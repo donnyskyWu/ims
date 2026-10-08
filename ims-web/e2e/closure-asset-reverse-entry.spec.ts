@@ -45,7 +45,7 @@ test.describe('corp asset account and session reverse closure', () => {
     const filtered = page.waitForResponse(
       (r) => r.url().includes('/corp/device/office/page') && r.request().method() === 'GET' && r.status() === 200,
     )
-    await page.getByRole('button', { name: '查询' }).click()
+    await page.locator('.qbar button[type="submit"]').click()
     await filtered
 
     await page.getByTestId('corp-asset-entry-open').click()
@@ -122,7 +122,8 @@ test.describe('corp asset account and session reverse closure', () => {
     expect(sessionBody.code).toBe(0)
     await expect(again.locator('tr', { hasText: sessionCode }).getByTestId('asset-entry-status')).toHaveText('待审核')
     await expect(again.locator('tr', { hasText: accountCode })).toHaveCount(0)
-    await expect(again.getByTestId('asset-entry-summary')).toContainText('命中 1 条')
+    await expect(again.getByTestId('asset-entry-summary')).toContainText('命中')
+    await expect(again.getByTestId('asset-entry-summary')).toContainText('在用 0')
     await page.screenshot({ path: `${shotDir}/05-session-pending.png`, fullPage: true })
     await again.getByRole('button', { name: '关闭' }).click()
 

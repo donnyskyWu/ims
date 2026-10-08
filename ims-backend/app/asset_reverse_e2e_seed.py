@@ -6,7 +6,6 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.corp import tenant_of
 from app.live_fin_e2e_seed import E2E_FIN_ACCOUNT_NO, ensure_live_fin_e2e_deps
 from app.models import LiveSession, User
 from app.ops_db import ops_session
@@ -53,7 +52,7 @@ def ensure_asset_reverse_e2e_session(db: Session, admin: User) -> None:
             session_status="ENDED",
             creator=admin.id,
             deleted=0,
-            tenant_id=tenant_of(admin),
+            tenant_id=admin.tenant_id or 0,
         )
     )
 
