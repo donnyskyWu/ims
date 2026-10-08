@@ -177,12 +177,12 @@ async function load() {
   flowError.value = flowRes.error
   flowTodos.value = asList(flowRes.data)
 
-  const todoRes = await readData('/auth/workbench/todos', { pageNo: 1, pageSize: 10, status: 'PENDING' })
+  const todoRes = await readData('/auth/workbench/todos', { pageNo: 1, pageSize: 20, status: 'PENDING' })
   todoReady.value = true
   todoError.value = todoRes.error
   todos.value = asList(todoRes.data)
 
-  const msgRes = await readData('/auth/workbench/messages', { pageNo: 1, pageSize: 10 })
+  const msgRes = await readData('/auth/workbench/messages', { pageNo: 1, pageSize: 20 })
   msgReady.value = true
   msgError.value = msgRes.error
   messages.value = asList(msgRes.data)
