@@ -156,6 +156,7 @@ PREFIXES = [
     ("PUT", "/admin-api/ims/cert/archive", "ims_cert_archive"),
     ("GET", "/admin-api/ims/cert/expire", "ims_cert_expire_log"),
     ("POST", "/admin-api/ims/cert/expire", "ims_cert_expire_log"),
+    ("PUT", "/admin-api/ims/cert/expire", "ims_cert_expire_log"),
     ("GET", "/admin-api/ims/corp/device/office", "ims_asset_ledger"),
     ("GET", "/admin-api/ims/corp/device/live", "ims_asset_ledger"),
     ("GET", "/admin-api/ims/asset/ledger", "ims_asset_ledger"),

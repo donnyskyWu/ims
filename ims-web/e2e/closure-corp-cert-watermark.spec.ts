@@ -15,11 +15,12 @@ test.describe('corp certificate watermark closure', () => {
     const listResp = page.waitForResponse(
       (r) =>
         r.url().includes('/corp/resource/certificate/page') &&
+        r.url().includes('holderName=E2E-Cert-Watermark') &&
         r.request().method() === 'GET' &&
         r.status() === 200,
     )
     await page.locator('input[placeholder="持有人"]').fill('E2E-Cert-Watermark')
-    await page.getByRole('button', { name: '查询' }).click()
+    await page.locator('form.qbar').first().getByRole('button', { name: '查询' }).click()
     const listBody = (await (await listResp).json()) as {
       code: number
       data?: { list?: Array<{ holderName?: string; certNoMasked?: string }> }
