@@ -276,7 +276,9 @@ interface FinShareResultVO {
 
 #### 2.3.8 PUT /admin-api/ims/fin/share/result/{id}/payoff — 发放登记
 
-**请求**：`{ payoffVoucher?: { fileName: string; fileKey: string }; payoffNote?: string }` → **响应**：`data: null`（状态 → `PAID_OFF`）。负向调整走冲销（`REVERSED`，红冲分录，V2-E3）。
+**请求**：`{ payoffVoucher?: { fileName: string; fileKey: string }; payoffNote?: string; reverse?: boolean; reverseReason?: string }` → **响应**：`data: null`（状态 → `PAID_OFF`）。
+
+**负向调整（#90，仍走本接口，不另开路径）**：`reverse=true` 时不发放。仅 `AUDITED` / `PAID_OFF` 可冲销，状态改为 `REVERSED`，`shareAmount` 不改，`calcDetail.redEntries` 写入负数红冲分录，并在 `ims_sys_operate_log` 留下 `action=冲销分成单`。原因为空 **1144**。未双审或已冲销再冲 **1150**。驳回仍走 `PUT …/audit` 的 `REJECT`，同样写红冲。全部对象已冲销后若成本更正改变分成额，受唯一键限制不新插单据，原单标记「已冲销（新单已补）」。
 
 ### 2.4 利润看板（FIN-004）
 
@@ -291,6 +293,8 @@ interface FinShareResultVO {
 #### 2.4.3 GET /admin-api/ims/fin/dashboard/drilldown — 多维下钻
 
 **请求**（Query）：`{ statPeriod: string; dimensionType: 'PLATFORM' | 'ACCOUNT' | 'IP_GROUP' | 'DAREN' | 'OWNER'; dimensionValue?: string; drillToSession?: boolean }` → **响应** `data`：`Array<{ dimensionValue: string; dimensionLabel: string; totalGmv: number; totalCost: number; netProfit: number; sessionCount: number; children?: Array<FinProfitVO> }>`（下钻最深到场次明细，联动 V1 台账详情，FIN-B-R2）。
+
+**#90**：`statPeriod` 为 `yyyy-MM`。维度不含公司主体（账号上的 company 不在 DrillDim 内）。达人与责任人都取场次 `responsibleUserId`（场次无独立达人主键）。总览实时汇总已核算利润，`refreshedAt` 落到当前小时。导出 `format=XLSX` 返回 60 秒下载链接；PDF 本片返回 **1001**。
 
 #### 2.4.4 GET /admin-api/ims/fin/dashboard/cost-structure — 成本结构
 

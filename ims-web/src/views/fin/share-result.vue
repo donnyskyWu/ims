@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>分成单管理</h1>
-        <div class="sub">FIN-003 · 利润核算后自动生成 · 财务审 + 业务审 → 发放 PAID_OFF · #57</div>
+        <div class="sub">FIN-003 · 财务审 + 业务审 → 发放 · 负向调整在发放接口红冲（1150 / 1144）· #90</div>
       </div>
     </div>
 
@@ -63,7 +63,7 @@
               <td class="num">¥{{ fmt(row.shareBase) }}</td>
               <td class="num">¥{{ fmt(row.shareAmount) }}</td>
               <td>{{ auditProgress(row) }}</td>
-              <td>{{ statusLabel(row.status) }}</td>
+              <td>{{ statusLabel(row.status, row) }}</td>
               <td>
                 <button
                   v-if="row.status === 'PENDING_AUDIT' && !row.finAuditPassed"
@@ -92,6 +92,24 @@
                 >
                   发放登记
                 </button>
+                <button
+                  v-if="row.status === 'AUDITED' || row.status === 'PAID_OFF'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-share-reverse-open"
+                  @click="openReverse(row)"
+                >
+                  冲销
+                </button>
+                <button
+                  v-if="row.status === 'REVERSED'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-share-reverse-detail-open"
+                  @click="openReverseDetail(row)"
+                >
+                  冲销明细
+                </button>
               </td>
             </tr>
           </tbody>
@@ -117,6 +135,55 @@
         </div>
       </div>
     </div>
+
+    <div v-if="reverseOpen && reverseRow" class="drawer-mask" @click.self="reverseOpen = false">
+      <div class="drawer on" data-testid="fin-share-reverse-drawer" style="width: 520px">
+        <div class="drawer-h">
+          <b>冲销 · {{ targetLabel(reverseRow.shareTarget) }}</b>
+          <button type="button" class="btn btn-sec btn-sm" @click="reverseOpen = false">关闭</button>
+        </div>
+        <p class="hint">场次 {{ reverseRow.sessionCode }} · 原金额 ¥{{ fmt(reverseRow.shareAmount) }} · 红冲不改原金额</p>
+        <label class="fld">
+          <span>冲销原因</span>
+          <input v-model="reverseReason" data-testid="fin-share-reverse-reason" maxlength="512" />
+        </label>
+        <p v-if="reverseError" class="hint" data-testid="fin-share-reverse-error" style="color: var(--red)">
+          {{ reverseError }}
+        </p>
+        <div v-if="reverseRed.length" data-testid="fin-share-red-entries">
+          <p v-for="entry in reverseRed" :key="entry.item" class="hint" style="color: var(--red)">
+            {{ entry.item }} <span data-testid="fin-share-red-amount">{{ redText(entry.amount) }}</span>
+          </p>
+          <p v-if="reverseAudit" class="hint" data-testid="fin-share-reverse-audit">
+            {{ reverseAudit.actorName }} · {{ reverseAudit.reversedAt }} · {{ reverseAudit.reason }} ·
+            {{ reverseAudit.fromStatus }}
+          </p>
+        </div>
+        <div class="drawer-f">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-reverse-submit" @click="submitReverse">
+            确认冲销
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="detailOpen && detailRow" class="drawer-mask" @click.self="detailOpen = false">
+      <div class="drawer on" data-testid="fin-share-reverse-detail" style="width: 560px">
+        <div class="drawer-h">
+          <b>冲销明细 · {{ targetLabel(detailRow.shareTarget) }}</b>
+          <button type="button" class="btn btn-sec btn-sm" @click="detailOpen = false">关闭</button>
+        </div>
+        <p class="hint">{{ detailRow.replaced ? '已冲销（新单已补）' : '已冲销' }} · 场次 {{ detailRow.sessionCode }}</p>
+        <p v-for="entry in detailRow.redEntries || []" :key="entry.item" class="hint" style="color: var(--red)">
+          {{ entry.item }} {{ redText(entry.amount) }}
+        </p>
+        <p v-if="detailRow.reverseAudit" class="hint" data-testid="fin-share-reverse-detail-audit">
+          {{ detailRow.reverseAudit.actorName }} · {{ detailRow.reverseAudit.reversedAt }} ·
+          {{ detailRow.reverseAudit.reason }}
+        </p>
+        <p v-if="detailRow.replaced" class="hint">补发金额 ¥{{ fmt(detailRow.replacementAmount) }}</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -124,6 +191,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
 
+type RedEntry = { item: string; amount: number }
+type ReverseAudit = { actorName?: string; reversedAt?: string; reason?: string; fromStatus?: string }
 type ShareRow = {
   id: number
   sessionCode: string
@@ -136,6 +205,10 @@ type ShareRow = {
   finAuditPassed?: boolean
   bizAuditPassed?: boolean
   calcDetail?: { shareTotal?: number }
+  redEntries?: RedEntry[]
+  reverseAudit?: ReverseAudit | null
+  replaced?: boolean
+  replacementAmount?: number
 }
 
 const loading = ref(false)
@@ -145,6 +218,14 @@ const query = reactive({ sessionCode: '', shareTarget: '', status: '' })
 const payoffOpen = ref(false)
 const payoffRow = ref<ShareRow | null>(null)
 const payoffNote = ref('')
+const reverseOpen = ref(false)
+const reverseRow = ref<ShareRow | null>(null)
+const reverseReason = ref('')
+const reverseError = ref('')
+const reverseRed = ref<RedEntry[]>([])
+const reverseAudit = ref<ReverseAudit | null>(null)
+const detailOpen = ref(false)
+const detailRow = ref<ShareRow | null>(null)
 
 const splitSum = computed(() => rows.value.reduce((acc, row) => acc + Number(row.shareAmount || 0), 0))
 const shareTotal = computed(() => {
@@ -163,7 +244,8 @@ function targetLabel(value: string) {
   return map[value] || value
 }
 
-function statusLabel(value: string) {
+function statusLabel(value: string, row?: ShareRow) {
+  if (value === 'REVERSED' && row?.replaced) return '已冲销（新单已补）'
   const map: Record<string, string> = {
     PENDING_AUDIT: '待审',
     AUDITED: '已审',
@@ -171,6 +253,10 @@ function statusLabel(value: string) {
     REVERSED: '已冲销',
   }
   return map[value] || value
+}
+
+function redText(amount: number) {
+  return `（${fmt(Math.abs(Number(amount || 0)))}）`
 }
 
 function auditProgress(row: ShareRow) {
@@ -217,6 +303,37 @@ function openPayoff(row: ShareRow) {
   payoffRow.value = row
   payoffNote.value = ''
   payoffOpen.value = true
+}
+
+function openReverse(row: ShareRow) {
+  reverseRow.value = row
+  reverseReason.value = ''
+  reverseError.value = ''
+  reverseRed.value = []
+  reverseAudit.value = null
+  reverseOpen.value = true
+}
+
+function openReverseDetail(row: ShareRow) {
+  detailRow.value = row
+  detailOpen.value = true
+}
+
+async function submitReverse() {
+  if (!reverseRow.value) return
+  reverseError.value = ''
+  try {
+    const res = await http.put(`/fin/share/result/${reverseRow.value.id}/payoff`, {
+      reverse: true,
+      reverseReason: reverseReason.value,
+    })
+    reverseRed.value = res.data.data?.redEntries || []
+    reverseAudit.value = res.data.data?.reverseAudit || null
+    await loadList()
+  } catch (err) {
+    const body = err as { code?: number; msg?: string }
+    reverseError.value = `${body?.code ?? ''} ${body?.msg || '冲销失败'}`.trim()
+  }
 }
 
 async function submitPayoff() {

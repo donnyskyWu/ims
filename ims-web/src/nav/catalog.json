@@ -707,6 +707,15 @@
       "parent": "场次财务",
       "desc": "FIN-002 · GET /fin/profit/list · 结算概览卡"
     },
+    "finDashboard": {
+      "no": "11",
+      "name": "利润看板",
+      "code": "FIN",
+      "icon": "chart",
+      "page": "利润看板",
+      "parent": "场次财务",
+      "desc": "FIN-004 · /ims/fin/dashboard · 按月与账号/平台/IP组/达人/责任人汇总"
+    },
     "finProfitTrace": {
       "no": "11",
       "name": "利润反查",
@@ -1208,6 +1217,7 @@
           "children": [
             "finCost",
             "finProfit",
+            "finDashboard",
             "finProfitTrace",
             "finShareRule",
             "finShareResult",

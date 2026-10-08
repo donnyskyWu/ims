@@ -877,7 +877,7 @@ type CostItem = 'COMMISSION' | 'AD' | 'RECHARGE' | 'FIXED' | 'SAMPLE' | 'SHARE_D
 ## 附录 A. 模块级约定
 
 1. **枚举引用**：全局权威枚举 `EntryCostStatus`（DRAFT/SUBMITTED/CONFIRMED）、`ProfitCalcStatus`（PENDING/CALCULATED/RECALCULATED/ABNORMAL）、`ShareResultStatus`（PENDING_AUDIT/AUDITED/PAID_OFF/REVERSED）、`EnableStatus`、`PlatformType`；模块内联枚举 `ShareCostType`/`ShareTarget`/`ShareBaseType`/`RateType`/`AuditRole`/`DrillDim`/`CostItem` 值域与 FIN-API 契约一致；
-2. **错误码段**：1141~1150 FIN 段（1141 场次非已核准、1142 期间已结账 LOCKED、1143 分成勾稽不平、1144 更正原因必填、1145 成本未核准、1146 规则参数非法、1147 优先级冲突、1148 双审未齐、1149 无审批角色权限）；
+2. **错误码段**：1141~1150 FIN 段（1141 场次非已核准、1142 期间已结账 LOCKED、1143 分成勾稽不平、1144 更正/冲销原因必填、1145 成本未核准、1146 规则参数非法、1147 优先级冲突、1148 双审未齐、1149 无审批角色权限、1150 分成单不可冲销：未双审或已冲销不可重复）；
 3. **金额规范（V2-E1）**：全模块 DECIMAL(12,2) 两位小数、¥ 前缀千分位；比例 DECIMAL(5,4) 百分比展示；BigDecimal 全链路（前端禁浮点运算展示换算误差，计算结果以服务端为准）；
 4. **幂等（V2-E4）**：成本录入/更正、分成审批、发放登记等金额写接口全部携带 clientToken；
 5. **红冲蓝补（V2-E3）**：更正/冲销不做物理修改，负数红括号渲染约定；

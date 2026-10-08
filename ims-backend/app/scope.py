@@ -299,6 +299,7 @@ PREFIXES = [
     ("PUT", "/admin-api/ims/fin/cost", "ims_fin_cost"),
     ("POST", "/admin-api/ims/fin/profit/recalc", "ims_fin_profit"),
     ("GET", "/admin-api/ims/fin/profit", "ims_fin_profit"),
+    ("GET", "/admin-api/ims/fin/dashboard", "ims_fin_profit"),
     ("GET", "/admin-api/ims/fin/share/rules", "ims_fin_share_rule"),
     ("POST", "/admin-api/ims/fin/share/rule", "ims_fin_share_rule"),
     ("PUT", "/admin-api/ims/fin/share/rule", "ims_fin_share_rule"),

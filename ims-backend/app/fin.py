@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -14,7 +15,17 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, tenant_of, user_names
 from app.live import get_session, iso, restrict_sessions
-from app.models import FinCost, FinPeriod, FinProfit, FinShareResult, FlowInstance, LiveReport, LiveSession, User
+from app.models import (
+    FinCost,
+    FinPeriod,
+    FinProfit,
+    FinShareResult,
+    FlowInstance,
+    LiveReport,
+    LiveSession,
+    OperateLog,
+    User,
+)
 
 router = APIRouter(prefix="/fin", tags=["fin"])
 
@@ -66,6 +77,9 @@ class FinSharePayoffBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     payoffVoucher: FinSharePayoffVoucher | None = None
     payoffNote: str = ""
+    # 契约 2.3.8：负向调整走冲销，不另开 REST。reverse=true 时本接口改为红冲。
+    reverse: bool = False
+    reverseReason: str = ""
 
 
 class FinPeriodCloseBody(BaseModel):
@@ -1053,7 +1067,7 @@ def sync_share_results(
     cost: FinCost,
     profit: FinProfit,
 ) -> None:
-    """利润落库后按手工分成额生成/刷新待审分成单。已审/已发放/已冲销不改写。"""
+    """利润落库后按手工分成额生成/刷新待审分成单。已审/已发放不改写。全部已冲销时只标记新单已补。"""
     session = db.scalar(
         select(LiveSession).where(
             LiveSession.session_code == session_code,
@@ -1070,9 +1084,28 @@ def sync_share_results(
         )
     ).all()
     active = [row for row in existing if row.deleted == 0]
+    parts = share_parts(session, cost)
+    if any(row.status in ("AUDITED", "PAID_OFF") for row in active):
+        return
+    reversed_rows = [row for row in active if row.status == "REVERSED"]
+    pending_rows = [row for row in active if row.status == "PENDING_AUDIT"]
+    if reversed_rows and not pending_rows:
+        # 唯一键是场次+对象，不能再插一张待审单。金额变化时在原单留「新单已补」。
+        by_part = {part["shareTarget"]: part for part in parts}
+        for row in reversed_rows:
+            part = by_part.get(row.share_target)
+            new_amount = money(part["shareAmount"]) if part else 0.0
+            if money(row.share_amount) == new_amount:
+                continue
+            detail = dict(row.calc_detail or {})
+            detail["replaced"] = True
+            detail["replacementAmount"] = new_amount
+            detail["replacedNote"] = "已冲销（新单已补）"
+            row.calc_detail = detail
+        db.flush()
+        return
     if any(row.status in LOCKED_SHARE_STATUSES for row in active):
         return
-    parts = share_parts(session, cost)
     share_total = money(sum(part["shareAmount"] for part in parts))
     by_target = {row.share_target: row for row in existing}
     keep = {part["shareTarget"] for part in parts}
@@ -1114,7 +1147,15 @@ def sync_share_results(
     db.flush()
 
 
+SHARE_ITEM_LABEL = {"DAREN": "达人分成", "REALNAME": "实名人分成", "TEAM": "团队分成"}
+
+
+def actor_display(actor: User) -> str:
+    return (actor.nickname or actor.username or "").strip() or str(actor.id)
+
+
 def share_result_vo(row: FinShareResult) -> dict:
+    detail = row.calc_detail or {}
     return {
         "id": row.id,
         "sessionCode": row.session_code,
@@ -1125,14 +1166,136 @@ def share_result_vo(row: FinShareResult) -> dict:
         "targetRefName": row.target_ref_name or "",
         "shareBase": money(row.share_base),
         "shareAmount": money(row.share_amount),
-        "calcDetail": row.calc_detail or {},
+        "calcDetail": detail,
         "status": row.status,
         "finAuditPassed": bool(row.fin_audit_passed),
         "bizAuditPassed": bool(row.biz_audit_passed),
         "auditedBy": row.audited_by or None,
         "auditedAt": iso(row.audited_at) if row.audited_at else None,
         "paidOffAt": iso(row.paid_off_at) if row.paid_off_at else None,
+        "redEntries": detail.get("redEntries") or [],
+        "reverseAudit": detail.get("reverseAudit"),
+        "replaced": bool(detail.get("replaced")),
+        "replacementAmount": detail.get("replacementAmount"),
+        "replacedNote": detail.get("replacedNote") or "",
+        "auditTrail": detail.get("auditTrail") or [],
     }
+
+
+def write_share_reverse_log(
+    db: Session,
+    actor: User,
+    row: FinShareResult,
+    *,
+    reason: str,
+    from_status: str,
+    red_amount: float,
+    result_code: int,
+) -> None:
+    detail = {
+        "shareId": row.id,
+        "sessionCode": row.session_code,
+        "shareTarget": row.share_target,
+        "action": "REVERSE",
+        "fromStatus": from_status,
+        "reason": reason,
+        "redAmount": red_amount,
+        "code": result_code,
+    }
+    now = utcnow()
+    db.add(
+        OperateLog(
+            module="财务",
+            action="冲销分成单",
+            operator_id=actor.id,
+            operator_name=actor_display(actor),
+            path=f"PUT /fin/share/result/{row.id}/payoff",
+            detail_json=json.dumps(detail, ensure_ascii=False),
+            result_code=result_code,
+            creator=actor.id,
+            updater=actor.id,
+            tenant_id=tenant_of(actor),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
+def apply_share_reverse(
+    db: Session,
+    actor: User,
+    row: FinShareResult,
+    reason: str,
+    *,
+    allow_pending: bool = False,
+):
+    """红冲原单，不改 share_amount。成功返回 VO；失败返回 fail 响应。"""
+    cleaned = (reason or "").strip()
+    from_status = row.status
+    red_amount = money(-money(row.share_amount))
+    if not cleaned:
+        write_share_reverse_log(
+            db, actor, row, reason="", from_status=from_status, red_amount=0, result_code=1144
+        )
+        db.flush()
+        return fail(1144, "冲销原因必填")
+    if row.status == "REVERSED":
+        write_share_reverse_log(
+            db,
+            actor,
+            row,
+            reason=cleaned[:512],
+            from_status=from_status,
+            red_amount=red_amount,
+            result_code=1150,
+        )
+        db.flush()
+        return fail(1150, "分成单已冲销，不可重复冲销")
+    allowed = {"AUDITED", "PAID_OFF"}
+    if allow_pending:
+        allowed.add("PENDING_AUDIT")
+    if row.status not in allowed:
+        write_share_reverse_log(
+            db,
+            actor,
+            row,
+            reason=cleaned[:512],
+            from_status=from_status,
+            red_amount=red_amount,
+            result_code=1150,
+        )
+        db.flush()
+        return fail(1150, "分成单未双审，不可冲销")
+    now = utcnow()
+    detail = dict(row.calc_detail or {})
+    audit = {
+        "actorId": actor.id,
+        "actorName": actor_display(actor),
+        "reversedAt": iso(now),
+        "reason": cleaned[:512],
+        "fromStatus": from_status,
+        "resultCode": 0,
+    }
+    trail = list(detail.get("auditTrail") or [])
+    trail.append({**audit, "action": "REVERSE", "redAmount": red_amount})
+    detail["redEntries"] = [{"item": SHARE_ITEM_LABEL.get(row.share_target, "分成"), "amount": red_amount}]
+    detail["reverseAudit"] = audit
+    detail["auditTrail"] = trail
+    row.calc_detail = detail
+    row.status = "REVERSED"
+    row.audited_by = actor.id
+    row.audited_at = now
+    write_share_reverse_log(
+        db,
+        actor,
+        row,
+        reason=cleaned[:512],
+        from_status=from_status,
+        red_amount=red_amount,
+        result_code=0,
+    )
+    db.flush()
+    return ok(share_result_vo(row))
 
 
 def audit_result_vo(row: FinShareResult) -> dict:
@@ -1265,10 +1428,15 @@ def share_result_audit(
     if row.status in ("PAID_OFF", "REVERSED"):
         return fail(1148, "分成单当前状态不可审批")
     if body.conclusion == "REJECT":
-        row.status = "REVERSED"
-        row.audited_by = actor.id
-        row.audited_at = utcnow()
-        db.flush()
+        reversed_resp = apply_share_reverse(
+            db,
+            actor,
+            row,
+            body.remark or "审批驳回",
+            allow_pending=True,
+        )
+        if not isinstance(reversed_resp, dict):
+            return reversed_resp
         return ok(audit_result_vo(row))
     if body.auditRole == "FINANCE":
         row.fin_audit_passed = 1
@@ -1298,13 +1466,15 @@ def share_result_payoff(
     row = load_visible_share(db, actor, request.state.scope, tenant_id, share_id)
     if row is None:
         return fail(1504, "资源不可用")
-    if row.status == "PAID_OFF":
-        return ok(None)
     session = live_session_row(db, tenant_id, row.session_code)
     if session is not None:
         locked = reject_if_period_locked(db, tenant_id, session)
         if locked is not None:
             return locked
+    if body.reverse:
+        return apply_share_reverse(db, actor, row, body.reverseReason or body.payoffNote)
+    if row.status == "PAID_OFF":
+        return ok(None)
     if row.status != "AUDITED":
         return fail(1148, "双审未齐")
     row.status = "PAID_OFF"

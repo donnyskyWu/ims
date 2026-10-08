@@ -18,6 +18,7 @@ const router = createRouter({
         { path: 'cost', component: () => import('../views/cost/index.vue') },
         { path: 'fin/cost', component: () => import('../views/fin/cost.vue') },
         { path: 'fin/profit', component: () => import('../views/fin/profit.vue') },
+        { path: 'fin/dashboard', component: () => import('../views/fin/dashboard.vue') },
         { path: 'fin/profit-trace', component: () => import('../views/fin/profit-trace.vue') },
         { path: 'fin/share/rule', component: () => import('../views/fin/share-rule.vue') },
         { path: 'fin/share/result', component: () => import('../views/fin/share-result.vue') },

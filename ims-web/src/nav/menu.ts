@@ -36,6 +36,7 @@ export const IMPLEMENTED: Record<string, string> = {
   cost: '/ims/cost',
   finCost: '/ims/fin/cost',
   finProfit: '/ims/fin/profit',
+  finDashboard: '/ims/fin/dashboard',
   finProfitTrace: '/ims/fin/profit-trace',
   finShareRule: '/ims/fin/share/rule',
   finShareResult: '/ims/fin/share/result',
