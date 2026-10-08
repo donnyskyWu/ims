@@ -11,6 +11,7 @@ from app.acct_seed import (
     E2E_ACCT_PEER_USER,
     E2E_POOL_ACCOUNT_NO,
     E2E_RECALL_ACCOUNT_NO,
+    E2E_RECON_ACCOUNT_NO,
     E2E_XFER_ACCOUNT_NO,
     refresh_acct_e2e_pool,
 )
@@ -188,7 +189,14 @@ def _reset_pool() -> int:
     return pool_account_id()
 
 
-def _recharge(auth: dict, account_id: int, amount: float, voucher: str | None = None, token: str | None = None):
+def _recharge(
+    auth: dict,
+    account_id: int,
+    amount: float,
+    voucher: str | None = None,
+    token: str | None = None,
+    recharge_date: str = "2026-10-08",
+):
     return client.post(
         "/admin-api/ims/account/recharge",
         headers={**auth, "clientToken": token or uuid.uuid4().hex},
@@ -196,10 +204,17 @@ def _recharge(auth: dict, account_id: int, amount: float, voucher: str | None = 
             "accountId": account_id,
             "amount": amount,
             "channel": "ALIPAY",
-            "rechargeDate": "2026-10-08",
+            "rechargeDate": recharge_date,
             "voucherUrl": voucher,
         },
     )
+
+
+def _verify(auth: dict, account_id: int, month: str, platform: float | None):
+    body: dict = {"month": month, "accountIds": [account_id]}
+    if platform is not None:
+        body["platformConsumed"] = platform
+    return client.post("/admin-api/ims/account/recharge/verify", headers=auth, json=body)
 
 
 def test_acct_recharge_voucher_gate_and_finance_visibility():
@@ -596,3 +611,96 @@ def test_acct_recall_freezes_and_blocks_1022():
     assert freeze_events
     assert "FROZEN" in freeze_events[0]["snapshotSummary"]
     assert "管理员" in freeze_events[0]["snapshotSummary"]
+
+
+def test_acct_reconcile_variance_boundary_1026():
+    """BR-017：|冲话费 − 平台消费| / 平台消费。1.99% 通过，2.00% 返回 1026 并生成财务核查工单。"""
+    from app.core import SessionLocal
+    from app.models import AccountRecharge, AccountRechargeVerify, Todo
+
+    auth = headers()
+    _reset_pool()
+    account_id = account_id_of(E2E_RECON_ACCOUNT_NO)
+
+    missing = _verify(auth, account_id, "2026-09", None)
+    assert missing.json()["code"] == 1001
+    assert "平台消费数据拉取失败" in missing.json()["msg"]
+
+    invalid = _verify(auth, account_id, "2026-09", 0)
+    assert invalid.json()["code"] == 1001
+    assert "大于 0" in invalid.json()["msg"]
+
+    empty = _verify(auth, account_id, "2026-07", 100)
+    assert empty.json()["code"] == 1001
+    assert "无冲话费" in empty.json()["msg"]
+
+    small = _recharge(auth, account_id, 101.99, recharge_date="2026-09-15")
+    assert small.json()["code"] == 0, small.json()
+    passed = _verify(auth, account_id, "2026-09", 100)
+    assert passed.json()["code"] == 0, passed.json()
+    passed_data = passed.json()["data"]
+    assert passed_data["diffRateText"] == "1.99%"
+    assert passed_data["overThreshold"] is False
+    assert passed_data["verifyStatus"] == "MATCHED"
+    assert passed_data["diffAmount"] == 1.99
+    assert passed_data["totalRecharge"] == 101.99
+    assert passed_data["platformConsumed"] == 100
+    assert passed_data["workOrderId"] is None
+    assert passed_data["verifyTaskId"].startswith("VR")
+
+    listed = client.get(
+        "/admin-api/ims/account/recharge/list",
+        headers=auth,
+        params={"accountId": account_id, "month": "2026-09"},
+    )
+    assert listed.json()["data"]["list"][0]["verifyStatus"] == "MATCHED"
+    assert listed.json()["data"]["list"][0]["verifyDiff"] == 1.99
+
+    blocked = _recharge(auth, account_id, 102, recharge_date="2026-08-15")
+    assert blocked.json()["code"] == 0, blocked.json()
+    over = _verify(auth, account_id, "2026-08", 100)
+    assert over.json()["code"] == 1026
+    assert "2.00%" in over.json()["msg"]
+    over_data = over.json()["data"]
+    assert over_data["diffRateText"] == "2.00%"
+    assert over_data["overThreshold"] is True
+    assert over_data["verifyStatus"] == "DIFF"
+    assert over_data["diffAmount"] == 2
+    assert over_data["workOrderId"]
+
+    diff_list = client.get(
+        "/admin-api/ims/account/recharge/list",
+        headers=auth,
+        params={"accountId": account_id, "month": "2026-08"},
+    )
+    assert diff_list.json()["data"]["list"][0]["verifyStatus"] == "DIFF"
+
+    scale_ok = _recharge(auth, account_id, 10199, voucher="RC-SCALE-199", recharge_date="2026-06-01")
+    assert scale_ok.json()["code"] == 0, scale_ok.json()
+    scale_pass = _verify(auth, account_id, "2026-06", 10000)
+    assert scale_pass.json()["code"] == 0, scale_pass.json()
+    assert scale_pass.json()["data"]["diffRateText"] == "1.99%"
+
+    scale_bad = _recharge(auth, account_id, 10200, voucher="RC-SCALE-200", recharge_date="2026-05-01")
+    assert scale_bad.json()["code"] == 0, scale_bad.json()
+    scale_over = _verify(auth, account_id, "2026-05", 10000)
+    assert scale_over.json()["code"] == 1026
+    assert scale_over.json()["data"]["diffRateText"] == "2.00%"
+
+    db = SessionLocal()
+    try:
+        tickets = list(db.scalars(select(Todo).where(Todo.task_type == "acct_reconcile")).all())
+        texts = [f"{row.title} {row.content}" for row in tickets]
+        assert any("2.00%" in text and "1026" in text for text in texts)
+        assert all("1.99%" not in text for text in texts)
+        assert db.scalar(select(AccountRechargeVerify).where(AccountRechargeVerify.month == "2026-07")) is None
+        untouched = db.scalar(
+            select(AccountRecharge).where(
+                AccountRecharge.account_id == account_id,
+                AccountRecharge.recharge_date == "2026-09-15",
+            )
+        )
+        assert untouched is not None
+        assert untouched.verify_status == "MATCHED"
+    finally:
+        db.close()

@@ -114,6 +114,15 @@
                 >
                   冲话费
                 </button>
+                <button
+                  v-if="row.status !== 'CANCELLED'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-verify-open"
+                  @click="openVerify(row)"
+                >
+                  账实核对
+                </button>
               </td>
             </tr>
           </tbody>
@@ -134,14 +143,14 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">冲话费记录</h2>
-          <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见</div>
+          <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 月度差异率 ≥ 2% 返回 1026</div>
         </div>
       </div>
       <div class="recharge-table">
@@ -170,7 +179,10 @@
                 <span v-else-if="item.voucherAttached">仅财务可见</span>
                 <span v-else>—</span>
               </td>
-              <td>{{ item.verifyStatus === 'UNVERIFIED' ? '未核对' : item.verifyStatus }}</td>
+              <td>
+                {{ verifyLabel(String(item.verifyStatus || '')) }}
+                <span v-if="item.verifyDiff != null"> ¥{{ moneyText(item.verifyDiff) }}</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -477,6 +489,44 @@
       </template>
     </ProtoDrawer>
 
+    <ProtoDrawer :open="verifyOpen" title="月度账实核对" width="720px" @close="closeVerify">
+      <div v-if="verifyAccount" data-testid="acct-verify-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ verifyAccount.accountNo }} · {{ verifyAccount.nickname }}</div>
+        </div>
+        <div class="fld">
+          <label>核对月份<i class="req">*</i></label>
+          <input v-model="verifyForm.month" data-testid="acct-verify-month" type="month" />
+        </div>
+        <div class="fld">
+          <label>平台实际消费（元）<i class="req">*</i></label>
+          <input
+            v-model="verifyForm.platformConsumed"
+            data-testid="acct-verify-platform"
+            inputmode="decimal"
+            placeholder="本地无平台拉取时录入后台消费"
+          />
+        </div>
+        <p class="hint">差异率 = |冲话费总额 − 平台实际消费| / 平台实际消费。低于 2% 通过；达到或超过 2% 返回 1026，并生成财务核查工单。</p>
+        <p v-if="verifyMsg" class="hint" data-testid="acct-verify-msg" :class="{ 'verify-over': verifyOver }">{{ verifyMsg }}</p>
+        <div v-if="verifyResult" data-testid="acct-verify-result" class="verify-card" :class="{ 'verify-over': verifyOver }">
+          <div data-testid="acct-verify-rate">差异率 {{ verifyResult.diffRateText }}</div>
+          <div>
+            冲话费 ¥{{ moneyText(verifyResult.totalRecharge) }} · 平台消费 ¥{{ moneyText(verifyResult.platformConsumed) }} · 差异 ¥{{ moneyText(verifyResult.diffAmount) }}
+          </div>
+          <div>核对状态：{{ verifyLabel(verifyResult.verifyStatus) }}</div>
+          <div v-if="verifyResult.workOrderId" data-testid="acct-verify-ticket">已生成财务核查工单 #{{ verifyResult.workOrderId }}</div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeVerify">关闭</button>
+        <button class="btn btn-pri" type="button" data-testid="acct-verify-submit" :disabled="verifyBusy" @click="submitVerify">
+          触发核对
+        </button>
+      </template>
+    </ProtoDrawer>
+
     <ProtoDrawer :open="formOpen" title="登记平台账号" width="480px" @close="formOpen = false">
       <div class="formrow one"><div class="fld"><label>昵称<i class="req">*</i></label><input v-model="form.accountName" /></div></div>
       <div class="formrow one"><div class="fld"><label>公司 ID<i class="req">*</i></label><input v-model.number="form.companyId" placeholder="选择器：填已有公司 id" /></div></div>
@@ -591,6 +641,28 @@ const rechargeForm = reactive({
   voucherUrl: '',
 })
 
+type VerifyResult = {
+  verifyTaskId: string
+  message: string
+  diffRateText: string
+  verifyStatus: string
+  totalRecharge: number
+  platformConsumed: number
+  diffAmount: number
+  overThreshold: boolean
+  workOrderId?: number | null
+}
+const verifyOpen = ref(false)
+const verifyAccount = ref<Record<string, unknown> | null>(null)
+const verifyBusy = ref(false)
+const verifyMsg = ref('')
+const verifyResult = ref<VerifyResult | null>(null)
+const verifyForm = reactive({
+  month: '',
+  platformConsumed: '',
+})
+const verifyOver = computed(() => !!verifyResult.value?.overThreshold || verifyMsg.value.startsWith('1026'))
+
 type TransferRow = {
   id: number
   transferNo: string
@@ -674,6 +746,19 @@ function statusLabel(code: string) {
 function channelLabel(code: string) {
   const hit = rechargeChannels.find((o) => o.value === code)
   return hit ? hit.label : code
+}
+
+function verifyLabel(code: string) {
+  if (code === 'MATCHED') return '一致'
+  if (code === 'DIFF') return '差异'
+  if (code === 'UNVERIFIED' || !code) return '未核对'
+  return code
+}
+
+function previousMonthUtc() {
+  const prev = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1))
+  const month = String(prev.getUTCMonth() + 1).padStart(2, '0')
+  return `${prev.getUTCFullYear()}-${month}`
 }
 
 function moneyText(value: unknown) {
@@ -1114,6 +1199,53 @@ function closeRecharge() {
   rechargeAccount.value = null
 }
 
+function closeVerify() {
+  verifyOpen.value = false
+  verifyAccount.value = null
+}
+
+function openVerify(row: Record<string, unknown>) {
+  verifyAccount.value = row
+  verifyForm.month = previousMonthUtc()
+  verifyForm.platformConsumed = ''
+  verifyMsg.value = ''
+  verifyResult.value = null
+  verifyOpen.value = true
+}
+
+async function submitVerify() {
+  if (!verifyAccount.value) return
+  verifyBusy.value = true
+  verifyMsg.value = ''
+  try {
+    const platform = Number(verifyForm.platformConsumed)
+    if (!verifyForm.month) {
+      verifyMsg.value = '1001 核对月份格式不合法'
+      return
+    }
+    if (!Number.isFinite(platform) || platform <= 0) {
+      verifyMsg.value = '1001 平台实际消费须大于 0'
+      return
+    }
+    const res = await http.post('/account/recharge/verify', {
+      month: verifyForm.month,
+      accountIds: [verifyAccount.value.id],
+      platformConsumed: platform,
+    })
+    const data = res.data?.data as VerifyResult
+    verifyResult.value = data
+    verifyMsg.value = data?.message || '核对完成'
+    await loadRecharges()
+  } catch (e: unknown) {
+    verifyMsg.value = bizMessage(e)
+    const body = e as { data?: VerifyResult }
+    verifyResult.value = body?.data ?? null
+    if (body?.data) await loadRecharges()
+  } finally {
+    verifyBusy.value = false
+  }
+}
+
 async function submitRecharge() {
   if (!rechargeAccount.value) return
   rechargeBusy.value = true
@@ -1236,5 +1368,14 @@ watch(activeTab, (tab) => {
 }
 .recharge-table {
   overflow: auto;
+}
+.verify-card {
+  padding: 12px;
+  border: 1px solid var(--border, #eee);
+  border-radius: 8px;
+}
+.verify-over {
+  color: #c45656;
+  font-weight: 600;
 }
 </style>
