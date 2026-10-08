@@ -29,6 +29,8 @@ E2E_POOL_ACCOUNT_NO = "AC-E2E-POOL"
 E2E_POOL_NICK = "E2E池内抖音"
 E2E_XFER_ACCOUNT_NO = "AC-E2E-XFER"
 E2E_XFER_NICK = "E2E流转抖音"
+E2E_RECALL_ACCOUNT_NO = "AC-E2E-RECALL"
+E2E_RECALL_NICK = "E2E收回抖音"
 E2E_ACCT_FINANCE_USER = "e2e_acct_r3"
 E2E_ACCT_PEER_USER = "e2e_acct_peer"
 E2E_ACCT_PEER_NICK = "流转同事"
@@ -78,6 +80,7 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
     try:
         _ensure_named_account(ops, admin, E2E_POOL_ACCOUNT_NO, E2E_POOL_NICK)
         _ensure_named_account(ops, admin, E2E_XFER_ACCOUNT_NO, E2E_XFER_NICK)
+        _ensure_named_account(ops, admin, E2E_RECALL_ACCOUNT_NO, E2E_RECALL_NICK)
         ops.commit()
     finally:
         ops.close()
@@ -188,7 +191,7 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     ops = ops_session()
     account_ids: list[int] = []
     try:
-        for account_no in (E2E_POOL_ACCOUNT_NO, E2E_XFER_ACCOUNT_NO):
+        for account_no in (E2E_POOL_ACCOUNT_NO, E2E_XFER_ACCOUNT_NO, E2E_RECALL_ACCOUNT_NO):
             row = _account_row(ops, account_no)
             if row is None:
                 continue

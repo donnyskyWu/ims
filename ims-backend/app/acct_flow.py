@@ -387,19 +387,80 @@ class TransferRevokeBody(BaseModel):
     remark: str
 
 
+def _create_recall(body: TransferCreateBody, remark: str, actor: User, db: Session):
+    """收回单：管理员发起后直接生效，账号 IN_USE → FROZEN（TRF-R2）。"""
+    if body.to_user_id is not None:
+        return fail(1001, "收回单不指定新责任人")
+    if not _is_admin(db, actor):
+        return fail(1008, "仅管理员可收回")
+    ops = ops_session()
+    try:
+        account = _load_account(ops, body.account_id)
+        if account is None:
+            return fail(1504, "资源不可用")
+        if account.status == "FROZEN":
+            return fail(1022, "账号处于冻结态")
+        if account.status != "IN_USE":
+            return fail(1023, "账号不在用，无法收回")
+        pending = db.scalar(
+            select(AccountTransfer.id).where(
+                AccountTransfer.account_id == account.id,
+                AccountTransfer.status == "PENDING_CONFIRM",
+            )
+        )
+        if pending is not None:
+            return fail(1023, "流转单状态非法")
+        from_id = account.holder_user_id or actor.id
+        now = utcnow()
+        row = AccountTransfer(
+            transfer_no=_next_transfer_no(db),
+            account_id=account.id,
+            account_no=account.account_no or str(account.id),
+            from_user_id=from_id,
+            to_user_id=0,
+            transfer_type="RECALL",
+            reason_type=body.reason_type,
+            remark=remark,
+            status="EFFECTIVE",
+            effective_at=now,
+            tenant_id=tenant_of(actor),
+        )
+        db.add(row)
+        db.flush()
+        account.status = "FROZEN"
+        account.updated_at = now
+        ops.commit()
+        from_name = _display_name(db, from_id)
+        _append_timeline(
+            db,
+            account_id=account.id,
+            event_type="FREEZE",
+            ref_no=row.transfer_no,
+            ref_id=row.id,
+            operator=actor,
+            summary=f"收回冻结 · 原责任人 {from_name} · 状态 FROZEN",
+            tenant_id=tenant_of(actor),
+        )
+        return ok(transfer_vo(row, {from_id: from_name}))
+    finally:
+        ops.close()
+
+
 @router.post("/account/transfer")
 def create_transfer(
     body: TransferCreateBody,
     actor: User = Depends(current_user),
     db: Session = Depends(db_session),
 ):
-    if body.transfer_type != "TRANSFER":
+    if body.transfer_type not in ("TRANSFER", "RECALL"):
         return fail(1001, "流转类型不合法")
     if body.reason_type not in TRANSFER_REASONS:
         return fail(1001, "原因分类不合法")
     remark = (body.remark or "").strip()
     if not remark or len(remark) > 512:
         return fail(1001, "交接说明必填")
+    if body.transfer_type == "RECALL":
+        return _create_recall(body, remark, actor, db)
     if body.to_user_id is None:
         return fail(1001, "新责任人必填")
     target = db.get(User, body.to_user_id)
