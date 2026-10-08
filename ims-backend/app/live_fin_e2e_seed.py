@@ -19,6 +19,14 @@ E2E_LIVE1045_ACCOUNT_NO = "AC-E2E-LIVE1045"
 E2E_LIVE1045_ACCOUNT_NICK = "E2E锁定证件场次"
 E2E_LIVE1045_PHONE_CODE = "E2E-LIVE1045-PHONE"
 E2E_LIVE1045_REALNAME = "E2E-Live-1045"
+E2E_LIVE1044_ACCOUNT_NO = "AC-E2E-LIVE1044"
+E2E_LIVE1044_ACCOUNT_NICK = "E2E黄级场次"
+E2E_LIVE1044_PHONE_CODE = "E2E-LIVE1044-PHONE"
+E2E_LIVE1044_REALNAME = "E2E-Live-1044"
+E2E_LIVE1043_ACCOUNT_NO = "AC-E2E-LIVE1043"
+E2E_LIVE1043_ACCOUNT_NICK = "E2E红级场次"
+E2E_LIVE1043_PHONE_CODE = "E2E-LIVE1043-PHONE"
+E2E_LIVE1043_REALNAME = "E2E-Live-1043"
 
 
 def ensure_live_fin_e2e_deps(db: Session, admin: User) -> None:
@@ -198,9 +206,126 @@ def clear_live_cert_lock_archives(db: Session) -> None:
     db.execute(delete(CertArchive).where(CertArchive.id.in_(ids)))
 
 
+def _upsert_risk_account(
+    ops,
+    admin: User,
+    company,
+    group,
+    *,
+    account_no: str,
+    account_nick: str,
+    phone_code: str,
+    real_name: str,
+    person_status: str,
+    account_status: str,
+    id_card: str,
+    mobile: str,
+    phone_number: str,
+) -> None:
+    person = ops.scalar(select(Realname).where(Realname.real_name == real_name, Realname.deleted == 0))
+    if person is None:
+        person = Realname(
+            real_name=real_name,
+            id_type="ID_CARD",
+            id_card_enc=encrypt_text(id_card),
+            phone_enc=encrypt_text(mobile),
+            status=person_status,
+            tenant_id=0,
+        )
+        ops.add(person)
+        ops.flush()
+    else:
+        person.status = person_status
+
+    phone = ops.scalar(select(Phone).where(Phone.phone_code == phone_code, Phone.deleted == 0))
+    if phone is None:
+        phone = Phone(
+            phone_enc=encrypt_text(phone_number),
+            phone_sha256=f"live-risk-{phone_code}",
+            phone_code=phone_code,
+            phone_model="E2E-iPhone",
+            status="IN_USE",
+            keeper_id=admin.id,
+            device_number=phone_code,
+            tenant_id=0,
+        )
+        ops.add(phone)
+        ops.flush()
+    else:
+        phone.status = "IN_USE"
+
+    account = ops.scalar(
+        select(PlatformAccount).where(PlatformAccount.account_no == account_no, PlatformAccount.deleted == 0)
+    )
+    if account is None:
+        ops.add(
+            PlatformAccount(
+                account_no=account_no,
+                account_name=account_nick,
+                platform_type="DOUYIN",
+                ip_group_id=group.id,
+                company_id=company.id,
+                realname_id=person.id,
+                holder_user_id=admin.id,
+                status=account_status,
+                tenant_id=0,
+            )
+        )
+    else:
+        account.realname_id = person.id
+        account.status = account_status
+        account.holder_user_id = admin.id
+        account.platform_type = "DOUYIN"
+        account.account_name = account_nick
+        account.ip_group_id = group.id
+        account.company_id = company.id
+
+
+def ensure_live_risk_e2e_deps(db: Session, admin: User) -> None:
+    """#78 黄级（账号非在用）与红级（实名人停用 + 账号非在用）种子。主题里的黑名单词由 closure 填写。"""
+    del db
+    ops = ops_session()
+    try:
+        company, group = _company_and_group(ops)
+        _upsert_risk_account(
+            ops,
+            admin,
+            company,
+            group,
+            account_no=E2E_LIVE1044_ACCOUNT_NO,
+            account_nick=E2E_LIVE1044_ACCOUNT_NICK,
+            phone_code=E2E_LIVE1044_PHONE_CODE,
+            real_name=E2E_LIVE1044_REALNAME,
+            person_status="ENABLED",
+            account_status="FROZEN",
+            id_card="330101199004041044",
+            mobile="13800001044",
+            phone_number="13600001044",
+        )
+        _upsert_risk_account(
+            ops,
+            admin,
+            company,
+            group,
+            account_no=E2E_LIVE1043_ACCOUNT_NO,
+            account_nick=E2E_LIVE1043_ACCOUNT_NICK,
+            phone_code=E2E_LIVE1043_PHONE_CODE,
+            real_name=E2E_LIVE1043_REALNAME,
+            person_status="DISABLED",
+            account_status="FROZEN",
+            id_card="330101199004041043",
+            mobile="13800001043",
+            phone_number="13600001043",
+        )
+        ops.commit()
+    finally:
+        ops.close()
+
+
 def refresh_live_fin_e2e_deps(db: Session, admin: User) -> None:
     if admin.username != "admin":
         return
     ensure_live_fin_e2e_deps(db, admin)
     ensure_live_cert_lock_e2e_deps(db, admin)
     clear_live_cert_lock_archives(db)
+    ensure_live_risk_e2e_deps(db, admin)

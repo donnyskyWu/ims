@@ -12,6 +12,13 @@ test.describe('CORP account pool checkout and return closure S4', () => {
     await page.goto('/ims/corp/account/douyin')
     await expect(page.locator('h1')).toContainText('抖音')
 
+    await page.locator('input[placeholder="账号编号/昵称"]').fill(POOL_NO)
+    const searchResp = page.waitForResponse(
+      (r) => r.url().includes('/corp/account/page') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await page.getByRole('button', { name: '查询' }).click()
+    await searchResp
+
     const row = page.locator('.tbl-wrap tbody tr').filter({ hasText: POOL_NO })
     await expect(row).toBeVisible()
     await expect(row).toContainText('池可领用')

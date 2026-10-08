@@ -187,12 +187,28 @@ def ensure_asset_purchase_column() -> None:
         conn.execute(text("CREATE INDEX idx_asset_ledger_purchase_batch ON ims_asset_ledger (purchase_batch_no)"))
 
 
+def ensure_live_approve_comment_column() -> None:
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_live_session" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_live_session")}
+    if "approve_comment" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE ims_live_session ADD COLUMN approve_comment VARCHAR(512) NOT NULL DEFAULT ''")
+        )
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
     ensure_bi_br212_columns()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()
+    ensure_live_approve_comment_column()
     from app.ops_db import ensure_ops
 
     ensure_ops()

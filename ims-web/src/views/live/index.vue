@@ -7,6 +7,7 @@
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="openRegister">新建场次登记</button>
+        <button class="btn btn-sec" type="button" data-testid="live-supplement-open" @click="openSupplement">历史补录</button>
         <button class="btn btn-sec" type="button" disabled>导出</button>
       </div>
     </div>
@@ -50,7 +51,10 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.sessionCode">
-              <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">{{ row.sessionCode }}</td>
+              <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">
+                {{ row.sessionCode }}
+                <span v-if="row.isSupplement" data-testid="live-supplement-tag">补录</span>
+              </td>
               <td class="mono" style="font-size: 12px">{{ row.accountNo }}</td>
               <td>{{ row.topic }}</td>
               <td>{{ row.platform }}</td>
@@ -102,6 +106,44 @@
       </template>
     </ProtoDrawer>
 
+    <ProtoDrawer :open="supplementOpen" title="历史补录" width="720px" @close="supplementOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>平台账号 id *</label>
+          <input v-model.number="sup.accountId" type="number" data-testid="live-supplement-account" />
+        </div>
+        <div class="fld">
+          <label>实名人 id *</label>
+          <input v-model.number="sup.realnamePersonId" type="number" data-testid="live-supplement-person" />
+        </div>
+        <div class="fld">
+          <label>手机设备 id *</label>
+          <input v-model.number="sup.deviceId" type="number" data-testid="live-supplement-device" />
+        </div>
+        <div class="fld">
+          <label>主题 *</label>
+          <input v-model="sup.topic" data-testid="live-supplement-topic" />
+        </div>
+        <div class="fld">
+          <label>计划开播 *</label>
+          <input v-model="sup.planStartTime" data-testid="live-supplement-plan" />
+        </div>
+        <div class="fld">
+          <label>补录说明 *</label>
+          <input v-model="sup.supplementReason" data-testid="live-supplement-reason" maxlength="256" />
+        </div>
+        <div class="fld">
+          <label>GMV</label>
+          <input v-model.number="sup.gmv" type="number" step="0.01" data-testid="live-supplement-gmv" />
+        </div>
+      </div>
+      <div v-if="supplementError" class="hint bad" data-testid="live-supplement-error">{{ supplementError }}</div>
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="supplementOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="live-supplement-submit" @click="submitSupplement">提交补录</button>
+      </template>
+    </ProtoDrawer>
+
     <ProtoDrawer :open="detailOpen" :title="detailTitle" width="90%" @close="detailOpen = false">
       <div v-if="detail" class="tabs">
         <div v-for="t in tabs" :key="t" class="tab" :class="{ on: tab === t }" @click="switchTab(t)">{{ t }}</div>
@@ -139,6 +181,29 @@
         </div>
         <p v-if="actionError" class="hint bad" data-testid="live-action-error">{{ actionError }}</p>
         <p data-testid="live-session-status">风险分 {{ detail.riskScore ?? '—' }} · {{ detail.riskLevel || '—' }} · 状态 {{ detail.sessionStatus }}</p>
+        <p v-if="riskConclusion" data-testid="live-risk-conclusion">{{ riskConclusion }}</p>
+        <p v-if="detail.approverName" data-testid="live-approver">审批人 {{ detail.approverName }}</p>
+        <div v-if="showYellowApprove" class="formrow one" style="margin-top: 8px">
+          <div class="fld">
+            <label>审批意见</label>
+            <input v-model="approveComment" data-testid="live-approve-comment" maxlength="512" />
+          </div>
+          <div class="acts">
+            <button class="btn btn-pri btn-sm" type="button" data-testid="live-approve-pass" @click="doApprove(true)">通过放行</button>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="live-approve-reject" @click="doApprove(false)">拒绝整改</button>
+          </div>
+        </div>
+        <p v-if="detail.isSupplement" data-testid="live-supplement-reason-text">补录说明：{{ detail.supplementReason || '—' }}</p>
+        <div v-if="showSupplementApprove" class="formrow one" style="margin-top: 8px">
+          <div class="fld">
+            <label>补录审批意见</label>
+            <input v-model="supplementComment" data-testid="live-supplement-comment" maxlength="512" />
+          </div>
+          <div class="acts">
+            <button class="btn btn-pri btn-sm" type="button" data-testid="live-supplement-pass" @click="doSupplementApprove(true)">通过补录</button>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="live-supplement-reject" @click="doSupplementApprove(false)">拒绝补录</button>
+          </div>
+        </div>
         <table v-if="detail.riskCheckResults?.length">
           <thead><tr><th>检查项</th><th>结果</th><th>权重分</th></tr></thead>
           <tbody>
@@ -227,6 +292,19 @@ const statusOptions = [
 const registerOpen = ref(false)
 const registerError = ref('')
 const actionError = ref('')
+const approveComment = ref('')
+const supplementOpen = ref(false)
+const supplementError = ref('')
+const supplementComment = ref('')
+const sup = reactive({
+  accountId: 0,
+  realnamePersonId: 0,
+  deviceId: 0,
+  topic: '历史场次补录',
+  planStartTime: '2020-01-15T20:00:00+08:00',
+  supplementReason: '',
+  gmv: 100,
+})
 const reg = reactive({
   accountId: 0,
   realnamePersonId: 0,
@@ -344,9 +422,26 @@ const basicLines = computed(() => {
     { k: '责任人', v: d.responsibleUserName },
     { k: '主题', v: d.topic },
     { k: '状态', v: d.sessionStatus },
+    { k: '补录', v: d.isSupplement ? d.supplementReason || '待审批' : '否' },
     { k: 'Football room', v: d.footballRoomId || '—' },
   ]
 })
+
+const riskConclusion = computed(() => {
+  const level = detail.value?.riskLevel as string | undefined
+  if (level === 'GREEN') return '绿色自动放行'
+  if (level === 'YELLOW') return '黄色待审批'
+  if (level === 'RED') return '红色禁止开播'
+  return ''
+})
+
+const showYellowApprove = computed(
+  () => detail.value?.riskLevel === 'YELLOW' && detail.value?.sessionStatus === 'PENDING_RISK_CHECK',
+)
+
+const showSupplementApprove = computed(
+  () => !!detail.value?.isSupplement && !detail.value?.approverUserId,
+)
 
 async function openDetail(row: any) {
   detailOpen.value = true
@@ -381,16 +476,21 @@ async function doSync() {
   hint.value = '已同步 live_room'
 }
 
+async function refreshDetail() {
+  if (!detail.value) return
+  detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
+}
+
 async function doRisk() {
   if (!detail.value) return
   actionError.value = ''
   try {
     await apiPost(`/live/register/${detail.value.sessionCode}/risk-check`, {})
-    detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
   } catch (e: unknown) {
     actionError.value = bizError(e)
     hint.value = actionError.value
   }
+  await refreshDetail()
 }
 
 async function doStart() {
@@ -398,12 +498,100 @@ async function doStart() {
   actionError.value = ''
   try {
     await apiPut(`/live/register/${detail.value.sessionCode}/start`, {})
-    detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
     hint.value = '已确认开播'
   } catch (e: unknown) {
     actionError.value = bizError(e)
     hint.value = actionError.value
   }
+  await refreshDetail()
+}
+
+async function doApprove(pass: boolean) {
+  if (!detail.value) return
+  actionError.value = ''
+  if (pass && !approveComment.value.trim()) {
+    actionError.value = '审批意见必填'
+    return
+  }
+  try {
+    await apiPut(`/live/register/${detail.value.sessionCode}/approve`, {
+      approve: pass,
+      comment: approveComment.value.trim(),
+    })
+    hint.value = pass ? '黄级已放行' : '已拒绝，请整改'
+    approveComment.value = ''
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+  }
+  await refreshDetail()
+}
+
+function openSupplement() {
+  supplementError.value = ''
+  sup.supplementReason = ''
+  supplementOpen.value = true
+}
+
+async function submitSupplement() {
+  supplementError.value = ''
+  try {
+    const data = await apiPost('/live/ledger/supplement', {
+      sessionCreate: {
+        accountId: sup.accountId,
+        realnamePersonId: sup.realnamePersonId,
+        responsibleUserId: 1,
+        deviceAssetIds: [sup.deviceId],
+        platform: 'DOUYIN',
+        topic: sup.topic,
+        planStartTime: sup.planStartTime,
+        planEndTime: '',
+      },
+      sessionReport: {
+        actualStart: sup.planStartTime,
+        actualEnd: '2020-01-15T22:00:00+08:00',
+        durationMinutes: 120,
+        gmv: sup.gmv,
+        refundAmount: 0,
+        orderCount: 1,
+        viewerCount: 10,
+        peakOnline: 5,
+        newFans: 1,
+        adCost: 0,
+      },
+      supplementReason: sup.supplementReason,
+    })
+    supplementOpen.value = false
+    hint.value = `补录已提交 ${data.sessionCode}`
+    await loadList()
+    openDetail(data)
+    tab.value = '风控登记'
+  } catch (e: unknown) {
+    supplementError.value = bizError(e)
+    hint.value = supplementError.value
+  }
+}
+
+async function doSupplementApprove(pass: boolean) {
+  if (!detail.value) return
+  actionError.value = ''
+  if (pass && !supplementComment.value.trim()) {
+    actionError.value = '审批意见必填'
+    return
+  }
+  try {
+    await apiPut(`/live/ledger/supplement/${detail.value.id}/approve`, {
+      approve: pass,
+      comment: supplementComment.value.trim(),
+    })
+    hint.value = pass ? '补录已审批入库' : '补录已退回'
+    supplementComment.value = ''
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+  }
+  await refreshDetail()
+  await loadList()
 }
 
 async function submitReport() {

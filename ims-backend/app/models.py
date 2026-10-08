@@ -414,6 +414,7 @@ class LiveSession(Base):
     risk_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
     approver_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    approve_comment: Mapped[str] = mapped_column(String(512), default="")
     football_room_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     football_sync_status: Mapped[str] = mapped_column(String(16), default="UNLINKED")
     last_football_sync_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
