@@ -1,5 +1,6 @@
 # IMS Python 执行进度（2026-10-06）
 
+> **2026-10-08 本回合（#63 · S5 办公设备 领用→使用→归还→报废）**：rebase 到 main `6f59ff6`（**#62** 已合入，状态仍开发完成/待UAT）。`ims_asset_ledger` / `ims_asset_lifecycle`。`POST /asset/ledger` 及 `…/checkout|use|return|scrap`。状态 `PENDING_REVIEW→IN_USE`（使用仍在用并写 `used_at`）→`RETURNED→SCRAPPED`。未使用归还、未归还报废 **1015**；在用再领用 **1012**。办公/直播列表改读台账。`closure-asset-lifecycle.spec.ts`（E2E-S5-02 · 纯 UI）· `test_asset_status_full_flow_checkout_use_return_scrap` · `test_asset_lifecycle.py` + `test_device.py` **3 passed** · collect **177** · Checklist **v2.6.73** · 全量 E2E **57/57 PASS**（`e2e_result.txt` · 18080 + 6173 · `--workers=1` · 本地 `127.0.0.1`）。状态 **开发完成/待UAT**（UAT 未测）。本片不改 `acct_flow` / 账号收回流转，也不改 `cert_expire`。采购导入与穿透 **1013** 未做。**#57/#58 已完成**。**#59–#62** 保持开发完成/待UAT。
 > **2026-10-08 本回合（#62 · S4 收回 → FROZEN / 1022）**：rebase 到 main `57169c8`（**#61** 已合入）。管理员 `POST /admin-api/ims/account/transfer` `transferType=RECALL`（不传 `toUserId`）直接 **EFFECTIVE**，账号 `IN_USE→FROZEN`，时间线 **FREEZE**。再领用/再流转 **1022**。非管理员 **1008**；待确认流转中收回 **1023**。种子 `AC-E2E-RECALL`（不占用 `AC-E2E-XFER`）。`closure-corp-account-recall.spec.ts`（E2E-S4-04 · 纯 UI）· `test_acct_recall_freezes_and_blocks_1022` · `test_acct_checkout.py` **4 passed** · collect **176** · Checklist **v2.6.72** · 全量 E2E **56/56 PASS**（`e2e_result.txt`）。状态 **开发完成/待UAT**（UAT 未测）。本片不改 `cert_expire` / 证件到期扫描。解冻回池 / 核对 **1026** 未做。**#59/#60/#61** 保持开发完成/待UAT。
 > **2026-10-08 本回合（#61 · S6 证书到期预警）**：rebase 到 main `908bd56`（**#60** 已合入），已合入 main `57169c8`。`ims_cert_expire_log` · `POST /cert/archive/upload` · `PUT /cert/archive/{id}/review` · `POST /cert/expire/scan` · `GET /cert/expire/list` · `GET /cert/expire/stats`。剩余 **30** 天黄色、**7** 天红色、**0** 天锁定；同级不重复推送；工作台待办与站内消息（钉钉不外发）。`closure-corp-cert-expire.spec.ts`（E2E-S6-02 · 纯 UI）· `test_cert_expire.py` **2 passed** · collect **175** · Checklist **v2.6.71** · 跑前 refresh workbench/acct/FIN/cert 种子 · 当时 E2E **55/55 PASS**（18080 + 6173 · `--workers=1` · 本地 `127.0.0.1`）。状态 **开发完成/待 UAT**。**#57–#60 已交付**（#59/#60 为开发完成/待UAT）。本片不改账号流转。换证 / **1035** / LIVE **1045** 未做。
 > **2026-10-08 本回合（#60 · S4 账号流转 + 他人领用 1021）**：rebase 到 main `6fa2a88`（**#59** 已合入）。`POST/GET /admin-api/ims/account/transfer` · `PUT …/confirm`（仅新责任人，否则 **1008**）· `PUT …/revoke`。在用账号再 `POST /account/apply` → **1021**。确认后 `holder_user_id` 改为接收人，时间线 **TRANSFER**。种子 `AC-E2E-XFER` / `e2e_acct_peer`（流转同事）。`closure-corp-account-transfer.spec.ts`（E2E-S4-02/03 · 纯 UI）· `test_acct_other_user_1021_and_transfer_holder_change` · `test_acct_checkout.py` 当时 **3 passed** · collect **173** · Checklist **v2.6.70** · 合并后全量 E2E **54/54 PASS**（`e2e_result.txt`）。状态 **开发完成/待UAT**（UAT 未测）。本片代码不改 `fin.py`。收回 **1022** 见 **#62**。核对 **1026** 未做。**#61** 见上节（已交付，开发完成/待UAT）。
@@ -155,7 +156,7 @@
 - 做了什么：办公、直播设备不建台账表。`GET /corp/device/office/page` 和 `GET /corp/device/live/page` 固定空分页，页面写明增删改已阻断，没有新建按钮。手机沿用登记册 #28 `oa_phone`。`GET/POST/PUT /master/phone`，CORP 的 `GET /corp/device/phone/page` 与 `/{id}` 读同一张表。保管人必须是本地用户。号码加密后脱敏。没有实名人列。影像只存 key，没有上传接口。B9 用 `asset_ledger_blocked` 放行两条空列表，这个名字没有物理表。
 - 测试：`python -m pytest -q` 为 35 passed（原 33 个未改坏，新增 2 个设备用例）。浏览器 1440 侧栏宽 232。办公设备空列表、「共 0 条」、阻断说明，没有新建。直播设备同样。手机新建后列表为 `136****4444`、类型 iPhone、保管人管理员。390 宽出现「打开菜单」，点开后侧栏为 `is-drawer on`，遮罩出现。
 - CHECKLIST-IMS-CORP §4 两项已勾。§1、§2、§5 未勾。
-- 未做：资产台账、领用跳转、手机影像上传、绑定账号列表（等平台账号）。
+- 未做（当时）：资产台账、领用跳转、手机影像上传、绑定账号列表（等平台账号）。办公/直播台账与领用→报废见文末 **#63**（`ims_asset_ledger`）；当时空分页口径保留在上一条。
 - 下一片：S-IMS-C-01 五个平台账号与采集 Tab。
 
 ## S-IMS-C-01 五个平台账号与采集 Tab
@@ -532,7 +533,7 @@
 | S2 直播全链路 | 部分 | 场次登记/列表/成本联动有；风控色带/24h 督办 E2E 未齐 |
 | S3 成本-利润-反查 | 部分 | FIN 三页 + DC-002 + W9-1 链路 pytest；结账/分成 PAID 未做 |
 | S4 账号领用流转 | 部分 | 平台账号 CRUD/采集 Tab；**#47** 池领用/归还；**#58** 冲话费登记 + **1025** 凭证门禁（E2E-S4-05/06）；**#60** 流转 + 他人领用 **1021**（E2E-S4-02/03，开发完成/待UAT）；**#62** 收回 **FROZEN** + **1022**（E2E-S4-04，开发完成/待UAT）；1026 未 E2E |
-| S5 资产+穿透 | 部分 | 设备/office·live·phone 台账；5 层穿透 1013 未做 |
+| S5 资产+穿透 | 部分 | **#63** 办公设备登记→领用→使用→归还→报废（E2E-S5-02，开发完成/待UAT）；手机仍走 `oa_phone`；采购导入与 5 层穿透 **1013** 未做 |
 | S6 证件预警 | 部分 | 证件水印/脱敏（**#55**）；T−30/T−7/T−0 三级预警 + 工作台提醒（**#61** · E2E-S6-02 · 开发完成/待UAT）；换证 / **1035** 频次 / LIVE **1045** 未做 |
 | S7 内容 AI 全流程 | 部分 | SOP~发布 G1 + 公推模板库首片；ComfyUI/GPU E2E 未做 |
 | S8 AI 资产分发 | 部分 | AIR 知识库文件管理；技能/专家/MCP 网关未做 |
@@ -1086,4 +1087,12 @@
 - **规则**：非 `IN_USE` 收回 → **1023**；已冻结再收回/再领用/再流转 → **1022**；非管理员 → **1008**；收回单带 `toUserId` → **1001**；存在待确认流转 → **1023**。空备注仍 **1001**，#60 流转用例不因此改写责任人。
 - **E2E**：`closure-corp-account-recall.spec.ts`（纯 UI · `AC-E2E-RECALL`）。rebase 到 main `57169c8` 后全量 **56/56 PASS**（`e2e_result.txt` · 18080 + 6173 · `--workers=1` · 本地 `127.0.0.1`）。
 - **测试**：`test_acct_recall_freezes_and_blocks_1022` · `test_acct_checkout.py` **4 passed** · collect **176**。
-- **文档**：Checklist **v2.6.72** · 计划表 **#62**（开发完成/待UAT）· 对照表 UAT 建议已填、UAT 状态 **未测**。**#61** 已合入 main `57169c8`（开发完成/待UAT）。本片不改 `cert_expire` / 证件到期扫描。解冻回池与 **1026** 未做。
+- **文档**：Checklist **v2.6.72** · 计划表 **#62**（开发完成/待UAT）· 对照表 UAT 建议已填、UAT 状态 **未测**。**#61** 已合入 main `57169c8`（开发完成/待UAT）。本片不改 `cert_expire` / 证件到期扫描。解冻回池与 **1026** 未做。已 squash 合入 main `6f59ff6`，状态仍开发完成/待UAT。
+
+## Follow-up · #63 S5 办公设备领用→使用→归还→报废（2026-10-08）
+
+- **API**：`asset_ledger.py` · `POST /asset/ledger` · `POST /asset/ledger/{id}/checkout|use|return|scrap` · `GET /asset/ledger/page` 与详情时间线。办公 `GET /corp/device/office/page` 强制 `assetType=OFFICE`；直播列表合并 `LIVE+SHOOT`。`POST /corp/device/office` 仍 404。
+- **规则**：登记 **PENDING_REVIEW**；领用仅待审核，在用再领用 **1012**；使用仅在用且不改状态；归还须已使用否则 **1015**；报废须已归还且有原因否则 **1015** / **1001**。责任人停用/跨租户 **1501** / **1504**；类型非法 **1503**；不存在 **1011**。
+- **E2E**：`closure-asset-lifecycle.spec.ts`（纯 UI · E2E-S5-02）。rebase 到 main `6f59ff6` 后全量 **57/57 PASS**（`e2e_result.txt` · 18080 + 6173 · `--workers=1` · 本地 `127.0.0.1`）。
+- **测试**：`test_asset_status_full_flow_checkout_use_return_scrap` · `test_asset_lifecycle.py` + `test_device.py` **3 passed** · collect **177**。
+- **文档**：Checklist **v2.6.73** · 计划表 **#63**（开发完成/待UAT）· 对照表 UAT 建议已填、UAT 状态 **未测**。**#62** 已合入 main `6f59ff6`（开发完成/待UAT）。本片不改 `acct_flow` / 账号收回与流转。采购导入与穿透 **1013** 未做。

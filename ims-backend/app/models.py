@@ -1606,3 +1606,43 @@ class AccountRecharge(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AssetLedger(Base):
+    """07 资产台账。AssetStatus：PENDING_REVIEW → IN_USE → RETURNED → SCRAPPED。"""
+
+    __tablename__ = "ims_asset_ledger"
+    __table_args__ = (UniqueConstraint("tenant_id", "asset_code", name="uk_asset_ledger_code"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    asset_code: Mapped[str] = mapped_column(String(64), default="")
+    asset_name: Mapped[str] = mapped_column(String(128), default="")
+    asset_type: Mapped[str] = mapped_column(String(32), default="OFFICE", index=True)
+    spec: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(32), default="PENDING_REVIEW", index=True)
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    purchase_date: Mapped[str] = mapped_column(String(10), default="")
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subject_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    updater: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AssetLifecycleEvent(Base):
+    """资产领用 / 使用 / 归还 / 报废时间线。"""
+
+    __tablename__ = "ims_asset_lifecycle"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    event_type: Mapped[str] = mapped_column(String(16), default="REGISTER")
+    from_status: Mapped[str] = mapped_column(String(32), default="")
+    to_status: Mapped[str] = mapped_column(String(32), default="")
+    actor_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    remark: Mapped[str] = mapped_column(String(256), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

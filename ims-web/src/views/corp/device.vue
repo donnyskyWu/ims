@@ -5,16 +5,20 @@
         <h1>{{ meta.title }}</h1>
         <div class="sub">{{ meta.sub }}</div>
       </div>
-      <div v-if="kind === 'phone'" class="acts">
-        <button class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
+      <div class="acts">
+        <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
+        <button v-else class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
       </div>
     </div>
-    <div v-if="kind !== 'phone'" class="hint">{{ meta.block }}</div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
       <select v-if="kind === 'phone'" v-model="status" style="width: 120px">
         <option value="">全部状态</option>
         <option v-for="item in phoneStatus" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
+      <select v-else v-model="status" style="width: 120px" data-testid="corp-asset-status-filter">
+        <option value="">全部状态</option>
+        <option v-for="item in assetStatusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -26,17 +30,17 @@
           <thead>
             <tr>
               <th v-for="col in meta.columns" :key="col">{{ col }}</th>
-              <th v-if="kind === 'phone'">操作</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td :colspan="meta.columns.length + (kind === 'phone' ? 1 : 0)" style="white-space: normal">
+              <td :colspan="meta.columns.length + 1" style="white-space: normal">
                 <div class="empty"><div class="et">加载中</div></div>
               </td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td :colspan="meta.columns.length + (kind === 'phone' ? 1 : 0)" style="white-space: normal">
+              <td :colspan="meta.columns.length + 1" style="white-space: normal">
                 <div class="empty">
                   <div class="et">{{ error || meta.empty }}</div>
                   <div class="es">{{ meta.emptyHint }}</div>
@@ -44,9 +48,18 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="String(row.id)">
-              <td v-for="key in meta.keys" :key="key">{{ show(row, key) }}</td>
+              <td v-for="key in meta.keys" :key="key" :data-testid="key === 'status' && kind !== 'phone' ? 'corp-asset-status' : undefined">
+                {{ show(row, key) }}
+              </td>
               <td v-if="kind === 'phone'">
                 <button class="btn btn-txt" type="button" @click="openDetail(row)">详情</button>
+              </td>
+              <td v-else>
+                <button v-if="row.status === 'PENDING_REVIEW'" class="btn btn-txt" type="button" data-testid="corp-asset-checkout-btn" @click="openCheckout(row)">领用</button>
+                <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-use-btn" @click="openUse(row)">使用</button>
+                <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-return-btn" @click="openReturn(row)">归还</button>
+                <button v-if="row.status === 'RETURNED'" class="btn btn-txt" type="button" data-testid="corp-asset-scrap-btn" @click="openScrap(row)">报废</button>
+                <button class="btn btn-txt" type="button" data-testid="corp-asset-detail-btn" @click="openAssetDetail(row)">详情</button>
               </td>
             </tr>
           </tbody>
@@ -116,6 +129,90 @@
         <button class="btn btn-pri" type="button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="assetCreateOpen" title="资产登记" width="480px" @close="assetCreateOpen = false">
+      <div class="formrow one"><div class="fld"><label>资产编号<i class="req">*</i></label><input v-model="assetForm.assetCode" data-testid="corp-asset-code" /></div></div>
+      <div class="formrow one"><div class="fld"><label>名称<i class="req">*</i></label><input v-model="assetForm.assetName" data-testid="corp-asset-name" /></div></div>
+      <div class="formrow one"><div class="fld"><label>规格</label><input v-model="assetForm.spec" data-testid="corp-asset-spec" /></div></div>
+      <div v-if="kind === 'live'" class="formrow one">
+        <div class="fld">
+          <label>类型</label>
+          <select v-model="assetForm.assetType" data-testid="corp-asset-type">
+            <option value="LIVE">直播设备</option>
+            <option value="SHOOT">拍摄设备</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one"><div class="fld"><label>采购日期</label><input v-model="assetForm.purchaseDate" type="date" data-testid="corp-asset-purchase" /></div></div>
+      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="assetCreateOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-save" :disabled="saving" @click="saveAsset">{{ saving ? '保存中…' : '保存' }}</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="checkoutOpen" title="领用" width="480px" @close="checkoutOpen = false">
+      <p class="hint">{{ activeAsset?.assetCode }} · {{ activeAsset?.assetName }}</p>
+      <div class="formrow one">
+        <div class="fld">
+          <label>责任人<i class="req">*</i></label>
+          <select v-model="assetForm.ownerUserId" data-testid="corp-asset-owner">
+            <option value="">请选择本地用户</option>
+            <option v-for="user in users" :key="user.id" :value="user.id">{{ user.nickname || user.username }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one"><div class="fld"><label>用途</label><input v-model="assetForm.purpose" data-testid="corp-asset-purpose" /></div></div>
+      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="checkoutOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-checkout-save" :disabled="saving" @click="submitCheckout">确认领用</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="useOpen" title="使用" width="480px" @close="useOpen = false">
+      <p class="hint">登记使用后状态仍为在用，之后才能归还。</p>
+      <div class="formrow one"><div class="fld"><label>使用说明</label><input v-model="assetForm.remark" data-testid="corp-asset-use-remark" /></div></div>
+      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="useOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-use-save" :disabled="saving" @click="submitUse">确认使用</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="returnOpen" title="归还" width="480px" @close="returnOpen = false">
+      <div class="formrow one"><div class="fld"><label>说明</label><input v-model="assetForm.remark" data-testid="corp-asset-return-remark" /></div></div>
+      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="returnOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-return-save" :disabled="saving" @click="submitReturn">确认归还</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="scrapOpen" title="报废" width="480px" @close="scrapOpen = false">
+      <div class="formrow one"><div class="fld"><label>报废原因<i class="req">*</i></label><input v-model="assetForm.remark" data-testid="corp-asset-scrap-reason" /></div></div>
+      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="scrapOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-scrap-save" :disabled="saving" @click="submitScrap">确认报废</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="assetDetailOpen" title="资产详情" width="560px" @close="assetDetailOpen = false">
+      <div v-if="assetDetail" class="formrow one">
+        <div class="fld"><label>编号</label><div>{{ assetDetail.assetCode }}</div></div>
+        <div class="fld"><label>名称</label><div>{{ assetDetail.assetName }}</div></div>
+        <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
+        <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
+      </div>
+      <table data-testid="corp-asset-timeline">
+        <thead><tr><th>事件</th><th>状态</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr v-for="event in timeline" :key="String(event.id)">
+            <td>{{ eventLabel(String(event.eventType || '')) }}</td>
+            <td>{{ statusLabel(String(event.toStatus || '')) }}</td>
+            <td>{{ event.remark || '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="assetDetailOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -128,6 +225,7 @@ import { asList, asTotal } from '../../api/read'
 
 type Row = Record<string, unknown>
 type Opt = { value: string; label: string }
+type UserOpt = { id: string; username: string; nickname: string }
 
 const route = useRoute()
 const kind = computed(() => String(route.params.kind || 'office'))
@@ -144,9 +242,20 @@ const detail = ref<Row | null>(null)
 const formOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
-const users = ref<{ id: string; username: string; nickname: string }[]>([])
+const users = ref<UserOpt[]>([])
 const phoneStatus = ref<Opt[]>([])
 const phoneTypes = ref<Opt[]>([])
+const assetTypes = ref<Opt[]>([])
+const assetStatuses = ref<Opt[]>([])
+const assetCreateOpen = ref(false)
+const checkoutOpen = ref(false)
+const useOpen = ref(false)
+const returnOpen = ref(false)
+const scrapOpen = ref(false)
+const assetDetailOpen = ref(false)
+const activeAsset = ref<Row | null>(null)
+const assetDetail = ref<Row | null>(null)
+const timeline = ref<Row[]>([])
 const form = reactive({
   phoneNumber: '',
   phoneCode: '',
@@ -156,6 +265,36 @@ const form = reactive({
   phoneType: '',
   status: 'IN_USE',
 })
+const assetForm = reactive({
+  assetCode: '',
+  assetName: '',
+  spec: '',
+  assetType: 'OFFICE',
+  purchaseDate: '',
+  ownerUserId: '',
+  purpose: '',
+  remark: '',
+})
+
+const fallbackStatus: Opt[] = [
+  { value: 'PENDING_REVIEW', label: '待审核' },
+  { value: 'IN_USE', label: '在用' },
+  { value: 'RETURNED', label: '已归还' },
+  { value: 'SCRAPPED', label: '已报废' },
+]
+const fallbackType: Opt[] = [
+  { value: 'OFFICE', label: '办公设备' },
+  { value: 'LIVE', label: '直播设备' },
+  { value: 'SHOOT', label: '拍摄设备' },
+  { value: 'DIGITAL', label: '数码设备' },
+]
+const eventLabels: Record<string, string> = {
+  REGISTER: '登记',
+  CHECKOUT: '领用',
+  USE: '使用',
+  RETURN: '归还',
+  SCRAP: '报废',
+}
 
 const specs: Record<string, {
   title: string
@@ -164,31 +303,28 @@ const specs: Record<string, {
   empty: string
   emptyHint: string
   hint: string
-  block: string
   columns: string[]
   keys: string[]
 }> = {
   office: {
     title: '办公设备管理',
-    sub: 'CORP-D · 台账写入已阻断',
-    placeholder: '资产编号',
+    sub: 'CORP-D · 领用 → 使用 → 归还 → 报废',
+    placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
-    emptyHint: '接口只返回空分页，不能在这里新增或修改。',
-    hint: 'GET /corp/device/office/page。资产台账未开放，页面不提供增删改。',
-    block: '办公设备增删改已阻断。下面的分页是空列表，不是一笔成功的登记。',
-    columns: ['编号', '名称', '类型', '状态', '责任人'],
-    keys: ['assetNo', 'name', 'assetType', 'status', 'ownerName'],
+    emptyHint: '点「资产登记」写入台账，再按领用、使用、归还、报废流转。',
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。状态：待审核 / 在用 / 已归还 / 已报废。',
+    columns: ['编号', '名称', '类型', '规格', '状态', '责任人'],
+    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'status', 'ownerName'],
   },
   live: {
     title: '直播设备管理',
-    sub: 'CORP-D · 直播与拍摄设备写入已阻断',
-    placeholder: '资产编号',
+    sub: 'CORP-D · 直播与拍摄设备同一台账',
+    placeholder: '资产编号 / 名称',
     empty: '没有直播设备',
-    emptyHint: '接口只返回空分页，不能在这里新增或修改。',
-    hint: 'GET /corp/device/live/page。不合并假数据，也不提供保存。',
-    block: '直播设备和拍摄设备增删改已阻断。下面的分页是空列表，不是一笔成功的登记。',
-    columns: ['编号', '名称', '类型', '状态', '责任人'],
-    keys: ['assetNo', 'name', 'assetType', 'status', 'ownerName'],
+    emptyHint: '登记时类型选直播设备或拍摄设备。流转与办公设备相同。',
+    hint: 'GET /corp/device/live/page 合并 assetType=LIVE 与 SHOOT。',
+    columns: ['编号', '名称', '类型', '规格', '状态', '责任人'],
+    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'status', 'ownerName'],
   },
   phone: {
     title: '手机设备管理',
@@ -197,13 +333,13 @@ const specs: Record<string, {
     empty: '没有手机',
     emptyHint: '可以新建。列表不显示实名人，手机资产没有这一列。',
     hint: 'POST /master/phone。CORP 的手机列表是同一份查询。',
-    block: '',
     columns: ['号码', '编号', '型号', '类型', '保管人', '状态'],
     keys: ['phoneNumber', 'deviceNumber', 'phoneModel', 'phoneType', 'keeperName', 'status'],
   },
 }
 
 const meta = computed(() => specs[kind.value] || specs.office)
+const assetStatusOptions = computed(() => (assetStatuses.value.length ? assetStatuses.value : fallbackStatus))
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const pageList = computed(() => {
   const end = Math.min(pageCount.value, Math.max(pageNo.value + 2, 5))
@@ -220,17 +356,39 @@ const labels: Record<string, string> = {
   phoneType: '类型',
   keeperName: '保管人',
   status: '状态',
+  assetCode: '编号',
+  assetName: '名称',
+  assetType: '类型',
+  spec: '规格',
+  ownerName: '责任人',
 }
 
 function labelOf(key: string) {
   return labels[key] || key
 }
 
+function statusLabel(value: string) {
+  return assetStatusOptions.value.find((item) => item.value === value)?.label || value
+}
+
+function typeLabel(value: string) {
+  const dict = assetTypes.value.length ? assetTypes.value : fallbackType
+  return dict.find((item) => item.value === value)?.label || value
+}
+
+function eventLabel(value: string) {
+  return eventLabels[value] || value
+}
+
 function show(row: Row, key: string) {
   const value = row[key]
   if (value === undefined || value === null || value === '') return '—'
-  if (key === 'status') return phoneStatus.value.find((item) => item.value === value)?.label || String(value)
+  if (key === 'status' && kind.value === 'phone') {
+    return phoneStatus.value.find((item) => item.value === value)?.label || String(value)
+  }
+  if (key === 'status') return statusLabel(String(value))
   if (key === 'phoneType') return phoneTypes.value.find((item) => item.value === value)?.label || String(value)
+  if (key === 'assetType') return typeLabel(String(value))
   return String(value)
 }
 
@@ -249,7 +407,25 @@ async function preparePhone() {
   ])
   phoneStatus.value = st
   phoneTypes.value = types
-  users.value = asList(userPage.data?.data) as unknown as { id: string; username: string; nickname: string }[]
+  users.value = asList(userPage.data?.data) as unknown as UserOpt[]
+}
+
+async function prepareAsset() {
+  const [types, statuses, userPage] = await Promise.all([
+    loadDict('dict_asset_type').catch(() => fallbackType),
+    loadDict('dict_asset_status').catch(() => fallbackStatus),
+    http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } }),
+  ])
+  assetTypes.value = types
+  assetStatuses.value = statuses
+  users.value = asList(userPage.data?.data) as unknown as UserOpt[]
+}
+
+function today() {
+  const date = new Date()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
 }
 
 async function load() {
@@ -262,6 +438,7 @@ async function load() {
       if (/^[A-Za-z0-9-]+$/.test(text) && !/^\d{11}$/.test(text)) query.deviceNumber = text
       else query.phoneModel = text
     }
+    if (kind.value !== 'phone' && text) query.keyword = text
     if (status.value) query.status = status.value
     const url = kind.value === 'phone' ? '/corp/device/phone/page' : `/corp/device/${kind.value}/page`
     const res = await http.get(url, { params: query })
@@ -345,15 +522,149 @@ async function save() {
   }
 }
 
+function closeAssetDrawers() {
+  assetCreateOpen.value = false
+  checkoutOpen.value = false
+  useOpen.value = false
+  returnOpen.value = false
+  scrapOpen.value = false
+}
+
+function openAssetCreate() {
+  closeAssetDrawers()
+  assetForm.assetCode = ''
+  assetForm.assetName = ''
+  assetForm.spec = ''
+  assetForm.assetType = kind.value === 'live' ? 'LIVE' : 'OFFICE'
+  assetForm.purchaseDate = today()
+  formError.value = ''
+  assetCreateOpen.value = true
+}
+
+function openCheckout(row: Row) {
+  closeAssetDrawers()
+  activeAsset.value = row
+  assetForm.ownerUserId = users.value[0]?.id || ''
+  assetForm.purpose = ''
+  formError.value = ''
+  checkoutOpen.value = true
+}
+
+function openUse(row: Row) {
+  closeAssetDrawers()
+  activeAsset.value = row
+  assetForm.remark = '现场使用'
+  formError.value = ''
+  useOpen.value = true
+}
+
+function openReturn(row: Row) {
+  closeAssetDrawers()
+  activeAsset.value = row
+  assetForm.remark = '归还入库'
+  formError.value = ''
+  returnOpen.value = true
+}
+
+function openScrap(row: Row) {
+  closeAssetDrawers()
+  activeAsset.value = row
+  assetForm.remark = ''
+  formError.value = ''
+  scrapOpen.value = true
+}
+
+async function openAssetDetail(row: Row) {
+  assetDetailOpen.value = true
+  assetDetail.value = null
+  timeline.value = []
+  try {
+    const res = await http.get(`/asset/ledger/${row.id}`)
+    assetDetail.value = res.data?.data
+    timeline.value = (res.data?.data?.timeline || []) as Row[]
+  } catch (e: unknown) {
+    assetDetail.value = { assetCode: errorMessage(e), assetName: '', status: '' }
+  }
+}
+
+async function saveAsset() {
+  saving.value = true
+  formError.value = ''
+  try {
+    await http.post('/asset/ledger', {
+      assetCode: assetForm.assetCode.trim(),
+      assetName: assetForm.assetName.trim(),
+      assetType: kind.value === 'live' ? assetForm.assetType : 'OFFICE',
+      spec: assetForm.spec,
+      purchaseDate: assetForm.purchaseDate || undefined,
+    })
+    assetCreateOpen.value = false
+    keyword.value = assetForm.assetCode.trim()
+    await load()
+  } catch (e: unknown) {
+    formError.value = errorMessage(e)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function postAction(path: string, payload: Record<string, unknown>, close: () => void) {
+  if (!activeAsset.value) return
+  saving.value = true
+  formError.value = ''
+  try {
+    await http.post(`/asset/ledger/${activeAsset.value.id}${path}`, payload)
+    close()
+    await load()
+  } catch (e: unknown) {
+    formError.value = errorMessage(e)
+  } finally {
+    saving.value = false
+  }
+}
+
+function submitCheckout() {
+  postAction('/checkout', { ownerUserId: Number(assetForm.ownerUserId), purpose: assetForm.purpose }, () => {
+    checkoutOpen.value = false
+  })
+}
+
+function submitUse() {
+  postAction('/use', { remark: assetForm.remark }, () => {
+    useOpen.value = false
+  })
+}
+
+function submitReturn() {
+  postAction('/return', { remark: assetForm.remark }, () => {
+    returnOpen.value = false
+  })
+}
+
+function submitScrap() {
+  postAction('/scrap', { remark: assetForm.remark }, () => {
+    scrapOpen.value = false
+  })
+}
+
 watch(kind, async () => {
   keyword.value = ''
   status.value = ''
   pageNo.value = 1
   detailOpen.value = false
   formOpen.value = false
+  closeAssetDrawers()
+  assetDetailOpen.value = false
   if (kind.value === 'phone' && !phoneStatus.value.length) {
     try {
       await preparePhone()
+    } catch {
+      /* 列表仍可打开 */
+    }
+  }
+  if (kind.value !== 'phone' && !users.value.length) {
+    try {
+      await prepareAsset()
     } catch {
       /* 列表仍可打开 */
     }
@@ -365,6 +676,12 @@ onMounted(async () => {
   if (kind.value === 'phone') {
     try {
       await preparePhone()
+    } catch {
+      /* 列表仍可打开 */
+    }
+  } else {
+    try {
+      await prepareAsset()
     } catch {
       /* 列表仍可打开 */
     }
