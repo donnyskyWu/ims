@@ -1,4 +1,4 @@
-"""ACCT-001 账号领用 / 归还、ACCT-002 流转 / 收回 / 解冻回池、ACCT-004 冲话费登记与账实核对（CORP 账号页）。"""
+"""ACCT-001 账号领用 / 归还、ACCT-002 流转 / 收回 / 解冻回池、ACCT-004 冲话费登记、账实核对与成本汇总（CORP 账号页）。"""
 
 import json
 import re
@@ -24,6 +24,7 @@ from app.models import (
     Role,
     Todo,
     User,
+    UserDept,
     UserRole,
     WorkMessage,
 )
@@ -34,6 +35,14 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 DIFF_RATE_LIMIT = Decimal("2.00")
 TRANSFER_REASONS = frozenset({"TRANSFER_POSITION", "PRE_RESIGN", "VIOLATION", "BUSINESS_ADJUST"})
+SUMMARY_GROUPS = frozenset({"ACCOUNT", "DEPT", "PLATFORM"})
+PLATFORM_LABELS = {
+    "DOUYIN": "抖音",
+    "KUAISHOU": "快手",
+    "XIAOHONGSHU": "小红书",
+    "WECHAT_OFFICIAL": "公众号",
+    "WECHAT_CHANNELS": "视频号",
+}
 
 router = APIRouter()
 
@@ -1069,3 +1078,110 @@ def verify_recharge(
     if over:
         return fail(1026, message, payload)
     return ok(payload)
+
+
+def _primary_dept_id(db: Session, user_id: int, tenant_id: int) -> int:
+    if not user_id:
+        return 0
+    dept = db.scalar(
+        select(UserDept.dept_id)
+        .where(UserDept.user_id == user_id, UserDept.tenant_id == tenant_id)
+        .order_by(UserDept.dept_id.asc())
+        .limit(1)
+    )
+    return int(dept or 0)
+
+
+def _summary_accounts(account_ids: set[int]) -> dict[int, PlatformAccount]:
+    if not account_ids:
+        return {}
+    ops = ops_session()
+    try:
+        rows = ops.scalars(select(PlatformAccount).where(PlatformAccount.id.in_(account_ids))).all()
+        return {int(row.id): row for row in rows if not row.deleted}
+    finally:
+        ops.close()
+
+
+@router.get("/account/recharge/summary")
+def recharge_summary(
+    month: str = "",
+    groupBy: str = "",
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """成本汇总。期间为 month（yyyy-MM）；维度 ACCOUNT / DEPT / PLATFORM（契约 2.4.5）。"""
+    period = (month or "").strip()
+    if not MONTH_RE.match(period):
+        return fail(1001, "汇总月份格式不合法")
+    group_by = (groupBy or "").strip().upper()
+    if group_by not in SUMMARY_GROUPS:
+        return fail(1001, "汇总维度不合法")
+
+    tenant = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(AccountRecharge)
+            .where(
+                AccountRecharge.tenant_id == tenant,
+                AccountRecharge.recharge_date.like(f"{period}%"),
+            )
+            .order_by(AccountRecharge.id.asc())
+        ).all()
+    )
+    accounts = _summary_accounts({int(row.account_id) for row in rows})
+    buckets: dict[str, dict] = {}
+    total_amount = Decimal("0")
+    total_diff = Decimal("0")
+    for row in rows:
+        amount = Decimal(str(row.amount or 0))
+        diff = Decimal(str(row.verify_diff)) if row.verify_diff is not None else Decimal("0")
+        account = accounts.get(int(row.account_id))
+        if group_by == "ACCOUNT":
+            key = str(row.account_id)
+            name = (account.account_name if account is not None else "") or ""
+            number = (account.account_no if account is not None else "") or row.account_no or key
+            label = f"{number} · {name}".strip(" ·") if name else number
+        elif group_by == "DEPT":
+            holder = int(account.holder_user_id or 0) if account is not None else 0
+            owner = holder or int(row.operator_user_id or 0)
+            dept_id = _primary_dept_id(db, owner, tenant)
+            key = str(dept_id)
+            label = "未分配" if dept_id == 0 else f"部门#{dept_id}"
+        else:
+            platform = ((account.platform_type if account is not None else "") or "").strip()
+            key = platform or "UNKNOWN"
+            label = PLATFORM_LABELS.get(key, platform or "未识别平台")
+        bucket = buckets.get(key)
+        if bucket is None:
+            bucket = {"dimKey": key, "dimLabel": label, "amount": Decimal("0"), "count": 0, "diff": Decimal("0")}
+            buckets[key] = bucket
+        bucket["amount"] += amount
+        bucket["count"] += 1
+        bucket["diff"] += diff
+        total_amount += amount
+        total_diff += diff
+
+    ordered = sorted(buckets.values(), key=lambda item: (-item["amount"], item["dimKey"]))
+    payload_rows = [
+        {
+            "dimKey": item["dimKey"],
+            "dimLabel": item["dimLabel"],
+            "totalAmount": _money_out(item["amount"]),
+            "recordCount": int(item["count"]),
+            "diffAmount": _money_out(item["diff"]),
+        }
+        for item in ordered
+    ]
+    return ok(
+        {
+            "groupBy": group_by,
+            "month": period,
+            "rows": payload_rows,
+            "totals": {
+                "totalAmount": _money_out(total_amount),
+                "recordCount": len(rows),
+                "diffAmount": _money_out(total_diff),
+            },
+        }
+    )
