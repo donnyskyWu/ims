@@ -299,6 +299,10 @@
           {{ node.layer === 'PERSON' ? '实名人' : `第${node.level}层` }} · {{ node.label }}
         </li>
       </ol>
+      <p v-if="exportNote && forwardOpen" class="hint" data-testid="asset-export-note">{{ exportNote }}</p>
+      <div class="acts" style="margin-top: 12px">
+        <button class="btn btn-pri btn-sm" type="button" data-testid="asset-forward-export" :disabled="exporting" @click="exportForward">导出穿透报告</button>
+      </div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="forwardOpen = false">关闭</button>
       </template>
@@ -324,8 +328,9 @@
     </ProtoDrawer>
     <ProtoDrawer v-if="kind !== 'phone'" :open="entryOpen" title="账号/场次反查" width="720px" @close="entryOpen = false">
       <div class="acts" style="margin-bottom: 12px">
-        <button class="btn btn-sm" :class="entryType === 'ACCOUNT' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-account" @click="entryType = 'ACCOUNT'">按账号</button>
-        <button class="btn btn-sm" :class="entryType === 'SESSION' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-session" @click="entryType = 'SESSION'">按场次</button>
+        <button class="btn btn-sm" :class="entryType === 'ACCOUNT' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-account" @click="pickEntry('ACCOUNT')">按账号</button>
+        <button class="btn btn-sm" :class="entryType === 'SESSION' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-session" @click="pickEntry('SESSION')">按场次</button>
+        <button v-if="kind === 'office'" class="btn btn-sm" :class="entryType === 'PERSON' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-person" @click="pickEntry('PERSON')">按使用人</button>
       </div>
       <div v-if="entryType === 'ACCOUNT'" class="formrow one">
         <div class="fld">
@@ -333,13 +338,24 @@
           <input v-model="entryAccountNo" data-testid="asset-entry-account-no" placeholder="例如 AC-E2E-FIN" />
         </div>
       </div>
-      <div v-else class="formrow one">
+      <div v-else-if="entryType === 'SESSION'" class="formrow one">
         <div class="fld">
           <label>场次编号</label>
           <input v-model="entrySessionCode" data-testid="asset-entry-session-code" placeholder="IMS + 日期 + 平台码 + 序号" />
         </div>
       </div>
+      <div v-else class="formrow one">
+        <div class="fld">
+          <label>使用人</label>
+          <select v-model="entryUserId" data-testid="asset-entry-user">
+            <option value="">请选择</option>
+            <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+          </select>
+        </div>
+      </div>
       <button class="btn btn-pri btn-sm" type="button" data-testid="asset-entry-query" @click="queryEntry">查询</button>
+      <button v-if="kind === 'office'" class="btn btn-sec btn-sm" type="button" data-testid="asset-entry-export" :disabled="exporting" @click="exportEntry">导出</button>
+      <p v-if="exportNote && entryOpen" class="hint" data-testid="asset-export-note">{{ exportNote }}</p>
       <p v-if="entryError" class="hint bad" data-testid="asset-entry-error">{{ entryError }}</p>
       <p v-else-if="entrySummary" class="hint" data-testid="asset-entry-summary">{{ entrySummary }}</p>
       <table v-if="!entryError" data-testid="asset-entry-table">
@@ -415,12 +431,16 @@ const reverseHolders = ref<Row[]>([])
 const reverseError = ref('')
 const reverseHint = ref('')
 const entryOpen = ref(false)
-const entryType = ref<'ACCOUNT' | 'SESSION'>('ACCOUNT')
+const entryType = ref<'ACCOUNT' | 'SESSION' | 'PERSON'>('ACCOUNT')
 const entryAccountNo = ref('')
 const entrySessionCode = ref('')
+const entryUserId = ref('')
 const entryRows = ref<Row[]>([])
 const entryError = ref('')
 const entrySummary = ref('')
+const forwardAssetId = ref(0)
+const exporting = ref(false)
+const exportNote = ref('')
 const persons = ref<PersonOpt[]>([])
 const activeAsset = ref<Row | null>(null)
 const assetDetail = ref<Row | null>(null)
@@ -485,7 +505,7 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
     emptyHint: '点「资产登记」或「采购导入」写入台账，再按领用、使用、归还、报废流转。',
-    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。采购导入：合法行入台账，非法行按行号和字段定位，部分成功不回滚。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。账号/场次反查：登记时绑定后按账号或场次列出设备状态；入口不存在为 1500。',
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。采购导入：合法行入台账，非法行按行号和字段定位，部分成功不回滚。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013，可导出穿透报告 PDF。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。账号/场次/使用人反查：登记时绑定后按入口列出设备状态，可导出 xlsx；入口不存在为 1500。',
     columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
     keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
   },
@@ -873,6 +893,8 @@ function openForwardPerson() {
   forwardNodes.value = []
   forwardError.value = ''
   forwardHint.value = '实名人 → 资产，最多 5 层'
+  forwardAssetId.value = 0
+  exportNote.value = ''
   forwardRealnameId.value = persons.value[0] ? String(persons.value[0].id) : ''
 }
 
@@ -884,6 +906,8 @@ async function queryForwardPerson() {
     return
   }
   forwardHint.value = '实名人 → 资产，最多 5 层'
+  forwardAssetId.value = 0
+  exportNote.value = ''
   await loadTrace('/asset/forward/trace/0', { realnameId: id })
 }
 
@@ -894,6 +918,8 @@ async function openForwardAsset(row: Row) {
   forwardError.value = ''
   forwardHint.value = `${row.assetCode || ''} 的链路（实名人 → 资产）`
   forwardRealnameId.value = ''
+  forwardAssetId.value = Number(row.id)
+  exportNote.value = ''
   await loadTrace(`/asset/forward/trace/${row.id}`)
 }
 
@@ -903,9 +929,23 @@ function openEntryReverse() {
   entryType.value = 'ACCOUNT'
   entryAccountNo.value = ''
   entrySessionCode.value = ''
+  entryUserId.value = ''
   entryRows.value = []
   entryError.value = ''
   entrySummary.value = ''
+  exportNote.value = ''
+}
+
+function pickEntry(type: 'ACCOUNT' | 'SESSION' | 'PERSON') {
+  entryType.value = type
+  entryRows.value = []
+  entryError.value = ''
+  entrySummary.value = ''
+  exportNote.value = ''
+  if (type === 'PERSON' && !entryUserId.value && users.value.length) {
+    const admin = users.value.find((user) => (user.nickname || user.username) === '管理员')
+    entryUserId.value = String((admin || users.value[0]).id)
+  }
 }
 
 async function queryEntry() {
@@ -921,13 +961,20 @@ async function queryEntry() {
         return
       }
       res = await http.get('/asset/reverse/by-account/0', { params: { accountNo } })
-    } else {
+    } else if (entryType.value === 'SESSION') {
       const sessionCode = entrySessionCode.value.trim()
       if (!sessionCode) {
         entryError.value = '请填写场次编号'
         return
       }
       res = await http.get(`/asset/reverse/by-session/${encodeURIComponent(sessionCode)}`)
+    } else {
+      const userId = Number(entryUserId.value)
+      if (!userId) {
+        entryError.value = '请选择使用人'
+        return
+      }
+      res = await http.get(`/asset/reverse/by-person/${userId}`)
     }
     const data = (res.data?.data || {}) as { list?: Row[]; summary?: Row }
     entryRows.value = data.list || []
@@ -936,6 +983,102 @@ async function queryEntry() {
   } catch (e: unknown) {
     entryError.value = bizError(e)
   }
+}
+
+async function downloadExport(
+  path: string,
+  params: Record<string, unknown>,
+  filename: string,
+  note: string,
+  target: 'forward' | 'entry',
+) {
+  exporting.value = true
+  exportNote.value = ''
+  try {
+    const res = await http.get(path, { params })
+    const downloadUrl = String(res.data?.data?.downloadUrl || '')
+    if (!downloadUrl) {
+      throw { code: 5005, msg: '报告生成失败，请稍后重试或联系管理员' }
+    }
+    const token = localStorage.getItem('ims_access')
+    const fileRes = await fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!fileRes.ok) {
+      let body: { code?: number; msg?: string } = {}
+      try {
+        body = await fileRes.json()
+      } catch {
+        body = {}
+      }
+      throw body.code ? body : { code: fileRes.status, msg: body.msg || '报告生成失败，请稍后重试或联系管理员' }
+    }
+    const blob = await fileRes.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+    if (target === 'forward') forwardError.value = ''
+    else entryError.value = ''
+    exportNote.value = note
+  } catch (e: unknown) {
+    exportNote.value = ''
+    const text = bizError(e)
+    if (target === 'forward') forwardError.value = text
+    else entryError.value = text
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function exportForward() {
+  const params: Record<string, unknown> = {}
+  const id = forwardAssetId.value
+  if (!id) {
+    const person = Number(forwardRealnameId.value)
+    if (!person) {
+      forwardError.value = '请选择实名人'
+      return
+    }
+    params.realnameId = person
+  }
+  await downloadExport(
+    `/asset/forward/export/${id || 0}`,
+    params,
+    'asset_forward_report.pdf',
+    '已导出穿透报告 PDF',
+    'forward',
+  )
+}
+
+async function exportEntry() {
+  const params: Record<string, string | number> = { entryType: entryType.value, entryId: 0 }
+  if (entryType.value === 'ACCOUNT') {
+    const accountNo = entryAccountNo.value.trim()
+    if (!accountNo) {
+      entryError.value = '请填写账号编号'
+      return
+    }
+    params.accountNo = accountNo
+  } else if (entryType.value === 'SESSION') {
+    const sessionCode = entrySessionCode.value.trim()
+    if (!sessionCode) {
+      entryError.value = '请填写场次编号'
+      return
+    }
+    params.sessionCode = sessionCode
+  } else {
+    const userId = Number(entryUserId.value)
+    if (!userId) {
+      entryError.value = '请选择使用人'
+      return
+    }
+    params.entryId = userId
+  }
+  await downloadExport('/asset/reverse/export', params, 'asset_reverse_report.xlsx', '已导出反查 xlsx', 'entry')
 }
 
 async function openReverse(row: Row) {

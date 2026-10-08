@@ -284,21 +284,14 @@ def _graph(db: Session, actor: User, assets: list[AssetLedger], levels: list[int
     return {"nodes": nodes, "edges": _edges(nodes), "depth": depth, "realnameId": realname_id, "verifiedPersons": [brief] if realname_id else []}
 
 
-def _trace_asset(db: Session, actor: User, asset_id: int, layers: str):
-    graph, error = _prepare_graph(db, actor, asset_id, layers)
-    if error:
-        return error
-    return ok(graph)
-
-
-def _trace_realname(db: Session, actor: User, realname_id: int, layers: str):
+def _realname_graph(db: Session, actor: User, realname_id: int, layers: str):
     blocked = _layers_blocked(layers)
     if blocked:
         _audit(db, actor, "forward", 0, realname_id, [])
-        return blocked
+        return None, blocked
     person_error = _check_realname(actor, realname_id)
     if person_error:
-        return person_error
+        return None, person_error
     stmt = select(AssetHierarchy).where(
         AssetHierarchy.deleted == 0,
         AssetHierarchy.tenant_id == tenant_of(actor),
@@ -307,13 +300,29 @@ def _trace_realname(db: Session, actor: User, realname_id: int, layers: str):
     rows = list(db.scalars(stmt).all())
     if any(int(row.level or 0) > MAX_LAYER for row in rows):
         _audit(db, actor, "forward", 0, realname_id, [])
-        return fail(1013, "穿透层级超限")
+        return None, fail(1013, "穿透层级超限")
     if not rows:
         graph = _graph(db, actor, [], [], realname_id)
         _audit(db, actor, "forward", 0, realname_id, graph["nodes"])
-        return ok(graph)
+        return graph, None
     leaf = max(rows, key=lambda item: (int(item.level or 0), int(item.asset_id or 0)))
-    return _trace_asset(db, actor, leaf.asset_id, "")
+    return _prepare_graph(db, actor, leaf.asset_id, "")
+
+
+def _trace_realname(db: Session, actor: User, realname_id: int, layers: str):
+    graph, error = _realname_graph(db, actor, realname_id, layers)
+    if error:
+        return error
+    return ok(graph)
+
+
+def forward_graph(db: Session, actor: User, asset_id: int, realname_id: int, layers: str):
+    """与 GET /asset/forward/trace 同一套层级与错误码。供导出复用。"""
+    if asset_id <= 0:
+        if not realname_id:
+            return None, fail(1001, "实名人必填")
+        return _realname_graph(db, actor, realname_id, layers)
+    return _prepare_graph(db, actor, asset_id, layers)
 
 
 def _asset_brief(row: AssetLedger) -> dict:
@@ -750,6 +759,107 @@ def reverse_by_account(
         status_filter=statusFilter,
         entry_label=f"account:{account['account_no']}",
     )
+
+
+def _person_items(db: Session, actor: User, user_id: int) -> tuple[list[dict], dict]:
+    owned = select(AssetLedger.id).where(
+        AssetLedger.deleted == 0,
+        AssetLedger.tenant_id == tenant_of(actor),
+        AssetLedger.owner_user_id == user_id,
+    )
+    asset_ids = set(db.scalars(owned).all())
+    hist = select(AssetLifecycleEvent.asset_id).where(
+        AssetLifecycleEvent.deleted == 0,
+        AssetLifecycleEvent.tenant_id == tenant_of(actor),
+        AssetLifecycleEvent.owner_user_id == user_id,
+    )
+    asset_ids.update(db.scalars(hist).all())
+    if not asset_ids:
+        return [], _summary([])
+    stmt = select(AssetLedger).where(
+        AssetLedger.deleted == 0,
+        AssetLedger.tenant_id == tenant_of(actor),
+        AssetLedger.id.in_(asset_ids),
+    )
+    rows = list(db.scalars(stmt.order_by(AssetLedger.id.desc())).all())
+    return [_reverse_item(db, row) for row in rows], _summary(rows)
+
+
+def _bound_items(db: Session, actor: User, *, account_id: int = 0, session_id: int = 0) -> tuple[list[dict], dict]:
+    stmt = (
+        select(AssetBind, AssetLedger)
+        .join(AssetLedger, AssetLedger.id == AssetBind.asset_id)
+        .where(
+            AssetBind.deleted == 0,
+            AssetBind.tenant_id == tenant_of(actor),
+            AssetBind.bind_status == "ACTIVE",
+            AssetLedger.deleted == 0,
+            AssetLedger.tenant_id == tenant_of(actor),
+        )
+        .order_by(AssetLedger.id.desc())
+    )
+    if account_id:
+        stmt = stmt.where(AssetBind.account_id == account_id)
+    if session_id:
+        stmt = stmt.where(AssetBind.session_id == session_id)
+    pairs = db.execute(stmt).all()
+    items = [_entry_item(bind, asset) for bind, asset in pairs]
+    return items, _summary([asset for _bind, asset in pairs])
+
+
+def collect_reverse_export(
+    db: Session,
+    actor: User,
+    entry_type: str,
+    entry_id: int = 0,
+    account_no: str = "",
+    session_code: str = "",
+):
+    """反查导出与列表同一入口、同一行。入口不存在 1500，场次编号格式不对 1001。"""
+    kind = (entry_type or "").strip().upper()
+    if kind not in {"PERSON", "ACCOUNT", "SESSION"}:
+        return None, fail(1001, "入口类型不正确")
+    if kind == "PERSON":
+        if entry_id <= 0:
+            return None, fail(1500, "使用人不存在")
+        user = db.get(User, entry_id)
+        if user is None or user.deleted or (user.tenant_id or 0) != tenant_of(actor):
+            return None, fail(1500, "使用人不存在")
+        items, summary = _person_items(db, actor, entry_id)
+        label = f"person:{entry_id}"
+    elif kind == "ACCOUNT":
+        if entry_id > 0:
+            account = _account(actor, account_id=entry_id)
+        else:
+            number = (account_no or "").strip()
+            account = _account(actor, account_no=number) if number else None
+        if account is None:
+            return None, fail(1500, "账号不存在")
+        items, summary = _bound_items(db, actor, account_id=account["id"])
+        label = f"account:{account['account_no']}"
+    else:
+        if entry_id > 0:
+            session = _session_row(db, actor, session_id=entry_id)
+        else:
+            code = (session_code or "").strip().upper()
+            if not code:
+                return None, fail(1001, "场次编号必填")
+            if not SESSION_CODE.match(code):
+                return None, fail(1001, "场次编号格式不正确")
+            session = _session_row(db, actor, session_code=code)
+        if session is None:
+            return None, fail(1500, "场次不存在")
+        items, summary = _bound_items(db, actor, session_id=int(session.id))
+        label = f"session:{session.session_code}"
+    _audit(
+        db,
+        actor,
+        "reverse",
+        0,
+        0,
+        [{"entry": label, "assetId": item["assetId"], "status": item["status"]} for item in items],
+    )
+    return {"items": items, "summary": summary, "entryType": kind, "entryLabel": label}, None
 
 
 @router.get("/asset/reverse/by-session/{session_key}")

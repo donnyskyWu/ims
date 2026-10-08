@@ -131,7 +131,22 @@ interface TraceGraphResp {
 
 #### 2.1.3 GET /admin-api/ims/asset/forward/export/{assetId} — 导出穿透报告
 
-**响应** `data`：`{ exportTaskId: string; message: string }`（异步导出，回执下载链接 · 服务端文件目录，V1-B3）。每次穿透查询记录审计（queryUser + 查询对象 + 时间，ASSET-F-R3）。
+**请求**：Path `assetId`。`assetId=0` 时 Query `realnameId` 走实名人最深链，Query `layers` 与 `GET /asset/forward/trace/{assetId}` 相同。
+
+**响应** `data`（#74）：
+
+```typescript
+{
+  exportTaskId: string;
+  message: string;          // 穿透报告已生成
+  downloadUrl: string;      // 回执下载链接
+  fileName: string;         // asset_forward_report.pdf
+}
+```
+
+文件为 **PDF**（页面规格「导出穿透报告 PDF」）。正文先写标题「资产穿透报告」，其后每行与穿透抽屉一致：`实名人 · {label}`、`第N层 · {label}`。层级超限 **1013**，资产不存在 **1011**，实名人不存在 **1500**，文件落盘失败 **5005**。这些情况下不返回下载链接。每次导出记穿透审计（ASSET-F-R3）。
+
+**回执下载**（同一导出资源，不是新业务接口）：`GET /admin-api/ims/asset/forward/export/file?token={exportTaskId}`，`Content-Type: application/pdf`，`Content-Disposition` 文件名 `asset_forward_report.pdf`。链接 300 秒、仅本人；过期 **1002**，他人 **1008**。字节同时写入服务端目录 `data/ims-files/asset/{yyyyMM}/`。
 
 ### 2.2 反向穿透查询（ASSET-002）
 
@@ -161,7 +176,11 @@ interface ReverseAssetItemVO {
 
 #### 2.2.2 GET /admin-api/ims/asset/reverse/export — 导出反查结果
 
-**请求**（Query）：`{ entryType: 'PERSON' | 'ACCOUNT' | 'SESSION'; entryId: number }` → **响应**：`{ exportTaskId: string }`（异步导出）。
+**请求**（Query）：`{ entryType: 'PERSON' | 'ACCOUNT' | 'SESSION'; entryId: number; accountNo?: string; sessionCode?: string }`。`entryId>0` 时按主键解析（使用人 / 账号 / 场次）。账号 `entryId=0` 时用 `accountNo`，场次 `entryId=0` 时用 `sessionCode`，与现有反查入口一致。
+
+**响应** `data`（#74）：`{ exportTaskId: string; message: string; downloadUrl: string; fileName: string }`。文件为 **xlsx**，`fileName=asset_reverse_report.xlsx`。行与反查表一致：首行汇总「命中 N 条（在用 X / 已归还 Y / 已报废 Z）」，表头「资产编号 / 名称 / 状态 / 绑定 / 账号」，状态与绑定用页面中文（待审核 / 在用 / 已归还 / 已报废，持有 / 担保 / 代管）。使用人不存在、账号不存在、场次不存在 → **1500**。入口类型不对、场次编号格式不对或场次编号为空 → **1001**。落盘失败 **5005**。
+
+**回执下载**：`GET /admin-api/ims/asset/reverse/export/file?token={exportTaskId}`，`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`。过期 **1002**，他人 **1008**。字节同时写入 `data/ims-files/asset/{yyyyMM}/`。
 
 ### 2.3 登记数据关联校验（ASSET-003）
 
@@ -295,7 +314,9 @@ PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──�
 
 #65 穿透（办公设备页，不新开路由）：`ims_asset_hierarchy.level` 从实名人向下计资产层。登记可带 `realnameId` 或 `parentAssetCode`（仍走 `POST /asset/ledger`）。`GET /asset/forward/trace/{assetId}`：`assetId>0` 返回该资产上行至实名人的链路；`assetId=0` 且 `realnameId` 取该实名人最深链路。任一层 `level>5`，或 `layers` 超出 L1–L5 → **1013**。`GET /asset/ledger/{id}` 与 `GET /asset/forward/detail/{assetId}` 的 `holders` 按领用/归还/报废给出使用人三态。`GET /asset/reverse/by-person/{userId}` 按当前责任人或历史领用事件列出资产及当前状态。
 
-#72 账号 / 场次反查（办公/直播设备页「账号/场次反查」，不新开路由）：`ims_asset_bind`。`POST /asset/ledger` 可选 `accountId` 或 `accountNo`、`sessionCode`（`IMS`+8 位日期+3 位平台码+4 位序号）、`bindType`（`HOLD`/`GUARANTEE`/`CUSTODY`，默认 `HOLD`）。账号不存在或场次不存在 → **1500**（本系统 **1002** 表示会话无效，入口缺失不用 1002）。场次编号格式不对或场次不属于所填账号 → **1001**。只填场次时账号取该场次的账号。成功时时间线 `REGISTER` 说明含「绑定账号」「绑定场次」。`GET /asset/reverse/by-account/{accountId}`：`accountId=0` 时用查询参数 `accountNo`。`GET /asset/reverse/by-session/{sessionId}` 接受场次主键或场次编号。结果带资产状态与汇总 `inUse`/`returned`/`scrapped`。绑定在归还后仍保留，以便已归还资产继续被反查。导出与关联校验不在本片。
+#72 账号 / 场次反查（办公/直播设备页「账号/场次反查」，不新开路由）：`ims_asset_bind`。`POST /asset/ledger` 可选 `accountId` 或 `accountNo`、`sessionCode`（`IMS`+8 位日期+3 位平台码+4 位序号）、`bindType`（`HOLD`/`GUARANTEE`/`CUSTODY`，默认 `HOLD`）。账号不存在或场次不存在 → **1500**（本系统 **1002** 表示会话无效，入口缺失不用 1002）。场次编号格式不对或场次不属于所填账号 → **1001**。只填场次时账号取该场次的账号。成功时时间线 `REGISTER` 说明含「绑定账号」「绑定场次」。`GET /asset/reverse/by-account/{accountId}`：`accountId=0` 时用查询参数 `accountNo`。`GET /asset/reverse/by-session/{sessionId}` 接受场次主键或场次编号。结果带资产状态与汇总 `inUse`/`returned`/`scrapped`。绑定在归还后仍保留，以便已归还资产继续被反查。关联校验不在本片。导出见 #74。
+
+#74 导出（办公设备页，不新开路由）：`GET /asset/forward/export/{assetId}` 生成与抽屉链路一致的 PDF。`GET /asset/reverse/export` 生成与使用人 / 账号 / 场次反查表一致的 xlsx。第 6 层或 `layers` 超出 L1–L5 → **1013**。资产不存在 **1011**。使用人、账号、场次或实名人不存在 **1500**。办公设备正向穿透抽屉有「导出穿透报告」，账号/场次反查抽屉增加「按使用人」和「导出」。
 
 #68 采购入台账（办公/直播设备页「采购导入」，不新开路由）：`POST /asset/ledger/import`。合法行待审核入台账并记 `purchaseBatchNo`；非法行返回文件行号与字段；`partial=true` 时已入库行不回滚。见 §2.4。
 
