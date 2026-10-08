@@ -566,8 +566,14 @@ def certificate_view(
     scope = getattr(request.state, "scope", None)
     if scope is not None and scope.kind == "SELF" and row.holder_user_id != actor.id:
         return fail(1504, "资源不可用")
+    from app.cert_view import enforce_view_frequency, record_cert_view
+
+    blocked = enforce_view_frequency(db, actor, row)
+    if blocked is not None:
+        return blocked
     stamp = utcnow().isoformat(sep=" ", timespec="seconds")
     watermark = f"{actor.username} {actor.nickname or actor.username} {stamp}"
+    record_cert_view(db, actor, row, watermark, request)
     return ok(
         {
             "viewLevel": 2,

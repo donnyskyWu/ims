@@ -150,7 +150,14 @@
         </div>
       </div>
       <div
-        v-if="kind === 'certificate' && detail"
+        v-if="kind === 'certificate' && viewError"
+        class="hint bad"
+        data-testid="corp-cert-view-error"
+      >
+        {{ viewError }}
+      </div>
+      <div
+        v-else-if="kind === 'certificate' && detail"
         class="hint"
         data-testid="corp-cert-watermark-hint"
       >
@@ -282,6 +289,7 @@ const loading = ref(false)
 const error = ref('')
 const detailOpen = ref(false)
 const detail = ref<Row | null>(null)
+const viewError = ref('')
 const certFormOpen = ref(false)
 const certSaving = ref(false)
 const certFormError = ref('')
@@ -386,7 +394,7 @@ const specs: Record<string, {
     placeholder: '持有人',
     empty: '没有证件档案',
     emptyHint: '可以录入。审核生效后参与到期扫描。',
-    hint: '录入 POST /cert/archive/upload，审核 PUT /cert/archive/{id}/review，扫描 POST /cert/expire/scan。证件号只显示脱敏值。',
+    hint: '录入 POST /cert/archive/upload，审核 PUT /cert/archive/{id}/review，扫描 POST /cert/expire/scan。证件号只显示脱敏值。同一证件 1 小时内第 11 次查看返回 1035。',
     detailTitle: '证件查看',
     columns: ['持有人', '类型', '证件号', '有效期', '状态'],
     keys: ['holderName', 'certType', 'certNoMasked', 'expireDate', 'status'],
@@ -661,6 +669,7 @@ function changeSize(event: Event) {
 
 async function openDetail(row: Row) {
   detail.value = null
+  viewError.value = ''
   detailOpen.value = true
   const id = row.id
   const url = kind.value === 'certificate' ? `/corp/resource/certificate/${id}/view` : `/corp/resource/${kind.value}/${id}`
@@ -669,7 +678,12 @@ async function openDetail(row: Row) {
     const data = res.data?.data || {}
     detail.value = kind.value === 'certificate' ? { ...(data.indexInfo || {}), watermarkText: data.watermarkText } : data
   } catch (e: unknown) {
-    detail.value = { status: errorMessage(e) }
+    if (kind.value === 'certificate') {
+      viewError.value = errorMessage(e)
+      detail.value = null
+    } else {
+      detail.value = { status: errorMessage(e) }
+    }
   }
 }
 
@@ -757,6 +771,7 @@ watch(kind, async () => {
   status.value = ''
   pageNo.value = 1
   detailOpen.value = false
+  viewError.value = ''
   formOpen.value = false
   certFormOpen.value = false
   reviewOpen.value = false
