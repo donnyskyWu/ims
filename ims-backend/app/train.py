@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,7 +13,7 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.bi_br212 import primary_dept_id
-from app.models import TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User
+from app.models import TrainMaterial, TrainMaterialCate, TrainStatDaily, TrainTask, TrainTaskRecord, User
 
 router = APIRouter(prefix="/train", tags=["train"])
 
@@ -354,6 +354,348 @@ def rate_pct(finished: int, assigned: int) -> float:
     return round(finished * 100.0 / assigned, 2)
 
 
+def parse_bounded_range(raw: str | None) -> tuple[datetime | None, datetime | None, str | None]:
+    """逗号分隔的 yyyy-MM-dd。空值表示不限；起大于止或格式不对返回错误文案。"""
+    if raw is None or not str(raw).strip():
+        return None, None, None
+    parts = [part.strip() for part in str(raw).split(",") if part.strip()]
+    if len(parts) != 2:
+        return None, None, "日期范围无效"
+    try:
+        start = datetime.strptime(parts[0], "%Y-%m-%d")
+        end_day = datetime.strptime(parts[1], "%Y-%m-%d")
+    except ValueError:
+        return None, None, "日期范围无效"
+    if start > end_day:
+        return None, None, "日期范围起大于止"
+    end = end_day.replace(hour=23, minute=59, second=59)
+    return start, end, None
+
+
+def as_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    return value
+
+
+def dept_label(dept_id: int) -> str:
+    return f"部门#{dept_id}" if dept_id else "未分配"
+
+
+def dept_of(db: Session, cache: dict[int, int], user_id: int, tenant_id: int) -> int:
+    if user_id not in cache:
+        cache[user_id] = primary_dept_id(db, user_id, tenant_id)
+    return cache[user_id]
+
+
+def stat_pairs(
+    db: Session,
+    tenant_id: int,
+    start: datetime | None,
+    end: datetime | None,
+    user_id: int | None,
+) -> list[tuple[TrainTaskRecord, TrainTask]]:
+    """与 finish-rate 相同的取数：任务创建时间落在范围内的指派记录。user_id 非空时只看本人。"""
+    stmt = (
+        select(TrainTaskRecord, TrainTask)
+        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
+        .where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTask.deleted == 0,
+        )
+    )
+    if start and end:
+        stmt = stmt.where(TrainTask.created_at >= start, TrainTask.created_at <= end)
+    if user_id is not None:
+        stmt = stmt.where(TrainTaskRecord.user_id == user_id)
+    return list(db.execute(stmt).all())
+
+
+def scoped_user_id(actor: User) -> int | None:
+    return None if actor.username == "admin" else actor.id
+
+
+def duration_minutes(study_seconds: int) -> int:
+    return max(0, int(study_seconds or 0)) // 60
+
+
+def aggregate_dept_daily(
+    db: Session, tenant_id: int, pairs: list[tuple[TrainTaskRecord, TrainTask]]
+) -> list[dict]:
+    cache: dict[int, int] = {}
+    buckets: dict[tuple[str, int], dict] = {}
+    for record, task in pairs:
+        created = task.created_at or utcnow()
+        stat_date = created.date().isoformat()
+        dept_id = dept_of(db, cache, record.user_id, tenant_id)
+        bucket = buckets.setdefault(
+            (stat_date, dept_id),
+            {
+                "statDate": stat_date,
+                "deptId": dept_id,
+                "deptName": dept_label(dept_id),
+                "assignedCount": 0,
+                "finishedCount": 0,
+                "studySeconds": 0,
+            },
+        )
+        bucket["assignedCount"] += 1
+        if record.confirm_status == 1:
+            bucket["finishedCount"] += 1
+        bucket["studySeconds"] += int(record.study_seconds or 0)
+    items: list[dict] = []
+    for bucket in buckets.values():
+        assigned = bucket["assignedCount"]
+        seconds = bucket.pop("studySeconds")
+        bucket["finishRate"] = rate_pct(bucket["finishedCount"], assigned)
+        bucket["avgDurationMinutes"] = int(round(seconds / 60 / assigned)) if assigned else 0
+        items.append(bucket)
+    items.sort(key=lambda item: (item["statDate"], item["deptName"]), reverse=True)
+    items.sort(key=lambda item: item["deptName"])
+    items.sort(key=lambda item: item["statDate"], reverse=True)
+    return items
+
+
+def mark_low_finish_alerts(items: list[dict]) -> None:
+    """连续两个自然周完成率都低于 85% 时打标。推送仍由 ALERT 执行，这里只展示。"""
+    weeks: dict[int, dict[date, list[int]]] = {}
+    for item in items:
+        stat_day = datetime.strptime(item["statDate"], "%Y-%m-%d").date()
+        week_start = stat_day - timedelta(days=stat_day.weekday())
+        cell = weeks.setdefault(int(item["deptId"]), {}).setdefault(week_start, [0, 0])
+        cell[0] += int(item["assignedCount"])
+        cell[1] += int(item["finishedCount"])
+    alert_depts: set[int] = set()
+    for dept_id, by_week in weeks.items():
+        ordered = sorted(by_week)
+        for index in range(1, len(ordered)):
+            previous, current = ordered[index - 1], ordered[index]
+            if (current - previous).days != 7:
+                continue
+            prev_assigned, prev_finished = by_week[previous]
+            cur_assigned, cur_finished = by_week[current]
+            if prev_assigned <= 0 or cur_assigned <= 0:
+                continue
+            if prev_finished * 100 / prev_assigned < 85 and cur_finished * 100 / cur_assigned < 85:
+                alert_depts.add(dept_id)
+                break
+    for item in items:
+        item["alertPushed"] = int(item["deptId"]) in alert_depts
+
+
+def persist_dept_daily(
+    db: Session,
+    tenant_id: int,
+    start: datetime | None,
+    end: datetime | None,
+    items: list[dict],
+) -> None:
+    stmt = select(TrainStatDaily).where(TrainStatDaily.tenant_id == tenant_id)
+    if start and end:
+        stmt = stmt.where(
+            TrainStatDaily.stat_date >= start.date(),
+            TrainStatDaily.stat_date <= end.date(),
+        )
+    existing = list(db.scalars(stmt).all())
+    by_key = {(as_date(row.stat_date), row.dept_id): row for row in existing}
+    seen: set[tuple] = set()
+    for item in items:
+        stat_day = datetime.strptime(item["statDate"], "%Y-%m-%d").date()
+        key = (stat_day, int(item["deptId"]))
+        seen.add(key)
+        row = by_key.get(key)
+        if row is None:
+            row = TrainStatDaily(stat_date=stat_day, dept_id=int(item["deptId"]), tenant_id=tenant_id)
+            db.add(row)
+        row.dept_name = item["deptName"]
+        row.assigned_count = int(item["assignedCount"])
+        row.finished_count = int(item["finishedCount"])
+        row.finish_rate = float(item["finishRate"])
+        row.avg_duration_minutes = int(item["avgDurationMinutes"])
+        row.deleted = 0
+        row.updated_at = utcnow()
+    for key, row in by_key.items():
+        if key not in seen:
+            db.delete(row)
+    db.flush()
+
+
+def read_dept_daily(
+    db: Session, tenant_id: int, start: datetime | None, end: datetime | None
+) -> list[dict]:
+    stmt = select(TrainStatDaily).where(
+        TrainStatDaily.deleted == 0,
+        TrainStatDaily.tenant_id == tenant_id,
+    )
+    if start and end:
+        stmt = stmt.where(
+            TrainStatDaily.stat_date >= start.date(),
+            TrainStatDaily.stat_date <= end.date(),
+        )
+    rows = list(
+        db.scalars(
+            stmt.order_by(TrainStatDaily.stat_date.desc(), TrainStatDaily.dept_id.asc())
+        ).all()
+    )
+    items = []
+    for row in rows:
+        stat_value = row.stat_date
+        stat_text = stat_value.strftime("%Y-%m-%d") if hasattr(stat_value, "strftime") else str(stat_value)[:10]
+        items.append(
+            {
+                "statDate": stat_text,
+                "deptId": row.dept_id,
+                "deptName": row.dept_name,
+                "assignedCount": row.assigned_count,
+                "finishedCount": row.finished_count,
+                "finishRate": float(row.finish_rate or 0),
+                "avgDurationMinutes": int(row.avg_duration_minutes or 0),
+            }
+        )
+    return items
+
+
+def aggregate_rank(
+    db: Session,
+    tenant_id: int,
+    pairs: list[tuple[TrainTaskRecord, TrainTask]],
+    dimension: str,
+    top_n: int,
+) -> list[dict]:
+    cache: dict[int, int] = {}
+    groups: dict[int, dict] = {}
+    if dimension == "PERSON":
+        names = user_names(db, {record.user_id for record, _ in pairs})
+        for record, _task in pairs:
+            bucket = groups.setdefault(
+                record.user_id,
+                {
+                    "userId": record.user_id,
+                    "userName": names.get(record.user_id, ""),
+                    "assigned": 0,
+                    "finished": 0,
+                    "seconds": 0,
+                },
+            )
+            bucket["assigned"] += 1
+            if record.confirm_status == 1:
+                bucket["finished"] += 1
+            bucket["seconds"] += int(record.study_seconds or 0)
+        items = [
+            {
+                "userId": bucket["userId"],
+                "userName": bucket["userName"],
+                "totalDurationMinutes": duration_minutes(bucket["seconds"]),
+                "finishRate": rate_pct(bucket["finished"], bucket["assigned"]),
+            }
+            for bucket in groups.values()
+        ]
+        items.sort(key=lambda item: (-item["totalDurationMinutes"], -item["finishRate"], item["userName"]))
+    else:
+        for record, _task in pairs:
+            dept_id = dept_of(db, cache, record.user_id, tenant_id)
+            bucket = groups.setdefault(
+                dept_id,
+                {"deptName": dept_label(dept_id), "assigned": 0, "finished": 0, "seconds": 0},
+            )
+            bucket["assigned"] += 1
+            if record.confirm_status == 1:
+                bucket["finished"] += 1
+            bucket["seconds"] += int(record.study_seconds or 0)
+        items = [
+            {
+                "deptName": bucket["deptName"],
+                "totalDurationMinutes": duration_minutes(bucket["seconds"]),
+                "finishRate": rate_pct(bucket["finished"], bucket["assigned"]),
+            }
+            for bucket in groups.values()
+        ]
+        items.sort(key=lambda item: (-item["totalDurationMinutes"], -item["finishRate"], item["deptName"]))
+    ranked = items[:top_n]
+    for index, item in enumerate(ranked, start=1):
+        item["rank"] = index
+    return ranked
+
+
+def aggregate_heat(
+    db: Session,
+    pairs: list[tuple[TrainTaskRecord, TrainTask]],
+    top_n: int,
+) -> list[dict]:
+    stats: dict[int, dict] = {}
+    for record, task in pairs:
+        material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+        progress_map = material_progress_map(record)
+        studied: set[int] = set()
+        for raw_id in material_ids:
+            try:
+                material_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if progress_map.get(material_id, 0) > 0 or record.confirm_status == 1:
+                studied.add(material_id)
+        if not studied and record.progress > 0:
+            for raw_id in material_ids:
+                try:
+                    studied.add(int(raw_id))
+                except (TypeError, ValueError):
+                    continue
+        if not studied:
+            continue
+        for material_id in studied:
+            bucket = stats.setdefault(material_id, {"count": 0, "seconds": 0})
+            bucket["count"] += 1
+            bucket["seconds"] += int(record.study_seconds or 0)
+    if not stats:
+        return []
+    materials = list(
+        db.scalars(select(TrainMaterial).where(TrainMaterial.id.in_(list(stats.keys())))).all()
+    )
+    by_id = {row.id: row for row in materials if not row.deleted}
+    items = []
+    for material_id, bucket in stats.items():
+        material = by_id.get(material_id)
+        if material is None:
+            continue
+        count = bucket["count"]
+        items.append(
+            {
+                "materialId": material_id,
+                "materialNo": material.material_no,
+                "title": material.title,
+                "materialType": material.material_type,
+                "studyCount": count,
+                "avgDurationMinutes": int(round((bucket["seconds"] / 60) / count)) if count else 0,
+            }
+        )
+    items.sort(key=lambda item: (-item["studyCount"], -item["avgDurationMinutes"], item["materialNo"]))
+    return items[:top_n]
+
+
+def deadline_text(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BJ)
+    else:
+        dt = dt.astimezone(BJ)
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def overdue_day_count(deadline: datetime, now: datetime) -> int:
+    days = (now.date() - deadline.date()).days
+    return days if days >= 1 else 1
+
+
+def clamp_top_n(top_n: int | None):
+    if top_n is None:
+        return 10, None
+    if top_n <= 0 or top_n > 50:
+        return None, fail(1001, "topN 无效")
+    return top_n, None
+
+
 def finish_rate(db: Session, task_id: int, assigned: int) -> float:
     if assigned <= 0:
         return 0.0
@@ -519,23 +861,7 @@ def stat_finish_rate(
     """TRAIN-003 · BR-102 完成率（分母含未确认指派记录）。"""
     tenant_id = tenant_of(actor)
     start, end = parse_date_range(dateRange)
-    stmt = (
-        select(TrainTaskRecord, TrainTask)
-        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
-        .where(
-            TrainTaskRecord.deleted == 0,
-            TrainTaskRecord.tenant_id == tenant_id,
-            TrainTask.deleted == 0,
-        )
-    )
-    if start and end:
-        stmt = stmt.where(
-            TrainTask.created_at >= start,
-            TrainTask.created_at <= end,
-        )
-    if actor.username != "admin":
-        stmt = stmt.where(TrainTaskRecord.user_id == actor.id)
-    rows = list(db.execute(stmt).all())
+    rows = stat_pairs(db, tenant_id, start, end, scoped_user_id(actor))
 
     total_assigned = len(rows)
     total_finished = sum(1 for rec, _ in rows if rec.confirm_status == 1)
@@ -565,7 +891,7 @@ def stat_finish_rate(
         if dept_id not in by_dept:
             by_dept[dept_id] = {
                 "deptId": dept_id,
-                "deptName": f"部门#{dept_id}" if dept_id else "未分配",
+                "deptName": dept_label(dept_id),
                 "assignedCount": 0,
                 "finishedCount": 0,
             }
@@ -613,6 +939,124 @@ def stat_finish_rate(
             "byPerson": person_items,
         }
     )
+
+
+@router.get("/stat/dept")
+def stat_dept(
+    statDateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """部门日汇总。先按全租户重写 ims_train_stat_daily，管理员读这张表。"""
+    start, end, error = parse_bounded_range(statDateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    all_pairs = stat_pairs(db, tenant_id, start, end, None)
+    tenant_items = aggregate_dept_daily(db, tenant_id, all_pairs)
+    persist_dept_daily(db, tenant_id, start, end, tenant_items)
+    if actor.username == "admin":
+        items = read_dept_daily(db, tenant_id, start, end)
+    else:
+        items = aggregate_dept_daily(db, tenant_id, stat_pairs(db, tenant_id, start, end, actor.id))
+    mark_low_finish_alerts(items)
+    return ok(items)
+
+
+@router.get("/stat/rank")
+def stat_rank(
+    dimension: str | None = None,
+    dateRange: str | None = None,
+    topN: int | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if dimension not in {"DEPT", "PERSON"}:
+        return fail(1001, "dimension 无效")
+    top_n, top_error = clamp_top_n(topN)
+    if top_error is not None:
+        return top_error
+    start, end, error = parse_bounded_range(dateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    pairs = stat_pairs(db, tenant_id, start, end, scoped_user_id(actor))
+    return ok(aggregate_rank(db, tenant_id, pairs, dimension, top_n))
+
+
+@router.get("/stat/material-heat")
+def stat_material_heat(
+    dateRange: str | None = None,
+    topN: int | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    top_n, top_error = clamp_top_n(topN)
+    if top_error is not None:
+        return top_error
+    start, end, error = parse_bounded_range(dateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    pairs = stat_pairs(db, tenant_id, start, end, scoped_user_id(actor))
+    return ok(aggregate_heat(db, pairs, top_n))
+
+
+@router.get("/stat/overdue")
+def stat_overdue(
+    taskId: int | None = None,
+    deptId: int | None = None,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """未确认且截止时间已过。分母口径与完成率一致，逾期记录仍留在完成率里。"""
+    tenant_id = tenant_of(actor)
+    page_no, size = page_args(pageNo, pageSize)
+    now = utcnow()
+    stmt = (
+        select(TrainTaskRecord, TrainTask)
+        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
+        .where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTask.deleted == 0,
+            TrainTaskRecord.confirm_status == 0,
+            TrainTask.deadline.isnot(None),
+            TrainTask.deadline < now,
+        )
+    )
+    if taskId:
+        stmt = stmt.where(TrainTaskRecord.task_id == taskId)
+    if scoped_user_id(actor) is not None:
+        stmt = stmt.where(TrainTaskRecord.user_id == actor.id)
+    rows = list(db.execute(stmt).all())
+    cache: dict[int, int] = {}
+    names = user_names(db, {record.user_id for record, _ in rows})
+    items = []
+    for record, task in rows:
+        dept_id = dept_of(db, cache, record.user_id, tenant_id)
+        if deptId is not None and dept_id != deptId:
+            continue
+        deadline = task.deadline
+        items.append(
+            {
+                "taskId": task.id,
+                "taskNo": task.task_no,
+                "taskName": task.task_name,
+                "userId": record.user_id,
+                "userName": names.get(record.user_id, ""),
+                "deptName": dept_label(dept_id),
+                "deadline": deadline_text(deadline),
+                "overdueDays": overdue_day_count(deadline, now) if deadline else 1,
+                "progress": int(record.progress or 0),
+            }
+        )
+    items.sort(key=lambda item: (-item["overdueDays"], item["taskNo"], item["userId"]))
+    total = len(items)
+    start_at = (page_no - 1) * size
+    return paged(items[start_at : start_at + size], total, page_no, size)
 
 
 @router.get("/task/list")
@@ -767,6 +1211,8 @@ def report_progress(
     mat_prog[body.materialId] = max(mat_prog.get(body.materialId, 0), pct)
     record.material_progress = {str(k): v for k, v in mat_prog.items()}
     record.progress = recompute_overall_progress(task, mat_prog)
+    if body.watchedSeconds is not None and body.watchedSeconds > 0:
+        record.study_seconds = max(int(record.study_seconds or 0), int(body.watchedSeconds))
     record.updated_at = utcnow()
     db.flush()
     return ok(progress_vo(db, task, record, body.materialId))

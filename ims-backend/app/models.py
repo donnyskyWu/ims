@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Date, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core import Base, utcnow
@@ -1013,6 +1013,28 @@ class TrainTaskRecord(Base):
     confirm_status: Mapped[int] = mapped_column(Integer, default=0)
     confirm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    study_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class TrainStatDaily(Base):
+    """TRN-S-R1 部门日汇总。完成率口径与 finish-rate 相同：已确认 / 应完成（含逾期）。"""
+
+    __tablename__ = "ims_train_stat_daily"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "stat_date", "dept_id", name="uk_train_stat_daily"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    stat_date: Mapped[date] = mapped_column(Date, index=True)
+    dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    dept_name: Mapped[str] = mapped_column(String(128), default="")
+    assigned_count: Mapped[int] = mapped_column(Integer, default=0)
+    finished_count: Mapped[int] = mapped_column(Integer, default=0)
+    finish_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_duration_minutes: Mapped[int] = mapped_column(Integer, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import utcnow
@@ -69,3 +69,20 @@ def refresh_workbench_e2e_seed(db: Session, user: User) -> None:
     if user.username != "admin":
         return
     _upsert_workbench_e2e_rows(db, user, fresh=True)
+
+
+def prune_closure_alert_inbox(db: Session) -> None:
+    """全量 E2E 开跑前清掉 closure 留下的证件、账实、离职待办和消息。
+
+    工作台预览各取 20 条。这些行按 id 或逾期排在种子前面，重复跑全量后会把
+    E2E-WB-MSG / E2E-WB-CLOSE 挤出第一页。只给 E2E 刷新脚本调用，不进 API 启动 seed()。
+    """
+    title_is_closure_alert = (
+        lambda column: or_(
+            column.like("证件%"),
+            column.like("账实核对%"),
+            column.like("离职待归还%"),
+        )
+    )
+    db.execute(delete(WorkMessage).where(title_is_closure_alert(WorkMessage.title)))
+    db.execute(delete(Todo).where(title_is_closure_alert(Todo.title)))

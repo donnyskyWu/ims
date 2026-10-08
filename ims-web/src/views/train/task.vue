@@ -135,10 +135,11 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
 const router = useRouter()
+const route = useRoute()
 
 type Row = {
   id: number
@@ -283,7 +284,16 @@ async function submit() {
   await loadList()
 }
 
-onMounted(loadList)
+onMounted(async () => {
+  await loadList()
+  const rawId = route.query.taskId
+  const taskId = Number(Array.isArray(rawId) ? rawId[0] : rawId)
+  if (!taskId) return
+  const rawName = route.query.taskName
+  const taskName = String(Array.isArray(rawName) ? rawName[0] : rawName || '')
+  const hit = rows.value.find((row) => row.id === taskId)
+  await openRecords(hit || { id: taskId, taskName: taskName || `任务#${taskId}` } as Row)
+})
 </script>
 
 <style scoped>

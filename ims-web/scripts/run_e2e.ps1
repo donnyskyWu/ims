@@ -120,28 +120,32 @@ Then restart API (scripts\start_api.ps1 -KillPort) and re-run this script.
     exit 3
 }
 
-Write-Host "[e2e] Refresh workbench + acct pool + FIN live + cert + asset reverse session + S1 fixtures (#46/#47/#50/#55/#72/#73) ..."
+Write-Host "[e2e] Refresh workbench + acct pool + FIN live + cert + asset reverse + S1 fixtures + train overdue (#46/#47/#50/#55/#72/#73/#76) ..."
 Push-Location $BackendRoot
 try {
     python -c @"
 from app.core import SessionLocal
 from app.models import User
-from app.workbench_seed import refresh_workbench_e2e_seed
-from app.acct_seed import refresh_acct_e2e_pool
+from app.workbench_seed import prune_closure_alert_inbox, refresh_workbench_e2e_seed
+from app.acct_seed import clear_apply_number_gap, refresh_acct_e2e_pool
 from app.live_fin_e2e_seed import refresh_live_fin_e2e_deps
 from app.cert_e2e_seed import refresh_cert_e2e_seed
 from app.asset_reverse_e2e_seed import refresh_asset_reverse_e2e_session
 from app.s1_lifecycle_seed import ensure_s1_fixtures
+from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
 db = SessionLocal()
 try:
     admin = db.query(User).filter(User.username == 'admin', User.deleted == 0).first()
     if admin is not None:
         refresh_workbench_e2e_seed(db, admin)
+        prune_closure_alert_inbox(db)
         refresh_acct_e2e_pool(db, admin)
         refresh_live_fin_e2e_deps(db, admin)
         refresh_cert_e2e_seed(db, admin)
         refresh_asset_reverse_e2e_session(db, admin)
         ensure_s1_fixtures(db)
+        clear_apply_number_gap(db)
+        refresh_train_stat_e2e_seed(db, admin)
         db.commit()
 finally:
     db.close()

@@ -218,6 +218,15 @@ def ensure_acct_sum_user(db: Session) -> User:
     return user
 
 
+def clear_apply_number_gap(db: Session) -> None:
+    """全量 E2E 开跑前清空领用单。
+
+    单号是当日行数 +1。只删除部分账号的单据会留下空洞，后面的申请会撞上仍在的单号并 500。
+    只给 E2E 刷新脚本调用，不进 API 启动 seed()。
+    """
+    db.execute(delete(AccountApply))
+
+
 def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     """E2E 跑前恢复池内账号与清空该账号流程单据。"""
     if admin.username != "admin":

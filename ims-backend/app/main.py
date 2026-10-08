@@ -127,6 +127,7 @@ def seed() -> None:
         from app.acct_seed import ensure_acct_e2e_pool_account, ensure_acct_schema, refresh_acct_e2e_pool
         from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, refresh_live_fin_e2e_deps
         from app.cert_e2e_seed import refresh_cert_e2e_seed
+        from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
 
         ensure_acct_schema()
         admin = db.query(User).filter(User.username == "admin", User.deleted == 0).first()
@@ -137,6 +138,7 @@ def seed() -> None:
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)
+            refresh_train_stat_e2e_seed(db, admin)
         db.commit()
     finally:
         db.close()
@@ -155,6 +157,20 @@ def ensure_bi_br212_columns() -> None:
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN dept_id BIGINT NOT NULL DEFAULT 0"))
             conn.execute(text(f"CREATE INDEX idx_{table}_dept_id ON {table} (dept_id)"))
+
+
+def ensure_train_stat_schema() -> None:
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "ims_train_task_record" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_train_task_record")}
+        if "study_seconds" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE ims_train_task_record ADD COLUMN study_seconds INT NOT NULL DEFAULT 0")
+                )
 
 
 def ensure_asset_purchase_column() -> None:
@@ -176,6 +192,7 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     ensure_bi_br212_columns()
     ensure_asset_purchase_column()
+    ensure_train_stat_schema()
     from app.ops_db import ensure_ops
 
     ensure_ops()

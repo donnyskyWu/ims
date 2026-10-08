@@ -151,6 +151,7 @@ async function markCurrentMaterialDone() {
       materialId: activeMaterialId.value,
       currentPage: 1,
       totalPages: 1,
+      watchedSeconds: 60,
       heartbeatAt: new Date().toISOString(),
     })
     if (res.data.code !== 0) {

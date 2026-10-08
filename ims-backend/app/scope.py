@@ -93,6 +93,7 @@ SPECS = {
     "ims_train_material_cate": Spec(),
     "ims_train_task": Spec(creator=True, creator_col="creator_user_id"),
     "ims_train_task_record": Spec(creator=True, creator_col="user_id"),
+    "ims_train_stat_daily": Spec(dept=True),
     "ims_fin_cost": Spec(creator=True, creator_col="entry_user_id"),
     "ims_fin_profit": Spec(),
     "ims_fin_share_result": Spec(),
