@@ -93,6 +93,7 @@
         <span data-testid="corp-cert-expire-stats">黄色 {{ expireStats.yellow }} · 红色 {{ expireStats.red }} · 锁定 {{ expireStats.locked }}</span>
       </div>
       <p v-if="scanMessage" class="hint" data-testid="corp-cert-scan-message">{{ scanMessage }}</p>
+      <p v-if="renewMessage" class="hint" data-testid="corp-cert-renew-message">{{ renewMessage }}</p>
       <form class="qbar" @submit.prevent="searchExpire">
         <input v-model="expireHolder" placeholder="预警持有人" style="width: 180px" data-testid="corp-cert-expire-holder" />
         <span class="sp"></span>
@@ -110,14 +111,15 @@
                 <th>剩余天数</th>
                 <th>预警级别</th>
                 <th>状态</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="expireLoading">
-                <td colspan="6" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+                <td colspan="7" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!expireRows.length">
-                <td colspan="6" style="white-space: normal">
+                <td colspan="7" style="white-space: normal">
                   <div class="empty"><div class="et">{{ expireError || '当前无到期预警' }}</div></div>
                 </td>
               </tr>
@@ -130,6 +132,13 @@
                   <span data-testid="corp-cert-level" :style="levelStyle(String(row.level || ''))">{{ levelLabel(String(row.level || '')) }}</span>
                 </td>
                 <td>{{ expireStatusLabel(String(row.status || '')) }}</td>
+                <td>
+                  <template v-if="row.status === 'WARNING' || row.status === 'EXPIRED_LOCKED'">
+                    <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-renew-btn" @click="openRenew(row)">换证</button>
+                    <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-renew-finish" @click="openRenewFinish(row)">完成换证</button>
+                  </template>
+                  <span v-else class="hint">—</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -257,6 +266,38 @@
         <button class="btn btn-pri" type="button" data-testid="corp-cert-review-approve" :disabled="reviewSaving" @click="approveCert">通过</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="renewOpen" title="换证" width="480px" @close="renewOpen = false">
+      <div class="formrow one">
+        <div class="fld"><label>持有人</label><div data-testid="corp-cert-renew-holder">{{ renewTarget?.holderName || '—' }}</div></div>
+        <div class="fld"><label>证件类型</label><div>{{ typeLabel(String(renewTarget?.certType || '')) }}</div></div>
+        <div class="fld"><label>原有效期</label><div>{{ renewTarget?.expireDate || '—' }}</div></div>
+        <div class="fld"><label>当前预警</label><div>{{ levelLabel(String(renewTarget?.level || '')) }}</div></div>
+      </div>
+      <div class="formrow one"><div class="fld"><label>新证件号<i class="req">*</i></label><input v-model="renewForm.certNoPlain" data-testid="corp-cert-renew-no" placeholder="至少 8 位，接口只回脱敏值" /></div></div>
+      <div class="formrow one"><div class="fld"><label>签发日期<i class="req">*</i></label><input v-model="renewForm.issueDate" type="date" data-testid="corp-cert-renew-issue" /></div></div>
+      <div class="formrow one"><div class="fld"><label>新有效期<i class="req">*</i></label><input v-model="renewForm.expireDate" type="date" data-testid="corp-cert-renew-expire" /></div></div>
+      <div class="formrow one"><div class="fld"><label>扫描件标识<i class="req">*</i></label><input v-model="renewForm.fileKey" data-testid="corp-cert-renew-file" /></div></div>
+      <div class="formrow one"><div class="fld"><label>备注</label><input v-model="renewForm.remark" data-testid="corp-cert-renew-remark" /></div></div>
+      <div class="hint">新证提交后为待审。审核生效后点「完成换证」：旧证保留为已回收历史，黄/红/锁定预警解除，工作台待办完成。新有效期须晚于旧证，且超出 30 天。</div>
+      <div v-if="renewError" class="hint bad" data-testid="corp-cert-renew-error">{{ renewError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="renewOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-renew-save" :disabled="renewSaving" @click="saveRenew">{{ renewSaving ? '提交中…' : '提交新证' }}</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="renewFinishOpen" title="完成换证" width="440px" @close="renewFinishOpen = false">
+      <div class="formrow one">
+        <div class="fld"><label>持有人</label><div>{{ renewFinishTarget?.holderName || '—' }}</div></div>
+        <div class="fld"><label>原有效期</label><div>{{ renewFinishTarget?.expireDate || '—' }}</div></div>
+        <div class="fld"><label>新证有效期</label><div data-testid="corp-cert-renew-new-expire">{{ renewCandidate?.expireDate || '—' }}</div></div>
+      </div>
+      <div class="hint">确认后旧证归档为历史（已回收），本条预警变为已换证，工作台中对应待办完成。</div>
+      <div v-if="renewFinishError" class="hint bad" data-testid="corp-cert-renew-finish-error">{{ renewFinishError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="renewFinishOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-renew-confirm" :disabled="renewFinishSaving || !renewCandidate" @click="confirmRenew">{{ renewFinishSaving ? '提交中…' : '确认换证' }}</button>
+      </template>
+    </ProtoDrawer>
     <ProtoDrawer :open="scanOpen" title="扫描到期" width="420px" @close="scanOpen = false">
       <div class="hint">按今日扫描已生效证件：剩余 30 天黄色、7 天红色、当天锁定，并写入工作台提醒。同一级别不重复推送。</div>
       <template #foot>
@@ -308,6 +349,23 @@ const reviewRow = ref<Row | null>(null)
 const scanOpen = ref(false)
 const scanSaving = ref(false)
 const scanMessage = ref('')
+const renewOpen = ref(false)
+const renewSaving = ref(false)
+const renewError = ref('')
+const renewMessage = ref('')
+const renewTarget = ref<Row | null>(null)
+const renewForm = reactive({
+  certNoPlain: '',
+  issueDate: '2024-01-01',
+  expireDate: '',
+  fileKey: 'local/cert/renew',
+  remark: '',
+})
+const renewFinishOpen = ref(false)
+const renewFinishSaving = ref(false)
+const renewFinishError = ref('')
+const renewFinishTarget = ref<Row | null>(null)
+const renewCandidate = ref<Row | null>(null)
 const expireRows = ref<Row[]>([])
 const expireLoading = ref(false)
 const expireError = ref('')
@@ -553,6 +611,102 @@ function openScan() {
   scanOpen.value = true
 }
 
+function bizError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const body = error as { code?: number; msg?: string }
+    if (typeof body.code === 'number' && body.code !== 0) {
+      return `${body.code} ${body.msg || ''}`.trim()
+    }
+  }
+  return errorMessage(error)
+}
+
+function openRenew(row: Row) {
+  renewTarget.value = row
+  renewForm.certNoPlain = ''
+  renewForm.issueDate = '2024-01-01'
+  renewForm.expireDate = ''
+  renewForm.fileKey = 'local/cert/renew'
+  renewForm.remark = ''
+  renewError.value = ''
+  renewOpen.value = true
+}
+
+async function saveRenew() {
+  const target = renewTarget.value
+  if (!target) {
+    renewError.value = '缺少预警记录'
+    return
+  }
+  renewSaving.value = true
+  renewError.value = ''
+  try {
+    await http.post('/cert/archive/upload', {
+      holderName: String(target.holderName || '').trim(),
+      certType: String(target.certType || 'IDCARD'),
+      certNoPlain: renewForm.certNoPlain.trim(),
+      fileKey: renewForm.fileKey.trim(),
+      issueDate: renewForm.issueDate,
+      expireDate: renewForm.expireDate,
+    })
+    renewOpen.value = false
+    renewMessage.value = '新证已提交待审。审核生效后点「完成换证」，旧证会保留为历史。'
+    await load()
+  } catch (e: unknown) {
+    renewError.value = bizError(e)
+  } finally {
+    renewSaving.value = false
+  }
+}
+
+async function openRenewFinish(row: Row) {
+  renewFinishTarget.value = row
+  renewCandidate.value = null
+  renewFinishError.value = ''
+  renewFinishOpen.value = true
+  try {
+    const res = await http.get('/corp/resource/certificate/page', {
+      params: { pageNo: 1, pageSize: 50, holderName: String(row.holderName || '') },
+    })
+    const list = asList(res.data?.data)
+    const found = list.find(
+      (item) =>
+        item.holderName === row.holderName &&
+        item.certType === row.certType &&
+        item.status === 'EFFECTIVE' &&
+        Number(item.id) !== Number(row.certId),
+    )
+    renewCandidate.value = found || null
+    if (!found) renewFinishError.value = '请先提交新证并审核生效'
+  } catch (e: unknown) {
+    renewFinishError.value = bizError(e)
+  }
+}
+
+async function confirmRenew() {
+  const target = renewFinishTarget.value
+  const candidate = renewCandidate.value
+  if (!target || !candidate) {
+    renewFinishError.value = '请先提交新证并审核生效'
+    return
+  }
+  renewFinishSaving.value = true
+  renewFinishError.value = ''
+  try {
+    await http.put(`/cert/expire/${target.id}/renew`, {
+      newCertId: Number(candidate.id),
+      remark: renewForm.remark.trim() || undefined,
+    })
+    renewFinishOpen.value = false
+    renewMessage.value = '换证完成：旧证已归档为历史，预警已解除，工作台待办已完成。'
+    await Promise.all([load(), loadExpire()])
+  } catch (e: unknown) {
+    renewFinishError.value = bizError(e)
+  } finally {
+    renewFinishSaving.value = false
+  }
+}
+
 async function loadExpire() {
   expireLoading.value = true
   expireError.value = ''
@@ -776,6 +930,8 @@ watch(kind, async () => {
   certFormOpen.value = false
   reviewOpen.value = false
   scanOpen.value = false
+  renewOpen.value = false
+  renewFinishOpen.value = false
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
       await prepareSim()

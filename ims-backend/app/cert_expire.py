@@ -2,11 +2,13 @@
 
 T−30 黄色、T−7 红色、T−0 锁定。扫描后推送工作台待办和消息。
 同级别不重复推送（CERT-E-R2）；级别升高才再推。钉钉不外发。
+换证：先上传并审核新证，再 PUT /cert/expire/{id}/renew。旧证改为 RECYCLED
+（档案仍在，作为历史），该证的黄/红/锁定预警改为 RENEW_RESOLVED，对应工作台待办完成。
 """
 
 import json
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
@@ -80,16 +82,37 @@ class ReviewBody(BaseModel):
     remark: str | None = None
 
 
-def blocking_archive(db: Session, actor: User, holder_name: str, cert_type: str) -> CertArchive | None:
-    return db.scalar(
-        select(CertArchive).where(
-            CertArchive.deleted == 0,
-            CertArchive.tenant_id == tenant_of(actor),
-            CertArchive.holder_name == holder_name,
-            CertArchive.cert_type == cert_type,
-            CertArchive.status.in_(BLOCKING_STATUS),
-        )
+class RenewBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    newCertId: int
+    remark: str | None = None
+
+
+def blocking_archives(db: Session, actor: User, holder_name: str, cert_type: str) -> list[CertArchive]:
+    return list(
+        db.scalars(
+            select(CertArchive).where(
+                CertArchive.deleted == 0,
+                CertArchive.tenant_id == tenant_of(actor),
+                CertArchive.holder_name == holder_name,
+                CertArchive.cert_type == cert_type,
+                CertArchive.status.in_(BLOCKING_STATUS),
+            )
+        ).all()
     )
+
+
+def renewal_floor(old_expire: date, today: date) -> date:
+    """新证须晚于旧证，并且剩余天数大于 30，换证后不再落入黄/红/锁定。"""
+    outside_window = today + timedelta(days=31)
+    after_old = old_expire + timedelta(days=1)
+    return outside_window if outside_window > after_old else after_old
+
+
+def renewal_date_error(new_expire: date, old_expire: date, today: date) -> str | None:
+    if new_expire < renewal_floor(old_expire, today):
+        return "新证有效期须晚于旧证，且超出 30 天预警"
+    return None
 
 
 @router.post("/cert/archive/upload")
@@ -110,8 +133,16 @@ def archive_upload(body: UploadBody, db: Session = Depends(db_session), actor: U
         return fail(1001, "日期须为 yyyy-MM-dd")
     if expire < issue:
         return fail(1001, "有效期须不早于签发日期")
-    if blocking_archive(db, actor, holder, body.certType) is not None:
+    existing = blocking_archives(db, actor, holder, body.certType)
+    if len(existing) >= 2 or (len(existing) == 1 and existing[0].status in ("PENDING_REVIEW", "EFFECTIVE")):
         return fail(1032, "已存在同类型档案，请走换证")
+    if len(existing) == 1 and existing[0].status in ("EXPIRING", "EXPIRED"):
+        old_expire = parse_date(existing[0].expire_date)
+        if old_expire is None:
+            return fail(1001, "旧证有效期不合法")
+        date_error = renewal_date_error(expire, old_expire, date.today())
+        if date_error:
+            return fail(1001, date_error)
     holder_user_id = body.holderUserId if body.holderUserId else actor.id
     holder_user = db.get(User, holder_user_id)
     if holder_user is None or holder_user.deleted or (holder_user.tenant_id or 0) != tenant_of(actor):
@@ -156,6 +187,72 @@ def archive_review(
         return fail(1001, "动作不合法")
     row.updater = actor.id
     row.updated_at = utcnow()
+    return ok(None)
+
+
+def resolve_expire_todos(db: Session, actor: User, log_id: int) -> None:
+    rows = db.scalars(
+        select(Todo).where(
+            Todo.tenant_id == tenant_of(actor),
+            Todo.task_type == "cert_expire",
+            Todo.ref_type == "cert_expire",
+            Todo.ref_id == log_id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for todo in rows:
+        todo.status = "DONE"
+
+
+@router.put("/cert/expire/{log_id}/renew")
+def expire_renew(
+    log_id: int,
+    body: RenewBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """换证登记。新证须已审核生效；旧证归档为历史，预警解除，工作台待办完成。"""
+    log = db.get(CertExpireLog, log_id)
+    if not visible(log, actor):
+        return fail(1504, "资源不可用")
+    if log.status not in OPEN_LOG:
+        return fail(1033, "预警已解除，不能换证")
+    old = db.get(CertArchive, log.cert_id)
+    if not visible(old, actor):
+        return fail(1031, "证件档案不存在")
+    new = db.get(CertArchive, body.newCertId)
+    if not visible(new, actor):
+        return fail(1031, "新证档案不存在")
+    if new.id == old.id:
+        return fail(1001, "新证不能与旧证相同")
+    if new.status != "EFFECTIVE":
+        return fail(1033, "新证须先审核生效")
+    if new.holder_name != old.holder_name or new.cert_type != old.cert_type:
+        return fail(1001, "新证须为同一持有人、同一类型")
+    new_expire = parse_date(new.expire_date)
+    old_expire = parse_date(old.expire_date)
+    if new_expire is None or old_expire is None:
+        return fail(1001, "有效期不合法")
+    date_error = renewal_date_error(new_expire, old_expire, date.today())
+    if date_error:
+        return fail(1001, date_error)
+    now = utcnow()
+    old.status = "RECYCLED"
+    old.updater = actor.id
+    old.updated_at = now
+    open_rows = db.scalars(
+        select(CertExpireLog).where(
+            CertExpireLog.deleted == 0,
+            CertExpireLog.tenant_id == tenant_of(actor),
+            CertExpireLog.cert_id == old.id,
+            CertExpireLog.status.in_(OPEN_LOG),
+        )
+    ).all()
+    for item in open_rows:
+        item.status = "RENEW_RESOLVED"
+        item.updater = actor.id
+        item.updated_at = now
+        resolve_expire_todos(db, actor, item.id)
     return ok(None)
 
 
