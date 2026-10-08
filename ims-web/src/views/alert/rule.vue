@@ -64,16 +64,27 @@
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 420px; padding: 20px">
+      <div class="card" style="width: 520px; padding: 20px">
         <h3 style="margin: 0 0 12px">注册预警规则</h3>
         <label class="fld">规则编码</label>
         <input v-model="form.ruleCode" class="fld-in" placeholder="live.data.delay" />
+        <p v-if="codeError" data-testid="alert-rule-code-error" class="hint" style="color: var(--red)">{{ codeError }}</p>
         <label class="fld">规则名称</label>
         <input v-model="form.ruleName" class="fld-in" />
         <label class="fld">阈值表达式</label>
         <input v-model="form.thresholdExpr" class="fld-in" placeholder="delayMinutes>30" />
+        <label class="fld">触发条件 DSL</label>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
+          <input v-model="form.dslSource" data-testid="alert-dsl-source" class="fld-in" placeholder="ims_fin_cost" />
+          <input v-model="form.dslField" data-testid="alert-dsl-field" class="fld-in" placeholder="hours_since_approve" />
+          <input v-model="form.dslOp" data-testid="alert-dsl-op" class="fld-in" placeholder="GT" />
+          <input v-model="form.dslValue" data-testid="alert-dsl-value" class="fld-in" placeholder="48" />
+        </div>
+        <p class="hint">操作符 GT / GTE / LT / LTE / EQ / NEQ。留空则沿用阈值表达式。</p>
+        <p data-testid="alert-dsl-preview" class="hint mono">{{ dslPreview }}</p>
+        <p v-if="dslError" data-testid="alert-dsl-error" class="hint" style="color: var(--red)">{{ dslError }}</p>
         <label class="fld"><input v-model="form.enabled" type="checkbox" /> 创建后立即启用</label>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" data-testid="alert-rule-form-error" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存</button>
@@ -84,8 +95,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -102,9 +113,43 @@ const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
 const formError = ref('')
+const codeError = ref('')
+const dslError = ref('')
 const filters = reactive({ ruleName: '', enabled: '' })
-const form = reactive({ ruleCode: '', ruleName: '', thresholdExpr: '', enabled: false })
+const form = reactive({
+  ruleCode: '',
+  ruleName: '',
+  thresholdExpr: '',
+  dslSource: '',
+  dslField: '',
+  dslOp: '',
+  dslValue: '',
+  enabled: false,
+})
 const toast = ref('')
+
+const dslTouched = computed(
+  () => !!(form.dslSource.trim() || form.dslField.trim() || form.dslOp.trim() || form.dslValue.trim()),
+)
+
+const dslPreview = computed(() => {
+  if (!dslTouched.value) return 'DSL 预览：未填写'
+  return `DSL 预览：${JSON.stringify(buildTriggerConfig())}`
+})
+
+function buildTriggerConfig() {
+  const raw = form.dslValue.trim()
+  const num = Number(raw)
+  const value = raw !== '' && !Number.isNaN(num) ? num : raw
+  return {
+    source: form.dslSource.trim(),
+    condition: {
+      field: form.dslField.trim(),
+      op: form.dslOp.trim(),
+      value,
+    },
+  }
+}
 
 async function loadList() {
   loading.value = true
@@ -133,28 +178,42 @@ function openCreate() {
   form.ruleCode = ''
   form.ruleName = ''
   form.thresholdExpr = ''
+  form.dslSource = ''
+  form.dslField = ''
+  form.dslOp = ''
+  form.dslValue = ''
   form.enabled = false
   formError.value = ''
+  codeError.value = ''
+  dslError.value = ''
   showForm.value = true
 }
 
 async function submitCreate() {
   formError.value = ''
+  codeError.value = ''
+  dslError.value = ''
+  const payload: Record<string, unknown> = {
+    ruleCode: form.ruleCode,
+    ruleName: form.ruleName,
+    thresholdExpr: form.thresholdExpr,
+    enabled: form.enabled,
+  }
+  if (dslTouched.value) payload.triggerConfig = buildTriggerConfig()
   try {
-    const res = await http.post('/alert/rule', {
-      ruleCode: form.ruleCode,
-      ruleName: form.ruleName,
-      thresholdExpr: form.thresholdExpr,
-      enabled: form.enabled,
-    })
+    const res = await http.post('/alert/rule', payload)
     if (res.data.code !== 0) {
       formError.value = res.data.msg || '保存失败'
       return
     }
     showForm.value = false
     await loadList()
-  } catch {
-    formError.value = '网络错误'
+  } catch (error) {
+    const body = error as { code?: number; msg?: string }
+    const msg = body?.msg || errorMessage(error)
+    if (body?.code === 1009) dslError.value = msg
+    else if (body?.code === 1165) codeError.value = msg
+    else formError.value = msg
   }
 }
 

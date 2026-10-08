@@ -27,7 +27,7 @@
         <option value="OPEN">待响应</option>
         <option value="ACK">已确认</option>
         <option value="HANDLED">已处理</option>
-        <option value="FALSE_POSITIVE">误报</option>
+        <option value="FALSE_ALARM">误报</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">刷新</button>
@@ -106,6 +106,15 @@
                 >
                   处理
                 </button>
+                <button
+                  v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'ACK' || row.responseStatus === 'FALSE_ALARM'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-false-alarm-btn"
+                  @click="respond(row.alertNo, 'FALSE_ALARM')"
+                >
+                  误报
+                </button>
               </td>
             </tr>
           </tbody>
@@ -119,7 +128,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -225,13 +234,15 @@ async function respond(alertNo: string, action: string) {
     const labels: Record<string, string> = {
       ACK: '已确认',
       HANDLED: '已处理',
+      FALSE_ALARM: '已标记误报',
       FALSE_POSITIVE: '已标记误报',
     }
     toast.value = `处置成功：${labels[status] || status}（${alertNo}）`
     if (tab.value === 'history') await loadSummary()
     await loadList()
-  } catch {
-    toast.value = '网络错误'
+  } catch (error) {
+    const body = error as { msg?: string }
+    toast.value = body?.msg || errorMessage(error)
   }
 }
 

@@ -1,8 +1,10 @@
-"""预警 ALERT-001 规则 · ALERT-002 检查记录（W9-4 首片）。"""
+"""预警 ALERT-001 规则 · ALERT-002 检查记录（W9-4 首片，#81 DSL/误报）。"""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,7 +19,15 @@ from app.models import AlertDedupPolicy, AlertRecord, AlertRule, User
 router = APIRouter(prefix="/alert", tags=["alert"])
 
 BJ = timezone(timedelta(hours=8))
-RESPONSE_LABELS = {0: "OPEN", 1: "ACK", 2: "HANDLED", 3: "FALSE_POSITIVE"}
+RESPONSE_LABELS = {0: "OPEN", 1: "ACK", 2: "HANDLED", 3: "FALSE_ALARM"}
+STATUS_ALIASES = {"FALSE_POSITIVE": "FALSE_ALARM", "MISREPORT": "FALSE_ALARM"}
+# 已处理 / 误报为终态；已确认（ACK）仍可处理或标误报。
+TERMINAL_STATUS = {2, 3}
+DSL_OPS = {"GT", "GTE", "LT", "LTE", "EQ", "NEQ"}
+DSL_KEYS = {"source", "condition", "conditions", "mergeWindowMinutes"}
+COND_KEYS = {"field", "op", "value"}
+IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+LEGACY_EXPR_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*\s*(>=|<=|==|!=|>|<)\s*-?\d+(\.\d+)?$")
 
 
 class RuleBody(BaseModel):
@@ -29,11 +39,92 @@ class RuleBody(BaseModel):
     thresholdExpr: str = ""
     cronExpr: str = "0 */15 * * *"
     enabled: bool = False
+    triggerConfig: Any = None
 
 
 class RespondBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    action: str
+    action: str = ""
+    response: str = ""
+    handleRemark: str = ""
+    falseAlarmReason: str = ""
+
+
+def _ident(value: Any) -> bool:
+    return isinstance(value, str) and bool(IDENT_RE.match(value))
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _condition_error(cond: Any, prefix: str) -> str | None:
+    if not isinstance(cond, dict):
+        return f"{prefix} 须为对象"
+    extra = set(cond) - COND_KEYS
+    if extra:
+        return f"{prefix} 含未知字段 {sorted(extra)[0]}"
+    if not _ident(cond.get("field")):
+        return f"{prefix}.field 非法"
+    op = cond.get("op")
+    if not isinstance(op, str) or op not in DSL_OPS:
+        return f"{prefix}.op 非法，允许 {', '.join(sorted(DSL_OPS))}"
+    if "value" not in cond or not _number(cond.get("value")):
+        return f"{prefix}.value 须为数字"
+    return None
+
+
+def dsl_error(cfg: Any) -> str | None:
+    """triggerConfig 非法时返回原因；合法返回 None。错误码 1009。"""
+    if not isinstance(cfg, dict):
+        return "triggerConfig 须为对象"
+    extra = set(cfg) - DSL_KEYS
+    if extra:
+        return f"triggerConfig 含未知字段 {sorted(extra)[0]}"
+    if not _ident(cfg.get("source")):
+        return "source 非法"
+    has_one = "condition" in cfg
+    has_many = "conditions" in cfg
+    if not has_one and not has_many:
+        return "condition 缺失"
+    if has_one:
+        reason = _condition_error(cfg.get("condition"), "condition")
+        if reason:
+            return reason
+    if has_many:
+        rows = cfg.get("conditions")
+        if not isinstance(rows, list) or not rows:
+            return "conditions 须为非空数组"
+        for index, row in enumerate(rows):
+            reason = _condition_error(row, f"conditions[{index}]")
+            if reason:
+                return reason
+    if "mergeWindowMinutes" in cfg:
+        window = cfg.get("mergeWindowMinutes")
+        if isinstance(window, bool) or not isinstance(window, int) or window < 5 or window > 60:
+            return "mergeWindowMinutes 须为 5~60 的整数"
+    return None
+
+
+def dsl_summary(cfg: dict) -> str:
+    cond = cfg.get("condition")
+    if not isinstance(cond, dict):
+        rows = cfg.get("conditions") or []
+        cond = rows[0] if rows else {}
+    return f"{cfg.get('source')}.{cond.get('field')} {cond.get('op')} {cond.get('value')}"
+
+
+def legacy_expr_error(expr: str) -> str | None:
+    text = expr.strip()
+    if not text:
+        return None
+    if LEGACY_EXPR_RE.match(text):
+        return None
+    return "thresholdExpr 不是合法比较式（字段><=数字）"
+
+
+def fail_dsl(reason: str):
+    return fail(1009, f"预警规则 DSL 非法（1009）：{reason}")
 
 
 def iso(dt: datetime | None) -> str:
@@ -154,15 +245,25 @@ def create_rule(
             )
         )
         if dup:
-            return fail(1165, "规则编码重复")
+            return fail(1165, "规则编码已存在（1165）")
     if not code:
         code = next_rule_code(db, tenant_id)
+    stored_expr = body.thresholdExpr.strip()
+    if body.triggerConfig is not None:
+        reason = dsl_error(body.triggerConfig)
+        if reason:
+            return fail_dsl(reason)
+        stored_expr = dsl_summary(body.triggerConfig)
+    elif stored_expr:
+        reason = legacy_expr_error(stored_expr)
+        if reason:
+            return fail_dsl(reason)
     row = AlertRule(
         rule_code=code,
         rule_name=name or code,
         metric_type=body.metricType.strip() or "THRESHOLD",
         level=body.level,
-        threshold_expr=body.thresholdExpr.strip(),
+        threshold_expr=stored_expr,
         cron_expr=body.cronExpr.strip() or "0 */15 * * *",
         enabled=1 if body.enabled else 0,
         created_by=actor.id,
@@ -206,7 +307,8 @@ def check_records(
         stmt = stmt.where(AlertRecord.rule_id == ruleId)
     if responseStatus:
         rev = {v: k for k, v in RESPONSE_LABELS.items()}
-        code = rev.get(responseStatus.upper())
+        key = STATUS_ALIASES.get(responseStatus.upper(), responseStatus.upper())
+        code = rev.get(key)
         if code is None:
             return fail(1001, "responseStatus 无效")
         stmt = stmt.where(AlertRecord.response_status == code)
@@ -233,8 +335,17 @@ def respond_alert(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    action = (body.action or "").upper()
-    mapping = {"ACK": 1, "CONFIRM": 1, "HANDLE": 2, "HANDLED": 2, "FALSE_POSITIVE": 3, "MISREPORT": 3}
+    action = (body.action or body.response or "").upper()
+    mapping = {
+        "ACK": 1,
+        "CONFIRM": 1,
+        "HANDLE": 2,
+        "HANDLED": 2,
+        "RESOLVE": 2,
+        "FALSE_POSITIVE": 3,
+        "MISREPORT": 3,
+        "FALSE_ALARM": 3,
+    }
     if action not in mapping:
         return fail(1001, "action 无效")
     tenant_id = tenant_of(actor)
@@ -247,7 +358,12 @@ def respond_alert(
     )
     if row is None:
         return fail(1500, "预警不存在")
+    if row.response_status in TERMINAL_STATUS:
+        return fail(1167, "预警已终态不可重复响应（1167）")
     row.response_status = mapping[action]
+    if action == "FALSE_ALARM" and (body.falseAlarmReason or "").strip():
+        note = body.falseAlarmReason.strip()
+        row.content = f"{row.content}；误报原因：{note}"[:512]
     row.updated_at = utcnow()
     db.flush()
     rule = db.get(AlertRule, row.rule_id) if row.rule_id else None
