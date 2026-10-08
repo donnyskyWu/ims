@@ -15,6 +15,7 @@ from app.models import (
     RolePerm,
     Todo,
     User,
+    UserDept,
     UserRole,
     WorkMessage,
 )
@@ -39,6 +40,11 @@ E2E_UNFREEZE_ACCOUNT_NO = "AC-E2E-UNFREEZE"
 E2E_UNFREEZE_NICK = "E2E解冻抖音"
 E2E_RECON_ACCOUNT_NO = "AC-E2E-RECON"
 E2E_RECON_NICK = "E2E核对抖音"
+E2E_SUM_ACCOUNT_NO = "AC-E2E-SUM"
+E2E_SUM_NICK = "E2E汇总抖音"
+E2E_SUM_DEPT_USER = "e2e_acct_sum"
+E2E_SUM_DEPT_NICK = "汇总部门"
+E2E_SUM_DEPT_ID = 70070
 E2E_ACCT_FINANCE_USER = "e2e_acct_r3"
 E2E_ACCT_PEER_USER = "e2e_acct_peer"
 E2E_ACCT_PEER_NICK = "流转同事"
@@ -91,6 +97,7 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
         _ensure_named_account(ops, admin, E2E_RECALL_ACCOUNT_NO, E2E_RECALL_NICK)
         _ensure_named_account(ops, admin, E2E_UNFREEZE_ACCOUNT_NO, E2E_UNFREEZE_NICK)
         _ensure_named_account(ops, admin, E2E_RECON_ACCOUNT_NO, E2E_RECON_NICK)
+        _ensure_named_account(ops, admin, E2E_SUM_ACCOUNT_NO, E2E_SUM_NICK)
         ops.commit()
     finally:
         ops.close()
@@ -190,6 +197,27 @@ def ensure_acct_peer_user(db: Session) -> None:
     )
 
 
+def ensure_acct_sum_user(db: Session) -> User:
+    """成本汇总部门维度。固定部门 70070，不占用 admin 的部门。"""
+    _ensure_cloned_user(
+        db,
+        username=E2E_SUM_DEPT_USER,
+        nickname=E2E_SUM_DEPT_NICK,
+        mobile="13900000070",
+        role_key="acct:sum",
+        role_name="账号汇总同事",
+    )
+    user = db.scalar(select(User).where(User.username == E2E_SUM_DEPT_USER, User.deleted == 0))
+    assert user is not None
+    linked = db.scalar(
+        select(UserDept).where(UserDept.user_id == user.id, UserDept.dept_id == E2E_SUM_DEPT_ID)
+    )
+    if linked is None:
+        db.add(UserDept(user_id=user.id, dept_id=E2E_SUM_DEPT_ID, tenant_id=user.tenant_id or 0))
+        db.flush()
+    return user
+
+
 def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     """E2E 跑前恢复池内账号与清空该账号流程单据。"""
     if admin.username != "admin":
@@ -198,6 +226,7 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     ensure_acct_e2e_pool_account(db, admin)
     ensure_acct_finance_user(db)
     ensure_acct_peer_user(db)
+    sum_user = ensure_acct_sum_user(db)
     ops = ops_session()
     account_ids: list[int] = []
     try:
@@ -207,12 +236,13 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
             E2E_RECALL_ACCOUNT_NO,
             E2E_UNFREEZE_ACCOUNT_NO,
             E2E_RECON_ACCOUNT_NO,
+            E2E_SUM_ACCOUNT_NO,
         ):
             row = _account_row(ops, account_no)
             if row is None:
                 continue
             row.status = "IN_POOL"
-            row.holder_user_id = admin.id
+            row.holder_user_id = sum_user.id if account_no == E2E_SUM_ACCOUNT_NO else admin.id
             account_ids.append(row.id)
         ops.commit()
     finally:

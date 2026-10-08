@@ -152,7 +152,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
@@ -196,6 +196,55 @@
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div data-testid="acct-recharge-summary" class="recharge-list">
+      <div class="pg-h" style="margin-top: 8px">
+        <div>
+          <h2 style="font-size: 16px; margin: 0">成本汇总报表</h2>
+          <div class="sub">GET /account/recharge/summary · 期间按月过滤 · 维度：账号 / 部门 / 平台 · 合计与当月冲话费记录一致</div>
+        </div>
+      </div>
+      <form class="qbar" data-testid="acct-summary-filters" @submit.prevent="loadSummary">
+        <label>
+          期间
+          <input v-model="summaryForm.month" data-testid="acct-summary-month" type="month" />
+        </label>
+        <label>
+          维度
+          <select v-model="summaryForm.groupBy" data-testid="acct-summary-groupby">
+            <option v-for="item in summaryGroups" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="acct-summary-query" :disabled="summaryBusy">查询</button>
+      </form>
+      <p v-if="summaryMsg" class="hint" data-testid="acct-summary-msg">{{ summaryMsg }}</p>
+      <div class="recharge-table">
+        <table data-testid="acct-summary-table">
+          <thead>
+            <tr>
+              <th>维度</th>
+              <th>金额</th>
+              <th>笔数</th>
+              <th>差异金额</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!summaryRows.length">
+              <td colspan="4">该月无冲话费记录</td>
+            </tr>
+            <tr v-for="item in summaryRows" :key="item.dimKey" data-testid="acct-summary-row">
+              <td>{{ item.dimLabel }}</td>
+              <td class="num">¥{{ moneyText(item.totalAmount) }}</td>
+              <td>{{ item.recordCount }}</td>
+              <td class="num">¥{{ moneyText(item.diffAmount) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint" data-testid="acct-summary-totals">
+        合计 ¥{{ moneyText(summaryTotals.totalAmount) }} · {{ summaryTotals.recordCount }} 笔 · 差异 ¥{{ moneyText(summaryTotals.diffAmount) }}
+      </p>
     </div>
 
     <ProtoDrawer :open="detailOpen" :title="`${meta.title} · 详情`" width="640px" @close="detailOpen = false">
@@ -674,6 +723,26 @@ const rechargeChannels = [
   { value: 'BANK', label: '银行卡' },
 ]
 const rechargeRows = ref<Record<string, unknown>[]>([])
+const summaryGroups = [
+  { value: 'ACCOUNT', label: '账号' },
+  { value: 'DEPT', label: '部门' },
+  { value: 'PLATFORM', label: '平台' },
+]
+type SummaryRow = {
+  dimKey: string
+  dimLabel: string
+  totalAmount: number
+  recordCount: number
+  diffAmount: number
+}
+const summaryForm = reactive({
+  month: '',
+  groupBy: 'ACCOUNT',
+})
+const summaryRows = ref<SummaryRow[]>([])
+const summaryTotals = ref({ totalAmount: 0, recordCount: 0, diffAmount: 0 })
+const summaryBusy = ref(false)
+const summaryMsg = ref('')
 const rechargeOpen = ref(false)
 const rechargeAccount = ref<Record<string, unknown> | null>(null)
 const rechargeBusy = ref(false)
@@ -883,6 +952,7 @@ async function load() {
   } finally {
     loading.value = false
     await loadRecharges()
+    await loadSummary()
     await loadTransfers()
   }
 }
@@ -919,6 +989,26 @@ async function loadRecharges() {
     rechargeRows.value = data?.list || []
   } catch {
     rechargeRows.value = []
+  }
+}
+
+async function loadSummary() {
+  if (!summaryForm.month) summaryForm.month = todayUtc().slice(0, 7)
+  summaryBusy.value = true
+  summaryMsg.value = ''
+  try {
+    const res = await http.get('/account/recharge/summary', {
+      params: { month: summaryForm.month, groupBy: summaryForm.groupBy },
+    })
+    const data = res.data?.data as { rows?: SummaryRow[]; totals?: typeof summaryTotals.value }
+    summaryRows.value = data?.rows || []
+    summaryTotals.value = data?.totals || { totalAmount: 0, recordCount: 0, diffAmount: 0 }
+  } catch (e: unknown) {
+    summaryRows.value = []
+    summaryTotals.value = { totalAmount: 0, recordCount: 0, diffAmount: 0 }
+    summaryMsg.value = bizMessage(e)
+  } finally {
+    summaryBusy.value = false
   }
 }
 
@@ -1357,6 +1447,7 @@ async function submitRecharge() {
     rechargeMsg.value = '冲话费已登记'
     rechargeOpen.value = false
     await loadRecharges()
+    await loadSummary()
   } catch (e: unknown) {
     rechargeMsg.value = bizMessage(e)
   } finally {
