@@ -1033,3 +1033,7 @@
 - **E2E**：本地 `npm run test:e2e:ci` → **47/47 PASS**（#54 分支 · Web **6173** · `e2e_result.txt`）；与 **#53** 合并 main 后预期 **48/48**。
 - **Live**：**重启 18080**（`-KillPort`）加载 correction 路由；云 MySQL 无 DDL（幂等写 remark）。
 - **文档**：Checklist **v2.6.64** · 计划表 **#54** · 对照表 FIN UAT · **未自动链 #55**。
+
+## WIP · #55 S6 证件水印 closure（2026-10-08 · 进行中）
+
+- **Checklist E2E-S6-03** · Playwright **`closure-corp-cert-watermark.spec.ts`** + **`cert_e2e_seed.py`** / `resource.vue` 水印 hint · pytest **`test_cert_e2e_seed_watermark_view`**（WIP · 未外置签收）· 全量 E2E 基线仍 **48/48（#54）** · 计划表 **#55 进行中** · **未自动链 #56**。
