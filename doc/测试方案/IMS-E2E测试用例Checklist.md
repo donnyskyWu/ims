@@ -29,6 +29,7 @@
 > **v2.6.51（2026-10-08 · #41 BI 分享过期）**：`closure-bi-share-expired.spec.ts`（**E2E-S12-05 EXPIRED 切片** · 纯 UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」· 无「复制链接」）；`npm run test:e2e:ci` 预期 **33/33 PASS**（+ L3 门开 **34** · `--workers=1`）。
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
+> **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npx playwright test --workers=1` 实测 **47/47 PASS**（`e2e_result.txt` · 本地 MySQL · API **18080** · Vite **6173**；`npm run test:e2e:ci` 为 PowerShell，Linux 以同等预检代替）。+ L3 门开 **48**。  
 > **v2.6.62（2026-10-08 · #52 DC-001 账号穿透 closure）**：`closure-dc-account-trace.spec.ts`（**E2E-S12-01 切片（账号入口）** · 纯 UI · 复用 **#50** LIVE 链 → `/ims/dc/trace` 搜 `AC-E2E-FIN` · 关系图 **ACCOUNT/PERSON/SESSION** · 明细表命中本场次 · `queryCostMs`/数据截至可见）；`trace.vue` testid · `dc_trace.py` **DETAIL** `detailList` DTO 修正 · `openDcAccountTraceViaUi`；`npm run test:e2e:ci` 预期 **46/46 PASS**（+ L3 门开 **47** · `--workers=1`）。  
 > **v2.6.61（2026-10-08 · #51 DC-002 利润反查 closure）**：`closure-fin-profit-trace.spec.ts`（**E2E-S3-09 / TC-IMS-FIN-02-01** · 纯 UI · 复用 **#50** 链 → `/ims/fin/profit-trace` 列表 **81400** ·「反查」抽屉 **BR-209** · 账号 `AC-E2E-FIN` · 成本/分成明细可见）；`profit-trace.vue` testid · `closure-helpers` `openFinProfitTraceChainViaUi`；`npm run test:e2e:ci` 预期 **45/45 PASS**（+ L3 门开 **46** · `--workers=1`）。  
 > **v2.6.60（2026-10-08 · #50 S3 FIN 成本→利润 closure）**：`closure-fin-cost-profit.spec.ts`（**E2E-S3-01/02/03 切片** · 纯 UI · LIVE「核准下播」→ `/ims/fin/cost` 提交/核准 → `/ims/fin/profit` **CALCULATED** · 净利润 **81400** · BR-107 完整率卡）；`live_fin_e2e_seed`（`AC-E2E-FIN`）· `live/index.vue` 核准下播 · `cost.vue` ProtoDrawer；`npm run test:e2e:ci` 预期 **44/44 PASS**（+ L3 门开 **45** · `--workers=1`）。  
@@ -54,7 +55,7 @@
 | S9 | 绩效考核周期（指标→计算→发布→员工查看） | BR-101~110 | V2 | P0 | smoke-OK · `smoke-perf.spec.ts` |
 | S10 | 培训-考试-补考周期 | BR-104~106 | V2 | P1 | smoke-OK · **`closure-train-dispatch-complete.spec.ts`（#48）** · **`closure-train-stat-finish-rate.spec.ts`（#49）** · `smoke-train.spec.ts` |
 | S11 | 预警规则配置-触发-处置闭环 | BR-111~113 | V2 | P1 | smoke-OK · `smoke-alert.spec.ts` |
-| S12 | 数据消费闭环（穿透查询-自助报表-订阅分享） | BR-204/205/212 | V3 | P0 | smoke-OK · **`closure-dc-account-trace.spec.ts`（#52 · DC-001 账号入口）** · `smoke-bi-report.spec.ts` |
+| S12 | 数据消费闭环（穿透查询-自助报表-订阅分享） | BR-204/205/212 | V3 | P0 | smoke-OK · **`closure-dc-account-trace.spec.ts`（#52 · DC-001 账号入口）** · **`closure-dc-session-drill.spec.ts`（#53 · 场次下钻/导出）** · `smoke-bi-report.spec.ts` |
 
 ---
 
@@ -258,7 +259,7 @@
 | 编号 | 步骤 | 断言点 |
 |------|------|--------|
 | E2E-S12-push-now | 订阅页新建 ACTIVE 订阅 →「立即推送」 | 快照区 GMV · 行「钉钉成功」· 上次推送时间更新 · **闭环-OK** `closure-bi-subscribe-push-now.spec.ts` |
-| E2E-S12-01 | 六入口穿透查询（各一） | 链路互达完整；P95 < 3s（预发执行）；**账号入口切片-OK** `closure-dc-account-trace.spec.ts`（#52 · `AC-E2E-FIN`） |
+| E2E-S12-01 | 六入口穿透查询（各一） | 链路互达完整；P95 < 3s（预发执行）；**账号入口切片-OK** `closure-dc-account-trace.spec.ts`（#52 · `AC-E2E-FIN`）；**场次下钻+导出切片-OK** `closure-dc-session-drill.spec.ts`（#53 · 明细抽屉 · XLSX · `queryCostMs`/1181） |
 | E2E-S12-02 | 自助报表拖拽→下钻 | DrillDimension 六维逐一下钻成功 |
 | E2E-S12-03 | 大数据集查询 | < 30s；> 10s 自动转异步（通知领取） |
 | E2E-S12-04 | 看板订阅 DAILY | 定时推送触达 |
