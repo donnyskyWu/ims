@@ -316,6 +316,16 @@ test.describe('S1 simulated employee lifecycle closure', () => {
     await expect(holdings).toContainText('资产在用 0')
     await expect(holdings).toContainText(/证件已回收 [1-9]/)
     await page.screenshot({ path: `${shotDir}/05-returned.png`, fullPage: true })
+
+    await page.goto('/ims/workbench')
+    const resignTodo = page.locator('.tbl-wrap table').nth(1).locator('tbody tr', { hasText: `离职待归还：${NICK}` })
+    await expect(resignTodo).toBeVisible()
+    const closeResp = page.waitForResponse(
+      (r) => r.url().includes('/auth/workbench/todos/') && r.request().method() === 'PUT' && r.status() === 200,
+    )
+    await resignTodo.getByRole('button', { name: '关闭' }).click()
+    await closeResp
+    await expect(page.locator('.tbl-wrap table').nth(1).locator('tbody tr', { hasText: `离职待归还：${NICK}` })).toHaveCount(0)
     expect(pageErrors).toEqual([])
   })
 })
