@@ -16,7 +16,7 @@
 | **S4 (#64)** | 账实核对 1026 | `closure-corp-account-reconcile.spec.ts` | `AC-E2E-RECON` · 101.99/100 → **1.99%** 一致 · 102/100 → **2.00%** **1026** · 财务核查工单 |
 | **S4 (#66)** | 解冻回池 | `closure-corp-account-unfreeze.spec.ts` | `AC-E2E-UNFREEZE` 收回冻结 → 解冻 **IN_POOL** · 时间线 UNFREEZE · 再领用成功 |
 | **S4 (#70)** | 冲话费成本汇总 | `closure-corp-account-summary.spec.ts` | `AC-E2E-SUM` · 2026-04 **200.00** / 2 笔 · 账号 / 部门#70070 / 抖音 · 2026-03 **50.00** 单独成月 |
-| **S5** | 资产采购领用 | `smoke-asset.spec.ts` · **`closure-asset-purchase-import.spec.ts`（#68）** · **`closure-asset-lifecycle.spec.ts`（#63）** · **`closure-asset-penetrate.spec.ts`（#65）** | smoke：办公设备列表；#68：采购 CSV 部分成功 · 第 3 行 `assetName`；#63：登记→领用→使用→归还→报废；#65：实名人下 5 层 · 第 6 层 **1013** · 使用人在用/已归还/已报废 |
+| **S5** | 资产采购领用 | `smoke-asset.spec.ts` · **`closure-asset-purchase-import.spec.ts`（#68）** · **`closure-asset-lifecycle.spec.ts`（#63）** · **`closure-asset-penetrate.spec.ts`（#65）** · **`closure-asset-reverse-entry.spec.ts`（#72）** | smoke：办公设备列表；#68：采购 CSV 部分成功 · 第 3 行 `assetName`；#63：登记→领用→使用→归还→报废；#65：实名人下 5 层 · 第 6 层 **1013** · 使用人在用/已归还/已报废；#72：按账号/场次反查 · 入口不存在 **1500** · 领用后「在用」 |
 | **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** · **`closure-corp-cert-expire.spec.ts`（#61）** | smoke：证件列表；#55：水印 + 脱敏号；#61：T−30/T−7/T−0 黄/红/锁定 + 工作台提醒 |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
 | **S8** | AI 资产分发 | `smoke-air-skill.spec.ts` | 登录 → `/ims/air/skill` 标题「技能库」+ table |
@@ -60,6 +60,7 @@
 | **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
 | **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
 | **E2E-S5-01 (#68)** | `closure-asset-purchase-import.spec.ts` | 纯 UI 文件选择器上传 CSV · 部分成功 2 条待审核 · 第 3 行 `assetName` · 坏编号不在台账 · 时间线「采购入台账」 |
+| **E2E-S5-05 (#72)** | `closure-asset-reverse-entry.spec.ts` | 纯 UI 绑定 `AC-E2E-FIN` / `IMS20261008DYE0072` · 不存在入口 **1500** · 领用后账号反查「在用」· 场次反查不含只绑账号的那台 |
 | **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
 | **E2E-S2 窄切片 (#56)** | `closure-live-session-report.spec.ts` | 登记→风控→下播核准 · 19 位场次 · 列表 CONFIRMED |
