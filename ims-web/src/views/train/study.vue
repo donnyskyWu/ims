@@ -14,7 +14,7 @@
     <div v-else-if="task" class="g2">
       <div class="card head">
         <div style="font-weight: 600; font-size: 16px">{{ task.taskName }}</div>
-        <div class="meta">编号 {{ task.taskNo }} · 截止 {{ task.deadline }} · {{ task.confirmType }}</div>
+        <div class="meta">编号 {{ task.taskNo }} · 截止 {{ task.deadline }} · {{ confirmTypeLabel }}</div>
         <div class="meta">
           总进度 <strong>{{ progressPct }}%</strong>
           · 确认状态
@@ -37,6 +37,7 @@
             标记当前资料已学完
           </button>
           <button
+            v-if="task.confirmType !== 'QUIZ'"
             class="btn btn-pri btn-sm"
             type="button"
             :disabled="busy || !allMaterialsDone"
@@ -46,19 +47,64 @@
             完成确认
           </button>
         </div>
+
+        <div v-if="task.confirmType === 'QUIZ' && confirmStatus !== 'CONFIRMED'" class="quiz-paper">
+          <div class="quiz-head">自测问卷 · 及格 {{ task.passScore }} 分 · 共 {{ quiz.length }} 题</div>
+          <p class="hint">全部题目必答。提交后将判分，未及格可重答，成绩保留最新一次。</p>
+          <div v-if="!quiz.length" class="hint" style="color: var(--red)">问卷未配置</div>
+          <div v-for="(q, qi) in quiz" :key="qi" class="quiz-q">
+            <div class="q-title">{{ qi + 1 }}. {{ q.question }}</div>
+            <label v-for="(opt, oi) in q.options" :key="oi" class="opt">
+              <input
+                type="radio"
+                :name="'quiz-' + qi"
+                :value="oi"
+                :checked="answers[qi] === oi"
+                @change="answers[qi] = oi"
+              />
+              {{ opt }}
+            </label>
+          </div>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            :disabled="busy || !quizReady"
+            :title="quizReady ? '' : '请答完全部题目'"
+            @click="showQuizConfirm = true"
+          >
+            提交问卷
+          </button>
+          <p v-if="gradeText" class="hint grade-banner">{{ gradeText }}</p>
+        </div>
+
         <p v-if="actionError" class="hint" style="color: var(--red); margin-top: 8px">{{ actionError }}</p>
-        <p v-if="confirmStatus === 'CONFIRMED'" class="hint ok-banner">学习已完成 · CONFIRMED</p>
+        <p v-if="confirmStatus === 'CONFIRMED'" class="hint ok-banner">
+          学习已完成 · CONFIRMED<span v-if="passedScore != null"> · 得分 {{ passedScore }}</span>
+        </p>
       </div>
     </div>
     <div v-else class="empty"><div class="et">加载中…</div></div>
+
+    <div v-if="showQuizConfirm" class="modal-mask" @click.self="showQuizConfirm = false">
+      <div class="card" style="width: 360px; padding: 20px">
+        <h3 style="margin: 0 0 8px">确认交卷</h3>
+        <p class="hint">提交后将判分，未及格可重答</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; gap: 8px">
+          <button class="btn btn-sec btn-sm" type="button" :disabled="busy" @click="showQuizConfirm = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" :disabled="busy" @click="submitQuiz">确认交卷</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
+
+type QuizPublic = { question: string; options: string[] }
 
 type TaskRow = {
   id: number
@@ -67,6 +113,8 @@ type TaskRow = {
   materialIds: number[]
   deadline: string
   confirmType: string
+  passScore?: number
+  quiz?: QuizPublic[]
 }
 
 type MatRow = { id: number; title: string; materialType: string }
@@ -81,11 +129,25 @@ const progressPct = ref(0)
 const confirmStatus = ref<'NOT_CONFIRMED' | 'CONFIRMED'>('NOT_CONFIRMED')
 const loadError = ref('')
 const actionError = ref('')
+const gradeText = ref('')
+const passedScore = ref<number | null>(null)
 const busy = ref(false)
+const showQuizConfirm = ref(false)
 const activeMaterialId = ref(0)
+const answers = reactive<(number | null)[]>([])
 
 const confirmStatusLabel = computed(() =>
   confirmStatus.value === 'CONFIRMED' ? '已确认' : '未确认',
+)
+
+const confirmTypeLabel = computed(() =>
+  task.value?.confirmType === 'QUIZ' ? '自测问卷' : '学时达标',
+)
+
+const quiz = computed(() => task.value?.quiz ?? [])
+
+const quizReady = computed(
+  () => quiz.value.length > 0 && quiz.value.every((_, index) => typeof answers[index] === 'number'),
 )
 
 const allMaterialsDone = computed(() => {
@@ -120,6 +182,7 @@ async function loadTaskAndProgress() {
   }
   task.value = found
   activeMaterialId.value = found.materialIds[0] ?? 0
+  answers.splice(0, answers.length, ...((found.quiz || []).map(() => null)))
 
   const matRes = await http.get('/train/material/list', {
     params: { status: 'PUBLISHED', pageNo: 1, pageSize: 100 },
@@ -139,6 +202,42 @@ async function loadTaskAndProgress() {
     materialProgress.value = parseMatProgress(rec.materialProgress)
     progressPct.value = rec.progress ?? 0
     confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
+    if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
+      passedScore.value = rec.confirmScore
+    }
+  }
+}
+
+async function submitQuiz() {
+  actionError.value = ''
+  gradeText.value = ''
+  busy.value = true
+  try {
+    const res = await http.post(`/train/task/${taskId.value}/confirm`, {
+      answers: quiz.value.map((_, index) => ({
+        questionIndex: index,
+        answerIndex: answers[index],
+      })),
+    })
+    if (res.data.code !== 0) {
+      actionError.value = res.data.msg || '交卷失败'
+      return
+    }
+    const data = res.data.data || {}
+    if (data.isPassed === false || data.confirmStatus !== 'CONFIRMED') {
+      gradeText.value = `得分 ${data.confirmScore}，及格 ${data.passScore}，未通过，可重答`
+      confirmStatus.value = 'NOT_CONFIRMED'
+      return
+    }
+    confirmStatus.value = 'CONFIRMED'
+    passedScore.value = data.confirmScore ?? null
+    progressPct.value = 100
+    gradeText.value = ''
+  } catch {
+    actionError.value = '网络错误'
+  } finally {
+    busy.value = false
+    showQuizConfirm.value = false
   }
 }
 
@@ -226,5 +325,40 @@ onMounted(loadTaskAndProgress)
   margin-top: 12px;
   color: var(--green);
   font-weight: 600;
+}
+.quiz-paper {
+  margin-top: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #eee);
+}
+.quiz-head {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.quiz-q {
+  margin: 12px 0;
+}
+.q-title {
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.opt {
+  display: block;
+  margin: 4px 0;
+  cursor: pointer;
+}
+.grade-banner {
+  margin-top: 12px;
+  color: var(--red);
+  font-weight: 600;
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
 }
 </style>

@@ -57,7 +57,7 @@
               <td class="num">{{ row.materialCount }}</td>
               <td class="num">{{ row.assignedCount }}</td>
               <td :style="{ color: finishColor(row.finishRate) }">{{ row.finishRate }}%</td>
-              <td>{{ row.confirmType }}</td>
+              <td>{{ confirmLabel(row.confirmType) }}</td>
               <td class="mono">{{ row.deadline }}</td>
               <td>{{ row.status }}</td>
               <td>
@@ -71,7 +71,7 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 420px; padding: 20px; max-height: 90vh; overflow: auto">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto">
         <h3 style="margin: 0 0 12px">下达学习任务</h3>
         <label class="fld">任务名称</label>
         <input v-model="form.taskName" class="fld-in" />
@@ -89,9 +89,37 @@
         <input v-model="form.deadline" class="fld-in" placeholder="2026-12-31T18:00:00+08:00" />
         <label class="fld">确认方式</label>
         <select v-model="form.confirmType" class="fld-in">
-          <option value="DURATION">DURATION</option>
-          <option value="QUIZ">QUIZ</option>
+          <option value="DURATION">学时达标</option>
+          <option value="QUIZ">自测问卷</option>
         </select>
+        <div v-if="form.confirmType === 'QUIZ'" class="quiz-editor">
+          <p class="hint">手工组卷：每题 1 分。及格分是需要答对的题数，不能超过题目数。</p>
+          <label class="fld">及格分（答对题数）</label>
+          <input v-model.number="form.passScore" class="fld-in" type="number" min="1" />
+          <div v-for="(q, qi) in form.quiz" :key="qi" class="quiz-block" :data-qi="qi">
+            <label class="fld">题目 {{ qi + 1 }}</label>
+            <input v-model="q.question" class="fld-in" placeholder="请输入题目" />
+            <div v-for="(opt, oi) in q.options" :key="oi" class="opt-row">
+              <input v-model.number="q.answerIndex" type="radio" :name="'ans-' + qi" :value="oi" />
+              <input v-model="q.options[oi]" class="fld-in" placeholder="选项内容" />
+              <button
+                v-if="q.options.length > 2"
+                class="btn btn-sec btn-sm"
+                type="button"
+                @click="removeOption(qi, oi)"
+              >
+                删除选项
+              </button>
+            </div>
+            <div class="acts" style="margin-top: 6px; gap: 8px">
+              <button class="btn btn-sec btn-sm" type="button" @click="addOption(qi)">添加选项</button>
+              <button v-if="form.quiz.length > 1" class="btn btn-sec btn-sm" type="button" @click="removeQuestion(qi)">
+                删除题目
+              </button>
+            </div>
+          </div>
+          <button class="btn btn-sec btn-sm" type="button" style="margin-top: 8px" @click="addQuestion">添加题目</button>
+        </div>
         <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
@@ -109,19 +137,21 @@
               <th>用户</th>
               <th>进度</th>
               <th>确认状态</th>
+              <th>得分</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="recordsLoading">
-              <td colspan="3">加载中…</td>
+              <td colspan="4">加载中…</td>
             </tr>
             <tr v-else-if="!recordRows.length">
-              <td colspan="3">暂无记录</td>
+              <td colspan="4">暂无记录</td>
             </tr>
             <tr v-for="r in recordRows" v-else :key="r.userId">
               <td>{{ r.userName || r.userId }}</td>
               <td class="num">{{ r.progress }}%</td>
               <td>{{ r.confirmStatus }}</td>
+              <td class="num">{{ r.confirmScore == null ? '—' : r.confirmScore }}</td>
             </tr>
           </tbody>
         </table>
@@ -164,14 +194,66 @@ const publishedMaterials = ref<MatPick[]>([])
 const showRecords = ref(false)
 const recordsLoading = ref(false)
 const recordsTaskName = ref('')
-const recordRows = ref<Array<{ userId: number; userName: string; progress: number; confirmStatus: string }>>([])
+const recordRows = ref<
+  Array<{ userId: number; userName: string; progress: number; confirmStatus: string; confirmScore: number | null }>
+>([])
+
+type QuizDraft = { question: string; options: string[]; answerIndex: number }
+
+function blankQuestion(): QuizDraft {
+  return { question: '', options: ['', ''], answerIndex: 0 }
+}
+
 const form = reactive({
   taskName: '',
   materialIds: [] as number[],
   userIdsText: '1',
   deadline: '2026-12-31T18:00:00+08:00',
   confirmType: 'DURATION',
+  passScore: 1,
+  quiz: [blankQuestion()] as QuizDraft[],
 })
+
+function confirmLabel(value: string) {
+  if (value === 'QUIZ') return '自测问卷'
+  if (value === 'DURATION') return '学时达标'
+  return value
+}
+
+function addQuestion() {
+  form.quiz.push(blankQuestion())
+}
+
+function removeQuestion(index: number) {
+  if (form.quiz.length <= 1) return
+  form.quiz.splice(index, 1)
+  if (form.passScore > form.quiz.length) form.passScore = form.quiz.length
+}
+
+function addOption(questionIndex: number) {
+  form.quiz[questionIndex].options.push('')
+}
+
+function removeOption(questionIndex: number, optionIndex: number) {
+  const question = form.quiz[questionIndex]
+  if (question.options.length <= 2) return
+  question.options.splice(optionIndex, 1)
+  if (question.answerIndex >= question.options.length) question.answerIndex = 0
+}
+
+function quizError(): string {
+  if (!form.quiz.length) return 'quiz 必填'
+  for (const question of form.quiz) {
+    if (!question.question.trim() || question.question.trim().length > 256) return '题目必填且不超过 256 字'
+    const options = question.options.map((opt) => opt.trim())
+    if (options.length < 2 || options.some((opt) => !opt)) return '每题选项至少 2 项'
+    if (question.answerIndex < 0 || question.answerIndex >= options.length) return '请设定正确答案'
+  }
+  if (!form.passScore || form.passScore < 1 || form.passScore > form.quiz.length) {
+    return '及格分须在 1 到题目数之间'
+  }
+  return ''
+}
 
 function defaultDeadline() {
   const d = new Date()
@@ -255,6 +337,8 @@ function openCreate() {
   form.userIdsText = '1'
   form.deadline = defaultDeadline()
   form.confirmType = 'DURATION'
+  form.passScore = 1
+  form.quiz = [blankQuestion()]
   formError.value = ''
   void loadPublishedMaterials()
   showForm.value = true
@@ -268,14 +352,28 @@ async function submit() {
     formError.value = '名称、资料与用户必填'
     return
   }
-  const res = await http.post('/train/task', {
+  const payload: Record<string, unknown> = {
     taskName: form.taskName.trim(),
     materialIds,
     assignScope: 'BY_USER',
     assignTargetUserIds: userIds,
     deadline: form.deadline,
     confirmType: form.confirmType,
-  })
+  }
+  if (form.confirmType === 'QUIZ') {
+    const invalid = quizError()
+    if (invalid) {
+      formError.value = invalid
+      return
+    }
+    payload.passScore = form.passScore
+    payload.quiz = form.quiz.map((question) => ({
+      question: question.question.trim(),
+      options: question.options.map((opt) => opt.trim()),
+      answerIndex: question.answerIndex,
+    }))
+  }
+  const res = await http.post('/train/task', payload)
   if (res.data.code !== 0) {
     formError.value = res.data.msg || `失败 (${res.data.code})`
     return
@@ -328,5 +426,23 @@ onMounted(async () => {
   font-size: 13px;
   margin: 4px 0;
   cursor: pointer;
+}
+.quiz-editor {
+  margin-top: 8px;
+}
+.quiz-block {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+}
+.opt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.opt-row .fld-in {
+  flex: 1;
 }
 </style>

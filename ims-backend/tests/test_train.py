@@ -1,11 +1,17 @@
 import os
+import uuid
 
+os.environ.pop("IMS_DATABASE_URL", None)
+os.environ["IMS_MYSQL_HOST"] = "127.0.0.1"
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.core import SessionLocal
 from app.main import app
+from app.models import TrainTask, UserRole
 
 client = TestClient(app)
 
@@ -260,3 +266,205 @@ def test_train_stat_finish_rate_after_confirm():
     assert hit["finishedCount"] == 1
     assert hit["assignedCount"] == 1
     assert hit["finishRate"] == 100.0
+
+
+def _published_material(auth: dict, title: str) -> int:
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    material = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": title,
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/quiz.pdf",
+            "publish": True,
+        },
+    )
+    body = material.json()
+    assert body["code"] == 0, body
+    return body["data"]["id"]
+
+
+def _quiz_task(auth: dict, material_id: int, name: str, quiz: list, pass_score: int | None):
+    payload = {
+        "taskName": name,
+        "materialIds": [material_id],
+        "assignScope": "BY_USER",
+        "assignTargetUserIds": [1],
+        "deadline": "2026-12-31T18:00:00+08:00",
+        "confirmType": "QUIZ",
+        "quiz": quiz,
+    }
+    if pass_score is not None:
+        payload["passScore"] = pass_score
+    return client.post("/admin-api/ims/train/task", headers=auth, json=payload)
+
+
+def _peer_headers() -> dict:
+    username = f"quiz_{uuid.uuid4().hex[:8]}"
+    mobile = f"137{uuid.uuid4().int % 10**8:08d}"
+    created = client.post(
+        "/admin-api/ims/system/user",
+        headers=headers(),
+        json={"username": username, "nickname": "问卷旁听", "mobile": mobile, "password": "Admin@123"},
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    user_id = int(body["data"]["id"])
+    db = SessionLocal()
+    try:
+        role_id = db.scalar(select(UserRole.role_id).where(UserRole.user_id == 1))
+        assert role_id
+        db.add(UserRole(user_id=user_id, role_id=role_id, tenant_id=0))
+        db.commit()
+    finally:
+        db.close()
+    logged = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"})
+    token = logged.json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+SAMPLE_QUIZ = [
+    {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"], "answerIndex": 0},
+    {"question": "话术可以照着念吗", "options": ["可以", "不行"], "answerIndex": 1},
+]
+
+
+def test_train_quiz_compose_rejects_bad_paper():
+    auth = headers()
+    material_id = _published_material(auth, "组卷校验资料")
+    cases = [
+        ({"quiz": [], "passScore": 1}, "quiz 必填"),
+        ({"quiz": SAMPLE_QUIZ}, "passScore 必填"),
+        ({"quiz": SAMPLE_QUIZ, "passScore": 3}, "及格分须在 1 到题目数之间"),
+        (
+            {"quiz": [{"question": "只有一项", "options": ["甲"], "answerIndex": 0}], "passScore": 1},
+            "每题选项至少 2 项",
+        ),
+        (
+            {"quiz": [{"question": "下标越界", "options": ["甲", "乙"], "answerIndex": 2}], "passScore": 1},
+            "答案下标超出选项",
+        ),
+        (
+            {"quiz": [{"question": "   ", "options": ["甲", "乙"], "answerIndex": 0}], "passScore": 1},
+            "题目必填且不超过 256 字",
+        ),
+    ]
+    for extra, message in cases:
+        payload = {
+            "taskName": "坏卷",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "QUIZ",
+            **extra,
+        }
+        bad = client.post("/admin-api/ims/train/task", headers=auth, json=payload)
+        body = bad.json()
+        assert body["code"] == 1001, body
+        assert body["msg"] == message
+
+
+def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
+    auth = headers()
+    material_id = _published_material(auth, "问卷判分资料")
+    name = f"问卷判分 {uuid.uuid4().hex[:6]}"
+    created = _quiz_task(auth, material_id, name, SAMPLE_QUIZ, 2)
+    body = created.json()
+    assert body["code"] == 0, body
+    data = body["data"]
+    task_id = data["id"]
+    assert data["questionCount"] == 2
+    assert data["passScore"] == 2
+    assert data["quiz"][0] == {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"]}
+    assert "answerIndex" not in data["quiz"][0]
+
+    listed = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": name, "pageNo": 1, "pageSize": 10},
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == task_id)
+    assert "answerIndex" not in row["quiz"][1]
+
+    stranger = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=_peer_headers(),
+        json={"answers": [{"questionIndex": 0, "answerIndex": 0}, {"questionIndex": 1, "answerIndex": 1}]},
+    )
+    assert stranger.json()["code"] == 1105
+
+    incomplete = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 0}]},
+    )
+    assert incomplete.json()["code"] == 1001
+    assert incomplete.json()["msg"] == "问卷未答完"
+
+    failed = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 1}, {"questionIndex": 1, "answerIndex": 0}]},
+    )
+    failed_body = failed.json()
+    assert failed_body["code"] == 0, failed_body
+    assert failed_body["data"]["isPassed"] is False
+    assert failed_body["data"]["confirmStatus"] == "NOT_CONFIRMED"
+    assert failed_body["data"]["confirmScore"] == 0
+    assert failed_body["data"]["passScore"] == 2
+
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    rec = records.json()["data"]["list"][0]
+    assert rec["confirmStatus"] == "NOT_CONFIRMED"
+    assert rec["confirmScore"] == 0
+
+    passed = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 0}, {"questionIndex": 1, "answerIndex": 1}]},
+    )
+    passed_body = passed.json()
+    assert passed_body["code"] == 0, passed_body
+    assert passed_body["data"]["isPassed"] is True
+    assert passed_body["data"]["confirmStatus"] == "CONFIRMED"
+    assert passed_body["data"]["confirmScore"] == 2
+
+    again = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 1}, {"questionIndex": 1, "answerIndex": 0}]},
+    )
+    again_body = again.json()
+    assert again_body["code"] == 0, again_body
+    assert again_body["data"]["confirmStatus"] == "CONFIRMED"
+    assert again_body["data"]["confirmScore"] == 2
+
+    listed_after = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": name, "pageNo": 1, "pageSize": 10},
+    )
+    done = next(item for item in listed_after.json()["data"]["list"] if item["id"] == task_id)
+    assert done["finishRate"] == 100.0
+
+    bare = _quiz_task(auth, material_id, f"空卷 {uuid.uuid4().hex[:6]}", SAMPLE_QUIZ, 1)
+    bare_id = bare.json()["data"]["id"]
+    db = SessionLocal()
+    try:
+        row = db.get(TrainTask, bare_id)
+        assert row is not None
+        row.quiz = []
+        db.commit()
+    finally:
+        db.close()
+    missing = client.post(f"/admin-api/ims/train/task/{bare_id}/confirm", headers=auth, json={"answers": []})
+    assert missing.json()["code"] == 1104
+    assert missing.json()["msg"] == "问卷未配置"

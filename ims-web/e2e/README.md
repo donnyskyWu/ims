@@ -62,6 +62,7 @@
 | **E2E-S5-01 (#68)** | `closure-asset-purchase-import.spec.ts` | 纯 UI 文件选择器上传 CSV · 部分成功 2 条待审核 · 第 3 行 `assetName` · 坏编号不在台账 · 时间线「采购入台账」 |
 | **E2E-S5-05 (#72)** | `closure-asset-reverse-entry.spec.ts` | 纯 UI 绑定 `AC-E2E-FIN` / `IMS20261008DYE0072` · 不存在入口 **1500** · 领用后账号反查「在用」· 场次反查不含只绑账号的那台 |
 | **E2E-S1-01/03/04 与 S1-05～11 子集 (#73)** | `closure-s1-lifecycle.spec.ts` | 事件由 `s1_lifecycle_seed` 在浏览器外入队 · 之后纯 UI：在职/工作台、领用 `AC-E2E-S1`、调岗 diff、冻结与 **1006**、归还和换证后名下在用为 0 |
+| **E2E-S10 问卷组卷/判分/重答 (#79)** | `closure-train-quiz-retake.spec.ts` | 纯 UI · 手工组卷及格分超题数拦截 · 交卷判分 · 不及格重答覆盖为最新成绩 · 及格后 **CONFIRMED** |
 | **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
 | **E2E-S2 窄切片 (#56)** | `closure-live-session-report.spec.ts` | 登记→风控→下播核准 · 19 位场次 · 列表 CONFIRMED |

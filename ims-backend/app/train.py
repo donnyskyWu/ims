@@ -714,8 +714,85 @@ def finish_rate(db: Session, task_id: int, assigned: int) -> float:
     return round(done * 100.0 / assigned, 2)
 
 
+def public_quiz(raw) -> list[dict]:
+    """学员可见题干与选项。正确答案只留在服务端。"""
+    items = raw if isinstance(raw, list) else []
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            {
+                "question": item.get("question") or "",
+                "options": list(item.get("options") or []),
+            }
+        )
+    return out
+
+
+def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
+    """手工组卷：每题 1 分，及格分是需要答对的题数。"""
+    if not quiz:
+        return fail(1001, "quiz 必填")
+    if pass_score is None:
+        return fail(1001, "passScore 必填")
+    if pass_score < 1 or pass_score > len(quiz):
+        return fail(1001, "及格分须在 1 到题目数之间")
+    normalized: list[dict] = []
+    for item in quiz:
+        question = (item.question or "").strip()
+        if not question or len(question) > 256:
+            return fail(1001, "题目必填且不超过 256 字")
+        options = [opt.strip() for opt in item.options]
+        if len(options) < 2 or any(not opt for opt in options):
+            return fail(1001, "每题选项至少 2 项")
+        if item.answerIndex < 0 or item.answerIndex >= len(options):
+            return fail(1001, "答案下标超出选项")
+        normalized.append(
+            {
+                "question": question,
+                "options": options,
+                "answerIndex": int(item.answerIndex),
+            }
+        )
+    return normalized, int(pass_score)
+
+
+def parse_quiz_answers(quiz: list, answers: list) -> dict[int, int] | None:
+    found: dict[int, int] = {}
+    for raw in answers:
+        if not isinstance(raw, dict) or "questionIndex" not in raw or "answerIndex" not in raw:
+            return None
+        try:
+            found[int(raw["questionIndex"])] = int(raw["answerIndex"])
+        except (TypeError, ValueError):
+            return None
+    for idx, item in enumerate(quiz):
+        options = item.get("options") if isinstance(item, dict) else None
+        option_count = len(options) if isinstance(options, list) else 0
+        given = found.get(idx)
+        if given is None or given < 0 or given >= option_count:
+            return None
+    return found
+
+
+def score_quiz(quiz: list, chosen: dict[int, int]) -> int:
+    score = 0
+    for idx, item in enumerate(quiz):
+        if not isinstance(item, dict):
+            continue
+        try:
+            expected = int(item.get("answerIndex", -1))
+        except (TypeError, ValueError):
+            continue
+        if chosen.get(idx) == expected:
+            score += 1
+    return score
+
+
 def task_vo(db: Session, row: TrainTask) -> dict:
     material_ids = row.material_ids if isinstance(row.material_ids, list) else []
+    quiz = public_quiz(row.quiz)
     return {
         "id": row.id,
         "taskNo": row.task_no,
@@ -725,6 +802,9 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "assignedCount": row.assigned_count,
         "deadline": iso(row.deadline),
         "confirmType": row.confirm_type,
+        "passScore": int(row.pass_score or 0),
+        "questionCount": len(quiz),
+        "quiz": quiz,
         "status": resolve_task_status(row),
         "createdAt": iso(row.created_at),
     }
@@ -787,10 +867,12 @@ def create_task(
     if err:
         return err
     if body.confirmType == "QUIZ":
-        if not body.quiz:
-            return fail(1001, "quiz 必填")
-        if body.passScore is None:
-            return fail(1001, "passScore 必填")
+        parsed = normalize_quiz(body.quiz, body.passScore)
+        if not isinstance(parsed, tuple):
+            return parsed
+        quiz_rows, pass_score = parsed
+    else:
+        quiz_rows, pass_score = [], 0
     assignees = expand_assignees(db, tenant_id, body)
     if isinstance(assignees, dict):
         return assignees
@@ -803,8 +885,8 @@ def create_task(
         assign_targets=unique_users if body.assignScope == "BY_USER" else body.assignTargetPositionCodes or [],
         deadline=deadline.replace(tzinfo=None),
         confirm_type=body.confirmType,
-        quiz=[item.model_dump() for item in (body.quiz or [])],
-        pass_score=body.passScore or 0,
+        quiz=quiz_rows,
+        pass_score=pass_score,
         assigned_count=len(unique_users),
         status="IN_PROGRESS",
         creator_user_id=actor.id,
@@ -1160,9 +1242,23 @@ def progress_vo(
         "progress": record.progress,
         "materialProgress": {str(k): v for k, v in mat_prog.items()},
         "confirmStatus": confirm_status_label(record.confirm_status),
+        "confirmScore": record.confirm_score,
         "startedAt": iso(record.created_at),
         "finishedAt": finished,
     }
+
+
+def confirm_payload(task: TrainTask, record: TrainTaskRecord) -> dict:
+    passed = record.confirm_status == 1
+    data = {
+        "confirmStatus": confirm_status_label(record.confirm_status),
+        "confirmScore": record.confirm_score,
+        "isPassed": passed,
+        "finishedAt": iso(record.finished_at) if record.finished_at else None,
+    }
+    if task.confirm_type == "QUIZ":
+        data["passScore"] = int(task.pass_score or 0)
+    return data
 
 
 class ProgressBody(BaseModel):
@@ -1233,14 +1329,7 @@ def confirm_task(
     if record is None:
         return fail(1105, "非被指派人无权上报进度")
     if record.confirm_status == 1:
-        return ok(
-            {
-                "confirmStatus": "CONFIRMED",
-                "confirmScore": record.confirm_score,
-                "isPassed": True,
-                "finishedAt": iso(record.finished_at),
-            }
-        )
+        return ok(confirm_payload(task, record))
 
     if task.confirm_type == "DURATION":
         material_ids = task.material_ids if isinstance(task.material_ids, list) else []
@@ -1251,18 +1340,17 @@ def confirm_task(
         quiz = task.quiz if isinstance(task.quiz, list) else []
         if not quiz:
             return fail(1104, "问卷未配置")
-        answers = (body.answers if body else None) or []
-        score = 0
-        for idx, item in enumerate(quiz):
-            expected = int(item.get("answerIndex", 0))
-            given = next((a.get("answerIndex") for a in answers if a.get("questionIndex") == idx), None)
-            if given is not None and int(given) == expected:
-                score += 1
-        pass_score = task.pass_score or len(quiz)
-        passed = score >= pass_score
-        if not passed:
-            return fail(1104, "问卷未及格")
+        chosen = parse_quiz_answers(quiz, (body.answers if body else None) or [])
+        if chosen is None:
+            return fail(1001, "问卷未答完")
+        score = score_quiz(quiz, chosen)
+        pass_line = int(task.pass_score or len(quiz))
+        now = utcnow()
         record.confirm_score = score
+        record.updated_at = now
+        if score < pass_line:
+            db.flush()
+            return ok(confirm_payload(task, record))
     else:
         return fail(1001, "confirmType 无效")
 
@@ -1272,14 +1360,7 @@ def confirm_task(
     record.finished_at = now
     record.updated_at = now
     db.flush()
-    return ok(
-        {
-            "confirmStatus": "CONFIRMED",
-            "confirmScore": record.confirm_score,
-            "isPassed": True,
-            "finishedAt": iso(record.finished_at),
-        }
-    )
+    return ok(confirm_payload(task, record))
 
 
 @router.get("/task/records")
