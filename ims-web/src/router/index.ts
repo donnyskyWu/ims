@@ -74,6 +74,7 @@ const router = createRouter({
         { path: 'air/skill', component: () => import('../views/air/skill.vue') },
         { path: 'air/expert', component: () => import('../views/air/expert.vue') },
         { path: 'air/cfg', component: () => import('../views/air/cfg.vue') },
+        { path: 'perf/metric', component: () => import('../views/perf/metric.vue') },
         { path: 'perf/scheme', component: () => import('../views/perf/scheme.vue') },
         { path: 'perf/execution', component: () => import('../views/perf/execution.vue') },
         { path: 'perf/result', component: () => import('../views/perf/result.vue') },

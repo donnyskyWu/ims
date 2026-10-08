@@ -769,6 +769,15 @@
       "desc": "考核方案 → 执行考核 → 考核结果（走查 #12 · OPS M3）",
       "navParent": true
     },
+    "perfMetric": {
+      "no": "05",
+      "name": "指标配置",
+      "code": "PERF",
+      "icon": "chart",
+      "page": "指标配置",
+      "parent": "绩效考核",
+      "desc": "PERF-001 · /ims/perf/metric · 指标集权重合计 100 · COMPETE_SUBMIT_RATE 锁定"
+    },
     "perfScheme": {
       "no": "05",
       "name": "考核方案",
@@ -1247,6 +1256,7 @@
           "id": "perfCenter",
           "label": "绩效考核",
           "children": [
+            "perfMetric",
             "perfScheme",
             "perfExec",
             "perfResult",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
-from app.models import ExamQuestion, PerfRecord, PerfScheme, User
+from app.models import ExamQuestion, PerfMetric, PerfPositionBind, PerfRecord, PerfScheme, User
 
 router = APIRouter(prefix="/perf", tags=["perf"])
 
@@ -760,3 +761,432 @@ def activate_scheme(
     row.updated_at = utcnow()
     db.flush()
     return ok(scheme_vo(row))
+
+
+COMPETE_CODE = "COMPETE_SUBMIT_RATE"
+COMPETE_NOTE = "待 V3 竞品管理（04）上线后启用（BR-110/BR-206）"
+COMPETE_LOCK_MSG = "竞品分析提交率指标 V2 锁定禁用（BR-110）"
+METRIC_SOURCES = frozenset({"AUTO", "MANUAL", "EXAM"})
+METRIC_MODULES = frozenset({"TRAIN", "MEET", "REPORT", "LIVE", "FIN", "FLOW"})
+METRIC_STATUSES = frozenset({"ENABLED", "DISABLED"})
+SCORE_RULE_TYPES = frozenset({"SEGMENT", "LINEAR"})
+HUNDRED = Decimal("100.00")
+ZERO = Decimal("0.00")
+
+
+class ScoreSegmentBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    minValue: float
+    maxValue: float | None = None
+    score: float
+
+
+class ScoreLinearBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    minMetric: float
+    maxMetric: float
+    minScore: float
+    maxScore: float
+
+
+class ScoreRuleBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    ruleType: str
+    segments: list[ScoreSegmentBody] | None = None
+    linear: ScoreLinearBody | None = None
+
+
+class SourceConfigBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    module: str
+    metricExpression: str
+    periodType: str = "MONTHLY"
+
+
+class MetricBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    metricCode: str
+    metricName: str
+    dataSource: str
+    sourceConfig: SourceConfigBody | None = None
+    weight: float = Field(ge=0, le=100)
+    scoreRule: ScoreRuleBody
+    status: str | None = None
+
+
+class MetricBindItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    metricId: int
+    weightOverride: float | None = Field(default=None, ge=0, le=100)
+
+
+class PositionBindBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    positionCode: str
+    metricBindings: list[MetricBindItem] = Field(default_factory=list)
+
+
+def q2(value: float | Decimal | int) -> Decimal:
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def score_in_range(value: float) -> bool:
+    score = q2(value)
+    return ZERO <= score <= HUNDRED
+
+
+def segments_overlap(ranges: list[tuple[Decimal, Decimal | None]]) -> bool:
+    """半开区间 [min, max)；max 为空表示无上界。相邻端点不算重叠。"""
+    ordered = sorted(ranges, key=lambda item: (item[0], item[1] is None))
+    prev_hi: Decimal | None = None
+    started = False
+    for lo, hi in ordered:
+        if started and (prev_hi is None or lo < prev_hi):
+            return True
+        started = True
+        prev_hi = hi
+    return False
+
+
+def check_score_rule(rule: ScoreRuleBody):
+    kind = (rule.ruleType or "").strip().upper()
+    if kind not in SCORE_RULE_TYPES:
+        return fail(1001, "得分规则类型无效")
+    if kind == "LINEAR":
+        if rule.linear is None:
+            return fail(1001, "线性得分规则缺少参数")
+        if not score_in_range(rule.linear.minScore) or not score_in_range(rule.linear.maxScore):
+            return fail(1152, "得分规则非法：分数越界 [0,100]")
+        return None
+    segments = rule.segments or []
+    if not segments:
+        return fail(1152, "得分规则非法：分段区间缺失")
+    ranges: list[tuple[Decimal, Decimal | None]] = []
+    for seg in segments:
+        if not score_in_range(seg.score):
+            return fail(1152, "得分规则非法：分数越界 [0,100]")
+        lo = q2(seg.minValue)
+        hi = None if seg.maxValue is None else q2(seg.maxValue)
+        if hi is not None and hi <= lo:
+            return fail(1152, "得分规则非法：分段区间非法")
+        ranges.append((lo, hi))
+    if segments_overlap(ranges):
+        return fail(1152, "得分规则非法：分段区间重叠")
+    return None
+
+
+def dump_score_rule(rule: ScoreRuleBody) -> dict:
+    kind = rule.ruleType.strip().upper()
+    if kind == "LINEAR" and rule.linear is not None:
+        linear = rule.linear
+        return {
+            "ruleType": "LINEAR",
+            "linear": {
+                "minMetric": float(q2(linear.minMetric)),
+                "maxMetric": float(q2(linear.maxMetric)),
+                "minScore": float(q2(linear.minScore)),
+                "maxScore": float(q2(linear.maxScore)),
+            },
+        }
+    segments = []
+    for seg in rule.segments or []:
+        segments.append(
+            {
+                "minValue": float(q2(seg.minValue)),
+                "maxValue": None if seg.maxValue is None else float(q2(seg.maxValue)),
+                "score": float(q2(seg.score)),
+            }
+        )
+    return {"ruleType": "SEGMENT", "segments": segments}
+
+
+def check_metric_body(body: MetricBody):
+    code = body.metricCode.strip()
+    name = body.metricName.strip()
+    if not code:
+        return fail(1001, "指标编码必填"), None
+    if not name:
+        return fail(1001, "指标名称必填"), None
+    source = body.dataSource.strip().upper()
+    if source not in METRIC_SOURCES:
+        return fail(1001, "取数来源无效"), None
+    status = (body.status or "ENABLED").strip().upper()
+    if status not in METRIC_STATUSES:
+        return fail(1001, "指标状态无效"), None
+    if code == COMPETE_CODE and status == "ENABLED":
+        return fail(1153, COMPETE_LOCK_MSG), None
+    if code == COMPETE_CODE:
+        status = "DISABLED"
+    source_config = None
+    if source == "AUTO":
+        if body.sourceConfig is None:
+            return fail(1001, "自动取数指标须填写取数映射"), None
+        module = body.sourceConfig.module.strip().upper()
+        expr = body.sourceConfig.metricExpression.strip()
+        period = (body.sourceConfig.periodType or "").strip().upper()
+        if module not in METRIC_MODULES:
+            return fail(1001, "取数模块无效"), None
+        if not expr:
+            return fail(1001, "指标表达式必填"), None
+        if period != "MONTHLY":
+            return fail(1001, "取数周期仅支持 MONTHLY"), None
+        source_config = {"module": module, "metricExpression": expr, "periodType": "MONTHLY"}
+    ruled = check_score_rule(body.scoreRule)
+    if ruled is not None:
+        return ruled, None
+    payload = {
+        "metricCode": code,
+        "metricName": name,
+        "dataSource": source,
+        "sourceConfig": source_config,
+        "weight": float(q2(body.weight)),
+        "scoreRule": dump_score_rule(body.scoreRule),
+        "status": status,
+    }
+    return None, payload
+
+
+def metric_vo(row: PerfMetric) -> dict:
+    data = {
+        "id": row.id,
+        "metricCode": row.metric_code,
+        "metricName": row.metric_name,
+        "dataSource": row.data_source,
+        "weight": float(q2(row.weight or 0)),
+        "scoreRule": row.score_rule or {},
+        "status": row.status,
+        "version": row.version,
+    }
+    if row.source_config:
+        data["sourceConfig"] = row.source_config
+    if row.metric_code == COMPETE_CODE or row.enable_note:
+        data["enableNote"] = row.enable_note or COMPETE_NOTE
+    return data
+
+
+def ensure_compete_metric(db: Session, tenant_id: int, actor_id: int) -> PerfMetric:
+    row = db.scalar(
+        select(PerfMetric).where(
+            PerfMetric.deleted == 0,
+            PerfMetric.tenant_id == tenant_id,
+            PerfMetric.metric_code == COMPETE_CODE,
+        )
+    )
+    if row is not None:
+        if row.status != "DISABLED":
+            row.status = "DISABLED"
+        if not row.enable_note:
+            row.enable_note = COMPETE_NOTE
+        return row
+    row = PerfMetric(
+        metric_code=COMPETE_CODE,
+        metric_name="竞品分析提交率",
+        data_source="MANUAL",
+        source_config=None,
+        weight=0,
+        score_rule={
+            "ruleType": "LINEAR",
+            "linear": {"minMetric": 0, "maxMetric": 100, "minScore": 0, "maxScore": 100},
+        },
+        status="DISABLED",
+        enable_note=COMPETE_NOTE,
+        version=1,
+        created_by=actor_id,
+        tenant_id=tenant_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def find_metric(db: Session, tenant_id: int, metric_id: int) -> PerfMetric | None:
+    row = db.get(PerfMetric, metric_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    return row
+
+
+def code_taken(db: Session, tenant_id: int, code: str, except_id: int | None = None) -> bool:
+    stmt = select(PerfMetric.id).where(
+        PerfMetric.deleted == 0,
+        PerfMetric.tenant_id == tenant_id,
+        PerfMetric.metric_code == code,
+    )
+    if except_id is not None:
+        stmt = stmt.where(PerfMetric.id != except_id)
+    return db.scalar(stmt) is not None
+
+
+@router.get("/metric/list")
+def metric_list(
+    pageNo: int = 1,
+    pageSize: int = 10,
+    metricName: str = "",
+    dataSource: str = "",
+    status: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_compete_metric(db, tenant_id, actor.id)
+    stmt = select(PerfMetric).where(PerfMetric.deleted == 0, PerfMetric.tenant_id == tenant_id)
+    if metricName.strip():
+        stmt = stmt.where(PerfMetric.metric_name.like(f"%{metricName.strip()}%"))
+    if dataSource.strip():
+        source = dataSource.strip().upper()
+        if source not in METRIC_SOURCES:
+            return fail(1001, "取数来源无效")
+        stmt = stmt.where(PerfMetric.data_source == source)
+    if status.strip():
+        stat = status.strip().upper()
+        if stat not in METRIC_STATUSES:
+            return fail(1001, "指标状态无效")
+        stmt = stmt.where(PerfMetric.status == stat)
+    page_no, size = page_args(pageNo, pageSize)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = db.scalars(stmt.order_by(PerfMetric.id.asc()).offset((page_no - 1) * size).limit(size)).all()
+    return paged([metric_vo(row) for row in rows], int(total or 0), page_no, size)
+
+
+@router.post("/metric")
+def create_metric(
+    body: MetricBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_compete_metric(db, tenant_id, actor.id)
+    rejected, payload = check_metric_body(body)
+    if rejected is not None:
+        return rejected
+    assert payload is not None
+    if code_taken(db, tenant_id, payload["metricCode"]):
+        return fail(1151, "指标编码已存在")
+    row = PerfMetric(
+        metric_code=payload["metricCode"],
+        metric_name=payload["metricName"],
+        data_source=payload["dataSource"],
+        source_config=payload["sourceConfig"],
+        weight=payload["weight"],
+        score_rule=payload["scoreRule"],
+        status=payload["status"],
+        enable_note=COMPETE_NOTE if payload["metricCode"] == COMPETE_CODE else "",
+        version=1,
+        created_by=actor.id,
+        tenant_id=tenant_id,
+    )
+    db.add(row)
+    db.flush()
+    return ok(metric_vo(row))
+
+
+@router.put("/metric/{metric_id}")
+def update_metric(
+    metric_id: int,
+    body: MetricBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_compete_metric(db, tenant_id, actor.id)
+    row = find_metric(db, tenant_id, metric_id)
+    if row is None:
+        return fail(1500, "指标不存在")
+    if row.metric_code == COMPETE_CODE and (body.status or "").strip().upper() == "ENABLED":
+        return fail(1153, COMPETE_LOCK_MSG)
+    if body.metricCode.strip() != row.metric_code:
+        return fail(1001, "指标编码不可修改")
+    rejected, payload = check_metric_body(body)
+    if rejected is not None:
+        return rejected
+    assert payload is not None
+    if row.metric_code == COMPETE_CODE:
+        payload["status"] = "DISABLED"
+    row.metric_name = payload["metricName"]
+    row.data_source = payload["dataSource"]
+    row.source_config = payload["sourceConfig"]
+    row.weight = payload["weight"]
+    row.score_rule = payload["scoreRule"]
+    row.status = payload["status"]
+    if row.metric_code == COMPETE_CODE:
+        row.enable_note = COMPETE_NOTE
+    row.version = int(row.version or 1) + 1
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(metric_vo(row))
+
+
+@router.delete("/metric/{metric_id}")
+def disable_metric(
+    metric_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_compete_metric(db, tenant_id, actor.id)
+    row = find_metric(db, tenant_id, metric_id)
+    if row is None:
+        return fail(1500, "指标不存在")
+    if row.metric_code == COMPETE_CODE:
+        return fail(1153, COMPETE_LOCK_MSG)
+    row.status = "DISABLED"
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(None)
+
+
+@router.post("/metric/bind-position")
+def bind_position_metrics(
+    body: PositionBindBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_compete_metric(db, tenant_id, actor.id)
+    position = body.positionCode.strip()
+    if not position:
+        return fail(1001, "岗位编码必填")
+    seen: set[int] = set()
+    chosen: list[tuple[PerfMetric, float | None, Decimal]] = []
+    total = ZERO
+    for item in body.metricBindings:
+        if item.metricId in seen:
+            return fail(1001, "指标重复绑定")
+        seen.add(item.metricId)
+        metric = find_metric(db, tenant_id, item.metricId)
+        if metric is None:
+            return fail(1001, "指标不存在")
+        effective = q2(metric.weight if item.weightOverride is None else item.weightOverride)
+        total += effective
+        chosen.append((metric, item.weightOverride, effective))
+    total = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if total != HUNDRED:
+        shown = f"{total:.2f}"
+        return fail(
+            1154,
+            f"该岗位指标集权重合计 {shown}%，须 = 100%",
+            {"positionCode": position, "totalWeight": float(total)},
+        )
+    existing = db.scalars(
+        select(PerfPositionBind).where(
+            PerfPositionBind.deleted == 0,
+            PerfPositionBind.tenant_id == tenant_id,
+            PerfPositionBind.position_code == position,
+        )
+    ).all()
+    now = utcnow()
+    for old in existing:
+        old.deleted = 1
+        old.updated_at = now
+    for metric, override, _effective in chosen:
+        db.add(
+            PerfPositionBind(
+                position_code=position,
+                metric_id=metric.id,
+                weight_override=None if override is None else float(q2(override)),
+                created_by=actor.id,
+                tenant_id=tenant_id,
+            )
+        )
+    db.flush()
+    return ok({"positionCode": position, "boundCount": len(chosen), "totalWeight": float(total)})

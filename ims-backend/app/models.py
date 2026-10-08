@@ -1237,6 +1237,42 @@ class PerfScheme(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PerfMetric(Base):
+    """PERF-001 指标定义。COMPETE_SUBMIT_RATE 在 V2 固定 DISABLED。"""
+
+    __tablename__ = "ims_perf_metric"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    metric_code: Mapped[str] = mapped_column(String(64), default="", index=True)
+    metric_name: Mapped[str] = mapped_column(String(128), default="")
+    data_source: Mapped[str] = mapped_column(String(16), default="MANUAL")
+    source_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, default=0.0)
+    score_rule: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED")
+    enable_note: Mapped[str] = mapped_column(String(256), default="")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PerfPositionBind(Base):
+    """岗位指标集绑定。同一岗位再次保存时旧行软删后重写。"""
+
+    __tablename__ = "ims_perf_position_bind"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    position_code: Mapped[str] = mapped_column(String(32), default="", index=True)
+    metric_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    weight_override: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AlertRule(Base):
     __tablename__ = "ims_alert_rule"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

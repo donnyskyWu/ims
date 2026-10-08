@@ -84,6 +84,7 @@ export const IMPLEMENTED: Record<string, string> = {
   airSkill: '/ims/air/skill',
   airExpert: '/ims/air/expert',
   airCfg: '/ims/air/cfg',
+  perfMetric: '/ims/perf/metric',
   perfScheme: '/ims/perf/scheme',
   perfExec: '/ims/perf/execution',
   perfResult: '/ims/perf/result',
