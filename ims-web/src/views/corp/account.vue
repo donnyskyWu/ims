@@ -216,7 +216,7 @@
             <option v-for="item in summaryGroups" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </label>
-        <button class="btn btn-pri btn-sm" type="submit" data-testid="acct-summary-query" :disabled="summaryBusy">查询</button>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="acct-summary-query" :disabled="summaryBusy">汇总</button>
       </form>
       <p v-if="summaryMsg" class="hint" data-testid="acct-summary-msg">{{ summaryMsg }}</p>
       <div class="recharge-table">

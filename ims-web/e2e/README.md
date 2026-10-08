@@ -15,6 +15,7 @@
 | **S4 (#62)** | 收回冻结 1022 | `closure-corp-account-recall.spec.ts` | `AC-E2E-RECALL` 领用至在用 ·「收回」直接 **冻结** · 再领用/再流转 **1022** · 时间线 FREEZE |
 | **S4 (#64)** | 账实核对 1026 | `closure-corp-account-reconcile.spec.ts` | `AC-E2E-RECON` · 101.99/100 → **1.99%** 一致 · 102/100 → **2.00%** **1026** · 财务核查工单 |
 | **S4 (#66)** | 解冻回池 | `closure-corp-account-unfreeze.spec.ts` | `AC-E2E-UNFREEZE` 收回冻结 → 解冻 **IN_POOL** · 时间线 UNFREEZE · 再领用成功 |
+| **S4 (#70)** | 冲话费成本汇总 | `closure-corp-account-summary.spec.ts` | `AC-E2E-SUM` · 2026-04 **200.00** / 2 笔 · 账号 / 部门#70070 / 抖音 · 2026-03 **50.00** 单独成月 |
 | **S5** | 资产采购领用 | `smoke-asset.spec.ts` · **`closure-asset-purchase-import.spec.ts`（#68）** · **`closure-asset-lifecycle.spec.ts`（#63）** · **`closure-asset-penetrate.spec.ts`（#65）** | smoke：办公设备列表；#68：采购 CSV 部分成功 · 第 3 行 `assetName`；#63：登记→领用→使用→归还→报废；#65：实名人下 5 层 · 第 6 层 **1013** · 使用人在用/已归还/已报废 |
 | **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** · **`closure-corp-cert-expire.spec.ts`（#61）** | smoke：证件列表；#55：水印 + 脱敏号；#61：T−30/T−7/T−0 黄/红/锁定 + 工作台提醒 |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
@@ -50,6 +51,7 @@
 | **E2E-S4-02/03 · CORP (#60)** | `closure-corp-account-transfer.spec.ts` | 纯 UI · `AC-E2E-XFER` · 他人领用 **1021** · 流转确认后责任人变更 · 时间线 TRANSFER |
 | **E2E-S4-04 · CORP (#62)** | `closure-corp-account-recall.spec.ts` | 纯 UI · `AC-E2E-RECALL` · 收回 **FROZEN** · 领用/流转 **1022** · 时间线 FREEZE |
 | **E2E-S4-07 · CORP (#64)** | `closure-corp-account-reconcile.spec.ts` | 纯 UI · `AC-E2E-RECON` · **1.99%** 一致 · **2.00%** **1026** · 财务核查工单 |
+| **E2E-S4-10 · CORP (#70)** | `closure-corp-account-summary.spec.ts` | 纯 UI · `AC-E2E-SUM` · 2026-04 合计 **¥200.00** / 2 笔 · 账号 / 部门#70070 / 抖音 · 2026-03 **¥50.00** 不进 4 月 |
 | **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
