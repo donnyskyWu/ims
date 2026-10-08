@@ -28,6 +28,8 @@ DICT_SEED = [
     ("dict_realname_status", "实名人状态", [("ENABLED", "启用"), ("DISABLED", "停用")]),
     ("dict_id_type", "证件类型", [("ID_CARD", "身份证"), ("PASSPORT", "护照"), ("HK_MACAO", "港澳通行证"), ("TAIWAN", "台湾通行证")]),
     ("dict_phone_status", "手机状态", [("IN_USE", "在用"), ("IDLE", "闲置"), ("DAMAGED", "损坏"), ("LOST", "丢失")]),
+    ("dict_asset_type", "资产类型", [("OFFICE", "办公设备"), ("LIVE", "直播设备"), ("SHOOT", "拍摄设备"), ("DIGITAL", "数码设备")]),
+    ("dict_asset_status", "资产状态", [("PENDING_REVIEW", "待审核"), ("IN_USE", "在用"), ("RETURNED", "已归还"), ("SCRAPPED", "已报废")]),
     ("dict_phone_type", "手机类型", [("ANDROID", "Android"), ("IPHONE", "iPhone")]),
     ("dict_collect_method", "采集方式", [("INTERNAL", "内部"), ("EXTERNAL", "外部竞品")]),
     ("dict_collect_frequency", "采集频率", [("HOURLY", "每小时"), ("DAILY", "每日"), ("WEEKLY", "每周")]),

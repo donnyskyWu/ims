@@ -238,10 +238,10 @@ interface AssetVerifyMetricsResp {
 **资产状态（AssetStatus，反向穿透三态，ASSET-B-R1）**：
 
 ```
-PENDING_REVIEW（登记待审）──▶ IN_USE（在用）──归还/报废──▶ RETURNED / SCRAPPED
-                                │
-                        冻结（离职未闭环 BR-015）→ 展示 frozen=true，闭环后恢复
+PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──使用（状态不变，须有 USE）──▶ 归还 ──▶ RETURNED ──报废──▶ SCRAPPED
 ```
+
+#63 生命周期：在用再领用 **1012**；未使用就归还、或未归还就报废、或终态再领用 → **1015**。直接从在用报废不在本切片。冻结展示仍属离职闭环，本切片不做。
 
 **校验工单（VerifyTaskStatus）**：`PENDING_DISPATCH →（派发）REPAIRING →（修复复审）CLOSED`；逾期（3 工作日）自动升级推送。
 
@@ -265,7 +265,8 @@ PENDING_REVIEW（登记待审）──▶ IN_USE（在用）──归还/报废�
 
 | 页面/区域 | 页面操作 | 调用 API |
 |-----------|----------|----------|
-| 资产台账列表页（走既有 07 资产登记端点，见头部映射表） | 台账列表查询（分页/筛选） | GET /asset/ledger/page（既有 07 系统提供，本契约不重复定义） |
+| 办公/直播设备台账（#63） | 登记 / 领用 / 使用 / 归还 / 报废 | POST /asset/ledger、POST /asset/ledger/{id}/checkout\|use\|return\|scrap；列表 GET /asset/ledger/page，办公页 BFF `GET /corp/device/office/page?assetType` 固定 OFFICE，直播页合并 LIVE+SHOOT |
+| 资产台账列表页（走既有 07 资产登记端点，见头部映射表） | 台账列表查询（分页/筛选） | GET /asset/ledger/page |
 | 资产台账列表页（复用既有 07 登记列表） | 行点击打开穿透详情抽屉（DetailDrawer 渐进渲染 L1→L5） | GET /asset/forward/detail/{assetId} |
 | 资产穿透详情抽屉-关系图 Tab | 渲染穿透链路图（TraceGraph） | GET /asset/forward/trace/{assetId} |
 | 资产穿透详情抽屉-操作按钮 | 导出穿透报告（ConfirmDialog → 异步导出提示） | GET /asset/forward/export/{assetId} |

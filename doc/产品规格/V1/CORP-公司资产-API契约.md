@@ -102,8 +102,13 @@
 |----------|------|------|------|
 | `/corp/device/phone/page` | GET | `oa_phone`（M4 P-M4-005） | ✅ |
 | `/corp/device/phone/{id}` | GET | 手机详情 | ✅ |
-| `/corp/device/office/page` | GET | **`GET /admin-api/ims/asset/ledger/page`** · Query `assetType=OFFICE`（`dict_asset_type`） | ✅（ASSET 既有台账 · 2026-10-01） |
-| `/corp/device/live/page` | GET | 同上 · Query `assetType` **`LIVE` 与 `SHOOT` 各查一次合并** 或 `assetTypes=LIVE,SHOOT`（BFF 约定一种，禁止新表） | ✅ |
+| `/corp/device/office/page` | GET | **`ims_asset_ledger`** · 固定 `assetType=OFFICE`（`dict_asset_type`） | ✅（#63 台账；写入走 `POST /asset/ledger`） |
+| `/corp/device/live/page` | GET | 同上 · `assetType` **LIVE 与 SHOOT** 合并 | ✅ |
+| `/asset/ledger` | POST | 登记 → `PENDING_REVIEW` | ✅（#63） |
+| `/asset/ledger/{id}/checkout` | POST | 领用 → `IN_USE` | ✅（#63） |
+| `/asset/ledger/{id}/use` | POST | 使用（仍 `IN_USE`） | ✅（#63） |
+| `/asset/ledger/{id}/return` | POST | 归还 → `RETURNED`（须已使用） | ✅（#63） |
+| `/asset/ledger/{id}/scrap` | POST | 报废 → `SCRAPPED`（须已归还） | ✅（#63） |
 | `/corp/device/{assetId}/forward` | GET | ASSET-001 L1 穿透 | ✅ IMS |
 
 ---
@@ -117,6 +122,7 @@
 | 1502 | 关联的实体**已被其他记录引用**（强关联阻挡删除） |
 | 1503 | 字典枚举非法 |
 | 1504 | 跨租户访问禁止 |
+| 1011 / 1012 / 1015 | 资产不存在 / 编号冲突或已在用 / 状态流转非法（#63 生命周期，见全局规范 ASSET 段） |
 
 > **语义对齐**（2026-10-03）：本节 1500~1504 对齐现网 `GLOBAL-CONVENTIONS.md` §5.3 权威语义；选择器绑定的「不存在 / 已停用 / 已被引用」三态分别用 1500 / 1501 / 1502 区分，**不再**把「不存在」与「跨租户」合并为 1501。详见 [错误码映射表（附录）](../错误码映射表-附录.md) §3。
 

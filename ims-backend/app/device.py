@@ -13,19 +13,56 @@ from app.ops_models import Phone
 router = APIRouter()
 
 
-def empty_page(pageNo: int = 1, pageSize: int = 10, actor: User = Depends(current_user)):
-    page_no, size = page_args(pageNo, pageSize)
-    return paged([], 0, page_no, size)
-
-
 @router.get("/corp/device/office/page")
-def office_page(pageNo: int = 1, pageSize: int = 10, actor: User = Depends(current_user)):
-    return empty_page(pageNo, pageSize, actor)
+def office_page(
+    pageNo: int = 1,
+    pageSize: int = 10,
+    assetCode: str = "",
+    keyword: str = "",
+    status: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    from app.asset_ledger import list_ledger
+
+    return list_ledger(
+        db,
+        actor,
+        pageNo,
+        pageSize,
+        asset_type="OFFICE",
+        asset_code=assetCode,
+        keyword=keyword,
+        status=status,
+    )
 
 
 @router.get("/corp/device/live/page")
-def live_page(pageNo: int = 1, pageSize: int = 10, actor: User = Depends(current_user)):
-    return empty_page(pageNo, pageSize, actor)
+def live_page(
+    pageNo: int = 1,
+    pageSize: int = 10,
+    assetCode: str = "",
+    assetType: str = "",
+    keyword: str = "",
+    status: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    from app.asset_ledger import list_ledger
+
+    types = ["LIVE", "SHOOT"]
+    if assetType in {"LIVE", "SHOOT"}:
+        types = [assetType]
+    return list_ledger(
+        db,
+        actor,
+        pageNo,
+        pageSize,
+        asset_types=types,
+        asset_code=assetCode,
+        keyword=keyword,
+        status=status,
+    )
 
 
 class PhoneBody(BaseModel):
