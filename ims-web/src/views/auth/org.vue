@@ -45,6 +45,10 @@
       <div class="tab" :class="{ on: tab === 'events' }" @click="tab = 'events'">同步事件</div>
     </div>
     <div v-if="tab === 'users'" class="tbl-block">
+      <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchUsers">
+        <input v-model="keyword" data-testid="org-user-keyword" placeholder="姓名 / 钉钉用户" style="width: 180px" />
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="org-user-search">查询</button>
+      </form>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -52,6 +56,8 @@
               <th>姓名</th>
               <th>手机</th>
               <th>部门</th>
+              <th>岗位</th>
+              <th>授予角色</th>
               <th>钉钉</th>
               <th>同步状态</th>
               <th>账号状态</th>
@@ -60,23 +66,29 @@
           </thead>
           <tbody>
             <tr v-if="!userReady">
-              <td colspan="7" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!users.length">
-              <td colspan="7" style="white-space: normal">
+              <td colspan="9" style="white-space: normal">
                 <div class="empty">
                   <div class="et">{{ userError || '没有已同步人员' }}</div>
                   <div class="es">人员来自验签后的组织事件，列表只展示接口返回的行。</div>
                 </div>
               </td>
             </tr>
-            <tr v-for="row in users" v-else :key="String(row.userId)">
-              <td style="font-weight: 500">{{ text(row.nickname) }}</td>
+            <tr v-for="row in users" v-else :key="String(row.userId)" data-testid="org-user-row">
+              <td style="font-weight: 500">
+                <button class="btn btn-txt btn-sm" type="button" data-testid="org-user-open" @click="openUser(row)">
+                  {{ text(row.nickname) }}
+                </button>
+              </td>
               <td class="masked">{{ text(row.mobileMasked) }}</td>
-              <td>{{ names(row.deptNames) }}</td>
+              <td data-testid="org-user-dept">{{ names(row.deptNames) }}</td>
+              <td data-testid="org-user-position">{{ text(row.positionName) }}</td>
+              <td data-testid="org-user-roles">{{ names(row.grantedRoleNames) }}</td>
               <td class="mono">{{ text(row.dingtalkUserId) }}</td>
               <td>{{ syncText(row) }}</td>
-              <td>{{ text(row.status) }}</td>
+              <td data-testid="org-user-status">{{ statusText(row.status) }}</td>
               <td class="mono">{{ text(row.lastSyncTime) }}</td>
             </tr>
           </tbody>
@@ -122,6 +134,40 @@
       </div>
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
+    <ProtoDrawer :open="detailOpen" title="人员详情" width="560px" @close="detailOpen = false">
+      <div v-if="detail" data-testid="org-user-drawer">
+        <p v-if="detail.status === 'FROZEN'" class="hint" data-testid="org-user-frozen">
+          该人员已冻结，不能登录，权限已失效。名下在用账号与资产待归还，未回收证件待回收。
+        </p>
+        <div class="formrow one">
+          <div class="fld"><label>姓名</label><div>{{ text(detail.nickname) }}</div></div>
+          <div class="fld"><label>岗位</label><div data-testid="org-detail-position">{{ text(detail.positionName) }}</div></div>
+          <div class="fld"><label>部门</label><div data-testid="org-detail-dept">{{ names(detail.deptNames) }}</div></div>
+          <div class="fld"><label>账号状态</label><div data-testid="org-detail-status">{{ statusText(detail.status) }}</div></div>
+          <div class="fld"><label>授予角色</label><div data-testid="org-detail-roles">{{ names(detail.grantedRoleNames) }}</div></div>
+          <div class="fld"><label>权限码</label><div data-testid="org-detail-perms">{{ names(detail.grantedPermCodes) }}</div></div>
+          <div class="fld"><label>权限缓冲至</label><div data-testid="org-detail-buffer">{{ text(detail.bufferUntil) }}</div></div>
+        </div>
+        <div v-if="diff" data-testid="org-user-diff" class="card" style="margin: 12px 0">
+          <div style="font-weight: 600">权限 diff</div>
+          <div data-testid="org-diff-summary">{{ text(diff.summary) }}</div>
+          <div data-testid="org-diff-dept">{{ text(diff.beforeDept) }} → {{ text(diff.afterDept) }}</div>
+          <div data-testid="org-diff-position">{{ text(diff.beforePosition) }} → {{ text(diff.afterPosition) }}</div>
+          <div data-testid="org-diff-retained">保留 {{ names(diff.retainedRoleNames) }}</div>
+          <div data-testid="org-diff-added">新增 {{ names(diff.addedRoleNames) }}</div>
+        </div>
+        <div data-testid="org-user-holdings" class="card">
+          <div style="font-weight: 600">名下终态</div>
+          <div>账号在用 {{ holding.accountInUse }}</div>
+          <div>资产在用 {{ holding.assetInUse }}</div>
+          <div>证件生效或待回收 {{ holding.certActive }}</div>
+          <div>证件已回收 {{ holding.certRecycled }}</div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -129,6 +175,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, readData } from '../../api/read'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const metrics = reactive<{ delayMillis?: number; level?: string; avgSyncDelayMinutes?: number; successRate?: number }>({})
 const metricReady = ref(false)
@@ -144,6 +191,26 @@ const total = ref(0)
 const msg = ref('')
 const confirming = ref(false)
 const tab = ref<'users' | 'events'>('users')
+const keyword = ref('')
+const detailOpen = ref(false)
+const detail = ref<Record<string, unknown> | null>(null)
+
+const diff = computed(() => {
+  const value = detail.value?.permissionDiff
+  if (!value || typeof value !== 'object') return null
+  return value as Record<string, unknown>
+})
+
+const holding = computed(() => {
+  const value = detail.value?.holdings
+  const row = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
+  return {
+    accountInUse: Number(row.accountInUse || 0),
+    assetInUse: Number(row.assetInUse || 0),
+    certActive: Number(row.certActive || 0),
+    certRecycled: Number(row.certRecycled || 0),
+  }
+})
 
 const levelText = computed(() => {
   if (!metricReady.value || metricError.value) return 'GET /auth/org/sync-metrics'
@@ -151,6 +218,13 @@ const levelText = computed(() => {
   if (metrics.level === 'green') return '5 分钟内，绿色'
   return metrics.level || 'GET /auth/org/sync-metrics'
 })
+
+function statusText(value: unknown) {
+  if (value === 'ENABLED') return '在职'
+  if (value === 'FROZEN') return '冻结'
+  if (value === 'DISABLED') return '停用'
+  return text(value)
+}
 
 function text(value: unknown) {
   if (value === undefined || value === null || value === '') return '—'
@@ -199,7 +273,11 @@ async function load() {
   metricError.value = metricRes.error
   if (metricRes.data && typeof metricRes.data === 'object') Object.assign(metrics, metricRes.data)
 
-  const userRes = await readData('/auth/org/users', { pageNo: 1, pageSize: 10 })
+  const userRes = await readData('/auth/org/users', {
+    pageNo: 1,
+    pageSize: 20,
+    keyword: keyword.value.trim() || undefined,
+  })
   userReady.value = true
   userError.value = userRes.error
   users.value = asList(userRes.data)
@@ -214,6 +292,16 @@ async function load() {
   total.value = eventRes.data && typeof eventRes.data === 'object' && typeof (eventRes.data as { total?: unknown }).total === 'number'
     ? (eventRes.data as { total: number }).total
     : events.value.length
+}
+
+function searchUsers() {
+  userReady.value = false
+  load()
+}
+
+function openUser(row: Record<string, unknown>) {
+  detail.value = row
+  detailOpen.value = true
 }
 
 async function reconcile() {

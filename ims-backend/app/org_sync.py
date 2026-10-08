@@ -13,7 +13,18 @@ from app.api import current_user, db_session, fail, ok
 from app.core import mask_mobile, utcnow
 from app.dingtalk_client import pull_org_directory
 from app.dingtalk_crypto import decrypt_encrypt, signature_ok
-from app.models import OrgEvent, Role, User, UserDept, UserMapping, UserRole
+from app.models import (
+    AssetLedger,
+    CertArchive,
+    OrgEvent,
+    PositionRule,
+    Role,
+    Todo,
+    User,
+    UserDept,
+    UserMapping,
+    UserRole,
+)
 
 router = APIRouter()
 
@@ -183,6 +194,166 @@ def find_user(db: Session, ding_id: str, mobile: str, user_id: int | None) -> Us
     return None
 
 
+def payload_position(payload: dict) -> str:
+    return str(payload.get("dingtalkPosition") or payload.get("position") or "").strip()[:64]
+
+
+def stored_json(event: OrgEvent) -> dict:
+    try:
+        data = json.loads(event.payload_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def enabled_position_rule(db: Session, position: str) -> PositionRule | None:
+    if not position:
+        return None
+    return db.scalar(
+        select(PositionRule).where(
+            PositionRule.dingtalk_position == position,
+            PositionRule.status == "ENABLED",
+            PositionRule.deleted == 0,
+        )
+    )
+
+
+def user_role_ids(db: Session, user_id: int) -> list[int]:
+    return list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user_id)).all())
+
+
+def role_names(db: Session, role_ids: list[int]) -> list[str]:
+    if not role_ids:
+        return []
+    rows = db.scalars(select(Role).where(Role.id.in_(role_ids), Role.deleted == 0)).all()
+    order = {row.id: row.role_name for row in rows}
+    return [order[role_id] for role_id in role_ids if role_id in order]
+
+
+def grant_roles(db: Session, user: User, role_ids: list[int]) -> list[str]:
+    existing = set(user_role_ids(db, user.id))
+    added: list[str] = []
+    for raw in role_ids:
+        role_id = int(raw)
+        if role_id in existing:
+            continue
+        role = db.get(Role, role_id)
+        if role is None or role.deleted or role.status != "ENABLED":
+            continue
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        existing.add(role.id)
+        added.append(role.role_name)
+    return added
+
+
+def previous_applied_position(db: Session, user_id: int) -> str:
+    rows = db.scalars(
+        select(OrgEvent)
+        .where(
+            OrgEvent.user_id == user_id,
+            OrgEvent.sync_status == "SUCCESS",
+            OrgEvent.event_type.in_(("hire", "transfer", "dept_change")),
+        )
+        .order_by(OrgEvent.id.desc())
+    ).all()
+    for event in rows:
+        stored = stored_json(event)
+        applied = str(stored.get("appliedPosition") or "").strip()
+        if applied:
+            return applied[:64]
+        position = payload_position(read_payload(event.payload_json))
+        if position:
+            return position
+    return ""
+
+
+def previous_dept_names(db: Session, user_id: int) -> list[str]:
+    rows = db.scalars(
+        select(OrgEvent)
+        .where(OrgEvent.user_id == user_id, OrgEvent.sync_status == "SUCCESS")
+        .order_by(OrgEvent.id.desc())
+    ).all()
+    for event in rows:
+        names = dept_names_of(read_payload(event.payload_json), event)
+        if names:
+            return names
+    return []
+
+
+def write_event_result(event: OrgEvent, position: str, diff: dict | None, dept_names: list[str]) -> None:
+    stored = stored_json(event)
+    if position:
+        stored["appliedPosition"] = position
+    if dept_names and not dept_names_of(read_payload(event.payload_json), event):
+        stored["deptNames"] = dept_names
+    if diff is not None:
+        stored["permissionDiff"] = diff
+    event.payload_json = json.dumps(stored, ensure_ascii=False)
+
+
+def ensure_return_todo(db: Session, user: User) -> None:
+    existing = db.scalar(
+        select(Todo).where(
+            Todo.ref_type == "org_resign",
+            Todo.ref_id == user.id,
+            Todo.status == "PENDING",
+        )
+    )
+    if existing is not None:
+        return
+    admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
+    db.add(
+        Todo(
+            assignee_user_id=admin.id if admin is not None else user.id,
+            task_type="return",
+            ref_type="org_resign",
+            ref_id=user.id,
+            title=f"离职待归还：{user.nickname or user.username}",
+            content="账号、资产待归还，证件待回收",
+            status="PENDING",
+            deadline=datetime(2000, 1, 1),
+            tenant_id=0,
+        )
+    )
+
+
+def apply_position_grant(db: Session, user: User, event: OrgEvent, position: str, before_position: str) -> dict:
+    retained = role_names(db, user_role_ids(db, user.id))
+    added: list[str] = []
+    if event.event_type == "hire" and position:
+        rule = enabled_position_rule(db, position)
+        if rule is not None:
+            added = grant_roles(db, user, [int(item) for item in (rule.grant_role_ids or [])])
+            if added:
+                rule.applied_user_count = int(rule.applied_user_count or 0) + 1
+        summary = "入职按岗位供给角色" if added else "入职未匹配启用供给规则"
+        retained_for_diff: list[str] = []
+    elif event.event_type == "transfer" and position and position != before_position:
+        rule = enabled_position_rule(db, position)
+        if rule is not None:
+            added = grant_roles(db, user, [int(item) for item in (rule.grant_role_ids or [])])
+            if added:
+                rule.applied_user_count = int(rule.applied_user_count or 0) + 1
+        summary = "调岗后追加新岗位角色，24 小时内保留原角色" if added else "调岗部门已变更，角色无增减"
+        retained_for_diff = retained
+    elif event.event_type == "transfer":
+        summary = "调岗部门已变更，角色无增减"
+        retained_for_diff = retained
+    else:
+        summary = "部门变更，角色无增减"
+        retained_for_diff = retained
+    return {
+        "beforePosition": before_position,
+        "afterPosition": position or before_position,
+        "beforeDept": event.before_dept,
+        "afterDept": event.after_dept,
+        "retainedRoleNames": retained_for_diff,
+        "addedRoleNames": added,
+        "removedRoleNames": [],
+        "summary": summary,
+    }
+
+
 def create_user(db: Session, ding_id: str, union_id: str, mobile: str, nickname: str) -> User:
     stem = f"dt_{ding_id or union_id or mobile}"[:50]
     username = stem
@@ -294,8 +465,21 @@ def apply_event(db: Session, event: OrgEvent, now: datetime) -> None:
     )
     if dept_ids:
         replace_depts(db, user.id, dept_ids)
+    position = payload_position(payload)
+    before_position = "" if event.event_type == "hire" else previous_applied_position(db, user.id)
+    kept_dept_names = dept_names_of(payload, event) or previous_dept_names(db, user.id)
+    diff = None
+    if event.event_type == "resign":
+        ensure_return_todo(db, user)
+        if not position:
+            position = before_position
+    else:
+        diff = apply_position_grant(db, user, event, position, before_position)
+        if not position:
+            position = before_position
     event.user_id = user.id
     event.union_id = union_id[:64]
+    write_event_result(event, position, diff, kept_dept_names)
     event.sync_status = "SUCCESS"
     event.synced_at = now
     event.dead_letter = 0
@@ -354,6 +538,85 @@ def user_sync_flags(db: Session, user_id: int, mapping: UserMapping) -> tuple[st
     return "FAILED", False, False
 
 
+def latest_permission_diff(db: Session, user_id: int) -> dict | None:
+    rows = db.scalars(
+        select(OrgEvent)
+        .where(
+            OrgEvent.user_id == user_id,
+            OrgEvent.sync_status == "SUCCESS",
+            OrgEvent.event_type.in_(("transfer", "dept_change", "hire")),
+        )
+        .order_by(OrgEvent.id.desc())
+    ).all()
+    for event in rows:
+        diff = stored_json(event).get("permissionDiff")
+        if isinstance(diff, dict):
+            return diff
+    return None
+
+
+def holding_summary(db: Session, user: User | None) -> dict:
+    empty = {"accountInUse": 0, "assetInUse": 0, "certActive": 0, "certRecycled": 0}
+    if user is None:
+        return empty
+    try:
+        from app.ops_db import ops_session
+        from app.ops_models import PlatformAccount
+
+        ops = ops_session()
+        try:
+            accounts = ops.scalar(
+                select(func.count())
+                .select_from(PlatformAccount)
+                .where(
+                    PlatformAccount.deleted == 0,
+                    PlatformAccount.holder_user_id == user.id,
+                    PlatformAccount.status == "IN_USE",
+                )
+            ) or 0
+        finally:
+            ops.close()
+        assets = db.scalar(
+            select(func.count())
+            .select_from(AssetLedger)
+            .where(
+                AssetLedger.deleted == 0,
+                AssetLedger.owner_user_id == user.id,
+                AssetLedger.status == "IN_USE",
+            )
+        ) or 0
+        nickname = (user.nickname or "").strip()
+        cert_active = 0
+        cert_recycled = 0
+        if nickname:
+            cert_active = db.scalar(
+                select(func.count())
+                .select_from(CertArchive)
+                .where(
+                    CertArchive.deleted == 0,
+                    CertArchive.holder_name == nickname,
+                    CertArchive.status != "RECYCLED",
+                )
+            ) or 0
+            cert_recycled = db.scalar(
+                select(func.count())
+                .select_from(CertArchive)
+                .where(
+                    CertArchive.deleted == 0,
+                    CertArchive.holder_name == nickname,
+                    CertArchive.status == "RECYCLED",
+                )
+            ) or 0
+        return {
+            "accountInUse": int(accounts),
+            "assetInUse": int(assets),
+            "certActive": int(cert_active),
+            "certRecycled": int(cert_recycled),
+        }
+    except Exception:
+        return empty
+
+
 def org_user_vo(db: Session, mapping: UserMapping) -> dict:
     user = db.get(User, mapping.user_id)
     payload = {}
@@ -365,6 +628,14 @@ def org_user_vo(db: Session, mapping: UserMapping) -> dict:
     names: list[str] = []
     if role_ids:
         names = list(db.scalars(select(Role.role_name).where(Role.id.in_(role_ids), Role.deleted == 0)).all())
+    from app.system_role import user_perm_codes
+
+    perm_codes = user_perm_codes(db, mapping.user_id) if user is not None else []
+    position = ""
+    if event is not None:
+        position = str(stored_json(event).get("appliedPosition") or "") or payload_position(payload)
+    if not position and user is not None:
+        position = previous_applied_position(db, user.id)
     return {
         "userId": mapping.user_id,
         "nickname": user.nickname if user else "",
@@ -378,6 +649,11 @@ def org_user_vo(db: Session, mapping: UserMapping) -> dict:
         "lastSyncTime": iso(mapping.last_sync_time),
         "status": user.status if user else "",
         "grantedRoleNames": names,
+        "positionName": position,
+        "grantedPermCodes": perm_codes,
+        "bufferUntil": iso(mapping.buffer_until),
+        "permissionDiff": latest_permission_diff(db, mapping.user_id),
+        "holdings": holding_summary(db, user),
     }
 
 

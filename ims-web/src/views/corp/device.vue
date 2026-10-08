@@ -582,15 +582,28 @@ async function loadDict(dictType: string) {
     .map((row) => ({ value: String(row.dictValue), label: String(row.dictLabel) }))
 }
 
+async function loadUserOptions() {
+  const firstRes = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } })
+  const payload = firstRes.data?.data as { total?: number } | undefined
+  const first = asList(payload) as unknown as UserOpt[]
+  const total = typeof payload?.total === 'number' ? payload.total : first.length
+  if (total <= first.length) return first
+  const lastPage = Math.ceil(total / 100)
+  const lastRes = await http.get('/system/user/page', { params: { pageNo: lastPage, pageSize: 100 } })
+  const last = asList(lastRes.data?.data) as unknown as UserOpt[]
+  const seen = new Set(first.map((user) => String(user.id)))
+  return first.concat(last.filter((user) => !seen.has(String(user.id))))
+}
+
 async function preparePhone() {
   const [st, types, userPage] = await Promise.all([
     loadDict('dict_phone_status'),
     loadDict('dict_phone_type'),
-    http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } }),
+    loadUserOptions(),
   ])
   phoneStatus.value = st
   phoneTypes.value = types
-  users.value = asList(userPage.data?.data) as unknown as UserOpt[]
+  users.value = userPage
 }
 
 function bizError(error: unknown) {
@@ -605,12 +618,12 @@ async function prepareAsset() {
   const [types, statuses, userPage, personPage] = await Promise.all([
     loadDict('dict_asset_type').catch(() => fallbackType),
     loadDict('dict_asset_status').catch(() => fallbackStatus),
-    http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } }),
+    loadUserOptions(),
     http.get('/corp/resource/realname/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } }).catch(() => null),
   ])
   assetTypes.value = types
   assetStatuses.value = statuses
-  users.value = asList(userPage.data?.data) as unknown as UserOpt[]
+  users.value = userPage
   persons.value = personPage ? (asList(personPage.data?.data) as unknown as PersonOpt[]) : []
 }
 
