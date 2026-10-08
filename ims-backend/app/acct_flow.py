@@ -1,4 +1,4 @@
-"""ACCT-001 账号领用 / 归还、ACCT-002 流转、ACCT-004 冲话费登记（CORP 账号页）。"""
+"""ACCT-001 账号领用 / 归还、ACCT-002 流转、ACCT-004 冲话费登记与账实核对（CORP 账号页）。"""
 
 import json
 import re
@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.acct_seed import FINANCE_ROLE_KEY
@@ -15,11 +15,24 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.ops_db import ops_session
-from app.models import AccountApply, AccountRecharge, AccountTimelineEvent, AccountTransfer, Role, User, UserRole
+from app.models import (
+    AccountApply,
+    AccountRecharge,
+    AccountRechargeVerify,
+    AccountTimelineEvent,
+    AccountTransfer,
+    Role,
+    Todo,
+    User,
+    UserRole,
+    WorkMessage,
+)
 from app.ops_models import PlatformAccount
 
 VOUCHER_LIMIT = Decimal("5000")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+DIFF_RATE_LIMIT = Decimal("2.00")
 TRANSFER_REASONS = frozenset({"TRANSFER_POSITION", "PRE_RESIGN", "VIOLATION", "BUSINESS_ADJUST"})
 
 router = APIRouter()
@@ -797,3 +810,211 @@ def list_recharge(
         page_no,
         size,
     )
+
+
+def _quantize_money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _rate_percent(diff: Decimal, platform: Decimal) -> tuple[Decimal, str, Decimal]:
+    """差异率 = |冲话费 − 平台消费| / 平台消费。返回（百分数、文案、四位小数比率）。"""
+    shown = ((diff / platform) * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    ratio = (shown / Decimal("100")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    return shown, f"{shown}%", ratio
+
+
+def _finance_recipients(db: Session, actor: User) -> list[int]:
+    role_ids = list(
+        db.scalars(
+            select(Role.id).where(
+                Role.deleted == 0,
+                Role.status == "ENABLED",
+                or_(Role.role_key == FINANCE_ROLE_KEY, Role.role_name.contains("财务")),
+            )
+        ).all()
+    )
+    wanted = {actor.id}
+    admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0, User.status == "ENABLED"))
+    if admin is not None:
+        wanted.add(admin.id)
+    if role_ids:
+        wanted.update(
+            int(item)
+            for item in db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all()
+        )
+    tenant = tenant_of(actor)
+    found: list[int] = []
+    for user_id in sorted(wanted):
+        user = db.get(User, user_id)
+        if user is None or user.deleted or user.status != "ENABLED":
+            continue
+        if (user.tenant_id or 0) != tenant:
+            continue
+        found.append(user.id)
+    return found
+
+
+def _open_reconcile_ticket(
+    db: Session,
+    actor: User,
+    verify: AccountRechargeVerify,
+    rate_text: str,
+) -> int:
+    title = f"账实核对 {rate_text}（1026）"[:128]
+    content = (
+        f"1026 差异率 {rate_text} ≥ 2% · {verify.month} · {verify.account_no} · "
+        f"冲话费 {verify.total_recharge:.2f} · 平台 {verify.platform_consumed:.2f}"
+    )[:512]
+    actor_todo_id = 0
+    for user_id in _finance_recipients(db, actor):
+        todo = Todo(
+            assignee_user_id=user_id,
+            task_type="acct_reconcile",
+            ref_type="acct_recharge_verify",
+            ref_id=verify.id,
+            title=title,
+            content=content,
+            status="PENDING",
+            deadline=utcnow(),
+            tenant_id=tenant_of(actor),
+        )
+        db.add(todo)
+        db.flush()
+        if user_id == actor.id:
+            actor_todo_id = todo.id
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="ACCT",
+                ref_type="acct_recharge_verify",
+                ref_id=verify.id,
+                tenant_id=tenant_of(actor),
+            )
+        )
+    return actor_todo_id
+
+
+class RechargeVerifyBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    month: str
+    account_ids: list[int] | None = Field(default=None, alias="accountIds")
+    platform_consumed: float | None = Field(default=None, alias="platformConsumed")
+
+
+@router.post("/account/recharge/verify")
+def verify_recharge(
+    body: RechargeVerifyBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """月度账实核对。本地无平台拉取时由请求携带平台实际消费；差异率 ≥ 2% 返回 1026。"""
+    month = (body.month or "").strip()
+    if not MONTH_RE.match(month):
+        return fail(1001, "核对月份格式不合法")
+    if body.platform_consumed is None:
+        return fail(1001, "平台消费数据拉取失败，请稍后重试")
+    platform = _money(body.platform_consumed)
+    if platform is None:
+        return fail(1001, "平台实际消费须大于 0")
+
+    stmt = select(AccountRecharge).where(
+        AccountRecharge.tenant_id == tenant_of(actor),
+        AccountRecharge.recharge_date.like(f"{month}%"),
+    )
+    if body.account_ids:
+        stmt = stmt.where(AccountRecharge.account_id.in_(body.account_ids))
+    rows = list(db.scalars(stmt.order_by(AccountRecharge.id.asc())).all())
+    if not rows:
+        return fail(1001, "该月无冲话费记录")
+
+    total = _quantize_money(sum((Decimal(str(row.amount)) for row in rows), Decimal("0")))
+    if total <= 0:
+        return fail(1001, "该月无冲话费记录")
+    diff = _quantize_money(abs(total - platform))
+    shown, rate_text, ratio = _rate_percent(diff, platform)
+    over = shown >= DIFF_RATE_LIMIT
+    status = "DIFF" if over else "MATCHED"
+
+    remaining = diff
+    for index, row in enumerate(rows):
+        if index == len(rows) - 1:
+            share = remaining
+        else:
+            share = _quantize_money(Decimal(str(row.amount)) / total * diff)
+            remaining = _quantize_money(remaining - share)
+        row.verify_status = status
+        row.verify_diff = float(share)
+        row.updated_at = utcnow()
+
+    account_ids = sorted({row.account_id for row in rows})
+    scoped_id = account_ids[0] if len(account_ids) == 1 else 0
+    account_no = rows[0].account_no if len(account_ids) == 1 else "多账号"
+    verify = AccountRechargeVerify(
+        verify_no=_next_doc_no(db, AccountRechargeVerify, AccountRechargeVerify.verify_no, "VR"),
+        month=month,
+        account_id=scoped_id,
+        account_no=account_no,
+        total_recharge=float(total),
+        platform_consumed=float(platform),
+        diff_amount=float(diff),
+        diff_rate=float(ratio),
+        status=status,
+        operator_user_id=actor.id,
+        tenant_id=tenant_of(actor),
+    )
+    db.add(verify)
+    db.flush()
+
+    work_order_id = 0
+    if over:
+        work_order_id = _open_reconcile_ticket(db, actor, verify, rate_text)
+        verify.work_order_id = work_order_id
+
+    grouped: dict[int, list[AccountRecharge]] = {}
+    for row in rows:
+        grouped.setdefault(row.account_id, []).append(row)
+    items = []
+    for account_id, group in grouped.items():
+        recharge_amount = _quantize_money(sum((Decimal(str(item.amount)) for item in group), Decimal("0")))
+        if len(grouped) == 1:
+            platform_amount = platform
+            item_diff = diff
+        else:
+            platform_amount = _quantize_money(recharge_amount / total * platform)
+            item_diff = _quantize_money(abs(recharge_amount - platform_amount))
+        items.append(
+            {
+                "accountId": account_id,
+                "accountNo": group[0].account_no,
+                "rechargeAmount": float(recharge_amount),
+                "platformAmount": float(platform_amount),
+                "diff": float(item_diff),
+            }
+        )
+
+    message = (
+        f"账实核对差异率超阈值（{rate_text} ≥ 2%）"
+        if over
+        else f"核对完成，差异率 {rate_text}（阈值 < 2%）"
+    )
+    payload = {
+        "verifyTaskId": verify.verify_no,
+        "message": message,
+        "month": month,
+        "totalRecharge": float(total),
+        "platformConsumed": float(platform),
+        "diffAmount": float(diff),
+        "diffRate": float(ratio),
+        "diffRateText": rate_text,
+        "overThreshold": over,
+        "verifyStatus": status,
+        "workOrderId": work_order_id or None,
+        "diffItems": items,
+    }
+    if over:
+        return fail(1026, message, payload)
+    return ok(payload)

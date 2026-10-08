@@ -1646,3 +1646,23 @@ class AssetLifecycleEvent(Base):
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AccountRechargeVerify(Base):
+    """ACCT-004 月度账实核对。差异率 ≥ 2% 记 DIFF 并生成财务核查工单（1026 / BR-017）。"""
+
+    __tablename__ = "ims_acct_recharge_verify"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    verify_no: Mapped[str] = mapped_column(String(32), unique=True)
+    month: Mapped[str] = mapped_column(String(7), index=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    account_no: Mapped[str] = mapped_column(String(64), default="")
+    total_recharge: Mapped[float] = mapped_column(Float, default=0.0)
+    platform_consumed: Mapped[float] = mapped_column(Float, default=0.0)
+    diff_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    diff_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(16), default="MATCHED")
+    work_order_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    operator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

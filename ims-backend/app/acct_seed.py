@@ -7,13 +7,16 @@ from app.core import engine
 from app.models import (
     AccountApply,
     AccountRecharge,
+    AccountRechargeVerify,
     AccountTimelineEvent,
     AccountTransfer,
     Role,
     RoleMenu,
     RolePerm,
+    Todo,
     User,
     UserRole,
+    WorkMessage,
 )
 from app.ops_db import ops_session
 from app.ops_models import Company, IpGroup, PlatformAccount
@@ -23,6 +26,7 @@ def ensure_acct_schema() -> None:
     AccountApply.__table__.create(engine, checkfirst=True)
     AccountTimelineEvent.__table__.create(engine, checkfirst=True)
     AccountRecharge.__table__.create(engine, checkfirst=True)
+    AccountRechargeVerify.__table__.create(engine, checkfirst=True)
     AccountTransfer.__table__.create(engine, checkfirst=True)
 
 E2E_POOL_ACCOUNT_NO = "AC-E2E-POOL"
@@ -31,6 +35,8 @@ E2E_XFER_ACCOUNT_NO = "AC-E2E-XFER"
 E2E_XFER_NICK = "E2E流转抖音"
 E2E_RECALL_ACCOUNT_NO = "AC-E2E-RECALL"
 E2E_RECALL_NICK = "E2E收回抖音"
+E2E_RECON_ACCOUNT_NO = "AC-E2E-RECON"
+E2E_RECON_NICK = "E2E核对抖音"
 E2E_ACCT_FINANCE_USER = "e2e_acct_r3"
 E2E_ACCT_PEER_USER = "e2e_acct_peer"
 E2E_ACCT_PEER_NICK = "流转同事"
@@ -81,6 +87,7 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
         _ensure_named_account(ops, admin, E2E_POOL_ACCOUNT_NO, E2E_POOL_NICK)
         _ensure_named_account(ops, admin, E2E_XFER_ACCOUNT_NO, E2E_XFER_NICK)
         _ensure_named_account(ops, admin, E2E_RECALL_ACCOUNT_NO, E2E_RECALL_NICK)
+        _ensure_named_account(ops, admin, E2E_RECON_ACCOUNT_NO, E2E_RECON_NICK)
         ops.commit()
     finally:
         ops.close()
@@ -191,7 +198,12 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     ops = ops_session()
     account_ids: list[int] = []
     try:
-        for account_no in (E2E_POOL_ACCOUNT_NO, E2E_XFER_ACCOUNT_NO, E2E_RECALL_ACCOUNT_NO):
+        for account_no in (
+            E2E_POOL_ACCOUNT_NO,
+            E2E_XFER_ACCOUNT_NO,
+            E2E_RECALL_ACCOUNT_NO,
+            E2E_RECON_ACCOUNT_NO,
+        ):
             row = _account_row(ops, account_no)
             if row is None:
                 continue
@@ -207,3 +219,17 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     db.execute(delete(AccountApply).where(AccountApply.account_id.in_(account_ids)))
     db.execute(delete(AccountRecharge).where(AccountRecharge.account_id.in_(account_ids)))
     db.execute(delete(AccountTransfer).where(AccountTransfer.account_id.in_(account_ids)))
+    verify_ids = list(
+        db.scalars(
+            select(AccountRechargeVerify.id).where(AccountRechargeVerify.account_id.in_(account_ids))
+        ).all()
+    )
+    if verify_ids:
+        db.execute(delete(Todo).where(Todo.ref_type == "acct_recharge_verify", Todo.ref_id.in_(verify_ids)))
+        db.execute(
+            delete(WorkMessage).where(
+                WorkMessage.ref_type == "acct_recharge_verify",
+                WorkMessage.ref_id.in_(verify_ids),
+            )
+        )
+        db.execute(delete(AccountRechargeVerify).where(AccountRechargeVerify.id.in_(verify_ids)))
