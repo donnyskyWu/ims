@@ -1,4 +1,4 @@
-"""DC-001 穿透查询（#52 账号入口 · #53 场次下钻与明细导出）。"""
+"""DC-001 穿透查询（#52 账号 · #53 场次下钻 · #88 实名人/责任人/资产/IP 组）。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ from app.dc_profit_trace import cost_detail_rows, parse_asset_ids
 from app.fin import approved_report, load_fin_cost, load_profit, money, net_profit_rate, operating_profit
 from app.live import get_session
 from app.models import LiveSession, User
+from app.ops_db import ops_session
+from app.ops_models import IpGroup, Phone, PlatformAccount
 
 router = APIRouter(prefix="/dc/trace", tags=["dc-trace"])
 
@@ -93,8 +95,62 @@ def session_rows(db: Session, tenant_id: int, limit: int = 20) -> list[LiveSessi
     )
 
 
+def base_sessions(tenant_id: int):
+    return select(LiveSession).where(LiveSession.deleted == 0, LiveSession.tenant_id == tenant_id)
+
+
+def asset_label(phone: Phone | None, asset_id: int) -> str:
+    if phone is None:
+        return f"资产#{asset_id}"
+    label = (phone.phone_code or phone.device_number or phone.phone_model or "").strip()
+    return label or f"资产#{asset_id}"
+
+
+def asset_label_map(asset_ids: set[int]) -> dict[int, str]:
+    if not asset_ids:
+        return {}
+    ops = ops_session()
+    try:
+        rows = ops.scalars(select(Phone).where(Phone.id.in_(asset_ids), Phone.deleted == 0)).all()
+    finally:
+        ops.close()
+    found = {row.id: row for row in rows}
+    return {asset_id: asset_label(found.get(asset_id), asset_id) for asset_id in asset_ids}
+
+
+def sessions_containing_asset(db: Session, tenant_id: int, asset_id: int, limit: int = 50) -> list[LiveSession]:
+    if not asset_id:
+        return []
+    rows = db.scalars(
+        base_sessions(tenant_id)
+        .where(LiveSession.device_asset_ids.contains(str(asset_id)))
+        .order_by(LiveSession.id.desc())
+        .limit(200)
+    ).all()
+    matched = [row for row in rows if asset_id in parse_asset_ids(row.device_asset_ids or "[]")]
+    return matched[:limit]
+
+
+def account_ids_in_group(tenant_id: int, group_id: int) -> list[int]:
+    if not group_id:
+        return []
+    ops = ops_session()
+    try:
+        return list(
+            ops.scalars(
+                select(PlatformAccount.id).where(
+                    PlatformAccount.deleted == 0,
+                    PlatformAccount.tenant_id == tenant_id,
+                    PlatformAccount.ip_group_id == group_id,
+                )
+            ).all()
+        )
+    finally:
+        ops.close()
+
+
 def load_entry_sessions(db: Session, tenant_id: int, entry_type: str, entry_id: str) -> list[LiveSession]:
-    stmt = select(LiveSession).where(LiveSession.deleted == 0, LiveSession.tenant_id == tenant_id)
+    stmt = base_sessions(tenant_id)
     entry_id = (entry_id or "").strip()
     if entry_type == "ACCOUNT":
         stmt = stmt.where(LiveSession.account_id == as_int(entry_id))
@@ -104,13 +160,24 @@ def load_entry_sessions(db: Session, tenant_id: int, entry_type: str, entry_id: 
         stmt = stmt.where(LiveSession.realname_person_id == as_int(entry_id))
     elif entry_type == "RESPONSIBLE":
         stmt = stmt.where(LiveSession.responsible_user_id == as_int(entry_id))
+    elif entry_type == "ASSET":
+        return sessions_containing_asset(db, tenant_id, as_int(entry_id))
+    elif entry_type == "IP_GROUP":
+        account_ids = account_ids_in_group(tenant_id, as_int(entry_id))
+        if not account_ids:
+            return []
+        stmt = stmt.where(LiveSession.account_id.in_(account_ids))
+    else:
+        return []
     return list(db.scalars(stmt.order_by(LiveSession.id.desc()).limit(50)).all())
 
 
-def build_graph_from_sessions(sessions: list[LiveSession]) -> dict:
+def build_graph_from_sessions(sessions: list[LiveSession], labels: dict[int, str] | None = None) -> dict:
     nodes: list[dict] = []
     edges: list[dict] = []
     seen: set[str] = set()
+    seen_edges: set[tuple[str, str]] = set()
+    asset_labels = labels or {}
 
     def add_node(node_type: str, node_id: str, label: str, **extra) -> str:
         key = f"{node_type}:{node_id}"
@@ -118,6 +185,13 @@ def build_graph_from_sessions(sessions: list[LiveSession]) -> dict:
             seen.add(key)
             nodes.append({"nodeType": node_type, "nodeId": node_id, "nodeLabel": label, **extra})
         return node_id
+
+    def add_edge(from_id: str, to_id: str) -> None:
+        key = (from_id, to_id)
+        if key in seen_edges or from_id == to_id:
+            return
+        seen_edges.add(key)
+        edges.append({"fromNodeId": from_id, "toNodeId": to_id})
 
     for row in sessions:
         person_id = add_node("PERSON", str(row.realname_person_id or 0), row.realname_name or "实名人")
@@ -128,9 +202,197 @@ def build_graph_from_sessions(sessions: list[LiveSession]) -> dict:
             platform=row.platform or None,
         )
         session_id = add_node("SESSION", row.session_code, row.topic or row.session_code, platform=row.platform)
-        edges.append({"fromNodeId": person_id, "toNodeId": account_id})
-        edges.append({"fromNodeId": account_id, "toNodeId": session_id})
+        add_edge(person_id, account_id)
+        add_edge(account_id, session_id)
+        for asset_id in parse_asset_ids(row.device_asset_ids or "[]"):
+            asset_node = add_node("ASSET", str(asset_id), asset_labels.get(asset_id, f"资产#{asset_id}"))
+            add_edge(asset_node, session_id)
     return {"nodes": nodes, "edges": edges}
+
+
+def dedup_entries(items: list[dict], limit: int) -> list[dict]:
+    dedup: dict[str, dict] = {}
+    for item in items:
+        dedup[f"{item['entryType']}:{item['entryId']}"] = item
+    return list(dedup.values())[:limit]
+
+
+def entry_item(entry_type: str, entry_id: str, label: str, hint: str, platform: str | None = None) -> dict:
+    item = {
+        "entryType": entry_type,
+        "entryId": entry_id,
+        "entryLabel": label,
+        "hint": hint,
+    }
+    if platform:
+        item["platform"] = platform
+    return item
+
+
+def search_person_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
+    stmt = base_sessions(tenant_id).where(LiveSession.realname_person_id != 0)
+    if keyword:
+        conds = [LiveSession.realname_name.contains(keyword)]
+        if keyword.isdigit():
+            conds.append(LiveSession.realname_person_id == int(keyword))
+        stmt = stmt.where(or_(*conds))
+    items: list[dict] = []
+    for row in db.scalars(stmt.order_by(LiveSession.id.desc()).limit(200)).all():
+        items.append(
+            entry_item(
+                "PERSON",
+                str(row.realname_person_id),
+                row.realname_name or f"实名人#{row.realname_person_id}",
+                row.account_no or "",
+                row.platform,
+            )
+        )
+    return dedup_entries(items, limit)
+
+
+def search_responsible_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
+    user_stmt = select(User).where(User.deleted == 0, User.tenant_id == tenant_id)
+    if keyword:
+        conds = [User.nickname.contains(keyword), User.username.contains(keyword)]
+        if keyword.isdigit():
+            conds.append(User.id == int(keyword))
+        user_stmt = user_stmt.where(or_(*conds))
+    users = list(db.scalars(user_stmt.order_by(User.id.asc()).limit(80)).all())
+    items: list[dict] = []
+    for user in users:
+        row = db.scalar(
+            base_sessions(tenant_id)
+            .where(LiveSession.responsible_user_id == user.id)
+            .order_by(LiveSession.id.desc())
+            .limit(1)
+        )
+        if row is None:
+            continue
+        items.append(
+            entry_item(
+                "RESPONSIBLE",
+                str(user.id),
+                user.nickname or user.username or f"责任人#{user.id}",
+                row.session_code,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+def search_asset_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
+    ops = ops_session()
+    try:
+        phone_stmt = select(Phone).where(Phone.deleted == 0, Phone.tenant_id == tenant_id)
+        exact_phone: Phone | None = None
+        if keyword and keyword.isdigit():
+            candidate = ops.get(Phone, int(keyword))
+            if candidate is not None and not candidate.deleted and (candidate.tenant_id or 0) == tenant_id:
+                exact_phone = candidate
+        if keyword:
+            conds = [
+                Phone.phone_code.contains(keyword),
+                Phone.device_number.contains(keyword),
+                Phone.phone_model.contains(keyword),
+            ]
+            if keyword.isdigit():
+                conds.append(Phone.id == int(keyword))
+            phone_stmt = phone_stmt.where(or_(*conds))
+        else:
+            recent_ids: list[int] = []
+            for row in session_rows(db, tenant_id, 80):
+                for asset_id in parse_asset_ids(row.device_asset_ids or "[]"):
+                    if asset_id not in recent_ids:
+                        recent_ids.append(asset_id)
+            if not recent_ids:
+                return []
+            phone_stmt = phone_stmt.where(Phone.id.in_(recent_ids[:80]))
+        phones = list(ops.scalars(phone_stmt.order_by(Phone.id.asc()).limit(80)).all())
+        if exact_phone is not None:
+            phones = [exact_phone] + [phone for phone in phones if phone.id != exact_phone.id]
+    finally:
+        ops.close()
+    items: list[dict] = []
+    for phone in phones:
+        row = None
+        matched = sessions_containing_asset(db, tenant_id, phone.id, limit=1)
+        if matched:
+            row = matched[0]
+        if row is None:
+            continue
+        items.append(
+            entry_item(
+                "ASSET",
+                str(phone.id),
+                asset_label(phone, phone.id),
+                row.session_code,
+                row.platform,
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
+def search_ip_group_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
+    ops = ops_session()
+    try:
+        group_stmt = select(IpGroup).where(IpGroup.deleted == 0, IpGroup.tenant_id == tenant_id)
+        exact: list[IpGroup] = []
+        if keyword:
+            exact = list(
+                ops.scalars(
+                    group_stmt.where(IpGroup.group_name == keyword).order_by(IpGroup.id.desc())
+                ).all()
+            )
+            group_stmt = group_stmt.where(IpGroup.group_name.contains(keyword))
+        groups = list(ops.scalars(group_stmt.order_by(IpGroup.id.desc()).limit(80)).all())
+        if exact:
+            seen_ids = {group.id for group in exact}
+            groups = exact + [group for group in groups if group.id not in seen_ids]
+        if not groups:
+            return []
+        group_ids = [group.id for group in groups]
+        accounts = list(
+            ops.scalars(
+                select(PlatformAccount).where(
+                    PlatformAccount.deleted == 0,
+                    PlatformAccount.tenant_id == tenant_id,
+                    PlatformAccount.ip_group_id.in_(group_ids),
+                )
+            ).all()
+        )
+    finally:
+        ops.close()
+    accounts_by_group: dict[int, list[int]] = {}
+    for account in accounts:
+        if account.ip_group_id:
+            accounts_by_group.setdefault(account.ip_group_id, []).append(account.id)
+    items: list[dict] = []
+    for group in groups:
+        account_ids = accounts_by_group.get(group.id) or []
+        if not account_ids:
+            continue
+        row = db.scalar(
+            base_sessions(tenant_id)
+            .where(LiveSession.account_id.in_(account_ids))
+            .order_by(LiveSession.id.desc())
+            .limit(1)
+        )
+        if row is None:
+            continue
+        items.append(
+            entry_item(
+                "IP_GROUP",
+                str(group.id),
+                group.group_name or f"IP组#{group.id}",
+                row.account_no or "",
+            )
+        )
+        if len(items) >= limit:
+            break
+    return items
 
 
 def detail_from_sessions(sessions: list[LiveSession], page_no: int, size: int) -> tuple[list[dict], int]:
@@ -393,7 +655,7 @@ def trace_entry(
     lim = min(max(limit, 1), 50)
     items: list[dict] = []
     if entryType == "ACCOUNT":
-        stmt = select(LiveSession).where(LiveSession.deleted == 0, LiveSession.tenant_id == tenant_id)
+        stmt = base_sessions(tenant_id)
         if kw:
             stmt = stmt.where(
                 or_(LiveSession.account_no.contains(kw), LiveSession.session_code.contains(kw))
@@ -402,45 +664,41 @@ def trace_entry(
             if not row.account_id:
                 continue
             items.append(
-                {
-                    "entryType": "ACCOUNT",
-                    "entryId": str(row.account_id),
-                    "entryLabel": row.account_no or f"账号#{row.account_id}",
-                    "platform": row.platform,
-                    "hint": f"最近场次 {row.session_code}",
-                }
+                entry_item(
+                    "ACCOUNT",
+                    str(row.account_id),
+                    row.account_no or f"账号#{row.account_id}",
+                    f"最近场次 {row.session_code}",
+                    row.platform,
+                )
             )
-    elif entryType == "SESSION":
-        stmt = select(LiveSession).where(LiveSession.deleted == 0, LiveSession.tenant_id == tenant_id)
+        return ok(dedup_entries(items, lim))
+    if entryType == "SESSION":
+        stmt = base_sessions(tenant_id)
         if kw:
             stmt = stmt.where(
                 or_(LiveSession.session_code.contains(kw), LiveSession.topic.contains(kw))
             )
         for row in db.scalars(stmt.order_by(LiveSession.id.desc()).limit(lim)).all():
             items.append(
-                {
-                    "entryType": "SESSION",
-                    "entryId": row.session_code,
-                    "entryLabel": row.topic or row.session_code,
-                    "platform": row.platform,
-                    "hint": row.account_no or "",
-                }
-            )
-    else:
-        for row in session_rows(db, tenant_id, lim):
-            if entryType == "PERSON" and row.realname_person_id:
-                items.append(
-                    {
-                        "entryType": "PERSON",
-                        "entryId": str(row.realname_person_id),
-                        "entryLabel": row.realname_name or f"实名人#{row.realname_person_id}",
-                        "hint": row.account_no or "",
-                    }
+                entry_item(
+                    "SESSION",
+                    row.session_code,
+                    row.topic or row.session_code,
+                    row.account_no or "",
+                    row.platform,
                 )
-    dedup: dict[str, dict] = {}
-    for item in items:
-        dedup[f"{item['entryType']}:{item['entryId']}"] = item
-    return ok(list(dedup.values())[:lim])
+            )
+        return ok(dedup_entries(items, lim))
+    if entryType == "PERSON":
+        return ok(search_person_entries(db, tenant_id, kw, lim))
+    if entryType == "RESPONSIBLE":
+        return ok(search_responsible_entries(db, tenant_id, kw, lim))
+    if entryType == "ASSET":
+        return ok(search_asset_entries(db, tenant_id, kw, lim))
+    if entryType == "IP_GROUP":
+        return ok(search_ip_group_entries(db, tenant_id, kw, lim))
+    return ok([])
 
 
 @router.post("/query")
@@ -461,7 +719,10 @@ def trace_query(
         load_entry_sessions(db, tenant_id, body.entryType, body.entryId),
         body.dateRange,
     )
-    graph = build_graph_from_sessions(sessions)
+    asset_ids: set[int] = set()
+    for row in sessions:
+        asset_ids.update(parse_asset_ids(row.device_asset_ids or "[]"))
+    graph = build_graph_from_sessions(sessions, asset_label_map(asset_ids))
     page_no, size = page_args(body.pageNo, body.pageSize)
     detail_list = None
     if body.mode == "DETAIL":

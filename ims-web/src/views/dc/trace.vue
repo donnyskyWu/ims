@@ -20,10 +20,13 @@
       >{{ timeoutHint }}</span>
     </div>
     <form class="qbar" @submit.prevent="onSubmit">
-      <select v-model="entryType" style="width: 120px">
-        <option value="ACCOUNT">账号</option>
-        <option value="SESSION">场次</option>
+      <select v-model="entryType" style="width: 132px" data-testid="dc-trace-entry-type" @change="onEntryTypeChange">
         <option value="PERSON">实名人</option>
+        <option value="ACCOUNT">账号</option>
+        <option value="ASSET">资产</option>
+        <option value="SESSION">场次</option>
+        <option value="RESPONSIBLE">责任人</option>
+        <option value="IP_GROUP">IP组</option>
       </select>
       <input
         v-model="keyword"
@@ -57,27 +60,46 @@
       入口：
       <button
         v-for="e in entries"
-        :key="e.entryId"
+        :key="e.entryType + ':' + e.entryId"
         type="button"
         class="btn btn-sec btn-sm"
         style="margin-right: 6px"
+        data-testid="dc-trace-entry-pick"
+        :data-entry-type="e.entryType"
+        :data-entry-id="e.entryId"
+        :title="e.hint || ''"
         @click="pickEntry(e)"
       >
         {{ e.entryLabel }}
       </button>
     </div>
+    <p v-else-if="searched" class="hint" data-testid="dc-trace-entry-empty">未找到入口</p>
+    <p v-if="selectedEntry" class="hint" data-testid="dc-trace-current-entry">
+      当前入口：{{ entryTypeLabel(selectedEntry.entryType) }} · {{ selectedEntry.entryLabel }}
+    </p>
     <div v-if="error" class="hint" style="color: var(--red)">{{ error }}</div>
     <div class="g2" style="margin-top: 12px">
       <div class="card" style="padding: 12px; min-height: 200px" data-testid="dc-trace-graph">
         <b style="font-size: 13px">关系图</b>
         <ul style="margin: 10px 0 0; padding-left: 18px; font-size: 12px">
-          <li v-for="n in nodes" :key="n.nodeType + ':' + n.nodeId">
+          <li v-for="n in nodes" :key="n.nodeType + ':' + n.nodeId" :data-node-type="n.nodeType">
             {{ n.nodeType }} ·
             <button
               v-if="n.nodeType === 'SESSION'"
               type="button"
               class="btn btn-sec btn-sm"
               @click="openSession(n.nodeId)"
+            >
+              {{ n.nodeLabel }}
+            </button>
+            <button
+              v-else-if="n.nodeType === 'PERSON' || n.nodeType === 'ACCOUNT' || n.nodeType === 'ASSET'"
+              type="button"
+              class="btn btn-sec btn-sm"
+              data-testid="dc-trace-node-drill"
+              :data-node-type="n.nodeType"
+              :data-node-id="n.nodeId"
+              @click="drillNode(n)"
             >
               {{ n.nodeLabel }}
             </button>
@@ -157,6 +179,13 @@
           <li>净利率：{{ sessionDetail.profit?.netProfitRate == null ? '—' : sessionDetail.profit.netProfitRate + '%' }}</li>
           <li>计算版本：v{{ sessionDetail.profit?.calcVersion ?? 0 }}</li>
           <li>账号：{{ sessionDetail.account?.accountNo || '—' }}</li>
+          <li
+            v-for="p in sessionDetail.persons || []"
+            :key="p.roleType + ':' + p.userId"
+            data-testid="dc-trace-person-line"
+          >
+            {{ personRoleLabel(p.roleType) }}：{{ p.userName || '—' }}
+          </li>
         </ul>
         <h3 style="font-size: 14px; margin-bottom: 6px">成本明细</h3>
         <table>
@@ -180,7 +209,7 @@
 import { computed, ref } from 'vue'
 import { http } from '../../api/http'
 
-type Entry = { entryType: string; entryId: string; entryLabel: string }
+type Entry = { entryType: string; entryId: string; entryLabel: string; hint?: string }
 type Node = { nodeType: string; nodeId: string; nodeLabel: string }
 type Detail = { sessionCode: string; platform: string; accountNo: string; realnameName: string }
 type CostItem = { costItem: string; costItemLabel?: string; amount: number | null }
@@ -199,6 +228,7 @@ type SessionDetail = {
   }
   costDetail?: CostItem[]
   account?: { accountNo?: string }
+  persons?: Array<{ userId: number; userName: string; roleType: string }>
 }
 type TracePayload = {
   queryCostMs?: number
@@ -215,6 +245,7 @@ const dateTo = ref('')
 const exportFormat = ref<'XLSX' | 'PDF'>('XLSX')
 const selectedEntry = ref<Entry | null>(null)
 const entries = ref<Entry[]>([])
+const searched = ref(false)
 const nodes = ref<Node[]>([])
 const details = ref<Detail[]>([])
 const dataAsOf = ref('')
@@ -229,6 +260,31 @@ const sessionDetail = ref<SessionDetail | null>(null)
 const timeoutHint = computed(() =>
   timeoutDegraded.value ? '1181 穿透查询超时降级，请缩小日期范围' : '超时降级 1181',
 )
+
+const ENTRY_LABELS: Record<string, string> = {
+  PERSON: '实名人',
+  ACCOUNT: '账号',
+  ASSET: '资产',
+  SESSION: '场次',
+  RESPONSIBLE: '责任人',
+  IP_GROUP: 'IP组',
+}
+
+function entryTypeLabel(entryType: string) {
+  return ENTRY_LABELS[entryType] || entryType
+}
+
+function personRoleLabel(role: string) {
+  if (role === 'RESPONSIBLE') return '责任人'
+  if (role === 'REALNAME') return '实名人'
+  return role
+}
+
+function onEntryTypeChange() {
+  selectedEntry.value = null
+  entries.value = []
+  searched.value = false
+}
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -259,16 +315,25 @@ function applyResult(data: TracePayload | undefined, degraded: boolean) {
 
 async function searchEntry() {
   error.value = ''
+  searched.value = false
+  selectedEntry.value = null
   try {
     const res = await http.get('/dc/trace/entry', {
       params: { keyword: keyword.value, entryType: entryType.value, limit: 8 },
     })
     entries.value = res.data.data || []
+    searched.value = true
     if (entries.value.length === 1) pickEntry(entries.value[0])
   } catch (err) {
     const fail = asApiFail(err)
     error.value = fail?.msg || '网络错误'
   }
+}
+
+function drillNode(n: Node) {
+  entryType.value = n.nodeType
+  selectedEntry.value = { entryType: n.nodeType, entryId: n.nodeId, entryLabel: n.nodeLabel }
+  runQuery()
 }
 
 function pickEntry(e: Entry) {

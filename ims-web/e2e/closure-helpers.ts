@@ -563,6 +563,8 @@ export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
   accountId: number
   realnamePersonId: number
   deviceId: number
+  ipGroupId?: number
+  ipGroupName?: string
 }> {
   await page.goto('/ims/corp/account/douyin')
   await page.locator('input[placeholder="账号编号/昵称"]').fill(E2E_FIN_ACCOUNT_NO)
@@ -579,7 +581,7 @@ export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
   await accRow.getByRole('button', { name: '详情' }).click()
   const accDetailBody = (await (await accDetailResp).json()) as {
     code: number
-    data?: { id?: number; realnameId?: number }
+    data?: { id?: number; realnameId?: number; ipGroupId?: number; ipGroupName?: string }
   }
   expect(accDetailBody.code).toBe(0)
   const accountId = accDetailBody.data?.id
@@ -607,6 +609,8 @@ export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
     accountId: accountId!,
     realnamePersonId: realnamePersonId!,
     deviceId: phoneHit!.id!,
+    ipGroupId: accDetailBody.data?.ipGroupId || undefined,
+    ipGroupName: accDetailBody.data?.ipGroupName || '',
   }
 }
 
@@ -615,7 +619,12 @@ export async function registerLiveSessionConfirmedReportViaUi(
   page: Page,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
   opts?: { topic?: string; gmv?: number; refundAmount?: number; planStartTime?: string },
-): Promise<{ sessionCode: string }> {
+): Promise<{
+  sessionCode: string
+  realnameName: string
+  responsibleUserName: string
+  responsibleUserId: number
+}> {
   const topic = opts?.topic ?? `E2E FIN ${Date.now()}`
   const gmv = opts?.gmv ?? 100_000
   const refundAmount = opts?.refundAmount ?? 2_000
@@ -641,7 +650,16 @@ export async function registerLiveSessionConfirmedReportViaUi(
     (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
   )
   await drawer.getByRole('button', { name: '提交登记' }).click()
-  const regBody = (await (await regResp).json()) as { code: number; data?: { sessionCode?: string; sessionStatus?: string } }
+  const regBody = (await (await regResp).json()) as {
+    code: number
+    data?: {
+      sessionCode?: string
+      sessionStatus?: string
+      realnameName?: string
+      responsibleUserName?: string
+      responsibleUserId?: number
+    }
+  }
   expect(regBody.code).toBe(0)
   const sessionCode = regBody.data?.sessionCode
   expect(sessionCode).toBeTruthy()
@@ -679,7 +697,12 @@ export async function registerLiveSessionConfirmedReportViaUi(
   const confirmBody = (await (await confirmResp).json()) as { code: number }
   expect(confirmBody.code).toBe(0)
 
-  return { sessionCode: sessionCode! }
+  return {
+    sessionCode: sessionCode!,
+    realnameName: regBody.data?.realnameName || '',
+    responsibleUserName: regBody.data?.responsibleUserName || '',
+    responsibleUserId: regBody.data?.responsibleUserId || 0,
+  }
 }
 
 /** FIN 成本录入 + 核准（纯 UI） */
@@ -919,7 +942,9 @@ export async function openDcAccountTraceViaUi(page: Page, accountNo: string, ses
   const queryResp = page.waitForResponse(
     (r) => r.url().includes('/dc/trace/query') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await page.getByRole('button', { name: hit!.entryLabel! }).click()
+  await page
+    .locator(`[data-testid="dc-trace-entry-pick"][data-entry-id="${hit!.entryId}"]`)
+    .click()
   const queryBody = (await (await queryResp).json()) as {
     code: number
     data?: {
@@ -947,6 +972,63 @@ export async function openDcAccountTraceViaUi(page: Page, accountNo: string, ses
     expect(listed).toBe(true)
   }
   return queryBody.data
+}
+
+/** DC-001 指定入口穿透：选类型 → 搜入口 → 关系图/明细表（纯 UI） */
+export async function openDcTypedEntryTraceViaUi(
+  page: Page,
+  entryType: 'PERSON' | 'ACCOUNT' | 'ASSET' | 'SESSION' | 'RESPONSIBLE' | 'IP_GROUP',
+  keyword: string,
+  sessionCode: string,
+  match: { entryId: string },
+) {
+  await page.goto('/ims/dc/trace')
+  await expect(page.locator('h1')).toHaveText('穿透查询', { timeout: 15_000 })
+  await page.getByTestId('dc-trace-entry-type').selectOption(entryType)
+  await page.getByTestId('dc-trace-keyword').fill(keyword)
+  const entryResp = page.waitForResponse(
+    (r) => r.url().includes('/dc/trace/entry') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByTestId('dc-trace-search-entry').click()
+  const entryBody = (await (await entryResp).json()) as {
+    code: number
+    data?: Array<{ entryType?: string; entryId?: string; entryLabel?: string }>
+  }
+  expect(entryBody.code).toBe(0)
+  const hit = entryBody.data?.find((e) => e.entryType === entryType && e.entryId === match.entryId)
+  expect(hit?.entryId).toBe(match.entryId)
+  expect(hit?.entryLabel).toBeTruthy()
+
+  const queryResp = page.waitForResponse(
+    (r) => r.url().includes('/dc/trace/query') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await page
+    .locator(
+      `[data-testid="dc-trace-entry-pick"][data-entry-type="${entryType}"][data-entry-id="${hit!.entryId}"]`,
+    )
+    .click()
+  const queryBody = (await (await queryResp).json()) as {
+    code: number
+    data?: {
+      queryCostMs?: number
+      dataAsOf?: string
+      nodes?: Array<{ nodeType?: string; nodeId?: string; nodeLabel?: string }>
+      detailList?: { list?: Array<{ sessionCode?: string }> }
+    }
+  }
+  expect(queryBody.code).toBe(0)
+  expect((queryBody.data?.queryCostMs ?? 0) >= 0).toBe(true)
+  expect(queryBody.data?.dataAsOf).toBeTruthy()
+  const nodeTypes = (queryBody.data?.nodes || []).map((n) => n.nodeType)
+  expect(nodeTypes).toContain('SESSION')
+  expect(queryBody.data?.detailList?.list?.some((row) => row.sessionCode === sessionCode)).toBe(true)
+
+  const current = page.getByTestId('dc-trace-current-entry')
+  await expect(current).toBeVisible()
+  await expect(current).toContainText(hit!.entryLabel!)
+  await expect(page.getByTestId('dc-trace-graph')).toContainText('SESSION')
+  await expect(page.getByTestId('dc-trace-detail-table')).toContainText(sessionCode)
+  return { hit, data: queryBody.data }
 }
 
 /** DC-001 场次下钻：明细表点场次 ID 打开抽屉（纯 UI，须已在穿透结果页） */
