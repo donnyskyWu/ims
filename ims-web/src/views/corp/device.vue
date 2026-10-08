@@ -10,6 +10,7 @@
         <template v-else>
           <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
           <button v-if="kind !== 'phone'" class="btn btn-sec" type="button" data-testid="corp-asset-entry-open" @click="openEntryReverse">账号/场次反查</button>
+          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-verify-open" @click="openVerify">关联校验</button>
           <button class="btn btn-sec" type="button" data-testid="corp-asset-import-btn" @click="openImport">采购导入</button>
           <button class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
         </template>
@@ -208,8 +209,8 @@
           <input v-model="assetForm.sessionCode" data-testid="corp-asset-bind-session" placeholder="场次编号，可空" />
         </div>
       </div>
-      <p class="hint">正向穿透从实名人向下最多 5 层。第 6 层可以登记，查询时返回 1013。绑定账号或场次后，可在「账号/场次反查」看到这台设备。场次须已存在，否则 1500。</p>
-      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <p class="hint">实名人、账号、场次会在保存时校验：不存在为 1500，已停用或场次已取消为 1501，场次或账号不属于该实名人为 1001。</p>
+      <div v-if="formError" class="hint bad" data-testid="corp-asset-form-error">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="assetCreateOpen = false">取消</button>
         <button class="btn btn-pri" type="button" data-testid="corp-asset-save" :disabled="saving" @click="saveAsset">{{ saving ? '保存中…' : '保存' }}</button>
@@ -299,6 +300,16 @@
           {{ node.layer === 'PERSON' ? '实名人' : `第${node.level}层` }} · {{ node.label }}
         </li>
       </ol>
+      <div v-if="forwardSessions.length" data-testid="asset-forward-sessions">
+        <p class="hint">场次层</p>
+        <p v-for="item in forwardSessions" :key="String(item.sessionId)" data-testid="asset-forward-session">
+          {{ item.sessionCode }} · {{ sessionStatusLabel(String(item.status || '')) }}
+        </p>
+      </div>
+      <p v-if="forwardFinance && forwardAssetId" class="hint" data-testid="asset-forward-finance">
+        成本层 · 成本 <span data-testid="asset-forward-cost">{{ forwardFinance.costMasked ? '***' : money(forwardFinance.totalCost) }}</span>
+        · 收入 <span data-testid="asset-forward-revenue">{{ money(forwardFinance.totalRevenue) }}</span>
+      </p>
       <p v-if="exportNote && forwardOpen" class="hint" data-testid="asset-export-note">{{ exportNote }}</p>
       <div class="acts" style="margin-top: 12px">
         <button class="btn btn-pri btn-sm" type="button" data-testid="asset-forward-export" :disabled="exporting" @click="exportForward">导出穿透报告</button>
@@ -377,6 +388,32 @@
         <button class="btn btn-sec" type="button" @click="entryOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer v-if="kind === 'office'" :open="verifyOpen" title="登记关联校验" width="720px" @close="verifyOpen = false">
+      <p class="hint">检查台账里的实名人、账号、场次是否存在、归属是否一致、状态是否允许。</p>
+      <div class="formrow one">
+        <div class="fld">
+          <label>只看资产编号</label>
+          <input v-model="verifyAssetCode" data-testid="asset-verify-asset-code" placeholder="可空，填写后只看这台设备" />
+        </div>
+      </div>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="asset-verify-run" :disabled="verifyRunning" @click="runVerify">{{ verifyRunning ? '校验中…' : '开始校验' }}</button>
+      <p v-if="verifyError" class="hint bad" data-testid="asset-verify-error">{{ verifyError }}</p>
+      <p v-else-if="verifySummary" class="hint" data-testid="asset-verify-summary">{{ verifySummary }}</p>
+      <p v-if="verifySummary && verifyAssetCode.trim() && !verifyErrors.length && !verifyError" class="hint" data-testid="asset-verify-clean">该资产没有关联异常</p>
+      <table v-if="verifyErrors.length" data-testid="asset-verify-errors">
+        <thead><tr><th>资产编号</th><th>类型</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr v-for="item in verifyErrors" :key="String(item.id)" data-testid="asset-verify-row">
+            <td data-testid="asset-verify-code">{{ item.assetCode }}</td>
+            <td>{{ verifyTypeLabel(String(item.recordType || '')) }}</td>
+            <td>{{ item.description }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="verifyOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -439,6 +476,14 @@ const entryRows = ref<Row[]>([])
 const entryError = ref('')
 const entrySummary = ref('')
 const forwardAssetId = ref(0)
+const forwardSessions = ref<Row[]>([])
+const forwardFinance = ref<Row | null>(null)
+const verifyOpen = ref(false)
+const verifyRunning = ref(false)
+const verifyError = ref('')
+const verifySummary = ref('')
+const verifyErrors = ref<Row[]>([])
+const verifyAssetCode = ref('')
 const exporting = ref(false)
 const exportNote = ref('')
 const persons = ref<PersonOpt[]>([])
@@ -505,7 +550,7 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
     emptyHint: '点「资产登记」或「采购导入」写入台账，再按领用、使用、归还、报废流转。',
-    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。采购导入：合法行入台账，非法行按行号和字段定位，部分成功不回滚。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013，可导出穿透报告 PDF。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。账号/场次/使用人反查：登记时绑定后按入口列出设备状态，可导出 xlsx；入口不存在为 1500。',
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。登记时校验实名人、账号、场次：不存在 1500，已停用或场次已取消 1501，归属不对 1001。正向穿透可看场次层和成本层。关联校验扫描已入库的不一致项。',
     columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
     keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
   },
@@ -745,6 +790,35 @@ function closeAssetDrawers() {
   forwardOpen.value = false
   reverseOpen.value = false
   entryOpen.value = false
+  verifyOpen.value = false
+}
+
+function money(value: unknown) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '0.00'
+  const sign = number < 0 ? '-' : ''
+  const [whole, frac] = Math.abs(number).toFixed(2).split('.')
+  return `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${frac}`
+}
+
+function sessionStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    PENDING_RISK_CHECK: '待风控',
+    APPROVED: '已放行',
+    LIVE: '直播中',
+    ENDED: '已结束',
+    CANCELLED: '已取消',
+  }
+  return labels[status] || status || '—'
+}
+
+function verifyTypeLabel(kind: string) {
+  const labels: Record<string, string> = {
+    asset_person: '资产↔实名人',
+    asset_account: '资产↔账号',
+    asset_session: '资产↔场次',
+  }
+  return labels[kind] || kind
 }
 
 function importSummary(result: Row) {
@@ -887,6 +961,11 @@ async function loadTrace(url: string, params?: Record<string, unknown>) {
   }
 }
 
+function clearForwardLayers() {
+  forwardSessions.value = []
+  forwardFinance.value = null
+}
+
 function openForwardPerson() {
   closeAssetDrawers()
   forwardOpen.value = true
@@ -894,6 +973,7 @@ function openForwardPerson() {
   forwardError.value = ''
   forwardHint.value = '实名人 → 资产，最多 5 层'
   forwardAssetId.value = 0
+  clearForwardLayers()
   exportNote.value = ''
   forwardRealnameId.value = persons.value[0] ? String(persons.value[0].id) : ''
 }
@@ -907,8 +987,24 @@ async function queryForwardPerson() {
   }
   forwardHint.value = '实名人 → 资产，最多 5 层'
   forwardAssetId.value = 0
+  clearForwardLayers()
   exportNote.value = ''
   await loadTrace('/asset/forward/trace/0', { realnameId: id })
+}
+
+async function loadForwardLayers(assetId: number) {
+  clearForwardLayers()
+  if (!assetId) return
+  try {
+    const res = await http.get(`/asset/forward/detail/${assetId}`, {
+      params: { withSessionLayer: true, withFinanceLayer: true },
+    })
+    const data = (res.data?.data || {}) as { liveSessions?: Row[]; financeSummary?: Row }
+    forwardSessions.value = data.liveSessions || []
+    forwardFinance.value = data.financeSummary || null
+  } catch {
+    clearForwardLayers()
+  }
 }
 
 async function openForwardAsset(row: Row) {
@@ -920,7 +1016,47 @@ async function openForwardAsset(row: Row) {
   forwardRealnameId.value = ''
   forwardAssetId.value = Number(row.id)
   exportNote.value = ''
+  clearForwardLayers()
   await loadTrace(`/asset/forward/trace/${row.id}`)
+  if (!forwardError.value) await loadForwardLayers(Number(row.id))
+}
+
+function openVerify() {
+  closeAssetDrawers()
+  verifyOpen.value = true
+  verifyError.value = ''
+  verifySummary.value = ''
+  verifyErrors.value = []
+  verifyAssetCode.value = ''
+}
+
+async function runVerify() {
+  verifyRunning.value = true
+  verifyError.value = ''
+  verifySummary.value = ''
+  verifyErrors.value = []
+  try {
+    const res = await http.post('/asset/verify/run', {
+      verifyTypes: ['asset_person', 'asset_account', 'asset_session'],
+      scope: 'FULL',
+    })
+    const data = (res.data?.data || {}) as { batchNo?: string; errorCount?: number; relationCompleteRate?: number; consistencyRate?: number }
+    const batchNo = String(data.batchNo || '')
+    const complete = Math.round(Number(data.relationCompleteRate || 0) * 1000) / 10
+    const consistent = Math.round(Number(data.consistencyRate || 0) * 1000) / 10
+    verifySummary.value = `批次 ${batchNo} · 异常资产 ${data.errorCount || 0} 台 · 完整率 ${complete}% · 一致率 ${consistent}%`
+    if (batchNo) {
+      const params: Record<string, string | number> = { batchNo, pageNo: 1, pageSize: 20 }
+      const code = verifyAssetCode.value.trim()
+      if (code) params.assetCode = code
+      const listed = await http.get('/asset/verify/errors', { params })
+      verifyErrors.value = ((listed.data?.data?.list || []) as Row[])
+    }
+  } catch (e: unknown) {
+    verifyError.value = bizError(e)
+  } finally {
+    verifyRunning.value = false
+  }
 }
 
 function openEntryReverse() {

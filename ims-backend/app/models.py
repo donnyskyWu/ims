@@ -1746,6 +1746,46 @@ class AssetBind(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AssetVerifyBatch(Base):
+    """ASSET-003 登记关联校验批次。一种校验类型一行。"""
+
+    __tablename__ = "ims_asset_verify_batch"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_no: Mapped[str] = mapped_column(String(64), unique=True)
+    run_no: Mapped[str] = mapped_column(String(32), default="", index=True)
+    verify_type: Mapped[str] = mapped_column(String(32), default="")
+    scope: Mapped[str] = mapped_column(String(16), default="FULL")
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    complete_rate: Mapped[float] = mapped_column(Float, default=1.0)
+    consistency_rate: Mapped[float] = mapped_column(Float, default=1.0)
+    error_detail: Mapped[str] = mapped_column(Text, default="")
+    task_status: Mapped[str] = mapped_column(String(32), default="PENDING_DISPATCH", index=True)
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    remark: Mapped[str] = mapped_column(String(256), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AssetVerifyError(Base):
+    """关联校验异常明细。"""
+
+    __tablename__ = "ims_asset_verify_error"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    batch_no: Mapped[str] = mapped_column(String(64), default="", index=True)
+    run_no: Mapped[str] = mapped_column(String(32), default="", index=True)
+    record_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    record_type: Mapped[str] = mapped_column(String(32), default="")
+    asset_code: Mapped[str] = mapped_column(String(64), default="")
+    inconsistent_fields: Mapped[str] = mapped_column(Text, default="[]")
+    description: Mapped[str] = mapped_column(String(256), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AssetTraceLog(Base):
     """穿透查询审计（ASSET-F-R3）。"""
 

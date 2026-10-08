@@ -318,6 +318,8 @@ PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──�
 
 #74 导出（办公设备页，不新开路由）：`GET /asset/forward/export/{assetId}` 生成与抽屉链路一致的 PDF。`GET /asset/reverse/export` 生成与使用人 / 账号 / 场次反查表一致的 xlsx。第 6 层或 `layers` 超出 L1–L5 → **1013**。资产不存在 **1011**。使用人、账号、场次或实名人不存在 **1500**。办公设备正向穿透抽屉有「导出穿透报告」，账号/场次反查抽屉增加「按使用人」和「导出」。
 
+#75 登记关联校验（ASSET-003，办公设备页，不新开路由）：`POST /asset/ledger` 在写入前校验实名人、账号、场次。不存在 **1500**；账号已停用（非 `IN_USE`/`IN_POOL`）、场次已取消或其他不允许状态、实名人已停用 **1501**；场次编号格式不对、场次不属于该账号、账号或场次不属于所选实名人 **1001**。`POST /asset/verify/run` 按 `asset_person` / `asset_account` / `asset_session` 扫描台账并记批次；未关联实名人或账号记异常，未绑定场次不算场次异常。`PUT /asset/verify/task/{id}` 只允许 `PENDING_DISPATCH → REPAIRING → CLOSED`，批次不存在或跳跃 **1014**。`GET /asset/forward/detail/{assetId}` 默认带回场次层 `liveSessions` 与成本层 `financeSummary`（优先 `ims_fin_profit`，否则下播报告 GMV / 投放成本）；`withSessionLayer=false` 或 `withFinanceLayer=false` 时对应层为空。角色键 `R9` 时 `costMasked=true` 且 `totalCost=-1`。
+
 #68 采购入台账（办公/直播设备页「采购导入」，不新开路由）：`POST /asset/ledger/import`。合法行待审核入台账并记 `purchaseBatchNo`；非法行返回文件行号与字段；`partial=true` 时已入库行不回滚。见 §2.4。
 
 **校验工单（VerifyTaskStatus）**：`PENDING_DISPATCH →（派发）REPAIRING →（修复复审）CLOSED`；逾期（3 工作日）自动升级推送。

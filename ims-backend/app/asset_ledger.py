@@ -261,8 +261,9 @@ def ledger_create(
         return fail(1001, "资产编号过长")
     if _code_taken(db, actor, code):
         return fail(1012, "资产编号已存在")
-    from app.asset_penetrate import resolve_bind
+    from app.asset_penetrate import bind_person_id, resolve_bind
 
+    person_id = bind_person_id(db, actor, body.realnameId, body.parentAssetCode)
     resolved, bind_error = resolve_bind(
         db,
         actor,
@@ -270,6 +271,7 @@ def ledger_create(
         body.accountNo,
         body.sessionCode,
         body.bindType,
+        person_id,
     )
     if bind_error:
         return bind_error

@@ -16,7 +16,19 @@ from app.api import current_user, db_session, fail, ok
 from app.core import mask_id_card, mask_mobile, mask_name, utcnow
 from app.corp import count_of, page_args, tenant_of, user_names
 from app.crypto import decrypt_text
-from app.models import AssetBind, AssetHierarchy, AssetLedger, AssetLifecycleEvent, AssetTraceLog, LiveSession, User
+from app.models import (
+    AssetBind,
+    AssetHierarchy,
+    AssetLedger,
+    AssetLifecycleEvent,
+    AssetTraceLog,
+    FinProfit,
+    LiveReport,
+    LiveSession,
+    Role,
+    User,
+    UserRole,
+)
 from app.ops_db import ops_session
 from app.ops_models import PlatformAccount, Realname
 
@@ -27,6 +39,8 @@ LAYER_TOKENS = {"L1", "L2", "L3", "L4", "L5"}
 HOLDER_LABEL = {"IN_USE": "在用", "RETURNED": "已归还", "SCRAPPED": "已报废"}
 BIND_TYPES = {"HOLD", "GUARANTEE", "CUSTODY"}
 SESSION_CODE = re.compile(r"^IMS\d{8}[A-Z]{3}\d{4}$")
+ALLOWED_ACCOUNT_STATUS = {"IN_USE", "IN_POOL"}
+ALLOWED_SESSION_STATUS = {"PENDING_RISK_CHECK", "APPROVED", "LIVE", "ENDED"}
 
 
 def _missing(db: Session, actor: User, asset_id: int):
@@ -378,12 +392,11 @@ def forward_trace(
 def forward_detail(
     asset_id: int,
     layers: str = "",
-    withSessionLayer: bool = False,
-    withFinanceLayer: bool = False,
+    withSessionLayer: bool = True,
+    withFinanceLayer: bool = True,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    del withSessionLayer, withFinanceLayer
     graph, error = _prepare_graph(db, actor, asset_id, layers)
     if error:
         return error
@@ -395,8 +408,8 @@ def forward_detail(
             "asset": _asset_brief(row),
             "bindAccounts": bind_accounts_of(db, actor, row.id),
             "verifiedPersons": graph.get("verifiedPersons") or [],
-            "liveSessions": bound_sessions_of(db, actor, row.id),
-            "financeSummary": {"totalCost": 0, "totalRevenue": 0, "costMasked": False},
+            "liveSessions": bound_sessions_of(db, actor, row.id) if withSessionLayer else [],
+            "financeSummary": finance_of(db, actor, row.id) if withFinanceLayer else {"totalCost": 0.0, "totalRevenue": 0.0, "costMasked": False},
             "nodes": graph.get("nodes") or [],
             "edges": graph.get("edges") or [],
             "depth": graph.get("depth") or 0,
@@ -427,6 +440,7 @@ def _account(actor: User, account_id: int = 0, account_no: str = ""):
             "account_no": row.account_no or "",
             "platform": row.platform_type or "",
             "realname_id": int(row.realname_id or 0),
+            "status": row.status or "",
         }
     finally:
         ops.close()
@@ -444,12 +458,69 @@ def _session_row(db: Session, actor: User, session_id: int = 0, session_code: st
     return db.scalar(stmt)
 
 
-def resolve_bind(db: Session, actor: User, account_id: int | None, account_no: str, session_code: str, bind_type: str):
-    """登记前解析账号 / 场次。无绑定返回 (None, None)。不写库。"""
+def bind_person_id(db: Session, actor: User, realname_id: int | None, parent_code: str) -> int:
+    """登记归属以实名人为准；挂了上级时跟上级的实名人。上级不存在时返回 0，由层级写入再报 1011。"""
+    code = (parent_code or "").strip()
+    if not code:
+        return int(realname_id or 0)
+    parent = db.scalar(
+        select(AssetLedger).where(
+            AssetLedger.deleted == 0,
+            AssetLedger.tenant_id == tenant_of(actor),
+            AssetLedger.asset_code == code,
+        )
+    )
+    if parent is None:
+        return 0
+    hier = _hierarchy(db, actor, parent.id)
+    if hier is None:
+        return 0
+    return int(hier.realname_id or 0)
+
+
+def _reject_account(account: dict):
+    if (account.get("status") or "") not in ALLOWED_ACCOUNT_STATUS:
+        return fail(1501, "账号已停用")
+    return None
+
+
+def _reject_session(session: LiveSession):
+    status = session.session_status or ""
+    if status in ALLOWED_SESSION_STATUS:
+        return None
+    if status == "CANCELLED":
+        return fail(1501, "场次已取消")
+    return fail(1501, "场次状态不允许")
+
+
+def _reject_owner(account: dict | None, session: LiveSession | None, person_id: int):
+    if not person_id:
+        return None
+    if account is not None and int(account.get("realname_id") or 0) not in (0, person_id):
+        return fail(1001, "账号不属于该实名人")
+    if session is not None and int(session.realname_person_id or 0) not in (0, person_id):
+        return fail(1001, "场次不属于该实名人")
+    return None
+
+
+def resolve_bind(
+    db: Session,
+    actor: User,
+    account_id: int | None,
+    account_no: str,
+    session_code: str,
+    bind_type: str,
+    realname_id: int | None = None,
+):
+    """登记前解析账号 / 场次。无绑定返回 (None, None)。不写库。
+
+    不存在 1500，已停用或场次已取消 1501，场次格式或归属不对 1001。
+    """
     number = (account_no or "").strip()
     code = (session_code or "").strip().upper()
     kind = (bind_type or "HOLD").strip().upper() or "HOLD"
     chosen = int(account_id or 0)
+    person_id = int(realname_id or 0)
     if not chosen and not number and not code:
         return None, None
     if kind not in BIND_TYPES:
@@ -463,6 +534,10 @@ def resolve_bind(db: Session, actor: User, account_id: int | None, account_no: s
         account = _account(actor, account_no=number)
         if account is None:
             return None, fail(1500, "账号不存在")
+    if account is not None:
+        blocked = _reject_account(account)
+        if blocked:
+            return None, blocked
     session = None
     if code:
         if not SESSION_CODE.match(code):
@@ -470,12 +545,21 @@ def resolve_bind(db: Session, actor: User, account_id: int | None, account_no: s
         session = _session_row(db, actor, session_code=code)
         if session is None:
             return None, fail(1500, "场次不存在")
+        blocked = _reject_session(session)
+        if blocked:
+            return None, blocked
         if account is not None and int(session.account_id or 0) != int(account["id"]):
             return None, fail(1001, "场次不属于该账号")
         if account is None:
             account = _account(actor, account_id=int(session.account_id or 0))
             if account is None:
                 return None, fail(1500, "账号不存在")
+            blocked = _reject_account(account)
+            if blocked:
+                return None, blocked
+    blocked = _reject_owner(account, session, person_id)
+    if blocked:
+        return None, blocked
     return {
         "accountId": account["id"],
         "accountNo": account["account_no"],
@@ -560,6 +644,59 @@ def bound_sessions_of(db: Session, actor: User, asset_id: int) -> list[dict]:
             }
         )
     return rows
+
+
+def _cost_masked(db: Session, actor: User) -> bool:
+    stmt = (
+        select(Role.role_key)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == actor.id, Role.deleted == 0)
+    )
+    keys = list(db.scalars(stmt).all())
+    return any((key or "") == "R9" or str(key).endswith(":R9") for key in keys)
+
+
+def _money(value) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def finance_of(db: Session, actor: User, asset_id: int) -> dict:
+    """L5 成本层。优先读场次利润，没有则用下播报告的 GMV / 投放成本。R9 成本返回 -1。"""
+    revenue = 0.0
+    cost = 0.0
+    seen: set[str] = set()
+    for bind in _active_binds(db, actor, asset_id):
+        code = (bind.session_code or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        profit = db.scalar(
+            select(FinProfit).where(
+                FinProfit.deleted == 0,
+                FinProfit.tenant_id == tenant_of(actor),
+                FinProfit.session_code == code,
+            )
+        )
+        if profit is not None:
+            revenue += _money(profit.revenue)
+            cost += _money(profit.total_cost)
+            continue
+        report = db.scalar(
+            select(LiveReport).where(
+                LiveReport.deleted == 0,
+                LiveReport.tenant_id == tenant_of(actor),
+                LiveReport.session_code == code,
+            )
+        )
+        if report is not None:
+            revenue += _money(report.gmv)
+            cost += _money(report.ad_cost)
+    if _cost_masked(db, actor):
+        return {"totalCost": -1, "totalRevenue": _money(revenue), "costMasked": True}
+    return {"totalCost": _money(cost), "totalRevenue": _money(revenue), "costMasked": False}
 
 
 def _effective_time(db: Session, asset_id: int) -> str:
