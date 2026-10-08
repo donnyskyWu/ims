@@ -335,6 +335,28 @@ class CertExpireLog(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CertViewLog(Base):
+    """CERT-S-R3 查看审计。同一查看人、同一证件，滚动 1 小时内第 11 次拦截。"""
+
+    __tablename__ = "ims_cert_view_log"
+    __table_args__ = (Index("idx_cert_view_hour", "tenant_id", "viewer_user_id", "cert_id", "created_at"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    cert_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    viewer_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    viewer_name: Mapped[str] = mapped_column(String(64), default="")
+    view_level: Mapped[int] = mapped_column(Integer, default=2)
+    watermark_text: Mapped[str] = mapped_column(String(512), default="")
+    view_duration: Mapped[int] = mapped_column(Integer, default=0)
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    device: Mapped[str] = mapped_column(String(256), default="")
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    updater: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class LiveSessionSeq(Base):
     __tablename__ = "ims_live_session_seq"
     __table_args__ = (UniqueConstraint("tenant_id", "biz_date", "platform_code", name="uk_live_seq_day"),)
