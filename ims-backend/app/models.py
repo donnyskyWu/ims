@@ -1480,6 +1480,38 @@ class AirSkill(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AirSkillGrant(Base):
+    """技能授权。表名跟随现有 ims_air_skill，对应契约 ims_skill_grant。"""
+
+    __tablename__ = "ims_air_skill_grant"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    skill_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    grant_type: Mapped[str] = mapped_column(String(16), default="")
+    grant_id_ref: Mapped[int] = mapped_column(BigInteger, default=0)
+    grant_name: Mapped[str] = mapped_column(String(128), default="")
+    all_staff: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    granted_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AirEvent(Base):
+    """AI 资产事件。授权写入后网关按表实时读，不另做延迟队列。"""
+
+    __tablename__ = "ims_air_event"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    event_type: Mapped[str] = mapped_column(String(64), default="")
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    sync_status: Mapped[str] = mapped_column(String(16), default="PENDING")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AirModelConfig(Base):
     __tablename__ = "ims_air_model_config"
     __table_args__ = (UniqueConstraint("tenant_id", "config_code", name="uk_air_model_code"),)

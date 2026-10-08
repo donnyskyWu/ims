@@ -117,6 +117,9 @@ def seed() -> None:
         finally:
             ops.close()
         _ensure_e2e_author(db)
+        from app.air_skill_seed import ensure_air_skill_dept_fixture
+
+        ensure_air_skill_dept_fixture(db)
         author = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).first()
         if author is not None:
             refresh_user_scope(db, author.id)

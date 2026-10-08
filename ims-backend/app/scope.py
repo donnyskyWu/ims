@@ -384,6 +384,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/air/skill", "ims_air_skill"),
     ("POST", "/admin-api/ims/air/skill", "ims_air_skill"),
     ("PUT", "/admin-api/ims/air/skill", "ims_air_skill"),
+    ("DELETE", "/admin-api/ims/air/skill", "ims_air_skill"),
     ("GET", "/admin-api/ims/air/expert", "ims_air_expert"),
     ("POST", "/admin-api/ims/air/expert", "ims_air_expert"),
     ("PUT", "/admin-api/ims/air/expert", "ims_air_expert"),
