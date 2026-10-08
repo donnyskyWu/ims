@@ -1547,6 +1547,26 @@ class AccountTimelineEvent(Base):
     event_time: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AccountTransfer(Base):
+    """ACCT-002 账号流转。新责任人确认后才改责任人并写时间线（TRF-R1/R3）。"""
+
+    __tablename__ = "ims_acct_transfer"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    transfer_no: Mapped[str] = mapped_column(String(32), unique=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    account_no: Mapped[str] = mapped_column(String(64), default="")
+    from_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    to_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    transfer_type: Mapped[str] = mapped_column(String(16), default="TRANSFER")
+    reason_type: Mapped[str] = mapped_column(String(32), default="")
+    remark: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(32), default="PENDING_CONFIRM")
+    effective_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AccountRecharge(Base):
     """ACCT-004 冲话费登记。凭证原文仅财务角色（acct:r3）在列表接口回传。"""
 

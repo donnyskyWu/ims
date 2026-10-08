@@ -108,6 +108,7 @@ def list_vo(
         "ipGroupName": groups.get(row.ip_group_id or 0, ""),
         "realNameMasked": persons.get(row.realname_id or 0, ""),
         "companyName": companies.get(row.company_id or 0, ""),
+        "holderUserId": row.holder_user_id,
         "holderUserName": holders.get(row.holder_user_id or 0, ""),
         "status": row.status,
         "collectBindSummary": bind_summary(row, bind),
