@@ -321,18 +321,19 @@ async function selectIpGroupInTree(page: Page, ipGroupId: number, groupNameHint?
   await page.goto('/ims/ip-group')
   await expect(page.locator('h1')).toHaveText('IP 组运营', { timeout: 15_000 })
   await treeReady
+  // A prior in-flight /tree can satisfy treeReady before this navigation's load finishes.
+  await expect(page.locator('.ipg-tree-body')).not.toContainText('加载中', { timeout: 15_000 })
 
   if (groupNameHint) {
     await page.locator('.ipg-tree-search input').fill(groupNameHint)
     const named = page.locator('.ipg-node', { hasText: groupNameHint })
-    if (await named.count()) {
-      const membersResp = page.waitForResponse(
-        (r) => r.url().includes(`/ip-group/${ipGroupId}/members`) && r.status() === 200,
-      )
-      await named.first().click()
-      await membersResp
-      return
-    }
+    await expect(named.first()).toBeVisible({ timeout: 15_000 })
+    const membersResp = page.waitForResponse(
+      (r) => r.url().includes(`/ip-group/${ipGroupId}/members`) && r.status() === 200,
+    )
+    await named.first().click()
+    await membersResp
+    return
   }
 
   const nodes = page.locator('.ipg-node.child')
@@ -356,27 +357,14 @@ export async function bindOpsAuthorToIpGroup(
   authorId = E2E_OPS_AUTHOR_ID,
   groupNameHint?: string,
 ) {
-  await page.goto('/ims/ip-group')
-  await expect(page.locator('h1')).toContainText('IP 组', { timeout: 15_000 })
   await selectIpGroupInTree(page, ipGroupId, groupNameHint)
   const authorTab = page.locator('.tab', { hasText: '关联作者' })
-  const waitAnchors = () =>
-    page.waitForResponse(
-      (r) => r.url().includes(`/ip-group/${ipGroupId}/anchors`) && r.request().method() === 'GET' && r.status() === 200,
-      { timeout: 20_000 },
-    )
-  let anchorsGet = waitAnchors()
   await authorTab.click()
-  try {
-    await anchorsGet
-  } catch {
-    await page.goto('/ims/ip-group')
-    await expect(page.locator('h1')).toContainText('IP 组', { timeout: 15_000 })
-    await selectIpGroupInTree(page, ipGroupId, groupNameHint)
-    anchorsGet = waitAnchors()
-    await authorTab.click()
-    await anchorsGet
-  }
+  // selectGroup already loads anchors; the tab click does not refetch.
+  const authorBody = page.locator('.ipg-detail-body')
+  await expect(authorBody.getByText(E2E_OPS_AUTHOR_NAME).or(authorBody.getByText('暂无关联作者'))).toBeVisible({
+    timeout: 15_000,
+  })
   const anchorRow = page.locator('.ipg-detail-body tbody tr').filter({ hasText: E2E_OPS_AUTHOR_NAME })
   if ((await anchorRow.count()) === 0) {
     await page.locator('input[placeholder="作者 id"]').fill(String(authorId))
@@ -386,10 +374,6 @@ export async function bindOpsAuthorToIpGroup(
     await page.getByRole('button', { name: '绑定作者' }).click()
     const bindBody = (await (await bindResp).json()) as { code: number }
     expect(bindBody.code).toBe(0)
-    const anchorsReload = page.waitForResponse(
-      (r) => r.url().includes(`/ip-group/${ipGroupId}/anchors`) && r.request().method() === 'GET' && r.status() === 200,
-    )
-    await anchorsReload
   }
   await expect(anchorRow.first()).toBeVisible({ timeout: 15_000 })
 }

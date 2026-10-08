@@ -1529,3 +1529,25 @@ class AccountTimelineEvent(Base):
     remark: Mapped[str] = mapped_column(String(256), default="")
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     event_time: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AccountRecharge(Base):
+    """ACCT-004 冲话费登记。凭证原文仅财务角色（acct:r3）在列表接口回传。"""
+
+    __tablename__ = "ims_acct_recharge"
+    __table_args__ = (UniqueConstraint("client_token", name="uk_acct_recharge_token"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    account_no: Mapped[str] = mapped_column(String(64), default="")
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    channel: Mapped[str] = mapped_column(String(64), default="")
+    voucher_url: Mapped[str] = mapped_column(String(512), default="")
+    recharge_date: Mapped[str] = mapped_column(String(16), default="")
+    verify_status: Mapped[str] = mapped_column(String(16), default="UNVERIFIED")
+    verify_diff: Mapped[float | None] = mapped_column(Float, nullable=True)
+    operator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    client_token: Mapped[str] = mapped_column(String(64))
+    remark: Mapped[str] = mapped_column(String(256), default="")
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

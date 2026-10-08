@@ -1,18 +1,25 @@
-"""ACCT-001 账号领用 / 归还（CORP 详情入口 · 契约 /account/apply）。"""
+"""ACCT-001 账号领用 / 归还 + ACCT-004 冲话费登记（CORP 账号页）。"""
 
 import json
+import re
+from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.acct_seed import FINANCE_ROLE_KEY
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.ops_db import ops_session
-from app.models import AccountApply, AccountTimelineEvent, User
+from app.models import AccountApply, AccountRecharge, AccountTimelineEvent, Role, User, UserRole
 from app.ops_models import PlatformAccount
+
+VOUCHER_LIMIT = Decimal("5000")
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 router = APIRouter()
 
@@ -313,3 +320,179 @@ def return_account(body: ReturnBody, actor: User = Depends(current_user), db: Se
         return ok({"accountId": account.id, "status": account.status})
     finally:
         ops.close()
+
+
+def _money(value: float) -> Decimal | None:
+    try:
+        quantized = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None
+    if quantized <= 0 or quantized > Decimal("9999999999.99"):
+        return None
+    return quantized
+
+
+def _money_out(value: float) -> float:
+    quantized = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return float(quantized)
+
+
+def _is_finance(db: Session, actor: User) -> bool:
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == actor.id)).all())
+    if not role_ids:
+        return False
+    roles = db.scalars(select(Role).where(Role.id.in_(role_ids), Role.deleted == 0, Role.status == "ENABLED")).all()
+    for role in roles:
+        if role.role_key == FINANCE_ROLE_KEY or "财务" in (role.role_name or ""):
+            return True
+    return False
+
+
+def recharge_vo(row: AccountRecharge, operator_name: str, *, reveal_voucher: bool) -> dict:
+    attached = bool((row.voucher_url or "").strip())
+    return {
+        "id": row.id,
+        "accountId": row.account_id,
+        "accountNo": row.account_no,
+        "amount": _money_out(row.amount),
+        "channel": row.channel,
+        "voucherUrl": row.voucher_url if reveal_voucher and attached else None,
+        "voucherAttached": attached,
+        "rechargeDate": row.recharge_date,
+        "verifyStatus": row.verify_status,
+        "verifyDiff": _money_out(row.verify_diff) if row.verify_diff is not None else None,
+        "operatorUserId": row.operator_user_id,
+        "operatorName": operator_name,
+        "remark": row.remark or "",
+        "createdAt": row.created_at.strftime("%Y-%m-%dT%H:%M:%S") if row.created_at else "",
+    }
+
+
+class RechargeCreateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    account_id: int = Field(alias="accountId")
+    amount: float
+    channel: str
+    voucher_url: str | None = Field(default=None, alias="voucherUrl")
+    recharge_date: str = Field(alias="rechargeDate")
+    remark: str | None = None
+
+
+@router.post("/account/recharge")
+def create_recharge(
+    body: RechargeCreateBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+    clientToken: str | None = Header(default=None),
+):
+    token = (clientToken or "").strip()
+    if not token or len(token) > 64:
+        return fail(1001, "clientToken 必填")
+    reveal = _is_finance(db, actor)
+    existing = db.scalar(select(AccountRecharge).where(AccountRecharge.client_token == token))
+    if existing is not None:
+        name = actor.nickname or actor.username
+        if existing.operator_user_id != actor.id:
+            owner = db.get(User, existing.operator_user_id)
+            name = (owner.nickname or owner.username) if owner is not None else ""
+        return ok(recharge_vo(existing, name, reveal_voucher=reveal))
+
+    amount = _money(body.amount)
+    if amount is None:
+        return fail(1001, "金额格式不合法")
+    channel = (body.channel or "").strip()
+    if not channel or len(channel) > 64:
+        return fail(1001, "充值渠道必填")
+    voucher = (body.voucher_url or "").strip()
+    if len(voucher) > 512:
+        return fail(1001, "凭证地址过长")
+    remark = (body.remark or "").strip()
+    if len(remark) > 256:
+        return fail(1001, "备注过长")
+    if not DATE_RE.match(body.recharge_date or ""):
+        return fail(1001, "充值日期格式不合法")
+    try:
+        recharge_day = date.fromisoformat(body.recharge_date)
+    except ValueError:
+        return fail(1001, "充值日期格式不合法")
+    if recharge_day > utcnow().date():
+        return fail(1001, "充值日期不得晚于今日")
+    if amount > VOUCHER_LIMIT and not voucher:
+        return fail(1025, "冲话费凭证必填（金额 > 5000 元）")
+
+    ops = ops_session()
+    try:
+        account = _load_account(ops, body.account_id)
+        if account is None:
+            return fail(1504, "资源不可用")
+        if account.status == "CANCELLED":
+            return fail(1001, "已注销账号不可冲话费")
+        row = AccountRecharge(
+            account_id=account.id,
+            account_no=account.account_no or str(account.id),
+            amount=float(amount),
+            channel=channel,
+            voucher_url=voucher,
+            recharge_date=body.recharge_date,
+            verify_status="UNVERIFIED",
+            operator_user_id=actor.id,
+            client_token=token,
+            remark=remark,
+            tenant_id=tenant_of(actor),
+        )
+        db.add(row)
+        db.flush()
+        _append_timeline(
+            db,
+            account_id=account.id,
+            event_type="RECHARGE",
+            ref_no=f"RC{row.id}",
+            ref_id=row.id,
+            operator=actor,
+            summary=f"冲话费登记 · ¥{amount} · {channel}",
+            tenant_id=tenant_of(actor),
+        )
+        name = actor.nickname or actor.username
+        return ok(recharge_vo(row, name, reveal_voucher=reveal))
+    finally:
+        ops.close()
+
+
+@router.get("/account/recharge/list")
+def list_recharge(
+    pageNo: int = 1,
+    pageSize: int = 20,
+    accountId: int | None = None,
+    verifyStatus: str | None = None,
+    month: str | None = None,
+    channel: str | None = None,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    page_no, size = page_args(pageNo, pageSize)
+    stmt = select(AccountRecharge).order_by(AccountRecharge.id.desc())
+    if accountId is not None:
+        stmt = stmt.where(AccountRecharge.account_id == accountId)
+    if verifyStatus:
+        stmt = stmt.where(AccountRecharge.verify_status == verifyStatus)
+    if month:
+        stmt = stmt.where(AccountRecharge.recharge_date.like(f"{month}%"))
+    if channel:
+        stmt = stmt.where(AccountRecharge.channel == channel)
+    rows = list(db.scalars(stmt).all())
+    reveal = _is_finance(db, actor)
+    operator_ids = {r.operator_user_id for r in rows}
+    names: dict[int, str] = {}
+    if operator_ids:
+        names = {
+            u.id: u.nickname or u.username
+            for u in db.scalars(select(User).where(User.id.in_(operator_ids))).all()
+        }
+    start = (page_no - 1) * size
+    page = rows[start : start + size]
+    return paged(
+        [recharge_vo(r, names.get(r.operator_user_id, ""), reveal_voucher=reveal) for r in page],
+        len(rows),
+        page_no,
+        size,
+    )
