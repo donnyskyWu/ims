@@ -83,6 +83,7 @@ const router = createRouter({
         { path: 'dc/trace', component: () => import('../views/dc/trace.vue') },
         { path: 'alert/rule', component: () => import('../views/alert/rule.vue') },
         { path: 'alert/live', component: () => import('../views/alert/live.vue') },
+        { path: 'alert/stats', component: () => import('../views/alert/stats.vue') },
         { path: 'cost/account', redirect: '/ims/cost' },
         { path: 'cost/roi', redirect: '/ims/cost' },
         { path: 'live/register', redirect: '/ims/live/sessions' },

@@ -7,6 +7,7 @@
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建规则</button>
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/stats">统计总览</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
       </div>
     </div>
@@ -52,6 +53,9 @@
                 <button class="btn btn-sec btn-sm" type="button" @click="toggle(row)">
                   {{ row.enabled ? '停用' : '启用' }}
                 </button>
+                <button class="btn btn-txt btn-sm" type="button" data-testid="alert-rule-edit" @click="openEdit(row)">
+                  编辑
+                </button>
                 <button class="btn btn-txt btn-sm" type="button" :disabled="!row.enabled" @click="run(row.id)">
                   试跑
                 </button>
@@ -65,9 +69,9 @@
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 520px; padding: 20px">
-        <h3 style="margin: 0 0 12px">注册预警规则</h3>
+        <h3 style="margin: 0 0 12px">{{ editingId ? '编辑预警规则' : '注册预警规则' }}</h3>
         <label class="fld">规则编码</label>
-        <input v-model="form.ruleCode" class="fld-in" placeholder="live.data.delay" />
+        <input v-model="form.ruleCode" class="fld-in" placeholder="live.data.delay" :readonly="editingId !== null" />
         <p v-if="codeError" data-testid="alert-rule-code-error" class="hint" style="color: var(--red)">{{ codeError }}</p>
         <label class="fld">规则名称</label>
         <input v-model="form.ruleName" class="fld-in" />
@@ -112,6 +116,7 @@ const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
+const editingId = ref<number | null>(null)
 const formError = ref('')
 const codeError = ref('')
 const dslError = ref('')
@@ -174,7 +179,7 @@ async function loadList() {
   }
 }
 
-function openCreate() {
+function resetForm() {
   form.ruleCode = ''
   form.ruleName = ''
   form.thresholdExpr = ''
@@ -186,6 +191,21 @@ function openCreate() {
   formError.value = ''
   codeError.value = ''
   dslError.value = ''
+}
+
+function openCreate() {
+  editingId.value = null
+  resetForm()
+  showForm.value = true
+}
+
+function openEdit(row: Row) {
+  editingId.value = row.id
+  resetForm()
+  form.ruleCode = row.ruleCode
+  form.ruleName = row.ruleName
+  form.thresholdExpr = row.thresholdExpr || ''
+  form.enabled = row.enabled
   showForm.value = true
 }
 
@@ -194,19 +214,24 @@ async function submitCreate() {
   codeError.value = ''
   dslError.value = ''
   const payload: Record<string, unknown> = {
-    ruleCode: form.ruleCode,
     ruleName: form.ruleName,
     thresholdExpr: form.thresholdExpr,
     enabled: form.enabled,
   }
+  if (!editingId.value) payload.ruleCode = form.ruleCode
   if (dslTouched.value) payload.triggerConfig = buildTriggerConfig()
   try {
-    const res = await http.post('/alert/rule', payload)
+    const res = editingId.value
+      ? await http.put(`/alert/rule/${editingId.value}`, payload)
+      : await http.post('/alert/rule', payload)
     if (res.data.code !== 0) {
       formError.value = res.data.msg || '保存失败'
       return
     }
+    const edited = editingId.value !== null
     showForm.value = false
+    editingId.value = null
+    if (edited) toast.value = '阈值已即时生效（热更新）'
     await loadList()
   } catch (error) {
     const body = error as { code?: number; msg?: string }

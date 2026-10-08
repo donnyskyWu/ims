@@ -5,7 +5,8 @@ import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
  * Checklist **E2E-S11-切片**（acceptance · **纯 UI** · #44）
  * Given: UI 新建启用规则 → 试跑生成 OPEN 预警
  * When: `/ims/alert/live`「处理」→「处置记录」Tab →「去重合并」Tab
- * Then: toast 处置成功 · 处置记录含 HANDLED · 去重策略表可见 DEDUP-LIVE
+ * Then: toast 处置成功 · 处置记录含 RESOLVED · 去重策略表可见 DEDUP-LIVE
+ * 状态已对齐契约：直接「处理」仍从 OPEN 到 RESOLVED（旧试跑→处理闭环）
  */
 test.describe('alert handle tab closure S11', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
@@ -52,10 +53,10 @@ test.describe('alert handle tab closure S11', () => {
     await liveRow.getByRole('button', { name: '处理' }).click()
     const handleBody = (await (await handleResp).json()) as { code: number; data?: { responseStatus?: string } }
     expect(handleBody.code).toBe(0)
-    expect(handleBody.data?.responseStatus).toBe('HANDLED')
+    expect(handleBody.data?.responseStatus).toBe('RESOLVED')
 
     await expect(page.locator('p.hint').filter({ hasText: /处置成功/ })).toBeVisible({ timeout: 10_000 })
-    await expect(liveRow).toContainText('HANDLED')
+    await expect(liveRow).toContainText('RESOLVED')
 
     await page.locator('.tab', { hasText: '处置记录' }).click()
     await expect(page.locator('.g4 .stat').filter({ hasText: '已处置' }).locator('.n')).not.toHaveText('0', {
@@ -64,7 +65,7 @@ test.describe('alert handle tab closure S11', () => {
 
     const historyRow = page.locator('tbody tr').filter({ hasText: alertNo! })
     await expect(historyRow).toBeVisible({ timeout: 15_000 })
-    await expect(historyRow).toContainText('HANDLED')
+    await expect(historyRow).toContainText('RESOLVED')
 
     await page.locator('.tab', { hasText: '去重合并' }).click()
     await expect(page.locator('tbody tr').filter({ hasText: 'DEDUP-LIVE' })).toBeVisible({ timeout: 15_000 })

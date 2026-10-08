@@ -19,10 +19,17 @@ from app.models import AlertDedupPolicy, AlertRecord, AlertRule, User
 router = APIRouter(prefix="/alert", tags=["alert"])
 
 BJ = timezone(timedelta(hours=8))
-RESPONSE_LABELS = {0: "OPEN", 1: "ACK", 2: "HANDLED", 3: "FALSE_ALARM"}
-STATUS_ALIASES = {"FALSE_POSITIVE": "FALSE_ALARM", "MISREPORT": "FALSE_ALARM"}
-# 已处理 / 误报为终态；已确认（ACK）仍可处理或标误报。
+# 契约 AlertEventStatus。1=CONFIRMED（旧称 ACK），2=RESOLVED（旧称 HANDLED）。
+RESPONSE_LABELS = {0: "OPEN", 1: "CONFIRMED", 2: "RESOLVED", 3: "FALSE_ALARM"}
+STATUS_ALIASES = {
+    "ACK": "CONFIRMED",
+    "HANDLED": "RESOLVED",
+    "FALSE_POSITIVE": "FALSE_ALARM",
+    "MISREPORT": "FALSE_ALARM",
+}
+# 已解决 / 误报为终态。已确认仍可处理或标误报。OPEN 仍可直接处理，保留试跑→处理闭环。
 TERMINAL_STATUS = {2, 3}
+ALLOWED_NEXT = {0: {1, 2, 3}, 1: {2, 3}}
 DSL_OPS = {"GT", "GTE", "LT", "LTE", "EQ", "NEQ"}
 DSL_KEYS = {"source", "condition", "conditions", "mergeWindowMinutes"}
 COND_KEYS = {"field", "op", "value"}
@@ -42,12 +49,55 @@ class RuleBody(BaseModel):
     triggerConfig: Any = None
 
 
+class RuleUpdateBody(BaseModel):
+    """编辑阈值等参数。ruleCode 不可改（契约 Omit id | ruleCode）。"""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    ruleName: str | None = None
+    metricType: str | None = None
+    level: int | None = Field(default=None, ge=1, le=3)
+    thresholdExpr: str | None = None
+    cronExpr: str | None = None
+    enabled: bool | None = None
+    triggerConfig: Any = None
+
+
 class RespondBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     action: str = ""
     response: str = ""
     handleRemark: str = ""
     falseAlarmReason: str = ""
+
+
+def status_code(label: str) -> int | None:
+    key = STATUS_ALIASES.get(label.upper(), label.upper())
+    rev = {value: code for code, value in RESPONSE_LABELS.items()}
+    return rev.get(key)
+
+
+def rate_pct(part: int, whole: int) -> float:
+    if whole <= 0:
+        return 0.0
+    return round(part * 100.0 / whole, 2)
+
+
+def parse_day_range(raw: str | None) -> tuple[datetime | None, datetime | None, str | None]:
+    """逗号分隔的 yyyy-MM-dd。空值不限；起大于止或格式不对返回错误文案。"""
+    if raw is None or not str(raw).strip():
+        return None, None, None
+    parts = [part.strip() for part in str(raw).split(",") if part.strip()]
+    if len(parts) != 2:
+        return None, None, "日期范围无效"
+    try:
+        start = datetime.strptime(parts[0], "%Y-%m-%d")
+        end_day = datetime.strptime(parts[1], "%Y-%m-%d")
+    except ValueError:
+        return None, None, "日期范围无效"
+    if start > end_day:
+        return None, None, "日期范围起大于止"
+    end = end_day.replace(hour=23, minute=59, second=59)
+    return start, end, None
 
 
 def _ident(value: Any) -> bool:
@@ -274,6 +324,49 @@ def create_rule(
     return ok(rule_vo(row))
 
 
+@router.put("/rule/{rule_id}")
+def update_rule(
+    rule_id: int,
+    body: RuleUpdateBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """阈值热更新（ALR-C-R2）。ruleCode 忽略，不因请求体改编码。"""
+    tenant_id = tenant_of(actor)
+    row = db.get(AlertRule, rule_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1500, "规则不存在")
+    if body.ruleName is not None:
+        name = body.ruleName.strip()
+        if not name:
+            return fail(1001, "ruleName 不能为空")
+        row.rule_name = name
+    if body.metricType is not None and body.metricType.strip():
+        row.metric_type = body.metricType.strip()
+    if body.level is not None:
+        row.level = body.level
+    if body.cronExpr is not None and body.cronExpr.strip():
+        row.cron_expr = body.cronExpr.strip()
+    if body.enabled is not None:
+        row.enabled = 1 if body.enabled else 0
+    if body.triggerConfig is not None:
+        reason = dsl_error(body.triggerConfig)
+        if reason:
+            return fail_dsl(reason)
+        row.threshold_expr = dsl_summary(body.triggerConfig)
+    elif body.thresholdExpr is not None:
+        expr = body.thresholdExpr.strip()
+        if expr != (row.threshold_expr or ""):
+            if expr:
+                reason = legacy_expr_error(expr)
+                if reason:
+                    return fail_dsl(reason)
+            row.threshold_expr = expr
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(rule_vo(row))
+
+
 @router.put("/rule/{rule_id}/enable")
 def toggle_rule(
     rule_id: int,
@@ -306,9 +399,7 @@ def check_records(
     if ruleId:
         stmt = stmt.where(AlertRecord.rule_id == ruleId)
     if responseStatus:
-        rev = {v: k for k, v in RESPONSE_LABELS.items()}
-        key = STATUS_ALIASES.get(responseStatus.upper(), responseStatus.upper())
-        code = rev.get(key)
+        code = status_code(responseStatus)
         if code is None:
             return fail(1001, "responseStatus 无效")
         stmt = stmt.where(AlertRecord.response_status == code)
@@ -360,7 +451,10 @@ def respond_alert(
         return fail(1500, "预警不存在")
     if row.response_status in TERMINAL_STATUS:
         return fail(1167, "预警已终态不可重复响应（1167）")
-    row.response_status = mapping[action]
+    target = mapping[action]
+    if target not in ALLOWED_NEXT.get(row.response_status, set()):
+        return fail(1001, "当前状态不可执行该响应")
+    row.response_status = target
     if action == "FALSE_ALARM" and (body.falseAlarmReason or "").strip():
         note = body.falseAlarmReason.strip()
         row.content = f"{row.content}；误报原因：{note}"[:512]
@@ -461,6 +555,72 @@ def history_summary(db: Session = Depends(db_session), actor: User = Depends(cur
             "handledCount": handled,
             "falsePositiveCount": false_pos,
             "openCount": max(total - handled, 0),
+        }
+    )
+
+
+def _overview_rows(db: Session, tenant_id: int, start: datetime | None, end: datetime | None) -> list[AlertRecord]:
+    stmt = select(AlertRecord).where(AlertRecord.deleted == 0, AlertRecord.tenant_id == tenant_id)
+    if start is not None:
+        stmt = stmt.where(AlertRecord.occurred_at >= start)
+    if end is not None:
+        stmt = stmt.where(AlertRecord.occurred_at <= end)
+    return list(db.scalars(stmt).all())
+
+
+@router.get("/stats/overview")
+def stats_overview(
+    dateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """全局统计总览。resolutionRate 为 E2E-S11-06 解决率，契约总览未单列，同响应追加。
+
+    响应时长取已响应记录（非 OPEN）的 updated_at − occurred_at 均值（分钟）。
+    送达率按 push_status=1（工作台已落库）计，不含钉钉/短信外发。
+    升级率固定 0：本环境没有升级台账。
+    """
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    rows = _overview_rows(db, tenant_id, start, end)
+    total = len(rows)
+    by_level = {"L1": 0, "L2": 0, "L3": 0}
+    responded = 0
+    resolved = 0
+    false_alarm = 0
+    delivered = 0
+    minutes: list[float] = []
+    level_key = {1: "L1", 2: "L2", 3: "L3"}
+    for row in rows:
+        key = level_key.get(row.level)
+        if key:
+            by_level[key] += 1
+        if row.push_status == 1:
+            delivered += 1
+        if row.response_status in (1, 2, 3):
+            responded += 1
+            if row.occurred_at is not None and row.updated_at is not None:
+                delta = (row.updated_at - row.occurred_at).total_seconds() / 60.0
+                minutes.append(delta if delta > 0 else 0.0)
+        if row.response_status == 2:
+            resolved += 1
+        elif row.response_status == 3:
+            false_alarm += 1
+    avg = round(sum(minutes) / len(minutes), 2) if minutes else 0.0
+    return ok(
+        {
+            "totalAlertCount": total,
+            "byLevel": by_level,
+            "responseRate": rate_pct(responded, total),
+            "resolutionRate": rate_pct(resolved, total),
+            "deliveryRate": rate_pct(delivered, total),
+            "falseAlarmRate": rate_pct(false_alarm, total),
+            "escalateRate": 0.0,
+            "avgResponseMinutes": avg,
+            "respondedCount": responded,
+            "resolvedCount": resolved,
         }
     )
 

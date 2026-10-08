@@ -984,6 +984,15 @@
       "parent": "预警中心",
       "desc": "ALERT-002/003 + 处置记录 Tab"
     },
+    "alertStats": {
+      "no": "13",
+      "name": "预警统计",
+      "code": "ALERT",
+      "icon": "chart",
+      "page": "预警统计",
+      "parent": "预警中心",
+      "desc": "ALERT-004 · 统计总览"
+    },
     "alertHistory": {
       "no": "13",
       "name": "处置记录",
@@ -1276,7 +1285,8 @@
           "label": "预警中心",
           "children": [
             "alertRule",
-            "alertLive"
+            "alertLive",
+            "alertStats"
           ]
         }
       ]

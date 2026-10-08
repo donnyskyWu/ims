@@ -5,7 +5,10 @@
         <h1>实时预警</h1>
         <div class="sub">ALERT-002/003/004 · 实时 · 处置记录 · 去重</div>
       </div>
-      <router-link class="btn btn-sec btn-sm" to="/ims/alert/rule">预警规则</router-link>
+      <div class="acts">
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/stats">统计总览</router-link>
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/rule">预警规则</router-link>
+      </div>
     </div>
 
     <div class="tabs">
@@ -25,8 +28,8 @@
       <select v-model="filters.responseStatus" style="width: 120px">
         <option value="">全部处置</option>
         <option value="OPEN">待响应</option>
-        <option value="ACK">已确认</option>
-        <option value="HANDLED">已处理</option>
+        <option value="CONFIRMED">已确认</option>
+        <option value="RESOLVED">已解决</option>
         <option value="FALSE_ALARM">误报</option>
       </select>
       <span class="sp"></span>
@@ -94,20 +97,22 @@
                   v-if="row.responseStatus === 'OPEN'"
                   class="btn btn-sec btn-sm"
                   type="button"
-                  @click="respond(row.alertNo, 'ACK')"
+                  data-testid="alert-confirm-btn"
+                  @click="respond(row.alertNo, 'CONFIRM')"
                 >
                   确认
                 </button>
                 <button
-                  v-if="row.responseStatus === 'OPEN'"
+                  v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'CONFIRMED'"
                   class="btn btn-txt btn-sm"
                   type="button"
-                  @click="respond(row.alertNo, 'HANDLE')"
+                  data-testid="alert-resolve-btn"
+                  @click="respond(row.alertNo, row.responseStatus === 'OPEN' ? 'HANDLE' : 'RESOLVE')"
                 >
                   处理
                 </button>
                 <button
-                  v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'ACK' || row.responseStatus === 'FALSE_ALARM'"
+                  v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'CONFIRMED' || row.responseStatus === 'FALSE_ALARM'"
                   class="btn btn-txt btn-sm"
                   type="button"
                   data-testid="alert-false-alarm-btn"
@@ -232,10 +237,9 @@ async function respond(alertNo: string, action: string) {
     }
     const status = res.data.data?.responseStatus || ''
     const labels: Record<string, string> = {
-      ACK: '已确认',
-      HANDLED: '已处理',
+      CONFIRMED: '已确认',
+      RESOLVED: '已解决',
       FALSE_ALARM: '已标记误报',
-      FALSE_POSITIVE: '已标记误报',
     }
     toast.value = `处置成功：${labels[status] || status}（${alertNo}）`
     if (tab.value === 'history') await loadSummary()
