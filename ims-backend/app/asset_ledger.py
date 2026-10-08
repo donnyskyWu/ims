@@ -19,6 +19,8 @@ class LedgerBody(BaseModel):
     assetType: str = "OFFICE"
     spec: str = ""
     purchaseDate: str = ""
+    realnameId: int | None = None
+    parentAssetCode: str = ""
 
 
 class CheckoutBody(BaseModel):
@@ -108,7 +110,11 @@ def _detail(db: Session, row: AssetLedger) -> dict:
             ids.add(event.owner_user_id)
     names = user_names(db, ids)
     timeline = [_event_vo(event, names) for event in events]
-    return ledger_vo(row, names, timeline)
+    data = ledger_vo(row, names, timeline)
+    from app.asset_penetrate import holders_of
+
+    data["holders"] = holders_of(db, row)
+    return data
 
 
 def _add_event(
@@ -270,6 +276,12 @@ def ledger_create(
     db.add(row)
     db.flush()
     _add_event(db, row, actor, "REGISTER", "", "PENDING_REVIEW", "登记入台账", None)
+    from app.asset_penetrate import link_hierarchy
+
+    link_error = link_hierarchy(db, actor, row, body.realnameId, body.parentAssetCode)
+    if link_error:
+        db.rollback()
+        return link_error
     db.flush()
     return ok(_detail(db, row))
 

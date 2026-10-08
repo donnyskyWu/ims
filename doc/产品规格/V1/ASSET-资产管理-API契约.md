@@ -243,6 +243,8 @@ PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──�
 
 #63 生命周期：在用再领用 **1012**；未使用就归还、或未归还就报废、或终态再领用 → **1015**。直接从在用报废不在本切片。冻结展示仍属离职闭环，本切片不做。
 
+#65 穿透（办公设备页，不新开路由）：`ims_asset_hierarchy.level` 从实名人向下计资产层。登记可带 `realnameId` 或 `parentAssetCode`（仍走 `POST /asset/ledger`）。`GET /asset/forward/trace/{assetId}`：`assetId>0` 返回该资产上行至实名人的链路；`assetId=0` 且 `realnameId` 取该实名人最深链路。任一层 `level>5`，或 `layers` 超出 L1–L5 → **1013**。`GET /asset/ledger/{id}` 与 `GET /asset/forward/detail/{assetId}` 的 `holders` 按领用/归还/报废给出使用人三态。`GET /asset/reverse/by-person/{userId}` 按当前责任人或历史领用事件列出资产及当前状态。账号/场次反查、导出、关联校验不在本片。
+
 **校验工单（VerifyTaskStatus）**：`PENDING_DISPATCH →（派发）REPAIRING →（修复复审）CLOSED`；逾期（3 工作日）自动升级推送。
 
 ### 3.2 业务规则引用（PRD）
