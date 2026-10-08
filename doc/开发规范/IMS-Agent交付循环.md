@@ -146,6 +146,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_dingtalk_l3.ps
 # 或 ims-web：npm run test:e2e:dingtalk
 ```
 
+## Agent 自动链（PO 闸口）
+
+- 默认：Agent 按 [计划表](../开发方案/IMS-任务进度计划表.md) **#** 序推进高价值 closure 切片，每切片走完「开发 → pytest 定向 → 全量 E2E → SSOT 收尾」。
+- **2026-10-08**：PO 在 **#52（DC-001 账号穿透）** 签收后 **暂停自动链**；在 PO 明确下一 **#** 前，Agent **不得** 自行启动 **#53+** 或并行新切片（仍可应 PO 指令做修复、文档、UAT 支持）。
+
 ## 维护
 
 - 方法论变更：同步改 **本文** + **`.cursor/rules/ims-delivery.mdc`** + 对照表图例。  

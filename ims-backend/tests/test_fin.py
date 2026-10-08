@@ -227,6 +227,39 @@ def test_fin_e2e_live_confirmed_cost_profit_trace_chain():
     assert body["data"]["queryCostMs"] >= 0
 
 
+def test_live_fin_e2e_seed_deps():
+    """#50 FIN closure：E2E 种子账号/手机存在且账号绑定实名人。"""
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.live_fin_e2e_seed import E2E_FIN_ACCOUNT_NO, E2E_FIN_PHONE_CODE, ensure_live_fin_e2e_deps
+    from app.models import User
+    from app.ops_db import ops_session
+    from app.ops_models import Phone, PlatformAccount
+
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin", User.deleted == 0).first()
+        assert admin is not None
+        ensure_live_fin_e2e_deps(db, admin)
+    finally:
+        db.close()
+    ops = ops_session()
+    try:
+        account = ops.scalar(
+            select(PlatformAccount).where(
+                PlatformAccount.account_no == E2E_FIN_ACCOUNT_NO, PlatformAccount.deleted == 0
+            )
+        )
+        phone = ops.scalar(
+            select(Phone).where(Phone.phone_code == E2E_FIN_PHONE_CODE, Phone.deleted == 0)
+        )
+        assert account is not None and account.realname_id
+        assert phone is not None
+    finally:
+        ops.close()
+
+
 def test_fin_cost_rejects_unapproved_session():
     auth = headers()
     account_id, person_id, phone_id, _ = seed_live_deps()

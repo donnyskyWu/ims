@@ -57,9 +57,27 @@
               <td style="font-weight: 500">{{ row.nickname }}</td>
               <td>{{ row.holderUserName || '—' }}</td>
               <td>{{ row.realNameMasked || '—' }}</td>
-              <td>{{ row.status }}</td>
+              <td>{{ statusLabel(String(row.status)) }}</td>
               <td>{{ row.collectBindSummary }}</td>
-              <td><button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button></td>
+              <td class="acts-cell">
+                <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
+                <button
+                  v-if="row.status === 'IN_POOL'"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  @click="openCheckout(row)"
+                >
+                  领用
+                </button>
+                <button
+                  v-if="row.status === 'IN_USE'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  @click="openReturn(row)"
+                >
+                  归还
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -78,7 +96,9 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
-    <p class="hint">GET /corp/account/page?platformType={{ meta.platform }} → OPS platform list · 领用流程入口 BLOCKED（见 PRD Q3）。</p>
+    <p class="hint">
+      GET /corp/account/page?platformType={{ meta.platform }} · 池内账号「领用」→ POST /account/apply · 归还 → POST /account/return/submit
+    </p>
 
     <ProtoDrawer :open="detailOpen" :title="`${meta.title} · 详情`" width="640px" @close="detailOpen = false">
       <div v-if="detail" class="tabs">
@@ -124,10 +144,111 @@
         </div>
         <p v-if="collectMsg" class="hint">{{ collectMsg }}</p>
       </div>
-      <div v-if="detail && activeTab === 'timeline'" class="hint">领用时间线契约为 GET /account/timeline/{accountId}，本片未接 ACCT 流程，暂为空。</div>
+      <div v-if="detail && activeTab === 'timeline'">
+        <p v-if="timelineLoading" class="hint">加载时间线…</p>
+        <p v-else-if="timelineError" class="hint">{{ timelineError }}</p>
+        <ul v-else-if="timelineEvents.length" class="timeline-list">
+          <li v-for="ev in timelineEvents" :key="ev.id">
+            <span class="mono">{{ ev.eventTime }}</span>
+            <strong>{{ ev.eventType }}</strong>
+            {{ ev.snapshotSummary }}
+            <span v-if="ev.refNo" class="hint">（{{ ev.refNo }}）</span>
+          </li>
+        </ul>
+        <p v-else class="hint">暂无领用/归还事件</p>
+      </div>
       <div v-if="detail && activeTab === 'asset'" class="hint">关联资产需 ASSET 反向穿透接口，契约未在本片实现。</div>
       <template #foot>
+        <button
+          v-if="detail && detail.status === 'IN_POOL'"
+          class="btn btn-pri"
+          type="button"
+          @click="openCheckout(detail)"
+        >
+          领用
+        </button>
+        <button
+          v-if="detail && detail.status === 'IN_USE'"
+          class="btn btn-sec"
+          type="button"
+          @click="openReturn(detail)"
+        >
+          归还
+        </button>
         <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="checkoutOpen" title="发起账号领用" width="520px" @close="closeCheckout">
+      <div v-if="checkoutAccount" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ checkoutAccount.accountNo }} · {{ checkoutAccount.nickname }}</div>
+        </div>
+      </div>
+      <template v-if="!checkoutApplyId">
+        <div class="formrow one">
+          <div class="fld">
+            <label>用途说明<i class="req">*</i></label>
+            <input v-model="checkoutForm.purpose" placeholder="直播/内容用途" />
+          </div>
+        </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>计划开始<i class="req">*</i></label>
+            <input v-model="checkoutForm.planStart" type="date" />
+          </div>
+        </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>计划结束<i class="req">*</i></label>
+            <input v-model="checkoutForm.planEnd" type="date" />
+          </div>
+        </div>
+        <p v-if="checkoutMsg" class="hint">{{ checkoutMsg }}</p>
+      </template>
+      <template v-else>
+        <p class="hint">申请单 {{ checkoutApplyNo }} · 状态 {{ checkoutStepLabel }}</p>
+        <div v-if="checkoutStep === 'PENDING_APPROVAL'" class="acts" style="margin-top: 12px">
+          <button class="btn btn-pri btn-sm" type="button" :disabled="checkoutBusy" @click="approveCheckout">审批通过</button>
+        </div>
+        <div v-if="checkoutStep === 'PENDING_HANDOVER'" class="formrow one" style="margin-top: 12px">
+          <label><input v-model="checkoutHandover.passwordReset" type="checkbox" /> 密码已重置</label>
+          <label><input v-model="checkoutHandover.mobileRebound" type="checkbox" /> 绑定手机已换</label>
+          <button class="btn btn-pri btn-sm" type="button" :disabled="checkoutBusy" @click="confirmCheckout">确认领用生效</button>
+        </div>
+        <div v-if="checkoutStep === 'DONE'" class="hint">领用已生效，账号状态应为「在用」。</div>
+        <p v-if="checkoutMsg" class="hint">{{ checkoutMsg }}</p>
+      </template>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeCheckout">取消</button>
+        <button
+          v-if="!checkoutApplyId"
+          class="btn btn-pri"
+          type="button"
+          :disabled="checkoutBusy"
+          @click="submitCheckout"
+        >
+          提交申请
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="returnOpen" title="账号归还" width="480px" @close="returnOpen = false">
+      <div v-if="returnAccount" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ returnAccount.accountNo }} · {{ returnAccount.nickname }}</div>
+        </div>
+        <div class="fld">
+          <label>备注</label>
+          <input v-model="returnRemark" placeholder="可选" />
+        </div>
+        <p v-if="returnMsg" class="hint">{{ returnMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="returnOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" :disabled="returnBusy" @click="submitReturn">确认归还</button>
       </template>
     </ProtoDrawer>
 
@@ -199,6 +320,32 @@ const activeTab = ref('basic')
 const collectMsg = ref('')
 const collectSummary = ref('—')
 
+const timelineEvents = ref<
+  { id: number; eventType: string; refNo: string; snapshotSummary: string; eventTime: string }[]
+>([])
+const timelineLoading = ref(false)
+const timelineError = ref('')
+
+const checkoutOpen = ref(false)
+const checkoutAccount = ref<Record<string, unknown> | null>(null)
+const checkoutApplyId = ref<number | null>(null)
+const checkoutApplyNo = ref('')
+const checkoutStep = ref('')
+const checkoutBusy = ref(false)
+const checkoutMsg = ref('')
+const checkoutForm = reactive({
+  purpose: 'E2E 内容直播领用',
+  planStart: '',
+  planEnd: '',
+})
+const checkoutHandover = reactive({ passwordReset: true, mobileRebound: false })
+
+const returnOpen = ref(false)
+const returnAccount = ref<Record<string, unknown> | null>(null)
+const returnRemark = ref('')
+const returnBusy = ref(false)
+const returnMsg = ref('')
+
 const formOpen = ref(false)
 const form = reactive({
   accountName: '',
@@ -218,6 +365,27 @@ const pageList = computed(() => {
   return Array.from({ length: end - start + 1 }, (_, i) => start + i)
 })
 
+const checkoutStepLabel = computed(() => {
+  if (checkoutStep.value === 'PENDING_APPROVAL') return '待审批'
+  if (checkoutStep.value === 'PENDING_HANDOVER') return '待交接确认'
+  if (checkoutStep.value === 'DONE') return '已领用'
+  return checkoutStep.value
+})
+
+function statusLabel(code: string) {
+  const hit = statusOptions.find((o) => o.value === code)
+  return hit ? hit.label : code
+}
+
+function defaultPlanDates() {
+  const start = new Date()
+  const end = new Date()
+  end.setDate(end.getDate() + 30)
+  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+  checkoutForm.planStart = fmt(start)
+  checkoutForm.planEnd = fmt(end)
+}
+
 const basicLines = computed(() => {
   if (!detail.value) return []
   const d = detail.value
@@ -229,7 +397,7 @@ const basicLines = computed(() => {
     { label: '公司', value: d.companyName || d.companyId },
     { label: '实名人', value: d.realNameMasked || '—' },
     { label: '责任人', value: d.holderUserName || d.holderUserId },
-    { label: '状态', value: d.status },
+    { label: '状态', value: statusLabel(String(d.status || '')) },
     { label: '采集摘要', value: d.collectBindSummary },
   ]
 })
@@ -288,6 +456,21 @@ function changeSize(ev: Event) {
   load()
 }
 
+async function loadTimeline(accountId: unknown) {
+  timelineLoading.value = true
+  timelineError.value = ''
+  timelineEvents.value = []
+  try {
+    const res = await http.get(`/account/timeline/${accountId}`)
+    const data = res.data?.data as { list: typeof timelineEvents.value }
+    timelineEvents.value = data?.list || []
+  } catch (e: unknown) {
+    timelineError.value = e instanceof Error ? e.message : '时间线加载失败'
+  } finally {
+    timelineLoading.value = false
+  }
+}
+
 async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   activeTab.value = tab
   collectMsg.value = ''
@@ -301,7 +484,113 @@ async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   } catch {
     bindInfo.value = null
   }
+  if (tab === 'timeline') {
+    await loadTimeline(row.id)
+  }
   detailOpen.value = true
+}
+
+function openCheckout(row: Record<string, unknown>) {
+  checkoutAccount.value = row
+  checkoutApplyId.value = null
+  checkoutApplyNo.value = ''
+  checkoutStep.value = ''
+  checkoutMsg.value = ''
+  checkoutHandover.passwordReset = true
+  checkoutHandover.mobileRebound = false
+  defaultPlanDates()
+  checkoutOpen.value = true
+}
+
+function closeCheckout() {
+  checkoutOpen.value = false
+  checkoutAccount.value = null
+  checkoutApplyId.value = null
+}
+
+async function submitCheckout() {
+  if (!checkoutAccount.value) return
+  checkoutBusy.value = true
+  checkoutMsg.value = ''
+  try {
+    const res = await http.post('/account/apply', {
+      accountId: checkoutAccount.value.id,
+      purpose: checkoutForm.purpose,
+      planStart: checkoutForm.planStart,
+      planEnd: checkoutForm.planEnd,
+    })
+    const vo = res.data?.data as { id: number; applyNo: string; applyStatus: string }
+    checkoutApplyId.value = vo.id
+    checkoutApplyNo.value = vo.applyNo
+    checkoutStep.value = vo.applyStatus
+  } catch (e: unknown) {
+    checkoutMsg.value = e instanceof Error ? e.message : '提交失败'
+  } finally {
+    checkoutBusy.value = false
+  }
+}
+
+async function approveCheckout() {
+  if (!checkoutApplyId.value) return
+  checkoutBusy.value = true
+  checkoutMsg.value = ''
+  try {
+    await http.put(`/account/apply/${checkoutApplyId.value}/approve`, { action: 'APPROVE' })
+    checkoutStep.value = 'PENDING_HANDOVER'
+  } catch (e: unknown) {
+    checkoutMsg.value = e instanceof Error ? e.message : '审批失败'
+  } finally {
+    checkoutBusy.value = false
+  }
+}
+
+async function confirmCheckout() {
+  if (!checkoutApplyId.value) return
+  checkoutBusy.value = true
+  checkoutMsg.value = ''
+  try {
+    await http.put(`/account/apply/${checkoutApplyId.value}/confirm`, {
+      passwordReset: checkoutHandover.passwordReset,
+      mobileRebound: checkoutHandover.mobileRebound,
+    })
+    checkoutStep.value = 'DONE'
+    checkoutOpen.value = false
+    await load()
+    if (detail.value && String(detail.value.id) === String(checkoutAccount.value?.id)) {
+      const res = await http.get(`/corp/account/${detail.value.id}`)
+      detail.value = res.data?.data as Record<string, unknown>
+    }
+  } catch (e: unknown) {
+    checkoutMsg.value = e instanceof Error ? e.message : '确认失败'
+  } finally {
+    checkoutBusy.value = false
+  }
+}
+
+function openReturn(row: Record<string, unknown>) {
+  returnAccount.value = row
+  returnRemark.value = ''
+  returnMsg.value = ''
+  returnOpen.value = true
+}
+
+async function submitReturn() {
+  if (!returnAccount.value) return
+  returnBusy.value = true
+  returnMsg.value = ''
+  try {
+    await http.post('/account/return/submit', {
+      accountId: returnAccount.value.id,
+      remark: returnRemark.value || undefined,
+    })
+    returnOpen.value = false
+    detailOpen.value = false
+    await load()
+  } catch (e: unknown) {
+    returnMsg.value = e instanceof Error ? e.message : '归还失败'
+  } finally {
+    returnBusy.value = false
+  }
 }
 
 async function importCollector() {
@@ -387,6 +676,12 @@ watch(
     applyDeepLink()
   },
 )
+
+watch(activeTab, (tab) => {
+  if (tab === 'timeline' && detail.value?.id) {
+    loadTimeline(detail.value.id)
+  }
+})
 </script>
 
 <style scoped>
@@ -395,5 +690,19 @@ watch(
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+.acts-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.timeline-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.timeline-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, #eee);
 }
 </style>

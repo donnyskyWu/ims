@@ -7,7 +7,7 @@
 | 序号 | 工作流 | 任务/切片 | 状态 | 负责人 | 最后更新 | 备注/链接 |
 |------|--------|-----------|------|--------|----------|-----------|
 | 1 | 验证 | W0–W9-14 主线交付（菜单 ~98 IMPLEMENTED） | 已完成 | 多 Agent | 2026-10-07 | [执行进度](./IMS-Python执行进度-20261006.md) |
-| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **38/38 PASS**（`test:e2e:ci` · 2026-10-08 12:32 · **纯 UI closure** · 含 **#45** BR-212 · **#44** 预警 · CONTENT 工作任务/IP 组 **closure-helpers 去 flaky** · 不含 L3）· API **18080** · Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 |
+| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **46/46 PASS**（`test:e2e:ci` · 含 **#52** DC-001 · **#51** DC-002 · 纯 UI · 不含 L3）· API **18080** · Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · **Agent 自动链已在 #52 暂停，待 PO 指令再开 #53+** |
 | 3 | 测试 | pytest 全量 154 条（外置单进程） | 已完成 | 用户本地 | 2026-10-07 | **#31** +3 `test_dingtalk_client_scopes` · 含 L3 3 条（默认 skip）· **collect-only 154** · 外置 **154 passed** · L3 另跑 `run_dingtalk_l3.ps1` |
 | 4 | 开发 | sysTenant 租户套餐 | 阻塞 | — | 2026-10-07 | **ADR / SLICES 批次外**，WIP=1，本批不做 |
 | 5 | 修复 | master/overview 404 → 200 | 已完成 | Agent | 2026-10-07 | `ops_db.create_all` · 需重启 18080 |
@@ -58,6 +58,13 @@
 | 43 | 验证 | MASTER overview smoke + closure | 已完成 | 本回合 Agent | 2026-10-08 | `smoke-master.spec.ts` · `closure-master-overview.spec.ts` · `test_master_overview_blocks` · Checklist **v2.6.53** · E2E **36/36 PASS** · `e2e_result.txt` · Web **6173** |
 | 44 | 验证 | ALERT/S11 预警处置 Tab 纯 UI closure | 已完成 | 本回合 Agent | 2026-10-08 | `live.vue` 处置 toast · `closure-alert-handle-tab.spec.ts`（试跑→处理→处置记录→去重）· `test_alert` 延伸 HANDLE · Checklist **v2.6.54** · E2E **37/37 PASS** · Web **6173** · `e2e_result.txt` |
 | 45 | 开发/验证 | BI/S12 **BR-212 行级权限** closure | 已完成 | 本回合 Agent | 2026-10-08 | `bi_br212.py` · `dept_id` · 种子 `bi_r4_viewer` + `BR212-` 三报表 · `closure-bi-br212-row-scope.spec.ts` **PASS** · pytest **3/3** · 全量 E2E **38/38**（续跑修复 CONTENT **closure-helpers** 时序/900001 绑定 · **BR-212 未回滚**）· Checklist **v2.6.55** · 假设：`bi_r4_viewer`=DEPT(11) 非 R4 审批岗 |
+| 46 | 开发/验证 | **WORKBENCH** 待办关闭 + 消息已读 closure | 已完成 | 本回合 Agent | 2026-10-08 | `workbench_seed.py` · `workbench/index.vue`「关闭」/已读「是/否」· `closure-workbench-todo-message.spec.ts` · `run_e2e.ps1` 跑前 refresh 种子 · `closure-helpers` 工作任务撤回循环（全量稳定）· `test_workbench_e2e_seed_todo_and_message` · Checklist **v2.6.56** · E2E **39/39 PASS** · collect **161** · Web **6173** |
+| 47 | 开发/验证 | **S4 CORP** 账号池领用→归还 closure | 已完成 | 本回合 Agent | 2026-10-08 | `acct_flow.py` · `acct_seed.py`（`AC-E2E-POOL`）· `corp/account.vue` 领用/归还抽屉 · `closure-corp-account-checkout.spec.ts` · `test_acct_checkout.py` · compat `20261008_acct_apply_timeline.sql` · `run_e2e.ps1` refresh 池种子 · 发布 closure 选用 `IN_USE` 账号 · Checklist **v2.6.57** · E2E **40/40 PASS** · collect **162** · Web **6173** |
+| 48 | 开发/验证 | **S10 TRAIN** 下发→学习完成 closure | 已完成 | 本回合 Agent | 2026-10-08 | `PUT …/task/{id}/progress` · `POST …/confirm` · `GET …/task/records` · `study.vue` · `task.vue` 资料多选/学习记录 · `scope.py` · compat `20261008_train_task_record_progress.sql` · `closure-train-dispatch-complete.spec.ts` · `test_train_task_progress_confirm_and_records` · Checklist **v2.6.58** · E2E **41/41 PASS** · collect **163** · Web **6173** · **Live**：已有库须 `-ApplyCompat` 或执行 compat SQL 后 **`-KillPort` 重启 18080** |
+| 49 | 开发/验证 | **TRAIN-003** 培训统计看板 · 完成率 Tab closure | 已完成 | 本回合 Agent | 2026-10-08 | `GET /train/stat/finish-rate` · `stat.vue` 完成率总览（近7/30天 · 任务/部门/个人表）· `closure-train-stat-finish-rate.spec.ts` · `completeTrainStudyViaUi` · `smoke-train` stat 窄 smoke · `test_train_stat_finish_rate_after_confirm` · Checklist **v2.6.59** · E2E **43/43 PASS** · collect **164** · Web **6173** · **Live**：新 API 须 **`-KillPort` 重启 18080** |
+| 50 | 开发/验证 | **S3 FIN** 成本登记→利润看板 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | `live_fin_e2e_seed` · `live/index.vue`「核准下播」· `cost.vue` ProtoDrawer · `closure-fin-cost-profit.spec.ts` · `closure-helpers` LIVE/FIN 链 · `test_live_fin_e2e_seed_deps` · Checklist **v2.6.60** · E2E **44/44 PASS** · Web **6173** · Live：**重启 18080** 加载 seed/核准 UI |
+| 51 | 开发/验证 | **DC-002** 利润反查 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | 复用 **#50** LIVE/FIN 链 · `/ims/fin/profit-trace`「反查」· `profit-trace.vue` `fin-profit-trace-chain-drawer` · `closure-fin-profit-trace.spec.ts` · `openFinProfitTraceChainViaUi` · `test_dc_profit_trace_list_and_chain` 定向 **2 passed** · Checklist **v2.6.61** · E2E **45/45 PASS** · Web **6173** |
+| 52 | 开发/验证 | **DC-001** 账号穿透 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | 复用 **#50** LIVE 链 · `/ims/dc/trace` 账号入口 · `trace.vue` testid · `dc_trace.py` **detailList** 嵌套 `ok()` 修复 · `closure-dc-account-trace.spec.ts` · `openDcAccountTraceViaUi` · `test_dc_trace_account_keyword_detail_mode` · 定向 pytest **3 passed**（含 trace 基线）· Checklist **v2.6.62** · E2E **46/46 PASS** · Web **6173** · Live：**重启 18080** 加载 `dc_trace` 修复 · **交付自动链在此切片收口（PO 2026-10-08）** |
 
 ---
 
@@ -245,3 +252,9 @@
 - **根因**：接口权限 ≠ **通讯录授权范围**；固定 `dept_id=1` 在新应用未授权时 **50004**。
 - **代码**：`auth/scopes` → `authed_dept` 定根 · BFS **50004** 跳过 · `authScopeHint` · `test_dingtalk_client_scopes.py`（**collect +3 → 154**）。
 - **PO**：[钉钉通讯录同步说明.md](../运维/钉钉通讯录同步说明.md) · 全量同步前 **全部员工** + 发布。
+
+### 2026-10-08 · #46–#52 团队同步 · 自动链暂停
+
+- **范围**：WORKBENCH / CORP 领还 / TRAIN 下发·统计 / FIN 成本·利润反查 / **DC-001 账号穿透**（#52）· 文档 SSOT（对照表、执行进度、Checklist **v2.6.56–v2.6.62**）。
+- **E2E**：全量 **46/46 PASS** · `ims-web/e2e_result.txt`（2026-10-08 15:43 · **6173** + **18080**）。
+- **PO 指令**：**暂停 Agent 自动链**；在 PO 明确下一切片前 **不得** 自动启动 **#53+**。

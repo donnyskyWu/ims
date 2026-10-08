@@ -1,5 +1,5 @@
 # One-command IMS Playwright E2E: preflight API (18080) + Vite (6173), run full suite, write e2e_result.txt.
-# DB: loads ims-backend/.env before auto-starting API (local vs cloud — doc/运维/云MySQL联调.md).
+# DB: loads ims-backend/.env before starting API (local MySQL vs cloud — see doc/运维/云MySQL联调.md).
 param(
     [switch]$SkipServe,
     [int]$ApiWaitSec = 120,
@@ -118,6 +118,30 @@ Then restart API (scripts\start_api.ps1 -KillPort) and re-run this script.
 "@
     "0 passed (login preflight failed — see init_ims_db.ps1)" | Set-Content -Path $resultFile -Encoding utf8
     exit 3
+}
+
+Write-Host "[e2e] Refresh workbench + acct pool + FIN live E2E seed (#46/#47/#50) ..."
+Push-Location $BackendRoot
+try {
+    python -c @"
+from app.core import SessionLocal
+from app.models import User
+from app.workbench_seed import refresh_workbench_e2e_seed
+from app.acct_seed import refresh_acct_e2e_pool
+from app.live_fin_e2e_seed import refresh_live_fin_e2e_deps
+db = SessionLocal()
+try:
+    admin = db.query(User).filter(User.username == 'admin', User.deleted == 0).first()
+    if admin is not None:
+        refresh_workbench_e2e_seed(db, admin)
+        refresh_acct_e2e_pool(db, admin)
+        refresh_live_fin_e2e_deps(db, admin)
+        db.commit()
+finally:
+    db.close()
+"@
+} finally {
+    Pop-Location
 }
 
 # Always align Playwright baseURL with Vite preflight port (ignore stale shell E2E_BASE_URL e.g. 5173).

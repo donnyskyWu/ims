@@ -6,7 +6,7 @@
         <div class="sub">DC-001 · /ims/dc/trace · GET/POST /dc/trace/* · 12 DC</div>
       </div>
     </div>
-    <div v-if="dataAsOf" class="hint" style="margin-bottom: 10px">
+    <div v-if="dataAsOf" class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">
       数据截至 <b>{{ dataAsOf }}</b> · queryCostMs {{ queryCostMs }} ms
     </div>
     <form class="qbar" @submit.prevent="searchEntry">
@@ -15,10 +15,17 @@
         <option value="SESSION">场次</option>
         <option value="PERSON">实名人</option>
       </select>
-      <input v-model="keyword" placeholder="关键词" style="width: 160px" />
-      <button class="btn btn-sec btn-sm" type="button" @click="searchEntry">搜入口</button>
+      <input
+        v-model="keyword"
+        placeholder="关键词"
+        style="width: 160px"
+        data-testid="dc-trace-keyword"
+      />
+      <button class="btn btn-sec btn-sm" type="button" data-testid="dc-trace-search-entry" @click="searchEntry">
+        搜入口
+      </button>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">穿透查询</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="dc-trace-submit">穿透查询</button>
     </form>
     <div v-if="entries.length" class="hint" style="margin: 8px 0">
       入口：
@@ -35,14 +42,14 @@
     </div>
     <div v-if="error" class="hint" style="color: var(--red)">{{ error }}</div>
     <div class="g2" style="margin-top: 12px">
-      <div class="card" style="padding: 12px; min-height: 200px">
+      <div class="card" style="padding: 12px; min-height: 200px" data-testid="dc-trace-graph">
         <b style="font-size: 13px">关系图</b>
         <ul style="margin: 10px 0 0; padding-left: 18px; font-size: 12px">
           <li v-for="n in nodes" :key="n.nodeId">{{ n.nodeType }} · {{ n.nodeLabel }}</li>
         </ul>
         <p v-if="!nodes.length" class="csub">选择入口后查询</p>
       </div>
-      <div class="tbl-block">
+      <div class="tbl-block" data-testid="dc-trace-detail-table">
         <div class="tbl-wrap">
           <table>
             <thead>

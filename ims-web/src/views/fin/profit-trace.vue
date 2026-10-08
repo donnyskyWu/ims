@@ -67,7 +67,7 @@
     </div>
 
     <div v-if="drawerOpen && chain" class="drawer-mask" @click.self="drawerOpen = false">
-      <div class="drawer" style="width: 680px">
+      <div class="drawer" data-testid="fin-profit-trace-chain-drawer" style="width: 680px">
         <div class="drawer-h">
           <b>反查链路 · {{ chain.sessionCode }}</b>
           <span class="hint">{{ queryCostMs }} ms</span>

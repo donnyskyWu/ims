@@ -66,6 +66,7 @@ const router = createRouter({
         { path: 'report/stat', component: () => import('../views/report/stat.vue') },
         { path: 'train/material', component: () => import('../views/train/material.vue') },
         { path: 'train/task', component: () => import('../views/train/task.vue') },
+        { path: 'train/study/:taskId', component: () => import('../views/train/study.vue') },
         { path: 'air/kb', component: () => import('../views/air/kb.vue') },
         { path: 'air/skill', component: () => import('../views/air/skill.vue') },
         { path: 'air/expert', component: () => import('../views/air/expert.vue') },

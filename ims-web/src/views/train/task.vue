@@ -41,14 +41,15 @@
               <th>确认方式</th>
               <th>截止时间</th>
               <th>状态</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无任务' }}</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无任务' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.taskNo }}</td>
@@ -59,6 +60,10 @@
               <td>{{ row.confirmType }}</td>
               <td class="mono">{{ row.deadline }}</td>
               <td>{{ row.status }}</td>
+              <td>
+                <button class="btn btn-sec btn-sm" type="button" @click="goStudy(row)">去学习</button>
+                <button class="btn btn-sec btn-sm" type="button" @click="openRecords(row)">学习记录</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -70,8 +75,14 @@
         <h3 style="margin: 0 0 12px">下达学习任务</h3>
         <label class="fld">任务名称</label>
         <input v-model="form.taskName" class="fld-in" />
-        <label class="fld">资料 ID（逗号分隔）</label>
-        <input v-model="form.materialIdsText" class="fld-in" placeholder="如 1,2" />
+        <label class="fld">已发布资料（多选）</label>
+        <div v-if="publishedMaterials.length" class="mat-pick">
+          <label v-for="m in publishedMaterials" :key="m.id" class="mat-opt">
+            <input v-model="form.materialIds" type="checkbox" :value="m.id" />
+            {{ m.title }} <small class="mono">#{{ m.id }}</small>
+          </label>
+        </div>
+        <p v-else class="hint">暂无已发布资料，请先在资料库发布</p>
         <label class="fld">指派用户 ID（逗号）</label>
         <input v-model="form.userIdsText" class="fld-in" placeholder="如 1" />
         <label class="fld">截止时间 ISO</label>
@@ -88,12 +99,46 @@
         </div>
       </div>
     </div>
+
+    <div v-if="showRecords" class="modal-mask" @click.self="showRecords = false">
+      <div class="card" style="width: 520px; padding: 20px; max-height: 85vh; overflow: auto">
+        <h3 style="margin: 0 0 8px">学习记录 · {{ recordsTaskName }}</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>进度</th>
+              <th>确认状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="recordsLoading">
+              <td colspan="3">加载中…</td>
+            </tr>
+            <tr v-else-if="!recordRows.length">
+              <td colspan="3">暂无记录</td>
+            </tr>
+            <tr v-for="r in recordRows" v-else :key="r.userId">
+              <td>{{ r.userName || r.userId }}</td>
+              <td class="num">{{ r.progress }}%</td>
+              <td>{{ r.confirmStatus }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-pri btn-sm" type="button" @click="showRecords = false">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+
+const router = useRouter()
 
 type Row = {
   id: number
@@ -113,13 +158,59 @@ const error = ref('')
 const showForm = ref(false)
 const formError = ref('')
 const filters = reactive({ taskName: '', status: '', confirmType: '' })
+type MatPick = { id: number; title: string }
+const publishedMaterials = ref<MatPick[]>([])
+const showRecords = ref(false)
+const recordsLoading = ref(false)
+const recordsTaskName = ref('')
+const recordRows = ref<Array<{ userId: number; userName: string; progress: number; confirmStatus: string }>>([])
 const form = reactive({
   taskName: '',
-  materialIdsText: '',
+  materialIds: [] as number[],
   userIdsText: '1',
   deadline: '2026-12-31T18:00:00+08:00',
   confirmType: 'DURATION',
 })
+
+function defaultDeadline() {
+  const d = new Date()
+  d.setMonth(d.getMonth() + 3)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00:00+08:00`
+}
+
+async function loadPublishedMaterials() {
+  const res = await http.get('/train/material/list', {
+    params: { status: 'PUBLISHED', pageNo: 1, pageSize: 50 },
+  })
+  if (res.data.code === 0) {
+    publishedMaterials.value = (res.data.data.list || []).map((m: MatPick) => ({
+      id: m.id,
+      title: m.title,
+    }))
+  }
+}
+
+function goStudy(row: Row) {
+  router.push(`/ims/train/study/${row.id}`)
+}
+
+async function openRecords(row: Row) {
+  recordsTaskName.value = row.taskName
+  showRecords.value = true
+  recordsLoading.value = true
+  recordRows.value = []
+  try {
+    const res = await http.get('/train/task/records', {
+      params: { taskId: row.id, pageNo: 1, pageSize: 20 },
+    })
+    if (res.data.code === 0) {
+      recordRows.value = res.data.data.list || []
+    }
+  } finally {
+    recordsLoading.value = false
+  }
+}
 
 function finishColor(rate: number) {
   if (rate >= 90) return 'var(--green)'
@@ -159,17 +250,18 @@ async function loadList() {
 
 function openCreate() {
   form.taskName = ''
-  form.materialIdsText = ''
+  form.materialIds = []
   form.userIdsText = '1'
-  form.deadline = '2026-12-31T18:00:00+08:00'
+  form.deadline = defaultDeadline()
   form.confirmType = 'DURATION'
   formError.value = ''
+  void loadPublishedMaterials()
   showForm.value = true
 }
 
 async function submit() {
   formError.value = ''
-  const materialIds = parseIds(form.materialIdsText)
+  const materialIds = [...form.materialIds]
   const userIds = parseIds(form.userIdsText)
   if (!form.taskName.trim() || !materialIds.length || !userIds.length) {
     formError.value = '名称、资料与用户必填'
@@ -213,5 +305,18 @@ onMounted(loadList)
 .fld-in {
   width: 100%;
   box-sizing: border-box;
+}
+.mat-pick {
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--border, #ddd);
+  padding: 8px;
+  border-radius: 4px;
+}
+.mat-opt {
+  display: block;
+  font-size: 13px;
+  margin: 4px 0;
+  cursor: pointer;
 }
 </style>

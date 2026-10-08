@@ -356,12 +356,27 @@ export async function bindOpsAuthorToIpGroup(
   authorId = E2E_OPS_AUTHOR_ID,
   groupNameHint?: string,
 ) {
+  await page.goto('/ims/ip-group')
+  await expect(page.locator('h1')).toContainText('IP 组', { timeout: 15_000 })
   await selectIpGroupInTree(page, ipGroupId, groupNameHint)
-  const anchorsGet = page.waitForResponse(
-    (r) => r.url().includes(`/ip-group/${ipGroupId}/anchors`) && r.request().method() === 'GET' && r.status() === 200,
-  )
-  await page.locator('.tab', { hasText: '关联作者' }).click()
-  await anchorsGet
+  const authorTab = page.locator('.tab', { hasText: '关联作者' })
+  const waitAnchors = () =>
+    page.waitForResponse(
+      (r) => r.url().includes(`/ip-group/${ipGroupId}/anchors`) && r.request().method() === 'GET' && r.status() === 200,
+      { timeout: 20_000 },
+    )
+  let anchorsGet = waitAnchors()
+  await authorTab.click()
+  try {
+    await anchorsGet
+  } catch {
+    await page.goto('/ims/ip-group')
+    await expect(page.locator('h1')).toContainText('IP 组', { timeout: 15_000 })
+    await selectIpGroupInTree(page, ipGroupId, groupNameHint)
+    anchorsGet = waitAnchors()
+    await authorTab.click()
+    await anchorsGet
+  }
   const anchorRow = page.locator('.ipg-detail-body tbody tr').filter({ hasText: E2E_OPS_AUTHOR_NAME })
   if ((await anchorRow.count()) === 0) {
     await page.locator('input[placeholder="作者 id"]').fill(String(authorId))
@@ -412,22 +427,28 @@ export async function registerWorkTaskRowViaUi(
   }
 
   let targetRow = dataRows.filter({ has: page.locator('input[type="number"]:not([disabled])') }).first()
-  if (!(await targetRow.count())) {
-    const confirmedAny = dataRows.filter({ has: page.locator('td', { hasText: 'CONFIRMED' }) })
-    if (await confirmedAny.count()) {
-      await confirmedAny.first().locator('input[type="checkbox"]').check()
-      const withdrawResp = page.waitForResponse(
-        (r) => r.url().includes('/work-task/') && r.url().includes('/withdraw') && r.request().method() === 'POST',
-      )
-      await page.getByRole('button', { name: '撤回' }).click()
-      await withdrawResp
-      const reloadResp = page.waitForResponse(
-        (r) => r.url().includes('/work-task/sheet') && r.request().method() === 'GET' && r.status() === 200,
-      )
-      await page.getByRole('button', { name: '查询' }).click()
-      await reloadResp
-      targetRow = dataRows.filter({ has: page.locator('input[type="number"]:not([disabled])') }).first()
-    }
+  for (let attempt = 0; attempt < 5 && !(await targetRow.count()); attempt += 1) {
+    const confirmedAny = page
+      .locator('tbody tr')
+      .filter({ has: page.locator('input[type="checkbox"]') })
+      .filter({ has: page.locator('td', { hasText: 'CONFIRMED' }) })
+    if (!(await confirmedAny.count())) break
+    await confirmedAny.first().locator('input[type="checkbox"]').check()
+    const withdrawResp = page.waitForResponse(
+      (r) => r.url().includes('/work-task/') && r.url().includes('/withdraw') && r.request().method() === 'POST',
+    )
+    await page.getByRole('button', { name: '撤回' }).click()
+    await withdrawResp
+    const reloadResp = page.waitForResponse(
+      (r) => r.url().includes('/work-task/sheet') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await page.getByRole('button', { name: '查询' }).click()
+    await reloadResp
+    targetRow = page
+      .locator('tbody tr')
+      .filter({ has: page.locator('input[type="checkbox"]') })
+      .filter({ has: page.locator('input[type="number"]:not([disabled])') })
+      .first()
   }
   await expect(targetRow).toBeVisible({ timeout: 15_000 })
   await targetRow.locator('input[type="number"]').fill(String(opts.authorId))
@@ -451,4 +472,369 @@ export async function registerWorkTaskRowViaUi(
   const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { generatedTaskCount?: number } }
   expect(confirmBody.code).toBe(0)
   expect((confirmBody.data?.generatedTaskCount ?? 0) >= 1).toBeTruthy()
+}
+
+/** TRAIN 资料库 · 发布 DOC 资料（纯 UI） */
+export async function createTrainMaterialViaUi(
+  page: Page,
+  opts: { title: string },
+): Promise<{ materialId: number }> {
+  await page.goto('/ims/train/material')
+  await expect(page.locator('h1')).toHaveText('培训资料库', { timeout: 15_000 })
+
+  const firstCate = page.locator('.tree button.linkish').first()
+  await expect(firstCate).toBeVisible({ timeout: 15_000 })
+  await firstCate.click()
+
+  await page.getByRole('button', { name: '上传资料' }).click()
+  const modal = page.locator('.modal-mask .card').filter({ hasText: '上传资料' })
+  await expect(modal).toBeVisible()
+  await modal
+    .locator('label.fld', { hasText: '标题' })
+    .locator('xpath=following-sibling::input[1]')
+    .fill(opts.title)
+
+  const createResp = page.waitForResponse(
+    (r) => r.url().includes('/train/material') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await modal.getByRole('button', { name: '发布' }).click()
+  const body = (await (await createResp).json()) as { code: number; data?: { id?: number } }
+  expect(body.code).toBe(0)
+  const materialId = body.data?.id
+  expect(materialId).toBeTruthy()
+
+  await expect(page.locator('tr', { hasText: opts.title })).toBeVisible({ timeout: 15_000 })
+  return { materialId: materialId! }
+}
+
+/** TRAIN 学习任务 · 下达任务（纯 UI · 资料多选） */
+export async function createTrainTaskViaUi(
+  page: Page,
+  opts: { taskName: string; materialIds: number[]; assignUserIds: number[] },
+): Promise<{ taskId: number }> {
+  await page.goto('/ims/train/task')
+  await expect(page.locator('h1')).toHaveText('学习任务管理', { timeout: 15_000 })
+
+  await page.getByRole('button', { name: '下达学习任务' }).click()
+  const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
+  await expect(modal).toBeVisible()
+  await modal
+    .locator('label.fld', { hasText: '任务名称' })
+    .locator('xpath=following-sibling::input[1]')
+    .fill(opts.taskName)
+
+  for (const mid of opts.materialIds) {
+    await modal.locator('label.mat-opt').filter({ hasText: `#${mid}` }).locator('input[type="checkbox"]').check()
+  }
+  await modal.locator('input[placeholder="如 1"]').fill(opts.assignUserIds.join(','))
+
+  const createResp = page.waitForResponse(
+    (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await modal.getByRole('button', { name: '保存' }).click()
+  const body = (await (await createResp).json()) as { code: number; data?: { id?: number } }
+  expect(body.code).toBe(0)
+  const taskId = body.data?.id
+  expect(taskId).toBeTruthy()
+
+  await expect(page.locator('tr', { hasText: opts.taskName })).toBeVisible({ timeout: 15_000 })
+  return { taskId: taskId! }
+}
+
+/** TRAIN 学习中心 · 标记学完并确认（纯 UI） */
+export async function completeTrainStudyViaUi(page: Page, taskId: number, taskName: string) {
+  await page.goto(`/ims/train/study/${taskId}`)
+  await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
+  await expect(page.getByText(taskName)).toBeVisible()
+
+  const progressResp = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/train/task/${taskId}/progress`) &&
+      r.request().method() === 'PUT' &&
+      r.status() === 200,
+  )
+  await page.getByRole('button', { name: '标记当前资料已学完' }).click()
+  const progBody = (await (await progressResp).json()) as { code: number }
+  expect(progBody.code).toBe(0)
+
+  const confirmResp = page.waitForResponse(
+    (r) =>
+      r.url().includes(`/train/task/${taskId}/confirm`) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
+  )
+  await page.getByRole('button', { name: '完成确认' }).click()
+  const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { confirmStatus?: string } }
+  expect(confirmBody.code).toBe(0)
+  expect(confirmBody.data?.confirmStatus).toBe('CONFIRMED')
+  await expect(page.getByText('学习已完成 · CONFIRMED')).toBeVisible({ timeout: 10_000 })
+}
+
+/** S3 FIN closure · 与 `live_fin_e2e_seed` 一致 */
+export const E2E_FIN_ACCOUNT_NO = 'AC-E2E-FIN'
+export const E2E_FIN_PHONE_CODE = 'E2E-FIN-PHONE'
+
+/** 纯 UI 读取 FIN E2E 种子账号/实名人/手机 id（依赖 run_e2e refresh 种子） */
+export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
+  accountId: number
+  realnamePersonId: number
+  deviceId: number
+}> {
+  await page.goto('/ims/corp/account/douyin')
+  await page.locator('input[placeholder="账号编号/昵称"]').fill(E2E_FIN_ACCOUNT_NO)
+  const accListResp = page.waitForResponse(
+    (r) => r.url().includes('/corp/account/page') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  await accListResp
+  const accRow = page.locator('tbody tr', { hasText: E2E_FIN_ACCOUNT_NO }).first()
+  await expect(accRow).toBeVisible({ timeout: 15_000 })
+  const accDetailResp = page.waitForResponse(
+    (r) => /\/corp\/account\/\d+/.test(r.url()) && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await accRow.getByRole('button', { name: '详情' }).click()
+  const accDetailBody = (await (await accDetailResp).json()) as {
+    code: number
+    data?: { id?: number; realnameId?: number }
+  }
+  expect(accDetailBody.code).toBe(0)
+  const accountId = accDetailBody.data?.id
+  const realnamePersonId = accDetailBody.data?.realnameId
+  expect(accountId).toBeTruthy()
+  expect(realnamePersonId).toBeTruthy()
+
+  await page.goto('/ims/corp/device/phone')
+  await page.locator('input[placeholder="设备编号 / 型号"]').fill(E2E_FIN_PHONE_CODE)
+  const phoneListResp = page.waitForResponse(
+    (r) => r.url().includes('/corp/device/phone/page') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  const phoneListBody = (await (await phoneListResp).json()) as {
+    code: number
+    data?: { list?: Array<{ id?: number; phoneCode?: string }> }
+  }
+  expect(phoneListBody.code).toBe(0)
+  const phoneHit = phoneListBody.data?.list?.find(
+    (r) => r.phoneCode === E2E_FIN_PHONE_CODE || (r as { deviceNumber?: string }).deviceNumber === E2E_FIN_PHONE_CODE,
+  )
+  expect(phoneHit?.id).toBeTruthy()
+
+  return {
+    accountId: accountId!,
+    realnamePersonId: realnamePersonId!,
+    deviceId: phoneHit!.id!,
+  }
+}
+
+/** LIVE 登记 → 下播提交/核准（纯 UI）· 返回场次 ID */
+export async function registerLiveSessionConfirmedReportViaUi(
+  page: Page,
+  ids: { accountId: number; realnamePersonId: number; deviceId: number },
+  opts?: { topic?: string; gmv?: number; refundAmount?: number },
+): Promise<{ sessionCode: string }> {
+  const topic = opts?.topic ?? `E2E FIN ${Date.now()}`
+  const gmv = opts?.gmv ?? 100_000
+  const refundAmount = opts?.refundAmount ?? 2_000
+
+  await page.goto('/ims/live/sessions')
+  await expect(page.locator('h1')).toHaveText('直播管理', { timeout: 15_000 })
+  await page.getByRole('button', { name: '新建场次登记' }).click()
+  const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
+  await expect(drawer).toBeVisible()
+  await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
+  await drawer
+    .locator('label', { hasText: '实名人 id' })
+    .locator('..')
+    .locator('input')
+    .fill(String(ids.realnamePersonId))
+  await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
+  await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
+
+  const regResp = page.waitForResponse(
+    (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await drawer.getByRole('button', { name: '提交登记' }).click()
+  const regBody = (await (await regResp).json()) as { code: number; data?: { sessionCode?: string; sessionStatus?: string } }
+  expect(regBody.code).toBe(0)
+  const sessionCode = regBody.data?.sessionCode
+  expect(sessionCode).toBeTruthy()
+
+  const detailDrawer = page.locator('.drawer').filter({ hasText: '场次' })
+  await expect(detailDrawer).toBeVisible({ timeout: 15_000 })
+
+  if (regBody.data?.sessionStatus === 'PENDING_RISK_CHECK') {
+    await detailDrawer.locator('.tab', { hasText: '风控登记' }).click()
+    const riskResp = page.waitForResponse(
+      (r) => r.url().includes('/risk-check') && r.request().method() === 'POST' && r.status() === 200,
+    )
+    await detailDrawer.getByRole('button', { name: '执行风控' }).click()
+    await riskResp
+  }
+
+  await detailDrawer.locator('.tab', { hasText: '下播与 GMV' }).click()
+  await detailDrawer.locator('label', { hasText: 'GMV' }).locator('..').locator('input').fill(String(gmv))
+  await detailDrawer
+    .locator('label', { hasText: '退款' })
+    .locator('..')
+    .locator('input')
+    .fill(String(refundAmount))
+
+  const reportResp = page.waitForResponse(
+    (r) => r.url().includes('/live/report/') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await detailDrawer.getByRole('button', { name: '提交下播' }).click()
+  await reportResp
+
+  const confirmResp = page.waitForResponse(
+    (r) => r.url().includes('/live/report/') && r.url().includes('/confirm') && r.request().method() === 'PUT',
+  )
+  await detailDrawer.getByTestId('live-report-confirm').click()
+  const confirmBody = (await (await confirmResp).json()) as { code: number }
+  expect(confirmBody.code).toBe(0)
+
+  return { sessionCode: sessionCode! }
+}
+
+/** FIN 成本录入 + 核准（纯 UI） */
+export async function submitAndConfirmFinCostViaUi(page: Page, sessionCode: string) {
+  await page.goto('/ims/fin/cost')
+  await expect(page.locator('h1')).toHaveText('成本核算', { timeout: 15_000 })
+  await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+  const pendingResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/cost/pending-sessions') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  await pendingResp
+  const row = page.locator('tbody tr', { hasText: sessionCode }).first()
+  await expect(row).toBeVisible({ timeout: 15_000 })
+  await row.getByRole('button', { name: '录入' }).click()
+  const entryDrawer = page.locator('.drawer.on').filter({ hasText: '成本录入' })
+  await expect(entryDrawer).toBeVisible()
+  await entryDrawer.getByRole('spinbutton', { name: '佣金率' }).fill('0.05')
+  await entryDrawer.getByRole('spinbutton', { name: '投放成本' }).fill('5000')
+  await entryDrawer.getByRole('spinbutton', { name: '冲话费摊销' }).fill('100')
+  await entryDrawer.getByRole('spinbutton', { name: '固定成本' }).fill('2000')
+  await entryDrawer.getByRole('spinbutton', { name: '样品成本' }).fill('500')
+  await entryDrawer.getByRole('spinbutton', { name: '达人分成' }).fill('3000')
+  await entryDrawer.getByRole('spinbutton', { name: '实名人分成' }).fill('1000')
+
+  const submitResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/cost/') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await entryDrawer.getByRole('button', { name: '提交' }).click()
+  await submitResp
+  await expect(entryDrawer).not.toBeVisible({ timeout: 10_000 })
+
+  await page.locator('.tab', { hasText: '已录入管理' }).click()
+  await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+  const listResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/cost/list') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  await listResp
+  const enteredRow = page.locator('tbody tr', { hasText: sessionCode }).first()
+  await expect(enteredRow).toContainText('已提交')
+
+  const confirmResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/cost/') && r.url().includes('/confirm') && r.request().method() === 'PUT',
+  )
+  await enteredRow.getByRole('button', { name: '核准' }).click()
+  const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { entryStatus?: string } }
+  expect(confirmBody.code).toBe(0)
+  expect(confirmBody.data?.entryStatus).toBe('CONFIRMED')
+  await expect(enteredRow).toContainText('已核准', { timeout: 10_000 })
+}
+
+/** DC-002 利润反查：列表筛选 + 打开 BR-209 链路抽屉（纯 UI） */
+export async function openFinProfitTraceChainViaUi(page: Page, sessionCode: string) {
+  await page.goto('/ims/fin/profit-trace')
+  await expect(page.locator('h1')).toHaveText('利润反查', { timeout: 15_000 })
+  await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+  const listResp = page.waitForResponse(
+    (r) => r.url().includes('/dc/profit-trace/list') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  const listBody = (await (await listResp).json()) as {
+    code: number
+    data?: { list?: Array<{ sessionCode?: string; netProfit?: number }> }
+  }
+  expect(listBody.code).toBe(0)
+  const traceRow = listBody.data?.list?.find((r) => r.sessionCode === sessionCode)
+  expect(traceRow?.netProfit).toBe(81_400)
+
+  const uiRow = page.locator('tbody tr', { hasText: sessionCode }).first()
+  await expect(uiRow).toBeVisible({ timeout: 15_000 })
+  await expect(uiRow).toContainText('81,400.00')
+
+  const chainResp = page.waitForResponse(
+    (r) =>
+      r.url().includes('/dc/profit-trace/') &&
+      !r.url().includes('/list') &&
+      !r.url().includes('/share-detail') &&
+      r.request().method() === 'GET' &&
+      r.status() === 200,
+  )
+  await uiRow.getByRole('button', { name: '反查' }).click()
+  const chainBody = (await (await chainResp).json()) as {
+    code: number
+    data?: { chain?: { session?: { sessionCode?: string }; costDetail?: unknown[] } }
+  }
+  expect(chainBody.code).toBe(0)
+  expect(chainBody.data?.chain?.session?.sessionCode).toBe(sessionCode)
+  expect((chainBody.data?.chain?.costDetail || []).length).toBeGreaterThanOrEqual(5)
+
+  const drawer = page.getByTestId('fin-profit-trace-chain-drawer')
+  await expect(drawer).toBeVisible()
+  return drawer
+}
+
+/** DC-001 账号穿透：入口搜索 + 关系图/明细表（纯 UI） */
+export async function openDcAccountTraceViaUi(page: Page, accountNo: string, sessionCode?: string) {
+  await page.goto('/ims/dc/trace')
+  await expect(page.locator('h1')).toHaveText('穿透查询', { timeout: 15_000 })
+  await page.getByTestId('dc-trace-keyword').fill(accountNo)
+  const entryResp = page.waitForResponse(
+    (r) => r.url().includes('/dc/trace/entry') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByTestId('dc-trace-search-entry').click()
+  const entryBody = (await (await entryResp).json()) as {
+    code: number
+    data?: Array<{ entryType?: string; entryId?: string; entryLabel?: string }>
+  }
+  expect(entryBody.code).toBe(0)
+  const hit =
+    entryBody.data?.find((e) => e.entryLabel?.includes(accountNo)) ?? entryBody.data?.[0]
+  expect(hit?.entryId).toBeTruthy()
+
+  const queryResp = page.waitForResponse(
+    (r) => r.url().includes('/dc/trace/query') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: hit!.entryLabel! }).click()
+  const queryBody = (await (await queryResp).json()) as {
+    code: number
+    data?: {
+      queryCostMs?: number
+      dataAsOf?: string
+      nodes?: Array<{ nodeType?: string; nodeLabel?: string }>
+      detailList?: { list?: Array<{ sessionCode?: string; accountNo?: string; realnameName?: string }> }
+    }
+  }
+  expect(queryBody.code).toBe(0)
+  expect((queryBody.data?.queryCostMs ?? 0) >= 0).toBe(true)
+  expect(queryBody.data?.dataAsOf).toBeTruthy()
+  const nodeTypes = (queryBody.data?.nodes || []).map((n) => n.nodeType)
+  expect(nodeTypes).toContain('ACCOUNT')
+  expect(nodeTypes).toContain('SESSION')
+
+  await expect(page.getByTestId('dc-trace-meta')).toBeVisible()
+  await expect(page.getByTestId('dc-trace-graph')).toContainText('ACCOUNT')
+  await expect(page.getByTestId('dc-trace-graph')).toContainText('SESSION')
+  const detailTable = page.getByTestId('dc-trace-detail-table')
+  await expect(detailTable).toContainText(accountNo)
+  if (sessionCode) {
+    await expect(detailTable).toContainText(sessionCode)
+    const listed = queryBody.data?.detailList?.list?.some((r) => r.sessionCode === sessionCode)
+    expect(listed).toBe(true)
+  }
+  return queryBody.data
 }

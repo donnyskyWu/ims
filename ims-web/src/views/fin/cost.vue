@@ -16,7 +16,7 @@
         <span class="l">已录入</span>
         <div class="n">{{ rate.costEnteredCount }}</div>
       </div>
-      <div class="card stat">
+      <div class="card stat" data-testid="fin-cost-complete-rate">
         <span class="l">完整率</span>
         <div class="n" :style="{ color: rate.completeRate >= 95 ? 'var(--green)' : 'var(--orange)' }">
           {{ rate.completeRate }}%
@@ -122,35 +122,35 @@
       </div>
     </div>
 
-    <div v-if="drawerOpen" class="drawer-mask" @click.self="drawerOpen = false">
-      <div class="drawer" style="width: 720px">
-        <div class="drawer-h">
-          <b>成本录入 · {{ form.sessionCode }}</b>
-          <button type="button" class="btn btn-sec btn-sm" @click="drawerOpen = false">关闭</button>
-        </div>
-        <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
-        <div class="form-grid">
-          <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
-          <label>退款（只读）<input :value="'¥' + fmt(form.costRefund)" disabled /></label>
-          <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
-          <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
-          <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
-          <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
-          <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
-          <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
-          <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
-        </div>
-        <div class="drawer-f">
-          <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
-          <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
-        </div>
+    <ProtoDrawer
+      :open="drawerOpen"
+      :title="'成本录入 · ' + form.sessionCode"
+      width="720px"
+      @close="drawerOpen = false"
+    >
+      <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
+      <div class="form-grid">
+        <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
+        <label>退款（只读）<input :value="'¥' + fmt(form.costRefund)" disabled /></label>
+        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
+        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
+        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
+        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
+        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
+        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
+        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
       </div>
-    </div>
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
+        <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http } from '../../api/http'
 
 const tab = ref<'pending' | 'entered'>('pending')

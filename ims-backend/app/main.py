@@ -123,6 +123,18 @@ def seed() -> None:
         from app.bi_br212_seed import ensure_bi_br212_seed
 
         ensure_bi_br212_seed(db)
+        from app.workbench_seed import refresh_workbench_e2e_seed
+        from app.acct_seed import ensure_acct_e2e_pool_account, ensure_acct_schema, refresh_acct_e2e_pool
+        from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, refresh_live_fin_e2e_deps
+
+        ensure_acct_schema()
+        admin = db.query(User).filter(User.username == "admin", User.deleted == 0).first()
+        if admin is not None:
+            refresh_workbench_e2e_seed(db, admin)
+            ensure_acct_e2e_pool_account(db, admin)
+            refresh_acct_e2e_pool(db, admin)
+            ensure_live_fin_e2e_deps(db, admin)
+            refresh_live_fin_e2e_deps(db, admin)
         db.commit()
     finally:
         db.close()

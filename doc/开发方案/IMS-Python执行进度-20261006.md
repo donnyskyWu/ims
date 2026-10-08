@@ -525,7 +525,7 @@
 | S1 员工全生命周期 | 部分 | AUTH 组织同步/岗位规则/工作台待办消息已通；离职账号归还 E2E 未自动化 |
 | S2 直播全链路 | 部分 | 场次登记/列表/成本联动有；风控色带/24h 督办 E2E 未齐 |
 | S3 成本-利润-反查 | 部分 | FIN 三页 + DC-002 + W9-1 链路 pytest；结账/分成 PAID 未做 |
-| S4 账号领用流转 | 部分 | 平台账号 CRUD/采集 Tab；领用审批 1021~1026 未 E2E |
+| S4 账号领用流转 | 部分 | 平台账号 CRUD/采集 Tab；**#47** 池领用/归还 closure + `test_acct_checkout`；流转/冲话费 1022~1026 未 E2E |
 | S5 资产+穿透 | 部分 | 设备/office·live·phone 台账；5 层穿透 1013 未做 |
 | S6 证件预警 | 部分 | 证件水印/脱敏；T-30/7/0 三级预警未接 ALERT |
 | S7 内容 AI 全流程 | 部分 | SOP~发布 G1 + 公推模板库首片；ComfyUI/GPU E2E 未做 |
@@ -949,3 +949,67 @@
 - **测试**：`tests/test_bi_br212_row_scope.py` 定向 **3 passed**。
 - **假设**：`bi_r4_viewer` 命名沿用 R4 语境，角色为 **本部门数据查看**（`bi:dept-viewer`），**非** 敏感分享 R4 审批岗；审批 Tab 全量仍待 PO 矩阵。
 - **文档**：Checklist **v2.6.55** · 计划表 **#45** · 对照表 BI 行级 UAT。
+
+## Follow-up · #46 WORKBENCH 待办关闭 + 消息已读 closure（2026-10-08）
+
+- **后端**：`workbench_seed.py`（`E2E-WB-MSG` / `E2E-WB-CLOSE` · admin · dashboard/init 幂等）。
+- **前端**：`workbench/index.vue` 待办「关闭」· 消息已读「是/否」· 已读隐藏按钮。
+- **E2E**：`closure-workbench-todo-message.spec.ts`（纯 UI · 计数联动）。
+- **测试**：`test_workbench_e2e_seed_todo_and_message` · collect **+1**。
+- **文档**：Checklist **v2.6.56** · 计划表 **#46** · 对照表工作台 UAT · 计划表 **#2** E2E **39/39**。
+
+## Follow-up · #47 S4 CORP 账号池领用→归还 closure（2026-10-08）
+
+- **后端**：`acct_flow.py`（`POST /account/apply` · approve · confirm · `POST /account/return/submit` · `GET /account/timeline/{id}`）· 表 `ims_acct_apply` / `ims_acct_timeline_event` · compat `db/compat/20261008_acct_apply_timeline.sql` · `acct_seed.py`（`AC-E2E-POOL` · `refresh_acct_e2e_pool`）。
+- **前端**：`corp/account.vue` 行内/抽屉「领用」「归还」· 时间线 Tab 接 API。
+- **E2E**：`closure-corp-account-checkout.spec.ts`（纯 UI · E2E-S4-01/08 切片）；`run_e2e.ps1` 跑前 refresh 池种子；`closure-content-publish` 改选 `IN_USE` 账号避免 1501。
+- **测试**：`test_acct_checkout.py` **1 passed** · collect **162**（+1）。
+- **文档**：Checklist **v2.6.57** · 计划表 **#47** · 对照表 S4/公司资产 UAT · 计划表 **#2** E2E **40/40**。
+
+## Follow-up · #48 S10 TRAIN 下发→学习完成 closure（2026-10-08）
+
+- **后端**：`app/train.py` · `PUT /train/task/{id}/progress` · `POST …/confirm` · `GET …/task/records` · `scope.py` 登记 · `ims_train_task_record`.`material_progress`/`finished_at` · compat `db/compat/20261008_train_task_record_progress.sql`。
+- **前端**：`/ims/train/study/:taskId`（`study.vue`）· `task.vue` 已发布资料多选 ·「去学习」/「学习记录」。
+- **E2E**：`closure-train-dispatch-complete.spec.ts` · `closure-helpers` 培训 UI 辅助（纯 UI · E2E-S10-01/02 切片）。
+- **测试**：`tests/test_train.py::test_train_task_progress_confirm_and_records` · train 模块 **5 passed** · collect **163**（+1）。
+- **E2E**：`npm run test:e2e:ci` → **41/41 PASS**（Web **6173** · `e2e_result.txt`）。
+- **Live**：已有 MySQL `ims` 库执行 compat 后 **重启 18080**（`-KillPort`）；`init_ims_db.ps1 -ApplyCompat` 含本脚本。
+- **文档**：Checklist **v2.6.58** · 计划表 **#48** · 对照表 TRAIN UAT · 计划表 **#2** E2E **41/41**。
+
+## Follow-up · #49 TRAIN-003 完成率 Tab closure（2026-10-08）
+
+- **后端**：`GET /admin-api/ims/train/stat/finish-rate`（`totalFinishRate` · `byTask`/`byDept`/`byPerson` · BR-102 分母含未确认指派 · 可选 `dateRange`）。
+- **前端**：`/ims/train/stat` · `stat.vue`「完成率总览」Tab（近7/30天 · KPI · 三表 · 其余 Tab 占位）。
+- **E2E**：`closure-train-stat-finish-rate.spec.ts` · `completeTrainStudyViaUi` · `smoke-train` 统计页 smoke；`closure-helpers` IP 组「关联作者」重试修正（去错 Tab「关联成员」）。
+- **测试**：`tests/test_train.py::test_train_stat_finish_rate_after_confirm` · train **6 passed** · collect **164**（+1）。
+- **E2E**：`npm run test:e2e:ci` → **43/43 PASS**（Web **6173** · `e2e_result.txt` 2026-10-08）。
+- **Live**：部署本切片后 **重启 18080**（`-KillPort`），否则 finish-rate **404**。
+- **文档**：Checklist **v2.6.59** · 计划表 **#49** · 对照表 TRAIN UAT（完成率看板）· 计划表 **#2** E2E **43/43**。
+
+## Follow-up · #50 S3 FIN 成本→利润 closure（2026-10-08）
+
+- **种子**：`live_fin_e2e_seed.py`（`AC-E2E-FIN` · `E2E-FIN-PHONE` · 实名人绑定）· `run_e2e.ps1` / `main.seed` refresh。
+- **前端**：`live/index.vue`「核准下播」（`PUT /live/report/{code}/confirm`）· `cost.vue` 成本录入 **ProtoDrawer** · `fin-cost-complete-rate` testid。
+- **E2E**：`closure-fin-cost-profit.spec.ts`（纯 UI · E2E-S3-01/02/03 · 净利润 **81400**）· `closure-helpers` LIVE/FIN 链。
+- **测试**：`test_live_fin_e2e_seed_deps` · 定向 `test_fin` **2 passed** · collect **165**（+1）。
+- **E2E**：`npm run test:e2e:ci` → **44/44 PASS**（Web **6173** · `e2e_result.txt`）。
+- **Live**：**重启 18080**（`-KillPort`）加载 seed + 核准下播 UI。
+- **文档**：Checklist **v2.6.60** · 计划表 **#50** · 对照表 FIN UAT · 计划表 **#2** E2E **44/44**。
+
+## Follow-up · #51 DC-002 利润反查 closure（2026-10-08）
+
+- **前端**：`profit-trace.vue` 抽屉 `data-testid="fin-profit-trace-chain-drawer"`（列表/反查抽屉已具备，本片仅 E2E 锚点）。
+- **E2E**：`closure-fin-profit-trace.spec.ts`（纯 UI · 复用 **#50** LIVE/FIN 链 → `/ims/fin/profit-trace` · **81400** · **BR-209** 穿透）· `openFinProfitTraceChainViaUi`。
+- **测试**：定向 `test_dc_profit_trace_list_and_chain` + `test_live_fin_e2e_seed_deps` **2 passed** · collect **165** 不变。
+- **E2E**：`npm run test:e2e:ci` → **45/45 PASS**（Web **6173** · `e2e_result.txt`）。
+- **文档**：Checklist **v2.6.61** · 计划表 **#51** · 对照表 FIN/DC UAT · 计划表 **#2** E2E **45/45**。
+
+## Follow-up · #52 DC-001 账号穿透 closure（2026-10-08）
+
+- **后端**：`dc_trace.py` — `mode=DETAIL` 时 `detailList` 为契约 `PageResult`（修正误嵌套 `ok()` 导致前端明细空表）。
+- **前端**：`trace.vue` — `dc-trace-*` testid（关键词/搜入口/图/明细/meta）。
+- **E2E**：`closure-dc-account-trace.spec.ts`（纯 UI · **E2E-S12-01 账号入口切片** · 复用 **#50** 链 → `/ims/dc/trace` · `AC-E2E-FIN` · 图+表）· `openDcAccountTraceViaUi`。
+- **测试**：`test_dc_trace_account_keyword_detail_mode` + `test_dc_trace_entry_and_query` **2 passed** · 定向含 `test_dc_profit_trace_list_and_chain` **3 passed** · collect **166**（+1）。
+- **E2E**：`npm run test:e2e:ci` → **46/46 PASS**（Web **6173** · `e2e_result.txt`）。
+- **Live**：**重启 18080**（`-KillPort`）加载 `dc_trace` 修复。
+- **文档**：Checklist **v2.6.62** · 计划表 **#52** · 对照表 BI/DC UAT · 计划表 **#2** E2E **46/46**。

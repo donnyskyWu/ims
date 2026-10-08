@@ -142,6 +142,64 @@ def test_train_task_1102_deadline_past():
     assert bad.json()["code"] == 1102
 
 
+def test_train_task_progress_confirm_and_records():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    material = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "进度确认资料",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/progress.pdf",
+            "publish": True,
+        },
+    )
+    material_id = material.json()["data"]["id"]
+
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "进度闭环任务",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    task_id = created.json()["data"]["id"]
+
+    prog = client.put(
+        f"/admin-api/ims/train/task/{task_id}/progress",
+        headers=auth,
+        json={
+            "materialId": material_id,
+            "currentPage": 1,
+            "totalPages": 1,
+            "heartbeatAt": "2026-10-08T12:00:00+08:00",
+        },
+    )
+    assert prog.json()["code"] == 0
+    assert prog.json()["data"]["progress"] == 100
+
+    bad_confirm = client.post(f"/admin-api/ims/train/task/{task_id}/confirm", headers=auth, json={})
+    assert bad_confirm.json()["code"] == 0
+    assert bad_confirm.json()["data"]["confirmStatus"] == "CONFIRMED"
+
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "confirmStatus": "CONFIRMED", "pageNo": 1, "pageSize": 10},
+    )
+    assert records.json()["code"] == 0
+    assert records.json()["data"]["total"] >= 1
+    assert records.json()["data"]["list"][0]["confirmStatus"] == "CONFIRMED"
+
+
 def test_train_stat_summary():
     auth = headers()
     summary = client.get("/admin-api/ims/train/stat/summary", headers=auth)
@@ -149,3 +207,56 @@ def test_train_stat_summary():
     data = summary.json()["data"]
     assert "taskCount" in data
     assert "avgFinishRate" in data
+
+
+def test_train_stat_finish_rate_after_confirm():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    material = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "完成率统计资料",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/rate.pdf",
+            "publish": True,
+        },
+    )
+    material_id = material.json()["data"]["id"]
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "完成率统计任务",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    task_id = created.json()["data"]["id"]
+    client.put(
+        f"/admin-api/ims/train/task/{task_id}/progress",
+        headers=auth,
+        json={
+            "materialId": material_id,
+            "currentPage": 1,
+            "totalPages": 1,
+            "heartbeatAt": "2026-10-08T12:00:00+08:00",
+        },
+    )
+    client.post(f"/admin-api/ims/train/task/{task_id}/confirm", headers=auth, json={})
+
+    rate = client.get("/admin-api/ims/train/stat/finish-rate", headers=auth)
+    assert rate.json()["code"] == 0
+    data = rate.json()["data"]
+    assert "totalFinishRate" in data
+    assert data["totalFinishRate"] >= 0
+    hit = next((row for row in data["byTask"] if row["taskName"] == "完成率统计任务"), None)
+    assert hit is not None
+    assert hit["finishedCount"] == 1
+    assert hit["assignedCount"] == 1
+    assert hit["finishRate"] == 100.0

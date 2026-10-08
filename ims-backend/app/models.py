@@ -950,8 +950,10 @@ class TrainTaskRecord(Base):
     task_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)
     progress: Mapped[int] = mapped_column(Integer, default=0)
+    material_progress: Mapped[dict] = mapped_column(JSON, default=dict)
     confirm_status: Mapped[int] = mapped_column(Integer, default=0)
     confirm_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -1464,3 +1466,35 @@ class Notify(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AccountApply(Base):
+    __tablename__ = "ims_acct_apply"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    apply_no: Mapped[str] = mapped_column(String(32), unique=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    account_no: Mapped[str] = mapped_column(String(64), default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    applicant_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    purpose: Mapped[str] = mapped_column(String(256), default="")
+    plan_start: Mapped[str] = mapped_column(String(32), default="")
+    plan_end: Mapped[str] = mapped_column(String(32), default="")
+    apply_status: Mapped[str] = mapped_column(String(32), default="PENDING_APPROVAL")
+    handover_json: Mapped[str] = mapped_column(Text, default="")
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AccountTimelineEvent(Base):
+    __tablename__ = "ims_acct_timeline_event"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    event_type: Mapped[str] = mapped_column(String(32))
+    ref_no: Mapped[str] = mapped_column(String(32), default="")
+    ref_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    operator_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    snapshot_summary: Mapped[str] = mapped_column(String(512), default="")
+    remark: Mapped[str] = mapped_column(String(256), default="")
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    event_time: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

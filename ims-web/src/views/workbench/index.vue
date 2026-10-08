@@ -62,21 +62,33 @@
               <th>标题</th>
               <th>状态</th>
               <th>逾期</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!todoReady">
-              <td colspan="3" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="4" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!todos.length">
-              <td colspan="3" style="white-space: normal">
+              <td colspan="4" style="white-space: normal">
                 <div class="empty"><div class="et">{{ todoError || '没有待办' }}</div></div>
               </td>
             </tr>
-            <tr v-for="(row, index) in todos" v-else :key="index" :style="row.overdue ? 'background:#fff4f2' : ''">
+            <tr v-for="(row, index) in todos" v-else :key="String(row.id ?? index)" :style="row.overdue ? 'background:#fff4f2' : ''">
               <td>{{ cell(row, ['title']) }}</td>
               <td>{{ cell(row, ['status']) }}</td>
-              <td>{{ cell(row, ['overdue']) }}</td>
+              <td>{{ overdueLabel(row) }}</td>
+              <td>
+                <button
+                  v-if="String(row.status) === 'PENDING' && row.id != null"
+                  class="btn btn-txt"
+                  type="button"
+                  @click="closeTodo(row)"
+                >
+                  关闭
+                </button>
+                <span v-else class="hint">—</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -104,8 +116,11 @@
             </tr>
             <tr v-for="(row, index) in messages" v-else :key="String(row.id ?? index)">
               <td>{{ cell(row, ['title']) }}</td>
-              <td>{{ cell(row, ['read']) }}</td>
-              <td><button class="btn btn-txt" type="button" @click="read(row)">标为已读</button></td>
+              <td>{{ readLabel(row) }}</td>
+              <td>
+                <button v-if="!isRead(row)" class="btn btn-txt" type="button" @click="read(row)">标为已读</button>
+                <span v-else class="hint">—</span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -162,7 +177,7 @@ async function load() {
   flowError.value = flowRes.error
   flowTodos.value = asList(flowRes.data)
 
-  const todoRes = await readData('/auth/workbench/todos', { pageNo: 1, pageSize: 10 })
+  const todoRes = await readData('/auth/workbench/todos', { pageNo: 1, pageSize: 10, status: 'PENDING' })
   todoReady.value = true
   todoError.value = todoRes.error
   todos.value = asList(todoRes.data)
@@ -171,6 +186,20 @@ async function load() {
   msgReady.value = true
   msgError.value = msgRes.error
   messages.value = asList(msgRes.data)
+}
+
+function isRead(row: Record<string, unknown>) {
+  return row.read === true || row.read === 1 || row.read === '1'
+}
+
+function readLabel(row: Record<string, unknown>) {
+  return isRead(row) ? '是' : '否'
+}
+
+function overdueLabel(row: Record<string, unknown>) {
+  if (row.overdue === true) return '是'
+  if (row.overdue === false) return '否'
+  return cell(row, ['overdue'])
 }
 
 async function read(row: Record<string, unknown>) {
@@ -182,6 +211,21 @@ async function read(row: Record<string, unknown>) {
   }
   try {
     await http.put(`/auth/workbench/messages/${id}/read`)
+    await load()
+  } catch (error) {
+    actionError.value = errorMessage(error)
+  }
+}
+
+async function closeTodo(row: Record<string, unknown>) {
+  actionError.value = ''
+  const id = row.id
+  if (id === undefined || id === null || id === '') {
+    actionError.value = '这条待办没有 id，无法关闭'
+    return
+  }
+  try {
+    await http.put(`/auth/workbench/todos/${id}`, { action: 'CLOSE' })
     await load()
   } catch (error) {
     actionError.value = errorMessage(error)

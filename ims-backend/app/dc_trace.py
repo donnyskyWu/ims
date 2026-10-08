@@ -11,7 +11,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, ok
-from app.corp import page_args, paged, tenant_of
+from app.corp import page_args, tenant_of
 from app.models import LiveSession, User
 
 router = APIRouter(prefix="/dc/trace", tags=["dc-trace"])
@@ -187,7 +187,7 @@ def trace_query(
     detail_list = None
     if body.mode == "DETAIL":
         rows, total = detail_from_sessions(sessions, page_no, size)
-        detail_list = paged(rows, total, page_no, size)
+        detail_list = {"list": rows, "total": total, "pageNo": page_no, "pageSize": size}
     elapsed = round((time.perf_counter() - started) * 1000, 1)
     payload = {
         "queryCostMs": elapsed,

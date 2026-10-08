@@ -47,11 +47,12 @@ test.describe('content publish supervision closure', () => {
     await page.goto('/ims/corp/account/douyin')
     const acctBody = (await (await acctListResp).json()) as {
       code: number
-      data?: { list?: { id: number }[] }
+      data?: { list?: { id: number; status?: string }[] }
     }
     expect(acctBody.code).toBe(0)
-    expect(acctBody.data?.list?.length).toBeGreaterThan(0)
-    const accountId = acctBody.data!.list![0].id
+    const inUse = acctBody.data?.list?.find((row) => row.status === 'IN_USE')
+    expect(inUse?.id).toBeTruthy()
+    const accountId = inUse!.id
 
     const overdueAt = new Date(Date.now() - 48 * 3600 * 1000)
     const planPublishAt = `${overdueAt.toISOString().slice(0, 19)}+08:00`

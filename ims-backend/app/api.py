@@ -332,6 +332,7 @@ from app.position_rule import router as position_router
 from app.system_dict import router as dict_router
 from app.system_role import router as role_router
 from app.workbench import router as workbench_router
+from app.acct_flow import router as acct_flow_router
 
 router.include_router(role_router)
 router.include_router(dict_router)
@@ -341,6 +342,7 @@ router.include_router(workbench_router)
 router.include_router(audit_router)
 router.include_router(corp_router)
 router.include_router(account_router)
+router.include_router(acct_flow_router)
 router.include_router(ip_group_router)
 router.include_router(device_router)
 router.include_router(live_router)

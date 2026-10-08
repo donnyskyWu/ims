@@ -116,6 +116,19 @@ def test_workbench_dashboard_includes_flow_todo_count():
     assert preview["data"]["total"] == data["flowTodoCount"]
 
 
+def test_workbench_e2e_seed_todo_and_message():
+    token = login()
+    headers = auth(token)
+    board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=headers).json()
+    assert board["code"] == 0
+    todos = client.get("/admin-api/ims/auth/workbench/todos", headers=headers, params={"pageSize": 50}).json()
+    assert todos["code"] == 0
+    assert any(row["title"] == "E2E-WB-CLOSE" and row["status"] == "PENDING" for row in todos["data"]["list"])
+    messages = client.get("/admin-api/ims/auth/workbench/messages", headers=headers).json()
+    assert messages["code"] == 0
+    assert any(row["title"] == "E2E-WB-MSG" and row["read"] is False for row in messages["data"]["list"])
+
+
 def test_message_read_is_idempotent():
     token = login()
     headers = auth(token)

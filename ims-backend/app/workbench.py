@@ -12,6 +12,7 @@ from app.core import utcnow
 from app.corp import tenant_of
 from app.flow import seed_flow, sync_seed_tasks
 from app.models import FlowInstance, FlowTask, Todo, User, WorkMessage
+from app.workbench_seed import ensure_workbench_e2e_seed
 
 router = APIRouter()
 
@@ -89,6 +90,7 @@ def message_vo(row: WorkMessage) -> dict:
 
 @router.get("/auth/workbench/dashboard")
 def dashboard(db: Session = Depends(db_session), user: User = Depends(current_user)):
+    ensure_workbench_e2e_seed(db, user)
     todo_count = db.scalar(
         select(func.count()).select_from(Todo).where(Todo.assignee_user_id == user.id, Todo.status == "PENDING")
     ) or 0

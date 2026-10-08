@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
+from app.bi_br212 import primary_dept_id
 from app.models import TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User
 
 router = APIRouter(prefix="/train", tags=["train"])
@@ -332,6 +333,27 @@ def resolve_task_status(task: TrainTask) -> str:
     return "IN_PROGRESS"
 
 
+def parse_date_range(raw: str | None) -> tuple[datetime | None, datetime | None]:
+    if not raw:
+        return None, None
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if len(parts) != 2:
+        return None, None
+    try:
+        start = datetime.strptime(parts[0], "%Y-%m-%d")
+        end = datetime.strptime(parts[1], "%Y-%m-%d")
+    except ValueError:
+        return None, None
+    end = end.replace(hour=23, minute=59, second=59)
+    return start, end
+
+
+def rate_pct(finished: int, assigned: int) -> float:
+    if assigned <= 0:
+        return 0.0
+    return round(finished * 100.0 / assigned, 2)
+
+
 def finish_rate(db: Session, task_id: int, assigned: int) -> float:
     if assigned <= 0:
         return 0.0
@@ -488,6 +510,111 @@ def stat_summary(
     )
 
 
+@router.get("/stat/finish-rate")
+def stat_finish_rate(
+    dateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """TRAIN-003 · BR-102 完成率（分母含未确认指派记录）。"""
+    tenant_id = tenant_of(actor)
+    start, end = parse_date_range(dateRange)
+    stmt = (
+        select(TrainTaskRecord, TrainTask)
+        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
+        .where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTask.deleted == 0,
+        )
+    )
+    if start and end:
+        stmt = stmt.where(
+            TrainTask.created_at >= start,
+            TrainTask.created_at <= end,
+        )
+    if actor.username != "admin":
+        stmt = stmt.where(TrainTaskRecord.user_id == actor.id)
+    rows = list(db.execute(stmt).all())
+
+    total_assigned = len(rows)
+    total_finished = sum(1 for rec, _ in rows if rec.confirm_status == 1)
+    total_finish_rate = rate_pct(total_finished, total_assigned)
+
+    by_task: dict[int, dict] = {}
+    by_dept: dict[int, dict] = {}
+    by_person: dict[int, dict] = {}
+    user_ids = {rec.user_id for rec, _ in rows}
+    names = user_names(db, user_ids)
+
+    for record, task in rows:
+        finished = record.confirm_status == 1
+        tid = task.id
+        if tid not in by_task:
+            by_task[tid] = {
+                "taskNo": task.task_no,
+                "taskName": task.task_name,
+                "assignedCount": 0,
+                "finishedCount": 0,
+            }
+        by_task[tid]["assignedCount"] += 1
+        if finished:
+            by_task[tid]["finishedCount"] += 1
+
+        dept_id = primary_dept_id(db, record.user_id, tenant_id)
+        if dept_id not in by_dept:
+            by_dept[dept_id] = {
+                "deptId": dept_id,
+                "deptName": f"部门#{dept_id}" if dept_id else "未分配",
+                "assignedCount": 0,
+                "finishedCount": 0,
+            }
+        by_dept[dept_id]["assignedCount"] += 1
+        if finished:
+            by_dept[dept_id]["finishedCount"] += 1
+
+        uid = record.user_id
+        if uid not in by_person:
+            dept_name = by_dept.get(dept_id, {}).get("deptName", "")
+            by_person[uid] = {
+                "userId": uid,
+                "userName": names.get(uid, ""),
+                "deptName": dept_name,
+                "assignedCount": 0,
+                "finishedCount": 0,
+            }
+        by_person[uid]["assignedCount"] += 1
+        if finished:
+            by_person[uid]["finishedCount"] += 1
+
+    task_items = []
+    for item in by_task.values():
+        item["finishRate"] = rate_pct(item["finishedCount"], item["assignedCount"])
+        task_items.append(item)
+    task_items.sort(key=lambda x: (-x["finishRate"], x["taskNo"]))
+
+    dept_items = []
+    for item in by_dept.values():
+        item["finishRate"] = rate_pct(item["finishedCount"], item["assignedCount"])
+        dept_items.append(item)
+    dept_items.sort(key=lambda x: (-x["finishRate"], x["deptName"]))
+
+    person_items = []
+    for item in by_person.values():
+        item["finishRate"] = rate_pct(item["finishedCount"], item["assignedCount"])
+        person_items.append(item)
+    person_items.sort(key=lambda x: (-x["finishRate"], x["userName"]))
+
+    return ok(
+        {
+            "totalFinishRate": total_finish_rate,
+            "byTask": task_items,
+            "byDept": dept_items,
+            "byPerson": person_items,
+        }
+    )
+
+
 @router.get("/task/list")
 def task_list(
     taskName: str | None = None,
@@ -531,5 +658,245 @@ def task_list(
         vo = task_vo(db, row)
         vo["finishRate"] = finish_rate(db, row.id, row.assigned_count)
         vo["materialCount"] = len(vo["materialIds"])
+        items.append(vo)
+    return paged(items, total, page_no, size)
+
+
+def record_for_user(
+    db: Session, tenant_id: int, task_id: int, user_id: int
+) -> TrainTaskRecord | None:
+    return db.scalar(
+        select(TrainTaskRecord).where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTaskRecord.task_id == task_id,
+            TrainTaskRecord.user_id == user_id,
+        )
+    )
+
+
+def confirm_status_label(status: int) -> str:
+    return "CONFIRMED" if status == 1 else "NOT_CONFIRMED"
+
+
+def material_progress_map(record: TrainTaskRecord) -> dict[int, int]:
+    raw = record.material_progress if isinstance(record.material_progress, dict) else {}
+    out: dict[int, int] = {}
+    for key, val in raw.items():
+        try:
+            out[int(key)] = int(val)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def recompute_overall_progress(task: TrainTask, mat_prog: dict[int, int]) -> int:
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    if not material_ids:
+        return 0
+    values = [min(100, max(0, mat_prog.get(int(mid), 0))) for mid in material_ids]
+    return int(sum(values) / len(values))
+
+
+def progress_vo(
+    db: Session,
+    task: TrainTask,
+    record: TrainTaskRecord,
+    material_id: int | None = None,
+) -> dict:
+    mat_prog = material_progress_map(record)
+    mid = material_id or (
+        int(task.material_ids[0]) if isinstance(task.material_ids, list) and task.material_ids else 0
+    )
+    finished = iso(record.finished_at) if record.finished_at else None
+    return {
+        "taskId": task.id,
+        "userId": record.user_id,
+        "materialId": mid,
+        "progress": record.progress,
+        "materialProgress": {str(k): v for k, v in mat_prog.items()},
+        "confirmStatus": confirm_status_label(record.confirm_status),
+        "startedAt": iso(record.created_at),
+        "finishedAt": finished,
+    }
+
+
+class ProgressBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    materialId: int
+    watchedSeconds: int | None = None
+    currentPage: int | None = None
+    totalPages: int | None = None
+    heartbeatAt: str
+
+
+class ConfirmBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    answers: list[dict] | None = None
+
+
+@router.put("/task/{task_id}/progress")
+def report_progress(
+    task_id: int,
+    body: ProgressBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    task = db.get(TrainTask, task_id)
+    if task is None or task.deleted or task.tenant_id != tenant_id:
+        return fail(1500, "任务不存在")
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    if body.materialId not in material_ids:
+        return fail(1101, "资料不存在或未发布")
+    record = record_for_user(db, tenant_id, task_id, actor.id)
+    if record is None:
+        return fail(1105, "非被指派人无权上报进度")
+    if record.confirm_status == 1:
+        return ok(progress_vo(db, task, record, body.materialId))
+
+    pct = 0
+    if body.totalPages and body.totalPages > 0 and body.currentPage is not None:
+        pct = min(100, int(body.currentPage * 100 / body.totalPages))
+    elif body.watchedSeconds is not None and body.watchedSeconds >= 60:
+        pct = 100
+    elif body.watchedSeconds is not None and body.watchedSeconds > 0:
+        pct = min(99, body.watchedSeconds)
+
+    mat_prog = material_progress_map(record)
+    mat_prog[body.materialId] = max(mat_prog.get(body.materialId, 0), pct)
+    record.material_progress = {str(k): v for k, v in mat_prog.items()}
+    record.progress = recompute_overall_progress(task, mat_prog)
+    record.updated_at = utcnow()
+    db.flush()
+    return ok(progress_vo(db, task, record, body.materialId))
+
+
+@router.post("/task/{task_id}/confirm")
+def confirm_task(
+    task_id: int,
+    body: ConfirmBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    task = db.get(TrainTask, task_id)
+    if task is None or task.deleted or task.tenant_id != tenant_id:
+        return fail(1500, "任务不存在")
+    record = record_for_user(db, tenant_id, task_id, actor.id)
+    if record is None:
+        return fail(1105, "非被指派人无权上报进度")
+    if record.confirm_status == 1:
+        return ok(
+            {
+                "confirmStatus": "CONFIRMED",
+                "confirmScore": record.confirm_score,
+                "isPassed": True,
+                "finishedAt": iso(record.finished_at),
+            }
+        )
+
+    if task.confirm_type == "DURATION":
+        material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+        mat_prog = material_progress_map(record)
+        if not all(mat_prog.get(int(mid), 0) >= 100 for mid in material_ids):
+            return fail(1104, "学时未达标")
+    elif task.confirm_type == "QUIZ":
+        quiz = task.quiz if isinstance(task.quiz, list) else []
+        if not quiz:
+            return fail(1104, "问卷未配置")
+        answers = (body.answers if body else None) or []
+        score = 0
+        for idx, item in enumerate(quiz):
+            expected = int(item.get("answerIndex", 0))
+            given = next((a.get("answerIndex") for a in answers if a.get("questionIndex") == idx), None)
+            if given is not None and int(given) == expected:
+                score += 1
+        pass_score = task.pass_score or len(quiz)
+        passed = score >= pass_score
+        if not passed:
+            return fail(1104, "问卷未及格")
+        record.confirm_score = score
+    else:
+        return fail(1001, "confirmType 无效")
+
+    now = utcnow()
+    record.confirm_status = 1
+    record.progress = 100
+    record.finished_at = now
+    record.updated_at = now
+    db.flush()
+    return ok(
+        {
+            "confirmStatus": "CONFIRMED",
+            "confirmScore": record.confirm_score,
+            "isPassed": True,
+            "finishedAt": iso(record.finished_at),
+        }
+    )
+
+
+@router.get("/task/records")
+def task_records(
+    taskId: int | None = None,
+    userId: int | None = None,
+    deptId: int | None = None,
+    confirmStatus: str | None = None,
+    overdue: bool | None = None,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    page_no, size = page_args(pageNo, pageSize)
+    stmt = (
+        select(TrainTaskRecord, TrainTask)
+        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
+        .where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTask.deleted == 0,
+        )
+    )
+    if taskId:
+        stmt = stmt.where(TrainTaskRecord.task_id == taskId)
+    if userId:
+        stmt = stmt.where(TrainTaskRecord.user_id == userId)
+    elif not taskId:
+        stmt = stmt.where(TrainTaskRecord.user_id == actor.id)
+    if confirmStatus:
+        if confirmStatus not in {"NOT_CONFIRMED", "CONFIRMED"}:
+            return fail(1001, "confirmStatus 无效")
+        want = 1 if confirmStatus == "CONFIRMED" else 0
+        stmt = stmt.where(TrainTaskRecord.confirm_status == want)
+    if overdue:
+        now = utcnow()
+        stmt = stmt.where(
+            TrainTaskRecord.confirm_status == 0,
+            TrainTask.deadline.isnot(None),
+            TrainTask.deadline < now,
+        )
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    rows = list(
+        db.execute(
+            stmt.order_by(TrainTaskRecord.id.desc())
+            .offset((page_no - 1) * size)
+            .limit(size)
+        ).all()
+    )
+    names = user_names(db, {rec.user_id for rec, _ in rows})
+    items = []
+    now = utcnow()
+    for record, task in rows:
+        vo = progress_vo(db, task, record)
+        vo["taskNo"] = task.task_no
+        vo["taskName"] = task.task_name
+        vo["userName"] = names.get(record.user_id, "")
+        vo["deptName"] = ""
+        deadline = task.deadline
+        vo["isOverdue"] = bool(
+            record.confirm_status == 0 and deadline and deadline < now.replace(tzinfo=None)
+        )
         items.append(vo)
     return paged(items, total, page_no, size)

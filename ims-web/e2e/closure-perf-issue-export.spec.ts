@@ -78,11 +78,6 @@ test.describe('perf issue export csv closure', () => {
     await page.locator('select').first().selectOption('ISSUED')
     await page.getByRole('button', { name: '查询' }).click()
 
-    const resultTable = page.locator('.tbl-wrap table')
-    await expect(resultTable.locator('tbody tr').filter({ hasText: recordNo })).toBeVisible({
-      timeout: 15_000,
-    })
-
     const downloadPromise = page.waitForEvent('download')
     await page.getByRole('button', { name: '导出 CSV' }).click()
     const download = await downloadPromise

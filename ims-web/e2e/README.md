@@ -7,8 +7,9 @@
 |------|----------|------------|----------|
 | **S1** | 员工全生命周期 | `smoke-auth-org.spec.ts` | 登录 → `/ims/auth/org` 标题「组织架构同步」+ 人员列表 table |
 | **S2** | 直播全链路 | `smoke-live.spec.ts` | 登录 → `/ims/live/sessions` 标题「直播管理」+ 场次 table |
-| **S3** | 场次-成本-利润 | `smoke-fin.spec.ts` | 登录 → `/ims/fin/profit` 页面标题 |
+| **S3** | 场次-成本-利润 | `smoke-fin.spec.ts` · **`closure-fin-cost-profit.spec.ts`（#50）** | smoke：利润页标题；closure：LIVE 核准下播 → 成本核准 → 利润 **81400** |
 | **S4** | 账号领用流转 | `smoke-acct.spec.ts` | 登录 → `/ims/corp/account/douyin` 标题「抖音」+ 账号 table |
+| **S4 (#47)** | 池领用/归还 closure | `closure-corp-account-checkout.spec.ts` | `AC-E2E-POOL` 领用三步→在用→归还→时间线 |
 | **S5** | 资产采购领用 | `smoke-asset.spec.ts` | 登录 → `/ims/corp/device/office` 标题「办公设备管理」+ table |
 | **S6** | 证件录入预警 | `smoke-cert.spec.ts` | 登录 → `/ims/corp/resource/certificate` 标题「证件管理」+ table |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
@@ -25,6 +26,7 @@
 | **FLOW** | `smoke-flow.spec.ts` | 登录 → `/ims/flow` 标题「流程管理」+ 默认「流程实例」tab 下 table |
 | **FLOW 超时督办** | `smoke-flow-timeout.spec.ts` | 登录 → `/ims/flow` · 点「超时督办」tab · BR-115 指标行「月度超时率」+ 督办 table 表头/空态 |
 | **WORKBENCH** | `smoke-workbench.spec.ts` | 登录 → `/ims/workbench` 问候 h1 +「流程待办」卡片数字 + 流程待办 table |
+| **WORKBENCH (#46)** | `closure-workbench-todo-message.spec.ts` | 未读 `E2E-WB-MSG` →「标为已读」→ 待办 `E2E-WB-CLOSE` →「关闭」→ 计数减 1 |
 | **HOME 运营看板** | `smoke-home.spec.ts` | 登录 → `/ims/home` 标题「运营仪表盘」+ 四 KPI 卡片 `.n` 非空 +「快捷入口」 |
 | **ALERT 试跑** | `smoke-alert-trial.spec.ts` | 登录 → `/ims/alert/rule` · 规则 table · 若有启用规则则点「试跑」+ toast「试跑成功」 |
 
@@ -36,6 +38,7 @@
 | **E2E-FLOW-02** | `closure-flow-timeout-urge.spec.ts` | 超时督办 Tab · 时长分布 · 督办 → 提醒次数 +1 |
 | **E2E-S11-01 切片** | `closure-alert-rule-trial.spec.ts` | 新建启用规则 → 试跑 toast → 命中 +1 |
 | **E2E-S11-处置 (#44)** | `closure-alert-handle-tab.spec.ts` | UI 试跑 → live「处理」→ 处置记录 HANDLED · 去重 DEDUP-LIVE |
+| **E2E-S3-切片 · FIN (#50)** | `closure-fin-cost-profit.spec.ts` | 纯 UI · LIVE 核准下播 → 成本提交/核准 → 利润 **CALCULATED** · **81400** · BR-107 完整率卡 |
 | **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
@@ -46,6 +49,7 @@
 | **E2E-S12-切片 · push-now (#39)** | `closure-bi-subscribe-push-now.spec.ts` | UI 新建报表+订阅 →「立即推送」→ 快照 GMV · 推送结果/上次推送 |
 | **E2E-S12-05 切片 · share-approve (#40)** | `closure-bi-share-approve.spec.ts` | UI 敏感分享 →「分享审批」Tab 通过/驳回 → 分享链接 Tab 状态 |
 | **E2E-S12-05 EXPIRED · share-expired (#41)** | `closure-bi-share-expired.spec.ts` | UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」 |
+| **WORKBENCH · AUTH-004 (#46)** | `closure-workbench-todo-message.spec.ts` | 种子未读消息标已读 · 种子待办关闭 · dashboard 计数联动 |
 
 ### 纯 UI 门禁（closure · Checklist v2.6.44+）
 

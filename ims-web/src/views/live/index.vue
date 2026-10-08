@@ -161,6 +161,15 @@
         </div>
         <div class="acts" style="margin-top: 8px">
           <button v-if="!report || report.entryStatus === 'DRAFT'" class="btn btn-pri btn-sm" type="button" @click="submitReport">提交下播</button>
+          <button
+            v-if="report && report.entryStatus === 'SUBMITTED'"
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="live-report-confirm"
+            @click="confirmReport"
+          >
+            核准下播
+          </button>
         </div>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
@@ -372,6 +381,13 @@ async function submitReport() {
   if (!detail.value) return
   report.value = await apiPost(`/live/report/${detail.value.sessionCode}`, { ...reportForm })
   hint.value = '下播数据已提交'
+}
+
+async function confirmReport() {
+  if (!detail.value) return
+  await apiPut(`/live/report/${detail.value.sessionCode}/confirm`, {})
+  report.value = await apiGet(`/live/report/${detail.value.sessionCode}`)
+  hint.value = '下播数据已核准'
 }
 
 onMounted(loadList)
