@@ -57,12 +57,26 @@ def test_air_expert_create_page_grant():
 
     detail = client.get(f"/admin-api/ims/air/expert/{expert_id}", headers=auth)
     assert detail.json()["code"] == 0
-    assert detail.json()["data"]["assemblePreview"]["systemPrompt"]
+    preview = detail.json()["data"]["assemblePreview"]
+    assert preview["systemPrompt"]
+    assert "knowledgeContext" not in preview
+    assert preview["skillRefs"][0]["md"] == ""
+    assert preview["skillRefs"][0]["code"]
+    assert "网关不执行模型" in preview["guidelines"]
 
+    users = client.get(
+        "/admin-api/ims/system/user/page",
+        headers=auth,
+        params={"username": "admin", "pageNo": 1, "pageSize": 5},
+    )
+    admin_id = int(users.json()["data"]["list"][0]["id"])
     grant = client.post(
         "/admin-api/ims/air/expert/grant",
         headers=auth,
-        json={"expertId": expert_id, "grantType": "USER", "grantId": 1},
+        json={"expertId": expert_id, "grantType": "PERSON", "grantId": admin_id},
     )
-    assert grant.json()["code"] == 0
+    assert grant.json()["code"] == 0, grant.text
     assert grant.json()["data"]["status"] == "ACTIVE"
+    assert grant.json()["data"]["syncEventId"].startswith("air-evt-")
+    again = client.get(f"/admin-api/ims/air/expert/{expert_id}", headers=auth)
+    assert any(item["grantType"] == "PERSON" and item["status"] == "ACTIVE" for item in again.json()["data"]["grants"])

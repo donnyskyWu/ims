@@ -328,6 +328,7 @@ from app.air_skill import router as air_skill_router
 from app.air_expert import router as air_expert_router
 from app.air_cfg import router as air_cfg_router
 from app.air_key import router as air_key_router
+from app.air_mcp_log import router as air_mcp_log_router
 from app.query_tool import router as query_tool_router
 from app.bi_subscribe import router as bi_subscribe_router
 from app.flow import router as flow_router
@@ -393,6 +394,7 @@ router.include_router(air_skill_router)
 router.include_router(air_expert_router)
 router.include_router(air_cfg_router)
 router.include_router(air_key_router)
+router.include_router(air_mcp_log_router)
 router.include_router(query_tool_router)
 router.include_router(bi_subscribe_router)
 router.include_router(flow_router)

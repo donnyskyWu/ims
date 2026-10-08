@@ -1567,6 +1567,24 @@ class AirExpert(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AirExpertGrant(Base):
+    """专家授权。表名跟随 ims_air_expert，对应契约 ims_expert_grant。"""
+
+    __tablename__ = "ims_air_expert_grant"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    expert_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    grant_type: Mapped[str] = mapped_column(String(16), default="")
+    grant_id_ref: Mapped[int] = mapped_column(BigInteger, default=0)
+    grant_name: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    granted_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class CompAsset(Base):
     __tablename__ = "ims_comp_asset"
     __table_args__ = (UniqueConstraint("tenant_id", "comp_name_std", name="uk_comp_asset_name"),)
@@ -1690,6 +1708,7 @@ class AirApiKey(Base):
     device_name: Mapped[str] = mapped_column(String(64), default="")
     qpm_limit: Mapped[int] = mapped_column(Integer, default=60)
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    freeze_reason: Mapped[str] = mapped_column(String(64), default="")
     whitelist: Mapped[str] = mapped_column(String(512), default="")
     client_token: Mapped[str] = mapped_column(String(64), default="")
     expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -1724,9 +1743,23 @@ class AirMcpLog(Base):
     param_digest: Mapped[str] = mapped_column(String(64), default="")
     result_code: Mapped[str] = mapped_column(String(16), default="")
     cost_ms: Mapped[int] = mapped_column(Integer, default=0)
+    # 网关不执行模型（BR-034），token_cnt 由本地写入，缺省 0。
+    token_cnt: Mapped[int] = mapped_column(Integer, default=0)
+    # 组装时被剔除的未发布技能数。密级检索过滤已移除，不另计 knowledgeContext。
+    filter_hit: Mapped[int] = mapped_column(Integer, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AirAuthFail(Base):
+    """Key 认证失败计数（BR-033）。10 分钟窗口，成功调用清空。"""
+
+    __tablename__ = "ims_air_auth_fail"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    key_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    failed_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
 
 
 class AirAuditLog(Base):

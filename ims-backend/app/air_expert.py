@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
@@ -10,10 +9,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.air_skill import (
+    dept_ids_of,
+    grant_is_current,
+    grant_matches,
+    parse_expire,
+    resolve_grant_target,
+    role_ids_of,
+    write_event,
+)
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import AirExpert, AirKb, AirSkill, User
+from app.models import AirExpert, AirExpertGrant, AirKb, AirSkill, User
 
 router = APIRouter(prefix="/air/expert", tags=["air-expert"])
 
@@ -36,10 +44,14 @@ class ExpertSaveBody(BaseModel):
 class ExpertGrantBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     expertId: int
-    grantType: str = "USER"
-    grantId: int
+    grantType: str = ""
+    grantId: int = 0
     expireAt: str = ""
     roleTemplateId: int | None = None
+
+
+GRANT_TYPES = frozenset({"DEPT", "ROLE", "PERSON"})
+ASSEMBLE_GUIDELINES = "experts.assemble 仅下发组装包（system_prompt + 技能契约）；网关不执行模型（D2/BR-034）。"
 
 
 def iso(dt: datetime | None) -> str:
@@ -137,15 +149,96 @@ def expert_vo(row: AirExpert, names: dict[int, str], skills: list[AirSkill] | No
     }
 
 
-def assemble_preview(row: AirExpert, skills: list[AirSkill], kbs: list[AirKb]) -> dict:
+def split_mounted_skills(db: Session, tenant_id: int, skill_ids: list[int]) -> tuple[list[AirSkill], int]:
+    """已发布技能进入组装包。缺失或未发布的计入过滤命中。不调用模型。"""
+    if not skill_ids:
+        return [], 0
+    rows = list(
+        db.scalars(
+            select(AirSkill).where(
+                AirSkill.deleted == 0,
+                AirSkill.tenant_id == tenant_id,
+                AirSkill.id.in_(skill_ids),
+            )
+        ).all()
+    )
+    by_id = {row.id: row for row in rows}
+    kept: list[AirSkill] = []
+    dropped = 0
+    for skill_id in skill_ids:
+        row = by_id.get(skill_id)
+        if row is None or row.status != "PUBLISHED":
+            dropped += 1
+            continue
+        kept.append(row)
+    return kept, dropped
+
+
+def mcp_assemble_package(db: Session, row: AirExpert) -> tuple[dict, int]:
+    skills, dropped = split_mounted_skills(db, row.tenant_id, list(row.skill_ids or []))
+    package = {
+        "systemPrompt": row.system_prompt,
+        "skillRefs": [{"code": skill.skill_no, "md": ""} for skill in skills],
+        "guidelines": ASSEMBLE_GUIDELINES,
+    }
+    return package, dropped
+
+
+def assemble_preview(row: AirExpert, skills: list[AirSkill]) -> dict:
     return {
         "systemPrompt": row.system_prompt,
         "skillRefs": [
-            {"code": s.skill_no, "name": s.skill_name, "ver": s.version_label} for s in skills
+            {"code": skill.skill_no, "name": skill.skill_name, "ver": skill.version_label, "md": ""}
+            for skill in skills
         ],
-        "kbRefs": [{"id": k.id, "name": k.kb_name, "secretLevel": k.secret_level} for k in kbs],
-        "guidelines": "experts.assemble 仅下发组装包（system_prompt + 技能契约）；网关不执行模型（D2/BR-034）。",
+        "guidelines": ASSEMBLE_GUIDELINES,
     }
+
+
+def expert_visible_to(db: Session, expert: AirExpert, user_id: int) -> bool:
+    """已发布且命中一条未过期的 ACTIVE 授权。"""
+    if expert.deleted or expert.status != "PUBLISHED":
+        return False
+    now = utcnow()
+    grants = db.scalars(
+        select(AirExpertGrant).where(
+            AirExpertGrant.expert_id == expert.id,
+            AirExpertGrant.deleted == 0,
+            AirExpertGrant.tenant_id == expert.tenant_id,
+            AirExpertGrant.status == "ACTIVE",
+        )
+    ).all()
+    if not grants:
+        return False
+    dept_ids = dept_ids_of(db, user_id, expert.tenant_id)
+    role_ids = role_ids_of(db, user_id)
+    return any(grant_matches(item, user_id, dept_ids, role_ids) for item in grants if grant_is_current(item, now))
+
+
+def expert_grant_vo(row: AirExpertGrant) -> dict:
+    return {
+        "grantId": row.id,
+        "grantType": row.grant_type,
+        "grantObjId": row.grant_id_ref,
+        "grantName": row.grant_name,
+        "expireAt": iso(row.expire_at) if row.expire_at else "",
+        "status": row.status,
+    }
+
+
+def active_expert_grants(db: Session, expert_id: int) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(AirExpertGrant)
+            .where(
+                AirExpertGrant.expert_id == expert_id,
+                AirExpertGrant.deleted == 0,
+                AirExpertGrant.status == "ACTIVE",
+            )
+        )
+        or 0
+    )
 
 
 @router.get("/summary")
@@ -235,6 +328,8 @@ def expert_create(body: ExpertSaveBody, db: Session = Depends(db_session), actor
     prompt = body.systemPrompt.strip()
     if not name:
         return fail(1001, "专家名称必填")
+    if not body.scene.strip():
+        return fail(1001, "适用场景必填")
     if not prompt:
         return fail(1001, "System Prompt 必填")
     bad_tool = validate_tools(body.toolWhitelist)
@@ -283,8 +378,8 @@ def expert_update(
         return fail(1504, "资源不可用")
     name = body.expertName.strip()
     prompt = body.systemPrompt.strip()
-    if not name or not prompt:
-        return fail(1001, "名称与 System Prompt 必填")
+    if not name or not prompt or not body.scene.strip():
+        return fail(1001, "名称、适用场景与 System Prompt 必填")
     bad_tool = validate_tools(body.toolWhitelist)
     if bad_tool:
         return fail(1001, f"工具白名单非法: {bad_tool}")
@@ -332,7 +427,17 @@ def expert_detail(expert_id: int, db: Session = Depends(db_session), actor: User
     skills, _ = load_skills(db, tenant_id, list(row.skill_ids or []))
     kbs, _ = load_kbs(db, tenant_id, list(row.kb_ids or []))
     data = expert_vo(row, names, skills, kbs)
-    data["assemblePreview"] = assemble_preview(row, skills, kbs)
+    data["assemblePreview"] = assemble_preview(row, skills)
+    grants = db.scalars(
+        select(AirExpertGrant)
+        .where(
+            AirExpertGrant.expert_id == row.id,
+            AirExpertGrant.deleted == 0,
+            AirExpertGrant.tenant_id == row.tenant_id,
+        )
+        .order_by(AirExpertGrant.id.desc())
+    ).all()
+    data["grants"] = [expert_grant_vo(item) for item in grants]
     return ok(data)
 
 
@@ -344,9 +449,81 @@ def expert_grant(body: ExpertGrantBody, db: Session = Depends(db_session), actor
         return fail(1001, "专家不存在")
     if row.status != "PUBLISHED":
         return fail(1001, "专家未发布不可授权")
-    if body.grantId <= 0:
-        return fail(1008, "授权对象无效")
-    row.grant_count = int(row.grant_count or 0) + 1
-    row.updated_at = utcnow()
-    grant_id = row.id * 10000 + row.grant_count
-    return ok({"grantId": grant_id, "status": "ACTIVE", "syncEventId": f"air-grant-{uuid.uuid4().hex[:12]}"})
+    expire_at = None
+    if (body.expireAt or "").strip():
+        expire_at = parse_expire(body.expireAt)
+        if expire_at is None:
+            return fail(1001, "有效期格式应为 YYYY-MM-DD")
+    grant_type = body.grantType.strip().upper()
+    if grant_type not in GRANT_TYPES:
+        return fail(1001, "授权类型仅支持 DEPT、ROLE、PERSON")
+    grant_name, error = resolve_grant_target(db, tenant_id, grant_type, body.grantId)
+    if error:
+        return fail(1001, error)
+    exists = db.scalar(
+        select(AirExpertGrant).where(
+            AirExpertGrant.expert_id == row.id,
+            AirExpertGrant.deleted == 0,
+            AirExpertGrant.tenant_id == tenant_id,
+            AirExpertGrant.status == "ACTIVE",
+            AirExpertGrant.grant_type == grant_type,
+            AirExpertGrant.grant_id_ref == body.grantId,
+        )
+    )
+    if exists is not None:
+        return fail(1001, "授权已存在")
+    now = utcnow()
+    grant = AirExpertGrant(
+        expert_id=row.id,
+        grant_type=grant_type,
+        grant_id_ref=body.grantId,
+        grant_name=grant_name or "",
+        status="ACTIVE",
+        expire_at=expire_at,
+        granted_by=actor.id,
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(grant)
+    db.flush()
+    row.grant_count = active_expert_grants(db, row.id)
+    row.updated_at = now
+    payload = {
+        "expertId": row.id,
+        "grantId": grant.id,
+        "grantType": grant_type,
+        "grantIdRef": body.grantId,
+    }
+    if body.roleTemplateId:
+        payload["roleTemplateId"] = body.roleTemplateId
+    sync_id = write_event(db, tenant_id, "EXPERT_GRANT", payload)
+    data = expert_grant_vo(grant)
+    data["syncEventId"] = sync_id
+    return ok(data)
+
+
+@router.delete("/grant/{grant_id}")
+def expert_grant_revoke(grant_id: int, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    grant = db.get(AirExpertGrant, grant_id)
+    if grant is None or grant.deleted or grant.tenant_id != tenant_id:
+        return fail(1001, "授权不存在")
+    row = db.get(AirExpert, grant.expert_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "专家不存在")
+    if grant.status != "ACTIVE":
+        return fail(1001, "授权已收回")
+    now = utcnow()
+    grant.status = "REVOKED"
+    grant.updated_at = now
+    db.flush()
+    row.grant_count = active_expert_grants(db, row.id)
+    row.updated_at = now
+    write_event(
+        db,
+        tenant_id,
+        "EXPERT_GRANT_REVOKED",
+        {"expertId": row.id, "grantId": grant.id, "grantType": grant.grant_type},
+    )
+    return ok(None)

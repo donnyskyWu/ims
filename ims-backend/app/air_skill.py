@@ -265,7 +265,7 @@ def grant_is_current(row: AirSkillGrant, now: datetime) -> bool:
 
 
 def grant_matches(row: AirSkillGrant, user_id: int, dept_ids: set[int], role_ids: set[int]) -> bool:
-    if row.all_staff:
+    if getattr(row, "all_staff", 0):
         return True
     if row.grant_type == "PERSON" and int(row.grant_id_ref) == int(user_id):
         return True

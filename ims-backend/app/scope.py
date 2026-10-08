@@ -112,6 +112,7 @@ SPECS = {
     "ims_alert_dedup_policy": Spec(),
     "ims_air_api_key": Spec(creator=True, creator_col="owner_user_id"),
     "ims_air_audit_log": Spec(),
+    "ims_mcp_log": Spec(),
     "ims_content_layout_template": Spec(creator=True, creator_col="created_by"),
     "ims_eff_relation": Spec(creator=True, creator_col="changed_by"),
     "ims_air_skill": Spec(creator=True, creator_col="owner_user_id"),
@@ -391,6 +392,8 @@ PREFIXES = [
     ("GET", "/admin-api/ims/air/expert", "ims_air_expert"),
     ("POST", "/admin-api/ims/air/expert", "ims_air_expert"),
     ("PUT", "/admin-api/ims/air/expert", "ims_air_expert"),
+    ("DELETE", "/admin-api/ims/air/expert", "ims_air_expert"),
+    ("GET", "/admin-api/ims/air/mcp/audit-log", "ims_mcp_log"),
 ]
 
 

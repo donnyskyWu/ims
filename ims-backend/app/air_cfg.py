@@ -330,6 +330,7 @@ def key_vo(row: AirApiKey, names: dict[int, str], accounts: dict[int, str] | Non
         "deviceName": row.device_name or "",
         "qpmLimit": int(row.qpm_limit if row.qpm_limit is not None else 60),
         "status": row.status,
+        "freezeReason": row.freeze_reason or "",
         "whitelist": row.whitelist,
         "expireAt": iso(row.expire_at) if row.expire_at else "",
         "graceUntil": iso(row.grace_until) if row.grace_until else "",

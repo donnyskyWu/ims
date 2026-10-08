@@ -142,6 +142,9 @@ def seed() -> None:
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
+        from app.air_audit_seed import ensure_air_mcp_audit_fixture
+
+        ensure_air_mcp_audit_fixture(db)
         db.commit()
     finally:
         db.close()
@@ -238,6 +241,31 @@ def ensure_air_key_columns() -> None:
             conn.execute(text("CREATE INDEX idx_air_api_key_hash ON ims_air_api_key (key_hash)"))
 
 
+def ensure_air_slice92_columns() -> None:
+    """已有库补审计列与冻结原因。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "ims_mcp_log" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_mcp_log")}
+        alters: list[str] = []
+        if "token_cnt" not in cols:
+            alters.append("ADD COLUMN token_cnt INT NOT NULL DEFAULT 0")
+        if "filter_hit" not in cols:
+            alters.append("ADD COLUMN filter_hit INT NOT NULL DEFAULT 0")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_mcp_log {', '.join(alters)}"))
+    if "ims_air_api_key" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_air_api_key")}
+        if "freeze_reason" not in cols:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("ALTER TABLE ims_air_api_key ADD COLUMN freeze_reason VARCHAR(64) NOT NULL DEFAULT ''")
+                )
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
@@ -246,6 +274,7 @@ def init_db() -> None:
     ensure_train_stat_schema()
     ensure_live_approve_comment_column()
     ensure_air_key_columns()
+    ensure_air_slice92_columns()
     from app.ops_db import ensure_ops
 
     ensure_ops()

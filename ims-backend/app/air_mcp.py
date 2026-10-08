@@ -16,7 +16,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.air_key import hash_key, key_blocked_reason, qpm_now, try_consume_qpm, window_start
+from app.air_expert import expert_visible_to, mcp_assemble_package
+from app.air_key import hash_key, key_blocked_reason, note_auth_result, qpm_now, try_consume_qpm, window_start
 from app.air_skill import skill_visible_to
 from app.api import db_session
 from app.core import utcnow
@@ -84,7 +85,7 @@ def tool_defs() -> list[dict]:
     ]
 
 
-def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[dict | None, int, str | None]:
+def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[dict | None, int, str | None, int]:
     tenant_id = key.tenant_id
     user_id = key.owner_user_id
     if name == "skills.list":
@@ -110,7 +111,7 @@ def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[d
             items.append(
                 {"code": row.skill_no, "name": row.skill_name, "desc": row.category or "", "ver": row.version_label}
             )
-        return {"items": items}, 200, None
+        return {"items": items}, 200, None, 0
     if name == "skills.get":
         code = str(arguments.get("code") or "").strip()
         row = db.scalar(
@@ -121,11 +122,12 @@ def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[d
             )
         )
         if row is None or not skill_visible_to(db, row, user_id):
-            return None, 403, "未授权"
+            return None, 403, "未授权", 0
         return (
             {"code": row.skill_no, "ver": row.version_label, "mdContent": "", "usageNote": row.skill_name},
             200,
             None,
+            0,
         )
     if name == "experts.list":
         rows = list(
@@ -137,8 +139,11 @@ def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[d
                 )
             ).all()
         )
-        return {
-            "items": [
+        items = []
+        for row in rows:
+            if not expert_visible_to(db, row, user_id):
+                continue
+            items.append(
                 {
                     "code": row.expert_code,
                     "name": row.expert_name,
@@ -146,9 +151,8 @@ def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[d
                     "ver": row.version_label,
                     "toolWhitelist": list(row.tool_whitelist or []),
                 }
-                for row in rows
-            ]
-        }, 200, None
+            )
+        return {"items": items}, 200, None, 0
     if name == "experts.assemble":
         code = str(arguments.get("code") or "").strip()
         row = db.scalar(
@@ -159,16 +163,26 @@ def run_tool(db: Session, key: AirApiKey, name: str, arguments: dict) -> tuple[d
                 AirExpert.status == "PUBLISHED",
             )
         )
-        prompt = row.system_prompt if row is not None else ""
-        return {
-            "systemPrompt": prompt,
-            "skillRefs": [],
-            "guidelines": "网关只组装不下发模型执行",
-        }, 200, None
-    return None, 200, "未知工具"
+        if row is None or not expert_visible_to(db, row, user_id):
+            return None, 403, "未授权", 0
+        package, filter_hit = mcp_assemble_package(db, row)
+        row.assemble_count = int(row.assemble_count or 0) + 1
+        row.updated_at = utcnow()
+        return package, 200, None, filter_hit
+    return None, 200, "未知工具", 0
 
 
-def write_log(db: Session, key: AirApiKey, tool: str, params: dict | None, result_code: str, cost_ms: int) -> None:
+def write_log(
+    db: Session,
+    key: AirApiKey,
+    tool: str,
+    params: dict | None,
+    result_code: str,
+    cost_ms: int,
+    *,
+    token_cnt: int = 0,
+    filter_hit: int = 0,
+) -> None:
     digest = hashlib.sha256(
         json.dumps(params or {}, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:32]
@@ -180,6 +194,8 @@ def write_log(db: Session, key: AirApiKey, tool: str, params: dict | None, resul
             param_digest=digest,
             result_code=result_code,
             cost_ms=cost_ms,
+            token_cnt=token_cnt,
+            filter_hit=filter_hit,
             tenant_id=key.tenant_id,
             created_at=utcnow(),
         )
@@ -215,6 +231,14 @@ def mcp_entry(request: Request, body: McpCall, db: Session = Depends(db_session)
         return rpc_error(401, body.id, 401, "Key 无效")
     blocked = key_blocked_reason(key)
     if blocked:
+        params = body.params or {}
+        tool_name = "auth"
+        method_name = (body.method or "").strip()
+        if method_name == "tools/call":
+            tool_name = str(params.get("name") or "auth")
+        elif method_name == "tools/list":
+            tool_name = "tools/list"
+        write_log(db, key, tool_name, params, "401", 0)
         return rpc_error(401, body.id, 401, f"Key 不可用：{blocked}")
 
     method = body.method.strip()
@@ -256,17 +280,37 @@ def mcp_entry(request: Request, body: McpCall, db: Session = Depends(db_session)
         return rpc_error(429, body.id, 429, "QPM 超限")
 
     started = time.perf_counter()
+    filter_hit = 0
     if method == "tools/list":
         result = {"tools": tool_defs()}
     else:
-        payload, http_status, error = run_tool(db, key, tool, arguments)
+        payload, http_status, error, filter_hit = run_tool(db, key, tool, arguments)
         if error:
             result_code = "403" if http_status == 403 else "0"
-            write_log(db, key, tool, params, result_code, int((time.perf_counter() - started) * 1000))
+            write_log(
+                db,
+                key,
+                tool,
+                params,
+                result_code,
+                int((time.perf_counter() - started) * 1000),
+                filter_hit=filter_hit,
+            )
+            if http_status == 403:
+                note_auth_result(db, key, ok=False)
             key.last_used_at = qpm_now()
             rpc_code = 403 if http_status == 403 else -32000
             return rpc_error(http_status, body.id, rpc_code, error)
         result = payload or {}
-    write_log(db, key, tool, params, "0", int((time.perf_counter() - started) * 1000))
+    note_auth_result(db, key, ok=True)
+    write_log(
+        db,
+        key,
+        tool,
+        params,
+        "0",
+        int((time.perf_counter() - started) * 1000),
+        filter_hit=filter_hit,
+    )
     key.last_used_at = qpm_now()
     return rpc_ok(body.id, result)

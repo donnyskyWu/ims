@@ -75,31 +75,103 @@
       </div>
     </div>
 
-    <div v-else-if="tab === 'audit'" class="tbl-block">
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Trace</th>
-              <th>场景</th>
-              <th>模型</th>
-              <th>Token</th>
-              <th>耗时 ms</th>
-              <th>状态</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
-            <tr v-for="row in audits" v-else :key="row.id">
-              <td class="mono">{{ row.traceId }}</td>
-              <td>{{ row.scene }}</td>
-              <td>{{ row.modelName }}</td>
-              <td class="num">{{ row.tokenIn }}/{{ row.tokenOut }}</td>
-              <td class="num">{{ row.latencyMs }}</td>
-              <td>{{ row.status }}</td>
-            </tr>
-          </tbody>
-        </table>
+    <div v-else-if="tab === 'audit'">
+      <div class="tbl-block" data-testid="air-mcp-audit">
+        <div class="rowline" style="margin-bottom: 8px">
+          <b>MCP 调用审计</b>
+          <span class="hint">数据来自 ims_mcp_log · 网关不执行模型，Token 记 0</span>
+        </div>
+        <form class="qbar" @submit.prevent="loadMcpLogs">
+          <select v-model="mcpTool" style="width: 180px" data-testid="air-mcp-tool">
+            <option value="">全部工具</option>
+            <option value="skills.list">skills.list</option>
+            <option value="skills.get">skills.get</option>
+            <option value="experts.list">experts.list</option>
+            <option value="experts.assemble">experts.assemble</option>
+          </select>
+          <select v-model="mcpResult" style="width: 120px" data-testid="air-mcp-result">
+            <option value="">全部结果</option>
+            <option value="SUCCESS">成功</option>
+            <option value="FAIL">失败</option>
+          </select>
+          <button class="btn btn-pri btn-sm" type="submit" data-testid="air-mcp-search">查询</button>
+        </form>
+        <p class="hint" data-testid="air-mcp-hint">
+          过滤命中只计组装时被剔除的未发布技能。本期无检索，不返回 knowledgeContext。
+        </p>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>工具</th>
+                <th>调用人</th>
+                <th>Key</th>
+                <th>结果</th>
+                <th>耗时</th>
+                <th>Token</th>
+                <th>过滤命中</th>
+                <th>鉴权说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="mcpLoading">
+                <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+              </tr>
+              <tr v-else-if="!mcpLogs.length">
+                <td colspan="9"><div class="empty"><div class="et">暂无调用日志</div></div></td>
+              </tr>
+              <tr
+                v-for="row in mcpLogs"
+                v-else
+                :key="row.id"
+                data-testid="air-mcp-row"
+                :data-tool="row.tool"
+                :data-cost="row.costMs"
+                :data-token="row.tokenCnt"
+                :data-filter="row.filterHit"
+              >
+                <td class="mono">{{ row.createdAt }}</td>
+                <td class="mono" data-testid="air-mcp-tool-cell">{{ row.tool }}</td>
+                <td>{{ row.userName }}</td>
+                <td class="mono">{{ row.keyCode || '—' }}</td>
+                <td>{{ row.resultCode === 'SUCCESS' ? '成功' : `失败·${row.resultCode}` }}</td>
+                <td class="num" data-testid="air-mcp-cost" :style="row.costMs > 1500 ? 'color:#b58105' : ''">{{ row.costMs }} ms</td>
+                <td class="num" data-testid="air-mcp-token">{{ row.tokenCnt }}</td>
+                <td class="num" data-testid="air-mcp-filter">{{ row.filterHit }}</td>
+                <td>{{ row.authNote }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="tbl-block" style="margin-top: 16px">
+        <div class="rowline" style="margin-bottom: 8px"><b>模型调用留痕</b></div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Trace</th>
+                <th>场景</th>
+                <th>模型</th>
+                <th>Token</th>
+                <th>耗时 ms</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
+              <tr v-for="row in audits" v-else :key="row.id">
+                <td class="mono">{{ row.traceId }}</td>
+                <td>{{ row.scene }}</td>
+                <td>{{ row.modelName }}</td>
+                <td class="num">{{ row.tokenIn }}/{{ row.tokenOut }}</td>
+                <td class="num">{{ row.latencyMs }}</td>
+                <td>{{ row.status }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -291,6 +363,7 @@ type KeyRow = {
   keyMask: string
   qpmLimit: number
   status: string
+  freezeReason?: string
   graceUntil: string
 }
 
@@ -316,6 +389,23 @@ const keyForm = reactive({
   qpmLimit: 60,
   expireAt: '',
 })
+type McpLog = {
+  id: number
+  createdAt: string
+  tool: string
+  userName: string
+  keyCode: string
+  resultCode: string
+  costMs: number
+  tokenCnt: number
+  filterHit: number
+  authNote: string
+}
+
+const mcpLogs = ref<McpLog[]>([])
+const mcpLoading = ref(false)
+const mcpTool = ref('')
+const mcpResult = ref('')
 const audits = ref<
   {
     id: number
@@ -370,7 +460,7 @@ function defaultExpire(): string {
 
 function keyStatusLabel(row: KeyRow): string {
   if (row.status === 'REVOKED') return '已吊销'
-  if (row.status === 'FROZEN') return '冻结'
+  if (row.status === 'FROZEN') return row.freezeReason ? `冻结·${row.freezeReason}` : '冻结'
   if (row.graceUntil) return '启用（宽限）'
   return '启用'
 }
@@ -482,11 +572,31 @@ async function loadAudits() {
   }
 }
 
+async function loadMcpLogs() {
+  mcpLoading.value = true
+  try {
+    const res = await http.get('/air/mcp/audit-log', {
+      params: {
+        pageNo: 1,
+        pageSize: 20,
+        tool: mcpTool.value || undefined,
+        result: mcpResult.value || undefined,
+      },
+    })
+    if (res.data.code === 0) mcpLogs.value = res.data.data.list || []
+  } finally {
+    mcpLoading.value = false
+  }
+}
+
 function loadTabData(name: TabId) {
   if (name === 'model') loadModels()
   else if (name === 'prompt') loadPrompts()
   else if (name === 'key') loadKeys()
-  else loadAudits()
+  else {
+    loadAudits()
+    loadMcpLogs()
+  }
 }
 
 async function loadModels() {

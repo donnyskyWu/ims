@@ -13,16 +13,18 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.models import AirApiKey, AirQpmBucket, User
+from app.models import AirApiKey, AirAuthFail, AirQpmBucket, Role, User, UserRole
 
 router = APIRouter(prefix="/air/key", tags=["air-key"])
 
 DEFAULT_QPM = 60
+AUTH_FAIL_LIMIT = 10
+AUTH_FAIL_WINDOW = timedelta(minutes=10)
 _clock_override: Callable[[], datetime] | None = None
 
 
@@ -207,6 +209,68 @@ def try_consume_qpm(db: Session, key: AirApiKey) -> bool:
     row.hit_count += 1
     db.flush()
     return True
+
+
+def note_auth_result(db: Session, key: AirApiKey, *, ok: bool) -> bool:
+    """连续认证失败满 10 次（10 分钟内）冻结 Key。成功调用清空计数。返回是否刚刚冻结。"""
+    if ok:
+        db.execute(delete(AirAuthFail).where(AirAuthFail.key_id == key.id))
+        return False
+    now = qpm_now()
+    cutoff = now - AUTH_FAIL_WINDOW
+    db.execute(delete(AirAuthFail).where(AirAuthFail.key_id == key.id, AirAuthFail.failed_at < cutoff))
+    db.add(AirAuthFail(key_id=key.id, failed_at=now, tenant_id=key.tenant_id or 0))
+    db.flush()
+    count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(AirAuthFail)
+            .where(AirAuthFail.key_id == key.id, AirAuthFail.failed_at >= cutoff)
+        )
+        or 0
+    )
+    if count < AUTH_FAIL_LIMIT or key.status != "ACTIVE":
+        return False
+    key.status = "FROZEN"
+    key.freeze_reason = "认证失败锁定"
+    key.updated_at = utcnow()
+    _notify_auth_lock(db, key)
+    return True
+
+
+def _notify_auth_lock(db: Session, key: AirApiKey) -> None:
+    from app.audit import publish_notify
+
+    owner = db.get(User, key.owner_user_id)
+    publish_notify(
+        db,
+        event_type="AIR_AUTH_LOCK",
+        biz_key=f"key:{key.id}:owner",
+        receiver=(owner.username if owner is not None else ""),
+        receiver_user_id=key.owner_user_id,
+        tenant_id=key.tenant_id or 0,
+        creator=key.owner_user_id,
+    )
+    admins = db.scalars(
+        select(User)
+        .join(UserRole, UserRole.user_id == User.id)
+        .join(Role, Role.id == UserRole.role_id)
+        .where(Role.role_key == "sys:admin", Role.deleted == 0, User.deleted == 0, User.status == "ENABLED")
+    ).all()
+    seen = {int(key.owner_user_id)}
+    for admin in admins:
+        if admin.id in seen:
+            continue
+        seen.add(admin.id)
+        publish_notify(
+            db,
+            event_type="AIR_AUTH_LOCK",
+            biz_key=f"key:{key.id}:audit:{admin.id}",
+            receiver=admin.username,
+            receiver_user_id=admin.id,
+            tenant_id=key.tenant_id or 0,
+            creator=key.owner_user_id,
+        )
 
 
 def key_blocked_reason(key: AirApiKey) -> str | None:
