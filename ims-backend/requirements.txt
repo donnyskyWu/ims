@@ -7,3 +7,8 @@ PyJWT==2.10.1
 pytest==8.3.4
 httpx==0.28.1
 cryptography==44.0.2
+# #74 正向穿透报告 PDF。既有 Helvetica 生成器会丢掉中文；xlsx 仍复用 dc_trace.build_xlsx，不引入 openpyxl。
+reportlab==4.2.5
+pillow==12.3.0
+chardet==7.6.0
+pypdf==5.4.0
