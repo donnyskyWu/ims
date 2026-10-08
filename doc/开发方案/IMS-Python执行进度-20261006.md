@@ -1,8 +1,9 @@
 # IMS Python 执行进度（2026-10-06）
 
-> **2026-10-08 本回合（#59 · S3 期间结账 LOCKED + 锁后更正）**：rebase 到 main `eb3991d`（**#58** 已合入，保留 IP 组树「加载中」等待）。`ims_fin_period` · `GET /fin/period` · `POST /fin/period/close` · 锁定月写入 **1142**（归并原 1010）· 未批锁后更正 **1155** · 嵌入既有 `FL-REIMB`（`FIN-LOCK-{sessionCode}`）后走 `POST /fin/cost/{sessionCode}/correction` 红冲+蓝补。`closure-fin-period-lock.spec.ts`（E2E-S3-06/07 · 纯 UI）· `test_fin.py` **11 passed** · collect **172** · Checklist **v2.6.69** · 跑前 refresh workbench/acct/FIN/cert 种子 · E2E **53/53 PASS**（18080 + 6173 · `--workers=1`）。状态 **开发完成/待 UAT**。**#57/#58 已完成**。**#60** = S4 他人领用 **1021** / 账号流转（E2E-S4-02/03）**进行中**（并行，非本片）。
-> **2026-10-08 本回合（#58 · S4 冲话费登记 + 凭证门禁）**：`POST/GET /admin-api/ims/account/recharge`（`clientToken` 幂等）· 金额 **>5000** 且无凭证 → **1025** · `voucherUrl` 仅角色 `acct:r3` / 财务管理员可见，其他人见 `voucherAttached` · 时间线 `RECHARGE` 不含凭证原文。种子账号 `AC-E2E-POOL`，财务用户 `e2e_acct_r3`。`closure-corp-account-recharge.spec.ts`（E2E-S4-05/06）· `test_acct_recharge_voucher_gate_and_finance_visibility` · collect **171** · Checklist **v2.6.68** · 与 main **#57**（`74c93cb`）合并后 E2E **52/52 PASS**。**#58 = 本切片**（已合入 main `eb3991d`）。E2E-S4-02/03（1021 / 账号流转）现为 **#60 进行中**。结账 LOCKED 见上 **#59**。
-> **2026-10-08 上一回合（#57 · S3 分成 PAID_OFF + 台账对账）**：PO（zhang wu）**恢复自动链**。`ims_fin_share_result` · 成本核准/`upsert_profit` 按手工达人/实名人额生成 `PENDING_AUDIT` 分成单（已审/已发放/已冲销不改写）· `GET /fin/share/results` · `PUT /fin/share/result/{id}/audit`（财务+业务双审，本地 `sys:admin` 可代双岗）· `PUT …/payoff` → **PAID_OFF**（未双审 **1148** · 非法角色 **1149**）· 拆分累计 = `shareDaren+shareRealname`。前端 `/ims/fin/share/result` · `/ims/fin/ledger`（四账由既有 cost/profit/share GET 拼装，**无新对账 REST**）。`closure-fin-share-payoff.spec.ts` · `test_fin.py` **10 passed** · collect **170** · Checklist **v2.6.67** · 当时 E2E **51/51 PASS**。结账 LOCKED 当时未做（现 **#59**）。**#58 不是流转/1021**。
+> **2026-10-08 本回合（#60 · S4 账号流转 + 他人领用 1021）**：rebase 到 main `6fa2a88`（**#59** 已合入）。`POST/GET /admin-api/ims/account/transfer` · `PUT …/confirm`（仅新责任人，否则 **1008**）· `PUT …/revoke`。在用账号再 `POST /account/apply` → **1021**。确认后 `holder_user_id` 改为接收人，时间线 **TRANSFER**。种子 `AC-E2E-XFER` / `e2e_acct_peer`（流转同事）。`closure-corp-account-transfer.spec.ts`（E2E-S4-02/03 · 纯 UI）· `test_acct_other_user_1021_and_transfer_holder_change` · `test_acct_checkout.py` **3 passed** · Checklist **v2.6.70** · 合并后全量 E2E 见 `e2e_result.txt`。状态 **开发完成/待UAT**（UAT 未测）。本片代码不改 `fin.py`。收回 **1022** / 核对 **1026** 未做。**#61** S6 证书到期预警（E2E-S6-02）并行进行中，不是本片。
+> **2026-10-08 本回合（#59 · S3 期间结账 LOCKED + 锁后更正）**：已合入 main `6fa2a88`。`ims_fin_period` · `GET /fin/period` · `POST /fin/period/close` · 锁定月写入 **1142**（原 1010 已移除）· 成本已核准 **1141** · 未批锁后更正 **1155** · 嵌入既有 `FL-REIMB`（`FIN-LOCK-{sessionCode}`）后走 `POST /fin/cost/{sessionCode}/correction` 红冲+蓝补。`closure-fin-period-lock.spec.ts`（E2E-S3-06/07 · 纯 UI）· `test_fin.py` **11 passed** · collect **172** · Checklist **v2.6.69** · 当时 E2E **53/53 PASS**。状态 **开发完成/待 UAT**。**#57/#58 已完成**。
+> **2026-10-08 本回合（#58 · S4 冲话费登记 + 凭证门禁）**：`POST/GET /admin-api/ims/account/recharge`（`clientToken` 幂等）· 金额 **>5000** 且无凭证 → **1025** · `voucherUrl` 仅角色 `acct:r3` / 财务管理员可见，其他人见 `voucherAttached` · 时间线 `RECHARGE` 不含凭证原文。种子账号 `AC-E2E-POOL`，财务用户 `e2e_acct_r3`。`closure-corp-account-recharge.spec.ts`（E2E-S4-05/06）· `test_acct_recharge_voucher_gate_and_finance_visibility` · collect **171** · Checklist **v2.6.68** · 与 main **#57**（`74c93cb`）合并后 E2E **52/52 PASS**。已合入 main `eb3991d`。E2E-S4-02/03 见 **#60**。结账 LOCKED 见 **#59**。
+> **2026-10-08 上一回合（#57 · S3 分成 PAID_OFF + 台账对账）**：PO（zhang wu）**恢复自动链**。`ims_fin_share_result` · 成本核准/`upsert_profit` 按手工达人/实名人额生成 `PENDING_AUDIT` 分成单（已审/已发放/已冲销不改写）· `GET /fin/share/results` · `PUT /fin/share/result/{id}/audit`（财务+业务双审，本地 `sys:admin` 可代双岗）· `PUT …/payoff` → **PAID_OFF**（未双审 **1148** · 非法角色 **1149**）· 拆分累计 = `shareDaren+shareRealname`。前端 `/ims/fin/share/result` · `/ims/fin/ledger`（四账由既有 cost/profit/share GET 拼装，**无新对账 REST**）。`closure-fin-share-payoff.spec.ts` · `test_fin.py` **10 passed** · collect **170** · Checklist **v2.6.67** · 当时 E2E **51/51 PASS**。结账 LOCKED 见 **#59**。**#58 不是流转/1021**。
 > **实时任务看板**（并行开发/测试/验证/修复）：[`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md)  
 > **PRD 功能点矩阵**：[`IMS-PRD功能点执行对照表.md`](./IMS-PRD功能点执行对照表.md)（**UAT 建议/状态** · PO 签收）  
 > **Agent 交付循环**：[`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md) · Cursor 规则 `.cursor/rules/ims-delivery.mdc`
@@ -528,9 +529,9 @@
 | S1 员工全生命周期 | 部分 | AUTH 组织同步/岗位规则/工作台待办消息已通；离职账号归还 E2E 未自动化 |
 | S2 直播全链路 | 部分 | 场次登记/列表/成本联动有；风控色带/24h 督办 E2E 未齐 |
 | S3 成本-利润-反查 | 部分 | FIN 三页 + DC-002 + W9-1 链路 pytest；结账/分成 PAID 未做 |
-| S4 账号领用流转 | 部分 | 平台账号 CRUD/采集 Tab；**#47** 池领用/归还；**#58** 冲话费登记 + **1025** 凭证门禁（E2E-S4-05/06）；E2E-S4-02/03 流转/**1021** 为 **#60 进行中**（并行）；1022/1026 未 E2E |
+| S4 账号领用流转 | 部分 | 平台账号 CRUD/采集 Tab；**#47** 池领用/归还；**#58** 冲话费登记 + **1025** 凭证门禁（E2E-S4-05/06）；**#60** 流转 + 他人领用 **1021**（E2E-S4-02/03，开发完成/待UAT）；1022/1026 未 E2E |
 | S5 资产+穿透 | 部分 | 设备/office·live·phone 台账；5 层穿透 1013 未做 |
-| S6 证件预警 | 部分 | 证件水印/脱敏；T-30/7/0 三级预警未接 ALERT |
+| S6 证件预警 | 部分 | 证件水印/脱敏（**#55**）；T-30/7/0 三级预警 **#61 进行中**（E2E-S6-02 · 并行，非本片） |
 | S7 内容 AI 全流程 | 部分 | SOP~发布 G1 + 公推模板库首片；ComfyUI/GPU E2E 未做 |
 | S8 AI 资产分发 | 部分 | AIR 知识库文件管理；技能/专家/MCP 网关未做 |
 | S9 绩效周期 | 部分 | 方案/执行/结果读屏；算分/审批发布/1155 锁定未做 |
@@ -1058,4 +1059,21 @@
 - **可见性**：`voucherUrl` 仅 `acct:r3`（种子 `e2e_acct_r3`）；admin 见「仅财务可见」。
 - **E2E**：`closure-corp-account-recharge.spec.ts`（纯 UI · `AC-E2E-POOL`）。与 **#57** 合并后 **52/52 PASS**。
 - **测试**：`test_acct_recharge_voucher_gate_and_finance_visibility` · collect **171**。
-- **文档**：Checklist **v2.6.68** · 计划表 **#58** · 对照表公司资产 UAT 建议。**E2E-S4-02/03 当时为 #60+ 候选，现为 #60 进行中**。
+- **文档**：Checklist **v2.6.68** · 计划表 **#58** · 对照表公司资产 UAT 建议。**E2E-S4-02/03 见 #60**（已交付）。
+
+## Follow-up · #59 S3 期间结账 LOCKED + 锁后红冲（2026-10-08）
+
+- **API**：`fin.py` `GET /fin/period` · `POST /fin/period/close` · `ims_fin_period` · 锁定月写入 **1142**（原 1010 已移除）· 成本已核准 **1141** · 未批锁后更正 **1155**。
+- **更正**：嵌入既有 `FL-REIMB`（`businessKey=FIN-LOCK-{sessionCode}`）审批后走 `POST /fin/cost/{sessionCode}/correction` 红冲+蓝补。
+- **E2E**：`closure-fin-period-lock.spec.ts`（纯 UI · E2E-S3-06/07）。当时全量 **53/53 PASS**。已合入 main `6fa2a88`。
+- **测试**：`test_fin_period_close_locks_writes_then_r4_red_correction` · `test_fin.py` **11 passed** · collect **172**。
+- **文档**：Checklist **v2.6.69** · 计划表 **#59**（开发完成/待UAT）· 不锁日历月 2026-10。
+
+## Follow-up · #60 S4 账号流转 + 他人领用 1021（2026-10-08）
+
+- **API**：`acct_flow.py` `POST/GET /account/transfer` · `PUT /account/transfer/{id}/confirm` · `PUT …/revoke` · `ims_acct_transfer` · B9 `scope.py` 登记该前缀 · compat `20261008_acct_transfer.sql`。
+- **规则**：账号非 `IN_USE` 发起流转 → **1023**；冻结 → **1022**；`RECALL` 本片返回 **1001**（收回留给后续）；待确认重复发起 → **1023**；非新责任人确认 → **1008**；在用再领用 → **1021**。
+- **生效**：确认后责任人改为 `toUserId`，状态保持 `IN_USE`，时间线 `TRANSFER` 摘要含双方昵称。
+- **E2E**：`closure-corp-account-transfer.spec.ts`（纯 UI · `AC-E2E-XFER` · admin 与 `e2e_acct_peer`）。合并 main 后全量见 `e2e_result.txt`。
+- **测试**：`test_acct_other_user_1021_and_transfer_holder_change`。
+- **文档**：Checklist **v2.6.70** · 计划表 **#60**（开发完成/待UAT）· 对照表 UAT 建议已填、UAT 状态 **未测**。**#59** 已合入 main `6fa2a88`（1142/1141/1155）。**#61** S6 证书到期预警进行中，不是本片。
