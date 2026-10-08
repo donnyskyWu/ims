@@ -5,7 +5,7 @@
 
 | 主线 | 场景摘要 | smoke spec | 断言要点 |
 |------|----------|------------|----------|
-| **S1** | 员工全生命周期 | `smoke-auth-org.spec.ts` | 登录 → `/ims/auth/org` 标题「组织架构同步」+ 人员列表 table |
+| **S1** | 员工全生命周期 | `smoke-auth-org.spec.ts` · **`closure-s1-lifecycle.spec.ts`（#73）** | smoke：组织页标题；#73：模拟入职可见 → 领用 → 调岗 diff → 离职冻结 → 归还/换证 |
 | **S2** | 直播全链路 | `smoke-live.spec.ts` · **`closure-live-session-report.spec.ts`（#56）** | smoke：直播管理列表；closure：登记→风控→下播核准 · **CONFIRMED** |
 | **S3** | 场次-成本-利润 | `smoke-fin.spec.ts` · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-share-payoff.spec.ts`（#57）** · **`closure-fin-period-lock.spec.ts`（#59）** | smoke：利润页标题；#50：成本核准 → 利润 **81400**；#57：分成双审发放 **PAID_OFF** → 台账 **四账一致**；#59：结账 **LOCKED** → 录入 **1142** → R4 后红冲 |
 | **S4** | 账号领用流转 | `smoke-acct.spec.ts` | 登录 → `/ims/corp/account/douyin` 标题「抖音」+ 账号 table |
@@ -61,6 +61,7 @@
 | **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
 | **E2E-S5-01 (#68)** | `closure-asset-purchase-import.spec.ts` | 纯 UI 文件选择器上传 CSV · 部分成功 2 条待审核 · 第 3 行 `assetName` · 坏编号不在台账 · 时间线「采购入台账」 |
 | **E2E-S5-05 (#72)** | `closure-asset-reverse-entry.spec.ts` | 纯 UI 绑定 `AC-E2E-FIN` / `IMS20261008DYE0072` · 不存在入口 **1500** · 领用后账号反查「在用」· 场次反查不含只绑账号的那台 |
+| **E2E-S1-01/03/04 与 S1-05～11 子集 (#73)** | `closure-s1-lifecycle.spec.ts` | 事件由 `s1_lifecycle_seed` 在浏览器外入队 · 之后纯 UI：在职/工作台、领用 `AC-E2E-S1`、调岗 diff、冻结与 **1006**、归还和换证后名下在用为 0 |
 | **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
 | **E2E-S2 窄切片 (#56)** | `closure-live-session-report.spec.ts` | 登记→风控→下播核准 · 19 位场次 · 列表 CONFIRMED |

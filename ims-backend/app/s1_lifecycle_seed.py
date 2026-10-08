@@ -28,7 +28,6 @@ from app.models import (
 )
 from app.ops_db import ops_session
 from app.ops_models import Company, IpGroup, PlatformAccount
-from app.org_sync import enqueue, process_due
 from app.security import hash_password
 
 DING_ID = "dt-e2e-s1"
@@ -189,6 +188,9 @@ def reset_s1_subject(db) -> None:
 
 
 def _post(db, payload: dict) -> None:
+    import app.api  # noqa: F401  先装载 api，避免 org_sync 与 api 的环在脚本入口断开
+    from app.org_sync import enqueue, process_due
+
     plain = json.dumps(payload, ensure_ascii=False)
     body, _headers = pack(plain, "1700000000000", "nonce-s1")
     from app.dingtalk_crypto import decrypt_encrypt
@@ -196,6 +198,7 @@ def _post(db, payload: dict) -> None:
     accepted, message = enqueue(db, decrypt_encrypt(body["encrypt"]))
     if not accepted:
         raise RuntimeError(message or "事件未入队")
+    db.flush()
     process_due(db)
 
 
