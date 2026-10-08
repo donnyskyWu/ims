@@ -46,6 +46,7 @@
 | **E2E-S7-切片 · 工作任务 (#35)** | `closure-content-work-task.spec.ts` | 工作任务登记确认 → CONTENT_GENERATION 执行/提审 → e2e_author 审过 → DONE |
 | **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
 | **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
+| **E2E-S12-01 场次下钻 (#53)** | `closure-dc-session-drill.spec.ts` | 账号穿透 → 场次明细抽屉（GMV/净利润/投流成本）→ 导出 XLSX → 宽日期 **1181** |
 | **E2E-S12-切片 · push-now (#39)** | `closure-bi-subscribe-push-now.spec.ts` | UI 新建报表+订阅 →「立即推送」→ 快照 GMV · 推送结果/上次推送 |
 | **E2E-S12-05 切片 · share-approve (#40)** | `closure-bi-share-approve.spec.ts` | UI 敏感分享 →「分享审批」Tab 通过/驳回 → 分享链接 Tab 状态 |
 | **E2E-S12-05 EXPIRED · share-expired (#41)** | `closure-bi-share-expired.spec.ts` | UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」 |
