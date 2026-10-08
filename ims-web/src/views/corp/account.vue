@@ -62,9 +62,10 @@
               <td class="acts-cell">
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
                 <button
-                  v-if="row.status === 'IN_POOL'"
+                  v-if="row.status === 'IN_POOL' || row.status === 'IN_USE'"
                   class="btn btn-pri btn-sm"
                   type="button"
+                  data-testid="acct-checkout-open"
                   @click="openCheckout(row)"
                 >
                   领用
@@ -76,6 +77,24 @@
                   @click="openReturn(row)"
                 >
                   归还
+                </button>
+                <button
+                  v-if="row.status === 'IN_USE' && !pendingFor(row)"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-transfer-open"
+                  @click="openTransfer(row)"
+                >
+                  流转
+                </button>
+                <button
+                  v-if="canConfirmTransfer(row)"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="acct-transfer-confirm-open"
+                  @click="openTransferConfirm(pendingFor(row))"
+                >
+                  确认接收
                 </button>
                 <button
                   v-if="row.status !== 'CANCELLED'"
@@ -106,7 +125,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 池内账号「领用」→ POST /account/apply · 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021）· 流转 → POST /account/transfer · 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
@@ -254,7 +273,7 @@
             <input v-model="checkoutForm.planEnd" type="date" />
           </div>
         </div>
-        <p v-if="checkoutMsg" class="hint">{{ checkoutMsg }}</p>
+        <p v-if="checkoutMsg" class="hint" data-testid="acct-checkout-msg">{{ checkoutMsg }}</p>
       </template>
       <template v-else>
         <p class="hint">申请单 {{ checkoutApplyNo }} · 状态 {{ checkoutStepLabel }}</p>
@@ -279,6 +298,78 @@
           @click="submitCheckout"
         >
           提交申请
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="transferOpen" title="发起账号流转" width="560px" @close="closeTransfer">
+      <div v-if="transferAccount" data-testid="acct-transfer-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ transferAccount.accountNo }} · {{ transferAccount.nickname }}</div>
+        </div>
+        <div class="fld">
+          <label>原责任人</label>
+          <div>{{ transferAccount.holderUserName || '—' }}</div>
+        </div>
+        <div class="fld">
+          <label>新责任人<i class="req">*</i></label>
+          <select v-model.number="transferForm.toUserId" data-testid="acct-transfer-to">
+            <option :value="0">请选择</option>
+            <option v-for="user in transferUsers" :key="user.id" :value="user.id">{{ user.label }}</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>原因分类<i class="req">*</i></label>
+          <select v-model="transferForm.reasonType" data-testid="acct-transfer-reason">
+            <option v-for="item in transferReasons" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>交接说明<i class="req">*</i></label>
+          <input v-model="transferForm.remark" data-testid="acct-transfer-remark" placeholder="交接说明" />
+        </div>
+        <p v-if="transferResult" class="hint" data-testid="acct-transfer-status">
+          流转单 {{ transferResult.transferNo }} · 审批流：待新责任人确认
+        </p>
+        <p v-if="transferMsg" class="hint" data-testid="acct-transfer-msg">{{ transferMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeTransfer">关闭</button>
+        <button
+          v-if="!transferResult"
+          class="btn btn-pri"
+          type="button"
+          data-testid="acct-transfer-submit"
+          :disabled="transferBusy"
+          @click="submitTransfer"
+        >
+          提交流转
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="transferConfirmOpen" title="确认接收流转" width="520px" @close="transferConfirmOpen = false">
+      <div v-if="transferConfirm" data-testid="acct-transfer-confirm-drawer" class="formrow one">
+        <div class="fld">
+          <label>流转单</label>
+          <div class="mono">{{ transferConfirm.transferNo }}</div>
+        </div>
+        <div class="fld">
+          <label>责任人</label>
+          <div>{{ transferConfirm.fromUserName || '—' }} → {{ transferConfirm.toUserName || '—' }}</div>
+        </div>
+        <div class="fld">
+          <label>交接说明</label>
+          <div>{{ transferConfirm.remark || '—' }}</div>
+        </div>
+        <p class="hint">审批流：待确认 → 新责任人确认后生效，账号责任人即刻变更。</p>
+        <p v-if="transferConfirmMsg" class="hint" data-testid="acct-transfer-confirm-msg">{{ transferConfirmMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="transferConfirmOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="acct-transfer-confirm" :disabled="transferBusy" @click="confirmTransfer">
+          确认接收
         </button>
       </template>
     </ProtoDrawer>
@@ -357,8 +448,11 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import { useUserStore } from '../../stores/user'
 
 const route = useRoute()
+const userStore = useUserStore()
+const currentUserId = computed(() => Number(userStore.profile?.userId || 0))
 
 const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: string }> = {
   'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: 'P-M4-008 · WECHAT_OFFICIAL · 08 CORP-A' },
@@ -446,6 +540,41 @@ const rechargeForm = reactive({
   rechargeDate: '',
   voucherUrl: '',
 })
+
+type TransferRow = {
+  id: number
+  transferNo: string
+  accountId: number
+  toUserId: number
+  fromUserId: number
+  fromUserName: string
+  toUserName: string
+  status: string
+  remark: string
+  reasonType: string
+}
+
+const transferReasons = [
+  { value: 'TRANSFER_POSITION', label: '调岗' },
+  { value: 'PRE_RESIGN', label: '离职前置' },
+  { value: 'VIOLATION', label: '违规' },
+  { value: 'BUSINESS_ADJUST', label: '业务调整' },
+]
+const pendingByAccount = ref<Record<number, TransferRow>>({})
+const transferOpen = ref(false)
+const transferAccount = ref<Record<string, unknown> | null>(null)
+const transferUsers = ref<{ id: number; label: string }[]>([])
+const transferBusy = ref(false)
+const transferMsg = ref('')
+const transferResult = ref<{ transferNo: string; status: string } | null>(null)
+const transferForm = reactive({
+  toUserId: 0,
+  reasonType: 'BUSINESS_ADJUST',
+  remark: 'E2E 账号流转交接',
+})
+const transferConfirmOpen = ref(false)
+const transferConfirm = ref<TransferRow | null>(null)
+const transferConfirmMsg = ref('')
 
 const rechargeNeedsVoucher = computed(() => {
   const amount = Number(rechargeForm.amount)
@@ -560,6 +689,32 @@ async function load() {
   } finally {
     loading.value = false
     await loadRecharges()
+    await loadTransfers()
+  }
+}
+
+function pendingFor(row: Record<string, unknown>) {
+  return pendingByAccount.value[Number(row.id)] || null
+}
+
+function canConfirmTransfer(row: Record<string, unknown>) {
+  const pending = pendingFor(row)
+  return !!pending && Number(pending.toUserId) === currentUserId.value
+}
+
+async function loadTransfers() {
+  try {
+    const res = await http.get('/account/transfer/list', {
+      params: { status: 'PENDING_CONFIRM', pageNo: 1, pageSize: 50 },
+    })
+    const data = res.data?.data as { list: TransferRow[] }
+    const map: Record<number, TransferRow> = {}
+    for (const item of data?.list || []) {
+      map[Number(item.accountId)] = item
+    }
+    pendingByAccount.value = map
+  } catch {
+    pendingByAccount.value = {}
   }
 }
 
@@ -665,7 +820,7 @@ async function submitCheckout() {
     checkoutApplyNo.value = vo.applyNo
     checkoutStep.value = vo.applyStatus
   } catch (e: unknown) {
-    checkoutMsg.value = e instanceof Error ? e.message : '提交失败'
+    checkoutMsg.value = bizMessage(e)
   } finally {
     checkoutBusy.value = false
   }
@@ -705,6 +860,90 @@ async function confirmCheckout() {
     checkoutMsg.value = e instanceof Error ? e.message : '确认失败'
   } finally {
     checkoutBusy.value = false
+  }
+}
+
+function closeTransfer() {
+  transferOpen.value = false
+  transferAccount.value = null
+  transferResult.value = null
+}
+
+async function openTransfer(row: Record<string, unknown>) {
+  transferAccount.value = row
+  transferForm.toUserId = 0
+  transferForm.reasonType = 'BUSINESS_ADJUST'
+  transferForm.remark = 'E2E 账号流转交接'
+  transferMsg.value = ''
+  transferResult.value = null
+  transferUsers.value = []
+  transferOpen.value = true
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
+    const list = (res.data?.data?.list || []) as { id: string; nickname?: string; username?: string }[]
+    const holderId = Number(row.holderUserId || 0)
+    transferUsers.value = list
+      .map((user) => ({
+        id: Number(user.id),
+        label: `${user.nickname || user.username || user.id}（${user.username || user.id}）`,
+      }))
+      .filter((user) => user.id > 0 && user.id !== holderId)
+  } catch (e: unknown) {
+    transferMsg.value = bizMessage(e)
+  }
+}
+
+async function submitTransfer() {
+  if (!transferAccount.value) return
+  transferBusy.value = true
+  transferMsg.value = ''
+  try {
+    if (!transferForm.toUserId) {
+      transferMsg.value = '1001 新责任人必填'
+      return
+    }
+    if (!transferForm.remark.trim()) {
+      transferMsg.value = '1001 交接说明必填'
+      return
+    }
+    const res = await http.post('/account/transfer', {
+      accountId: transferAccount.value.id,
+      transferType: 'TRANSFER',
+      toUserId: transferForm.toUserId,
+      reasonType: transferForm.reasonType,
+      remark: transferForm.remark.trim(),
+    })
+    const vo = res.data?.data as { transferNo: string; status: string }
+    transferResult.value = vo
+    transferMsg.value = `流转单 ${vo.transferNo} · 审批流：待新责任人确认`
+    await loadTransfers()
+  } catch (e: unknown) {
+    transferMsg.value = bizMessage(e)
+  } finally {
+    transferBusy.value = false
+  }
+}
+
+function openTransferConfirm(row: TransferRow | null) {
+  if (!row) return
+  transferConfirm.value = row
+  transferConfirmMsg.value = ''
+  transferConfirmOpen.value = true
+}
+
+async function confirmTransfer() {
+  if (!transferConfirm.value) return
+  transferBusy.value = true
+  transferConfirmMsg.value = ''
+  try {
+    await http.put(`/account/transfer/${transferConfirm.value.id}/confirm`, { accept: true })
+    transferConfirmMsg.value = '已生效'
+    transferConfirmOpen.value = false
+    await load()
+  } catch (e: unknown) {
+    transferConfirmMsg.value = bizMessage(e)
+  } finally {
+    transferBusy.value = false
   }
 }
 

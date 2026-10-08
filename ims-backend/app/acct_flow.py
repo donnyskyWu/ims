@@ -1,4 +1,4 @@
-"""ACCT-001 账号领用 / 归还 + ACCT-004 冲话费登记（CORP 账号页）。"""
+"""ACCT-001 账号领用 / 归还、ACCT-002 流转、ACCT-004 冲话费登记（CORP 账号页）。"""
 
 import json
 import re
@@ -15,11 +15,12 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.ops_db import ops_session
-from app.models import AccountApply, AccountRecharge, AccountTimelineEvent, Role, User, UserRole
+from app.models import AccountApply, AccountRecharge, AccountTimelineEvent, AccountTransfer, Role, User, UserRole
 from app.ops_models import PlatformAccount
 
 VOUCHER_LIMIT = Decimal("5000")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+TRANSFER_REASONS = frozenset({"TRANSFER_POSITION", "PRE_RESIGN", "VIOLATION", "BUSINESS_ADJUST"})
 
 router = APIRouter()
 
@@ -31,11 +32,19 @@ def _load_account(ops: Session, account_id: int) -> PlatformAccount | None:
     return row
 
 
-def _next_apply_no(db: Session) -> str:
+def _next_doc_no(db: Session, model, column, prefix_letter: str) -> str:
     day = utcnow().strftime("%Y%m%d")
-    prefix = f"AP{day}"
-    count = db.scalar(select(func.count()).select_from(AccountApply).where(AccountApply.apply_no.like(f"{prefix}%"))) or 0
+    prefix = f"{prefix_letter}{day}"
+    count = db.scalar(select(func.count()).select_from(model).where(column.like(f"{prefix}%"))) or 0
     return f"{prefix}{int(count) + 1:04d}"
+
+
+def _next_apply_no(db: Session) -> str:
+    return _next_doc_no(db, AccountApply, AccountApply.apply_no, "AP")
+
+
+def _next_transfer_no(db: Session) -> str:
+    return _next_doc_no(db, AccountTransfer, AccountTransfer.transfer_no, "TR")
 
 
 def _append_timeline(
@@ -320,6 +329,237 @@ def return_account(body: ReturnBody, actor: User = Depends(current_user), db: Se
         return ok({"accountId": account.id, "status": account.status})
     finally:
         ops.close()
+
+
+def _is_admin(db: Session, actor: User) -> bool:
+    if actor.username == "admin":
+        return True
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == actor.id)).all())
+    if not role_ids:
+        return False
+    roles = db.scalars(select(Role).where(Role.id.in_(role_ids), Role.deleted == 0, Role.status == "ENABLED")).all()
+    return any(role.role_key == "sys:admin" for role in roles)
+
+
+def _display_name(db: Session, user_id: int) -> str:
+    user = db.get(User, user_id)
+    if user is None:
+        return ""
+    return user.nickname or user.username
+
+
+def transfer_vo(row: AccountTransfer, names: dict[int, str]) -> dict:
+    return {
+        "id": row.id,
+        "transferNo": row.transfer_no,
+        "accountId": row.account_id,
+        "accountNo": row.account_no,
+        "fromUserId": row.from_user_id,
+        "toUserId": row.to_user_id or None,
+        "fromUserName": names.get(row.from_user_id, ""),
+        "toUserName": names.get(row.to_user_id, "") if row.to_user_id else None,
+        "transferType": row.transfer_type,
+        "reasonType": row.reason_type,
+        "remark": row.remark,
+        "status": row.status,
+        "createdAt": row.created_at.strftime("%Y-%m-%dT%H:%M:%S") if row.created_at else "",
+        "effectiveAt": row.effective_at.strftime("%Y-%m-%dT%H:%M:%S") if row.effective_at else None,
+    }
+
+
+class TransferCreateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    account_id: int = Field(alias="accountId")
+    transfer_type: str = Field(default="TRANSFER", alias="transferType")
+    to_user_id: int | None = Field(default=None, alias="toUserId")
+    reason_type: str = Field(alias="reasonType")
+    remark: str | None = None
+
+
+class TransferConfirmBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    accept: bool = True
+    remark: str | None = None
+
+
+class TransferRevokeBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    remark: str
+
+
+@router.post("/account/transfer")
+def create_transfer(
+    body: TransferCreateBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    if body.transfer_type != "TRANSFER":
+        return fail(1001, "流转类型不合法")
+    if body.reason_type not in TRANSFER_REASONS:
+        return fail(1001, "原因分类不合法")
+    remark = (body.remark or "").strip()
+    if not remark or len(remark) > 512:
+        return fail(1001, "交接说明必填")
+    if body.to_user_id is None:
+        return fail(1001, "新责任人必填")
+    target = db.get(User, body.to_user_id)
+    if target is None or target.deleted or target.status != "ENABLED":
+        return fail(1504, "资源不可用")
+    ops = ops_session()
+    try:
+        account = _load_account(ops, body.account_id)
+        if account is None:
+            return fail(1504, "资源不可用")
+        if account.status == "FROZEN":
+            return fail(1022, "账号处于冻结态")
+        if account.status != "IN_USE":
+            return fail(1023, "账号不在用，无法流转")
+        if actor.id != account.holder_user_id and not _is_admin(db, actor):
+            return fail(1008, "仅当前责任人可发起流转")
+        if target.id == account.holder_user_id:
+            return fail(1001, "不可流转给当前责任人")
+        pending = db.scalar(
+            select(AccountTransfer.id).where(
+                AccountTransfer.account_id == account.id,
+                AccountTransfer.status == "PENDING_CONFIRM",
+            )
+        )
+        if pending is not None:
+            return fail(1023, "流转单状态非法")
+        row = AccountTransfer(
+            transfer_no=_next_transfer_no(db),
+            account_id=account.id,
+            account_no=account.account_no or str(account.id),
+            from_user_id=account.holder_user_id or actor.id,
+            to_user_id=target.id,
+            transfer_type="TRANSFER",
+            reason_type=body.reason_type,
+            remark=remark,
+            status="PENDING_CONFIRM",
+            tenant_id=tenant_of(actor),
+        )
+        db.add(row)
+        db.flush()
+        names = {
+            row.from_user_id: _display_name(db, row.from_user_id),
+            row.to_user_id: target.nickname or target.username,
+        }
+        return ok(transfer_vo(row, names))
+    finally:
+        ops.close()
+
+
+@router.get("/account/transfer/list")
+def list_transfer(
+    pageNo: int = 1,
+    pageSize: int = 20,
+    accountId: int | None = None,
+    status: str | None = None,
+    transferType: str | None = None,
+    fromUserId: int | None = None,
+    toUserId: int | None = None,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    page_no, size = page_args(pageNo, pageSize)
+    stmt = select(AccountTransfer).order_by(AccountTransfer.id.desc())
+    if accountId is not None:
+        stmt = stmt.where(AccountTransfer.account_id == accountId)
+    if status:
+        stmt = stmt.where(AccountTransfer.status == status)
+    if transferType:
+        stmt = stmt.where(AccountTransfer.transfer_type == transferType)
+    if fromUserId is not None:
+        stmt = stmt.where(AccountTransfer.from_user_id == fromUserId)
+    if toUserId is not None:
+        stmt = stmt.where(AccountTransfer.to_user_id == toUserId)
+    rows = list(db.scalars(stmt).all())
+    user_ids = {r.from_user_id for r in rows} | {r.to_user_id for r in rows if r.to_user_id}
+    names = {
+        u.id: u.nickname or u.username
+        for u in db.scalars(select(User).where(User.id.in_(user_ids))).all()
+    } if user_ids else {}
+    start = (page_no - 1) * size
+    page = rows[start : start + size]
+    return paged([transfer_vo(r, names) for r in page], len(rows), page_no, size)
+
+
+@router.put("/account/transfer/{transfer_id}/confirm")
+def confirm_transfer(
+    transfer_id: int,
+    body: TransferConfirmBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    row = db.get(AccountTransfer, transfer_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.status != "PENDING_CONFIRM":
+        return fail(1023, "流转单状态非法")
+    if actor.id != row.to_user_id:
+        return fail(1008, "仅新责任人可确认")
+    if not body.accept:
+        row.status = "REVOKED"
+        row.updated_at = utcnow()
+        return ok(None)
+    ops = ops_session()
+    try:
+        account = _load_account(ops, row.account_id)
+        if account is None:
+            return fail(1504, "资源不可用")
+        if account.status == "FROZEN":
+            return fail(1022, "账号处于冻结态")
+        if account.status != "IN_USE" or account.holder_user_id != row.from_user_id:
+            return fail(1023, "账号状态已变化，请刷新")
+        from_name = _display_name(db, row.from_user_id)
+        to_name = _display_name(db, row.to_user_id)
+        account.holder_user_id = row.to_user_id
+        account.updated_at = utcnow()
+        row.status = "EFFECTIVE"
+        row.effective_at = utcnow()
+        row.updated_at = utcnow()
+        if body.remark and body.remark.strip():
+            extra = body.remark.strip()
+            merged = f"{row.remark}；{extra}" if row.remark else extra
+            row.remark = merged[:512]
+        ops.commit()
+        _append_timeline(
+            db,
+            account_id=account.id,
+            event_type="TRANSFER",
+            ref_no=row.transfer_no,
+            ref_id=row.id,
+            operator=actor,
+            summary=f"流转生效 · 责任人 {from_name} → {to_name}",
+            tenant_id=tenant_of(actor),
+        )
+        return ok(None)
+    finally:
+        ops.close()
+
+
+@router.put("/account/transfer/{transfer_id}/revoke")
+def revoke_transfer(
+    transfer_id: int,
+    body: TransferRevokeBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    remark = (body.remark or "").strip()
+    if not remark or len(remark) > 256:
+        return fail(1001, "撤销原因必填")
+    row = db.get(AccountTransfer, transfer_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.status != "PENDING_CONFIRM":
+        return fail(1023, "流转单状态非法")
+    if actor.id != row.from_user_id and not _is_admin(db, actor):
+        return fail(1008, "仅发起人或管理员可撤销")
+    row.status = "REVOKED"
+    row.updated_at = utcnow()
+    note = f"{row.remark}；撤销：{remark}" if row.remark else f"撤销：{remark}"
+    row.remark = note[:512]
+    return ok(None)
 
 
 def _money(value: float) -> Decimal | None:
