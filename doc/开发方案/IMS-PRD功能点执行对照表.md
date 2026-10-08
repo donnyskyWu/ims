@@ -1,6 +1,6 @@
 # IMS PRD 功能点执行对照表（矩阵 · W9 主线）
 
-> **用途**：对照完整 PRD / 菜单 IMPLEMENTED / 切片计划 / pytest·E2E 签收，回答「PRD 功能点做到哪了」——**不复制 PRD 全文**，仅矩阵视图。  
+> **用途**：对照完整 PRD / 菜单 IMPLEMENTED / 切片计划 / pytest·E2E 签收，回答「PRD 功能点做到哪了」——**不复制 PRD 全文**，仅矩阵视图。**本表为 PRD 模块矩阵，不是计划表 `#` 清单**；关联交付 `#` 见各列「备注」与 [`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md)。  
 > **SSOT 链**：[`IMS-PRD与原型完整性核验-20261001.md`](../产品规划/IMS-PRD与原型完整性核验-20261001.md) · [`IMS-Python完整开发计划-20261005.md`](./IMS-Python完整开发计划-20261005.md) · [`IMS-Python执行进度-20261006.md`](./IMS-Python执行进度-20261006.md) · [`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md) · [`IMS-E2E测试用例Checklist.md`](../测试方案/IMS-E2E测试用例Checklist.md) · **[Agent 交付循环](../开发规范/IMS-Agent交付循环.md)**  
 > **最后刷新**：2026-10-08 · 菜单 **~98 IMPLEMENTED**（含隐藏路由）· pytest collect **167**（含 3× L3 skip）· E2E **48/48**（v2.6.64 · 合并 **#53+#54** · `npm run test:e2e:ci` · **#50–#54** FIN/DC）
 
