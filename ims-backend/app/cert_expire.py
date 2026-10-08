@@ -4,6 +4,7 @@ T−30 黄色、T−7 红色、T−0 锁定。扫描后推送工作台待办和�
 同级别不重复推送（CERT-E-R2）；级别升高才再推。钉钉不外发。
 换证：先上传并审核新证，再 PUT /cert/expire/{id}/renew。旧证改为 RECYCLED
 （档案仍在，作为历史），该证的黄/红/锁定预警改为 RENEW_RESOLVED，对应工作台待办完成。
+人工催办 PUT /cert/expire/{id}/remind：另写证件催办待办，不改扫描去重。钉钉不外发。
 """
 
 import json
@@ -19,7 +20,7 @@ from app.api import current_user, db_session, fail, ok
 from app.core import mask_cert_no, utcnow
 from app.corp import cert_vo, count_of, page_args, paged, tenant_of, visible
 from app.crypto import decrypt_text, encrypt_text, sha256_hex
-from app.models import CertArchive, CertExpireLog, Todo, User, WorkMessage
+from app.models import CertArchive, CertExpireLog, CertRemindLog, Todo, User, WorkMessage
 
 router = APIRouter()
 
@@ -86,6 +87,11 @@ class RenewBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     newCertId: int
     remark: str | None = None
+
+
+class RemindBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    remindChannel: str | None = None
 
 
 def blocking_archives(db: Session, actor: User, holder_name: str, cert_type: str) -> list[CertArchive]:
@@ -254,6 +260,117 @@ def expire_renew(
         item.updated_at = now
         resolve_expire_todos(db, actor, item.id)
     return ok(None)
+
+
+def remind_channels(raw: str | None) -> tuple[str, ...] | None:
+    text = (raw or "").strip().upper()
+    if text in ("", "BOTH"):
+        return ("APP", "DINGTALK")
+    if text in ("APP", "DINGTALK"):
+        return (text,)
+    return None
+
+
+def push_remind(db: Session, actor: User, cert: CertArchive, log: CertExpireLog, channels: tuple[str, ...]) -> str:
+    """催办写入新的证件待办类型。不改扫描产生的 cert_expire 待办。"""
+    users = recipient_ids(db, actor, cert)
+    if not users:
+        return ""
+    now = utcnow()
+    plain = decrypt_text(cert.cert_no_enc) if cert.cert_no_enc else ""
+    masked = mask_cert_no(plain)
+    names = "、".join("工作台" if item == "APP" else "钉钉" for item in channels)
+    title = f"证件催办：{cert.holder_name}"[:128]
+    content = f"人工催办（{names}）· 有效期 {cert.expire_date} · {masked}。钉钉未外发。"[:512]
+    deadline = None
+    parsed = parse_date(cert.expire_date)
+    if parsed is not None:
+        deadline = datetime(parsed.year, parsed.month, parsed.day)
+    for user_id in users:
+        if "APP" in channels:
+            db.add(
+                Todo(
+                    assignee_user_id=user_id,
+                    task_type="cert_remind",
+                    ref_type="cert_remind",
+                    ref_id=log.id,
+                    title=title,
+                    content=content,
+                    status="PENDING",
+                    deadline=deadline,
+                    tenant_id=tenant_of(actor),
+                )
+            )
+            db.add(
+                WorkMessage(
+                    user_id=user_id,
+                    title=title,
+                    content=content,
+                    channel="IN_APP",
+                    read_flag=0,
+                    source_module="CERT",
+                    ref_type="cert_remind",
+                    ref_id=log.id,
+                    tenant_id=tenant_of(actor),
+                )
+            )
+        if "DINGTALK" in channels:
+            db.add(
+                WorkMessage(
+                    user_id=user_id,
+                    title=title,
+                    content=content,
+                    channel="DINGTALK",
+                    read_flag=0,
+                    source_module="CERT",
+                    ref_type="cert_remind",
+                    ref_id=log.id,
+                    tenant_id=tenant_of(actor),
+                )
+            )
+    stored = "BOTH" if set(channels) == {"APP", "DINGTALK"} else channels[0]
+    db.add(
+        CertRemindLog(
+            expire_log_id=log.id,
+            cert_id=cert.id,
+            channel=stored,
+            reminded_at=now,
+            operator_user_id=actor.id,
+            creator=actor.id,
+            updater=actor.id,
+            tenant_id=tenant_of(actor),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return iso(now)
+
+
+@router.put("/cert/expire/{log_id}/remind")
+def expire_remind(
+    log_id: int,
+    body: RemindBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """人工催办。重复催办各记一条，不占用扫描的同级别不重复限额。钉钉不外发。"""
+    from app.cert_view import can_cert_urge
+
+    if not can_cert_urge(db, actor):
+        return fail(1008, "权限不足")
+    channels = remind_channels(body.remindChannel)
+    if channels is None:
+        return fail(1001, "提醒渠道不合法")
+    log = db.get(CertExpireLog, log_id)
+    if not visible(log, actor):
+        return fail(1039, "催办对象或预警任务不存在")
+    cert = db.get(CertArchive, log.cert_id)
+    if not visible(cert, actor):
+        return fail(1039, "催办对象或预警任务不存在")
+    reminded_at = push_remind(db, actor, cert, log, channels)
+    if not reminded_at:
+        return fail(1039, "催办对象或预警任务不存在")
+    return ok({"remindedAt": reminded_at})
 
 
 def open_log(db: Session, actor: User, cert_id: int) -> CertExpireLog | None:

@@ -357,6 +357,24 @@ class CertViewLog(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CertRemindLog(Base):
+    """CERT-002 人工催办事实。重复催办各记一条，不占用同级别扫描去重。"""
+
+    __tablename__ = "ims_cert_remind_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    expire_log_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    cert_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    channel: Mapped[str] = mapped_column(String(16), default="BOTH")
+    reminded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    operator_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    updater: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class LiveSessionSeq(Base):
     __tablename__ = "ims_live_session_seq"
     __table_args__ = (UniqueConstraint("tenant_id", "biz_date", "platform_code", name="uk_live_seq_day"),)

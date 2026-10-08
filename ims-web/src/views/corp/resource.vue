@@ -94,6 +94,7 @@
       </div>
       <p v-if="scanMessage" class="hint" data-testid="corp-cert-scan-message">{{ scanMessage }}</p>
       <p v-if="renewMessage" class="hint" data-testid="corp-cert-renew-message">{{ renewMessage }}</p>
+      <p v-if="remindMessage" class="hint" data-testid="corp-cert-remind-message">{{ remindMessage }}</p>
       <form class="qbar" @submit.prevent="searchExpire">
         <input v-model="expireHolder" placeholder="预警持有人" style="width: 180px" data-testid="corp-cert-expire-holder" />
         <span class="sp"></span>
@@ -136,12 +137,87 @@
                   <template v-if="row.status === 'WARNING' || row.status === 'EXPIRED_LOCKED'">
                     <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-renew-btn" @click="openRenew(row)">换证</button>
                     <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-renew-finish" @click="openRenewFinish(row)">完成换证</button>
+                    <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-remind-btn" @click="openRemind(row)">催办</button>
                   </template>
                   <span v-else class="hint">—</span>
                 </td>
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+    <div v-if="kind === 'certificate'" data-testid="corp-cert-audit-panel">
+      <div class="sec">查看审计</div>
+      <form class="qbar" @submit.prevent="searchAudit">
+        <input v-model="auditHolder" placeholder="证件持有人或编号" style="width: 180px" data-testid="corp-cert-audit-holder" />
+        <select v-model="auditViewer" style="width: 140px" data-testid="corp-cert-audit-viewer">
+          <option value="">全部查看人</option>
+          <option v-for="user in users" :key="user.id" :value="user.id">{{ user.nickname || user.username }}</option>
+        </select>
+        <input v-model="auditFrom" type="date" data-testid="corp-cert-audit-from" />
+        <input v-model="auditTo" type="date" data-testid="corp-cert-audit-to" />
+        <span class="sp"></span>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-audit-search">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="resetAudit">重置</button>
+      </form>
+      <p class="hint" data-testid="corp-cert-audit-total">共 {{ auditTotal }} 条</p>
+      <p v-if="auditError" class="hint bad">{{ auditError }}</p>
+      <div class="tbl-block">
+        <div class="expire-wrap">
+          <table data-testid="corp-cert-audit-table">
+            <thead>
+              <tr>
+                <th>查看人</th>
+                <th>证件</th>
+                <th>级别</th>
+                <th>水印</th>
+                <th>时长</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="auditLoading">
+                <td colspan="6" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+              </tr>
+              <tr v-else-if="!auditRows.length">
+                <td colspan="6" style="white-space: normal"><div class="empty"><div class="et">没有查看记录</div></div></td>
+              </tr>
+              <tr v-for="row in auditRows" v-else :key="String(row.id)">
+                <td>{{ show(row, 'viewerName') }}</td>
+                <td>{{ show(row, 'certLabel') }}</td>
+                <td>{{ viewLevelLabel(row.viewLevel) }}</td>
+                <td>{{ show(row, 'watermarkText') }}</td>
+                <td>{{ durationLabel(row.viewDuration) }}</td>
+                <td>{{ show(row, 'createdAt') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="sec">异常访问</div>
+      <div data-testid="corp-cert-risk-report">
+        <p class="hint">近 1 小时成功查看超过 10 次。异常次数 {{ riskTotal }}。单证第 11 次会被 1035 拦住，不写入本表。</p>
+        <div class="tbl-block">
+          <div class="expire-wrap">
+            <table data-testid="corp-cert-risk-table">
+              <thead>
+                <tr>
+                  <th>查看人</th>
+                  <th>近 1 小时次数</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!riskUsers.length">
+                  <td colspan="2" style="white-space: normal"><div class="empty"><div class="et">当前没有超过 10 次的访问</div></div></td>
+                </tr>
+                <tr v-for="item in riskUsers" v-else :key="String(item.userId)">
+                  <td>{{ item.name || '—' }}</td>
+                  <td>{{ item.viewsInLastHour }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -298,6 +374,24 @@
         <button class="btn btn-pri" type="button" data-testid="corp-cert-renew-confirm" :disabled="renewFinishSaving || !renewCandidate" @click="confirmRenew">{{ renewFinishSaving ? '提交中…' : '确认换证' }}</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="remindOpen" title="催办" width="360px" @close="remindOpen = false">
+      <div class="hint">选择渠道后写入工作台待办。不选渠道时工作台和钉钉都记一笔。重复催办会再写一条，不占用扫描的同级不重复限额。钉钉只记渠道，不外发。</div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>渠道</label>
+          <select v-model="remindChannel" data-testid="corp-cert-remind-channel">
+            <option value="">双渠道</option>
+            <option value="APP">工作台</option>
+            <option value="DINGTALK">钉钉</option>
+          </select>
+        </div>
+      </div>
+      <p v-if="remindError" class="hint bad">{{ remindError }}</p>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="remindOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-remind-confirm" :disabled="remindSaving" @click="confirmRemind">{{ remindSaving ? '提交中…' : '确认催办' }}</button>
+      </template>
+    </ProtoDrawer>
     <ProtoDrawer :open="scanOpen" title="扫描到期" width="420px" @close="scanOpen = false">
       <div class="hint">按今日扫描已生效证件：剩余 30 天黄色、7 天红色、当天锁定，并写入工作台提醒。同一级别不重复推送。</div>
       <template #foot>
@@ -371,6 +465,22 @@ const expireLoading = ref(false)
 const expireError = ref('')
 const expireHolder = ref('')
 const expireStats = reactive({ yellow: 0, red: 0, locked: 0 })
+const remindOpen = ref(false)
+const remindSaving = ref(false)
+const remindError = ref('')
+const remindMessage = ref('')
+const remindChannel = ref('')
+const remindTarget = ref<Row | null>(null)
+const auditHolder = ref('')
+const auditViewer = ref('')
+const auditFrom = ref('')
+const auditTo = ref('')
+const auditRows = ref<Row[]>([])
+const auditTotal = ref(0)
+const auditLoading = ref(false)
+const auditError = ref('')
+const riskUsers = ref<{ userId: number; name: string; viewsInLastHour: number }[]>([])
+const riskTotal = ref(0)
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
@@ -452,7 +562,7 @@ const specs: Record<string, {
     placeholder: '持有人',
     empty: '没有证件档案',
     emptyHint: '可以录入。审核生效后参与到期扫描。',
-    hint: '录入 POST /cert/archive/upload，审核 PUT /cert/archive/{id}/review，扫描 POST /cert/expire/scan。证件号只显示脱敏值。同一证件 1 小时内第 11 次查看返回 1035。',
+    hint: '录入 POST /cert/archive/upload，审核 PUT /cert/archive/{id}/review，扫描 POST /cert/expire/scan，催办 PUT /cert/expire/{id}/remind。查看审计 GET /cert/security/view-logs。证件号只显示脱敏值。同一证件 1 小时内第 11 次查看返回 1035。',
     detailTitle: '证件查看',
     columns: ['持有人', '类型', '证件号', '有效期', '状态'],
     keys: ['holderName', 'certType', 'certNoMasked', 'expireDate', 'status'],
@@ -609,6 +719,120 @@ async function approveCert() {
 
 function openScan() {
   scanOpen.value = true
+}
+
+function openRemind(row: Row) {
+  remindTarget.value = row
+  remindChannel.value = 'APP'
+  remindError.value = ''
+  remindOpen.value = true
+}
+
+async function confirmRemind() {
+  const target = remindTarget.value
+  if (!target) {
+    remindError.value = '缺少预警记录'
+    return
+  }
+  remindSaving.value = true
+  remindError.value = ''
+  try {
+    const body: Record<string, string> = {}
+    if (remindChannel.value) body.remindChannel = remindChannel.value
+    const res = await http.put(`/cert/expire/${target.id}/remind`, body)
+    const at = String(res.data?.data?.remindedAt || '')
+    remindOpen.value = false
+    remindMessage.value = `已催办 ${at}。工作台已写入待办。重复催办会再写一条。钉钉未外发。`
+  } catch (e: unknown) {
+    remindError.value = bizError(e)
+  } finally {
+    remindSaving.value = false
+  }
+}
+
+function viewLevelLabel(value: unknown) {
+  const level = Number(value)
+  if (level === 1 || level === 2 || level === 3) return `L${level}`
+  return '—'
+}
+
+function durationLabel(value: unknown) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds < 0) return '—'
+  const whole = Math.floor(seconds)
+  if (whole < 60) return `${whole} 秒`
+  return `${Math.floor(whole / 60)} 分 ${whole % 60} 秒`
+}
+
+async function loadAuditUsers() {
+  if (users.value.length) return
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } })
+    users.value = asList(res.data?.data) as unknown as { id: string; username: string; nickname: string }[]
+  } catch {
+    users.value = []
+  }
+}
+
+async function loadRisk() {
+  const res = await http.get('/cert/security/risk-report')
+  const data = res.data?.data || {}
+  riskUsers.value = Array.isArray(data.highFrequencyUsers) ? data.highFrequencyUsers : []
+  riskTotal.value = Number(data.abnormalTotal || 0)
+}
+
+async function searchAudit() {
+  auditLoading.value = true
+  auditError.value = ''
+  try {
+    const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+    const holder = auditHolder.value.trim()
+    if (holder) {
+      if (/^\d+$/.test(holder)) {
+        params.certId = Number(holder)
+      } else {
+        const found = await http.get('/corp/resource/certificate/page', {
+          params: { pageNo: 1, pageSize: 20, holderName: holder },
+        })
+        const list = asList(found.data?.data)
+        const exact = list.find((item) => String(item.holderName) === holder) || list[0]
+        if (!exact) {
+          auditRows.value = []
+          auditTotal.value = 0
+          auditError.value = '没有匹配的证件'
+          await loadRisk()
+          return
+        }
+        params.certId = Number(exact.id)
+      }
+    }
+    if (auditViewer.value) params.viewerUserId = Number(auditViewer.value)
+    if (auditFrom.value && auditTo.value) {
+      params.timeRange = [`${auditFrom.value} 00:00:00`, `${auditTo.value} 23:59:59`]
+    }
+    const res = await http.get('/cert/security/view-logs', {
+      params,
+      paramsSerializer: { indexes: null },
+    })
+    const data = res.data?.data
+    auditRows.value = asList(data)
+    auditTotal.value = asTotal(data, auditRows.value.length)
+    await loadRisk()
+  } catch (e: unknown) {
+    auditRows.value = []
+    auditTotal.value = 0
+    auditError.value = bizError(e)
+  } finally {
+    auditLoading.value = false
+  }
+}
+
+function resetAudit() {
+  auditHolder.value = ''
+  auditViewer.value = ''
+  auditFrom.value = ''
+  auditTo.value = ''
+  searchAudit()
 }
 
 function bizError(error: unknown) {
@@ -932,6 +1156,7 @@ watch(kind, async () => {
   scanOpen.value = false
   renewOpen.value = false
   renewFinishOpen.value = false
+  remindOpen.value = false
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
       await prepareSim()
@@ -951,7 +1176,10 @@ onMounted(async () => {
     }
   }
   await load()
-  if (kind.value === 'certificate') await loadExpire()
+  if (kind.value === 'certificate') {
+    await loadAuditUsers()
+    await Promise.all([loadExpire(), searchAudit()])
+  }
 })
 </script>
 

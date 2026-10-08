@@ -19,6 +19,24 @@ WINDOW = timedelta(hours=1)
 BLOCK_MSG = "1035 高频访问告警拦截（1 小时内同一证件查看超过 10 次）"
 
 
+def can_cert_r1(db: Session, actor: User) -> bool:
+    """审计与异常报告仅 R1（系统管理员）。"""
+    if (actor.username or "") == "admin":
+        return True
+    from app.scope import enabled_roles
+
+    return any(role.role_key == "sys:admin" for role in enabled_roles(db, actor))
+
+
+def can_cert_urge(db: Session, actor: User) -> bool:
+    """催办：R1，或角色名含「行政」的 R2。"""
+    if can_cert_r1(db, actor):
+        return True
+    from app.scope import enabled_roles
+
+    return any("行政" in (role.role_name or "") for role in enabled_roles(db, actor))
+
+
 def recent_view_count(db: Session, actor: User, cert_id: int) -> int:
     since = utcnow() - WINDOW
     tenant = actor.tenant_id or 0
