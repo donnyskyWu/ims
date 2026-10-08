@@ -1,0 +1,589 @@
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE       [100%]
+=================================== ERRORS ====================================
+______ ERROR at setup of test_account_page_requires_platform_and_filters ______
+E   pymysql.err.OperationalError: (1050, "Table 'oa_internal_content' already exists")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1050, "Table 'oa_internal_content' already exists")
+    [SQL: 
+    CREATE TABLE oa_internal_content (
+    	id BIGINT NOT NULL AUTO_INCREMENT, 
+    	title VARCHAR(255) NOT NULL, 
+    	account_id BIGINT, 
+    	account_name VARCHAR(128) NOT NULL, 
+    	platform_type VARCHAR(32) NOT NULL, 
+    	content_type VARCHAR(32) NOT NULL, 
+    	ip_group_id BIGINT, 
+    	play_count BIGINT NOT NULL, 
+    	completion_rate FLOAT NOT NULL, 
+    	publish_time VARCHAR(32) NOT NULL, 
+    	deleted INTEGER NOT NULL, 
+    	tenant_id BIGINT NOT NULL, 
+    	created_at DATETIME NOT NULL, 
+    	updated_at DATETIME NOT NULL, 
+    	PRIMARY KEY (id)
+    )
+    
+    ]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______ ERROR at setup of test_platform_account_write_rejects_bad_company ______
+E   pymysql.err.IntegrityError: (1062, "Duplicate entry 'admin' for key 'ims_sys_user.username'")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.IntegrityError: (pymysql.err.IntegrityError) (1062, "Duplicate entry 'admin' for key 'ims_sys_user.username'")
+    [SQL: INSERT INTO ims_sys_user (username, nickname, mobile, password_hash, status, dingtalk_user_id, tenant_id, deleted, created_at) VALUES (%(username)s, %(nickname)s, %(mobile)s, %(password_hash)s, %(status)s, %(dingtalk_user_id)s, %(tenant_id)s, %(deleted)s, %(created_at)s)]
+    [parameters: {'username': 'admin', 'nickname': '管理员', 'mobile': '13812345678', 'password_hash': 'c4225cbc381442ea20b6fea4a9def965$0b4e92c723279292518d7d2c4b7069b4d449518cc43745698d2113b056aa7b08', 'status': 'ENABLED', 'dingtalk_user_id': '', 'tenant_id': 0, 'deleted': 0, 'created_at': datetime.datetime(2026, 10, 6, 3, 33, 34, 889976)}]
+    (Background on this error at: https://sqlalche.me/e/20/gkpj)
+________________________ ERROR at setup of test_health ________________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_notify' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_notify' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_notify`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________________ ERROR at setup of test_login_and_user_mask __________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_sop_seq' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_sop_seq' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_sop_seq`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_____________ ERROR at setup of test_create_and_reject_pk_change ______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_publish' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_publish' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_publish`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_____________ ERROR at setup of test_login_lock_on_sixth_failure ______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_work_task_assignment' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_work_task_assignment' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_work_task_assignment`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______________ ERROR at setup of test_sso_matches_local_mobile _______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_project' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_project' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_project`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______________ ERROR at setup of test_user_api_requires_login ________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_sop_node' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_sop_node' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_sop_node`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______________ ERROR at setup of test_bi_query_run_mapped_entity ______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_data_snapshot' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_data_snapshot' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_data_snapshot`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____________ ERROR at setup of test_bi_query_unmapped_entity_1261 _____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_session' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_session' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_session`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______________ ERROR at setup of test_bi_query_save_and_publish _______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_session_seq' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_session_seq' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_session_seq`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+________ ERROR at setup of test_create_single_account_task_run_and_log ________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_login_log' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_login_log' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_login_log`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+________ ERROR at setup of test_unbound_account_warning_and_failed_run ________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_user_scope' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_user_scope' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_user_scope`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______________ ERROR at setup of test_channel_d_external_task ________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_user_dept' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_user_dept' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_user_dept`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+________________ ERROR at setup of test_ensure_unified_members ________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_message' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_message' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_message`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+___________ ERROR at setup of test_quality_summary_and_manual_fill ____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_user_role' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_user_role' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_user_role`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+________ ERROR at setup of test_external_account_keyword_and_threshold ________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_user_role' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_user_role' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_user_role`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_metadata_entity_fields_and_bi0_read __________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_dict_data' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_dict_data' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_dict_data`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______________ ERROR at setup of test_sop_list_and_plan_create _______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_dict_data' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_dict_data' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_dict_data`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______________ ERROR at setup of test_review_gate_and_publish ________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_todo' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_todo' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_todo`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____________ ERROR at setup of test_work_task_confirm_and_withdraw ____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_org_event' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_org_event' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_org_event`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+__________ ERROR at setup of test_task_execute_content_gate_and_crud __________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_user_mapping' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_user_mapping' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_user_mapping`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_ ERROR at setup of test_content_save_enqueues_outbox_when_football_unconfigured _
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_user_mapping' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_user_mapping' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_user_mapping`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+__________ ERROR at setup of test_content_fb_sync_success_with_stub ___________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_message' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_message' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_message`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____________ ERROR at setup of test_delete_drafts_shelf_off_outbox ____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_position_template' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_position_template' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_position_template`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____ ERROR at setup of test_company_and_realname_are_query_only_and_masked ____
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_user_scope' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_user_scope' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_user_scope`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_sim_write_rules_and_certificate_view _________
+E   pymysql.err.OperationalError: (1050, "Table 'ims_content_work_task_assignment_task' already exists")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1050, "Table 'ims_content_work_task_assignment_task' already exists")
+    [SQL: 
+    CREATE TABLE ims_content_work_task_assignment_task (
+    	id BIGINT NOT NULL AUTO_INCREMENT, 
+    	assignment_id BIGINT NOT NULL, 
+    	task_id BIGINT NOT NULL, 
+    	tenant_id BIGINT NOT NULL, 
+    	PRIMARY KEY (id)
+    )
+    
+    ]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+__________ ERROR at setup of test_company_scope_without_all_is_1008 ___________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_review' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_review' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_review`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______ ERROR at setup of test_cost_purchase_process_and_missing_account _______
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_publish' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_publish' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_publish`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+__________ ERROR at setup of test_roi_revenue_delay_without_football __________
+E   pymysql.err.IntegrityError: (1062, "Duplicate entry 'admin' for key 'ims_sys_user.username'")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.IntegrityError: (pymysql.err.IntegrityError) (1062, "Duplicate entry 'admin' for key 'ims_sys_user.username'")
+    [SQL: INSERT INTO ims_sys_user (username, nickname, mobile, password_hash, status, dingtalk_user_id, tenant_id, deleted, created_at) VALUES (%(username)s, %(nickname)s, %(mobile)s, %(password_hash)s, %(status)s, %(dingtalk_user_id)s, %(tenant_id)s, %(deleted)s, %(created_at)s)]
+    [parameters: {'username': 'admin', 'nickname': '管理员', 'mobile': '13812345678', 'password_hash': 'af66a1361cb5e9580e51f76ab478dbe6$b5aa649198e257d33056e16f97567f92dace2450b8abe5a6dd67c3e591ab13a2', 'status': 'ENABLED', 'dingtalk_user_id': '', 'tenant_id': 0, 'deleted': 0, 'created_at': datetime.datetime(2026, 10, 6, 3, 33, 39, 760200)}]
+    (Background on this error at: https://sqlalche.me/e/20/gkpj)
+________________ ERROR at setup of test_roi_with_football_stub ________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_bi_custom_query' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_bi_custom_query' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_bi_custom_query`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+___________ ERROR at setup of test_office_and_live_pages_stay_empty ___________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_metadata_entity' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_metadata_entity' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_metadata_entity`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____________ ERROR at setup of test_phone_follows_master_contract _____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_publish_seq' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_publish_seq' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_publish_seq`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____ ERROR at setup of test_platform_dict_seed_and_disabled_cannot_delete _____
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_review' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_review' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_review`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_unknown_param_key_and_bool_persists __________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_work_task_assignment' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_work_task_assignment' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_work_task_assignment`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+__________ ERROR at setup of test_home_dashboard_kpis_and_shortcuts ___________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_org_event' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_org_event' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_org_event`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________________ ERROR at setup of test_home_date_span_1202 __________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_message' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_message' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_message`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+___________________ ERROR at setup of test_home_todos_page ____________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_position_template' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_position_template' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_position_template`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______________ ERROR at setup of test_int_work_page_all_and_hit _______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_auth_user_dept' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_auth_user_dept' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_auth_user_dept`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+________ ERROR at setup of test_int_work_low_score_requires_threshold _________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_user_scope' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_user_scope' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_user_scope`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______ ERROR at setup of test_ip_group_tree_members_and_accounts_cascade ______
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_operate_log' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_operate_log' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_operate_log`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______ ERROR at setup of test_ip_group_delete_guard_and_duplicate_name _______
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_sys_login_log' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_sys_login_log' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_sys_login_log`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____ ERROR at setup of test_register_session_id_and_metrics_from_live_room ____
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_cert_archive' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_cert_archive' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_cert_archive`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____________ ERROR at setup of test_metrics_unlinked_without_room _____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_cert_archive' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_cert_archive' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_cert_archive`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_login_success_and_failure_are_logged _________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_session_seq' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_session_seq' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_session_seq`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____ ERROR at setup of test_protected_write_creates_operate_log_and_pages _____
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_session_token' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_session_token' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_session_token`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______________ ERROR at setup of test_operate_log_second_page ________________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_session' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_session' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_session`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_____________ ERROR at setup of test_notify_page_dedup_and_filter _____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_session' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_session' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_session`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+___ ERROR at setup of test_event_is_signed_then_queued_without_writing_user ___
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_risk_check' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_risk_check' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_risk_check`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____________ ERROR at setup of test_bad_signature_does_not_enqueue ____________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_report' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_report' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_report`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_idempotent_key_writes_one_local_user _________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_data_snapshot' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_data_snapshot' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_data_snapshot`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_retry_sixteen_times_then_dead_letter _________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_data_snapshot' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_data_snapshot' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_data_snapshot`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_reconcile_only_r1_and_metrics_br001 __________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_live_alarm_record' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_live_alarm_record' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_live_alarm_record`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_ ERROR at setup of test_transfer_records_buffer_and_resign_freezes_local_user _
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_sop' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_sop' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_sop`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_________ ERROR at setup of test_callback_ack_stays_under_half_second _________
+E   pymysql.err.OperationalError: (1050, "Table 'ims_content_plan' already exists")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1050, "Table 'ims_content_plan' already exists")
+    [SQL: 
+    CREATE TABLE ims_content_plan (
+    	id BIGINT NOT NULL AUTO_INCREMENT, 
+    	plan_name VARCHAR(128) NOT NULL, 
+    	sop_id BIGINT NOT NULL, 
+    	ip_group_ids JSON NOT NULL, 
+    	start_date VARCHAR(10) NOT NULL, 
+    	end_date VARCHAR(10) NOT NULL, 
+    	description VARCHAR(512) NOT NULL, 
+    	plan_status VARCHAR(32) NOT NULL, 
+    	creator BIGINT NOT NULL, 
+    	deleted INTEGER NOT NULL, 
+    	tenant_id BIGINT NOT NULL, 
+    	created_at DATETIME NOT NULL, 
+    	PRIMARY KEY (id)
+    )
+    
+    ]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______ ERROR at setup of test_rule_version_does_not_change_applied_users ______
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_project' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_project' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_project`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_ ERROR at setup of test_pending_role_is_rejected_and_auto_create_is_idempotent _
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_project' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_project' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_project`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+__________ ERROR at setup of test_role_menu_scope_position_and_union __________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_fb_sync_outbox' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_fb_sync_outbox' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_fb_sync_outbox`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_ ERROR at setup of test_from_position_is_idempotent_and_pending_grants_nothing _
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_work_task_sheet' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_work_task_sheet' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_work_task_sheet`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+_______ ERROR at setup of test_missing_role_and_position_preview_route ________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_task' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_task' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_task`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+___ ERROR at setup of test_empty_pending_illegal_and_unregistered_are_1008 ____
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_work_task_assignment_task' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_work_task_assignment_task' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_work_task_assignment_task`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+____ ERROR at setup of test_missing_and_cross_tenant_both_say_unavailable _____
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_work_task_assignment_task' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_work_task_assignment_task' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_work_task_assignment_task`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+___ ERROR at setup of test_dept_excludes_child_and_materializes_exact_scope ___
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_review' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_review' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_review`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______ ERROR at setup of test_br212_intersects_creator_and_viewer_scopes ______
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_publish' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_publish' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_publish`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______ ERROR at setup of test_todos_are_personal_and_preview_caps_at_ten ______
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_review_seq' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_review_seq' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_review_seq`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+______________ ERROR at setup of test_message_read_is_idempotent ______________
+E   pymysql.err.OperationalError: (1684, "Table 'ims_test'.'ims_content_publish_seq' was skipped since its definition is being modified by concurrent DDL statement")
+
+The above exception was the direct cause of the following exception:
+E   sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (1684, "Table 'ims_test'.'ims_content_publish_seq' was skipped since its definition is being modified by concurrent DDL statement")
+    [SQL: DESCRIBE `ims_test`.`ims_content_publish_seq`]
+    (Background on this error at: https://sqlalche.me/e/20/e3q8)
+============================== warnings summary ===============================
+C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\routing.py:233: 595 warnings
+  C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\routing.py:233: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    is_coroutine = asyncio.iscoroutinefunction(dependant.call)
+
+C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\starlette\_utils.py:39: 641 warnings
+  C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\starlette\_utils.py:39: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or (callable(obj) and asyncio.iscoroutinefunction(obj.__call__))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR tests/test_account.py::test_account_page_requires_platform_and_filters
+ERROR tests/test_account.py::test_platform_account_write_rejects_bad_company
+ERROR tests/test_api.py::test_health - sqlalchemy.exc.OperationalError: (pymy...
+ERROR tests/test_api.py::test_login_and_user_mask - sqlalchemy.exc.Operationa...
+ERROR tests/test_api.py::test_create_and_reject_pk_change - sqlalchemy.exc.Op...
+ERROR tests/test_api.py::test_login_lock_on_sixth_failure - sqlalchemy.exc.Op...
+ERROR tests/test_api.py::test_sso_matches_local_mobile - sqlalchemy.exc.Opera...
+ERROR tests/test_api.py::test_user_api_requires_login - sqlalchemy.exc.Operat...
+ERROR tests/test_bi_query.py::test_bi_query_run_mapped_entity - sqlalchemy.ex...
+ERROR tests/test_bi_query.py::test_bi_query_unmapped_entity_1261 - sqlalchemy...
+ERROR tests/test_bi_query.py::test_bi_query_save_and_publish - sqlalchemy.exc...
+ERROR tests/test_collect.py::test_create_single_account_task_run_and_log - sq...
+ERROR tests/test_collect.py::test_unbound_account_warning_and_failed_run - sq...
+ERROR tests/test_collect.py::test_channel_d_external_task - sqlalchemy.exc.Op...
+ERROR tests/test_collect.py::test_ensure_unified_members - sqlalchemy.exc.Ope...
+ERROR tests/test_collect.py::test_quality_summary_and_manual_fill - sqlalchem...
+ERROR tests/test_collect_config.py::test_external_account_keyword_and_threshold
+ERROR tests/test_collect_config.py::test_metadata_entity_fields_and_bi0_read
+ERROR tests/test_content.py::test_sop_list_and_plan_create - sqlalchemy.exc.O...
+ERROR tests/test_content.py::test_review_gate_and_publish - sqlalchemy.exc.Op...
+ERROR tests/test_content.py::test_work_task_confirm_and_withdraw - sqlalchemy...
+ERROR tests/test_content.py::test_task_execute_content_gate_and_crud - sqlalc...
+ERROR tests/test_content_fb_sync.py::test_content_save_enqueues_outbox_when_football_unconfigured
+ERROR tests/test_content_fb_sync.py::test_content_fb_sync_success_with_stub
+ERROR tests/test_content_fb_sync.py::test_delete_drafts_shelf_off_outbox - sq...
+ERROR tests/test_corp.py::test_company_and_realname_are_query_only_and_masked
+ERROR tests/test_corp.py::test_sim_write_rules_and_certificate_view - sqlalch...
+ERROR tests/test_corp.py::test_company_scope_without_all_is_1008 - sqlalchemy...
+ERROR tests/test_cost.py::test_cost_purchase_process_and_missing_account - sq...
+ERROR tests/test_cost.py::test_roi_revenue_delay_without_football - sqlalchem...
+ERROR tests/test_cost.py::test_roi_with_football_stub - sqlalchemy.exc.Operat...
+ERROR tests/test_device.py::test_office_and_live_pages_stay_empty - sqlalchem...
+ERROR tests/test_device.py::test_phone_follows_master_contract - sqlalchemy.e...
+ERROR tests/test_dict_param.py::test_platform_dict_seed_and_disabled_cannot_delete
+ERROR tests/test_dict_param.py::test_unknown_param_key_and_bool_persists - sq...
+ERROR tests/test_home.py::test_home_dashboard_kpis_and_shortcuts - sqlalchemy...
+ERROR tests/test_home.py::test_home_date_span_1202 - sqlalchemy.exc.Operation...
+ERROR tests/test_home.py::test_home_todos_page - sqlalchemy.exc.OperationalEr...
+ERROR tests/test_int_analysis.py::test_int_work_page_all_and_hit - sqlalchemy...
+ERROR tests/test_int_analysis.py::test_int_work_low_score_requires_threshold
+ERROR tests/test_ip_group.py::test_ip_group_tree_members_and_accounts_cascade
+ERROR tests/test_ip_group.py::test_ip_group_delete_guard_and_duplicate_name
+ERROR tests/test_live.py::test_register_session_id_and_metrics_from_live_room
+ERROR tests/test_live.py::test_metrics_unlinked_without_room - sqlalchemy.exc...
+ERROR tests/test_log.py::test_login_success_and_failure_are_logged - sqlalche...
+ERROR tests/test_log.py::test_protected_write_creates_operate_log_and_pages
+ERROR tests/test_log.py::test_operate_log_second_page - sqlalchemy.exc.Operat...
+ERROR tests/test_log.py::test_notify_page_dedup_and_filter - sqlalchemy.exc.O...
+ERROR tests/test_org.py::test_event_is_signed_then_queued_without_writing_user
+ERROR tests/test_org.py::test_bad_signature_does_not_enqueue - sqlalchemy.exc...
+ERROR tests/test_org.py::test_idempotent_key_writes_one_local_user - sqlalche...
+ERROR tests/test_org.py::test_retry_sixteen_times_then_dead_letter - sqlalche...
+ERROR tests/test_org.py::test_reconcile_only_r1_and_metrics_br001 - sqlalchem...
+ERROR tests/test_org.py::test_transfer_records_buffer_and_resign_freezes_local_user
+ERROR tests/test_org.py::test_callback_ack_stays_under_half_second - sqlalche...
+ERROR tests/test_position.py::test_rule_version_does_not_change_applied_users
+ERROR tests/test_position.py::test_pending_role_is_rejected_and_auto_create_is_idempotent
+ERROR tests/test_role.py::test_role_menu_scope_position_and_union - sqlalchem...
+ERROR tests/test_role.py::test_from_position_is_idempotent_and_pending_grants_nothing
+ERROR tests/test_role.py::test_missing_role_and_position_preview_route - sqla...
+ERROR tests/test_scope.py::test_empty_pending_illegal_and_unregistered_are_1008
+ERROR tests/test_scope.py::test_missing_and_cross_tenant_both_say_unavailable
+ERROR tests/test_scope.py::test_dept_excludes_child_and_materializes_exact_scope
+ERROR tests/test_scope.py::test_br212_intersects_creator_and_viewer_scopes - ...
+ERROR tests/test_workbench.py::test_todos_are_personal_and_preview_caps_at_ten
+ERROR tests/test_workbench.py::test_message_read_is_idempotent - sqlalchemy.e...
+1236 warnings, 66 errors in 15.36s

@@ -1,0 +1,19 @@
+store: memory
+http:
+  addr: ":8080"
+opsdb:
+  dsn: ""
+imsdb:
+  dsn: ""
+redis:
+  addr: ""
+football:
+  webapi:
+    baseUrl: ""
+dingtalk:
+  appKey: ""
+jwt:
+  accessTtl: 2h
+  refreshTtl: 168h
+file:
+  storageRoot: "./data/files"

@@ -1,0 +1,52 @@
+# Secrets & local env
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+**/secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node / frontend
+node_modules/
+ims-web/dist/
+*.local
+
+# Playwright / E2E artifacts
+playwright-report/
+test-results/
+ims-web/playwright-report/
+ims-web/test-results/
+
+# IDE / tooling caches
+.specstory/
+.vscode/
+*.log
+ims-web/e2e_run.log
+
+# Large / generated test outputs (keep e2e_result.txt for SSOT)
+ims-backend/pytest_out.txt
+ims-backend/pytest_result.txt
+ims-backend/pytest_scope_out.txt
+ims-backend/collect_only.txt
+ims-backend/targeted_inline.txt
+ims-backend/dingtalk_sync_result.txt
+ims-backend/dingtalk_l3_result.txt
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Nested empty git worktree (no checkout; blocks `git add`)
+ops-platform-server/

@@ -1,0 +1,16 @@
+ALTER TABLE ims_content_sop_node ADD COLUMN instruction_text TEXT NULL;
+ALTER TABLE ims_content_sop_node ADD COLUMN attachment_urls JSON NULL;
+ALTER TABLE ims_content_task ADD COLUMN plan_name VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE ims_content_task ADD COLUMN deliverables TEXT NULL;
+ALTER TABLE ims_content_task ADD COLUMN user_attachments JSON NULL;
+ALTER TABLE ims_content_project ADD COLUMN body TEXT NULL;
+ALTER TABLE ims_content_project ADD COLUMN content_type VARCHAR(32) NOT NULL DEFAULT 'SHORT_VIDEO';
+ALTER TABLE ims_content_project ADD COLUMN platform_type VARCHAR(32) NOT NULL DEFAULT '';
+ALTER TABLE ims_content_project ADD COLUMN ip_group_id BIGINT NULL;
+ALTER TABLE ims_content_project ADD COLUMN competition_id VARCHAR(64) NOT NULL DEFAULT '';
+ALTER TABLE ims_content_project ADD COLUMN competition_name VARCHAR(256) NOT NULL DEFAULT '';
+ALTER TABLE ims_content_project ADD COLUMN match_type INT NULL;
+ALTER TABLE ims_content_project ADD COLUMN match_scheme JSON NULL;
+ALTER TABLE ims_content_project ADD COLUMN match_summary VARCHAR(128) NOT NULL DEFAULT '';
+ALTER TABLE ims_content_project ADD COLUMN layout_html TEXT NULL;
+ALTER TABLE ims_content_project ADD COLUMN ai_generate_error VARCHAR(512) NULL;

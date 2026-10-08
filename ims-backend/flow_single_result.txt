@@ -1,0 +1,8 @@
+KILLED: Cursor in-agent shell terminated pytest before completion (exit -1, ~3–8s, no pytest output captured).
+
+Preflight: scripts/_pytest_preflight.py exited 0.
+
+Command (not completed):
+  python -m pytest tests/test_flow.py::test_flow_instance_start_and_idempotent -q --tb=line
+
+Re-run externally (user-only): scripts\run_pytest_external.bat for full 135 (#3).

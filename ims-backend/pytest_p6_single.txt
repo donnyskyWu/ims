@@ -1,0 +1,12 @@
+.                                                                        [100%]
+============================== warnings summary ===============================
+C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\routing.py:233: 601 warnings
+  C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\routing.py:233: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    is_coroutine = asyncio.iscoroutinefunction(dependant.call)
+
+C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\starlette\_utils.py:39: 607 warnings
+  C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\starlette\_utils.py:39: DeprecationWarning: 'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16; use inspect.iscoroutinefunction() instead
+    return asyncio.iscoroutinefunction(obj) or (callable(obj) and asyncio.iscoroutinefunction(obj.__call__))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1208 warnings in 14.41s

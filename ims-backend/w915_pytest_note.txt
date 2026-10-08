@@ -1,0 +1,4 @@
+W9-15 targeted pytest (2 tests): KILLED in Cursor integrated shell (exit -1, ~5s, no pytest summary).
+Tests: test_perf_issue_from_confirmed_and_locked_1155, test_flow_task_handle_approve_and_reject
+Preflight before run: 0
+Retry locally: python -m pytest tests/test_perf.py::test_perf_issue_from_confirmed_and_locked_1155 tests/test_flow.py::test_flow_task_handle_approve_and_reject -q

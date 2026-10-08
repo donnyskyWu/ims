@@ -1,0 +1,131 @@
+# IMS Playwright E2E 窄路径对照
+
+> 对照 `doc/测试方案/IMS-E2E测试用例Checklist.md` 十二条主线 **S1–S12**。  
+> **PO 签收**看 **closure-***（acceptance）与 Checklist 步骤；**smoke-*** 仅为路由健康检查。策略：[`IMS-E2E验收策略.md`](../../doc/测试方案/IMS-E2E验收策略.md)。
+
+| 主线 | 场景摘要 | smoke spec | 断言要点 |
+|------|----------|------------|----------|
+| **S1** | 员工全生命周期 | `smoke-auth-org.spec.ts` | 登录 → `/ims/auth/org` 标题「组织架构同步」+ 人员列表 table |
+| **S2** | 直播全链路 | `smoke-live.spec.ts` | 登录 → `/ims/live/sessions` 标题「直播管理」+ 场次 table |
+| **S3** | 场次-成本-利润 | `smoke-fin.spec.ts` | 登录 → `/ims/fin/profit` 页面标题 |
+| **S4** | 账号领用流转 | `smoke-acct.spec.ts` | 登录 → `/ims/corp/account/douyin` 标题「抖音」+ 账号 table |
+| **S5** | 资产采购领用 | `smoke-asset.spec.ts` | 登录 → `/ims/corp/device/office` 标题「办公设备管理」+ table |
+| **S6** | 证件录入预警 | `smoke-cert.spec.ts` | 登录 → `/ims/corp/resource/certificate` 标题「证件管理」+ table |
+| **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
+| **S8** | AI 资产分发 | `smoke-air-skill.spec.ts` | 登录 → `/ims/air/skill` 标题「技能库」+ table |
+| **S9** | 绩效考核周期 | `smoke-perf.spec.ts` | 登录 → `/ims/perf/execution` 标题「执行考核」 |
+| **S10** | 培训考试 | `smoke-train.spec.ts` | 登录 → `/ims/train/task` 标题「学习任务管理」+ table |
+| **S11** | 预警闭环 | `smoke-alert.spec.ts` | 登录 → `/ims/alert/rule` 标题 |
+| **S12** | 数据消费闭环 | `smoke-bi-report.spec.ts` | 登录 → `/ims/bi/report` 标题「报表中心」 |
+
+**补充（非 S1–S12 主线编号）**
+
+| 场景 | smoke spec | 断言要点 |
+|------|------------|----------|
+| **FLOW** | `smoke-flow.spec.ts` | 登录 → `/ims/flow` 标题「流程管理」+ 默认「流程实例」tab 下 table |
+| **FLOW 超时督办** | `smoke-flow-timeout.spec.ts` | 登录 → `/ims/flow` · 点「超时督办」tab · BR-115 指标行「月度超时率」+ 督办 table 表头/空态 |
+| **WORKBENCH** | `smoke-workbench.spec.ts` | 登录 → `/ims/workbench` 问候 h1 +「流程待办」卡片数字 + 流程待办 table |
+| **HOME 运营看板** | `smoke-home.spec.ts` | 登录 → `/ims/home` 标题「运营仪表盘」+ 四 KPI 卡片 `.n` 非空 +「快捷入口」 |
+| **ALERT 试跑** | `smoke-alert-trial.spec.ts` | 登录 → `/ims/alert/rule` · 规则 table · 若有启用规则则点「试跑」+ toast「试跑成功」 |
+
+**逐步闭环（acceptance · 非 narrow · 保留上述 smoke）**
+
+| 场景 | closure spec | 断言要点 |
+|------|--------------|----------|
+| **E2E-FLOW-01** | `closure-flow-start-todo.spec.ts` | 发起 → 实例表「进行中」→ 我的待办「通过」→ 待办消失 · 实例「已通过」 |
+| **E2E-FLOW-02** | `closure-flow-timeout-urge.spec.ts` | 超时督办 Tab · 时长分布 · 督办 → 提醒次数 +1 |
+| **E2E-S11-01 切片** | `closure-alert-rule-trial.spec.ts` | 新建启用规则 → 试跑 toast → 命中 +1 |
+| **E2E-S11-处置 (#44)** | `closure-alert-handle-tab.spec.ts` | UI 试跑 → live「处理」→ 处置记录 HANDLED · 去重 DEDUP-LIVE |
+| **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
+| **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
+| **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
+| **E2E-S7-切片 · 任务** | `closure-content-task-execute.spec.ts` | UI 启动计划 → 执行页工作说明 → DONE |
+| **E2E-S7-切片 · 工作任务 (#35)** | `closure-content-work-task.spec.ts` | 工作任务登记确认 → CONTENT_GENERATION 执行/提审 → e2e_author 审过 → DONE |
+| **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
+| **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
+| **E2E-S12-切片 · push-now (#39)** | `closure-bi-subscribe-push-now.spec.ts` | UI 新建报表+订阅 →「立即推送」→ 快照 GMV · 推送结果/上次推送 |
+| **E2E-S12-05 切片 · share-approve (#40)** | `closure-bi-share-approve.spec.ts` | UI 敏感分享 →「分享审批」Tab 通过/驳回 → 分享链接 Tab 状态 |
+| **E2E-S12-05 EXPIRED · share-expired (#41)** | `closure-bi-share-expired.spec.ts` | UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」 |
+
+### 纯 UI 门禁（closure · Checklist v2.6.44+）
+
+PO 签收要求：**closure 链 100% 经 UI 点击造数**，不得在后端「偷偷」写库。
+
+| 允许 | 禁止 |
+|------|------|
+| `/login` 表单登录（admin / `e2e_author` 等） | `page.evaluate(() => fetch('/admin-api/…'))` |
+| 菜单导航、Drawer/Modal 填表、行内按钮 | Playwright 侧 TestClient / 直连 18080 造数 |
+| UI 保存后 `waitForResponse` 读 **id / 单号**（由刚才的点击触发） | 在 evaluate 里换 token、多用户 API 编排 |
+| 环境只读：`E2E_BASE_URL`、init 库已有主数据（如抖音账号列表） | 用 API 绕过缺失的前端表单（应先补 UI 或标 TODO） |
+
+**推荐写法（content 计划链）**
+
+```typescript
+import { loginAdmin, createSopViaUi, prepareIpGroupWithAdminMember, createDraftPlanViaUi, startPlanRowViaUi } from './closure-helpers'
+
+await loginAdmin(page)
+const { sopId } = await createSopViaUi(page, { sopName: `E2E SOP ${Date.now()}`, nodeName: '脚本' })
+const { ipGroupId } = await prepareIpGroupWithAdminMember(page, label)
+await createDraftPlanViaUi(page, { planName, sopId, ipGroupId })
+await startPlanRowViaUi(page, planName)
+```
+
+**反例（勿再提交）**
+
+```typescript
+// ❌ API 种子 — v2.6.44 起禁止
+const seeded = await page.evaluate(async () => {
+  const res = await fetch('/admin-api/ims/content/plan', { method: 'POST', … })
+  return res.json()
+})
+```
+
+共用辅助：`smoke-helpers.ts`（narrow smoke 登录）；**closure** 用 `closure-helpers.ts`。`E2E_BASE_URL` 由 `playwright.config.ts` 注入（默认 `http://127.0.0.1:6173`）；Vite `server.host`/`port` 与之一致；后端代理默认 `IMS_API=http://127.0.0.1:18080`（`vite.config.ts`）。S1/S2/S4–S8/S10 与 **FLOW** / **WORKBENCH** 补充 spec 额外断言 `.tbl-wrap table` 可见且无未捕获 `pageerror`（WORKBENCH 另断言 `flowTodoCount` 卡片 `.n` 为数字）。
+
+## 运行（PO / Agent：默认一键，无需手敲多条 npm）
+
+```powershell
+cd ims-web
+npm run test:e2e:ci
+# 等价于:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1
+```
+
+脚本行为：
+
+1. 探测 **18080** `/health`、**6173** Vite；未起则后台启动 API（KillPort + `python -m app.main`）与 `npm run dev`（超时 120s / 90s）。
+2. admin 登录 preflight；失败提示运行 `ims-backend\scripts\init_ims_db.ps1`。
+3. `npx playwright test --workers=1 --reporter=list,html` → `playwright-report/index.html`。
+4. 摘要写入 **`e2e_result.txt`**（末行 `N passed`）。
+
+服务已就绪时：`.\scripts\run_e2e.ps1 -SkipServe`
+
+仅 Playwright（无 preflight，跨平台 CI 子步骤）：`npm run test:e2e:ci:playwright-only`
+
+手工调试：
+
+```bash
+cd ims-web
+npm run test:e2e          # 等同 playwright test（config 已 workers=1）
+npm run test:e2e:skip     # SKIP_E2E=1 跳过
+```
+
+## W9 总验收（后端 pytest 仍为用户外置 cmd）
+
+### 后端 · `run_pytest.cmd`
+
+1. 确认无并行 pytest（脚本会检测并退出）。
+2. 在 `ims-backend` 下执行：`scripts\run_pytest.cmd`
+3. 流程：重置 `ims_test` / `ims_ops_test` → 全量 pytest → 结果写入 `pytest_result.txt`。
+4. **collect-only 快照**（不跑用例）：  
+   `set IMS_DB=ims_test&& set IMS_OPS_DB=ims_ops_test&& python -m pytest --collect-only -q`  
+   W9-10 后预期 **124**（122 + `test_bi_subscribe` 内 2 条）。
+
+### IMPLEMENTED / WIP 快照（W9-10 后）
+
+| 指标 | 数量 |
+|------|------|
+| IMPLEMENTED（`menu.ts` 侧栏/隐藏路由） | **78** |
+| 仍 WIP（`/ims/wip/*` · catalog 非 navParent） | **18** |
+
+**新 API 后**：重启 **18080** 后端以加载 `/bi/subscribe/*`、`/bi/report/preview/*`。

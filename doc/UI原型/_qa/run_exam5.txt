@@ -1,0 +1,4 @@
+FAIL: B3 错1题得70分且提示未及格
+FAIL: F3 提示简答待阅
+PASS=26 FAIL=2
+DEBUG toasts: []

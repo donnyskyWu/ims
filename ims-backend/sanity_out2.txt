@@ -1,0 +1,10 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.14.5, pytest-8.3.4, pluggy-1.6.0 -- C:\Users\donny\AppData\Local\Python\pythoncore-3.14-64\python.exe
+cachedir: .pytest_cache
+rootdir: D:\self\sy\IMS系统产品\ims-backend
+configfile: pytest.ini
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+tests/test_master_data.py::test_master_overview_blocks 

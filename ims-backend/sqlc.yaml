@@ -1,0 +1,15 @@
+version: "2"
+sql:
+  - engine: "mysql"
+    schema: "db/migration"
+    queries: "db/query/ims"
+    gen:
+      go:
+        package: "imsdb"
+        out: "internal/db/sqlcgen/imsdb"
+  - engine: "mysql"
+    queries: "db/query/ops"
+    gen:
+      go:
+        package: "opsdb"
+        out: "internal/db/sqlcgen/opsdb"

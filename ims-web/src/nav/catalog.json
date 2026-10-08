@@ -1,0 +1,1333 @@
+{
+  "mods": {
+    "home": {
+      "no": "00",
+      "name": "运营看板",
+      "code": "HOME",
+      "icon": "chart",
+      "page": "运营仪表盘",
+      "desc": "IP 组筛选、核心指标、待办与快捷入口（OPS 并入）"
+    },
+    "workbench": {
+      "no": "",
+      "name": "个人工作台",
+      "code": "AUTH",
+      "icon": "star",
+      "page": "工作台首页",
+      "desc": "待办中心与消息中心（AUTH-004）"
+    },
+    "workbenchTodos": {
+      "no": "",
+      "name": "个人工作台",
+      "code": "AUTH",
+      "icon": "star",
+      "page": "待办中心",
+      "desc": "全部待办 · 筛选与处理闭环"
+    },
+    "workbenchMsgs": {
+      "no": "",
+      "name": "个人工作台",
+      "code": "AUTH",
+      "icon": "star",
+      "page": "消息中心",
+      "desc": "站内信 · 已读未读与来源跳转"
+    },
+    "authMgmt": {
+      "no": "01",
+      "name": "权限管理",
+      "code": "AUTH",
+      "icon": "shield",
+      "page": "权限管理",
+      "desc": "钉钉组织同步与岗位-角色供给规则（AUTH-002/003 · ADR-IMS-008）",
+      "navParent": true
+    },
+    "authOrg": {
+      "no": "01",
+      "name": "组织架构同步",
+      "code": "AUTH",
+      "icon": "people",
+      "page": "组织架构同步",
+      "parent": "权限管理",
+      "desc": "AUTH-002 · 人员/事件/对账 · GET /auth/org/*"
+    },
+    "authPosition": {
+      "no": "01",
+      "name": "岗位-角色供给规则",
+      "code": "AUTH",
+      "icon": "shield",
+      "page": "岗位-角色供给规则",
+      "parent": "权限管理",
+      "desc": "AUTH-003 · 岗位→角色自动供给 · 自动建角色护栏 · ADR-IMS-008"
+    },
+    "sysMgmt": {
+      "no": "01",
+      "name": "系统管理",
+      "code": "SYS",
+      "icon": "db",
+      "page": "系统管理",
+      "desc": "SYS-001～007 · OPS M9 同构迁入（走查 #15）",
+      "navParent": true
+    },
+    "sysUser": {
+      "no": "01",
+      "name": "用户",
+      "code": "SYS",
+      "icon": "user",
+      "page": "用户管理",
+      "parent": "系统管理",
+      "desc": "SYS-001 · system_users.id 只读 · 部门树"
+    },
+    "sysRole": {
+      "no": "01",
+      "name": "角色",
+      "code": "SYS",
+      "icon": "shield",
+      "page": "角色权限",
+      "parent": "系统管理",
+      "desc": "SYS-002 · 角色=权限唯一载体 · 菜单+功能点R/W/D+数据范围+钉钉岗位 · ADR-IMS-008"
+    },
+    "sysMenu": {
+      "no": "01",
+      "name": "菜单",
+      "code": "SYS",
+      "icon": "doc",
+      "page": "菜单管理",
+      "parent": "系统管理",
+      "desc": "SYS-003 · IMS 菜单树迁入"
+    },
+    "sysDict": {
+      "no": "01",
+      "name": "字典",
+      "code": "SYS",
+      "icon": "db",
+      "page": "字典管理",
+      "parent": "系统管理",
+      "desc": "SYS-004 · 系统+业务字典合并"
+    },
+    "sysParam": {
+      "no": "01",
+      "name": "参数",
+      "code": "SYS",
+      "icon": "spark",
+      "page": "系统参数",
+      "parent": "系统管理",
+      "desc": "SYS-005 · key 不改名（jingcai/审核/AIR/钉钉）"
+    },
+    "sysLog": {
+      "no": "01",
+      "name": "日志",
+      "code": "SYS",
+      "icon": "doc",
+      "page": "操作/登录日志",
+      "parent": "系统管理",
+      "desc": "SYS-006 · 操作+登录 · IMS 新写"
+    },
+    "sysNotify": {
+      "no": "01",
+      "name": "通知",
+      "code": "SYS",
+      "icon": "bell",
+      "page": "消息通知",
+      "parent": "系统管理",
+      "desc": "SYS-007 · 站内信+钉钉 · 事件去重"
+    },
+    "sysTenant": {
+      "no": "01",
+      "name": "租户套餐",
+      "code": "SYS",
+      "icon": "shield",
+      "page": "租户套餐",
+      "parent": "系统管理",
+      "desc": "SYS-008 · system_tenant/package · ADR-IMS-007"
+    },
+    "asset": {
+      "no": "07",
+      "name": "资产管理",
+      "code": "ASSET",
+      "icon": "box",
+      "page": "资产台账",
+      "desc": "设备资产全生命周期登记与流转"
+    },
+    "master": {
+      "no": "06",
+      "name": "主数据",
+      "code": "MASTER",
+      "icon": "id",
+      "page": "主数据台账",
+      "desc": "公司 / 实名人 / 手机 / 卡，强关联选择器"
+    },
+    "acct": {
+      "no": "08",
+      "name": "账号管理",
+      "code": "ACCT",
+      "icon": "user",
+      "page": "账号台账",
+      "desc": "直播/短视频账号池统一管理与领用"
+    },
+    "cert": {
+      "no": "06",
+      "name": "证件档案",
+      "code": "CERT",
+      "icon": "id",
+      "page": "证件档案",
+      "desc": "员工证件数字化存档与水印分级查看（IA 遗留 · 入口见资源管理·证件）"
+    },
+    "corpAcct": {
+      "no": "08",
+      "name": "账号管理",
+      "code": "CORP-A",
+      "icon": "user",
+      "page": "账号管理",
+      "desc": "UX-M4 平台账号 · 按平台 L3（走查 #8）",
+      "navParent": true
+    },
+    "caWechatOfficial": {
+      "no": "08",
+      "name": "公众号",
+      "code": "CORP-A",
+      "icon": "user",
+      "page": "公众号",
+      "parent": "账号管理",
+      "desc": "P-M4-008 · platform=WECHAT_OFFICIAL"
+    },
+    "caWechatChannels": {
+      "no": "08",
+      "name": "视频号",
+      "code": "CORP-A",
+      "icon": "video",
+      "page": "视频号",
+      "parent": "账号管理",
+      "desc": "P-M4-008 · WECHAT_CHANNELS + 采集 Tab"
+    },
+    "caDouyin": {
+      "no": "08",
+      "name": "抖音",
+      "code": "CORP-A",
+      "icon": "film",
+      "page": "抖音",
+      "parent": "账号管理",
+      "desc": "P-M4-008 · DOUYIN + ADR-047 采集 Tab"
+    },
+    "caKuaishou": {
+      "no": "08",
+      "name": "快手",
+      "code": "CORP-A",
+      "icon": "film",
+      "page": "快手",
+      "parent": "账号管理",
+      "desc": "P-M4-008 · KUAISHOU"
+    },
+    "caXhs": {
+      "no": "08",
+      "name": "小红书",
+      "code": "CORP-A",
+      "icon": "book",
+      "page": "小红书",
+      "parent": "账号管理",
+      "desc": "P-M4-008 · XIAOHONGSHU"
+    },
+    "corpRes": {
+      "no": "06",
+      "name": "资源管理",
+      "code": "CORP-R",
+      "icon": "id",
+      "page": "资源管理",
+      "desc": "公司/实名人/手机卡/证件（走查 #8）",
+      "navParent": true
+    },
+    "crCompany": {
+      "no": "06",
+      "name": "公司管理",
+      "code": "CORP-R",
+      "icon": "db",
+      "page": "公司管理",
+      "parent": "资源管理",
+      "desc": "MASTER-002 · P-M4-001"
+    },
+    "crRealname": {
+      "no": "06",
+      "name": "实名人管理",
+      "code": "CORP-R",
+      "icon": "user",
+      "page": "实名人管理",
+      "parent": "资源管理",
+      "desc": "MASTER-001 · P-M4-003"
+    },
+    "crSim": {
+      "no": "06",
+      "name": "手机卡管理",
+      "code": "CORP-R",
+      "icon": "phone",
+      "page": "手机卡管理",
+      "parent": "资源管理",
+      "desc": "MASTER-004 · P-M4-006 · ADR-074"
+    },
+    "crCert": {
+      "no": "06",
+      "name": "证件管理",
+      "code": "CORP-R",
+      "icon": "shield",
+      "page": "证件管理",
+      "parent": "资源管理",
+      "desc": "CERT-001 · 索引入口 P-R4"
+    },
+    "corpDev": {
+      "no": "07",
+      "name": "设备管理",
+      "code": "CORP-D",
+      "icon": "box",
+      "page": "设备管理",
+      "desc": "办公/直播/手机设备（走查 #8）",
+      "navParent": true
+    },
+    "cdOffice": {
+      "no": "07",
+      "name": "办公设备管理",
+      "code": "CORP-D",
+      "icon": "box",
+      "page": "办公设备管理",
+      "parent": "设备管理",
+      "desc": "ASSET-001 · dict_asset_type=OFFICE"
+    },
+    "cdLive": {
+      "no": "07",
+      "name": "直播设备管理",
+      "code": "CORP-D",
+      "icon": "video",
+      "page": "直播设备管理",
+      "parent": "设备管理",
+      "desc": "ASSET-001 · dict_asset_type LIVE+SHOOT"
+    },
+    "cdPhone": {
+      "no": "07",
+      "name": "手机设备管理",
+      "code": "CORP-D",
+      "icon": "phone",
+      "page": "手机设备管理",
+      "parent": "设备管理",
+      "desc": "MASTER-003 · P-M4-005 oa_phone"
+    },
+    "ipg": {
+      "no": "19a",
+      "name": "IP 组",
+      "code": "IPG",
+      "icon": "people",
+      "page": "IP 组运营",
+      "desc": "大组小组、成员岗位、作者与账号绑定"
+    },
+    "live": {
+      "no": "10",
+      "name": "直播管理",
+      "code": "LIVE",
+      "icon": "video",
+      "page": "直播管理",
+      "desc": "场次中心：列表→详情 Tab（数据/风控/下播）"
+    },
+    "content": {
+      "no": "15",
+      "name": "内容生产",
+      "code": "CONTENT",
+      "icon": "film",
+      "page": "内容生产",
+      "desc": "OPS M2 主路径 · 侧栏二级目录（与 10 直播管理并列，ADR-IMS-003）",
+      "navParent": true
+    },
+    "contentSop": {
+      "no": "15",
+      "name": "SOP管理",
+      "code": "CONTENT",
+      "icon": "flow",
+      "page": "SOP 管理",
+      "parent": "内容生产",
+      "desc": "SOP 模板列表与 DAG 编排（CONTENT-100/001 · UX P-M2-001/002）"
+    },
+    "contentPlan": {
+      "no": "15",
+      "name": "计划管理",
+      "code": "CONTENT",
+      "icon": "cal",
+      "page": "计划管理",
+      "parent": "内容生产",
+      "desc": "计划向导/列表（CONTENT-102 · P-M2-011）"
+    },
+    "contentWork": {
+      "no": "15",
+      "name": "工作任务登记",
+      "code": "CONTENT",
+      "icon": "doc",
+      "page": "工作任务登记",
+      "parent": "内容生产",
+      "desc": "作者×赛事矩阵 · 确认出任务/撤回（CONTENT-104/105）"
+    },
+    "contentTask": {
+      "no": "15",
+      "name": "我的任务",
+      "code": "CONTENT",
+      "icon": "check",
+      "page": "我的任务",
+      "parent": "内容生产",
+      "desc": "默认「我的任务」· 执行/提交审核/完成门禁（CONTENT-103 · P-M2-003）"
+    },
+    "contentTaskExecute": {
+      "no": "15",
+      "name": "任务执行",
+      "code": "CONTENT",
+      "icon": "check",
+      "page": "任务执行",
+      "parent": "内容生产",
+      "desc": "P-M2-012 全页 · /ims/content/task/:id/execute（隐藏路由 · ADR-IMS-003 §5）"
+    },
+    "contentList": {
+      "no": "15",
+      "name": "内容管理",
+      "code": "CONTENT",
+      "icon": "film",
+      "page": "内容管理",
+      "parent": "内容生产",
+      "desc": "内容 CRUD · 玩法区 · AI 排版 · AI 视频脚本/成片（CONTENT-106/107）"
+    },
+    "contentLayout": {
+      "no": "15",
+      "name": "公推模板库",
+      "code": "CONTENT",
+      "icon": "book",
+      "page": "公推模板库",
+      "parent": "内容生产",
+      "desc": "版式模板导入/编辑/预览（CONTENT-107 · P-M2-013~015）"
+    },
+    "contentReview": {
+      "no": "15",
+      "name": "内容审核",
+      "code": "CONTENT",
+      "icon": "shield",
+      "page": "内容审核",
+      "parent": "内容生产",
+      "desc": "一级/二级审核队列（CONTENT-005 · P-M2-008）"
+    },
+    "contentPublish": {
+      "no": "15",
+      "name": "发布管理",
+      "code": "CONTENT",
+      "icon": "send",
+      "page": "发布管理",
+      "parent": "内容生产",
+      "desc": "发布单 / 回填 / 督办（CONTENT-006 · PUB-R2/R3）"
+    },
+    "collect": {
+      "no": "16",
+      "name": "数据采集",
+      "code": "COLLECT",
+      "icon": "search",
+      "page": "数据采集",
+      "desc": "OPS M8/M10 · 侧栏二级（任务/日志/外部/元数据/阈值）",
+      "navParent": true
+    },
+    "collectTask": {
+      "no": "16",
+      "name": "采集任务",
+      "code": "COLLECT",
+      "icon": "check",
+      "page": "采集任务",
+      "parent": "数据采集",
+      "desc": "UX-M10 P-M10-001/002 · Channel-A/B/C/D"
+    },
+    "collectLog": {
+      "no": "16",
+      "name": "采集日志",
+      "code": "COLLECT",
+      "icon": "doc",
+      "page": "采集日志",
+      "parent": "数据采集",
+      "desc": "UX-M10 P-M10-003 · typeResults 详情"
+    },
+    "collectExtAccount": {
+      "no": "16",
+      "name": "竞品账号配置",
+      "code": "COLLECT",
+      "icon": "user",
+      "page": "竞品账号配置",
+      "parent": "数据采集",
+      "desc": "UX-M8 外部账号 · 行内不嵌 Cookie（ADR-052）"
+    },
+    "collectExtKeyword": {
+      "no": "16",
+      "name": "竞品关键字配置",
+      "code": "COLLECT",
+      "icon": "search",
+      "page": "竞品关键字配置",
+      "parent": "数据采集",
+      "desc": "UX-M8 关键词配置 · 独立路由"
+    },
+    "collectMetadata": {
+      "no": "16",
+      "name": "元数据维护",
+      "code": "COLLECT",
+      "icon": "db",
+      "page": "元数据维护",
+      "parent": "数据采集",
+      "desc": "UX-M8 FR-M8-008 · 供 BI0 自定义查询消费"
+    },
+    "collectThreshold": {
+      "no": "16",
+      "name": "阈值规则",
+      "code": "COLLECT",
+      "icon": "warn",
+      "page": "阈值规则",
+      "parent": "数据采集",
+      "desc": "UX-M8 阈值 · ALERT/内部分析/竞品分析 引用"
+    },
+    "intAnalysis": {
+      "no": "18b",
+      "name": "内部分析",
+      "code": "INT",
+      "icon": "chart",
+      "page": "内部分析",
+      "desc": "OPS M1 内部作品/账号 + M7 阈值标签（走查 #7）",
+      "navParent": true
+    },
+    "intWork": {
+      "no": "18b",
+      "name": "内部作品",
+      "code": "INT",
+      "icon": "film",
+      "page": "内部作品",
+      "parent": "内部分析",
+      "desc": "Tab：全部/爆款/低分 · internal-content"
+    },
+    "intAccount": {
+      "no": "18b",
+      "name": "内部账号",
+      "code": "INT",
+      "icon": "user",
+      "page": "内部账号",
+      "parent": "内部分析",
+      "desc": "Tab：全部/高粉/低粉 · account-analysis"
+    },
+    "compAnalysis": {
+      "no": "18a",
+      "name": "竞品分析",
+      "code": "COMPA",
+      "icon": "target",
+      "page": "竞品分析",
+      "desc": "M7 监测 + V3 竞品库（走查 #6/#9）",
+      "navParent": true
+    },
+    "compWork": {
+      "no": "18a",
+      "name": "竞品作品",
+      "code": "COMPA",
+      "icon": "film",
+      "page": "竞品作品",
+      "parent": "竞品分析",
+      "desc": "Tab：全部/爆款/低分 · oa_external_work"
+    },
+    "compAccount": {
+      "no": "18a",
+      "name": "竞品账号",
+      "code": "COMPA",
+      "icon": "user",
+      "page": "竞品账号",
+      "parent": "竞品分析",
+      "desc": "Tab：全部/高粉/低粉 · oa_external_account"
+    },
+    "comp": {
+      "no": "18a",
+      "name": "竞品库",
+      "code": "COMP",
+      "icon": "db",
+      "page": "竞品库",
+      "parent": "竞品分析",
+      "desc": "V3 COMP-003 · BR-202 审核入库 · /ims/comp-analysis/library"
+    },
+    "mon": {
+      "no": "18",
+      "name": "作品监测",
+      "code": "MON",
+      "icon": "target",
+      "page": "作品监测",
+      "desc": "IP 主题/行业（内部→内部分析 · 外部→竞品分析）"
+    },
+    "trainMgmt": {
+      "no": "02",
+      "name": "培训管理",
+      "code": "TRAIN",
+      "icon": "book",
+      "page": "培训管理",
+      "desc": "岗位资料库 · 学习任务 · 完成率（走查 #11 · V2 TRAIN）",
+      "navParent": true
+    },
+    "trainMaterial": {
+      "no": "02",
+      "name": "培训资料库",
+      "code": "TRAIN",
+      "icon": "db",
+      "page": "岗位资料库",
+      "parent": "培训管理",
+      "desc": "TRAIN-001 · /ims/train/material · 按岗位维护 DOC/VIDEO/LINK"
+    },
+    "trainTask": {
+      "no": "02",
+      "name": "学习任务",
+      "code": "TRAIN",
+      "icon": "check",
+      "page": "学习任务管理",
+      "parent": "培训管理",
+      "desc": "TRAIN-002 · 资料多选 · AI 出卷 ADR-004"
+    },
+    "trainStat": {
+      "no": "02",
+      "name": "完成率统计",
+      "code": "TRAIN",
+      "icon": "chart",
+      "page": "培训统计看板",
+      "parent": "培训管理",
+      "desc": "TRAIN-003 · BR-102 完成率 / 逾期督办"
+    },
+    "meet": {
+      "no": "03",
+      "name": "会议",
+      "code": "MEET",
+      "icon": "cal",
+      "page": "会议管理",
+      "desc": "会议室预约与会议纪要（MEET-004 · 与日报中心分路由）"
+    },
+    "dailyCenter": {
+      "no": "03",
+      "name": "日报中心",
+      "code": "MEET",
+      "icon": "doc",
+      "page": "日报中心",
+      "desc": "MEET-001～003 工作日报 · 走查 #10 与 09 分离",
+      "navParent": true
+    },
+    "dailyMine": {
+      "no": "03",
+      "name": "我的日报",
+      "code": "MEET",
+      "icon": "doc",
+      "page": "我的日报",
+      "parent": "日报中心",
+      "desc": "P2 · /ims/meet/daily 本人列表"
+    },
+    "dailyTeam": {
+      "no": "03",
+      "name": "团队日报",
+      "code": "MEET",
+      "icon": "people",
+      "page": "团队日报",
+      "parent": "日报中心",
+      "desc": "P2 · 下属/本部门列表"
+    },
+    "dailyReview": {
+      "no": "03",
+      "name": "待我审阅",
+      "code": "MEET",
+      "icon": "check",
+      "page": "待我审阅",
+      "parent": "日报中心",
+      "desc": "MEET-002 审阅队列"
+    },
+    "dailyStat": {
+      "no": "03",
+      "name": "提交率统计",
+      "code": "MEET",
+      "icon": "chart",
+      "page": "提交率统计",
+      "parent": "日报中心",
+      "desc": "MEET-003 · BR-103/104"
+    },
+    "reportOps": {
+      "no": "09",
+      "name": "数据上报",
+      "code": "REPORT",
+      "icon": "doc",
+      "page": "数据上报",
+      "desc": "REPORT-001～004 模板填报 · 非 MEET 日报",
+      "navParent": true
+    },
+    "reportTpl": {
+      "no": "09",
+      "name": "上报模板",
+      "code": "REPORT",
+      "icon": "doc",
+      "page": "上报模板",
+      "parent": "数据上报",
+      "desc": "REPORT-001 · /admin-api/ims/report/template"
+    },
+    "reportSub": {
+      "no": "09",
+      "name": "填报单管理",
+      "code": "REPORT",
+      "icon": "check",
+      "page": "填报单管理",
+      "parent": "数据上报",
+      "desc": "REPORT-002/003 · AuthorSelect+AccountSelect 必填"
+    },
+    "reportRate": {
+      "no": "09",
+      "name": "完成率统计",
+      "code": "REPORT",
+      "icon": "chart",
+      "page": "完成率统计",
+      "parent": "数据上报",
+      "desc": "REPORT-004 · BR-106"
+    },
+    "flow": {
+      "no": "14",
+      "name": "工作流",
+      "code": "FLOW",
+      "icon": "flow",
+      "page": "流程管理",
+      "desc": "审批流程发起、流转与催办"
+    },
+    "finMgmt": {
+      "no": "11",
+      "name": "场次财务",
+      "code": "FIN",
+      "icon": "yuan",
+      "page": "场次财务",
+      "desc": "FIN-001～004 + DC-002 利润反查",
+      "navParent": true
+    },
+    "finCost": {
+      "no": "11",
+      "name": "成本核算",
+      "code": "FIN",
+      "icon": "yuan",
+      "page": "成本核算",
+      "parent": "场次财务",
+      "desc": "FIN 结算/成本/分成 · /ims/fin/*"
+    },
+    "finProfit": {
+      "no": "11",
+      "name": "利润核算",
+      "code": "FIN",
+      "icon": "chart",
+      "page": "利润核算",
+      "parent": "场次财务",
+      "desc": "FIN-002 · GET /fin/profit/list · 结算概览卡"
+    },
+    "finProfitTrace": {
+      "no": "11",
+      "name": "利润反查",
+      "code": "FIN",
+      "icon": "db",
+      "page": "利润反查",
+      "parent": "场次财务",
+      "desc": "DC-002 · /ims/fin/profit-trace · GET /dc/profit-trace/*"
+    },
+    "fin": {
+      "no": "11",
+      "name": "成本核算",
+      "code": "FIN",
+      "icon": "yuan",
+      "page": "成本核算",
+      "parent": "场次财务",
+      "desc": "兼容键 → finCost"
+    },
+    "cost": {
+      "no": "08b",
+      "name": "账号财务",
+      "code": "COST",
+      "icon": "yuan",
+      "page": "账号成本与 ROI",
+      "desc": "采购/过程成本；营收来自 Football 订单 WebAPI"
+    },
+    "perfCenter": {
+      "no": "05",
+      "name": "绩效考核",
+      "code": "PERF",
+      "icon": "chart",
+      "page": "绩效考核",
+      "desc": "考核方案 → 执行考核 → 考核结果（走查 #12 · OPS M3）",
+      "navParent": true
+    },
+    "perfScheme": {
+      "no": "05",
+      "name": "考核方案",
+      "code": "PERF",
+      "icon": "doc",
+      "page": "考核方案",
+      "parent": "绩效考核",
+      "desc": "FR-M3-001 · /ims/perf/scheme · OPS 考核模板"
+    },
+    "perfExec": {
+      "no": "05",
+      "name": "执行考核",
+      "code": "PERF",
+      "icon": "check",
+      "page": "执行考核",
+      "parent": "绩效考核",
+      "desc": "FR-M3-002 · /ims/perf/execution · 算分/调整/确认"
+    },
+    "perfResult": {
+      "no": "05",
+      "name": "考核结果",
+      "code": "PERF",
+      "icon": "chart",
+      "page": "考核结果",
+      "parent": "绩效考核",
+      "desc": "FR-M3-003 · /ims/perf/result · 排名与 PIP"
+    },
+    "perfExam": {
+      "no": "05",
+      "name": "在线考试",
+      "code": "PERF",
+      "icon": "doc",
+      "page": "在线考试",
+      "parent": "绩效考核",
+      "desc": "PERF-003 · IMS 自建考试域"
+    },
+    "biReportMgmt": {
+      "no": "17b",
+      "name": "数据报表",
+      "code": "BI",
+      "icon": "doc",
+      "page": "数据报表",
+      "desc": "走查 #21 · 侧栏 2 叶（报表管理 + 报表中心）· 设计/大屏/订阅为隐藏路由",
+      "navParent": true
+    },
+    "biList": {
+      "no": "17b",
+      "name": "报表管理",
+      "code": "BI",
+      "icon": "doc",
+      "page": "报表管理",
+      "parent": "数据报表",
+      "desc": "报表/大屏统一管理 · 编辑/新增进入设计器（BI-001/003）"
+    },
+    "biDesign": {
+      "no": "17b",
+      "name": "报表设计",
+      "code": "BI",
+      "icon": "spark",
+      "page": "报表设计器",
+      "parent": "数据报表",
+      "desc": "BI-001 · 隐藏路由 /ims/bi/report/designer（由报表管理进入）"
+    },
+    "bi0Report": {
+      "no": "17a",
+      "name": "报表中心",
+      "code": "BI0",
+      "icon": "doc",
+      "page": "报表中心",
+      "parent": "数据报表",
+      "desc": "M6 八张标准报表 · 统一筛选条（bi0Standard 兼容）"
+    },
+    "bi0Screen": {
+      "no": "17a",
+      "name": "大屏配置",
+      "code": "BI0",
+      "icon": "chart",
+      "page": "大屏配置",
+      "parent": "数据报表",
+      "desc": "隐藏路由 · 大屏即报表类型 dashboard（bi0ScreenConfig 兼容）"
+    },
+    "biMetricMgmt": {
+      "no": "17a",
+      "name": "数据指标",
+      "code": "BI0",
+      "icon": "chart",
+      "page": "数据指标",
+      "desc": "OPS M6 指标域 · 走查 #17",
+      "navParent": true
+    },
+    "bi0Metric": {
+      "no": "17a",
+      "name": "指标管理",
+      "code": "BI0",
+      "icon": "chart",
+      "page": "指标管理",
+      "parent": "数据指标",
+      "desc": "FR-M6-001 · /ims/bi/metric"
+    },
+    "bi0Analysis": {
+      "no": "17a",
+      "name": "指标分析",
+      "code": "BI0",
+      "icon": "chart",
+      "page": "指标分析",
+      "parent": "数据指标",
+      "desc": "FR-M6-001 分析视图 · P2"
+    },
+    "biAnalysisMgmt": {
+      "no": "17",
+      "name": "数据分析",
+      "code": "BI",
+      "icon": "chart",
+      "page": "数据分析",
+      "desc": "走查 #17/#18 · 侧栏 5 叶",
+      "navParent": true
+    },
+    "queryTool": {
+      "no": "17c",
+      "name": "查询工具",
+      "code": "QT",
+      "icon": "search",
+      "page": "查询工具",
+      "parent": "数据分析",
+      "desc": "QT-001 · /ims/analysis/query-tool · DRILL|TRACE"
+    },
+    "biPreview": {
+      "no": "17b",
+      "name": "预览与下钻",
+      "code": "BI",
+      "icon": "chart",
+      "page": "预览与下钻",
+      "parent": "数据分析",
+      "desc": "BI-002 · 单元格穿透"
+    },
+    "dc": {
+      "no": "12",
+      "name": "穿透查询",
+      "code": "DC",
+      "icon": "db",
+      "page": "穿透查询",
+      "parent": "数据分析",
+      "desc": "DC-001 · /ims/dc/trace · 页内无 Tab"
+    },
+    "eff": {
+      "no": "19b",
+      "name": "组织人效",
+      "code": "EFF",
+      "icon": "people",
+      "page": "组织人效",
+      "parent": "数据分析",
+      "desc": "EFF · 页内 Tab 归属/盘点/看板"
+    },
+    "bi0Query": {
+      "no": "17a",
+      "name": "自定义查询",
+      "code": "BI0",
+      "icon": "search",
+      "page": "自定义查询",
+      "parent": "数据分析",
+      "desc": "FR-M6-005 · /ims/bi/query"
+    },
+    "biShare": {
+      "no": "17b",
+      "name": "订阅与分享",
+      "code": "BI",
+      "icon": "bell",
+      "page": "订阅与分享",
+      "desc": "BI-003 · 无侧栏 · go(biShare)→报表管理 Tab"
+    },
+    "effRelation": {
+      "no": "19b",
+      "name": "归属关系",
+      "code": "EFF",
+      "icon": "user",
+      "page": "归属关系",
+      "parent": "数据分析",
+      "desc": "EFF-001 · 兼容键 → eff Tab"
+    },
+    "effInventory": {
+      "no": "19b",
+      "name": "人效盘点",
+      "code": "EFF",
+      "icon": "check",
+      "page": "人效盘点",
+      "parent": "数据分析",
+      "desc": "EFF-002 · 兼容键 → eff Tab"
+    },
+    "effBoard": {
+      "no": "19b",
+      "name": "人效看板",
+      "code": "EFF",
+      "icon": "chart",
+      "page": "人效看板",
+      "parent": "数据分析",
+      "desc": "P3 · 兼容键 → eff Tab"
+    },
+    "alertMgmt": {
+      "no": "13",
+      "name": "预警中心",
+      "code": "ALERT",
+      "icon": "bell",
+      "page": "预警中心",
+      "desc": "ALERT-001~004 · 走查 #17",
+      "navParent": true
+    },
+    "alertRule": {
+      "no": "13",
+      "name": "预警规则",
+      "code": "ALERT",
+      "icon": "shield",
+      "page": "预警规则",
+      "parent": "预警中心",
+      "desc": "ALERT-001 · 阈值只读引用 COLLECT"
+    },
+    "alertLive": {
+      "no": "13",
+      "name": "实时预警",
+      "code": "ALERT",
+      "icon": "bell",
+      "page": "实时预警",
+      "parent": "预警中心",
+      "desc": "ALERT-002/003 + 处置记录 Tab"
+    },
+    "alertHistory": {
+      "no": "13",
+      "name": "处置记录",
+      "code": "ALERT",
+      "icon": "doc",
+      "page": "处置记录",
+      "parent": "预警中心",
+      "desc": "兼容键 → alertLive Tab"
+    },
+    "alertDedup": {
+      "no": "13",
+      "name": "去重合并",
+      "code": "ALERT",
+      "icon": "warn",
+      "page": "去重合并",
+      "parent": "预警中心",
+      "desc": "ALERT-004 · 兼容键 → alertLive Tab"
+    },
+    "airSkill": {
+      "no": "20",
+      "name": "技能库",
+      "code": "AIR",
+      "icon": "spark",
+      "page": "技能库",
+      "desc": "AI 技能登记、审核、版本与授权分发"
+    },
+    "airExpert": {
+      "no": "20",
+      "name": "专家库",
+      "code": "AIR",
+      "icon": "star",
+      "page": "专家库",
+      "desc": "专家包组装（Prompt+技能+知识）与授权"
+    },
+    "airKb": {
+      "no": "20",
+      "name": "知识库",
+      "code": "AIR",
+      "icon": "book",
+      "page": "知识库",
+      "desc": "知识分类/入库审批/密级管理/文件上传/系统资料转入（仅文件管理，不含检索）"
+    },
+    "airKey": {
+      "no": "20",
+      "name": "Key 管理",
+      "code": "AIR",
+      "icon": "shield",
+      "page": "Key 管理",
+      "desc": "人员 API Key 生成、生命周期与白名单"
+    },
+    "airCfg": {
+      "no": "20",
+      "name": "模型与提示词",
+      "code": "AIR",
+      "icon": "spark",
+      "page": "模型连接 / 提示词",
+      "desc": "OPS AI 模型与提示词收编；禁止两套 Key"
+    },
+    "airLog": {
+      "no": "20",
+      "name": "审计监控",
+      "code": "AIR",
+      "icon": "chart",
+      "page": "审计监控",
+      "desc": "MCP 调用审计与用量统计"
+    },
+    "qtPub_QT-TPL-004": {
+      "no": "17c",
+      "name": "财务穿透 · 场次成本",
+      "code": "QT",
+      "icon": "search",
+      "page": "财务穿透 · 场次成本",
+      "parent": "数据分析",
+      "desc": "MenuSeed · QT-TPL-004"
+    },
+    "trainCenter": {
+      "no": "02",
+      "name": "培训管理",
+      "code": "TRAIN",
+      "icon": "book",
+      "page": "培训管理",
+      "desc": "岗位资料库 · 学习任务 · 完成率",
+      "navParent": true
+    }
+  },
+  "groups": [
+    [
+      "工作台",
+      [
+        "home",
+        "workbench"
+      ]
+    ],
+    [
+      "日常运营",
+      [
+        "ipg",
+        "live",
+        {
+          "type": "sub",
+          "id": "content",
+          "label": "内容生产",
+          "children": [
+            "contentSop",
+            "contentPlan",
+            "contentWork",
+            "contentTask",
+            "contentList",
+            "contentLayout",
+            "contentReview",
+            "contentPublish"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "collect",
+          "label": "数据采集",
+          "children": [
+            "collectTask",
+            "collectLog",
+            "collectExtAccount",
+            "collectExtKeyword",
+            "collectMetadata",
+            "collectThreshold"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "intAnalysis",
+          "label": "内部分析",
+          "children": [
+            "intWork",
+            "intAccount"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "compAnalysis",
+          "label": "竞品分析",
+          "children": [
+            "compWork",
+            "compAccount",
+            "comp"
+          ]
+        },
+        "mon"
+      ]
+    ],
+    [
+      "公司资产",
+      [
+        {
+          "type": "sub",
+          "id": "corpAcct",
+          "label": "账号管理",
+          "children": [
+            "caWechatOfficial",
+            "caWechatChannels",
+            "caDouyin",
+            "caKuaishou",
+            "caXhs"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "corpRes",
+          "label": "资源管理",
+          "children": [
+            "crCompany",
+            "crRealname",
+            "crSim",
+            "crCert"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "corpDev",
+          "label": "设备管理",
+          "children": [
+            "cdOffice",
+            "cdLive",
+            "cdPhone"
+          ]
+        }
+      ]
+    ],
+    [
+      "财务",
+      [
+        "cost",
+        {
+          "type": "sub",
+          "id": "finMgmt",
+          "label": "场次财务",
+          "children": [
+            "finCost",
+            "finProfit",
+            "finProfitTrace"
+          ]
+        }
+      ]
+    ],
+    [
+      "协同与成长",
+      [
+        "meet",
+        {
+          "type": "sub",
+          "id": "dailyCenter",
+          "label": "日报中心",
+          "children": [
+            "dailyMine",
+            "dailyTeam",
+            "dailyReview",
+            "dailyStat"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "reportOps",
+          "label": "数据上报",
+          "children": [
+            "reportTpl",
+            "reportSub",
+            "reportRate"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "trainCenter",
+          "label": "培训管理",
+          "children": [
+            "trainMaterial",
+            "trainTask",
+            "trainStat"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "perfCenter",
+          "label": "绩效考核",
+          "children": [
+            "perfScheme",
+            "perfExec",
+            "perfResult",
+            "perfExam"
+          ]
+        },
+        "flow"
+      ]
+    ],
+    [
+      "数据决策",
+      [
+        {
+          "type": "sub",
+          "id": "biReportMgmt",
+          "label": "数据报表",
+          "children": [
+            "biList",
+            "bi0Report"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "biMetricMgmt",
+          "label": "数据指标",
+          "children": [
+            "bi0Metric",
+            "bi0Analysis"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "biAnalysisMgmt",
+          "label": "数据分析",
+          "children": [
+            "queryTool",
+            "bi0Query",
+            "biPreview",
+            "dc",
+            "eff"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "alertMgmt",
+          "label": "预警中心",
+          "children": [
+            "alertRule",
+            "alertLive"
+          ]
+        }
+      ]
+    ],
+    [
+      "AI 资源中心",
+      [
+        "airSkill",
+        "airExpert",
+        "airKb",
+        "airCfg"
+      ]
+    ],
+    [
+      "系统与权限",
+      [
+        {
+          "type": "sub",
+          "id": "authMgmt",
+          "label": "权限管理",
+          "children": [
+            "authOrg",
+            "authPosition"
+          ]
+        },
+        {
+          "type": "sub",
+          "id": "sysMgmt",
+          "label": "系统管理",
+          "children": [
+            "sysUser",
+            "sysRole",
+            "sysMenu",
+            "sysDict",
+            "sysParam",
+            "sysLog",
+            "sysNotify",
+            "sysTenant"
+          ]
+        }
+      ]
+    ]
+  ],
+  "icons": {
+    "star": "M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z",
+    "shield": "M12 3l7 3v6c0 4.4-2.9 7.6-7 9-4.1-1.4-7-4.6-7-9V6z",
+    "box": "M3 8l9-5 9 5v8l-9 5-9-5zM3 8l9 5 9-5M12 13v8",
+    "user": "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM5 20c1.2-3.2 3.7-5 7-5s5.8 1.8 7 5",
+    "id": "M3 6h18v12H3zM7 15a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM11 12h6M11 15h4",
+    "video": "M15 10l6-3.5v11L15 14zM3 7h12v10H3z",
+    "film": "M4 4h16v16H4zM4 9h16M4 15h16M9 4v16M15 4v16",
+    "book": "M6 3h9a3 3 0 0 1 3 3v15H9a3 3 0 0 1-3-3zM18 6v12",
+    "cal": "M5 5h14v16H5zM5 9h14M9 3v4M15 3v4",
+    "doc": "M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6",
+    "flow": "M7 4h10v4H7zM7 16h10v4H7zM12 8v4M12 12l-3 3M12 12l3 3",
+    "yuan": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8.5 7l3.5 5 3.5-5M9 12.5h6M9 15.5h6",
+    "chart": "M5 20V10M12 20V4M19 20v-7",
+    "bell": "M18 15V10a6 6 0 1 0-12 0v5l-2 3h16zM10 21h4",
+    "target": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
+    "db": "M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
+    "people": "M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20c1-3 3.5-4.5 6.5-4.5s5.5 1.5 6.5 4.5M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 15.8c1.5.7 2.5 2 3 4.2",
+    "search": "M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM16.5 16.5L21 21",
+    "help": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 1 1 4 2c-1 .8-2 1.2-2 2.5M12 17h.01",
+    "chev": "M6 9l6 6 6-6",
+    "right": "M9 6l6 6-6 6",
+    "x": "M6 6l12 12M18 6L6 18",
+    "clock": "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2",
+    "check": "M5 12l5 5 9-11",
+    "plus": "M12 5v14M5 12h14",
+    "arrow": "M5 12h14M13 6l6 6-6 6",
+    "warn": "M12 3l9 17H3zM12 10v4M12 17h.01",
+    "spark": "M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"
+  }
+}

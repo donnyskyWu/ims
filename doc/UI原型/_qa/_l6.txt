@@ -1,0 +1,27 @@
+2323 | const MEETS = [
+2334 | PAGES.meet = function () {
+2346 | const list = qFilter(MEETS, function (m) { return [m.id, m.topic, m.org, m.room]; }, function (m) { 
+2352 | '<td><span class="btn btn-sec btn-sm" onclick="toast(\'会议详情 / 纪要 · 原型示意\',\'success\')">查看</span></t
+2354 | const tblEl = tbl(['会议编号', '主题', '组织者', '时间', '时长', '会议室', '参会人数', '纪要状态', '操作'], rows);
+2379 | const no = 'MT20260912-' + String(MEETS.length + 1).padStart(2, '0');
+3144 | PAGES.fin = function () {
+3146 | '<button class="btn btn-pri" onclick="finAdd()">' + ic('plus', 15) + '发起结算</button>');
+3182 | function finAdd() {
+3195 | '<button class="btn btn-sec" onclick="closeDrawer()">取消</button><button class="btn btn-pri" onclick=
+3209 | function finAddSubmit() {
+3798 | const COMPS = [
+3808 | PAGES.comp = function () {
+3809 | let h = pgHead('comp', '<button class="btn btn-sec" onclick="exportX(this,\'竞品对比报告\',COMPS.length)">
+3810 | '<button class="btn btn-pri" onclick="compAdd()">' + ic('plus', 15) + '新增竞品</button>');
+3812 | COMPS.forEach(function (c, i) {
+3813 | h += '<div class="card hov" onclick="compDetail(' + i + ')"><div class="rowline" style="margin-botto
+3825 | function compDetail(i) {
+3826 | const c = COMPS[i];
+3847 | const c = COMPS[i];
+3849 | confirmDlg('加入对比篮？', '竞品「' + c.name + '」（' + c.plat + ' · 粉丝 ' + c.fans + '）将加入对比篮，当前对比篮 ' + COMP_BA
+3855 | function compAdd() {
+3864 | '<button class="btn btn-sec" onclick="closeDrawer()">取消</button><button class="btn btn-pri" onclick=
+3866 | function compAddSubmit() {
+3877 | let h = pgHead('dc', '<button class="btn btn-sec" onclick="toast(\'数据字典 · 原型示意\',\'success\')">数据字典<
+3906 | h += '<g style="cursor:pointer" onclick="dcDrill(\'' + n[1] + '\')">' +
+3929 | function dcDrill(n) {

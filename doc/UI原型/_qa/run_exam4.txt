@@ -1,0 +1,4 @@
+FAIL: B2 作答态初始化
+FAIL: B4 判分态渲染解析
+FAIL: F3 提示简答待阅
+PASS=24 FAIL=3

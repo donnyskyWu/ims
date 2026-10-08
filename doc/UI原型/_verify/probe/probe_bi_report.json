@@ -1,0 +1,264 @@
+{
+  "biList": {
+    "page": "biList",
+    "treeItems": 8,
+    "cards": 7,
+    "thumbs": 7,
+    "viewSwitch": 2,
+    "len": 13319
+  },
+  "biListListView": {
+    "rows": 7,
+    "heads": [
+      "缩略图",
+      "报表名称 / 编号",
+      "类型",
+      "可见范围",
+      "数据集 / 版本",
+      "状态",
+      "创建人",
+      "更新时间",
+      "操作"
+    ]
+  },
+  "biListCat": {
+    "cards": 4
+  },
+  "biDesign": {
+    "page": "biDesign",
+    "compCells": 21,
+    "draggable": 18,
+    "canvas": true,
+    "compsOnCanvas": 0,
+    "layerItems": 0,
+    "propSecs": 1,
+    "cols": "198px 746px 272px",
+    "len": 8457
+  },
+  "biDesignSeeded": {
+    "name": "未命名报表",
+    "comps": 7,
+    "compsOnCanvas": 7,
+    "layerItems": 7,
+    "svgInCanvas": 2,
+    "kpiVals": 1
+  },
+  "biAddComp": {
+    "before": 7,
+    "after": 8,
+    "onCanvas": 8,
+    "layers": 8
+  },
+  "biSelect": {
+    "sel": "c008",
+    "selectedOnCanvas": 1,
+    "propSecs": [
+      "📝 基础属性",
+      "📊 数据源配置",
+      "🔗 交互配置"
+    ],
+    "hasX": true,
+    "selLayer": 1
+  },
+  "biDelComp": {
+    "before": 8,
+    "after": 7
+  },
+  "biUndo": {
+    "before": 7,
+    "after": 8
+  },
+  "biSave": {
+    "ver": 8,
+    "st": "PUBLISHED",
+    "comps": 12
+  },
+  "biRealDrop": {
+    "before": 8,
+    "after": 9,
+    "lastType": "line",
+    "lastX": 330,
+    "lastY": 378,
+    "onCanvas": 9
+  },
+  "biDragMove": {
+    "x0": 4,
+    "y0": 4,
+    "x1": 124,
+    "y1": 84,
+    "moved": true
+  },
+  "biPropSet": {
+    "x": 60,
+    "title": "GMV 合计",
+    "nodeLeft": "60px",
+    "nodeTitle": "🔢 GMV 合计"
+  },
+  "biPreview": {
+    "page": "biPreview",
+    "filterBar": true,
+    "kpis": 3,
+    "charts": 2,
+    "detailRows": 4,
+    "statusText": "数据截至 2026-10-03 14:00耗时 856ms · 缓存命中 ✓（V3-B3 · TTL 15 分钟）结果 6 行 · 上限 1000 行未截断数据集 METRIC_LIB"
+  },
+  "biShare": {
+    "page": "biList",
+    "tabs": [
+      "我的订阅",
+      "分享链接",
+      "发布管理"
+    ]
+  },
+  "biShareLink": {
+    "tabs": [
+      "我的订阅",
+      "分享链接",
+      "发布管理"
+    ],
+    "tables": 2,
+    "rows": [
+      3,
+      1
+    ]
+  },
+  "biSharePub": {
+    "tables": 1,
+    "rows": 3,
+    "heads": [
+      "发布ID",
+      "访问方式",
+      "可见范围 / 权限",
+      "访问链接",
+      "密码",
+      "有效期",
+      "快照",
+      "访问次数",
+      "状态",
+      "发布人",
+      "发布时间",
+      "操作"
+    ]
+  },
+  "biPubDlg": {
+    "on": true,
+    "title": "发布配置 · 运营日报",
+    "bodyLen": 3673
+  },
+  "biSnapshotDlg": {
+    "on": true,
+    "title": "推送快照回溯 · 直播周报"
+  },
+  "biFullscreen": {
+    "exists": true,
+    "kpis": 6,
+    "svg": 2
+  },
+  "renderAll": {
+    "total": 111,
+    "bad": [],
+    "aliasCount": 25,
+    "aliased": [
+      [
+        "auth",
+        "authOrg"
+      ],
+      [
+        "asset",
+        "cdLive"
+      ],
+      [
+        "acct",
+        "caDouyin"
+      ],
+      [
+        "corpAcct",
+        "caDouyin"
+      ],
+      [
+        "corpRes",
+        "crCompany"
+      ],
+      [
+        "corpDev",
+        "cdLive"
+      ],
+      [
+        "cert",
+        "crCert"
+      ],
+      [
+        "train",
+        "trainMaterial"
+      ],
+      [
+        "fin",
+        "finCost"
+      ],
+      [
+        "alertDedup",
+        "alertLive"
+      ],
+      [
+        "alertHistory",
+        "alertLive"
+      ],
+      [
+        "biShare",
+        "biList"
+      ],
+      [
+        "effBoard",
+        "eff"
+      ],
+      [
+        "effInventory",
+        "eff"
+      ],
+      [
+        "effRelation",
+        "eff"
+      ],
+      [
+        "airKb",
+        "airSkill"
+      ],
+      [
+        "airKey",
+        "airSkill"
+      ],
+      [
+        "airLog",
+        "airSkill"
+      ],
+      [
+        "air",
+        "airSkill"
+      ],
+      [
+        "sys",
+        "sysUser"
+      ],
+      [
+        "master",
+        "crCompany"
+      ],
+      [
+        "collect",
+        "collectTask"
+      ],
+      [
+        "compAnalysis",
+        "compWork"
+      ],
+      [
+        "intAnalysis",
+        "intWork"
+      ],
+      [
+        "bi0Standard",
+        "bi0Report"
+      ]
+    ]
+  }
+}

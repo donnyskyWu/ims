@@ -1,0 +1,37 @@
+---
+description: IMS Agent 交付循环 — PRD→开发→pytest/E2E→文档签收；smoke≠签收；UAT 门禁
+alwaysApply: true
+---
+
+# IMS 交付循环（Agent 必遵）
+
+## 顺序
+
+PRD / 原型 SSOT → 规格与切片 → **开发**（`ims-backend` + `ims-web`）→ **pytest**（域内/定向；**禁止**在 Cursor 内跑全量 pytest 并宣称 PO 签收）→ **`npm run test:e2e:ci`** / `ims-web/scripts/run_e2e.ps1` → 失败则 fix → 回归 E2E → 更新 SSOT。
+
+## 签收口径
+
+- **Narrow smoke**（`smoke-*.spec.ts`）：健康检查 only，**≠ PO 签收**。
+- **Closure / acceptance**（`closure-*.spec.ts`）：对应 [IMS-E2E测试用例Checklist](../doc/测试方案/IMS-E2E测试用例Checklist.md) 步骤 + 可见 UI 结果 → Agent 可跑全量 E2E 并记录 `e2e_result.txt`。**纯 UI 门禁（v2.6.44+）**：closure **禁止** `page.evaluate`+`/admin-api` 造数；数据须 UI 表单/按钮创建（`closure-helpers.ts` · `e2e/README.md`）。
+- **已验收**（矩阵）：closure OK + 最新 E2E 全量 PASS + PO 填 [对照表 UAT 状态=通过](../doc/开发方案/IMS-PRD功能点执行对照表.md)。
+- **pytest 全量**：仅用户外置 `run_pytest_external.bat` 签收；Agent 可 `collect-only`、单文件/定向冒烟。
+
+## 每切片收尾（必做）
+
+1. [IMS-任务进度计划表](../doc/开发方案/IMS-任务进度计划表.md) 新增或更新 **#** 行  
+2. [IMS-Python执行进度](../doc/开发方案/IMS-Python执行进度-20261006.md) 节/备注  
+3. [IMS-PRD功能点执行对照表](../doc/开发方案/IMS-PRD功能点执行对照表.md)（含 **UAT 建议**，Agent 填）  
+4. Checklist 版本行（有 closure 或步骤变更时）  
+5. 人类 SSOT：[IMS-Agent交付循环](../doc/开发规范/IMS-Agent交付循环.md)
+
+## 并行 Subagent
+
+仅 **无耦合** 任务并行（不同模块/文件、不共享 DB 迁移顺序、不抢同一计划表 #）。同一切片内串行：开发 → 测 → 文档。
+
+## UAT 门禁
+
+Agent 完成自动化与文档后，PO 按对照表 **UAT 建议** 做手工/UAT；**UAT 状态=通过** 前不得标「已验收」。阻塞项先问 PO 是否要真实外部资源（钉钉 org、Football、GPU 等），见交付循环 **执行前 PO 资源清单**。
+
+## 范围
+
+本规则优先于临时口头约定；实现细节以 `doc/产品规格/**`、`doc/delivery/**` 契约为准，**禁止**发明 REST。

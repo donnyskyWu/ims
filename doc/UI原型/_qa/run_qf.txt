@@ -1,0 +1,2 @@
+﻿PASS | T1 acct 鐘舵€?鍐荤粨 鈫?2 琛?PASS | T2 acct 骞冲彴=鎶栭煶 鈫?3 琛?PASS | T3 acct 鏂囨湰=绁為奔浣撹偛 鈫?1 琛?PASS | T4 fin 鍗曠淮鐘舵€?宸茬粨绠?鈫?2 琛?PASS | T5 cert 绫诲瀷=鎶ょ収 鈫?1 琛?PASS | T6 alert 绾у埆=绾?鈫?3 琛?PASS | T7 train 鐘舵€?鎶ュ悕涓?鈫?2 琛?PASS | T8 鍒濆鐘舵€佷笉杩囨护 鈫?4 琛?
+==== RESULT: 8 PASS / 0 FAIL ====

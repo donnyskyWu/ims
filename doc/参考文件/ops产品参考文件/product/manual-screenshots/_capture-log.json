@@ -1,0 +1,86 @@
+﻿[
+    {
+        "name":  "04-dashboard",
+        "label":  "首页仪表盘",
+        "url":  "http://127.0.0.1:5777/ops/dashboard",
+        "finalUrl":  "http://127.0.0.1:5777/ops/dashboard",
+        "ok":  true
+    },
+    {
+        "name":  "05-plan",
+        "label":  "计划管理",
+        "url":  "http://127.0.0.1:5777/ops/production/plan",
+        "finalUrl":  "http://127.0.0.1:5777/ops/production/plan",
+        "ok":  true
+    },
+    {
+        "name":  "06-task",
+        "label":  "我的任务",
+        "url":  "http://127.0.0.1:5777/ops/production/task",
+        "finalUrl":  "http://127.0.0.1:5777/ops/production/task",
+        "ok":  true
+    },
+    {
+        "name":  "07-content",
+        "label":  "内容管理",
+        "url":  "http://127.0.0.1:5777/ops/production/content",
+        "finalUrl":  "http://127.0.0.1:5777/ops/production/content",
+        "ok":  true
+    },
+    {
+        "name":  "08-content-review",
+        "label":  "内容审核",
+        "url":  "http://127.0.0.1:5777/ops/production/content/review",
+        "finalUrl":  "http://127.0.0.1:5777/ops/production/content/review",
+        "ok":  true
+    },
+    {
+        "name":  "09-ip-group",
+        "label":  "IP组管理",
+        "url":  "http://127.0.0.1:5777/ops/operations/ip-group",
+        "finalUrl":  "http://127.0.0.1:5777/ops/operations/ip-group",
+        "ok":  true
+    },
+    {
+        "name":  "10-internal-account",
+        "label":  "平台账号管理",
+        "url":  "http://127.0.0.1:5777/ops/internal/internal-account",
+        "finalUrl":  "http://127.0.0.1:5777/ops/internal/internal-account",
+        "ok":  true
+    },
+    {
+        "name":  "11-monitor-hot-works",
+        "label":  "爆款作品分析",
+        "url":  "http://127.0.0.1:5777/ops/monitor/hot-works",
+        "finalUrl":  "http://127.0.0.1:5777/ops/monitor/hot-works",
+        "ok":  true
+    },
+    {
+        "name":  "12-system-param",
+        "label":  "系统参数",
+        "url":  "http://127.0.0.1:5777/ops/system-oa/system-param",
+        "finalUrl":  "http://127.0.0.1:5777/ops/system-oa/system-param",
+        "ok":  true
+    },
+    {
+        "name":  "13-perf-result",
+        "label":  "绩效结果",
+        "url":  "http://127.0.0.1:5777/ops/performance/perf-result",
+        "finalUrl":  "http://127.0.0.1:5777/ops/performance/perf-result",
+        "ok":  true
+    },
+    {
+        "name":  "14-account-cost",
+        "label":  "账号成本管理",
+        "url":  "http://127.0.0.1:5777/ops/finance/account-cost",
+        "finalUrl":  "http://127.0.0.1:5777/ops/finance/account-cost",
+        "ok":  true
+    },
+    {
+        "name":  "15-data-report",
+        "label":  "数据报表",
+        "url":  "http://127.0.0.1:5777/ops/analysis/data-report",
+        "finalUrl":  "http://127.0.0.1:5777/ops/analysis/data-report",
+        "ok":  true
+    }
+]

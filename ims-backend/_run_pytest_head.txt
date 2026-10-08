@@ -1,0 +1,9 @@
+
+若并�?pytest 导致 MySQL 1684，请先执行：
+  DROP DATABASE ims_test; CREATE DATABASE ims_test CHARACTER SET utf8mb4;
+  DROP DATABASE ims_ops_test; CREATE DATABASE ims_ops_test CHARACTER SET utf8mb4;
+
+单进程运行全量测试（重置测库 �?pytest_result.txt�?..
+Recreated ims_test
+Recreated ims_ops_test
+[pytest] running pid=28368 ��
