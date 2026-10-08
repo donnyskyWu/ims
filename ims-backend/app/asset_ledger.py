@@ -21,6 +21,10 @@ class LedgerBody(BaseModel):
     purchaseDate: str = ""
     realnameId: int | None = None
     parentAssetCode: str = ""
+    accountId: int | None = None
+    accountNo: str = ""
+    sessionCode: str = ""
+    bindType: str = "HOLD"
 
 
 class CheckoutBody(BaseModel):
@@ -257,6 +261,18 @@ def ledger_create(
         return fail(1001, "资产编号过长")
     if _code_taken(db, actor, code):
         return fail(1012, "资产编号已存在")
+    from app.asset_penetrate import resolve_bind
+
+    resolved, bind_error = resolve_bind(
+        db,
+        actor,
+        body.accountId,
+        body.accountNo,
+        body.sessionCode,
+        body.bindType,
+    )
+    if bind_error:
+        return bind_error
     now = utcnow()
     row = AssetLedger(
         asset_code=code,
@@ -276,13 +292,24 @@ def ledger_create(
     )
     db.add(row)
     db.flush()
-    _add_event(db, row, actor, "REGISTER", "", "PENDING_REVIEW", "登记入台账", None)
-    from app.asset_penetrate import link_hierarchy
+    remark = "登记入台账"
+    if resolved:
+        parts = []
+        if resolved["accountNo"]:
+            parts.append(f"绑定账号 {resolved['accountNo']}")
+        if resolved["sessionCode"]:
+            parts.append(f"绑定场次 {resolved['sessionCode']}")
+        if parts:
+            remark = "登记入台账 · " + " · ".join(parts)
+    _add_event(db, row, actor, "REGISTER", "", "PENDING_REVIEW", remark, None)
+    from app.asset_penetrate import link_hierarchy, write_bind
 
     link_error = link_hierarchy(db, actor, row, body.realnameId, body.parentAssetCode)
     if link_error:
         db.rollback()
         return link_error
+    if resolved:
+        write_bind(db, actor, row, resolved)
     db.flush()
     return ok(_detail(db, row))
 

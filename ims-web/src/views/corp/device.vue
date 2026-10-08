@@ -9,6 +9,7 @@
         <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
         <template v-else>
           <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
+          <button v-if="kind !== 'phone'" class="btn btn-sec" type="button" data-testid="corp-asset-entry-open" @click="openEntryReverse">账号/场次反查</button>
           <button class="btn btn-sec" type="button" data-testid="corp-asset-import-btn" @click="openImport">采购导入</button>
           <button class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
         </template>
@@ -195,7 +196,19 @@
           <input v-model="assetForm.parentAssetCode" data-testid="corp-asset-parent" placeholder="挂到已挂实名人的资产下" />
         </div>
       </div>
-      <p class="hint">正向穿透从实名人向下最多 5 层。第 6 层可以登记，查询时返回 1013。</p>
+      <div class="formrow one">
+        <div class="fld">
+          <label>绑定账号</label>
+          <input v-model="assetForm.accountNo" data-testid="corp-asset-bind-account" placeholder="账号编号，可空" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>绑定场次</label>
+          <input v-model="assetForm.sessionCode" data-testid="corp-asset-bind-session" placeholder="场次编号，可空" />
+        </div>
+      </div>
+      <p class="hint">正向穿透从实名人向下最多 5 层。第 6 层可以登记，查询时返回 1013。绑定账号或场次后，可在「账号/场次反查」看到这台设备。场次须已存在，否则 1500。</p>
       <div v-if="formError" class="hint bad">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="assetCreateOpen = false">取消</button>
@@ -309,6 +322,45 @@
         <button class="btn btn-sec" type="button" @click="reverseOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer v-if="kind !== 'phone'" :open="entryOpen" title="账号/场次反查" width="720px" @close="entryOpen = false">
+      <div class="acts" style="margin-bottom: 12px">
+        <button class="btn btn-sm" :class="entryType === 'ACCOUNT' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-account" @click="entryType = 'ACCOUNT'">按账号</button>
+        <button class="btn btn-sm" :class="entryType === 'SESSION' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="asset-entry-session" @click="entryType = 'SESSION'">按场次</button>
+      </div>
+      <div v-if="entryType === 'ACCOUNT'" class="formrow one">
+        <div class="fld">
+          <label>账号编号</label>
+          <input v-model="entryAccountNo" data-testid="asset-entry-account-no" placeholder="例如 AC-E2E-FIN" />
+        </div>
+      </div>
+      <div v-else class="formrow one">
+        <div class="fld">
+          <label>场次编号</label>
+          <input v-model="entrySessionCode" data-testid="asset-entry-session-code" placeholder="IMS + 日期 + 平台码 + 序号" />
+        </div>
+      </div>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="asset-entry-query" @click="queryEntry">查询</button>
+      <p v-if="entryError" class="hint bad" data-testid="asset-entry-error">{{ entryError }}</p>
+      <p v-else-if="entrySummary" class="hint" data-testid="asset-entry-summary">{{ entrySummary }}</p>
+      <table v-if="!entryError" data-testid="asset-entry-table">
+        <thead><tr><th>资产编号</th><th>名称</th><th>状态</th><th>绑定</th><th>账号</th></tr></thead>
+        <tbody>
+          <tr v-if="!entryRows.length">
+            <td colspan="5">没有绑定资产</td>
+          </tr>
+          <tr v-for="item in entryRows" :key="String(item.assetId)" data-testid="asset-entry-row">
+            <td data-testid="asset-entry-code">{{ item.assetCode }}</td>
+            <td>{{ item.assetName }}</td>
+            <td data-testid="asset-entry-status">{{ statusLabel(String(item.status || '')) }}</td>
+            <td>{{ bindLabel(String(item.bindType || '')) }}</td>
+            <td>{{ item.relatedAccountNo || '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="entryOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -362,6 +414,13 @@ const forwardHint = ref('')
 const reverseHolders = ref<Row[]>([])
 const reverseError = ref('')
 const reverseHint = ref('')
+const entryOpen = ref(false)
+const entryType = ref<'ACCOUNT' | 'SESSION'>('ACCOUNT')
+const entryAccountNo = ref('')
+const entrySessionCode = ref('')
+const entryRows = ref<Row[]>([])
+const entryError = ref('')
+const entrySummary = ref('')
 const persons = ref<PersonOpt[]>([])
 const activeAsset = ref<Row | null>(null)
 const assetDetail = ref<Row | null>(null)
@@ -386,6 +445,8 @@ const assetForm = reactive({
   remark: '',
   realnameId: '',
   parentAssetCode: '',
+  accountNo: '',
+  sessionCode: '',
 })
 
 const fallbackStatus: Opt[] = [
@@ -424,7 +485,7 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
     emptyHint: '点「资产登记」或「采购导入」写入台账，再按领用、使用、归还、报废流转。',
-    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。采购导入：合法行入台账，非法行按行号和字段定位，部分成功不回滚。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。',
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。采购导入：合法行入台账，非法行按行号和字段定位，部分成功不回滚。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。账号/场次反查：登记时绑定后按账号或场次列出设备状态；入口不存在为 1500。',
     columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
     keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
   },
@@ -493,6 +554,13 @@ function typeLabel(value: string) {
 
 function eventLabel(value: string) {
   return eventLabels[value] || value
+}
+
+function bindLabel(value: string) {
+  if (value === 'HOLD') return '持有'
+  if (value === 'GUARANTEE') return '担保'
+  if (value === 'CUSTODY') return '代管'
+  return value || '—'
 }
 
 function show(row: Row, key: string) {
@@ -656,6 +724,7 @@ function closeAssetDrawers() {
   scrapOpen.value = false
   forwardOpen.value = false
   reverseOpen.value = false
+  entryOpen.value = false
 }
 
 function importSummary(result: Row) {
@@ -708,6 +777,8 @@ function openAssetCreate() {
   assetForm.purchaseDate = today()
   assetForm.realnameId = ''
   assetForm.parentAssetCode = ''
+  assetForm.accountNo = ''
+  assetForm.sessionCode = ''
   formError.value = ''
   assetCreateOpen.value = true
 }
@@ -772,6 +843,8 @@ async function saveAsset() {
     const parent = assetForm.parentAssetCode.trim()
     if (parent) payload.parentAssetCode = parent
     else if (assetForm.realnameId) payload.realnameId = Number(assetForm.realnameId)
+    if (assetForm.accountNo.trim()) payload.accountNo = assetForm.accountNo.trim()
+    if (assetForm.sessionCode.trim()) payload.sessionCode = assetForm.sessionCode.trim()
     await http.post('/asset/ledger', payload)
     assetCreateOpen.value = false
     keyword.value = assetForm.assetCode.trim()
@@ -822,6 +895,47 @@ async function openForwardAsset(row: Row) {
   forwardHint.value = `${row.assetCode || ''} 的链路（实名人 → 资产）`
   forwardRealnameId.value = ''
   await loadTrace(`/asset/forward/trace/${row.id}`)
+}
+
+function openEntryReverse() {
+  closeAssetDrawers()
+  entryOpen.value = true
+  entryType.value = 'ACCOUNT'
+  entryAccountNo.value = ''
+  entrySessionCode.value = ''
+  entryRows.value = []
+  entryError.value = ''
+  entrySummary.value = ''
+}
+
+async function queryEntry() {
+  entryError.value = ''
+  entryRows.value = []
+  entrySummary.value = ''
+  try {
+    let res
+    if (entryType.value === 'ACCOUNT') {
+      const accountNo = entryAccountNo.value.trim()
+      if (!accountNo) {
+        entryError.value = '请填写账号编号'
+        return
+      }
+      res = await http.get('/asset/reverse/by-account/0', { params: { accountNo } })
+    } else {
+      const sessionCode = entrySessionCode.value.trim()
+      if (!sessionCode) {
+        entryError.value = '请填写场次编号'
+        return
+      }
+      res = await http.get(`/asset/reverse/by-session/${encodeURIComponent(sessionCode)}`)
+    }
+    const data = (res.data?.data || {}) as { list?: Row[]; summary?: Row }
+    entryRows.value = data.list || []
+    const summary = data.summary || {}
+    entrySummary.value = `命中 ${summary.total || 0} 条（在用 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
+  } catch (e: unknown) {
+    entryError.value = bizError(e)
+  }
 }
 
 async function openReverse(row: Row) {
