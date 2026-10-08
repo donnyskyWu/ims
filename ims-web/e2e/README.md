@@ -13,7 +13,7 @@
 | **S4 (#58)** | 冲话费 + 凭证门禁 | `closure-corp-account-recharge.spec.ts` | 1000 无凭证成功 · 6000 无凭证 **1025** · 补凭证后 admin 隐藏 URL · `e2e_acct_r3` 可见 |
 | **S4 (#60)** | 流转 + 他人领用 1021 | `closure-corp-account-transfer.spec.ts` | `AC-E2E-XFER` 领用至在用 · `e2e_acct_peer` 再领用 **1021** · 流转待确认 → 确认接收 · 责任人「流转同事」· 时间线 TRANSFER |
 | **S4 (#62)** | 收回冻结 1022 | `closure-corp-account-recall.spec.ts` | `AC-E2E-RECALL` 领用至在用 ·「收回」直接 **冻结** · 再领用/再流转 **1022** · 时间线 FREEZE |
-| **S5** | 资产采购领用 | `smoke-asset.spec.ts` | 登录 → `/ims/corp/device/office` 标题「办公设备管理」+ table |
+| **S5** | 资产采购领用 | `smoke-asset.spec.ts` · **`closure-asset-lifecycle.spec.ts`（#63）** | smoke：办公设备列表；#63：登记→领用→使用→归还→报废 · 待审核/在用/已归还/已报废 |
 | **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** · **`closure-corp-cert-expire.spec.ts`（#61）** | smoke：证件列表；#55：水印 + 脱敏号；#61：T−30/T−7/T−0 黄/红/锁定 + 工作台提醒 |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
 | **S8** | AI 资产分发 | `smoke-air-skill.spec.ts` | 登录 → `/ims/air/skill` 标题「技能库」+ table |
