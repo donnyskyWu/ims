@@ -45,7 +45,14 @@
             <tr v-for="row in rows" v-else :key="String(row.id)">
               <td v-for="key in meta.keys" :key="key">{{ show(row, key) }}</td>
               <td>
-                <button class="btn btn-txt btn-sm" type="button" @click="openDetail(row)">{{ kind === 'certificate' ? '查看' : '详情' }}</button>
+                <button
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  :data-testid="kind === 'certificate' ? 'corp-cert-view-btn' : undefined"
+                  @click="openDetail(row)"
+                >
+                  {{ kind === 'certificate' ? '查看' : '详情' }}
+                </button>
                 <button v-if="kind === 'sim-card'" class="btn btn-txt btn-sm" type="button" @click="openEdit(row)">编辑</button>
               </td>
             </tr>
@@ -67,14 +74,26 @@
       </div>
     </div>
     <p class="hint">{{ meta.hint }}</p>
-    <ProtoDrawer :open="detailOpen" :title="meta.detailTitle" width="520px" @close="detailOpen = false">
+    <ProtoDrawer
+      :open="detailOpen"
+      :title="meta.detailTitle"
+      width="520px"
+      :data-testid="kind === 'certificate' ? 'corp-cert-detail-drawer' : undefined"
+      @close="detailOpen = false"
+    >
       <div v-if="detail" class="formrow one">
         <div v-for="item in detailLines" :key="item.label" class="fld">
           <label>{{ item.label }}</label>
           <div>{{ item.value }}</div>
         </div>
       </div>
-      <div v-if="kind === 'certificate' && detail" class="hint">水印：{{ detail.watermarkText || '—' }}。本接口不返回原图。</div>
+      <div
+        v-if="kind === 'certificate' && detail"
+        class="hint"
+        data-testid="corp-cert-watermark-hint"
+      >
+        水印：{{ detail.watermarkText || '—' }}。本接口不返回原图。
+      </div>
       <div v-if="kind === 'realname'" class="hint">中介人与关联账号暂无。契约没有实名人写入接口。</div>
       <div v-if="kind === 'sim-card' && detail" class="hint">关联账号 {{ linkedCount }} 个。平台账号在下一片接入前这里是空列表。</div>
       <template #foot>

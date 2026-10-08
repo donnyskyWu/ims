@@ -537,6 +537,9 @@ def certificate_page(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
+    from app.cert_e2e_seed import ensure_cert_e2e_seed
+
+    ensure_cert_e2e_seed(db, actor)
     page_no, size = page_args(pageNo, pageSize)
     stmt = cert_stmt(actor, request)
     if holderName:

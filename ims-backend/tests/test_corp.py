@@ -189,6 +189,23 @@ def test_sim_write_rules_and_certificate_view():
     assert hidden.json()["code"] == 1504
 
 
+def test_cert_e2e_seed_watermark_view():
+    """#55 · cert_e2e_seed 幂等 + 查看水印（与 Playwright closure 同源）。"""
+    auth = headers()
+    page = client.get("/admin-api/ims/corp/resource/certificate/page", headers=auth, params={"holderName": "E2E-Cert-Watermark"})
+    assert page.json()["code"] == 0
+    assert page.json()["data"]["total"] >= 1
+    item = page.json()["data"]["list"][0]
+    cert_id = item["id"]
+    assert item["holderName"] == "E2E-Cert-Watermark"
+    assert "110101199888011234" not in page.text
+    view = client.get(f"/admin-api/ims/corp/resource/certificate/{cert_id}/view", headers=auth)
+    assert view.json()["code"] == 0
+    assert "admin" in view.json()["data"]["watermarkText"].lower()
+    assert view.json()["data"]["indexInfo"]["certNoMasked"] != "110101199888011234"
+    assert "signedUrl" not in view.text
+
+
 def test_company_scope_without_all_is_1008():
     auth = headers()
     created = client.post(

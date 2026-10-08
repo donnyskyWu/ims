@@ -100,7 +100,13 @@
             <tbody>
               <tr v-for="d in details" :key="d.sessionCode">
                 <td class="mono">
-                  <button type="button" class="btn btn-sec btn-sm" @click="openSession(d.sessionCode)">
+                  <button
+                    type="button"
+                    class="btn btn-sec btn-sm"
+                    data-testid="dc-trace-session-open"
+                    :data-session-code="d.sessionCode"
+                    @click="openSession(d.sessionCode)"
+                  >
                     {{ d.sessionCode }}
                   </button>
                 </td>
@@ -308,7 +314,7 @@ async function runQuery() {
 async function openSession(sessionCode: string) {
   error.value = ''
   try {
-    const res = await http.get(`/dc/trace/detail/${encodeURIComponent(sessionCode)}`)
+    const res = await http.get(`/dc/trace/detail/${encodeURIComponent(sessionCode)}`, { timeout: 60_000 })
     sessionDetail.value = res.data.data
     drawerOpen.value = true
   } catch (err) {

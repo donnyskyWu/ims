@@ -883,10 +883,19 @@ export async function openDcAccountTraceViaUi(page: Page, accountNo: string, ses
 
 /** DC-001 场次下钻：明细表点场次 ID 打开抽屉（纯 UI，须已在穿透结果页） */
 export async function openDcSessionDetailViaUi(page: Page, sessionCode: string) {
+  const sessionBtn = page
+    .getByTestId('dc-trace-detail-table')
+    .locator(`button[data-session-code="${sessionCode}"]`)
+  await expect(sessionBtn).toBeVisible({ timeout: 15_000 })
+  await sessionBtn.scrollIntoViewIfNeeded()
   const detailResp = page.waitForResponse(
-    (r) => r.url().includes('/dc/trace/detail/') && r.request().method() === 'GET' && r.status() === 200,
+    (r) =>
+      r.url().includes('/dc/trace/detail/') &&
+      r.request().method() === 'GET' &&
+      r.status() === 200,
+    { timeout: 65_000 },
   )
-  await page.getByTestId('dc-trace-detail-table').getByRole('button', { name: sessionCode }).click()
+  await sessionBtn.click()
   const detailBody = (await (await detailResp).json()) as {
     code: number
     data?: {

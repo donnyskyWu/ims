@@ -30,6 +30,8 @@
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
 > **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
+> **v2.6.66（2026-10-08 · #56 S2 直播登记→下播 narrow closure）**：`closure-live-session-report.spec.ts`（**E2E-S2 窄切片** · 纯 UI · 登记→风控→下播提交/核准 · `IMS…DYS…` 19 位 · 列表 `reportEntryStatus=CONFIRMED`）；`npm run test:e2e:ci` 预期 **50/50 PASS**（+ L3 门开 **51** · `--workers=1`）。  
+> **v2.6.65（2026-10-08 · #55 S6 证件水印 closure）**：`closure-corp-cert-watermark.spec.ts`（**E2E-S6-03 切片** · 纯 UI · 搜 `E2E-Cert-Watermark` →「查看」→ 脱敏号 + admin 水印 · 无原图）；`cert_e2e_seed.py` · `resource.vue`；`npm run test:e2e:ci` 预期 **49/49 PASS**（+ L3 **50** · `--workers=1`）。  
 > **v2.6.64（2026-10-08 · #54 FIN 成本更正→重算 closure）**：`closure-fin-cost-correction.spec.ts`（**E2E-S3-04** · 纯 UI · 复用 **#50** 链 → **CALCULATED 81400** → `/ims/fin/cost`「更正」投放 **6000** + 达人分成 **3500** → `/ims/fin/profit` **RECALCULATED** · **79900** · V≥2 → 利润反查抽屉达人 **3,500.00**）；`fin.py` correction/recalc · `cost.vue` testid · `submitFinCostCorrectionViaUi`；合并 **#53+#54** 后 `npm run test:e2e:ci` 预期 **48/48 PASS**（+ L3 门开 **49** · `--workers=1`）。  
 > **v2.6.62（2026-10-08 · #52 DC-001 账号穿透 closure）**：`closure-dc-account-trace.spec.ts`（**E2E-S12-01 切片（账号入口）** · 纯 UI · 复用 **#50** LIVE 链 → `/ims/dc/trace` 搜 `AC-E2E-FIN` · 关系图 **ACCOUNT/PERSON/SESSION** · 明细表命中本场次 · `queryCostMs`/数据截至可见）；`trace.vue` testid · `dc_trace.py` **DETAIL** `detailList` DTO 修正 · `openDcAccountTraceViaUi`；`npm run test:e2e:ci` 预期 **46/46 PASS**（+ L3 门开 **47** · `--workers=1`）。  
 > **v2.6.61（2026-10-08 · #51 DC-002 利润反查 closure）**：`closure-fin-profit-trace.spec.ts`（**E2E-S3-09 / TC-IMS-FIN-02-01** · 纯 UI · 复用 **#50** 链 → `/ims/fin/profit-trace` 列表 **81400** ·「反查」抽屉 **BR-209** · 账号 `AC-E2E-FIN` · 成本/分成明细可见）；`profit-trace.vue` testid · `closure-helpers` `openFinProfitTraceChainViaUi`；`npm run test:e2e:ci` 预期 **45/45 PASS**（+ L3 门开 **46** · `--workers=1`）。  
@@ -46,7 +48,7 @@
 | # | 场景 | 覆盖 BR | 期次 | 优先级 | smoke（2026-10-07） |
 |---|------|---------|------|--------|---------------------|
 | S1 | 员工全生命周期（入职→在岗→离职闭环） | BR-001/002/015/023 | V1+V2.2 | P0 | smoke-OK · `smoke-auth-org.spec.ts` |
-| S2 | 直播场次全链路（登记→风控→开播→下播→数据） | BR-011/014/007 | V1 | P0 | smoke-OK · `smoke-live.spec.ts` |
+| S2 | 直播场次全链路（登记→风控→开播→下播→数据） | BR-011/014/007 | V1 | P0 | smoke-OK · **`closure-live-session-report.spec.ts`（#56 · E2E-S2 窄切片）** · `smoke-live.spec.ts` |
 | S3 | 场次-成本-利润-分成全链路 | BR-107/108/118/209 | V3 先行 | P0 | smoke-OK · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-profit-trace.spec.ts`（#51 · DC-002）** · `smoke-fin.spec.ts` |
 | S4 | 账号领用-流转-归还-冲话费 | BR-017/1024 | V1 | P0 | smoke-OK · **`closure-corp-account-checkout.spec.ts`（#47 · E2E-S4-01/08）** · `smoke-acct.spec.ts` |
 | S5 | 资产采购-领用-归还-报废 + 穿透 | BR-003~005 | V1 | P1 | smoke-OK · `smoke-asset.spec.ts` |
@@ -83,7 +85,8 @@
 
 ## S2 直播场次全链路（P0）
 
-> smoke-OK（narrow）：直播管理列表页可加载；**未**覆盖风控/开播/24h 数据逐步。
+> smoke-OK（narrow）：直播管理列表页可加载。  
+> **闭环-OK（Playwright · v2.6.66 · #56 窄切片）**：`closure-live-session-report.spec.ts` — 登记 → 风控 → 下播提交/核准 · 19 位场次 ID · 列表 **CONFIRMED**；**未**覆盖 E2E-S2-03～05/07～09（黄红/开播/补录等）。
 
 前置剧本：实名人（证件有效）+ 账号 IN_USE + 平台 DYS。
 
@@ -147,7 +150,8 @@
 
 ## S6 证件录入-预警-水印（P1）
 
-> smoke-OK（narrow）：证件管理列表页可加载；**未**覆盖到期预警/水印访问逐步。
+> smoke-OK（narrow）：证件管理列表页可加载。  
+> **闭环-OK（Playwright · v2.6.65 · #55 切片）**：`closure-corp-cert-watermark.spec.ts` — **E2E-S6-03** 查看水印 + 脱敏号；**未**覆盖 E2E-S6-01/02/04（录入/到期预警/频次拦截）。
 
 | 编号 | 步骤 | 断言点 |
 |------|------|--------|

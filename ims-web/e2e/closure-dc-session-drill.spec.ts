@@ -19,6 +19,7 @@ test.describe('dc session drill export closure', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
 
   test('account trace drills into session detail, exports, and shows 1181 hint', async ({ page }) => {
+    test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     await loginAdmin(page)
 

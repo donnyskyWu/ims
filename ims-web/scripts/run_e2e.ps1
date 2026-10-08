@@ -120,7 +120,7 @@ Then restart API (scripts\start_api.ps1 -KillPort) and re-run this script.
     exit 3
 }
 
-Write-Host "[e2e] Refresh workbench + acct pool + FIN live E2E seed (#46/#47/#50) ..."
+Write-Host "[e2e] Refresh workbench + acct pool + FIN live + cert E2E seed (#46/#47/#50/#55) ..."
 Push-Location $BackendRoot
 try {
     python -c @"
@@ -129,6 +129,7 @@ from app.models import User
 from app.workbench_seed import refresh_workbench_e2e_seed
 from app.acct_seed import refresh_acct_e2e_pool
 from app.live_fin_e2e_seed import refresh_live_fin_e2e_deps
+from app.cert_e2e_seed import refresh_cert_e2e_seed
 db = SessionLocal()
 try:
     admin = db.query(User).filter(User.username == 'admin', User.deleted == 0).first()
@@ -136,6 +137,7 @@ try:
         refresh_workbench_e2e_seed(db, admin)
         refresh_acct_e2e_pool(db, admin)
         refresh_live_fin_e2e_deps(db, admin)
+        refresh_cert_e2e_seed(db, admin)
         db.commit()
 finally:
     db.close()

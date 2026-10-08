@@ -1,38 +1,37 @@
-IMS E2E run 2026-10-08 16:57:52
+﻿IMS E2E run 2026-10-08 18:03:30
 API: http://127.0.0.1:18080  Web: http://127.0.0.1:6173
 ExitCode: 0
 Report: D:\self\sy\IMS系统产品\ims-web\playwright-report/index.html
-Note: Post-merge main includes #53 closure-dc-session-drill + #54 closure-fin-cost-correction → PO re-run test:e2e:ci for 48/48 sign-off. This file is last #54-branch run (47 specs).
 --- playwright list output (tail) ---
-  ok 21 e2e\closure-flow-timeout-urge.spec.ts:7:3 › flow timeout urge closure › urge on timeout tab increments remind count (854ms)
-  ok 22 e2e\closure-home-dashboard.spec.ts:7:3 › HOME dashboard KPI closure › refresh KPIs, account drill-down, work-task shortcut (748ms)
-  ok 23 e2e\closure-master-overview.spec.ts:12:3 › master overview KPI navigation closure › company and platform account drill-down from overview (737ms)
-  ok 24 e2e\closure-perf-issue-export.spec.ts:9:3 › perf issue export csv closure › issue from execution then export csv on result page (1.7s)
-  ok 25 e2e\closure-train-dispatch-complete.spec.ts:16:3 › train dispatch and complete closure › admin dispatch task then learner completes study (1.6s)
-  ok 26 e2e\closure-train-stat-finish-rate.spec.ts:17:3 › train stat finish-rate tab closure › complete study then finish-rate tab shows task at 100% (1.4s)
-  ok 27 e2e\closure-workbench-todo-message.spec.ts:10:3 › WORKBENCH todo close and message read closure › mark message read then close seeded todo (#46) (909ms)
-  ok 28 e2e\smoke-acct.spec.ts:7:3 › corp account smoke S4 narrow › login then douyin account pool list (501ms)
-  ok 29 e2e\smoke-air-skill.spec.ts:7:3 › air skill smoke S8 narrow › login then air/skill heading and table (521ms)
-  ok 30 e2e\smoke-alert-trial.spec.ts:6:3 › alert rule trial smoke narrow › login then alert rule page and optional trial toast (517ms)
-  ok 31 e2e\smoke-alert.spec.ts:6:3 › alert smoke S11 narrow › login then alert/rule heading (477ms)
-  ok 32 e2e\smoke-asset.spec.ts:7:3 › corp asset smoke S5 narrow › login then office device list (492ms)
-  ok 33 e2e\smoke-auth-org.spec.ts:7:3 › auth org smoke S1 narrow › login then auth/org heading and org table (504ms)
-  ok 34 e2e\smoke-bi-report.spec.ts:6:3 › bi report center smoke S12 narrow › login then report center heading (584ms)
-  ok 35 e2e\smoke-cert.spec.ts:7:3 › certificate smoke S6 narrow › login then certificate registry list (767ms)
-  ok 36 e2e\smoke-content-plan.spec.ts:7:3 › content plan smoke S1 narrow › login then plan page heading and table (503ms)
-  ok 37 e2e\smoke-content.spec.ts:7:3 › content smoke S7 narrow › login then content list heading and table (547ms)
-  ok 38 e2e\smoke-fin.spec.ts:6:3 › fin smoke S3 narrow › login then fin/profit heading (485ms)
-  ok 39 e2e\smoke-flow-timeout.spec.ts:6:3 › flow timeout tab smoke narrow › login then timeout tab metrics and table (620ms)
-  ok 40 e2e\smoke-flow.spec.ts:7:3 › flow smoke narrow › login then flow page heading and instance table (512ms)
-  ok 41 e2e\smoke-home.spec.ts:6:3 › home dashboard smoke narrow › login then home heading and four KPI cards (512ms)
-  ok 42 e2e\smoke-live.spec.ts:7:3 › live smoke S2 narrow › login then live/sessions heading and session table (512ms)
-  ok 43 e2e\smoke-master.spec.ts:6:3 › master overview smoke narrow › login then master heading and KPI cards (529ms)
-  ok 44 e2e\smoke-perf.spec.ts:6:3 › perf smoke S9 narrow › login then perf execution heading (489ms)
-  ok 45 e2e\smoke-train.spec.ts:7:3 › train smoke S10 narrow › login then train/task heading and table (487ms)
-  ok 46 e2e\smoke-train.spec.ts:11:3 › train smoke S10 narrow › login then train/stat finish-rate tab (570ms)
-  ok 47 e2e\smoke-workbench.spec.ts:6:3 › workbench smoke narrow › login then workbench greeting and flowTodoCount card (575ms)
-
-  47 passed (4.1m)
+  ok 24 e2e\closure-home-dashboard.spec.ts:7:3 鈥?HOME dashboard KPI closure 鈥?refresh KPIs, account drill-down, work-task shortcut (754ms)
+  ok 25 e2e\closure-live-session-report.spec.ts:16:3 鈥?live session register report closure 鈥?register risk check report confirm shows session in list (2.1s)
+  ok 26 e2e\closure-master-overview.spec.ts:12:3 鈥?master overview KPI navigation closure 鈥?company and platform account drill-down from overview (1.0s)
+  ok 27 e2e\closure-perf-issue-export.spec.ts:9:3 鈥?perf issue export csv closure 鈥?issue from execution then export csv on result page (1.8s)
+  ok 28 e2e\closure-train-dispatch-complete.spec.ts:16:3 鈥?train dispatch and complete closure 鈥?admin dispatch task then learner completes study (2.0s)
+  ok 29 e2e\closure-train-stat-finish-rate.spec.ts:17:3 鈥?train stat finish-rate tab closure 鈥?complete study then finish-rate tab shows task at 100% (1.8s)
+  ok 30 e2e\closure-workbench-todo-message.spec.ts:10:3 鈥?WORKBENCH todo close and message read closure 鈥?mark message read then close seeded todo (#46) (1.1s)
+  ok 31 e2e\smoke-acct.spec.ts:7:3 鈥?corp account smoke S4 narrow 鈥?login then douyin account pool list (656ms)
+  ok 32 e2e\smoke-air-skill.spec.ts:7:3 鈥?air skill smoke S8 narrow 鈥?login then air/skill heading and table (603ms)
+  ok 33 e2e\smoke-alert-trial.spec.ts:6:3 鈥?alert rule trial smoke narrow 鈥?login then alert rule page and optional trial toast (630ms)
+  ok 34 e2e\smoke-alert.spec.ts:6:3 鈥?alert smoke S11 narrow 鈥?login then alert/rule heading (601ms)
+  ok 35 e2e\smoke-asset.spec.ts:7:3 鈥?corp asset smoke S5 narrow 鈥?login then office device list (633ms)
+  ok 36 e2e\smoke-auth-org.spec.ts:7:3 鈥?auth org smoke S1 narrow 鈥?login then auth/org heading and org table (636ms)
+  ok 37 e2e\smoke-bi-report.spec.ts:6:3 鈥?bi report center smoke S12 narrow 鈥?login then report center heading (609ms)
+  ok 38 e2e\smoke-cert.spec.ts:7:3 鈥?certificate smoke S6 narrow 鈥?login then certificate registry list (597ms)
+  ok 39 e2e\smoke-content-plan.spec.ts:7:3 鈥?content plan smoke S1 narrow 鈥?login then plan page heading and table (601ms)
+  ok 40 e2e\smoke-content.spec.ts:7:3 鈥?content smoke S7 narrow 鈥?login then content list heading and table (583ms)
+  ok 41 e2e\smoke-fin.spec.ts:6:3 鈥?fin smoke S3 narrow 鈥?login then fin/profit heading (630ms)
+  ok 42 e2e\smoke-flow-timeout.spec.ts:6:3 鈥?flow timeout tab smoke narrow 鈥?login then timeout tab metrics and table (792ms)
+  ok 43 e2e\smoke-flow.spec.ts:7:3 鈥?flow smoke narrow 鈥?login then flow page heading and instance table (604ms)
+  ok 44 e2e\smoke-home.spec.ts:6:3 鈥?home dashboard smoke narrow 鈥?login then home heading and four KPI cards (628ms)
+  ok 45 e2e\smoke-live.spec.ts:7:3 鈥?live smoke S2 narrow 鈥?login then live/sessions heading and session table (597ms)
+  ok 46 e2e\smoke-master.spec.ts:6:3 鈥?master overview smoke narrow 鈥?login then master heading and KPI cards (657ms)
+  ok 47 e2e\smoke-perf.spec.ts:6:3 鈥?perf smoke S9 narrow 鈥?login then perf execution heading (595ms)
+  ok 48 e2e\smoke-train.spec.ts:7:3 鈥?train smoke S10 narrow 鈥?login then train/task heading and table (616ms)
+  ok 49 e2e\smoke-train.spec.ts:11:3 鈥?train smoke S10 narrow 鈥?login then train/stat finish-rate tab (704ms)
+  ok 50 e2e\smoke-workbench.spec.ts:6:3 鈥?workbench smoke narrow 鈥?login then workbench greeting and flowTodoCount card (679ms)
+
+  50 passed (2.7m)
 
 ---
-47 passed
+50 passed

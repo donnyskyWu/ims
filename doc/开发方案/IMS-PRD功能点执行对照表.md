@@ -2,7 +2,7 @@
 
 > **用途**：对照完整 PRD / 菜单 IMPLEMENTED / 切片计划 / pytest·E2E 签收，回答「PRD 功能点做到哪了」——**不复制 PRD 全文**，仅矩阵视图。**本表为 PRD 模块矩阵，不是计划表 `#` 清单**；关联交付 `#` 见各列「备注」与 [`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md)。  
 > **SSOT 链**：[`IMS-PRD与原型完整性核验-20261001.md`](../产品规划/IMS-PRD与原型完整性核验-20261001.md) · [`IMS-Python完整开发计划-20261005.md`](./IMS-Python完整开发计划-20261005.md) · [`IMS-Python执行进度-20261006.md`](./IMS-Python执行进度-20261006.md) · [`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md) · [`IMS-E2E测试用例Checklist.md`](../测试方案/IMS-E2E测试用例Checklist.md) · **[Agent 交付循环](../开发规范/IMS-Agent交付循环.md)**  
-> **最后刷新**：2026-10-08 · 菜单 **~98 IMPLEMENTED**（含隐藏路由）· pytest collect **167**（含 3× L3 skip）· E2E **48/48**（v2.6.64 · 合并 **#53+#54** · `npm run test:e2e:ci` · **#50–#54** FIN/DC）
+> **最后刷新**：2026-10-08 · 菜单 **~98 IMPLEMENTED**（含隐藏路由）· pytest collect **169**（含 3× L3 skip）· E2E **50/50**（v2.6.66 · **#55/#56** S6/S2 closure · `npm run test:e2e:ci` · **#50–#54** FIN/DC）
 
 **图例**
 
@@ -50,7 +50,9 @@
 | **公司资产 · 账号池领用/归还** · `/ims/corp/account/*` · ACCT apply/confirm/return · 时间线 Tab | W2 CORP · **#47** | 切片已实现 | 已实现（领用/归还抽屉） | **`test_acct_checkout`** | S4 smoke + **`closure-corp-account-checkout`（#47）** | **可 UAT（池领用 · #47）**：抖音页搜 `AC-E2E-POOL` →「领用」→ 提交/审批/交接 → 状态「在用」· 责任人 admin →「归还」→「已归还」· 详情「领用时间线」见 APPLY/RETURN | 未测 | 流转/冲话费/1022～1026 **未做**；已有 ims 库需 compat 或重启 API `ensure_acct_schema` |
 | **培训 TRAIN** · 资料/任务 · **progress/confirm/records** · 学习中心 · **TRAIN-003 完成率 Tab** | W7 · **#48/#49** | 切片已实现 | 已实现（`task`/`study`/`stat`） | **`test_train_task_progress_confirm_and_records`** · **`test_train_stat_finish_rate_after_confirm`（#49）** | S10 smoke + **`closure-train-dispatch-complete`（#48）** + **`closure-train-stat-finish-rate`（#49）** | **可 UAT（培训下发 · #48）**：资料→任务→学习中心 **CONFIRMED** → 学习记录。**可 UAT（完成率看板 · #49）**：`/ims/train/stat`「完成率总览」· 近30天 · 总完成率 KPI · 按任务/部门/个人表（纯 UI 链：学完后再进看板见该任务 **100%**） | 未测 | 部门统计/排行/逾期/资料热度 Tab **待接 API**；考试/补考 **未做** |
 | **财务 FIN** · **FIN-001/002** · **成本更正/重算** · **DC-002 利润反查** · BR-107/108/209 | W8 · **#50/#51/#54** | 切片已实现 | 已实现（`/ims/fin/cost` · `/ims/fin/profit` · **`/ims/fin/profit-trace`**） | **`test_fin_*`** · **`test_fin_cost_correction_recalc_profit_and_share_trace`（#54）** · **`test_dc_profit_trace_list_and_chain`（#51）** · **`test_live_fin_e2e_seed_deps`（#50）** | S3 smoke + **`closure-fin-cost-profit`（#50）** + **`closure-fin-profit-trace`（#51）** + **`closure-fin-cost-correction`（#54 · E2E-S3-04）** | **可 UAT（成本→利润 · #50）**：LIVE 核准下播 → 成本核准 → 利润 **CALCULATED** · **81400**。**可 UAT（利润反查 · #51）**：同链 → 利润反查「反查」→ **BR-209**。**可 UAT（更正重算 · #54）**：已核准成本 →「更正」改投放/达人分成 + 原因 → 利润 **RECALCULATED** · **79900** · 反查抽屉达人分成 **3500** | 未测 | 分成 PAID/结账/对账（E2E-S3-05～08）**未做**；聚合/异常 Tab **未做** |
-| **直播 / 账号 / 资产 / 采集 / 会议 / 上报** 等 W2–W7 切片 | W2–W7 | 大部分已实现 | **~98 IMPLEMENTED** | 域内用例齐全 | S2/S4/S5/S6 等 smoke | 可 UAT | 未测 | Football/OPS 真实 KPI **待补数据**；详见 [执行进度](./IMS-Python执行进度-20261006.md) |
+| **直播 LIVE** · 场次登记/风控/下播 · **S2 窄 closure** | W2 · **#56** | 已实现 | 已实现（`/ims/live/sessions`） | `test_live.py` 等 | S2 smoke + **`closure-live-session-report`（#56 · E2E-S2 窄切片）** | **可 UAT（登记→下播 · #56）**：新建场次 → 风控 → 下播 GMV/退款 → 核准 → 列表 `reportEntryStatus=CONFIRMED` · 19 位 `IMS…DYS…` | 未测 | E2E-S2-01/02/06 切片；黄红风控/补录 **未逐步** |
+| **证件 CORP-R** · 索引分页 · **查看水印** | W2 · **#55** | 已实现（page/view） | 已实现（`/ims/corp/resource/certificate`） | **`test_cert_e2e_seed_watermark_view`（#55）** | S6 smoke + **`closure-corp-cert-watermark`（#55 · E2E-S6-03 切片）** | **可 UAT（证件水印 · #55）**：搜 `E2E-Cert-Watermark` →「查看」→ 脱敏号 + 水印含 admin · 无原图 | 未测 | 契约无上传 UI；到期预警 **未做** |
+| **直播 / 账号 / 资产 / 采集 / 会议 / 上报** 等 W2–W7 其余 | W2–W7 | 大部分已实现 | **~98 IMPLEMENTED** | 域内用例齐全 | S4/S5 等 smoke | 可 UAT | 未测 | Football/OPS 真实 KPI **待补数据**；详见 [执行进度](./IMS-Python执行进度-20261006.md) |
 | **sysTenant 租户套餐** | 批次外 | 未开始 | WIP | — | — | 阻塞 | 未测 | [计划表 #4](./IMS-任务进度计划表.md) **阻塞·本批不做** |
 
 **† 组织 L3 签收**：**系统参数**（`dingtalk.*`）为主；`dingtalk.l3Enabled=true` 或 `IMS_DINGTALK_L3=1` + `scripts/run_dingtalk_l3.ps1` 或 `npm run test:e2e:dingtalk`；可选 bootstrap `scripts/seed_dingtalk_params_from_env.ps1`；全量人员 **`POST /auth/org/sync-from-dingtalk`**（R1）· `scripts/run_dingtalk_org_sync.ps1` · 组织页「手动对账」；**全量同步前提**：开放平台 **通讯录授权范围** 覆盖同步根部门（见 `auth/scopes` / PO 清单）；Checklist **E2E-ORG-DING-01**。
@@ -62,11 +64,11 @@
 | 主线 | PRD 优先级 | narrow smoke | 逐步闭环 / 切片 |
 |------|------------|--------------|-----------------|
 | S1 员工生命周期 | P0 | OK | 未 |
-| S2 直播 | P0 | OK | 未 |
+| S2 直播 | P0 | OK | **closure 登记→下播核准（#56 · E2E-S2 窄切片）** |
 | S3 场次-成本-利润 | P0 | OK | **closure 成本→利润（#50）** · **closure 利润反查（#51）** · **closure 更正重算（#54 · E2E-S3-04）** · E2E-S3-01/02/03/04/09 切片 |
 | S4 账号领用 | P0 | OK | **closure 池领用/归还（#47）** · E2E-S4-01/08 切片 |
 | S5 资产 | P1 | OK | 未 |
-| S6 证件 | P1 | OK | 未 |
+| S6 证件 | P1 | OK | **closure 水印查看（#55 · E2E-S6-03 切片）** |
 | **S7 内容 AI 全流程** | P1 | OK（内容管理 list） | **closure 发布督办（#24）** · **closure 计划启动（#32）** |
 | S8 AI 资产 | P0 | OK | 未（检索用例已作废） |
 | S9 绩效 | P0 | OK | **closure 下发→导出 OK** |

@@ -1034,6 +1034,16 @@
 - **Live**：**重启 18080**（`-KillPort`）加载 correction 路由；云 MySQL 无 DDL（幂等写 remark）。
 - **文档**：Checklist **v2.6.64** · 计划表 **#54** · 对照表 FIN UAT · **未自动链 #55**。
 
-## WIP · #55 S6 证件水印 closure（2026-10-08 · 进行中）
+## Follow-up · #55 S6 证件水印 closure（2026-10-08）
 
-- **Checklist E2E-S6-03** · Playwright **`closure-corp-cert-watermark.spec.ts`** + **`cert_e2e_seed.py`** / `resource.vue` 水印 hint · pytest **`test_cert_e2e_seed_watermark_view`**（WIP · 未外置签收）· 全量 E2E 基线仍 **48/48（#54）** · 计划表 **#55 进行中** · **未自动链 #56**。
+- **种子**：`cert_e2e_seed.py`（`E2E-Cert-Watermark` · 证件 list 页/`main`/`run_e2e.ps1` 幂等）。
+- **前端**：`resource.vue` · `corp-cert-view-btn` / `corp-cert-watermark-hint`。
+- **E2E**：`closure-corp-cert-watermark.spec.ts`（**E2E-S6-03 切片** · 纯 UI）。
+- **测试**：`test_cert_e2e_seed_watermark_view` **1 passed** · collect **169**（+1）。
+- **文档**：Checklist **v2.6.65** · 计划表 **#55** · 对照表 S6 UAT 建议。
+
+## Follow-up · #56 S2 直播登记→下播 narrow closure（2026-10-08）
+
+- **E2E**：`closure-live-session-report.spec.ts`（纯 UI · `registerLiveSessionConfirmedReportViaUi` · 19 位 ID · 列表 **CONFIRMED**）。
+- **加固**：`trace.vue` 场次明细 GET **60s** · `dc-trace-session-open` testid · `openDcSessionDetailViaUi` 行定位。
+- **文档**：Checklist **v2.6.66** · 计划表 **#56** · 对照表 LIVE 行 · 全量 E2E **50/50 PASS**。

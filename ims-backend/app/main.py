@@ -126,6 +126,7 @@ def seed() -> None:
         from app.workbench_seed import refresh_workbench_e2e_seed
         from app.acct_seed import ensure_acct_e2e_pool_account, ensure_acct_schema, refresh_acct_e2e_pool
         from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, refresh_live_fin_e2e_deps
+        from app.cert_e2e_seed import refresh_cert_e2e_seed
 
         ensure_acct_schema()
         admin = db.query(User).filter(User.username == "admin", User.deleted == 0).first()
@@ -135,6 +136,7 @@ def seed() -> None:
             refresh_acct_e2e_pool(db, admin)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
+            refresh_cert_e2e_seed(db, admin)
         db.commit()
     finally:
         db.close()
