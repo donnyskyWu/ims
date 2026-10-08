@@ -88,6 +88,15 @@
                   收回
                 </button>
                 <button
+                  v-if="row.status === 'FROZEN'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-unfreeze-open"
+                  @click="openUnfreeze(row)"
+                >
+                  解冻
+                </button>
+                <button
                   v-if="(row.status === 'IN_USE' && !pendingFor(row)) || row.status === 'FROZEN'"
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -143,7 +152,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
@@ -407,6 +416,41 @@
           @click="submitRecall"
         >
           提交收回
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="unfreezeOpen" title="解冻回账号池" width="520px" @close="closeUnfreeze">
+      <div v-if="unfreezeAccount" data-testid="acct-unfreeze-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ unfreezeAccount.accountNo }} · {{ unfreezeAccount.nickname }}</div>
+        </div>
+        <div class="fld">
+          <label>当前状态</label>
+          <div>冻结（FROZEN）</div>
+        </div>
+        <div class="fld">
+          <label>解冻说明<i class="req">*</i></label>
+          <input v-model="unfreezeRemark" data-testid="acct-unfreeze-remark" placeholder="解冻原因" />
+        </div>
+        <p class="hint">仅管理员可操作。解冻后账号回到账号池（IN_POOL），清空责任人，可再次领用。</p>
+        <p v-if="unfreezeResult" class="hint" data-testid="acct-unfreeze-status">
+          已解冻 · 状态 {{ unfreezeResult.status }}
+        </p>
+        <p v-if="unfreezeMsg" class="hint" data-testid="acct-unfreeze-msg">{{ unfreezeMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeUnfreeze">关闭</button>
+        <button
+          v-if="!unfreezeResult"
+          class="btn btn-pri"
+          type="button"
+          data-testid="acct-unfreeze-submit"
+          :disabled="unfreezeBusy"
+          @click="submitUnfreeze"
+        >
+          确认解冻
         </button>
       </template>
     </ProtoDrawer>
@@ -706,6 +750,12 @@ const recallForm = reactive({
   reasonType: 'BUSINESS_ADJUST',
   remark: 'E2E 账号收回冻结',
 })
+const unfreezeOpen = ref(false)
+const unfreezeAccount = ref<Record<string, unknown> | null>(null)
+const unfreezeBusy = ref(false)
+const unfreezeMsg = ref('')
+const unfreezeRemark = ref('E2E 管理员解冻回池')
+const unfreezeResult = ref<{ status: string } | null>(null)
 
 const rechargeNeedsVoucher = computed(() => {
   const amount = Number(rechargeForm.amount)
@@ -1106,6 +1156,43 @@ async function submitRecall() {
     recallMsg.value = bizMessage(e)
   } finally {
     recallBusy.value = false
+  }
+}
+
+function closeUnfreeze() {
+  unfreezeOpen.value = false
+  unfreezeAccount.value = null
+  unfreezeResult.value = null
+}
+
+function openUnfreeze(row: Record<string, unknown>) {
+  unfreezeAccount.value = row
+  unfreezeRemark.value = 'E2E 管理员解冻回池'
+  unfreezeMsg.value = ''
+  unfreezeResult.value = null
+  unfreezeOpen.value = true
+}
+
+async function submitUnfreeze() {
+  if (!unfreezeAccount.value) return
+  unfreezeBusy.value = true
+  unfreezeMsg.value = ''
+  try {
+    if (!unfreezeRemark.value.trim()) {
+      unfreezeMsg.value = '1001 解冻说明必填'
+      return
+    }
+    const res = await http.post(`/account/${unfreezeAccount.value.id}/unfreeze`, {
+      remark: unfreezeRemark.value.trim(),
+    })
+    const vo = res.data?.data as { status: string }
+    unfreezeResult.value = vo
+    unfreezeMsg.value = '已解冻 · 状态 IN_POOL'
+    await load()
+  } catch (e: unknown) {
+    unfreezeMsg.value = bizMessage(e)
+  } finally {
+    unfreezeBusy.value = false
   }
 }
 

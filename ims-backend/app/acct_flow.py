@@ -1,4 +1,4 @@
-"""ACCT-001 账号领用 / 归还、ACCT-002 流转、ACCT-004 冲话费登记与账实核对（CORP 账号页）。"""
+"""ACCT-001 账号领用 / 归还、ACCT-002 流转 / 收回 / 解冻回池、ACCT-004 冲话费登记与账实核对（CORP 账号页）。"""
 
 import json
 import re
@@ -634,6 +634,57 @@ def revoke_transfer(
     note = f"{row.remark}；撤销：{remark}" if row.remark else f"撤销：{remark}"
     row.remark = note[:512]
     return ok(None)
+
+
+class UnfreezeBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    remark: str
+
+
+@router.post("/account/{account_id}/unfreeze")
+def unfreeze_account(
+    account_id: int,
+    body: UnfreezeBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """TRF-R2：管理员把收回冻结账号解冻回池（FROZEN → IN_POOL）。"""
+    remark = (body.remark or "").strip()
+    if not remark or len(remark) > 512:
+        return fail(1001, "解冻说明必填")
+    if not _is_admin(db, actor):
+        return fail(1008, "仅管理员可解冻")
+    ops = ops_session()
+    try:
+        account = _load_account(ops, account_id)
+        if account is None:
+            return fail(1504, "资源不可用")
+        if account.status != "FROZEN":
+            return fail(1023, "账号未冻结，无法解冻")
+        now = utcnow()
+        account.status = "IN_POOL"
+        account.holder_user_id = None
+        account.updated_at = now
+        ops.commit()
+        _append_timeline(
+            db,
+            account_id=account.id,
+            event_type="UNFREEZE",
+            ref_no=f"UF{account.id}",
+            ref_id=account.id,
+            operator=actor,
+            summary=f"管理员解冻 · 状态 IN_POOL · {remark}",
+            tenant_id=tenant_of(actor),
+        )
+        return ok(
+            {
+                "accountId": account.id,
+                "accountNo": account.account_no or str(account.id),
+                "status": "IN_POOL",
+            }
+        )
+    finally:
+        ops.close()
 
 
 def _money(value: float) -> Decimal | None:

@@ -35,6 +35,8 @@ E2E_XFER_ACCOUNT_NO = "AC-E2E-XFER"
 E2E_XFER_NICK = "E2E流转抖音"
 E2E_RECALL_ACCOUNT_NO = "AC-E2E-RECALL"
 E2E_RECALL_NICK = "E2E收回抖音"
+E2E_UNFREEZE_ACCOUNT_NO = "AC-E2E-UNFREEZE"
+E2E_UNFREEZE_NICK = "E2E解冻抖音"
 E2E_RECON_ACCOUNT_NO = "AC-E2E-RECON"
 E2E_RECON_NICK = "E2E核对抖音"
 E2E_ACCT_FINANCE_USER = "e2e_acct_r3"
@@ -87,6 +89,7 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
         _ensure_named_account(ops, admin, E2E_POOL_ACCOUNT_NO, E2E_POOL_NICK)
         _ensure_named_account(ops, admin, E2E_XFER_ACCOUNT_NO, E2E_XFER_NICK)
         _ensure_named_account(ops, admin, E2E_RECALL_ACCOUNT_NO, E2E_RECALL_NICK)
+        _ensure_named_account(ops, admin, E2E_UNFREEZE_ACCOUNT_NO, E2E_UNFREEZE_NICK)
         _ensure_named_account(ops, admin, E2E_RECON_ACCOUNT_NO, E2E_RECON_NICK)
         ops.commit()
     finally:
@@ -202,6 +205,7 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
             E2E_POOL_ACCOUNT_NO,
             E2E_XFER_ACCOUNT_NO,
             E2E_RECALL_ACCOUNT_NO,
+            E2E_UNFREEZE_ACCOUNT_NO,
             E2E_RECON_ACCOUNT_NO,
         ):
             row = _account_row(ops, account_no)
