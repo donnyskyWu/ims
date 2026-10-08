@@ -109,14 +109,14 @@
       GET /corp/account/page?platformType={{ meta.platform }} · 池内账号「领用」→ POST /account/apply · 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge
     </p>
 
-    <div class="tbl-block" data-testid="acct-recharge-list">
+    <div data-testid="acct-recharge-list" class="recharge-list">
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">冲话费记录</h2>
           <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见</div>
         </div>
       </div>
-      <div class="tbl-wrap">
+      <div class="recharge-table">
         <table>
           <thead>
             <tr>
@@ -891,5 +891,11 @@ watch(activeTab, (tab) => {
 .timeline-list li {
   padding: 8px 0;
   border-bottom: 1px solid var(--border, #eee);
+}
+.recharge-list {
+  margin-top: 12px;
+}
+.recharge-table {
+  overflow: auto;
 }
 </style>
