@@ -74,7 +74,7 @@ test.describe('CORP account recall to FROZEN S4', () => {
     await page.screenshot({ path: `${SHOTS}/01-in-use-admin.png`, fullPage: true })
 
     await inUseRow.getByTestId('acct-recall-open').click()
-    const recallDrawer = page.getByTestId('acct-recall-drawer')
+    const recallDrawer = page.locator('.drawer.on').filter({ hasText: '收回至冻结' })
     await expect(recallDrawer).toBeVisible()
     await expect(recallDrawer).toContainText('冻结态')
     await recallDrawer.getByTestId('acct-recall-reason').selectOption({ label: '业务调整' })
@@ -91,7 +91,7 @@ test.describe('CORP account recall to FROZEN S4', () => {
     await expect(recallDrawer.getByTestId('acct-recall-status')).toContainText('FROZEN')
     await expect(recallDrawer.getByTestId('acct-recall-status')).toContainText('TR')
     await page.screenshot({ path: `${SHOTS}/02-recall-effective.png`, fullPage: true })
-    await page.getByRole('button', { name: '关闭' }).click()
+    await recallDrawer.getByRole('button', { name: '关闭' }).click()
 
     const frozenRow = await searchRecall(page)
     await expect(frozenRow).toContainText('冻结')

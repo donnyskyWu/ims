@@ -12,6 +12,7 @@
 | **S4 (#47)** | 池领用/归还 closure | `closure-corp-account-checkout.spec.ts` | `AC-E2E-POOL` 领用三步→在用→归还→时间线 |
 | **S4 (#58)** | 冲话费 + 凭证门禁 | `closure-corp-account-recharge.spec.ts` | 1000 无凭证成功 · 6000 无凭证 **1025** · 补凭证后 admin 隐藏 URL · `e2e_acct_r3` 可见 |
 | **S4 (#60)** | 流转 + 他人领用 1021 | `closure-corp-account-transfer.spec.ts` | `AC-E2E-XFER` 领用至在用 · `e2e_acct_peer` 再领用 **1021** · 流转待确认 → 确认接收 · 责任人「流转同事」· 时间线 TRANSFER |
+| **S4 (#62)** | 收回冻结 1022 | `closure-corp-account-recall.spec.ts` | `AC-E2E-RECALL` 领用至在用 ·「收回」直接 **冻结** · 再领用/再流转 **1022** · 时间线 FREEZE |
 | **S5** | 资产采购领用 | `smoke-asset.spec.ts` | 登录 → `/ims/corp/device/office` 标题「办公设备管理」+ table |
 | **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** · **`closure-corp-cert-expire.spec.ts`（#61）** | smoke：证件列表；#55：水印 + 脱敏号；#61：T−30/T−7/T−0 黄/红/锁定 + 工作台提醒 |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
@@ -45,6 +46,7 @@
 | **E2E-S3-06/07 · FIN (#59)** | `closure-fin-period-lock.spec.ts` | 纯 UI · 独立期间结账 **LOCKED** · 录入 **1142** · 未批更正 **1155** · R4 通过后红冲投放成本 · 利润 **82,400.00** / **RECALCULATED** |
 | **E2E-S4-05/06 · CORP (#58)** | `closure-corp-account-recharge.spec.ts` | 纯 UI · `AC-E2E-POOL` 冲话费 · 1000 无凭证成功 · 6000 无凭证 **1025** · 补凭证 · 仅 `e2e_acct_r3` 见凭证号 |
 | **E2E-S4-02/03 · CORP (#60)** | `closure-corp-account-transfer.spec.ts` | 纯 UI · `AC-E2E-XFER` · 他人领用 **1021** · 流转确认后责任人变更 · 时间线 TRANSFER |
+| **E2E-S4-04 · CORP (#62)** | `closure-corp-account-recall.spec.ts` | 纯 UI · `AC-E2E-RECALL` · 收回 **FROZEN** · 领用/流转 **1022** · 时间线 FREEZE |
 | **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
