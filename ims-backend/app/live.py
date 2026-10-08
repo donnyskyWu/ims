@@ -13,6 +13,7 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import (
+    CertArchive,
     LiveAlarmRecord,
     LiveDataSnapshot,
     LiveReport,
@@ -143,6 +144,43 @@ def validate_devices(ops: Session, actor: User, device_ids: list[int]) -> bool:
         if not visible(phone, actor):
             return False
     return True
+
+
+USABLE_CERT_STATUS = frozenset({"EFFECTIVE", "EXPIRING"})
+
+
+def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
+    """LIVE-R2 / CERT-E-R3：实名人名下过期、锁定或未生效证件拦截开播（1045）。
+
+    没有证件不拦截，避免无档实名人的既有场次被误伤。
+    仍有 EXPIRED 档时，旁边即使已有新的 EFFECTIVE 档也不放行，须走换证把旧档改为 RECYCLED。
+    """
+    name = (person.real_name or "").strip()[:64]
+    if not name:
+        return None
+    rows = db.scalars(
+        select(CertArchive).where(
+            CertArchive.deleted == 0,
+            CertArchive.tenant_id == tenant_of(actor),
+            CertArchive.holder_name == name,
+        )
+    ).all()
+    if not rows:
+        return None
+    if any(row.status == "EXPIRED" for row in rows):
+        return "实名人证件过期或锁定，禁止开播"
+    if any(row.status in USABLE_CERT_STATUS for row in rows):
+        return None
+    if any(row.status != "RECYCLED" for row in rows):
+        return "实名人证件未生效，禁止开播"
+    return None
+
+
+def locked_cert_fail(db: Session, actor: User, person: Realname):
+    reason = cert_blocks_live(db, actor, person)
+    if reason is None:
+        return None
+    return fail(1045, reason)
 
 
 def risk_level_of(score: int) -> str:
@@ -621,6 +659,9 @@ def register_create(
     person = load_realname(ops, actor, body.realnamePersonId)
     if person is None:
         return fail(1041, "实名人不存在")
+    blocked = locked_cert_fail(db, actor, person)
+    if blocked is not None:
+        return blocked
     if not validate_devices(ops, actor, body.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     user = db.get(User, body.responsibleUserId)
@@ -723,6 +764,9 @@ def register_update(
     person = load_realname(ops, actor, body.realnamePersonId)
     if account is None or person is None:
         return fail(1041, "账号或实名人不存在")
+    blocked = locked_cert_fail(db, actor, person)
+    if blocked is not None:
+        return blocked
     if not validate_devices(ops, actor, body.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     row.account_id = body.accountId
@@ -758,6 +802,9 @@ def risk_check(
     person = load_realname(ops, actor, row.realname_person_id)
     if account is None or person is None:
         return fail(1041, "账号或实名人不存在")
+    blocked = locked_cert_fail(db, actor, person)
+    if blocked is not None:
+        return blocked
     device_ids = json.loads(row.device_asset_ids or "[]")
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, device_ids)
     apply_risk(db, row, score, level, checks)
@@ -832,6 +879,7 @@ def register_start(
     request: Request,
     session_code: str,
     db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
     row = get_session(db, actor, request.state.scope, session_code)
@@ -839,6 +887,12 @@ def register_start(
         return fail(1504, "资源不可用")
     if row.session_status != "APPROVED":
         return fail(1042, "未放行不可开播")
+    person = load_realname(ops, actor, row.realname_person_id)
+    if person is None:
+        return fail(1041, "实名人不存在")
+    blocked = locked_cert_fail(db, actor, person)
+    if blocked is not None:
+        return blocked
     row.session_status = "LIVE"
     return ok(None)
 
