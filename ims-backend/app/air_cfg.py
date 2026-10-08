@@ -279,6 +279,9 @@ def seed_air_keys(db: Session, tenant_id: int, actor_id: int) -> None:
             key_code="KEY-0001",
             owner_user_id=actor_id,
             key_prefix="ims_sk_••••",
+            key_mask="ims_sk_••••",
+            device_name="个人通用",
+            qpm_limit=60,
             status="ACTIVE",
             whitelist="mcp.content,mcp.report",
             last_used_at=now,
@@ -314,15 +317,22 @@ def seed_air_audit(db: Session, tenant_id: int, actor_id: int) -> None:
     db.flush()
 
 
-def key_vo(row: AirApiKey, names: dict[int, str]) -> dict:
+def key_vo(row: AirApiKey, names: dict[int, str], accounts: dict[int, str] | None = None) -> dict:
+    mask = row.key_mask or row.key_prefix
     return {
         "id": row.id,
         "keyCode": row.key_code,
         "ownerUserId": row.owner_user_id,
         "ownerName": names.get(row.owner_user_id, ""),
+        "ownerUsername": (accounts or {}).get(row.owner_user_id, ""),
         "keyPrefix": row.key_prefix,
+        "keyMask": mask,
+        "deviceName": row.device_name or "",
+        "qpmLimit": int(row.qpm_limit if row.qpm_limit is not None else 60),
         "status": row.status,
         "whitelist": row.whitelist,
+        "expireAt": iso(row.expire_at) if row.expire_at else "",
+        "graceUntil": iso(row.grace_until) if row.grace_until else "",
         "lastUsedAt": iso(row.last_used_at),
     }
 
@@ -355,8 +365,11 @@ def key_page(
     stmt = select(AirApiKey).where(AirApiKey.deleted == 0, AirApiKey.tenant_id == tenant_id)
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(db.scalars(stmt.order_by(AirApiKey.id.desc()).offset((page_no - 1) * size).limit(size)).all())
-    names = user_names(db, [r.owner_user_id for r in rows])
-    return paged([key_vo(r, names) for r in rows], total, page_no, size)
+    owner_ids = [r.owner_user_id for r in rows]
+    names = user_names(db, owner_ids)
+    owners = list(db.scalars(select(User).where(User.id.in_(owner_ids))).all()) if owner_ids else []
+    accounts = {row.id: row.username for row in owners}
+    return paged([key_vo(r, names, accounts) for r in rows], total, page_no, size)
 
 
 @router.get("/audit/page")

@@ -354,6 +354,8 @@ PREFIXES = [
     ("PUT", "/admin-api/ims/air/cfg/prompt", "ims_air_prompt_config"),
     ("GET", "/admin-api/ims/air/cfg/key", "ims_air_api_key"),
     ("GET", "/admin-api/ims/air/cfg/audit", "ims_air_audit_log"),
+    ("POST", "/admin-api/ims/air/key/generate", "ims_air_api_key"),
+    ("POST", "/admin-api/ims/air/key/", "ims_air_api_key"),
     ("GET", "/admin-api/ims/master/overview", "oa_company"),
     ("GET", "/admin-api/ims/bi/metric/list", "ims_bi_metric"),
     ("POST", "/admin-api/ims/bi/metric", "ims_bi_metric"),

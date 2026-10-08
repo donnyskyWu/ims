@@ -1646,18 +1646,55 @@ class AlertDedupPolicy(Base):
 
 
 class AirApiKey(Base):
+    """人员 Key。明文只在生成/换新响应出现一次，库内仅存 SHA-256（BR-020）。"""
+
     __tablename__ = "ims_air_api_key"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     key_code: Mapped[str] = mapped_column(String(32), default="", index=True)
     owner_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     key_prefix: Mapped[str] = mapped_column(String(16), default="")
+    key_mask: Mapped[str] = mapped_column(String(64), default="")
+    key_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    device_name: Mapped[str] = mapped_column(String(64), default="")
+    qpm_limit: Mapped[int] = mapped_column(Integer, default=60)
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
     whitelist: Mapped[str] = mapped_column(String(512), default="")
+    client_token: Mapped[str] = mapped_column(String(64), default="")
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    grace_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AirQpmBucket(Base):
+    """单 Key 的一分钟调用计数。测试注入时钟，不依赖墙钟睡 60 秒。"""
+
+    __tablename__ = "ims_air_qpm_bucket"
+    __table_args__ = (UniqueConstraint("key_id", "window_start", name="uk_air_qpm_window"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    key_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    window_start: Mapped[datetime] = mapped_column(DateTime, index=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+
+
+class AirMcpLog(Base):
+    """MCP 调用审计（契约表 ims_mcp_log）。网关本地写入，不调用外部模型。"""
+
+    __tablename__ = "ims_mcp_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    key_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    tool: Mapped[str] = mapped_column(String(64), default="")
+    param_digest: Mapped[str] = mapped_column(String(64), default="")
+    result_code: Mapped[str] = mapped_column(String(16), default="")
+    cost_ms: Mapped[int] = mapped_column(Integer, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AirAuditLog(Base):

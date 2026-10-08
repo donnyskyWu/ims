@@ -202,6 +202,39 @@ def ensure_live_approve_comment_column() -> None:
         )
 
 
+def ensure_air_key_columns() -> None:
+    """已有库补 Key 限额列。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_api_key" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_api_key")}
+    alters: list[str] = []
+    if "key_mask" not in cols:
+        alters.append("ADD COLUMN key_mask VARCHAR(64) NOT NULL DEFAULT ''")
+    if "key_hash" not in cols:
+        alters.append("ADD COLUMN key_hash VARCHAR(64) NOT NULL DEFAULT ''")
+    if "device_name" not in cols:
+        alters.append("ADD COLUMN device_name VARCHAR(64) NOT NULL DEFAULT ''")
+    if "qpm_limit" not in cols:
+        alters.append("ADD COLUMN qpm_limit INT NOT NULL DEFAULT 60")
+    if "client_token" not in cols:
+        alters.append("ADD COLUMN client_token VARCHAR(64) NOT NULL DEFAULT ''")
+    if "expire_at" not in cols:
+        alters.append("ADD COLUMN expire_at DATETIME NULL")
+    if "grace_until" not in cols:
+        alters.append("ADD COLUMN grace_until DATETIME NULL")
+    if alters:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE ims_air_api_key {', '.join(alters)}"))
+    insp = inspect(engine)
+    index_names = {idx["name"] for idx in insp.get_indexes("ims_air_api_key")}
+    if "ix_ims_air_api_key_key_hash" not in index_names and "idx_air_api_key_hash" not in index_names:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE INDEX idx_air_api_key_hash ON ims_air_api_key (key_hash)"))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
@@ -209,6 +242,7 @@ def init_db() -> None:
     ensure_asset_purchase_column()
     ensure_train_stat_schema()
     ensure_live_approve_comment_column()
+    ensure_air_key_columns()
     from app.ops_db import ensure_ops
 
     ensure_ops()
@@ -261,6 +295,9 @@ def create_app() -> FastAPI:
         return {"code": 0, "msg": "ok", "data": {"status": "up", "db": IMS_DB, "ops": OPS_DB}}
 
     app.include_router(router, prefix="/admin-api/ims")
+    from app.air_mcp import router as air_mcp_router
+
+    app.include_router(air_mcp_router)
     return app
 
 
