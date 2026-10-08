@@ -30,6 +30,7 @@
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
 > **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
+> **v2.6.81（2026-10-08 · #71 LIVE 锁定证件拦截开播）**：`closure-live-locked-cert.spec.ts`（**E2E-S2-04** · 纯 UI · 种子 `AC-E2E-LIVE1045` / 实名人 `E2E-Live-1045` · 录入当天到期 → 审核 →「扫描到期」锁定 → 开播登记红字 **1045** →「换证」后旧档 **已回收**、新档 **生效**、预警 **已换证** → 再登记并「确认开播」状态 **LIVE**）；`POST /live/register` · `POST …/risk-check` · `PUT …/start` · `live/index.vue`；rebase 到 main `5d4d505`（含 **#70**）后 `npx playwright test --workers=1` **66/66 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#70** 保持开发完成/待UAT。本片不改 `acct_flow` / `account.vue` / `asset_ledger` / `device.vue`。评分 ≥70 的 **1043** 仍未做。**#72** 资产核验并行进行中。
 > **v2.6.80（2026-10-08 · #70 S4 冲话费成本汇总）**：`closure-corp-account-summary.spec.ts`（**E2E-S4-10** · 纯 UI · 种子 `AC-E2E-SUM` · 2026-04 登记 **120.50** + **79.50** → 账号 / 部门#70070 / 抖音 合计 **¥200.00** · **2 笔** · 2026-03 的 **50.00** 不进 4 月 · 3 月汇总 **¥50.00** · **1 笔**）；`GET /account/recharge/summary` · `account.vue`；rebase 到 main `ab529a1`（含 **#69**）后 `npx playwright test --workers=1` **65/65 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#69** 保持开发完成/待UAT。本片不改 cert / `resource.vue` / live-session / `asset_ledger` / `device.vue`。**#71** LIVE **1045** 并行进行中。
 > **v2.6.79（2026-10-08 · #69 S6 证件换证）**：`closure-corp-cert-renew.spec.ts`（**E2E-S6-05** · 纯 UI · 持有人 `E2E-Cert-RN-*` · 录入 T−30/T−7/T−0 → 审核 →「扫描到期」→「换证」提交新有效期 →「审核」→「完成换证」→ 预警 **已换证** · 旧档 **已回收** 仍在 · 新档 **生效** · 工作台待办中锁定标题消失）；`PUT /cert/expire/{id}/renew` · `resource.vue`；rebase 到 main `07726cf`（含 **#68**）后 `npx playwright test --workers=1` **64/64 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#68** 保持开发完成/待UAT。本片不改 `asset_ledger` / `device.vue` / `acct_flow` / `account.vue`。LIVE **1045** 仍未做。**#70** 冲话费成本汇总并行进行中。  
 > **v2.6.78（2026-10-08 · #68 S5 采购入台账 + 批量导入）**：`closure-asset-purchase-import.spec.ts`（**E2E-S5-01** · 纯 UI · 办公设备「采购导入」经文件选择器上传 CSV · 两行合法 + 第 3 行名称为空 → 抽屉「部分成功：成功 2 条，失败 1 条」· 错误表「第 3 行」字段 `assetName` · 列表两台「待审核」· 坏编号不在台账 · 详情时间线「采购入台账」）；`POST /asset/ledger/import` · `device.vue`；rebase 到 main `a00e0ce`（含 **#67**）后 `npx playwright test --workers=1` **63/63 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#67** 保持开发完成/待UAT。本片不改 cert / `resource.vue`。换证见 **#69**。
@@ -100,7 +101,7 @@
 ## S2 直播场次全链路（P0）
 
 > smoke-OK（narrow）：直播管理列表页可加载。  
-> **闭环-OK（Playwright · v2.6.66 · #56 窄切片）**：`closure-live-session-report.spec.ts` — 登记 → 风控 → 下播提交/核准 · 19 位场次 ID · 列表 **CONFIRMED**；**未**覆盖 E2E-S2-03～05/07～09（黄红/开播/补录等）。
+> **闭环-OK（Playwright · v2.6.81 · #71）**：`closure-live-locked-cert.spec.ts` — **E2E-S2-04** 实名人证件锁定后开播登记 **1045**，换证后确认开播 **LIVE**（**E2E-S2-05** 的放行后续）。`closure-live-session-report.spec.ts` — **#56** 登记 → 风控 → 下播提交/核准 · 19 位场次 ID · 列表 **CONFIRMED**。**未**覆盖 E2E-S2-03、评分 ≥70 的 **1043**、E2E-S2-07～09。
 
 前置剧本：实名人（证件有效）+ 账号 IN_USE + 平台 DYS。
 
@@ -109,8 +110,8 @@
 | E2E-S2-01 | 登记开播（选账号/实名人/平台/时间） | 场次 ID 19 位、平台码 DYS、状态 PENDING_RISK_CHECK |
 | E2E-S2-02 | 风控评分（构造绿色数据） | < 40 绿放行 APPROVED |
 | E2E-S2-03 | 构造黄色（40~69） | 需审批放行；审批后 APPROVED |
-| E2E-S2-04 | 构造红色（≥70 或实名人证件过期） | 禁止开播 1043/1045 |
-| E2E-S2-05 | 开播→LIVE | 状态流转；直播中列表可见 |
+| E2E-S2-04 | 构造红色（≥70 或实名人证件过期） | 禁止开播 1043/1045（**#71 closure** · 证件锁定/未生效 **1045** · 换证前不开播 · 评分 ≥70 的 **1043** 仍未做） |
+| E2E-S2-05 | 开播→LIVE | 状态流转；直播中列表可见（**#71 closure** · 换证后「确认开播」**LIVE**） |
 | E2E-S2-06 | 下播→24h 内录数据 | 必填缺失拦截 1046；补齐提交成功 |
 | E2E-S2-07 | 已提交数据修改 | 只读拦截 1047；走更正单流程 |
 | E2E-S2-08 | 构造另一场次超 24h 未录 | 督办事件生成（工作台+预警） |
@@ -168,7 +169,7 @@
 ## S6 证件录入-预警-水印（P1）
 
 > smoke-OK（narrow）：证件管理列表页可加载。  
-> **闭环-OK（Playwright · v2.6.79 · #69）**：`closure-corp-cert-renew.spec.ts` — **E2E-S6-05** 纯 UI 对 `E2E-Cert-RN-*` 换证，旧证 **已回收** 仍在列表，新证 **生效**，黄/红/锁定变为 **已换证**，工作台锁定待办消失。`closure-corp-cert-view-freq.spec.ts` — **E2E-S6-04**（#67）前 10 次水印成功，第 11 次 **1035**。`closure-corp-cert-expire.spec.ts` — **E2E-S6-02**（#61）T−30/T−7/T−0 → 黄/红/锁定 + 工作台提醒。`closure-corp-cert-watermark.spec.ts` — **E2E-S6-03**（#55）查看水印 + 脱敏号。**E2E-S6-01** 的重复 **1032** 仍仅 pytest。LIVE **1045** 仍未覆盖。
+> **闭环-OK（Playwright · v2.6.81 · #71）**：锁定证件挡住开播见 S2 `closure-live-locked-cert.spec.ts`（**E2E-S2-04** · **1045** · 换证后 **LIVE**）。`closure-corp-cert-renew.spec.ts` — **E2E-S6-05**（#69）纯 UI 对 `E2E-Cert-RN-*` 换证，旧证 **已回收** 仍在列表，新证 **生效**，黄/红/锁定变为 **已换证**，工作台锁定待办消失。`closure-corp-cert-view-freq.spec.ts` — **E2E-S6-04**（#67）前 10 次水印成功，第 11 次 **1035**。`closure-corp-cert-expire.spec.ts` — **E2E-S6-02**（#61）T−30/T−7/T−0 → 黄/红/锁定 + 工作台提醒。`closure-corp-cert-watermark.spec.ts` — **E2E-S6-03**（#55）查看水印 + 脱敏号。**E2E-S6-01** 的重复 **1032** 仍仅 pytest。
 
 | 编号 | 步骤 | 断言点 |
 |------|------|--------|
