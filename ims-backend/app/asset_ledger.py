@@ -92,6 +92,7 @@ def ledger_vo(row: AssetLedger, names: dict[int, str], timeline: list[dict] | No
         "ownerUserId": row.owner_user_id,
         "ownerName": names.get(row.owner_user_id or 0, "") if row.owner_user_id else "",
         "purchaseDate": row.purchase_date,
+        "purchaseBatchNo": row.purchase_batch_no or "",
         "bindCount": 0,
         "used": bool(row.used_at),
     }

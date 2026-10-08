@@ -229,6 +229,56 @@ interface AssetVerifyMetricsResp {
 }
 ```
 
+### 2.4 采购批量入台账（#68 · E2E-S5-01）
+
+复用既有 `POST /asset/ledger` 的登记口径，不另建资产资源。办公设备 / 直播设备页「采购导入」上传 CSV。
+
+#### 2.4.1 POST /admin-api/ims/asset/ledger/import — 采购 CSV 入台账
+
+**请求**：`multipart/form-data`，字段 `file`（CSV，UTF-8 或 GBK）。表头必含资产名称与采购日期，列名可用英文或中文：
+
+| 列 | 英文 | 中文 | 规则 |
+|----|------|------|------|
+| 资产编号 | assetCode | 资产编号 / 编号 | 可空则生成；库内或本文件内重复 → 该行 **1012**，字段 `assetCode` |
+| 资产名称 | assetName | 资产名称 / 名称 | 必填，空 → 该行 **1001**，字段 `assetName` |
+| 资产类型 | assetType | 资产类型 / 类型 | 空则 `OFFICE`；不在 `dict_asset_type` → 该行 **1503**，字段 `assetType` |
+| 规格 | spec | 规格 | 超过 128 → 该行 **1001**，字段 `spec` |
+| 采购日期 | purchaseDate | 采购日期 | 必填，`yyyy-MM-dd`，否则该行 **1001**，字段 `purchaseDate` |
+
+文件为空、无法识别编码、缺必填列、没有数据行、超过 200 行 → **1001**，不入库。
+
+**响应** `data`（业务码 **0**，含部分成功）：
+
+```typescript
+interface AssetPurchaseImportResp {
+  batchNo: string;          // PB + 时间戳
+  fileName: string;
+  total: number;
+  successCount: number;
+  failCount: number;
+  /** 成功与失败并存。已成功行不因后续失败行回滚（G7 例外） */
+  partial: boolean;
+  errors: Array<{
+    rowNo: number;          // 文件行号，表头为第 1 行
+    field: 'assetCode' | 'assetName' | 'assetType' | 'spec' | 'purchaseDate';
+    fieldLabel: string;
+    code: number;
+    message: string;
+    assetCode: string;
+  }>;
+  imported: Array<{
+    id: number;
+    assetCode: string;
+    assetName: string;
+    status: 'PENDING_REVIEW';
+    purchaseDate: string;
+    purchaseBatchNo: string;
+  }>;
+}
+```
+
+成功行：`ims_asset_ledger.status=PENDING_REVIEW`，`purchase_batch_no=batchNo`，时间线 `REGISTER` / 说明「采购入台账」。批次头写入 `ims_asset_purchase_batch.error_detail`。
+
 ---
 
 ## 3. 状态机与业务约束
@@ -244,6 +294,8 @@ PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──�
 #63 生命周期：在用再领用 **1012**；未使用就归还、或未归还就报废、或终态再领用 → **1015**。直接从在用报废不在本切片。冻结展示仍属离职闭环，本切片不做。
 
 #65 穿透（办公设备页，不新开路由）：`ims_asset_hierarchy.level` 从实名人向下计资产层。登记可带 `realnameId` 或 `parentAssetCode`（仍走 `POST /asset/ledger`）。`GET /asset/forward/trace/{assetId}`：`assetId>0` 返回该资产上行至实名人的链路；`assetId=0` 且 `realnameId` 取该实名人最深链路。任一层 `level>5`，或 `layers` 超出 L1–L5 → **1013**。`GET /asset/ledger/{id}` 与 `GET /asset/forward/detail/{assetId}` 的 `holders` 按领用/归还/报废给出使用人三态。`GET /asset/reverse/by-person/{userId}` 按当前责任人或历史领用事件列出资产及当前状态。账号/场次反查、导出、关联校验不在本片。
+
+#68 采购入台账（办公/直播设备页「采购导入」，不新开路由）：`POST /asset/ledger/import`。合法行待审核入台账并记 `purchaseBatchNo`；非法行返回文件行号与字段；`partial=true` 时已入库行不回滚。见 §2.4。
 
 **校验工单（VerifyTaskStatus）**：`PENDING_DISPATCH →（派发）REPAIRING →（修复复审）CLOSED`；逾期（3 工作日）自动升级推送。
 
@@ -268,6 +320,7 @@ PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──�
 | 页面/区域 | 页面操作 | 调用 API |
 |-----------|----------|----------|
 | 办公/直播设备台账（#63） | 登记 / 领用 / 使用 / 归还 / 报废 | POST /asset/ledger、POST /asset/ledger/{id}/checkout\|use\|return\|scrap；列表 GET /asset/ledger/page，办公页 BFF `GET /corp/device/office/page?assetType` 固定 OFFICE，直播页合并 LIVE+SHOOT |
+| 办公/直播设备台账（#68） | 采购 CSV 批量入台账；行级错误；部分成功 | POST /asset/ledger/import |
 | 资产台账列表页（走既有 07 资产登记端点，见头部映射表） | 台账列表查询（分页/筛选） | GET /asset/ledger/page |
 | 资产台账列表页（复用既有 07 登记列表） | 行点击打开穿透详情抽屉（DetailDrawer 渐进渲染 L1→L5） | GET /asset/forward/detail/{assetId} |
 | 资产穿透详情抽屉-关系图 Tab | 渲染穿透链路图（TraceGraph） | GET /asset/forward/trace/{assetId} |

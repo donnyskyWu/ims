@@ -157,10 +157,25 @@ def ensure_bi_br212_columns() -> None:
             conn.execute(text(f"CREATE INDEX idx_{table}_dept_id ON {table} (dept_id)"))
 
 
+def ensure_asset_purchase_column() -> None:
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_asset_ledger" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_asset_ledger")}
+    if "purchase_batch_no" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_asset_ledger ADD COLUMN purchase_batch_no VARCHAR(32) NOT NULL DEFAULT ''"))
+        conn.execute(text("CREATE INDEX idx_asset_ledger_purchase_batch ON ims_asset_ledger (purchase_batch_no)"))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
     ensure_bi_br212_columns()
+    ensure_asset_purchase_column()
     from app.ops_db import ensure_ops
 
     ensure_ops()

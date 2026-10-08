@@ -1643,6 +1643,7 @@ class AssetLedger(Base):
     status: Mapped[str] = mapped_column(String(32), default="PENDING_REVIEW", index=True)
     owner_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     purchase_date: Mapped[str] = mapped_column(String(10), default="")
+    purchase_batch_no: Mapped[str] = mapped_column(String(32), default="", index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     subject_id: Mapped[int] = mapped_column(BigInteger, default=0)
     creator: Mapped[int] = mapped_column(BigInteger, default=0)
@@ -1651,6 +1652,24 @@ class AssetLedger(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AssetPurchaseBatch(Base):
+    """采购 CSV 入台账（#68）。成功行已提交，失败行只记行号与字段，不回滚已入库行。"""
+
+    __tablename__ = "ims_asset_purchase_batch"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    batch_no: Mapped[str] = mapped_column(String(32), unique=True)
+    file_name: Mapped[str] = mapped_column(String(128), default="")
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    fail_count: Mapped[int] = mapped_column(Integer, default=0)
+    partial: Mapped[int] = mapped_column(Integer, default=0)
+    error_detail: Mapped[str] = mapped_column(Text, default="[]")
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class AssetLifecycleEvent(Base):
