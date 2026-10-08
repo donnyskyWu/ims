@@ -170,7 +170,9 @@ test.describe('fin period lock and post-lock correction', () => {
     const profitRow = page.locator('tbody tr', { hasText: sessionCode }).first()
     await expect(profitRow).toContainText('82,400.00', { timeout: 15_000 })
     await profitRow.getByRole('button', { name: '详情' }).click()
-    await expect(page.locator('.drawer.on')).toContainText('RECALCULATED')
+    const detailDrawer = page.locator('.drawer').filter({ hasText: '利润详情' })
+    await expect(detailDrawer).toBeVisible()
+    await expect(detailDrawer).toContainText('RECALCULATED')
 
     expect(pageErrors).toEqual([])
   })
