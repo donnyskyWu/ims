@@ -333,6 +333,7 @@ from app.system_dict import router as dict_router
 from app.system_role import router as role_router
 from app.workbench import router as workbench_router
 from app.acct_flow import router as acct_flow_router
+from app.cert_expire import router as cert_expire_router
 
 router.include_router(role_router)
 router.include_router(dict_router)
@@ -380,3 +381,4 @@ router.include_router(bi_subscribe_router)
 router.include_router(flow_router)
 router.include_router(bi_screen_router)
 router.include_router(master_data_router)
+router.include_router(cert_expire_router)

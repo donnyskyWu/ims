@@ -8,6 +8,10 @@
       <div v-if="kind === 'sim-card'" class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新建手机卡</button>
       </div>
+      <div v-else-if="kind === 'certificate'" class="acts">
+        <button class="btn btn-sec" type="button" data-testid="corp-cert-scan-btn" @click="openScan">扫描到期</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-create-btn" @click="openCertCreate">录入证件</button>
+      </div>
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
@@ -54,6 +58,15 @@
                   {{ kind === 'certificate' ? '查看' : '详情' }}
                 </button>
                 <button v-if="kind === 'sim-card'" class="btn btn-txt btn-sm" type="button" @click="openEdit(row)">编辑</button>
+                <button
+                  v-if="kind === 'certificate' && row.status === 'PENDING_REVIEW'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="corp-cert-review-btn"
+                  @click="openReview(row)"
+                >
+                  审核
+                </button>
               </td>
             </tr>
           </tbody>
@@ -74,6 +87,55 @@
       </div>
     </div>
     <p class="hint">{{ meta.hint }}</p>
+    <div v-if="kind === 'certificate'" data-testid="corp-cert-expire-panel">
+      <div class="sec rowline" style="justify-content: space-between; align-items: baseline">
+        <span>到期预警</span>
+        <span data-testid="corp-cert-expire-stats">黄色 {{ expireStats.yellow }} · 红色 {{ expireStats.red }} · 锁定 {{ expireStats.locked }}</span>
+      </div>
+      <p v-if="scanMessage" class="hint" data-testid="corp-cert-scan-message">{{ scanMessage }}</p>
+      <form class="qbar" @submit.prevent="searchExpire">
+        <input v-model="expireHolder" placeholder="预警持有人" style="width: 180px" data-testid="corp-cert-expire-holder" />
+        <span class="sp"></span>
+        <button class="btn btn-pri btn-sm" type="submit">筛选</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="resetExpire">重置</button>
+      </form>
+      <div class="tbl-block">
+        <div class="expire-wrap">
+          <table data-testid="corp-cert-expire-table">
+            <thead>
+              <tr>
+                <th>持有人</th>
+                <th>证件号</th>
+                <th>有效期至</th>
+                <th>剩余天数</th>
+                <th>预警级别</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="expireLoading">
+                <td colspan="6" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+              </tr>
+              <tr v-else-if="!expireRows.length">
+                <td colspan="6" style="white-space: normal">
+                  <div class="empty"><div class="et">{{ expireError || '当前无到期预警' }}</div></div>
+                </td>
+              </tr>
+              <tr v-for="row in expireRows" v-else :key="String(row.id)">
+                <td>{{ show(row, 'holderName') }}</td>
+                <td>{{ show(row, 'certNoMasked') }}</td>
+                <td>{{ show(row, 'expireDate') }}</td>
+                <td>{{ show(row, 'remainDays') }}</td>
+                <td>
+                  <span data-testid="corp-cert-level" :style="levelStyle(String(row.level || ''))">{{ levelLabel(String(row.level || '')) }}</span>
+                </td>
+                <td>{{ expireStatusLabel(String(row.status || '')) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
     <ProtoDrawer
       :open="detailOpen"
       :title="meta.detailTitle"
@@ -153,6 +215,48 @@
         <button class="btn btn-pri" type="button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="certFormOpen" title="录入证件" width="480px" @close="certFormOpen = false">
+      <div class="formrow one"><div class="fld"><label>持有人<i class="req">*</i></label><input v-model="certForm.holderName" data-testid="corp-cert-holder" placeholder="姓名" /></div></div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>证件类型<i class="req">*</i></label>
+          <select v-model="certForm.certType" data-testid="corp-cert-type">
+            <option value="IDCARD">身份证</option>
+            <option value="PASSPORT">护照</option>
+            <option value="OTHER">其他</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one"><div class="fld"><label>证件号<i class="req">*</i></label><input v-model="certForm.certNoPlain" data-testid="corp-cert-no" placeholder="至少 8 位，接口只回脱敏值" /></div></div>
+      <div class="formrow one"><div class="fld"><label>签发日期<i class="req">*</i></label><input v-model="certForm.issueDate" type="date" data-testid="corp-cert-issue" /></div></div>
+      <div class="formrow one"><div class="fld"><label>有效期至<i class="req">*</i></label><input v-model="certForm.expireDate" type="date" data-testid="corp-cert-expire-date" /></div></div>
+      <div class="formrow one"><div class="fld"><label>扫描件标识<i class="req">*</i></label><input v-model="certForm.fileKey" data-testid="corp-cert-file-key" /></div></div>
+      <div class="hint">提交后为待审。审核生效后才参与到期扫描。本期不返回原图。</div>
+      <div v-if="certFormError" class="hint bad" data-testid="corp-cert-form-error">{{ certFormError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="certFormOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-save" :disabled="certSaving" @click="saveCert">{{ certSaving ? '提交中…' : '提交审核' }}</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="reviewOpen" title="审核证件" width="420px" @close="reviewOpen = false">
+      <div class="formrow one">
+        <div class="fld"><label>持有人</label><div>{{ reviewRow?.holderName || '—' }}</div></div>
+        <div class="fld"><label>证件号</label><div>{{ reviewRow?.certNoMasked || '—' }}</div></div>
+        <div class="fld"><label>有效期至</label><div>{{ reviewRow?.expireDate || '—' }}</div></div>
+      </div>
+      <div v-if="reviewError" class="hint bad">{{ reviewError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="reviewOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-review-approve" :disabled="reviewSaving" @click="approveCert">通过</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="scanOpen" title="扫描到期" width="420px" @close="scanOpen = false">
+      <div class="hint">按今日扫描已生效证件：剩余 30 天黄色、7 天红色、当天锁定，并写入工作台提醒。同一级别不重复推送。</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="scanOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-scan-confirm" :disabled="scanSaving" @click="confirmScan">{{ scanSaving ? '扫描中…' : '确认扫描' }}</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -178,6 +282,29 @@ const loading = ref(false)
 const error = ref('')
 const detailOpen = ref(false)
 const detail = ref<Row | null>(null)
+const certFormOpen = ref(false)
+const certSaving = ref(false)
+const certFormError = ref('')
+const certForm = reactive({
+  holderName: '',
+  certType: 'IDCARD',
+  certNoPlain: '',
+  issueDate: '2020-01-01',
+  expireDate: '',
+  fileKey: 'local/cert/upload',
+})
+const reviewOpen = ref(false)
+const reviewSaving = ref(false)
+const reviewError = ref('')
+const reviewRow = ref<Row | null>(null)
+const scanOpen = ref(false)
+const scanSaving = ref(false)
+const scanMessage = ref('')
+const expireRows = ref<Row[]>([])
+const expireLoading = ref(false)
+const expireError = ref('')
+const expireHolder = ref('')
+const expireStats = reactive({ yellow: 0, red: 0, locked: 0 })
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
@@ -255,11 +382,11 @@ const specs: Record<string, {
   },
   certificate: {
     title: '证件管理',
-    sub: 'CORP-R · 索引分页 · 查看带水印，不出原图',
+    sub: 'CORP-R · 索引分页 · 到期预警 · 查看带水印，不出原图',
     placeholder: '持有人',
     empty: '没有证件档案',
-    emptyHint: '契约没有上传接口，列表可以为空。',
-    hint: 'GET /corp/resource/certificate/page 与 /{id}/view。证件号只显示脱敏值。',
+    emptyHint: '可以录入。审核生效后参与到期扫描。',
+    hint: '录入 POST /cert/archive/upload，审核 PUT /cert/archive/{id}/review，扫描 POST /cert/expire/scan。证件号只显示脱敏值。',
     detailTitle: '证件查看',
     columns: ['持有人', '类型', '证件号', '有效期', '状态'],
     keys: ['holderName', 'certType', 'certNoMasked', 'expireDate', 'status'],
@@ -334,6 +461,137 @@ function statusLabel(value: string) {
   if (value === 'ENABLED') return '启用'
   if (value === 'DISABLED') return '停用'
   return value
+}
+
+function levelLabel(value: string) {
+  if (value === 'YELLOW') return '黄色'
+  if (value === 'RED') return '红色'
+  if (value === 'LOCKED') return '锁定'
+  return value || '—'
+}
+
+function levelStyle(value: string) {
+  if (value === 'YELLOW') return 'color:#a16207;font-weight:600'
+  if (value === 'RED') return 'color:#b91c1c;font-weight:600'
+  if (value === 'LOCKED') return 'color:#7f1d1d;font-weight:700'
+  return ''
+}
+
+function expireStatusLabel(value: string) {
+  if (value === 'WARNING') return '预警中'
+  if (value === 'EXPIRED_LOCKED') return '已锁定'
+  if (value === 'RENEW_RESOLVED') return '已换证'
+  return value || '—'
+}
+
+function openCertCreate() {
+  certForm.holderName = ''
+  certForm.certType = 'IDCARD'
+  certForm.certNoPlain = ''
+  certForm.issueDate = '2020-01-01'
+  certForm.expireDate = ''
+  certForm.fileKey = 'local/cert/upload'
+  certFormError.value = ''
+  certFormOpen.value = true
+}
+
+async function saveCert() {
+  certSaving.value = true
+  certFormError.value = ''
+  try {
+    await http.post('/cert/archive/upload', {
+      holderName: certForm.holderName.trim(),
+      certType: certForm.certType,
+      certNoPlain: certForm.certNoPlain.trim(),
+      fileKey: certForm.fileKey.trim(),
+      issueDate: certForm.issueDate,
+      expireDate: certForm.expireDate,
+    })
+    certFormOpen.value = false
+    await load()
+  } catch (e: unknown) {
+    certFormError.value = errorMessage(e)
+  } finally {
+    certSaving.value = false
+  }
+}
+
+function openReview(row: Row) {
+  reviewRow.value = row
+  reviewError.value = ''
+  reviewOpen.value = true
+}
+
+async function approveCert() {
+  const id = reviewRow.value?.id
+  if (id === undefined || id === null || id === '') {
+    reviewError.value = '缺少证件 id'
+    return
+  }
+  reviewSaving.value = true
+  reviewError.value = ''
+  try {
+    await http.put(`/cert/archive/${id}/review`, { action: 'APPROVE' })
+    reviewOpen.value = false
+    await load()
+  } catch (e: unknown) {
+    reviewError.value = errorMessage(e)
+  } finally {
+    reviewSaving.value = false
+  }
+}
+
+function openScan() {
+  scanOpen.value = true
+}
+
+async function loadExpire() {
+  expireLoading.value = true
+  expireError.value = ''
+  try {
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
+    const text = expireHolder.value.trim()
+    if (text) params.holderName = text
+    const [listRes, statsRes] = await Promise.all([
+      http.get('/cert/expire/list', { params }),
+      http.get('/cert/expire/stats'),
+    ])
+    const data = listRes.data?.data
+    expireRows.value = asList(data)
+    const stats = statsRes.data?.data || {}
+    expireStats.yellow = Number(stats.yellowCount || 0)
+    expireStats.red = Number(stats.redCount || 0)
+    expireStats.locked = Number(stats.lockedCount || 0)
+  } catch (e: unknown) {
+    expireRows.value = []
+    expireError.value = errorMessage(e)
+  } finally {
+    expireLoading.value = false
+  }
+}
+
+function searchExpire() {
+  loadExpire()
+}
+
+function resetExpire() {
+  expireHolder.value = ''
+  loadExpire()
+}
+
+async function confirmScan() {
+  scanSaving.value = true
+  try {
+    const res = await http.post('/cert/expire/scan')
+    scanMessage.value = String(res.data?.data?.message || '扫描完成')
+    scanOpen.value = false
+    await Promise.all([load(), loadExpire()])
+  } catch (e: unknown) {
+    scanMessage.value = errorMessage(e)
+    scanOpen.value = false
+  } finally {
+    scanSaving.value = false
+  }
 }
 
 function typeLabel(value: string) {
@@ -500,6 +758,9 @@ watch(kind, async () => {
   pageNo.value = 1
   detailOpen.value = false
   formOpen.value = false
+  certFormOpen.value = false
+  reviewOpen.value = false
+  scanOpen.value = false
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
       await prepareSim()
@@ -519,5 +780,15 @@ onMounted(async () => {
     }
   }
   await load()
+  if (kind.value === 'certificate') await loadExpire()
 })
 </script>
+
+<style scoped>
+.expire-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r) var(--r) 0 0;
+  background: #fff;
+}
+</style>

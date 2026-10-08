@@ -316,6 +316,25 @@ class CertArchive(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CertExpireLog(Base):
+    """CERT-002 / BR-013 到期预警。同证件同时仅一条未解除记录。"""
+
+    __tablename__ = "ims_cert_expire_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    cert_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    holder_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    level: Mapped[str] = mapped_column(String(16), default="YELLOW")
+    notify_user_ids: Mapped[str] = mapped_column(Text, default="[]")
+    notified_levels: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(32), default="WARNING")
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    updater: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class LiveSessionSeq(Base):
     __tablename__ = "ims_live_session_seq"
     __table_args__ = (UniqueConstraint("tenant_id", "biz_date", "platform_code", name="uk_live_seq_day"),)

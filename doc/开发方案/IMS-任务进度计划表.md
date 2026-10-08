@@ -2,15 +2,15 @@
 
 > **用途**：并行开发 / 测试 / 验证 / 修复的统一进度 SSOT；与 [`IMS-Python完整开发计划-20261005.md`](./IMS-Python完整开发计划-20261005.md) 对齐。交付顺序与 UAT 门禁见 [`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md)。  
 > **PRD 功能点矩阵**（模块 × 切片 × 前后端 × pytest/E2E）：[`IMS-PRD功能点执行对照表.md`](./IMS-PRD功能点执行对照表.md)  
-> **交付 `#` 流水号**：本表「序号」列 = Agent/PO 每片收尾登记的 **计划表 `#`**（**当前主 `#` 查表末行**，现 **#61** · **进行中**）；可含子行（如 **8b**、**13b**）表示同一切片内的测试/验证子项。**无预定上限**，随 closure / 修复 / 规范增量续编。**≠** 对照表模块矩阵行数（约 17 行 PRD 模块视图）。  
-> **编号（2026-10-08）**：**#57** = S3 FIN 分成 **PAID_OFF** + 台账（**已完成**）。**#58** = S4 CORP **冲话费登记 + 凭证门禁**（E2E-S4-05/06，**已完成**，main `eb3991d`）。**#59** = S3 FIN **期间结账 LOCKED + 锁后更正**（E2E-S3-06/07，**已完成** · 开发完成/待 UAT，main `6fa2a88`）。**#60** = S4 **他人领用 1021 / 账号流转**（E2E-S4-02/03，**本片** · 开发完成/待UAT）。**#61** = S6 **证书到期预警**（E2E-S6-02，**进行中** · 并行分支，不是本片）。  
-> **自动链（PO 2026-10-08 · zhang wu）**：**#57 起恢复**。此前「#55 后暂停、不自动开 #57」已解除。#57、#58、#59 已合入 main。本片交付 **#60**。**#61** 由并行分支推进。父代理继续后续 `#`，除非 PO 再暂停。
+> **交付 `#` 流水号**：本表「序号」列 = Agent/PO 每片收尾登记的 **计划表 `#`**（**当前主 `#` 查表末行**，现 **#61** · **开发完成/待UAT**）；可含子行（如 **8b**、**13b**）表示同一切片内的测试/验证子项。**无预定上限**，随 closure / 修复 / 规范增量续编。**≠** 对照表模块矩阵行数（约 17 行 PRD 模块视图）。  
+> **编号（2026-10-08）**：**#57** = S3 FIN 分成 **PAID_OFF** + 台账（**已完成**）。**#58** = S4 CORP **冲话费登记 + 凭证门禁**（E2E-S4-05/06，**已完成**，main `eb3991d`）。**#59** = S3 FIN **期间结账 LOCKED + 锁后更正**（E2E-S3-06/07，**已完成** · 开发完成/待 UAT，main `6fa2a88`）。**#60** = S4 **他人领用 1021 / 账号流转**（E2E-S4-02/03，**已完成** · 开发完成/待UAT，main `908bd56`）。**#61** = S6 **证书到期预警**（E2E-S6-02，**本片** · 开发完成/待UAT）。  
+> **自动链（PO 2026-10-08 · zhang wu）**：**#57 起恢复**。此前「#55 后暂停、不自动开 #57」已解除。#57、#58、#59、#60 已合入 main。本片交付 **#61**。父代理继续后续 `#`，除非 PO 再暂停。
 > **最后整表刷新**：2026-10-08
 
 | 序号 | 工作流 | 任务/切片 | 状态 | 负责人 | 最后更新 | 备注/链接 |
 |------|--------|-----------|------|--------|----------|-----------|
 | 1 | 验证 | W0–W9-14 主线交付（菜单 ~98 IMPLEMENTED） | 已完成 | 多 Agent | 2026-10-07 | [执行进度](./IMS-Python执行进度-20261006.md) |
-| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **54/54 PASS**（含 **#60** S4 流转/1021 · **#59** S3 结账 LOCKED + 锁后红冲 · **#58** S4 冲话费 1025 · **#57** S3 分成 PAID_OFF + 台账对账 · **#55** S6 水印 · **#56** S2 登记下播 · **#53/#54** FIN/DC · 纯 UI · 不含 L3）· API **18080** · Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · rebase 到 main `6fa2a88` |
+| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **55/55 PASS**（含 **#61** S6 到期预警 · **#60** S4 流转/1021 · **#59** S3 结账 LOCKED + 锁后红冲 · **#58** S4 冲话费 1025 · **#57** S3 分成 PAID_OFF + 台账对账 · **#55** S6 水印 · **#56** S2 登记下播 · **#53/#54** FIN/DC · 纯 UI · 不含 L3）· API **18080** · Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · rebase 到 main `908bd56` |
 | 3 | 测试 | pytest 全量 154 条（外置单进程） | 已完成 | 用户本地 | 2026-10-07 | **#31** +3 `test_dingtalk_client_scopes` · 含 L3 3 条（默认 skip）· **collect-only 154** · 外置 **154 passed** · L3 另跑 `run_dingtalk_l3.ps1` |
 | 4 | 开发 | sysTenant 租户套餐 | 阻塞 | — | 2026-10-07 | **ADR / SLICES 批次外**，WIP=1，本批不做 |
 | 5 | 修复 | master/overview 404 → 200 | 已完成 | Agent | 2026-10-07 | `ops_db.create_all` · 需重启 18080 |
@@ -76,7 +76,7 @@
 | 58 | 开发/验证 | **S4 CORP** 冲话费登记 + 凭证门禁 | 已完成 | 本回合 Agent | 2026-10-08 | **E2E-S4-05/06** · `POST/GET /admin-api/ims/account/recharge` · 金额 **>5000** 无凭证 **1025** · 凭证 URL 仅 `acct:r3`（`e2e_acct_r3`）可见 · 时间线 `RECHARGE` 不含凭证原文 · `account.vue` 登记抽屉 + 列表 · `closure-corp-account-recharge.spec.ts` · `test_acct_recharge_voucher_gate_and_finance_visibility` · collect **171** · Checklist **v2.6.68** · 与 **#57** 合并后当时 E2E **52/52 PASS** · 已合入 main `eb3991d` · **E2E-S4-02/03** 见 **#60**（已交付）· 1022/1026 仍未做 |
 | 59 | 开发/验证 | **S3 FIN** 期间结账 **LOCKED** + 锁后更正 | 开发完成/待UAT | 本回合 Agent | 2026-10-08 | **E2E-S3-06/07** · `GET /fin/period` · `POST /fin/period/close`（AT-FIN-002）· 锁定月录入/核准/重算/分成审 **1142**（原 1010 已移除）· 成本已核准 **1141** · 未批锁后更正 **1155** · 嵌入既有 `FL-REIMB`（`businessKey=FIN-LOCK-{sessionCode}`）审批后走既有 `POST /fin/cost/{sessionCode}/correction` 红冲+蓝补 · `cost.vue` 期间条 · `closure-fin-period-lock.spec.ts` 纯 UI · `test_fin_period_close_locks_writes_then_r4_red_correction` · `test_fin.py` **11 passed** · collect **172** · Checklist **v2.6.69** · 与 **#58** 合并后当时 E2E **53/53 PASS** · 已合入 main `6fa2a88` · **UAT 未测** · E2E 锁独立期间，不锁 2026-10 |
 | 60 | 开发/验证 | **S4 CORP** 账号流转 + 他人领用 **1021** | 开发完成/待UAT | 本回合 Agent | 2026-10-08 | **E2E-S4-02/03** · `POST/GET /account/transfer` · `PUT …/confirm` · `PUT …/revoke` · 在用账号他人再领用 **1021** · 新责任人确认后改 `holder` + 时间线 **TRANSFER** · 种子 `AC-E2E-XFER` / `e2e_acct_peer` · `closure-corp-account-transfer.spec.ts` · `test_acct_other_user_1021_and_transfer_holder_change` · `test_acct_checkout.py` **3 passed** · Checklist **v2.6.70** · collect **173** · rebase 到 main `6fa2a88` 后 E2E **54/54 PASS** · Web **6173** · 本地 MySQL · **UAT 未测** · 收回 **1022** / 核对 **1026** 未做 · **非已验收** |
-| 61 | 开发/验证 | **S6 CORP** 证书到期预警 | 进行中 | 并行分支 | 2026-10-08 | **E2E-S6-02** · 黄/红/锁定三级预警 · **不是本片** · 本分支不实现 |
+| 61 | 开发/验证 | **S6 CORP** 证书到期预警 | 开发完成/待UAT | 本回合 Agent | 2026-10-08 | **E2E-S6-02** · `POST /cert/archive/upload` + `PUT …/review` 纯 UI 构造 T−30/T−7/T−0 · `POST /cert/expire/scan` 黄/红/锁定 · 同级不重复 · 工作台消息 · `closure-corp-cert-expire.spec.ts` · `test_cert_expire.py` **2 passed** · collect **175** · Checklist **v2.6.71** · rebase 到 main `908bd56`（**#60**）后 E2E **55/55 PASS** · 本地 MySQL `127.0.0.1` · **UAT 未测** · **非已验收** · 换证/频次 **1035** / LIVE **1045** 未做 |
 
 ---
 
@@ -301,5 +301,12 @@
 - **#60**：`ims_acct_transfer` · `POST/GET /account/transfer` · `PUT …/confirm`（仅新责任人）· `PUT …/revoke` · 在用再领用 **1021** · `account.vue` 流转/确认接收 · `closure-corp-account-transfer.spec.ts`（纯 UI · admin 与 `e2e_acct_peer`）· Checklist **v2.6.70**（#59 已占用 v2.6.69）· `test_acct_checkout.py` **3 passed** · collect **173** · rebase 到 main `6fa2a88` 后 E2E **54/54 PASS**（`e2e_result.txt` · 18080 + 6173 · `--workers=1` · 本地 `127.0.0.1`）。
 - **状态**：计划表 **开发完成/待UAT**；对照表 UAT 状态 **未测**（非已验收）。
 - **#59**：已合入 main `6fa2a88`。期间已结账 **1142** · 成本已核准 **1141** · 锁后更正未批 **1155**。本片代码不改 `fin.py`；rebase 后的树含 #59。
-- **#61**：S6 证书到期预警（E2E-S6-02）并行进行中，不是本片。
+- **#61**：S6 证书到期预警（E2E-S6-02）见下节（本片，开发完成/待UAT）。
 - **未做**：收回冻结 **1022**（E2E-S4-04）、账实核对 **1026**（E2E-S4-07）、流转工作台待办、资产同步转移提示。
+
+### 2026-10-08 · #61 S6 证书到期预警
+
+- **#61**：`ims_cert_expire_log` · `POST /cert/archive/upload` · `PUT /cert/archive/{id}/review` · `POST /cert/expire/scan` · `GET /cert/expire/list` · `GET /cert/expire/stats`。T−30 **YELLOW** / T−7 **RED** / T−0 **LOCKED**（BR-013）。同级别不重复推送（CERT-E-R2）。工作台待办 + 站内消息；钉钉不外发。`resource.vue` 录入/审核/扫描/预警表 · `closure-corp-cert-expire.spec.ts`（纯 UI）· `test_cert_expire.py` **2 passed** · collect **175** · Checklist **v2.6.71**。
+- **基线**：rebase 到 main `908bd56`（**#60** 账号流转 + 1021 已合入）。本片不改 `acct_flow.py` 流转路径。全量 E2E **55/55 PASS**（`e2e_result.txt` · 18080 + 6173 · `--workers=1` · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 `127.0.0.1`）。
+- **状态**：开发完成/待 UAT。对照表 **UAT 状态** 仍为 **未测**。不得标已验收。**#57–#60** 保持已交付（#59/#60 为开发完成/待UAT，非已验收）。
+- **不做**：换证登记、1 小时 11 次 **1035**（E2E-S6-04）、锁定联动直播 **1045**、原图对象存储。
