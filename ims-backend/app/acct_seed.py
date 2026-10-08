@@ -1,10 +1,10 @@
 """CORP 账号领用 E2E 种子：池内抖音号 AC-E2E-POOL（幂等 / 可 refresh）。"""
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core import engine
-from app.models import AccountApply, AccountTimelineEvent, User
+from app.models import AccountApply, AccountRecharge, AccountTimelineEvent, Role, RoleMenu, RolePerm, User, UserRole
 from app.ops_db import ops_session
 from app.ops_models import Company, IpGroup, PlatformAccount
 
@@ -12,9 +12,12 @@ from app.ops_models import Company, IpGroup, PlatformAccount
 def ensure_acct_schema() -> None:
     AccountApply.__table__.create(engine, checkfirst=True)
     AccountTimelineEvent.__table__.create(engine, checkfirst=True)
+    AccountRecharge.__table__.create(engine, checkfirst=True)
 
 E2E_POOL_ACCOUNT_NO = "AC-E2E-POOL"
 E2E_POOL_NICK = "E2E池内抖音"
+E2E_ACCT_FINANCE_USER = "e2e_acct_r3"
+FINANCE_ROLE_KEY = "acct:r3"
 
 
 def _pool_row(ops) -> PlatformAccount | None:
@@ -56,12 +59,73 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
         ops.close()
 
 
+def _clone_admin_perms(db: Session, role_id: int) -> None:
+    admin_role = db.scalar(select(Role).where(Role.role_key == "sys:admin", Role.deleted == 0))
+    if admin_role is None:
+        return
+    for rm in db.scalars(select(RoleMenu).where(RoleMenu.role_id == admin_role.id)).all():
+        if db.scalar(select(RoleMenu).where(RoleMenu.role_id == role_id, RoleMenu.menu_id == rm.menu_id)):
+            continue
+        db.add(RoleMenu(role_id=role_id, menu_id=rm.menu_id, perm_code=rm.perm_code, tenant_id=rm.tenant_id))
+    for rp in db.scalars(select(RolePerm).where(RolePerm.role_id == admin_role.id)).all():
+        exists = db.scalar(
+            select(RolePerm).where(RolePerm.role_id == role_id, RolePerm.perm_code == rp.perm_code)
+        )
+        if exists is None:
+            db.add(
+                RolePerm(
+                    role_id=role_id,
+                    module_code=rp.module_code,
+                    perm_code=rp.perm_code,
+                    perm_level=rp.perm_level,
+                    tenant_id=rp.tenant_id,
+                )
+            )
+
+
+def ensure_acct_finance_user(db: Session) -> None:
+    """冲话费凭证可见角色（R3 · acct:r3）。密码与 admin 种子相同，仅本地 E2E。"""
+    from app.scope import refresh_user_scope
+    from app.security import hash_password
+
+    user = db.scalar(select(User).where(User.username == E2E_ACCT_FINANCE_USER, User.deleted == 0))
+    if user is None:
+        user = User(
+            username=E2E_ACCT_FINANCE_USER,
+            nickname="财务管理员",
+            mobile="13900000058",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+        )
+        db.add(user)
+        db.flush()
+    role = db.scalar(select(Role).where(Role.role_key == FINANCE_ROLE_KEY, Role.deleted == 0))
+    if role is None:
+        role = Role(
+            role_name="财务管理员",
+            role_key=FINANCE_ROLE_KEY,
+            data_scope="ALL",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+    perm_count = db.scalar(select(func.count()).select_from(RolePerm).where(RolePerm.role_id == role.id)) or 0
+    if perm_count == 0:
+        _clone_admin_perms(db, role.id)
+    if not db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id)):
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+    refresh_user_scope(db, user.id)
+
+
 def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
     """E2E 跑前恢复池内账号与清空该账号流程单据。"""
     if admin.username != "admin":
         return
     ensure_acct_schema()
     ensure_acct_e2e_pool_account(db, admin)
+    ensure_acct_finance_user(db)
     ops = ops_session()
     try:
         row = _pool_row(ops)
@@ -75,3 +139,4 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
         ops.close()
     db.execute(delete(AccountTimelineEvent).where(AccountTimelineEvent.account_id == account_id))
     db.execute(delete(AccountApply).where(AccountApply.account_id == account_id))
+    db.execute(delete(AccountRecharge).where(AccountRecharge.account_id == account_id))
