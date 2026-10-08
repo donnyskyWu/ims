@@ -90,7 +90,7 @@ flowchart LR
 
 | 资源 | 说明 |
 |------|------|
-| **MySQL** | 默认 `127.0.0.1:3306`，用户/密码 `root`/`root`（`IMS_MYSQL_*`）；库 `ims` + `opsbiz`（`IMS_DB` / `IMS_OPS_DB`） |
+| **MySQL** | 默认 `127.0.0.1:3306`，用户/密码 `root`/`root`（`IMS_MYSQL_*`）；库 `ims` + `opsbiz`（`IMS_DB` / `IMS_OPS_DB`）。云联调：`IMS_USE_CLOUD_DB=1` 或 `IMS_DATABASE_URL` + PO 本机 `.env`，见 [云MySQL联调](../运维/云MySQL联调.md) |
 | **初始化** | `ims-backend/scripts/init_ims_db.ps1`（ORM `create_all` + seed）；已有库升级按需 `db/compat/*.sql` 或 `-ApplyCompat` |
 | **API / 前端** | `IMS_PORT` 默认 **18080**；Vite **6173**（PO：5173 占用）；E2E `E2E_BASE_URL` 默认同 6173 |
 | **登录** | 种子 **admin / Admin@123**（`main.py` seed；E2E 同）；另 seed **e2e_author**（发布 closure） |

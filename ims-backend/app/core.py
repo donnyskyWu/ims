@@ -10,12 +10,25 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-MYSQL_USER = _env("IMS_MYSQL_USER", "root")
-MYSQL_PASSWORD = _env("IMS_MYSQL_PASSWORD", "root")
-MYSQL_HOST = _env("IMS_MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = _env("IMS_MYSQL_PORT", "3306")
+def _truthy(name: str) -> bool:
+    return _env(name, "").strip().lower() in ("1", "true", "yes")
+
+
+if _truthy("IMS_USE_CLOUD_DB"):
+    # 非密钥默认值；密码仅来自 IMS_MYSQL_PASSWORD / IMS_DATABASE_URL（勿写入仓库）
+    MYSQL_USER = _env("IMS_MYSQL_USER", "shenyu")
+    MYSQL_PASSWORD = _env("IMS_MYSQL_PASSWORD", "")
+    MYSQL_HOST = _env("IMS_MYSQL_HOST", "47.110.62.216")
+    MYSQL_PORT = _env("IMS_MYSQL_PORT", "3306")
+else:
+    MYSQL_USER = _env("IMS_MYSQL_USER", "root")
+    MYSQL_PASSWORD = _env("IMS_MYSQL_PASSWORD", "root")
+    MYSQL_HOST = _env("IMS_MYSQL_HOST", "127.0.0.1")
+    MYSQL_PORT = _env("IMS_MYSQL_PORT", "3306")
+
 IMS_DB = _env("IMS_DB", "ims")
 OPS_DB = _env("IMS_OPS_DB", "opsbiz")
+IMS_DATABASE_URL = _env("IMS_DATABASE_URL", "").strip()
 JWT_SECRET = _env("IMS_JWT_SECRET", "ims-dev-secret-change-me")
 ACCESS_MINUTES = 120
 REFRESH_DAYS = 7
@@ -42,6 +55,12 @@ def server_url(database: str | None = None) -> str:
     return f"{base}/?charset=utf8mb4"
 
 
+def db_url(database: str | None = None) -> str:
+    if IMS_DATABASE_URL and database == IMS_DB:
+        return IMS_DATABASE_URL
+    return server_url(database)
+
+
 def ensure_databases() -> None:
     engine = create_engine(server_url(), pool_pre_ping=True)
     with engine.begin() as conn:
@@ -54,7 +73,7 @@ class Base(DeclarativeBase):
     pass
 
 
-engine = create_engine(server_url(IMS_DB), pool_pre_ping=True)
+engine = create_engine(db_url(IMS_DB), pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
+. (Join-Path $PSScriptRoot "_import_dotenv.ps1")
+$null = Import-ImsDotEnv -Path (Join-Path (Get-Location).Path ".env")
 
 if ($KillPort) {
     $port = if ($env:IMS_PORT) { [int]$env:IMS_PORT } else { 18080 }

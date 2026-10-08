@@ -1,4 +1,5 @@
 # One-command IMS Playwright E2E: preflight API (18080) + Vite (6173), run full suite, write e2e_result.txt.
+# DB: loads ims-backend/.env before auto-starting API (local vs cloud — doc/运维/云MySQL联调.md).
 param(
     [switch]$SkipServe,
     [int]$ApiWaitSec = 120,
@@ -67,6 +68,11 @@ function Test-LoginPreflight {
 }
 
 function Start-ImsApi {
+    $dotenvScript = Join-Path $BackendRoot "scripts\_import_dotenv.ps1"
+    if (Test-Path $dotenvScript) {
+        . $dotenvScript
+        $null = Import-ImsDotEnv -Path (Join-Path $BackendRoot ".env")
+    }
     Get-NetTCPConnection -LocalPort $ApiPort -ErrorAction SilentlyContinue |
         ForEach-Object { $_.OwningProcess } |
         Where-Object { $_ -and $_ -ne 0 } |

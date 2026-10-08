@@ -43,6 +43,9 @@ ims-backend/collect_only.txt
 ims-backend/targeted_inline.txt
 ims-backend/dingtalk_sync_result.txt
 ims-backend/dingtalk_l3_result.txt
+ims-backend/cloud_db_sync_result.txt
+ims-backend/_ims_cloud_sync.dump.sql
+ims-backend/*_cloud_sync.dump.sql
 
 # OS
 Thumbs.db
