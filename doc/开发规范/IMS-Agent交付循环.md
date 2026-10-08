@@ -150,6 +150,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_dingtalk_l3.ps
 
 - 默认：Agent 按 [计划表](../开发方案/IMS-任务进度计划表.md) **#** 序推进高价值 closure 切片，每切片走完「开发 → pytest 定向 → 全量 E2E → SSOT 收尾」。
 - **2026-10-08**：PO（zhang wu）授权 **#53**；#53 收口后曾暂停。**同日续**：**#54+ 自动链已重新启用**（PO 闸口：遇阻塞再问 PO；否则按计划表 **#** 序推进 closure 切片直至 PO 叫停）。
+- **2026-10-08（PO）**：**#55 收口后暂停自动链**——**不自动链 #56、#57** 及后续 `#`，除非 PO 另行授权。遇阻塞仍先问 PO。
 
 ## 维护
 

@@ -3,12 +3,13 @@
 > **用途**：并行开发 / 测试 / 验证 / 修复的统一进度 SSOT；与 [`IMS-Python完整开发计划-20261005.md`](./IMS-Python完整开发计划-20261005.md) 对齐。交付顺序与 UAT 门禁见 [`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md)。  
 > **PRD 功能点矩阵**（模块 × 切片 × 前后端 × pytest/E2E）：[`IMS-PRD功能点执行对照表.md`](./IMS-PRD功能点执行对照表.md)  
 > **交付 `#` 流水号**：本表「序号」列 = Agent/PO 每片收尾登记的 **计划表 `#`**（**当前主 `#` 查表末行**，现 **#56** · **已完成**）；可含子行（如 **8b**、**13b**）表示同一切片内的测试/验证子项。**无预定上限**，随 closure / 修复 / 规范增量续编。**≠** 对照表模块矩阵行数（约 17 行 PRD 模块视图）。  
+> **自动链（PO 2026-10-08）**：**#55 后暂停**——Agent **不自动开 #57**；#56 已在同批提交中交付，链止于 #55 后待命。
 > **最后整表刷新**：2026-10-08
 
 | 序号 | 工作流 | 任务/切片 | 状态 | 负责人 | 最后更新 | 备注/链接 |
 |------|--------|-----------|------|--------|----------|-----------|
 | 1 | 验证 | W0–W9-14 主线交付（菜单 ~98 IMPLEMENTED） | 已完成 | 多 Agent | 2026-10-07 | [执行进度](./IMS-Python执行进度-20261006.md) |
-| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **50/50 PASS**（含 **#55** S6 证件水印 · **#56** S2 登记下播 · **#53/#54** FIN/DC · 纯 UI · 不含 L3）· API **18080**（**须 `-KillPort` 重启** 加载 DC detail 等路由）· Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · **自动链已启用**（PO #54+ · 遇阻塞再问 PO） |
+| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **50/50 PASS**（含 **#55** S6 证件水印 · **#56** S2 登记下播 · **#53/#54** FIN/DC · 纯 UI · 不含 L3）· API **18080**（**须 `-KillPort` 重启** 加载 DC detail 等路由）· Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · **自动链 #55 后暂停**（PO 2026-10-08 · **#57 不自动开**） |
 | 3 | 测试 | pytest 全量 154 条（外置单进程） | 已完成 | 用户本地 | 2026-10-07 | **#31** +3 `test_dingtalk_client_scopes` · 含 L3 3 条（默认 skip）· **collect-only 154** · 外置 **154 passed** · L3 另跑 `run_dingtalk_l3.ps1` |
 | 4 | 开发 | sysTenant 租户套餐 | 阻塞 | — | 2026-10-07 | **ADR / SLICES 批次外**，WIP=1，本批不做 |
 | 5 | 修复 | master/overview 404 → 200 | 已完成 | Agent | 2026-10-07 | `ops_db.create_all` · 需重启 18080 |
@@ -68,8 +69,8 @@
 | 52 | 开发/验证 | **DC-001** 账号穿透 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | 复用 **#50** LIVE 链 · `/ims/dc/trace` 账号入口 · `trace.vue` testid · `dc_trace.py` **detailList** 嵌套 `ok()` 修复 · `closure-dc-account-trace.spec.ts` · `openDcAccountTraceViaUi` · `test_dc_trace_account_keyword_detail_mode` · 定向 pytest **3 passed**（含 trace 基线）· Checklist **v2.6.62** · E2E **46/46 PASS** · Web **6173** · Live：**重启 18080** 加载 `dc_trace` 修复 · **PO 于 #52 后曾暂停自动链，同日授权 #53** |
 | 53 | 开发/验证 | **DC-001** 场次下钻 + 明细导出 | 已完成 | 本回合 Agent | 2026-10-08 | `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`（XLSX/PDF · `downloadUrl`/`expiresIn`）· 页头 `queryCostMs` + **1181**（日期跨度 >92 天）· `trace.vue` 场次抽屉 · `closure-dc-session-drill.spec.ts` · `test_dc_trace.py` **3 passed** · collect **167** · Checklist **v2.6.63** · E2E **47/47 PASS** · Web **6173** · Live：本地 MySQL `ims`（非云库）· 附带 `smoke-train` 完成率响应监听改到 `goto` 之前（快 API 竞态） |
 | 54 | 开发/验证 | **S3 FIN** 成本更正→利润 **RECALCULATED** closure | 已完成 | 本回合 Agent | 2026-10-08 | `POST /fin/cost/{sessionCode}/correction` · `POST /fin/profit/recalc/{sessionCode}` · `cost.vue` 更正抽屉 · `closure-fin-cost-correction.spec.ts` · `submitFinCostCorrectionViaUi` · `test_fin_cost_correction_recalc_profit_and_share_trace` · Checklist **v2.6.64** · 与 **#53** 合并后 E2E **48/48** · collect **167** · Web **6173** · Live：**重启 18080** 加载 correction API · 云库：更正写 `ims_fin_cost.remark`（无 DDL）· **未自动链 #55** |
-| 55 | 开发/验证 | **S6 CORP** 证件查看水印 **纯 UI** closure | 已完成 | 本回合 Agent | 2026-10-08 | **E2E-S6-03 切片** · `cert_e2e_seed.py` · `closure-corp-cert-watermark.spec.ts` · `resource.vue` testid · `test_cert_e2e_seed_watermark_view` · Checklist **v2.6.65** · collect **169** · E2E **50/50** · 云库仅种子行 |
-| 56 | 开发/验证 | **S2 LIVE** 登记→下播核准 **窄 closure** | 已完成 | 本回合 Agent | 2026-10-08 | **`closure-live-session-report.spec.ts`** · 复用 **#50** UI 链 · 19 位场次 · `reportEntryStatus=CONFIRMED` · `trace.vue` 明细 60s 超时 · Checklist **v2.6.66** · E2E **50/50** · **Live：重启 18080**（DC detail 路由） |
+| 55 | 开发/验证 | **S6 CORP** 证件查看水印 **纯 UI** closure | 已完成 | 本回合 Agent | 2026-10-08 | **E2E-S6-03 切片** · `cert_e2e_seed.py` · `closure-corp-cert-watermark.spec.ts` · `resource.vue` testid · `test_cert_e2e_seed_watermark_view` · Checklist **v2.6.65** · collect **169** · E2E **50/50** · 云库仅种子行 · **PO：自动链止于本切片后暂停**（`ab3625b`）
+| 56 | 开发/验证 | **S2 LIVE** 登记→下播核准 **窄 closure** | 已完成 | 本回合 Agent | 2026-10-08 | **`closure-live-session-report.spec.ts`** · 复用 **#50** UI 链 · 19 位场次 · `reportEntryStatus=CONFIRMED` · `trace.vue` 明细 60s 超时 · Checklist **v2.6.66** · E2E **50/50** · **Live：重启 18080**（DC detail 路由）· **#56 已交付**（`ab3625b`）· **PO 暂停链止于 #55 后** · **#57 不自动开** |
 
 ---
 
@@ -266,6 +267,7 @@
 
 ### 2026-10-08 · #55/#56 S6 水印 + S2 直播窄 closure
 
-- **#55**：`cert_e2e_seed` · `closure-corp-cert-watermark` · Checklist **v2.6.65** · pytest **+1 → 169**。
-- **#56**：`closure-live-session-report` · Checklist **v2.6.66** · 无新增 pytest。
+- **#55**：`cert_e2e_seed` · `closure-corp-cert-watermark` · Checklist **v2.6.65** · pytest **+1 → 169** · **已完成**。
+- **#56**：`closure-live-session-report` · Checklist **v2.6.66** · 无新增 pytest · **已完成**（与 #55 同提交 `ab3625b`）。
 - **E2E**：`npm run test:e2e:ci` → **50/50 PASS** · `e2e_result.txt` · **18080 须 `-KillPort` 重启**（否则 DC detail **404**）。
+- **PO（2026-10-08）**：**自动链 #55 后暂停**——**不自动链 #56+#57**（#56 代码已推送，链闸口止于 #55 后；**#57 不自动开**）。
