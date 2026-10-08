@@ -6,7 +6,7 @@
 
 ---
 
-## 1. API 总览表（共 22 个接口）
+## 1. API 总览表（共 23 个接口）
 
 | # | 方法 | 路径 | 说明 | 权限（角色） |
 |---|------|------|------|--------------|
@@ -19,6 +19,7 @@
 | 7 | GET | `/admin-api/ims/account/transfer/list` | 流转单列表（分页） | R1/R4/R9（脱敏）/R5（本人经手） |
 | 8 | PUT | `/admin-api/ims/account/transfer/{id}/confirm` | 新责任人确认生效 | 新责任人 |
 | 9 | PUT | `/admin-api/ims/account/transfer/{id}/revoke` | 撤销流转单 | R1/R4 |
+| 9b | POST | `/admin-api/ims/account/{id}/unfreeze` | 管理员解冻回池（FROZEN→IN_POOL，TRF-R2） | R1 |
 | 10 | POST | `/admin-api/ims/account/return/generate` | 生成离职归还单（事件触发/手动） | R1/R2（手动补建） |
 | 11 | GET | `/admin-api/ims/account/return/list` | 归还单列表（分页） | R1/R2/R3/R4/R5（涉及只读）/R9 |
 | 12 | GET | `/admin-api/ims/account/return/{id}` | 归还单详情（含明细） | 同上 |
@@ -159,6 +160,14 @@ interface AccountTransferVO {
 #### 2.2.4 PUT /admin-api/ims/account/transfer/{id}/revoke — 撤销
 
 **请求**：`{ remark: string }` → **响应**：`data: null`。仅待确认态可撤销。
+
+#### 2.2.5 POST /admin-api/ims/account/{id}/unfreeze — 管理员解冻回池（TRF-R2）
+
+状态机已规定「解冻 FROZEN→IN_POOL」，时间线类型含 `UNFREEZE`。收回单生效后账号停在冻结态，本接口是该迁移的管理端落点（不新增错误码，复用 1001/1008/1023/1504）。
+
+**请求**：`{ remark: string }`（必填，≤512）→ **响应** `data`：`{ accountId, accountNo, status: 'IN_POOL' }`。
+
+仅管理员（R1）。账号须为 `FROZEN`，否则 **1023**；非管理员 **1008**；说明空 **1001**；账号不存在 **1504**。成功后状态 `IN_POOL`、清空当前责任人，并写入时间线 `UNFREEZE`。解冻后可再次 `POST /account/apply`。
 
 ### 2.3 离职归还（ACCT-003）
 
@@ -385,6 +394,7 @@ EXCEPTION_SUSPENDED（D+7 未闭环：冻结+升级）
 | 领用单详情抽屉-审批操作（ConfirmDialog） | 通过/拒绝审批 | PUT /account/apply/{id}/approve |
 | 领用单详情抽屉-交接确认 | 填写交接事实（密码已重置等）确认生效 | PUT /account/apply/{id}/confirm |
 | 流转管理页（表格+发起流转抽屉） | 发起流转/收回、列表查询 | POST /account/transfer、GET /account/transfer/list |
+| 账号台账-冻结行 | 管理员解冻回池 | POST /account/{id}/unfreeze |
 | 待确认流转抽屉 | 新责任人确认/撤销 | PUT /account/transfer/{id}/confirm、/revoke |
 | 离职归还管理页（表格） | 归还单列表/详情（明细项） | GET /account/return/list、GET /account/return/{id} |
 | 离职归还操作 | 手动补建归还单（ConfirmDialog） | POST /account/return/generate |

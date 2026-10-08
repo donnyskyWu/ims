@@ -12,6 +12,7 @@ from app.acct_seed import (
     E2E_POOL_ACCOUNT_NO,
     E2E_RECALL_ACCOUNT_NO,
     E2E_RECON_ACCOUNT_NO,
+    E2E_UNFREEZE_ACCOUNT_NO,
     E2E_XFER_ACCOUNT_NO,
     refresh_acct_e2e_pool,
 )
@@ -611,6 +612,98 @@ def test_acct_recall_freezes_and_blocks_1022():
     assert freeze_events
     assert "FROZEN" in freeze_events[0]["snapshotSummary"]
     assert "管理员" in freeze_events[0]["snapshotSummary"]
+
+
+def test_acct_unfreeze_returns_frozen_account_to_pool():
+    """TRF-R2：收回冻结后，管理员解冻 FROZEN → IN_POOL，之后可再领用。"""
+    auth = headers()
+    peer_auth = headers(E2E_ACCT_PEER_USER)
+    from app.core import SessionLocal
+
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
+        refresh_acct_e2e_pool(db, admin)
+        db.commit()
+    finally:
+        db.close()
+
+    account_id = account_id_of(E2E_UNFREEZE_ACCOUNT_NO)
+
+    def _unfreeze(token: dict, remark: str = "pytest 管理员解冻回池"):
+        return client.post(
+            f"/admin-api/ims/account/{account_id}/unfreeze",
+            headers=token,
+            json={"remark": remark},
+        )
+
+    pool_blocked = _unfreeze(auth)
+    assert pool_blocked.json()["code"] == 1023
+    assert "未冻结" in pool_blocked.json()["msg"]
+
+    checkout_in_use(auth, account_id)
+    in_use_blocked = _unfreeze(auth)
+    assert in_use_blocked.json()["code"] == 1023
+
+    blank = _unfreeze(auth, "  ")
+    assert blank.json()["code"] == 1001
+
+    recalled = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "pytest 先收回再解冻",
+        },
+    )
+    assert recalled.json()["code"] == 0, recalled.json()
+
+    peer = _unfreeze(peer_auth)
+    assert peer.json()["code"] == 1008
+    assert "管理员" in peer.json()["msg"]
+
+    missing = client.post(
+        "/admin-api/ims/account/999999991/unfreeze",
+        headers=auth,
+        json={"remark": "不存在的账号"},
+    )
+    assert missing.json()["code"] == 1504
+
+    done = _unfreeze(auth)
+    assert done.json()["code"] == 0, done.json()
+    assert done.json()["data"]["status"] == "IN_POOL"
+    assert done.json()["data"]["accountId"] == account_id
+
+    ops = ops_session()
+    try:
+        row = ops.get(PlatformAccount, account_id)
+        assert row.status == "IN_POOL"
+        assert row.holder_user_id is None
+    finally:
+        ops.close()
+
+    again = _unfreeze(auth)
+    assert again.json()["code"] == 1023
+
+    apply = client.post(
+        "/admin-api/ims/account/apply",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "purpose": "解冻后再领用",
+            "planStart": "2026-10-08",
+            "planEnd": "2026-11-08",
+        },
+    )
+    assert apply.json()["code"] == 0, apply.json()
+
+    tl = client.get(f"/admin-api/ims/account/timeline/{account_id}", headers=auth)
+    events = [item for item in tl.json()["data"]["list"] if item["eventType"] == "UNFREEZE"]
+    assert events
+    assert "IN_POOL" in events[0]["snapshotSummary"]
+    assert "管理员" in events[0]["snapshotSummary"]
 
 
 def test_acct_reconcile_variance_boundary_1026():

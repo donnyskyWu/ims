@@ -171,6 +171,7 @@ PREFIXES = [
     ("POST", "/admin-api/ims/account/transfer", "ims_acct_transfer"),
     ("GET", "/admin-api/ims/account/transfer", "ims_acct_transfer"),
     ("PUT", "/admin-api/ims/account/transfer", "ims_acct_transfer"),
+    ("POST", "/admin-api/ims/account/", "ims_acct_transfer"),
     ("POST", "/admin-api/ims/account/recharge", "ims_acct_recharge"),
     ("GET", "/admin-api/ims/account/recharge", "ims_acct_recharge"),
     ("GET", "/admin-api/ims/master/phone", "oa_phone"),
