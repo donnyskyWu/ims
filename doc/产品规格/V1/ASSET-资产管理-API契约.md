@@ -293,7 +293,9 @@ PENDING_REVIEW（登记待审）──领用──▶ IN_USE（在用）──�
 
 #63 生命周期：在用再领用 **1012**；未使用就归还、或未归还就报废、或终态再领用 → **1015**。直接从在用报废不在本切片。冻结展示仍属离职闭环，本切片不做。
 
-#65 穿透（办公设备页，不新开路由）：`ims_asset_hierarchy.level` 从实名人向下计资产层。登记可带 `realnameId` 或 `parentAssetCode`（仍走 `POST /asset/ledger`）。`GET /asset/forward/trace/{assetId}`：`assetId>0` 返回该资产上行至实名人的链路；`assetId=0` 且 `realnameId` 取该实名人最深链路。任一层 `level>5`，或 `layers` 超出 L1–L5 → **1013**。`GET /asset/ledger/{id}` 与 `GET /asset/forward/detail/{assetId}` 的 `holders` 按领用/归还/报废给出使用人三态。`GET /asset/reverse/by-person/{userId}` 按当前责任人或历史领用事件列出资产及当前状态。账号/场次反查、导出、关联校验不在本片。
+#65 穿透（办公设备页，不新开路由）：`ims_asset_hierarchy.level` 从实名人向下计资产层。登记可带 `realnameId` 或 `parentAssetCode`（仍走 `POST /asset/ledger`）。`GET /asset/forward/trace/{assetId}`：`assetId>0` 返回该资产上行至实名人的链路；`assetId=0` 且 `realnameId` 取该实名人最深链路。任一层 `level>5`，或 `layers` 超出 L1–L5 → **1013**。`GET /asset/ledger/{id}` 与 `GET /asset/forward/detail/{assetId}` 的 `holders` 按领用/归还/报废给出使用人三态。`GET /asset/reverse/by-person/{userId}` 按当前责任人或历史领用事件列出资产及当前状态。
+
+#72 账号 / 场次反查（办公/直播设备页「账号/场次反查」，不新开路由）：`ims_asset_bind`。`POST /asset/ledger` 可选 `accountId` 或 `accountNo`、`sessionCode`（`IMS`+8 位日期+3 位平台码+4 位序号）、`bindType`（`HOLD`/`GUARANTEE`/`CUSTODY`，默认 `HOLD`）。账号不存在或场次不存在 → **1500**（本系统 **1002** 表示会话无效，入口缺失不用 1002）。场次编号格式不对或场次不属于所填账号 → **1001**。只填场次时账号取该场次的账号。成功时时间线 `REGISTER` 说明含「绑定账号」「绑定场次」。`GET /asset/reverse/by-account/{accountId}`：`accountId=0` 时用查询参数 `accountNo`。`GET /asset/reverse/by-session/{sessionId}` 接受场次主键或场次编号。结果带资产状态与汇总 `inUse`/`returned`/`scrapped`。绑定在归还后仍保留，以便已归还资产继续被反查。导出与关联校验不在本片。
 
 #68 采购入台账（办公/直播设备页「采购导入」，不新开路由）：`POST /asset/ledger/import`。合法行待审核入台账并记 `purchaseBatchNo`；非法行返回文件行号与字段；`partial=true` 时已入库行不回滚。见 §2.4。
 

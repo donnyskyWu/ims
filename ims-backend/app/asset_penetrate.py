@@ -1,10 +1,12 @@
-"""ASSET 穿透（#65 · E2E-S5-03/04）。
+"""ASSET 穿透（#65 · E2E-S5-03/04，#72 账号/场次反查）。
 
 正向：实名人 → 资产，层级 ≤ 5；更深或 layers 超出 L1–L5 返回 1013。
 反向：资产 → 使用人，按领用/归还/报废区分在用、已归还、已报废。
+账号 / 场次：登记时可选绑定，再按入口反查台账状态。
 """
 
 import json
+import re
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -14,15 +16,17 @@ from app.api import current_user, db_session, fail, ok
 from app.core import mask_id_card, mask_mobile, mask_name, utcnow
 from app.corp import count_of, page_args, tenant_of, user_names
 from app.crypto import decrypt_text
-from app.models import AssetHierarchy, AssetLedger, AssetLifecycleEvent, AssetTraceLog, User
+from app.models import AssetBind, AssetHierarchy, AssetLedger, AssetLifecycleEvent, AssetTraceLog, LiveSession, User
 from app.ops_db import ops_session
-from app.ops_models import Realname
+from app.ops_models import PlatformAccount, Realname
 
 router = APIRouter()
 
 MAX_LAYER = 5
 LAYER_TOKENS = {"L1", "L2", "L3", "L4", "L5"}
 HOLDER_LABEL = {"IN_USE": "在用", "RETURNED": "已归还", "SCRAPPED": "已报废"}
+BIND_TYPES = {"HOLD", "GUARANTEE", "CUSTODY"}
+SESSION_CODE = re.compile(r"^IMS\d{8}[A-Z]{3}\d{4}$")
 
 
 def _missing(db: Session, actor: User, asset_id: int):
@@ -380,9 +384,9 @@ def forward_detail(
     return ok(
         {
             "asset": _asset_brief(row),
-            "bindAccounts": [],
+            "bindAccounts": bind_accounts_of(db, actor, row.id),
             "verifiedPersons": graph.get("verifiedPersons") or [],
-            "liveSessions": [],
+            "liveSessions": bound_sessions_of(db, actor, row.id),
             "financeSummary": {"totalCost": 0, "totalRevenue": 0, "costMasked": False},
             "nodes": graph.get("nodes") or [],
             "edges": graph.get("edges") or [],
@@ -390,6 +394,163 @@ def forward_detail(
             "holders": holders_of(db, row),
         }
     )
+
+
+def _clock(value) -> str:
+    if value is None:
+        return ""
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _account(actor: User, account_id: int = 0, account_no: str = ""):
+    ops = ops_session()
+    try:
+        stmt = select(PlatformAccount).where(PlatformAccount.deleted == 0)
+        if account_id:
+            stmt = stmt.where(PlatformAccount.id == account_id)
+        else:
+            stmt = stmt.where(PlatformAccount.account_no == account_no)
+        row = ops.scalar(stmt)
+        if row is None or (row.tenant_id or 0) != tenant_of(actor):
+            return None
+        return {
+            "id": int(row.id),
+            "account_no": row.account_no or "",
+            "platform": row.platform_type or "",
+            "realname_id": int(row.realname_id or 0),
+        }
+    finally:
+        ops.close()
+
+
+def _session_row(db: Session, actor: User, session_id: int = 0, session_code: str = "") -> LiveSession | None:
+    stmt = select(LiveSession).where(
+        LiveSession.deleted == 0,
+        LiveSession.tenant_id == tenant_of(actor),
+    )
+    if session_id:
+        stmt = stmt.where(LiveSession.id == session_id)
+    else:
+        stmt = stmt.where(LiveSession.session_code == session_code)
+    return db.scalar(stmt)
+
+
+def resolve_bind(db: Session, actor: User, account_id: int | None, account_no: str, session_code: str, bind_type: str):
+    """登记前解析账号 / 场次。无绑定返回 (None, None)。不写库。"""
+    number = (account_no or "").strip()
+    code = (session_code or "").strip().upper()
+    kind = (bind_type or "HOLD").strip().upper() or "HOLD"
+    chosen = int(account_id or 0)
+    if not chosen and not number and not code:
+        return None, None
+    if kind not in BIND_TYPES:
+        return None, fail(1001, "绑定方式不正确")
+    account = None
+    if chosen:
+        account = _account(actor, account_id=chosen)
+        if account is None:
+            return None, fail(1500, "账号不存在")
+    elif number:
+        account = _account(actor, account_no=number)
+        if account is None:
+            return None, fail(1500, "账号不存在")
+    session = None
+    if code:
+        if not SESSION_CODE.match(code):
+            return None, fail(1001, "场次编号格式不正确")
+        session = _session_row(db, actor, session_code=code)
+        if session is None:
+            return None, fail(1500, "场次不存在")
+        if account is not None and int(session.account_id or 0) != int(account["id"]):
+            return None, fail(1001, "场次不属于该账号")
+        if account is None:
+            account = _account(actor, account_id=int(session.account_id or 0))
+            if account is None:
+                return None, fail(1500, "账号不存在")
+    return {
+        "accountId": account["id"],
+        "accountNo": account["account_no"],
+        "platform": account["platform"],
+        "sessionId": int(session.id) if session is not None else 0,
+        "sessionCode": session.session_code if session is not None else "",
+        "bindType": kind,
+        "verifiedPersonId": account["realname_id"],
+    }, None
+
+
+def write_bind(db: Session, actor: User, row: AssetLedger, resolved: dict) -> None:
+    db.add(
+        AssetBind(
+            asset_id=row.id,
+            asset_code=row.asset_code,
+            account_id=resolved["accountId"],
+            account_no=resolved["accountNo"],
+            platform=resolved["platform"],
+            session_id=resolved["sessionId"],
+            session_code=resolved["sessionCode"],
+            verified_person_id=resolved["verifiedPersonId"],
+            bind_type=resolved["bindType"],
+            bind_status="ACTIVE",
+            deleted=0,
+            tenant_id=tenant_of(actor),
+            created_at=utcnow(),
+        )
+    )
+
+
+def _active_binds(db: Session, actor: User, asset_id: int) -> list[AssetBind]:
+    stmt = (
+        select(AssetBind)
+        .where(
+            AssetBind.deleted == 0,
+            AssetBind.tenant_id == tenant_of(actor),
+            AssetBind.asset_id == asset_id,
+            AssetBind.bind_status == "ACTIVE",
+        )
+        .order_by(AssetBind.id)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def bind_accounts_of(db: Session, actor: User, asset_id: int) -> list[dict]:
+    rows = []
+    for bind in _active_binds(db, actor, asset_id):
+        if not bind.account_id:
+            continue
+        rows.append(
+            {
+                "bindId": bind.id,
+                "assetId": bind.asset_id,
+                "assetCode": bind.asset_code,
+                "accountId": bind.account_id,
+                "accountNo": bind.account_no,
+                "platform": bind.platform,
+                "verifiedPersonId": bind.verified_person_id,
+                "bindType": bind.bind_type,
+                "bindStatus": bind.bind_status,
+                "effectiveTime": _clock(bind.created_at),
+            }
+        )
+    return rows
+
+
+def bound_sessions_of(db: Session, actor: User, asset_id: int) -> list[dict]:
+    rows = []
+    for bind in _active_binds(db, actor, asset_id):
+        if not bind.session_id:
+            continue
+        session = _session_row(db, actor, session_id=bind.session_id)
+        rows.append(
+            {
+                "sessionId": bind.session_id,
+                "sessionCode": bind.session_code,
+                "platform": bind.platform or (session.platform if session else ""),
+                "title": session.topic if session else "",
+                "status": session.session_status if session else "",
+                "ownerPersonId": session.responsible_user_id if session else 0,
+            }
+        )
+    return rows
 
 
 def _effective_time(db: Session, asset_id: int) -> str:
@@ -493,3 +654,129 @@ def _reverse_item(db: Session, row: AssetLedger) -> dict:
         "frozen": False,
         "relatedAccountNo": "",
     }
+
+
+def _entry_item(bind: AssetBind, row: AssetLedger) -> dict:
+    return {
+        "assetId": row.id,
+        "assetCode": row.asset_code,
+        "assetName": row.asset_name,
+        "assetType": row.asset_type,
+        "status": row.status,
+        "bindType": bind.bind_type or "HOLD",
+        "effectiveTime": _clock(bind.created_at),
+        "frozen": False,
+        "relatedAccountNo": bind.account_no or "",
+        "sessionCode": bind.session_code or "",
+    }
+
+
+def _entry_page(
+    db: Session,
+    actor: User,
+    *,
+    account_id: int = 0,
+    session_id: int = 0,
+    page_no: int,
+    page_size: int,
+    status_filter: str,
+    entry_label: str,
+):
+    number, size = page_args(page_no, page_size)
+    stmt = (
+        select(AssetBind, AssetLedger)
+        .join(AssetLedger, AssetLedger.id == AssetBind.asset_id)
+        .where(
+            AssetBind.deleted == 0,
+            AssetBind.tenant_id == tenant_of(actor),
+            AssetBind.bind_status == "ACTIVE",
+            AssetLedger.deleted == 0,
+            AssetLedger.tenant_id == tenant_of(actor),
+        )
+    )
+    if account_id:
+        stmt = stmt.where(AssetBind.account_id == account_id)
+    if session_id:
+        stmt = stmt.where(AssetBind.session_id == session_id)
+    if status_filter:
+        stmt = stmt.where(AssetLedger.status == status_filter)
+    total = count_of(db, stmt)
+    pairs = db.execute(stmt.order_by(AssetLedger.id.desc()).offset((number - 1) * size).limit(size)).all()
+    items = [_entry_item(bind, asset) for bind, asset in pairs]
+    counted = db.execute(stmt).all()
+    summary = _summary([asset for _bind, asset in counted])
+    _audit(
+        db,
+        actor,
+        "reverse",
+        0,
+        0,
+        [{"entry": entry_label, "assetId": item["assetId"], "status": item["status"]} for item in items],
+    )
+    return ok(
+        {
+            "list": items,
+            "total": total,
+            "pageNo": number,
+            "pageSize": size,
+            "summary": summary,
+        }
+    )
+
+
+@router.get("/asset/reverse/by-account/{account_id}")
+def reverse_by_account(
+    account_id: int,
+    accountNo: str = "",
+    pageNo: int = 1,
+    pageSize: int = 10,
+    statusFilter: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if account_id > 0:
+        account = _account(actor, account_id=account_id)
+    else:
+        number = (accountNo or "").strip()
+        account = _account(actor, account_no=number) if number else None
+    if account is None:
+        return fail(1500, "账号不存在")
+    return _entry_page(
+        db,
+        actor,
+        account_id=account["id"],
+        page_no=pageNo,
+        page_size=pageSize,
+        status_filter=statusFilter,
+        entry_label=f"account:{account['account_no']}",
+    )
+
+
+@router.get("/asset/reverse/by-session/{session_key}")
+def reverse_by_session(
+    session_key: str,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    statusFilter: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    key = (session_key or "").strip()
+    if key.isdigit():
+        session = _session_row(db, actor, session_id=int(key))
+    else:
+        code = key.upper()
+        if not SESSION_CODE.match(code):
+            return fail(1001, "场次编号格式不正确")
+        session = _session_row(db, actor, session_code=code)
+    if session is None:
+        return fail(1500, "场次不存在")
+    return _entry_page(
+        db,
+        actor,
+        session_id=int(session.id),
+        page_no=pageNo,
+        page_size=pageSize,
+        status_filter=statusFilter,
+        entry_label=f"session:{session.session_code}",
+    )

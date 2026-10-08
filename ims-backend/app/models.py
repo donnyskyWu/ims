@@ -1725,6 +1725,27 @@ class AssetHierarchy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AssetBind(Base):
+    """资产绑定账号 / 场次（ASSET-002 · #72）。一台资产一条有效绑定。"""
+
+    __tablename__ = "ims_asset_bind"
+    __table_args__ = (UniqueConstraint("tenant_id", "asset_id", name="uk_asset_bind_asset"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    asset_code: Mapped[str] = mapped_column(String(64), default="")
+    account_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    account_no: Mapped[str] = mapped_column(String(64), default="", index=True)
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    session_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    session_code: Mapped[str] = mapped_column(String(32), default="", index=True)
+    verified_person_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    bind_type: Mapped[str] = mapped_column(String(16), default="HOLD")
+    bind_status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AssetTraceLog(Base):
     """穿透查询审计（ASSET-F-R3）。"""
 
