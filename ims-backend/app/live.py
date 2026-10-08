@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -15,6 +20,7 @@ from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import (
     CertArchive,
     LiveAlarmRecord,
+    LiveCost,
     LiveDataSnapshot,
     LiveReport,
     LiveReportCorrection,
@@ -578,6 +584,14 @@ class CancelBody(BaseModel):
     cancelReason: str
 
 
+class CostItemBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    costType: str | None = None
+    amount: float | None = None
+    refRecordId: int | None = None
+    remark: str | None = None
+
+
 class ReportBody(BaseModel):
     """字段默认可空，缺必填时由业务返回 1046，而不是框架 422。"""
 
@@ -592,6 +606,7 @@ class ReportBody(BaseModel):
     peakOnline: int | None = None
     newFans: int | None = None
     adCost: float | None = None
+    costDetails: list[CostItemBody] | None = None
 
 
 class CorrectionBody(ReportBody):
@@ -620,6 +635,65 @@ REPORT_NUMBERS = (
 )
 OVERDUE_HOURS = 24
 OVERDUE_RULE = "下播超时督办"
+COST_TYPES = {"AD", "RECHARGE", "GIFT", "SAMPLE"}
+COST_MASK = "***"
+FINANCE_REPORT_KEYS = (
+    "id",
+    "sessionCode",
+    "gmv",
+    "refundAmount",
+    "adCost",
+    "avgOrderValue",
+    "roas",
+    "entryUserId",
+    "entryStatus",
+    "submittedAt",
+    "costDetails",
+)
+EXPORT_LIMIT = 5000
+EXPORT_TTL_SEC = 300
+LEDGER_XLSX = "live_ledger.xlsx"
+XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# token -> (expires_at, body, user_id, path)
+_LEDGER_EXPORTS: dict[str, tuple[float, bytes, int, str]] = {}
+
+
+def role_tags(db: Session, actor: User) -> set[str]:
+    """把角色收成 R1/R2/R3/R4/R9。财务看 acct:r3 或角色名含「财务」。"""
+    from app.scope import enabled_roles
+
+    tags: set[str] = set()
+    for role in enabled_roles(db, actor):
+        key = (role.role_key or "").strip().lower()
+        name = role.role_name or ""
+        if key:
+            tags.add(key)
+        if key == "sys:admin" or "系统管理员" in name:
+            tags.add("r1")
+        if key == "r2" or key.endswith(":r2") or "行政" in name:
+            tags.add("r2")
+        if key == "r3" or key.endswith(":r3") or "财务" in name:
+            tags.add("r3")
+        if key == "r4" or key.endswith(":r4") or "运营总监" in name:
+            tags.add("r4")
+        if key == "r9" or key.endswith(":r9") or "数据分析" in name:
+            tags.add("r9")
+    return tags
+
+
+def report_view(tags: set[str]) -> str:
+    """R1/R4 全量；仅财务裁成 GMV/成本；R9 保留运营字段但成本打成 ***。"""
+    if tags & {"r1", "r4", "sys:admin"}:
+        return "full"
+    if "r3" in tags:
+        return "finance"
+    if "r9" in tags:
+        return "masked"
+    return "full"
+
+
+def can_export_ledger(tags: set[str]) -> bool:
+    return bool(tags & {"r1", "r2", "r4", "r9", "sys:admin"})
 
 
 def report_missing(body: ReportBody) -> list[str]:
@@ -629,6 +703,25 @@ def report_missing(body: ReportBody) -> list[str]:
         if value is None or (isinstance(value, str) and not value.strip()):
             missing.append(key)
     return missing
+
+
+def reject_cost_details(items: list[CostItemBody] | None):
+    if items is None:
+        return None
+    for index, item in enumerate(items, 1):
+        kind = (item.costType or "").strip().upper()
+        if kind not in COST_TYPES:
+            return fail(1001, "成本类型非法", {"field": "costType", "index": index})
+        if item.amount is None:
+            return fail(1001, "成本金额必填", {"field": "amount", "index": index})
+        if item.amount < 0:
+            return fail(1001, "数值不能为负", {"field": "amount", "index": index})
+        if item.refRecordId is not None and item.refRecordId < 0:
+            return fail(1001, "关联记录无效", {"field": "refRecordId", "index": index})
+        remark = (item.remark or "").strip()
+        if len(remark) > 256:
+            return fail(1001, "成本备注过长", {"field": "remark", "index": index})
+    return None
 
 
 def reject_report_body(body: ReportBody):
@@ -645,6 +738,9 @@ def reject_report_body(body: ReportBody):
         return fail(1001, "时间格式无效")
     if end <= start:
         return fail(1001, "实际结束须晚于实际开始")
+    rejected = reject_cost_details(body.costDetails)
+    if rejected is not None:
+        return rejected
     return None
 
 
@@ -656,9 +752,163 @@ def whole(value: int | None) -> int:
     return int(value or 0)
 
 
-def report_snapshot(report: LiveReport) -> dict:
-    vo = report_vo(report) or {}
-    return {key: vo.get(key) for key in (
+def load_costs(db: Session, session_code: str) -> list[LiveCost]:
+    return list(
+        db.scalars(
+            select(LiveCost)
+            .where(LiveCost.session_code == session_code, LiveCost.deleted == 0)
+            .order_by(LiveCost.id.asc())
+        ).all()
+    )
+
+
+def cost_vo(row: LiveCost) -> dict:
+    return {
+        "id": row.id,
+        "costType": row.cost_type,
+        "amount": round(float(row.amount or 0), 2),
+        "refRecordId": row.ref_record_id,
+        "remark": row.remark or "",
+    }
+
+
+def replace_costs(db: Session, session_code: str, tenant_id: int, items: list[CostItemBody]) -> None:
+    for row in load_costs(db, session_code):
+        row.deleted = 1
+    for item in items:
+        db.add(
+            LiveCost(
+                session_code=session_code,
+                cost_type=(item.costType or "").strip().upper(),
+                amount=money2(item.amount),
+                ref_record_id=item.refRecordId,
+                remark=(item.remark or "").strip(),
+                tenant_id=tenant_id,
+            )
+        )
+
+
+def report_payload(db: Session, report: LiveReport | None) -> dict | None:
+    vo = report_vo(report)
+    if vo is None or report is None:
+        return None
+    details = [cost_vo(row) for row in load_costs(db, report.session_code)]
+    vo["costDetails"] = details
+    if details:
+        total = round(sum(float(item["amount"]) for item in details), 2)
+        vo["roas"] = round(vo["gmv"] / total, 2) if total else 0.0
+    return vo
+
+
+def summary_of(vo: dict | None) -> dict | None:
+    if vo is None:
+        return None
+    return {
+        "gmv": vo["gmv"],
+        "orderCount": vo["orderCount"],
+        "durationMinutes": vo["durationMinutes"],
+        "roas": vo["roas"],
+        "entryStatus": vo["entryStatus"],
+    }
+
+
+def cost_summary_of(db: Session, report: LiveReport | None) -> dict | None:
+    if report is None or report.deleted:
+        return None
+    rows = load_costs(db, report.session_code)
+    if rows:
+        by_type: dict[str, float] = {}
+        total = 0.0
+        for row in rows:
+            amount = round(float(row.amount or 0), 2)
+            by_type[row.cost_type] = round(by_type.get(row.cost_type, 0.0) + amount, 2)
+            total = round(total + amount, 2)
+        return {"totalCost": total, "byType": by_type}
+    ad = round(float(report.ad_cost or 0), 2)
+    return {"totalCost": ad, "byType": {"AD": ad}}
+
+
+def _mask_details(details: list[dict]) -> list[dict]:
+    masked = []
+    for item in details:
+        copy = dict(item)
+        copy["amount"] = COST_MASK
+        masked.append(copy)
+    return masked
+
+
+def shape_money_blob(blob: dict, view: str) -> dict:
+    if view == "finance":
+        kept = {key: blob.get(key) for key in ("gmv", "refundAmount", "adCost", "costDetails") if key in blob}
+        if "costDetails" in kept and kept["costDetails"] is None:
+            kept["costDetails"] = []
+        return kept
+    if view == "masked":
+        masked = dict(blob)
+        if "adCost" in masked:
+            masked["adCost"] = COST_MASK
+        if "roas" in masked:
+            masked["roas"] = COST_MASK
+        if isinstance(masked.get("costDetails"), list):
+            masked["costDetails"] = _mask_details(masked["costDetails"])
+        return masked
+    return dict(blob)
+
+
+def shape_report(vo: dict | None, view: str) -> dict | None:
+    if vo is None:
+        return None
+    if view == "finance":
+        trimmed = {key: vo.get(key) for key in FINANCE_REPORT_KEYS}
+        trimmed["fieldScope"] = "FINANCE"
+        return trimmed
+    if view == "masked":
+        masked = dict(vo)
+        masked["adCost"] = COST_MASK
+        masked["roas"] = COST_MASK
+        masked["costDetails"] = _mask_details(list(vo.get("costDetails") or []))
+        masked["fieldScope"] = "MASKED"
+        return masked
+    full = dict(vo)
+    full["fieldScope"] = "FULL"
+    return full
+
+
+def shape_summary(summary: dict | None, view: str) -> dict | None:
+    if summary is None:
+        return None
+    if view == "finance":
+        return {"gmv": summary["gmv"], "roas": summary["roas"], "entryStatus": summary["entryStatus"]}
+    if view == "masked":
+        masked = dict(summary)
+        masked["roas"] = COST_MASK
+        return masked
+    return dict(summary)
+
+
+def shape_cost_summary(summary: dict | None, view: str) -> dict | None:
+    if summary is None:
+        return None
+    if view != "masked":
+        shown = dict(summary)
+        shown["costMasked"] = False
+        return shown
+    by_type = {key: COST_MASK for key in (summary.get("byType") or {})}
+    return {"totalCost": COST_MASK, "byType": by_type, "costMasked": True}
+
+
+def shape_correction(item: dict, view: str) -> dict:
+    if view == "full":
+        return item
+    shaped = dict(item)
+    shaped["before"] = shape_money_blob(item.get("before") or {}, view)
+    shaped["after"] = shape_money_blob(item.get("after") or {}, view)
+    return shaped
+
+
+def report_snapshot(db: Session, report: LiveReport) -> dict:
+    vo = report_payload(db, report) or {}
+    snap = {key: vo.get(key) for key in (
         "actualStart",
         "actualEnd",
         "durationMinutes",
@@ -670,6 +920,8 @@ def report_snapshot(report: LiveReport) -> dict:
         "newFans",
         "adCost",
     )}
+    snap["costDetails"] = vo.get("costDetails") or []
+    return snap
 
 
 def load_report(db: Session, session_code: str) -> LiveReport | None:
@@ -848,6 +1100,7 @@ def filter_sessions(
     risk_level: str = "",
     platform: str = "",
     is_supplement: bool | None = None,
+    time_range: list[str] | None = None,
 ):
     stmt = select(LiveSession)
     stmt = restrict_sessions(stmt, actor, scope)
@@ -865,6 +1118,11 @@ def filter_sessions(
         stmt = stmt.where(LiveSession.platform == platform)
     if is_supplement is not None:
         stmt = stmt.where(LiveSession.is_supplement == (1 if is_supplement else 0))
+    if time_range and len(time_range) >= 2 and time_range[0] and time_range[1]:
+        stmt = stmt.where(
+            LiveSession.plan_start_time >= time_range[0],
+            LiveSession.plan_start_time <= time_range[1],
+        )
     return stmt.order_by(LiveSession.id.desc())
 
 
@@ -880,6 +1138,7 @@ def sessions_list(
     riskLevel: str = "",
     platform: str = "",
     isSupplement: bool | None = None,
+    timeRange: list[str] = Query(default=[]),
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -895,15 +1154,20 @@ def sessions_list(
         riskLevel,
         platform,
         isSupplement,
+        time_range=timeRange,
     )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all()
+    view = report_view(role_tags(db, actor))
     out = []
     for row in rows:
         report = db.scalar(
             select(LiveReport).where(LiveReport.session_code == row.session_code, LiveReport.deleted == 0)
         )
-        out.append(ledger_vo(db, row, report))
+        item = ledger_vo(db, row, report)
+        if report is not None:
+            item["reportSummary"] = shape_summary(summary_of(report_payload(db, report)), view)
+        out.append(item)
     return paged(out, total, page_no, size)
 
 
@@ -925,9 +1189,12 @@ def sessions_detail(
     data = session_vo(db, row, report, list(checks))
     data["metricsSnapshot"] = metrics_payload(db, ops, actor, row)
     data["footballEnrichment"] = data["metricsSnapshot"].get("footballRoomBasic")
+    view = report_view(role_tags(db, actor))
     if report:
-        data["report"] = report_vo(report)
-        data["costSummary"] = {"totalCost": round(report.ad_cost, 2), "byType": {"AD": round(report.ad_cost, 2)}}
+        payload = report_payload(db, report)
+        data["report"] = shape_report(payload, view)
+        data["reportSummary"] = shape_summary(summary_of(payload), view)
+        data["costSummary"] = shape_cost_summary(cost_summary_of(db, report), view)
     else:
         data["report"] = None
         data["costSummary"] = None
@@ -1274,6 +1541,8 @@ def upsert_report(
     report.new_fans = whole(body.newFans)
     report.ad_cost = money2(body.adCost)
     report.entry_user_id = actor.id
+    if body.costDetails is not None:
+        replace_costs(db, session.session_code, tenant_of(actor), body.costDetails)
     if keep_status:
         session.actual_start = body.actualStart or session.actual_start
         session.actual_end = body.actualEnd or session.actual_end
@@ -1365,7 +1634,8 @@ def report_submit(
     report = upsert_report(db, row, body, actor, submit=True)
     close_overdue_todos(db, row)
     db.flush()
-    return ok(report_vo(report))
+    view = report_view(role_tags(db, actor))
+    return ok(shape_report(report_payload(db, report), view))
 
 
 @router.get("/report/{session_code}")
@@ -1381,9 +1651,12 @@ def report_get(
     report = load_report(db, session_code)
     if report is None:
         return ok(None)
-    data = report_vo(report)
+    view = report_view(role_tags(db, actor))
+    data = shape_report(report_payload(db, report), view)
     if data is not None:
-        data["corrections"] = [correction_vo(item) for item in correction_rows(db, session_code)]
+        data["corrections"] = [
+            shape_correction(correction_vo(item), view) for item in correction_rows(db, session_code)
+        ]
     return ok(data)
 
 
@@ -1401,6 +1674,9 @@ def report_update(
     report = load_report(db, session_code)
     if report and report.entry_status != "DRAFT":
         return fail(1047, "提交后只读")
+    rejected = reject_cost_details(body.costDetails)
+    if rejected is not None:
+        return rejected
     upsert_report(db, row, body, actor, submit=False)
     return ok(None)
 
@@ -1427,10 +1703,10 @@ def report_correction(
     rejected = reject_report_body(body)
     if rejected is not None:
         return rejected
-    before = report_snapshot(report)
+    before = report_snapshot(db, report)
     upsert_report(db, row, body, actor, submit=False, keep_status=True)
     db.flush()
-    after = report_snapshot(report)
+    after = report_snapshot(db, report)
     saved = LiveReportCorrection(
         session_code=session_code,
         report_id=report.id,
@@ -1573,6 +1849,7 @@ def ledger_list(
     riskLevel: str = "",
     platform: str = "",
     isSupplement: bool | None = None,
+    timeRange: list[str] = Query(default=[]),
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -1587,9 +1864,179 @@ def ledger_list(
         riskLevel,
         platform,
         isSupplement,
+        timeRange,
         db,
         actor,
     )
+
+
+def _ledger_root() -> Path:
+    configured = (os.environ.get("IMS_FILE_ROOT") or "").strip()
+    if configured:
+        return Path(configured)
+    return Path(__file__).resolve().parents[1] / "data" / "ims-files"
+
+
+def purge_ledger_exports(now: float) -> None:
+    dead = [key for key, item in _LEDGER_EXPORTS.items() if item[0] < now]
+    for key in dead:
+        path = _LEDGER_EXPORTS[key][3]
+        _LEDGER_EXPORTS.pop(key, None)
+        if path:
+            Path(path).unlink(missing_ok=True)
+
+
+def issue_ledger_export(actor_id: int, body: bytes) -> dict | None:
+    now = time.time()
+    purge_ledger_exports(now)
+    token = secrets.token_urlsafe(24)
+    folder = _ledger_root() / "live" / datetime.now().strftime("%Y%m")
+    path = folder / f"{token}.xlsx"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    except OSError:
+        return None
+    _LEDGER_EXPORTS[token] = (now + EXPORT_TTL_SEC, body, actor_id, str(path))
+    return {
+        "exportTaskId": token,
+        "message": "导出任务已提交",
+        "downloadUrl": f"/admin-api/ims/live/ledger/export/file?token={token}",
+        "fileName": LEDGER_XLSX,
+    }
+
+
+def _cell(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _money_cell(value: object, masked: bool) -> str:
+    if masked:
+        return COST_MASK
+    try:
+        return f"{float(value or 0):.2f}"
+    except (TypeError, ValueError):
+        return COST_MASK
+
+
+def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[str]]:
+    header = [
+        "场次ID",
+        "平台",
+        "主题",
+        "账号",
+        "责任人",
+        "场次状态",
+        "风险级别",
+        "补录",
+        "GMV",
+        "退款",
+        "投放成本",
+        "订单数",
+        "观看人数",
+        "峰值在线",
+        "涨粉",
+        "时长分钟",
+        "投产比",
+        "录入状态",
+    ]
+    masked = view == "masked"
+    matrix = [header]
+    user_ids = {row.responsible_user_id for row in rows}
+    names = user_names(db, user_ids)
+    for row in rows:
+        report = load_report(db, row.session_code)
+        payload = report_payload(db, report) if report else None
+        present = payload is not None
+        matrix.append(
+            [
+                row.session_code,
+                row.platform or "",
+                row.topic or "",
+                row.account_no or "",
+                names.get(row.responsible_user_id, ""),
+                row.session_status or "",
+                row.risk_level or "",
+                "是" if row.is_supplement else "否",
+                _money_cell(payload.get("gmv"), False) if present else "",
+                _money_cell(payload.get("refundAmount"), False) if present else "",
+                _money_cell(payload.get("adCost"), masked) if present else "",
+                _cell(payload.get("orderCount")) if present else "",
+                _cell(payload.get("viewerCount")) if present else "",
+                _cell(payload.get("peakOnline")) if present else "",
+                _cell(payload.get("newFans")) if present else "",
+                _cell(payload.get("durationMinutes")) if present else "",
+                (COST_MASK if masked else _money_cell(payload.get("roas"), False)) if present else "",
+                _cell(payload.get("entryStatus")) if present else "",
+            ]
+        )
+    return matrix
+
+
+@router.get("/ledger/export/file")
+def ledger_export_file(token: str, actor: User = Depends(current_user)):
+    now = time.time()
+    purge_ledger_exports(now)
+    item = _LEDGER_EXPORTS.get(token)
+    if item is None or item[0] < now:
+        return fail(1002, "下载链接已过期")
+    if item[2] != actor.id:
+        return fail(1008, "无数据权限")
+    _expires, body, _user_id, _path = item
+    return Response(
+        content=body,
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="{LEDGER_XLSX}"'},
+    )
+
+
+@router.get("/ledger/export")
+def ledger_export(
+    request: Request,
+    sessionCode: str = "",
+    accountId: int | None = None,
+    responsibleUserId: int | None = None,
+    sessionStatus: str = "",
+    riskLevel: str = "",
+    platform: str = "",
+    isSupplement: bool | None = None,
+    timeRange: list[str] = Query(default=[]),
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tags = role_tags(db, actor)
+    if not can_export_ledger(tags):
+        return fail(1008, "无数据权限")
+    stmt = filter_sessions(
+        db,
+        actor,
+        request.state.scope,
+        sessionCode,
+        accountId,
+        responsibleUserId,
+        sessionStatus,
+        riskLevel,
+        platform,
+        isSupplement,
+        time_range=timeRange,
+    )
+    rows = list(db.scalars(stmt.limit(EXPORT_LIMIT + 1)).all())
+    truncated = len(rows) > EXPORT_LIMIT
+    rows = rows[:EXPORT_LIMIT]
+    try:
+        from app.dc_trace import build_xlsx
+
+        body = build_xlsx(ledger_matrix(db, rows, report_view(tags)))
+    except Exception:
+        return fail(5005, "台账导出失败，请稍后重试")
+    issued = issue_ledger_export(actor.id, body)
+    if issued is None:
+        return fail(5005, "台账导出失败，请稍后重试")
+    if truncated:
+        issued["message"] = "导出任务已提交，仅包含前 5000 条"
+    return ok(issued)
 
 
 @router.get("/ledger/{session_code}")

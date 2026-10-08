@@ -466,6 +466,21 @@ class LiveReport(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class LiveCost(Base):
+    """下播成本明细（ims_live_cost）。cost_type：AD / RECHARGE / GIFT / SAMPLE。"""
+
+    __tablename__ = "ims_live_cost"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_code: Mapped[str] = mapped_column(String(32), index=True)
+    cost_type: Mapped[str] = mapped_column(String(16), default="")
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    ref_record_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    remark: Mapped[str] = mapped_column(String(256), default="")
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class LiveReportCorrection(Base):
     """下播报告更正单。提交后原值只读，修改留新旧对比。"""
 

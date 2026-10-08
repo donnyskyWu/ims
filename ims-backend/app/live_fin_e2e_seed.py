@@ -15,6 +15,7 @@ from app.models import (
     CertExpireLog,
     CertViewLog,
     LiveAlarmRecord,
+    LiveCost,
     LiveReport,
     LiveSession,
     LiveSessionSeq,
@@ -42,6 +43,8 @@ E2E_LIVE1043_PHONE_CODE = "E2E-LIVE1043-PHONE"
 E2E_LIVE1043_REALNAME = "E2E-Live-1043"
 E2E_LIVE1048_SESSION = "IMS20261006DYS1048"
 E2E_LIVE1048_TOPIC = "E2E超时督办"
+E2E_LEDGER_SESSION = "IMS20261008DYS0082"
+E2E_LEDGER_TOPIC = "E2E台账导出"
 
 
 def ensure_live_fin_e2e_deps(db: Session, admin: User) -> None:
@@ -427,6 +430,114 @@ def ensure_live_overdue_e2e_session(db: Session, admin: User) -> None:
     )
 
 
+def ensure_live_ledger_export_session(db: Session, admin: User) -> None:
+    """已核准下播报告，供台账导出和财务字段裁剪。刷新时写回固定 GMV / 观看 / 成本明细。"""
+    ops = ops_session()
+    try:
+        account = ops.scalar(
+            select(PlatformAccount).where(
+                PlatformAccount.account_no == E2E_FIN_ACCOUNT_NO,
+                PlatformAccount.deleted == 0,
+            )
+        )
+    finally:
+        ops.close()
+    if account is None:
+        return
+    start_iso = "2026-10-08T20:00:00+08:00"
+    ended_iso = "2026-10-08T22:00:00+08:00"
+    tenant_id = admin.tenant_id or 0
+    row = db.scalar(select(LiveSession).where(LiveSession.session_code == E2E_LEDGER_SESSION))
+    if row is None:
+        row = LiveSession(
+            session_code=E2E_LEDGER_SESSION,
+            account_id=account.id,
+            account_no=account.account_no,
+            realname_person_id=account.realname_id or 0,
+            realname_name="E2E财务实名人",
+            responsible_user_id=admin.id,
+            device_asset_ids="[]",
+            platform="DOUYIN",
+            topic=E2E_LEDGER_TOPIC,
+            plan_start_time=start_iso,
+            plan_end_time=ended_iso,
+            session_status="ENDED",
+            risk_level="GREEN",
+            risk_score=0,
+            actual_start=start_iso,
+            actual_end=ended_iso,
+            creator=admin.id,
+            tenant_id=tenant_id,
+            football_sync_status="UNLINKED",
+        )
+        db.add(row)
+        db.flush()
+    else:
+        row.deleted = 0
+        row.session_status = "ENDED"
+        row.account_id = account.id
+        row.account_no = account.account_no
+        row.realname_person_id = account.realname_id or 0
+        row.responsible_user_id = admin.id
+        row.topic = E2E_LEDGER_TOPIC
+        row.platform = "DOUYIN"
+        row.plan_start_time = start_iso
+        row.plan_end_time = ended_iso
+        row.actual_start = start_iso
+        row.actual_end = ended_iso
+        row.is_supplement = 0
+        row.tenant_id = tenant_id
+    report = db.scalar(select(LiveReport).where(LiveReport.session_code == E2E_LEDGER_SESSION))
+    if report is None:
+        report = LiveReport(session_code=E2E_LEDGER_SESSION, tenant_id=tenant_id)
+        db.add(report)
+    report.deleted = 0
+    report.actual_start = start_iso
+    report.actual_end = ended_iso
+    report.duration_minutes = 120
+    report.gmv = 12800.50
+    report.refund_amount = 20
+    report.order_count = 88
+    report.viewer_count = 4321
+    report.peak_online = 300
+    report.new_fans = 40
+    report.ad_cost = 860
+    report.entry_user_id = admin.id
+    report.entry_status = "CONFIRMED"
+    report.submitted_at = ended_iso
+    report.tenant_id = tenant_id
+    db.execute(delete(LiveCost).where(LiveCost.session_code == E2E_LEDGER_SESSION))
+    db.add(
+        LiveCost(
+            session_code=E2E_LEDGER_SESSION,
+            cost_type="AD",
+            amount=500,
+            remark="投放",
+            tenant_id=tenant_id,
+        )
+    )
+    db.add(
+        LiveCost(
+            session_code=E2E_LEDGER_SESSION,
+            cost_type="GIFT",
+            amount=360,
+            remark="打赏",
+            tenant_id=tenant_id,
+        )
+    )
+    seq = db.scalar(
+        select(LiveSessionSeq).where(
+            LiveSessionSeq.tenant_id == tenant_id,
+            LiveSessionSeq.biz_date == "20261008",
+            LiveSessionSeq.platform_code == "DYS",
+        )
+    )
+    if seq is None:
+        db.add(LiveSessionSeq(biz_date="20261008", platform_code="DYS", tenant_id=tenant_id, seq_val=82))
+    elif seq.seq_val < 82:
+        seq.seq_val = 82
+
+
 def refresh_live_fin_e2e_deps(db: Session, admin: User) -> None:
     if admin.username != "admin":
         return
@@ -435,3 +546,4 @@ def refresh_live_fin_e2e_deps(db: Session, admin: User) -> None:
     clear_live_cert_lock_archives(db)
     ensure_live_risk_e2e_deps(db, admin)
     ensure_live_overdue_e2e_session(db, admin)
+    ensure_live_ledger_export_session(db, admin)

@@ -8,9 +8,11 @@
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="openRegister">新建场次登记</button>
         <button class="btn btn-sec" type="button" data-testid="live-supplement-open" @click="openSupplement">历史补录</button>
-        <button class="btn btn-sec" type="button" disabled>导出</button>
+        <button class="btn btn-sec" type="button" data-testid="live-ledger-export" :disabled="exporting" @click="exportLedger">导出</button>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="live-export-note">{{ exportNote }}</p>
+    <p v-if="exportError" class="hint bad" data-testid="live-export-error">{{ exportError }}</p>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
     <div class="tabs">
       <div class="tab" :class="{ on: view === 'sessions' }" data-testid="live-view-sessions" @click="view = 'sessions'">场次列表</div>
@@ -259,30 +261,45 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '下播与 GMV'" class="tbl-block" style="margin-top: 12px">
-        <div v-if="report" class="hint">
-          录入状态 {{ report.entryStatus }} · GMV ¥{{ Number(report.gmv || 0).toFixed(2) }}
-          · 客单价 {{ Number(report.avgOrderValue || 0).toFixed(2) }} · ROAS {{ Number(report.roas || 0).toFixed(2) }}
+        <p v-if="financeView" class="hint" data-testid="live-report-finance-scope">财务字段：仅 GMV 与成本</p>
+        <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
+        <div v-if="report" class="hint" data-testid="live-report-headline">
+          录入状态 {{ report.entryStatus || '—' }} · GMV ¥{{ displayMoney(report.gmv) }}
+          · 客单价 {{ displayMoney(report.avgOrderValue) }} · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
         </div>
         <div class="formrow one">
-          <div class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>GMV</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="reportLocked && !correcting" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
-          <div class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>投放成本</label><input v-model="reportForm.adCost" type="number" step="0.01" data-testid="live-report-ad" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>GMV</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="showOpsFields" class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="showOpsFields" class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="showOpsFields" class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" /></div>
+          <div class="fld"><label>投放成本</label><input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" /></div>
+          <div v-if="showCostEditor" class="fld">
+            <label>成本明细</label>
+            <select v-model="costDraft.costType" data-testid="live-cost-type">
+              <option value="AD">投放</option>
+              <option value="RECHARGE">冲话费</option>
+              <option value="GIFT">打赏</option>
+              <option value="SAMPLE">样品</option>
+            </select>
+            <input v-model="costDraft.amount" type="number" step="0.01" placeholder="金额" data-testid="live-cost-amount" />
+          </div>
           <div v-if="correcting" class="fld">
             <label>更正原因 *</label>
             <input v-model="correctionReason" maxlength="512" data-testid="live-report-correction-reason" />
           </div>
         </div>
+        <ul v-if="costLines.length" data-testid="live-cost-details">
+          <li v-for="(item, index) in costLines" :key="index">{{ costLabel(item.costType) }} {{ displayMoney(item.amount) }}</li>
+        </ul>
         <p v-if="reportError" class="hint bad" data-testid="live-report-error">{{ reportError }}</p>
         <p v-if="correctionTrace" class="hint" data-testid="live-correction-trace">
           更正单 {{ correctionTrace.correctionId }} · GMV {{ correctionTrace.before?.gmv }} → {{ correctionTrace.after?.gmv }}
         </p>
-        <div class="acts" style="margin-top: 8px">
+        <div v-if="!financeView" class="acts" style="margin-top: 8px">
           <button v-if="!reportLocked" class="btn btn-pri btn-sm" type="button" data-testid="live-report-submit" @click="submitReport">提交下播</button>
           <button
             v-if="report && report.entryStatus === 'SUBMITTED'"
@@ -337,6 +354,9 @@ async function apiPut(url: string, body?: unknown) {
 const loading = ref(false)
 const error = ref('')
 const hint = ref('')
+const exporting = ref(false)
+const exportNote = ref('')
+const exportError = ref('')
 const rows = ref<any[]>([])
 const total = ref(0)
 const view = ref<'sessions' | 'pending'>('sessions')
@@ -401,8 +421,25 @@ const reportForm = reactive({
   refundAmount: '0',
   adCost: '100',
 })
+const costLines = ref<{ costType: string; amount: unknown; remark?: string }[]>([])
+const costDraft = reactive({ costType: 'GIFT', amount: '' })
 
 const reportLocked = computed(() => !!report.value && report.value.entryStatus !== 'DRAFT')
+const financeView = computed(() => report.value?.fieldScope === 'FINANCE')
+const showOpsFields = computed(() => !financeView.value)
+const showCostEditor = computed(() => !financeView.value && (!reportLocked.value || correcting.value))
+
+function displayMoney(value: unknown) {
+  if (value === '***') return '***'
+  if (value === '' || value === null || value === undefined) return '—'
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : '—'
+}
+
+function costLabel(kind: string) {
+  const map: Record<string, string> = { AD: '投放', RECHARGE: '冲话费', GIFT: '打赏', SAMPLE: '样品' }
+  return map[kind] || kind || '成本'
+}
 
 function resetReportForm() {
   reportForm.actualStart = '2026-10-06T20:00:00+08:00'
@@ -419,6 +456,8 @@ function resetReportForm() {
 function applyReport(data: Record<string, unknown> | null) {
   if (!data) {
     resetReportForm()
+    costLines.value = []
+    costDraft.amount = ''
     return
   }
   reportForm.actualStart = String(data.actualStart || '')
@@ -429,7 +468,16 @@ function applyReport(data: Record<string, unknown> | null) {
   reportForm.peakOnline = String(data.peakOnline ?? '')
   reportForm.newFans = String(data.newFans ?? '')
   reportForm.refundAmount = String(data.refundAmount ?? '')
-  reportForm.adCost = String(data.adCost ?? '')
+  reportForm.adCost = data.adCost === '***' ? '***' : String(data.adCost ?? '')
+  const details = data.costDetails
+  costLines.value = Array.isArray(details)
+    ? details.map((item) => ({
+        costType: String((item as { costType?: string }).costType || ''),
+        amount: (item as { amount?: unknown }).amount,
+        remark: String((item as { remark?: string }).remark || ''),
+      }))
+    : []
+  costDraft.amount = ''
 }
 
 function nullableNumber(value: unknown) {
@@ -439,7 +487,7 @@ function nullableNumber(value: unknown) {
 }
 
 function reportPayload() {
-  return {
+  const payload: Record<string, unknown> = {
     actualStart: reportForm.actualStart.trim() || null,
     actualEnd: reportForm.actualEnd.trim() || null,
     gmv: nullableNumber(reportForm.gmv),
@@ -448,8 +496,20 @@ function reportPayload() {
     viewerCount: nullableNumber(reportForm.viewerCount),
     peakOnline: nullableNumber(reportForm.peakOnline),
     newFans: nullableNumber(reportForm.newFans),
-    adCost: nullableNumber(reportForm.adCost),
+    adCost: reportForm.adCost === '***' ? null : nullableNumber(reportForm.adCost),
   }
+  const details = costLines.value
+    .filter((item) => item.amount !== '***')
+    .map((item) => ({
+      costType: item.costType,
+      amount: nullableNumber(item.amount),
+      remark: item.remark || undefined,
+    }))
+  if (String(costDraft.amount).trim() !== '') {
+    details.push({ costType: costDraft.costType, amount: nullableNumber(costDraft.amount), remark: undefined })
+  }
+  if (details.length) payload.costDetails = details
+  return payload
 }
 
 function fieldMissing(key: string) {
@@ -491,14 +551,62 @@ function resetQuery() {
   loadList()
 }
 
+function unwrapError(error: unknown) {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const data = (error as { response?: { data?: unknown } }).response?.data
+    if (data && typeof data === 'object') return data
+  }
+  return error
+}
+
 function bizError(error: unknown) {
-  if (error && typeof error === 'object' && 'code' in error) {
-    const body = error as { code?: number; msg?: string }
-    if (typeof body.code === 'number' && body.code !== 0) {
-      return `${body.code} ${body.msg || ''}`.trim()
-    }
+  const body = unwrapError(error) as { code?: number; msg?: string }
+  if (body && typeof body === 'object' && typeof body.code === 'number' && body.code !== 0) {
+    return `${body.code} ${body.msg || ''}`.trim()
   }
   return errorMessage(error)
+}
+
+async function exportLedger() {
+  exporting.value = true
+  exportNote.value = ''
+  exportError.value = ''
+  try {
+    const params: Record<string, string> = {}
+    if (query.sessionCode) params.sessionCode = query.sessionCode
+    if (query.sessionStatus) params.sessionStatus = query.sessionStatus
+    const res = await http.get('/live/ledger/export', { params })
+    const data = res.data.data || {}
+    exportNote.value = data.message || '导出任务已提交'
+    const downloadUrl = String(data.downloadUrl || '')
+    if (!downloadUrl) return
+    const token = localStorage.getItem('ims_access')
+    const fileRes = await fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!fileRes.ok) {
+      let body: unknown = {}
+      try {
+        body = await fileRes.json()
+      } catch {
+        body = {}
+      }
+      throw body
+    }
+    const blob = await fileRes.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = String(data.fileName || 'live_ledger.xlsx')
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(a.href)
+  } catch (e: unknown) {
+    exportNote.value = ''
+    exportError.value = bizError(e)
+  } finally {
+    exporting.value = false
+  }
 }
 
 function openRegister() {
