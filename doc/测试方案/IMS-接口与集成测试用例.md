@@ -62,7 +62,7 @@
 | AT-AIR-002 | GET /air/skill（管理端） | 复用 1001/1008；不使用 AIR 专属业务码段 |
 | ~~AT-AIR-003~~ | **已移除（v2.6.34）** GET /ims/mcp（health 探针）RAGFlow 不健康 5008 事件化 | — |
 | AT-FIN-001 | POST /fin/cost/{id}/confirm | 触发自动计算（5 分钟内状态变更断言） |
-| AT-FIN-002 | POST /fin/period/close | 已结账期间再录入 1010 |
+| AT-FIN-002 | POST /fin/period/close | 已结账期间再录入 **1142**（归并原 1010）（**#59**） |
 | AT-BI-001 | POST /bi/report/query | 10 万行数据集 < 30s；> 10s 转异步 BiQueryMode |
 | AT-BI-002 | POST /bi/share | 五态审批流含 EXPIRED 过期态 |
 | AT-DC-001 | GET /dc/trace/perf-metrics | P95 统计口径验证 |
@@ -187,7 +187,7 @@
 |------|------|------|------|
 | IT-FLOW-01 | 账号流转审批 | ACCT 发起流转→FLOW 审批 | 节点权限正确；审批结果回写单据状态 |
 | IT-FLOW-02 | 上报审批 | REPORT 提交→FLOW | 驳回→REJECTED+驳回原因 |
-| IT-FLOW-03 | 财务更正审批 | FIN 锁定后更正→R4 审批 | 1155/1010 语义贯通 |
+| IT-FLOW-03 | 财务更正审批 | FIN 锁定后更正→R4 审批 | 1155/1142 语义贯通（**#59** · 嵌入 FL-REIMB） |
 | IT-FLOW-04 | 超时自动流转 | 挂起节点到超时 | TIMEOUT 流转+督办 |
 
 ### IT-11 COMP→PERF 解禁联动

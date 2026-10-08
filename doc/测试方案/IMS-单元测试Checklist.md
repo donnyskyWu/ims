@@ -240,7 +240,7 @@
 | UT-FIN-003-01 | 分成规则：同一场次多分成对象比例求和 ≤ 1.0000 且多对象集合求和 = 1.0000（V2-E2 口径）；边界 0.9999/1.0000/1.0001；fixedRate 超出 (0,1] 或阶梯区间重叠/比例非法返回 1146，优先级冲突返回 1147 | FIN-003 |
 | UT-FIN-003-02 | ShareResultStatus 四值（PENDING_AUDIT→AUDITED→PAID_OFF→REVERSED）；冲销（REVERSED）负向记账 | G4 |
 | UT-FIN-003-03 | 分成金额拆分精度：比例拆分累计 = 总额（尾差处理规则验证） | BR-107 |
-| UT-FIN-004-01 | 期间结账：已结账期间录入返回 1010（FinanceStatus.LOCKED） | BR-118 |
+| UT-FIN-004-01 | 期间结账：已结账期间录入返回 **1142**（归并原 1010 · FinanceStatus.LOCKED）（**#59** `test_fin_period_close_locks_writes_then_r4_red_correction`） | BR-118 |
 | UT-FIN-004-02 | 结账后更正须 R4 审批流程（返回 1155 语义） | BR-108 |
 | UT-FIN-004-03 | 台账一致性：场次 ID 关联 LIVE 数据；对账差异输出 | FIN-004 |
 

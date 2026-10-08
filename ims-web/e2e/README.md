@@ -7,7 +7,7 @@
 |------|----------|------------|----------|
 | **S1** | 员工全生命周期 | `smoke-auth-org.spec.ts` | 登录 → `/ims/auth/org` 标题「组织架构同步」+ 人员列表 table |
 | **S2** | 直播全链路 | `smoke-live.spec.ts` · **`closure-live-session-report.spec.ts`（#56）** | smoke：直播管理列表；closure：登记→风控→下播核准 · **CONFIRMED** |
-| **S3** | 场次-成本-利润 | `smoke-fin.spec.ts` · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-share-payoff.spec.ts`（#57）** | smoke：利润页标题；#50：成本核准 → 利润 **81400**；#57：分成双审发放 **PAID_OFF** → 台账 **四账一致** |
+| **S3** | 场次-成本-利润 | `smoke-fin.spec.ts` · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-share-payoff.spec.ts`（#57）** · **`closure-fin-period-lock.spec.ts`（#59）** | smoke：利润页标题；#50：成本核准 → 利润 **81400**；#57：分成双审发放 **PAID_OFF** → 台账 **四账一致**；#59：结账 **LOCKED** → 录入 **1142** → R4 后红冲 |
 | **S4** | 账号领用流转 | `smoke-acct.spec.ts` | 登录 → `/ims/corp/account/douyin` 标题「抖音」+ 账号 table |
 | **S4 (#47)** | 池领用/归还 closure | `closure-corp-account-checkout.spec.ts` | `AC-E2E-POOL` 领用三步→在用→归还→时间线 |
 | **S4 (#58)** | 冲话费 + 凭证门禁 | `closure-corp-account-recharge.spec.ts` | 1000 无凭证成功 · 6000 无凭证 **1025** · 补凭证后 admin 隐藏 URL · `e2e_acct_r3` 可见 |
@@ -41,6 +41,7 @@
 | **E2E-S11-处置 (#44)** | `closure-alert-handle-tab.spec.ts` | UI 试跑 → live「处理」→ 处置记录 HANDLED · 去重 DEDUP-LIVE |
 | **E2E-S3-切片 · FIN (#50)** | `closure-fin-cost-profit.spec.ts` | 纯 UI · LIVE 核准下播 → 成本提交/核准 → 利润 **CALCULATED** · **81400** · BR-107 完整率卡 |
 | **E2E-S3-05/08 · FIN (#57)** | `closure-fin-share-payoff.spec.ts` | 纯 UI · 复用 #50 链 → 分成单财务审+业务审 → **已发放** · 拆分 **4,000** = 总额 → 台账 **四账一致** |
+| **E2E-S3-06/07 · FIN (#59)** | `closure-fin-period-lock.spec.ts` | 纯 UI · 独立期间结账 **LOCKED** · 录入 **1142** · 未批更正 **1155** · R4 通过后红冲投放成本 · 利润 **82,400.00** / **RECALCULATED** |
 | **E2E-S4-05/06 · CORP (#58)** | `closure-corp-account-recharge.spec.ts` | 纯 UI · `AC-E2E-POOL` 冲话费 · 1000 无凭证成功 · 6000 无凭证 **1025** · 补凭证 · 仅 `e2e_acct_r3` 见凭证号 |
 | **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
