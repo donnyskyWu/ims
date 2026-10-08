@@ -1,0 +1,14 @@
+-- FIN 期间结账（#59 · FinanceStatus.LOCKED · AT-FIN-002）
+CREATE TABLE IF NOT EXISTS ims_fin_period (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  period_month VARCHAR(7) NOT NULL DEFAULT '',
+  finance_status VARCHAR(16) NOT NULL DEFAULT 'OPEN',
+  locked_by BIGINT NOT NULL DEFAULT 0,
+  locked_at DATETIME NULL,
+  deleted INT NOT NULL DEFAULT 0,
+  tenant_id BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_fin_period_month (tenant_id, period_month),
+  KEY idx_fin_period_month (period_month)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
