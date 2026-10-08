@@ -30,6 +30,7 @@
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
 > **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
+> **v2.6.67（2026-10-08 · #57 S3 分成 PAID_OFF + 台账对账）**：`closure-fin-share-payoff.spec.ts`（**E2E-S3-05/08 窄切片** · 纯 UI · 复用 **#50** 链 → `/ims/fin/share/result` 财务审+业务审 → **已发放** · 拆分合计 **4,000.00** = 总额 → `/ims/fin/ledger` **四账一致** · 成本 **16,600.00** · 净利润 **81,400.00**）；`fin.py` share results/audit/payoff · `share-result.vue` · `ledger.vue`（对账页复用既有 GET，无新 REST）；结账 LOCKED **未做**；`npm run test:e2e:ci` 以 `e2e_result.txt` 为准。  
 > **v2.6.66（2026-10-08 · #56 S2 直播登记→下播 narrow closure）**：`closure-live-session-report.spec.ts`（**E2E-S2 窄切片** · 纯 UI · 登记→风控→下播提交/核准 · `IMS…DYS…` 19 位 · 列表 `reportEntryStatus=CONFIRMED`）；`npm run test:e2e:ci` 预期 **50/50 PASS**（+ L3 门开 **51** · `--workers=1`）。  
 > **v2.6.65（2026-10-08 · #55 S6 证件水印 closure）**：`closure-corp-cert-watermark.spec.ts`（**E2E-S6-03 切片** · 纯 UI · 搜 `E2E-Cert-Watermark` →「查看」→ 脱敏号 + admin 水印 · 无原图）；`cert_e2e_seed.py` · `resource.vue`；`npm run test:e2e:ci` 预期 **49/49 PASS**（+ L3 **50** · `--workers=1`）。  
 > **v2.6.64（2026-10-08 · #54 FIN 成本更正→重算 closure）**：`closure-fin-cost-correction.spec.ts`（**E2E-S3-04** · 纯 UI · 复用 **#50** 链 → **CALCULATED 81400** → `/ims/fin/cost`「更正」投放 **6000** + 达人分成 **3500** → `/ims/fin/profit` **RECALCULATED** · **79900** · V≥2 → 利润反查抽屉达人 **3,500.00**）；`fin.py` correction/recalc · `cost.vue` testid · `submitFinCostCorrectionViaUi`；合并 **#53+#54** 后 `npm run test:e2e:ci` 预期 **48/48 PASS**（+ L3 门开 **49** · `--workers=1`）。  
@@ -49,7 +50,7 @@
 |---|------|---------|------|--------|---------------------|
 | S1 | 员工全生命周期（入职→在岗→离职闭环） | BR-001/002/015/023 | V1+V2.2 | P0 | smoke-OK · `smoke-auth-org.spec.ts` |
 | S2 | 直播场次全链路（登记→风控→开播→下播→数据） | BR-011/014/007 | V1 | P0 | smoke-OK · **`closure-live-session-report.spec.ts`（#56 · E2E-S2 窄切片）** · `smoke-live.spec.ts` |
-| S3 | 场次-成本-利润-分成全链路 | BR-107/108/118/209 | V3 先行 | P0 | smoke-OK · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-profit-trace.spec.ts`（#51 · DC-002）** · `smoke-fin.spec.ts` |
+| S3 | 场次-成本-利润-分成全链路 | BR-107/108/118/209 | V3 先行 | P0 | smoke-OK · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-profit-trace.spec.ts`（#51 · DC-002）** · **`closure-fin-share-payoff.spec.ts`（#57 · E2E-S3-05/08）** · `smoke-fin.spec.ts` |
 | S4 | 账号领用-流转-归还-冲话费 | BR-017/1024 | V1 | P0 | smoke-OK · **`closure-corp-account-checkout.spec.ts`（#47 · E2E-S4-01/08）** · `smoke-acct.spec.ts` |
 | S5 | 资产采购-领用-归还-报废 + 穿透 | BR-003~005 | V1 | P1 | smoke-OK · `smoke-asset.spec.ts` |
 | S6 | 证件录入-到期预警-水印访问 | BR-013 | V1 | P1 | smoke-OK · `smoke-cert.spec.ts` |
@@ -105,7 +106,7 @@
 ## S3 场次-成本-利润-分成全链路（P0，V3 先行）
 
 > smoke-OK（narrow）：利润页可加载。  
-> **闭环-OK（Playwright · v2.6.63）**：**E2E-S3-切片** — `closure-fin-cost-profit.spec.ts`（#50 · **CALCULATED**）+ `closure-fin-profit-trace.spec.ts`（#51 · **DC-002**）+ `closure-fin-cost-correction.spec.ts`（#54 · **E2E-S3-04** · **RECALCULATED** · 分成明细同步）；**未**覆盖 E2E-S3-05～08（分成 PAID/结账/对账）。
+> **闭环-OK（Playwright · v2.6.67）**：**E2E-S3-切片** — `closure-fin-cost-profit.spec.ts`（#50 · **CALCULATED**）+ `closure-fin-profit-trace.spec.ts`（#51 · **DC-002**）+ `closure-fin-cost-correction.spec.ts`（#54 · **E2E-S3-04** · **RECALCULATED**）+ `closure-fin-share-payoff.spec.ts`（#57 · **E2E-S3-05/08** · **PAID_OFF** · 四账一致）；**未**覆盖 E2E-S3-06/07（结账 LOCKED / 锁后更正）。
 
 前置剧本：S2 完成的场次 + 分成规则（多级比例合计 100%）。
 
@@ -116,10 +117,10 @@
 | E2E-S3-03 | 利润查看 | ProfitCalcStatus=CALCULATED；收入−成本数值正确（人工复算一致） |
 | E2E-S3-09 | 利润反查（DC-002） | `/ims/fin/profit-trace` 列表命中；反查抽屉 chain·成本/分成明细；queryCostMs 可见（**#51 closure**） |
 | E2E-S3-04 | 成本更正→重算 | RECALCULATED；分成单同步更新（**#54 closure** · 反查抽屉 shareAmount） |
-| E2E-S3-05 | 分成单审批→PAID_OFF | ShareResultStatus 流转；金额拆分累计=总额 |
+| E2E-S3-05 | 分成单审批→PAID_OFF | ShareResultStatus 流转；金额拆分累计=总额（**#57 closure** · 待审→已审→已发放 · 4,000=总额） |
 | E2E-S3-06 | 期间结账 | LOCKED；结账后录入拦截 1010 |
 | E2E-S3-07 | 结账后更正 | R4 审批流（FLOW 嵌入）；审批过才可更正 |
-| E2E-S3-08 | 台账对账页 | 场次×成本×利润×分成四账一致 |
+| E2E-S3-08 | 台账对账页 | 场次×成本×利润×分成四账一致（**#57 closure** · `/ims/fin/ledger` **四账一致**） |
 
 ## S4 账号领用-流转-归还-冲话费（P0）
 
