@@ -30,7 +30,8 @@
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
 > **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
-> **v2.6.75（2026-10-08 · #66 S4 解冻回池）**：`closure-corp-account-unfreeze.spec.ts`（纯 UI · 种子 `AC-E2E-UNFREEZE` · admin 领用至在用 →「收回」**冻结** · 再领用 **1022** →「解冻」→ **池可领用** · 责任人清空 · 时间线 **UNFREEZE** / **IN_POOL** · 再领用提交成功）；`POST /account/{id}/unfreeze` · `account.vue`；基线 main `a90e6c5`（含 **#64**）后 `npm run test:e2e:ci` **59/59 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。状态 **开发完成/待UAT**。**#65** 资产穿透并行，本片不改 `asset_ledger` / `device.vue`。  
+> **v2.6.76（2026-10-08 · #65 S5 资产穿透）**：`closure-asset-penetrate.spec.ts`（**E2E-S5-03/04** · 纯 UI · 办公设备选实名人挂第 1 层，上级资产编号挂到第 5 层 → 行内「正向穿透」见实名人与第 1–5 层 · 再挂第 6 层 → **1013**「穿透层级超限」· 领用/使用/归还/报废后「反向穿透」区分 **在用/已归还/已报废**）；`GET /asset/forward/trace/{assetId}` · `GET /asset/reverse/by-person/{userId}` · `device.vue`；合并 main `5357647`（含 **#66**）后 `npm run test:e2e:ci` **61/61 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#64/#66** 保持开发完成/待UAT。本片不改 `acct_flow` / 解冻与账实核对。采购导入 E2E-S5-01 仍未做。  
+> **v2.6.75（2026-10-08 · #66 S4 解冻回池）**：`closure-corp-account-unfreeze.spec.ts`（纯 UI · 种子 `AC-E2E-UNFREEZE` · admin 领用至在用 →「收回」**冻结** · 再领用 **1022** →「解冻」→ **池可领用** · 责任人清空 · 时间线 **UNFREEZE** / **IN_POOL** · 再领用提交成功）；`POST /account/{id}/unfreeze` · `account.vue`；基线 main `a90e6c5`（含 **#64**）后 `npm run test:e2e:ci` **59/59 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。状态 **开发完成/待UAT**。**#65** 资产穿透见 **v2.6.76**。本片不改 `asset_ledger` / `device.vue`。  
 > **v2.6.74（2026-10-08 · #64 S4 账实核对 1026）**：`closure-corp-account-reconcile.spec.ts`（**E2E-S4-07** · 纯 UI · 种子 `AC-E2E-RECON` · 冲话费 **101.99** / 平台 **100** → 差异率 **1.99%** · 核对状态 **一致** · 不见 **1026** · 再登记 **102.00** / 平台 **100** → **2.00%** 且 **1026** · 财务核查工单 · 工作台消息）；`POST /account/recharge/verify` · `account.vue`；解冻回池仍未做；rebase 到 main `8f9a224`（含 **#63**）后 `npm run test:e2e:ci` **58/58 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。  
 > **v2.6.73（2026-10-08 · #63 S5 办公设备领用→使用→归还→报废）**：`closure-asset-lifecycle.spec.ts`（**E2E-S5-02** · 纯 UI · 办公设备登记 →「待审核」→ 领用「在用」→ 使用（时间线含使用）→ 归还「已归还」→ 报废「已报废」· 详情时间线登记/领用/使用/归还/报废）；`POST /asset/ledger` 及 `…/checkout|use|return|scrap` · `device.vue`；采购导入 / 穿透 **1013** 仍未做；rebase 到 main `6f59ff6`（含 **#62**）后 `npm run test:e2e:ci` **57/57 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。  
 > **v2.6.72（2026-10-08 · #62 S4 收回冻结 1022）**：`closure-corp-account-recall.spec.ts`（**E2E-S4-04** · 纯 UI · 种子 `AC-E2E-RECALL` · admin 领用至在用 →「收回」直接生效 · 状态 **冻结** · 时间线 **FREEZE** · 再领用与再流转均见 **1022**）；`POST /account/transfer` `transferType=RECALL` · `account.vue`；解冻回池仍未做；账实核对 **1026** 见 **#64**；rebase 到 main `57169c8`（含 **#61**）后当时 `npm run test:e2e:ci` **56/56 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。已合入 main `6f59ff6`。状态仍 **开发完成/待UAT**。  
@@ -150,14 +151,14 @@
 ## S5 资产全生命周期 + 穿透（P1）
 
 > smoke-OK（narrow）：办公设备列表页可加载。  
-> **闭环-OK（Playwright · v2.6.73 · #63）**：`closure-asset-lifecycle.spec.ts` — **E2E-S5-02** 纯 UI 登记（待审核）→ 领用（在用）→ 使用 → 归还（已归还）→ 报废（已报废），详情时间线含登记/领用/使用/归还/报废。仍未覆盖 **E2E-S5-01**（采购导入）与 **E2E-S5-03/04**（穿透 · **1013**）。
+> **闭环-OK（Playwright · v2.6.76 · #65）**：`closure-asset-penetrate.spec.ts` — **E2E-S5-03** 纯 UI 实名人下 5 层链路返回，第 6 层查询 **1013**；**E2E-S5-04** 同一资产使用人区分在用 / 已归还 / 已报废。`closure-asset-lifecycle.spec.ts` — **E2E-S5-02**（**#63**）登记（待审核）→ 领用（在用）→ 使用 → 归还（已归还）→ 报废（已报废）。仍未覆盖 **E2E-S5-01**（采购导入）。
 
 | 编号 | 步骤 | 断言点 |
 |------|------|--------|
 | E2E-S5-01 | 采购入台账→批量导入 | 行级错误定位；部分成功 |
 | E2E-S5-02 | 领用→使用→归还→报废 | AssetStatus 全流转（**#63 closure** · 待审核→在用→已归还→已报废 · 使用后时间线含「使用」） |
-| E2E-S5-03 | 正向穿透（实名人→资产 5 层内） | 链路返回；> 5 层 1013 |
-| E2E-S5-04 | 反向穿透（资产→使用人，三态） | 在用/已归还/已报废区分 |
+| E2E-S5-03 | 正向穿透（实名人→资产 5 层内） | 链路返回；> 5 层 1013（**#65 closure** · 第 1–5 层可见 · 第 6 层「穿透层级超限」） |
+| E2E-S5-04 | 反向穿透（资产→使用人，三态） | 在用/已归还/已报废区分（**#65 closure** · 使用人「管理员」） |
 
 ## S6 证件录入-预警-水印（P1）
 

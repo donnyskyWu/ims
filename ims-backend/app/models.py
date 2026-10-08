@@ -1666,3 +1666,33 @@ class AccountRechargeVerify(Base):
     operator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AssetHierarchy(Base):
+    """实名人向下的资产层级。level 从 1 起，>5 的查询返回 1013。"""
+
+    __tablename__ = "ims_asset_hierarchy"
+    __table_args__ = (UniqueConstraint("tenant_id", "asset_id", name="uk_asset_hierarchy_asset"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    parent_asset_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    realname_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    path: Mapped[str] = mapped_column(String(512), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AssetTraceLog(Base):
+    """穿透查询审计（ASSET-F-R3）。"""
+
+    __tablename__ = "ims_asset_trace"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    trace_type: Mapped[str] = mapped_column(String(16), default="forward")
+    asset_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    realname_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    node_chain: Mapped[str] = mapped_column(Text, default="[]")
+    query_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

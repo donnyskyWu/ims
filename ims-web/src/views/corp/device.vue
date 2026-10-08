@@ -7,7 +7,10 @@
       </div>
       <div class="acts">
         <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
-        <button v-else class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
+        <template v-else>
+          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
+          <button class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
+        </template>
       </div>
     </div>
     <form class="qbar" @submit.prevent="search">
@@ -60,6 +63,8 @@
                 <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-return-btn" @click="openReturn(row)">归还</button>
                 <button v-if="row.status === 'RETURNED'" class="btn btn-txt" type="button" data-testid="corp-asset-scrap-btn" @click="openScrap(row)">报废</button>
                 <button class="btn btn-txt" type="button" data-testid="corp-asset-detail-btn" @click="openAssetDetail(row)">详情</button>
+                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">正向穿透</button>
+                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-reverse-btn" @click="openReverse(row)">反向穿透</button>
               </td>
             </tr>
           </tbody>
@@ -143,6 +148,22 @@
         </div>
       </div>
       <div class="formrow one"><div class="fld"><label>采购日期</label><input v-model="assetForm.purchaseDate" type="date" data-testid="corp-asset-purchase" /></div></div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>实名人</label>
+          <select v-model="assetForm.realnameId" data-testid="corp-asset-realname">
+            <option value="">不挂接</option>
+            <option v-for="person in persons" :key="person.id" :value="String(person.id)">{{ person.realName }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>上级资产编号</label>
+          <input v-model="assetForm.parentAssetCode" data-testid="corp-asset-parent" placeholder="挂到已挂实名人的资产下" />
+        </div>
+      </div>
+      <p class="hint">正向穿透从实名人向下最多 5 层。第 6 层可以登记，查询时返回 1013。</p>
       <div v-if="formError" class="hint bad">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="assetCreateOpen = false">取消</button>
@@ -213,6 +234,47 @@
         <button class="btn btn-sec" type="button" @click="assetDetailOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer v-if="kind === 'office'" :open="forwardOpen" title="正向穿透" width="560px" @close="forwardOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>实名人</label>
+          <select v-model="forwardRealnameId" data-testid="asset-forward-realname">
+            <option value="">请选择</option>
+            <option v-for="person in persons" :key="person.id" :value="String(person.id)">{{ person.realName }}</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="asset-forward-query" @click="queryForwardPerson">查询</button>
+      <p v-if="forwardHint" class="hint">{{ forwardHint }}</p>
+      <p v-if="forwardError" class="hint bad" data-testid="asset-forward-error">{{ forwardError }}</p>
+      <ol v-if="forwardNodes.length" data-testid="asset-forward-chain">
+        <li v-for="node in forwardNodes" :key="String(node.id)" data-testid="asset-forward-node">
+          {{ node.layer === 'PERSON' ? '实名人' : `第${node.level}层` }} · {{ node.label }}
+        </li>
+      </ol>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="forwardOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer v-if="kind === 'office'" :open="reverseOpen" title="反向穿透" width="560px" @close="reverseOpen = false">
+      <p class="hint">{{ reverseHint }}</p>
+      <p v-if="reverseError" class="hint bad" data-testid="asset-reverse-error">{{ reverseError }}</p>
+      <table v-else data-testid="asset-reverse-holders">
+        <thead><tr><th>使用人</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr v-if="!reverseHolders.length">
+            <td colspan="2">尚无使用人</td>
+          </tr>
+          <tr v-for="(holder, index) in reverseHolders" :key="index" data-testid="asset-reverse-row">
+            <td data-testid="asset-reverse-user">{{ holder.userName || '—' }}</td>
+            <td data-testid="asset-reverse-status">{{ holder.statusLabel }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="reverseOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -226,6 +288,7 @@ import { asList, asTotal } from '../../api/read'
 type Row = Record<string, unknown>
 type Opt = { value: string; label: string }
 type UserOpt = { id: string; username: string; nickname: string }
+type PersonOpt = { id: number; realName: string }
 
 const route = useRoute()
 const kind = computed(() => String(route.params.kind || 'office'))
@@ -253,6 +316,16 @@ const useOpen = ref(false)
 const returnOpen = ref(false)
 const scrapOpen = ref(false)
 const assetDetailOpen = ref(false)
+const forwardOpen = ref(false)
+const reverseOpen = ref(false)
+const forwardRealnameId = ref('')
+const forwardNodes = ref<Row[]>([])
+const forwardError = ref('')
+const forwardHint = ref('')
+const reverseHolders = ref<Row[]>([])
+const reverseError = ref('')
+const reverseHint = ref('')
+const persons = ref<PersonOpt[]>([])
 const activeAsset = ref<Row | null>(null)
 const assetDetail = ref<Row | null>(null)
 const timeline = ref<Row[]>([])
@@ -274,6 +347,8 @@ const assetForm = reactive({
   ownerUserId: '',
   purpose: '',
   remark: '',
+  realnameId: '',
+  parentAssetCode: '',
 })
 
 const fallbackStatus: Opt[] = [
@@ -308,11 +383,11 @@ const specs: Record<string, {
 }> = {
   office: {
     title: '办公设备管理',
-    sub: 'CORP-D · 领用 → 使用 → 归还 → 报废',
+    sub: 'CORP-D · 领用 → 使用 → 归还 → 报废 · 实名人穿透',
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
     emptyHint: '点「资产登记」写入台账，再按领用、使用、归还、报废流转。',
-    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。状态：待审核 / 在用 / 已归还 / 已报废。',
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。',
     columns: ['编号', '名称', '类型', '规格', '状态', '责任人'],
     keys: ['assetCode', 'assetName', 'assetType', 'spec', 'status', 'ownerName'],
   },
@@ -410,15 +485,25 @@ async function preparePhone() {
   users.value = asList(userPage.data?.data) as unknown as UserOpt[]
 }
 
+function bizError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const body = error as { code?: number; msg?: string }
+    if (body.code && body.code !== 0) return `${body.code} ${body.msg || ''}`.trim()
+  }
+  return errorMessage(error)
+}
+
 async function prepareAsset() {
-  const [types, statuses, userPage] = await Promise.all([
+  const [types, statuses, userPage, personPage] = await Promise.all([
     loadDict('dict_asset_type').catch(() => fallbackType),
     loadDict('dict_asset_status').catch(() => fallbackStatus),
     http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } }),
+    http.get('/corp/resource/realname/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } }).catch(() => null),
   ])
   assetTypes.value = types
   assetStatuses.value = statuses
   users.value = asList(userPage.data?.data) as unknown as UserOpt[]
+  persons.value = personPage ? (asList(personPage.data?.data) as unknown as PersonOpt[]) : []
 }
 
 function today() {
@@ -528,6 +613,8 @@ function closeAssetDrawers() {
   useOpen.value = false
   returnOpen.value = false
   scrapOpen.value = false
+  forwardOpen.value = false
+  reverseOpen.value = false
 }
 
 function openAssetCreate() {
@@ -537,6 +624,8 @@ function openAssetCreate() {
   assetForm.spec = ''
   assetForm.assetType = kind.value === 'live' ? 'LIVE' : 'OFFICE'
   assetForm.purchaseDate = today()
+  assetForm.realnameId = ''
+  assetForm.parentAssetCode = ''
   formError.value = ''
   assetCreateOpen.value = true
 }
@@ -591,20 +680,79 @@ async function saveAsset() {
   saving.value = true
   formError.value = ''
   try {
-    await http.post('/asset/ledger', {
+    const payload: Record<string, unknown> = {
       assetCode: assetForm.assetCode.trim(),
       assetName: assetForm.assetName.trim(),
       assetType: kind.value === 'live' ? assetForm.assetType : 'OFFICE',
       spec: assetForm.spec,
       purchaseDate: assetForm.purchaseDate || undefined,
-    })
+    }
+    const parent = assetForm.parentAssetCode.trim()
+    if (parent) payload.parentAssetCode = parent
+    else if (assetForm.realnameId) payload.realnameId = Number(assetForm.realnameId)
+    await http.post('/asset/ledger', payload)
     assetCreateOpen.value = false
     keyword.value = assetForm.assetCode.trim()
     await load()
   } catch (e: unknown) {
-    formError.value = errorMessage(e)
+    formError.value = bizError(e)
   } finally {
     saving.value = false
+  }
+}
+
+async function loadTrace(url: string, params?: Record<string, unknown>) {
+  try {
+    const res = await http.get(url, { params })
+    forwardNodes.value = (res.data?.data?.nodes || []) as Row[]
+    forwardError.value = ''
+  } catch (e: unknown) {
+    forwardNodes.value = []
+    forwardError.value = bizError(e)
+  }
+}
+
+function openForwardPerson() {
+  closeAssetDrawers()
+  forwardOpen.value = true
+  forwardNodes.value = []
+  forwardError.value = ''
+  forwardHint.value = '实名人 → 资产，最多 5 层'
+  forwardRealnameId.value = persons.value[0] ? String(persons.value[0].id) : ''
+}
+
+async function queryForwardPerson() {
+  const id = Number(forwardRealnameId.value)
+  if (!id) {
+    forwardError.value = '请选择实名人'
+    forwardNodes.value = []
+    return
+  }
+  forwardHint.value = '实名人 → 资产，最多 5 层'
+  await loadTrace('/asset/forward/trace/0', { realnameId: id })
+}
+
+async function openForwardAsset(row: Row) {
+  closeAssetDrawers()
+  forwardOpen.value = true
+  forwardNodes.value = []
+  forwardError.value = ''
+  forwardHint.value = `${row.assetCode || ''} 的链路（实名人 → 资产）`
+  forwardRealnameId.value = ''
+  await loadTrace(`/asset/forward/trace/${row.id}`)
+}
+
+async function openReverse(row: Row) {
+  closeAssetDrawers()
+  reverseOpen.value = true
+  reverseHolders.value = []
+  reverseError.value = ''
+  reverseHint.value = `${row.assetCode || ''} → 使用人（在用 / 已归还 / 已报废）`
+  try {
+    const res = await http.get(`/asset/ledger/${row.id}`)
+    reverseHolders.value = (res.data?.data?.holders || []) as Row[]
+  } catch (e: unknown) {
+    reverseError.value = bizError(e)
   }
 }
 

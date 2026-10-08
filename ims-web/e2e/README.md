@@ -14,7 +14,8 @@
 | **S4 (#60)** | 流转 + 他人领用 1021 | `closure-corp-account-transfer.spec.ts` | `AC-E2E-XFER` 领用至在用 · `e2e_acct_peer` 再领用 **1021** · 流转待确认 → 确认接收 · 责任人「流转同事」· 时间线 TRANSFER |
 | **S4 (#62)** | 收回冻结 1022 | `closure-corp-account-recall.spec.ts` | `AC-E2E-RECALL` 领用至在用 ·「收回」直接 **冻结** · 再领用/再流转 **1022** · 时间线 FREEZE |
 | **S4 (#64)** | 账实核对 1026 | `closure-corp-account-reconcile.spec.ts` | `AC-E2E-RECON` · 101.99/100 → **1.99%** 一致 · 102/100 → **2.00%** **1026** · 财务核查工单 |
-| **S5** | 资产采购领用 | `smoke-asset.spec.ts` · **`closure-asset-lifecycle.spec.ts`（#63）** | smoke：办公设备列表；#63：登记→领用→使用→归还→报废 · 待审核/在用/已归还/已报废 |
+| **S4 (#66)** | 解冻回池 | `closure-corp-account-unfreeze.spec.ts` | `AC-E2E-UNFREEZE` 收回冻结 → 解冻 **IN_POOL** · 时间线 UNFREEZE · 再领用成功 |
+| **S5** | 资产采购领用 | `smoke-asset.spec.ts` · **`closure-asset-lifecycle.spec.ts`（#63）** · **`closure-asset-penetrate.spec.ts`（#65）** | smoke：办公设备列表；#63：登记→领用→使用→归还→报废；#65：实名人下 5 层 · 第 6 层 **1013** · 使用人在用/已归还/已报废 |
 | **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** · **`closure-corp-cert-expire.spec.ts`（#61）** | smoke：证件列表；#55：水印 + 脱敏号；#61：T−30/T−7/T−0 黄/红/锁定 + 工作台提醒 |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
 | **S8** | AI 资产分发 | `smoke-air-skill.spec.ts` | 登录 → `/ims/air/skill` 标题「技能库」+ table |
