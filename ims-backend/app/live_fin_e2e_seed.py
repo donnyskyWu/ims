@@ -4,11 +4,24 @@
 证件由 closure 纯 UI 录入，refresh 时清掉该持有人的档案，避免换证后的生效档让下一轮录入撞上 1032。
 """
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.crypto import encrypt_text
-from app.models import CertArchive, CertExpireLog, CertViewLog, Todo, User, WorkMessage
+from app.models import (
+    CertArchive,
+    CertExpireLog,
+    CertViewLog,
+    LiveAlarmRecord,
+    LiveReport,
+    LiveSession,
+    LiveSessionSeq,
+    Todo,
+    User,
+    WorkMessage,
+)
 from app.ops_db import ops_session
 from app.ops_models import Company, IpGroup, Phone, PlatformAccount, Realname
 
@@ -27,6 +40,8 @@ E2E_LIVE1043_ACCOUNT_NO = "AC-E2E-LIVE1043"
 E2E_LIVE1043_ACCOUNT_NICK = "E2E红级场次"
 E2E_LIVE1043_PHONE_CODE = "E2E-LIVE1043-PHONE"
 E2E_LIVE1043_REALNAME = "E2E-Live-1043"
+E2E_LIVE1048_SESSION = "IMS20261006DYS1048"
+E2E_LIVE1048_TOPIC = "E2E超时督办"
 
 
 def ensure_live_fin_e2e_deps(db: Session, admin: User) -> None:
@@ -322,6 +337,96 @@ def ensure_live_risk_e2e_deps(db: Session, admin: User) -> None:
         ops.close()
 
 
+def ensure_live_overdue_e2e_session(db: Session, admin: User) -> None:
+    """已下播超过 24 小时、尚未提交报告的场次。督办待办由打开待录入列表时生成。"""
+    ops = ops_session()
+    try:
+        account = ops.scalar(
+            select(PlatformAccount).where(
+                PlatformAccount.account_no == E2E_FIN_ACCOUNT_NO,
+                PlatformAccount.deleted == 0,
+            )
+        )
+    finally:
+        ops.close()
+    if account is None:
+        return
+    bj = timezone(timedelta(hours=8))
+    ended = datetime.now(bj) - timedelta(hours=48)
+    started = ended - timedelta(hours=2)
+    ended_iso = ended.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    start_iso = started.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    tenant_id = admin.tenant_id or 0
+    row = db.scalar(select(LiveSession).where(LiveSession.session_code == E2E_LIVE1048_SESSION))
+    if row is None:
+        row = LiveSession(
+            session_code=E2E_LIVE1048_SESSION,
+            account_id=account.id,
+            account_no=account.account_no,
+            realname_person_id=account.realname_id or 0,
+            realname_name="E2E财务实名人",
+            responsible_user_id=admin.id,
+            device_asset_ids="[]",
+            platform="DOUYIN",
+            topic=E2E_LIVE1048_TOPIC,
+            plan_start_time=start_iso,
+            plan_end_time=ended_iso,
+            session_status="ENDED",
+            actual_start=start_iso,
+            actual_end=ended_iso,
+            creator=admin.id,
+            tenant_id=tenant_id,
+            football_sync_status="UNLINKED",
+        )
+        db.add(row)
+        db.flush()
+    else:
+        row.deleted = 0
+        row.session_status = "ENDED"
+        row.account_id = account.id
+        row.account_no = account.account_no
+        row.realname_person_id = account.realname_id or 0
+        row.responsible_user_id = admin.id
+        row.topic = E2E_LIVE1048_TOPIC
+        row.plan_start_time = start_iso
+        row.plan_end_time = ended_iso
+        row.actual_start = start_iso
+        row.actual_end = ended_iso
+        row.is_supplement = 0
+        row.tenant_id = tenant_id
+    report = db.scalar(select(LiveReport).where(LiveReport.session_code == E2E_LIVE1048_SESSION))
+    if report is not None:
+        report.deleted = 1
+        report.entry_status = "DRAFT"
+    seq = db.scalar(
+        select(LiveSessionSeq).where(
+            LiveSessionSeq.tenant_id == tenant_id,
+            LiveSessionSeq.biz_date == "20261006",
+            LiveSessionSeq.platform_code == "DYS",
+        )
+    )
+    if seq is None:
+        db.add(LiveSessionSeq(biz_date="20261006", platform_code="DYS", tenant_id=tenant_id, seq_val=1048))
+    elif seq.seq_val < 1048:
+        seq.seq_val = 1048
+    db.execute(
+        delete(Todo).where(Todo.task_type == "live_report_overdue", Todo.ref_type == "live_session", Todo.ref_id == row.id)
+    )
+    db.execute(
+        delete(WorkMessage).where(
+            WorkMessage.source_module == "LIVE",
+            WorkMessage.ref_type == "live_report_overdue",
+            WorkMessage.ref_id == row.id,
+        )
+    )
+    db.execute(
+        delete(LiveAlarmRecord).where(
+            LiveAlarmRecord.session_code == E2E_LIVE1048_SESSION,
+            LiveAlarmRecord.rule_name == "下播超时督办",
+        )
+    )
+
+
 def refresh_live_fin_e2e_deps(db: Session, admin: User) -> None:
     if admin.username != "admin":
         return
@@ -329,3 +434,4 @@ def refresh_live_fin_e2e_deps(db: Session, admin: User) -> None:
     ensure_live_cert_lock_e2e_deps(db, admin)
     clear_live_cert_lock_archives(db)
     ensure_live_risk_e2e_deps(db, admin)
+    ensure_live_overdue_e2e_session(db, admin)

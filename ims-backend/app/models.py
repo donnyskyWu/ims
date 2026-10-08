@@ -466,6 +466,22 @@ class LiveReport(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class LiveReportCorrection(Base):
+    """下播报告更正单。提交后原值只读，修改留新旧对比。"""
+
+    __tablename__ = "ims_live_report_correction"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_code: Mapped[str] = mapped_column(String(32), index=True)
+    report_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    correction_reason: Mapped[str] = mapped_column(String(512), default="")
+    before_json: Mapped[str] = mapped_column(Text, default="{}")
+    after_json: Mapped[str] = mapped_column(Text, default="{}")
+    operator_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class LiveDataSnapshot(Base):
     __tablename__ = "ims_live_data_snapshot"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

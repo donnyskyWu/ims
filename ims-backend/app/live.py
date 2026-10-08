@@ -17,11 +17,14 @@ from app.models import (
     LiveAlarmRecord,
     LiveDataSnapshot,
     LiveReport,
+    LiveReportCorrection,
     LiveRiskCheck,
     LiveSession,
     LiveSessionSeq,
     LiveSessionToken,
+    Todo,
     User,
+    WorkMessage,
 )
 from app.ops_models import LiveRoom, Phone, PlatformAccount, Realname, SimCard
 
@@ -576,17 +579,251 @@ class CancelBody(BaseModel):
 
 
 class ReportBody(BaseModel):
+    """字段默认可空，缺必填时由业务返回 1046，而不是框架 422。"""
+
     model_config = ConfigDict(populate_by_name=True)
-    actualStart: str
-    actualEnd: str
+    actualStart: str | None = None
+    actualEnd: str | None = None
     durationMinutes: int | None = None
-    gmv: float
-    refundAmount: float
-    orderCount: int
-    viewerCount: int
-    peakOnline: int
-    newFans: int
-    adCost: float
+    gmv: float | None = None
+    refundAmount: float | None = None
+    orderCount: int | None = None
+    viewerCount: int | None = None
+    peakOnline: int | None = None
+    newFans: int | None = None
+    adCost: float | None = None
+
+
+class CorrectionBody(ReportBody):
+    correctionReason: str = ""
+
+
+REPORT_REQUIRED = (
+    "actualStart",
+    "actualEnd",
+    "gmv",
+    "refundAmount",
+    "orderCount",
+    "viewerCount",
+    "peakOnline",
+    "newFans",
+    "adCost",
+)
+REPORT_NUMBERS = (
+    "gmv",
+    "refundAmount",
+    "adCost",
+    "orderCount",
+    "viewerCount",
+    "peakOnline",
+    "newFans",
+)
+OVERDUE_HOURS = 24
+OVERDUE_RULE = "下播超时督办"
+
+
+def report_missing(body: ReportBody) -> list[str]:
+    missing = []
+    for key in REPORT_REQUIRED:
+        value = getattr(body, key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing.append(key)
+    return missing
+
+
+def reject_report_body(body: ReportBody):
+    missing = report_missing(body)
+    if missing:
+        return fail(1046, "必填项缺失", {"missing": missing})
+    for key in REPORT_NUMBERS:
+        value = getattr(body, key)
+        if value is not None and value < 0:
+            return fail(1001, "数值不能为负")
+    start = parse_iso(body.actualStart)
+    end = parse_iso(body.actualEnd)
+    if start is None or end is None:
+        return fail(1001, "时间格式无效")
+    if end <= start:
+        return fail(1001, "实际结束须晚于实际开始")
+    return None
+
+
+def money2(value: float | None) -> float:
+    return round(float(value or 0), 2)
+
+
+def whole(value: int | None) -> int:
+    return int(value or 0)
+
+
+def report_snapshot(report: LiveReport) -> dict:
+    vo = report_vo(report) or {}
+    return {key: vo.get(key) for key in (
+        "actualStart",
+        "actualEnd",
+        "durationMinutes",
+        "gmv",
+        "refundAmount",
+        "orderCount",
+        "viewerCount",
+        "peakOnline",
+        "newFans",
+        "adCost",
+    )}
+
+
+def load_report(db: Session, session_code: str) -> LiveReport | None:
+    return db.scalar(
+        select(LiveReport).where(LiveReport.session_code == session_code, LiveReport.deleted == 0)
+    )
+
+
+def correction_rows(db: Session, session_code: str) -> list[LiveReportCorrection]:
+    return list(
+        db.scalars(
+            select(LiveReportCorrection)
+            .where(
+                LiveReportCorrection.session_code == session_code,
+                LiveReportCorrection.deleted == 0,
+            )
+            .order_by(LiveReportCorrection.id.asc())
+        ).all()
+    )
+
+
+def correction_vo(row: LiveReportCorrection) -> dict:
+    try:
+        before = json.loads(row.before_json or "{}")
+    except json.JSONDecodeError:
+        before = {}
+    try:
+        after = json.loads(row.after_json or "{}")
+    except json.JSONDecodeError:
+        after = {}
+    return {
+        "id": row.id,
+        "correctionReason": row.correction_reason,
+        "before": before,
+        "after": after,
+        "operatorUserId": row.operator_user_id,
+        "createdAt": iso(row.created_at),
+    }
+
+
+def close_overdue_todos(db: Session, session: LiveSession) -> None:
+    rows = db.scalars(
+        select(Todo).where(
+            Todo.task_type == "live_report_overdue",
+            Todo.ref_type == "live_session",
+            Todo.ref_id == session.id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for row in rows:
+        row.status = "DONE"
+
+
+def ended_moment(row: LiveSession) -> datetime | None:
+    parsed = parse_iso(row.actual_end)
+    if parsed is not None:
+        return parsed
+    if row.session_status != "ENDED":
+        return None
+    parsed = parse_iso(row.plan_end_time)
+    if parsed is not None:
+        return parsed
+    if row.updated_at is None:
+        return None
+    if row.updated_at.tzinfo is None:
+        return row.updated_at.replace(tzinfo=timezone.utc).astimezone(BJ)
+    return row.updated_at.astimezone(BJ)
+
+
+def hours_since(moment: datetime | None, now: datetime) -> int:
+    if moment is None:
+        return 0
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=BJ)
+    delta = now.astimezone(moment.tzinfo) - moment
+    hours = int(delta.total_seconds() // 3600)
+    return hours if hours > 0 else 0
+
+
+def ensure_overdue_supervision(db: Session, actor: User, row: LiveSession, hours: int) -> None:
+    title = f"下播超时督办 1048：{row.session_code}"[:128]
+    content = f"1048 下播已超过 {hours} 小时未录入"[:512]
+    tenant_id = tenant_of(actor)
+    existing = db.scalar(
+        select(Todo).where(
+            Todo.assignee_user_id == row.responsible_user_id,
+            Todo.task_type == "live_report_overdue",
+            Todo.ref_type == "live_session",
+            Todo.ref_id == row.id,
+            Todo.status == "PENDING",
+        )
+    )
+    ended = ended_moment(row)
+    deadline = None
+    if ended is not None:
+        deadline = (ended + timedelta(hours=OVERDUE_HOURS)).astimezone(timezone.utc).replace(tzinfo=None)
+    if existing is None:
+        db.add(
+            Todo(
+                assignee_user_id=row.responsible_user_id,
+                task_type="live_report_overdue",
+                ref_type="live_session",
+                ref_id=row.id,
+                title=title,
+                content=content,
+                status="PENDING",
+                deadline=deadline,
+                tenant_id=tenant_id,
+            )
+        )
+    message = db.scalar(
+        select(WorkMessage).where(
+            WorkMessage.user_id == row.responsible_user_id,
+            WorkMessage.source_module == "LIVE",
+            WorkMessage.ref_type == "live_report_overdue",
+            WorkMessage.ref_id == row.id,
+        )
+    )
+    if message is None:
+        db.add(
+            WorkMessage(
+                user_id=row.responsible_user_id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="LIVE",
+                ref_type="live_report_overdue",
+                ref_id=row.id,
+                tenant_id=tenant_id,
+            )
+        )
+    alarm = db.scalar(
+        select(LiveAlarmRecord).where(
+            LiveAlarmRecord.deleted == 0,
+            LiveAlarmRecord.tenant_id == tenant_id,
+            LiveAlarmRecord.session_code == row.session_code,
+            LiveAlarmRecord.rule_name == OVERDUE_RULE,
+            LiveAlarmRecord.handle_status == "UNHANDLED",
+        )
+    )
+    if alarm is None:
+        db.add(
+            LiveAlarmRecord(
+                rule_id=0,
+                rule_name=OVERDUE_RULE,
+                session_code=row.session_code,
+                alarm_level=2,
+                alarm_content=content,
+                occur_at=iso(datetime.now(BJ)) or "",
+                handle_status="UNHANDLED",
+                tenant_id=tenant_id,
+            )
+        )
 
 
 class SyncBody(BaseModel):
@@ -1015,6 +1252,7 @@ def upsert_report(
     submit: bool,
     *,
     end_session: bool = True,
+    keep_status: bool = False,
 ) -> LiveReport:
     report = db.scalar(select(LiveReport).where(LiveReport.session_code == session.session_code))
     duration = body.durationMinutes
@@ -1025,18 +1263,21 @@ def upsert_report(
     if report is None:
         report = LiveReport(session_code=session.session_code, tenant_id=tenant_of(actor))
         db.add(report)
-    report.actual_start = body.actualStart
-    report.actual_end = body.actualEnd
+    report.actual_start = (body.actualStart or "").strip()
+    report.actual_end = (body.actualEnd or "").strip()
     report.duration_minutes = duration or 0
-    report.gmv = body.gmv
-    report.refund_amount = body.refundAmount
-    report.order_count = body.orderCount
-    report.viewer_count = body.viewerCount
-    report.peak_online = body.peakOnline
-    report.new_fans = body.newFans
-    report.ad_cost = body.adCost
+    report.gmv = money2(body.gmv)
+    report.refund_amount = money2(body.refundAmount)
+    report.order_count = whole(body.orderCount)
+    report.viewer_count = whole(body.viewerCount)
+    report.peak_online = whole(body.peakOnline)
+    report.new_fans = whole(body.newFans)
+    report.ad_cost = money2(body.adCost)
     report.entry_user_id = actor.id
-    if submit:
+    if keep_status:
+        session.actual_start = body.actualStart or session.actual_start
+        session.actual_end = body.actualEnd or session.actual_end
+    elif submit:
         report.entry_status = "SUBMITTED"
         report.submitted_at = iso(utcnow())
         if end_session:
@@ -1046,6 +1287,58 @@ def upsert_report(
     else:
         report.entry_status = "DRAFT"
     return report
+
+
+@router.get("/report/pending")
+def report_pending(
+    request: Request,
+    pageNo: int = 1,
+    pageSize: int = 20,
+    responsibleUserId: int | None = None,
+    overdueOnly: bool = False,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    page_no, size = page_args(pageNo, pageSize)
+    now = datetime.now(BJ)
+    stmt = restrict_sessions(select(LiveSession), actor, request.state.scope)
+    stmt = stmt.where(LiveSession.session_status.in_(("LIVE", "ENDED")))
+    if responsibleUserId:
+        stmt = stmt.where(LiveSession.responsible_user_id == responsibleUserId)
+    rows = db.scalars(stmt).all()
+    pending = []
+    overdue_count = 0
+    for row in rows:
+        report = load_report(db, row.session_code)
+        if report and report.entry_status in ("SUBMITTED", "CONFIRMED"):
+            continue
+        hours = hours_since(ended_moment(row), now)
+        overdue = hours >= OVERDUE_HOURS
+        if overdueOnly and not overdue:
+            continue
+        if overdue:
+            overdue_count += 1
+            ensure_overdue_supervision(db, actor, row, hours)
+        names = user_names(db, {row.responsible_user_id})
+        pending.append(
+            {
+                "sessionCode": row.session_code,
+                "topic": row.topic,
+                "endedAt": row.actual_end or row.plan_end_time or "",
+                "responsibleUserName": names.get(row.responsible_user_id, ""),
+                "submitted": bool(report and report.entry_status == "SUBMITTED"),
+                "overdueHours": hours,
+                "overdue": overdue,
+            }
+        )
+    pending.sort(key=lambda item: (-int(item["overdueHours"]), str(item["sessionCode"])))
+    total = len(pending)
+    chunk = pending[(page_no - 1) * size : page_no * size]
+    payload = {"list": chunk, "total": total, "pageNo": page_no, "pageSize": size, "hintCode": None}
+    if overdue_count:
+        payload["hintCode"] = 1048
+        return fail(1048, "24小时录入超时督办", payload)
+    return ok(payload)
 
 
 @router.post("/report/{session_code}")
@@ -1063,10 +1356,14 @@ def report_submit(
         return fail(1049, "补录未审批")
     if row.session_status not in ("LIVE", "ENDED") and row.session_status != "APPROVED":
         return fail(1042, "场次状态不允许录入")
-    required = [body.actualStart, body.actualEnd, body.gmv, body.orderCount]
-    if not all(x is not None for x in required):
-        return fail(1046, "必填项缺失")
+    existing = load_report(db, session_code)
+    if existing and existing.entry_status in ("SUBMITTED", "CONFIRMED"):
+        return fail(1047, "提交后只读")
+    rejected = reject_report_body(body)
+    if rejected is not None:
+        return rejected
     report = upsert_report(db, row, body, actor, submit=True)
+    close_overdue_todos(db, row)
     db.flush()
     return ok(report_vo(report))
 
@@ -1081,10 +1378,13 @@ def report_get(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
-    report = db.scalar(select(LiveReport).where(LiveReport.session_code == session_code, LiveReport.deleted == 0))
+    report = load_report(db, session_code)
     if report is None:
         return ok(None)
-    return ok(report_vo(report))
+    data = report_vo(report)
+    if data is not None:
+        data["corrections"] = [correction_vo(item) for item in correction_rows(db, session_code)]
+    return ok(data)
 
 
 @router.put("/report/{session_code}")
@@ -1098,11 +1398,51 @@ def report_update(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
-    report = db.scalar(select(LiveReport).where(LiveReport.session_code == session_code, LiveReport.deleted == 0))
+    report = load_report(db, session_code)
     if report and report.entry_status != "DRAFT":
         return fail(1047, "提交后只读")
     upsert_report(db, row, body, actor, submit=False)
     return ok(None)
+
+
+@router.post("/report/{session_code}/correction")
+def report_correction(
+    request: Request,
+    session_code: str,
+    body: CorrectionBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = get_session(db, actor, request.state.scope, session_code)
+    if row is None:
+        return fail(1504, "资源不可用")
+    report = load_report(db, session_code)
+    if report is None or report.entry_status not in ("SUBMITTED", "CONFIRMED"):
+        return fail(1042, "报告未提交")
+    reason = (body.correctionReason or "").strip()
+    if not reason:
+        return fail(1001, "更正原因必填")
+    if len(reason) > 512:
+        return fail(1001, "更正原因过长")
+    rejected = reject_report_body(body)
+    if rejected is not None:
+        return rejected
+    before = report_snapshot(report)
+    upsert_report(db, row, body, actor, submit=False, keep_status=True)
+    db.flush()
+    after = report_snapshot(report)
+    saved = LiveReportCorrection(
+        session_code=session_code,
+        report_id=report.id,
+        correction_reason=reason,
+        before_json=json.dumps(before, ensure_ascii=False),
+        after_json=json.dumps(after, ensure_ascii=False),
+        operator_user_id=actor.id,
+        tenant_id=tenant_of(actor),
+    )
+    db.add(saved)
+    db.flush()
+    return ok({"correctionId": saved.id, "before": before, "after": after})
 
 
 @router.put("/report/{session_code}/confirm")
@@ -1124,38 +1464,6 @@ def report_confirm(
     return ok(None)
 
 
-@router.get("/report/pending")
-def report_pending(
-    request: Request,
-    pageNo: int = 1,
-    pageSize: int = 20,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
-    page_no, size = page_args(pageNo, pageSize)
-    stmt = restrict_sessions(select(LiveSession), actor, request.state.scope)
-    stmt = stmt.where(LiveSession.session_status.in_(("LIVE", "ENDED")))
-    rows = db.scalars(stmt).all()
-    pending = []
-    for row in rows:
-        report = db.scalar(select(LiveReport).where(LiveReport.session_code == row.session_code, LiveReport.deleted == 0))
-        if report and report.entry_status in ("SUBMITTED", "CONFIRMED"):
-            continue
-        pending.append(
-            {
-                "sessionCode": row.session_code,
-                "topic": row.topic,
-                "endedAt": row.actual_end or row.plan_end_time,
-                "responsibleUserName": user_names(db, [row.responsible_user_id]).get(row.responsible_user_id, ""),
-                "submitted": bool(report and report.entry_status == "SUBMITTED"),
-                "overdueHours": 0,
-            }
-        )
-    total = len(pending)
-    chunk = pending[(page_no - 1) * size : page_no * size]
-    return ok({"list": chunk, "total": total, "pageNo": page_no, "pageSize": size})
-
-
 @router.post("/ledger/supplement")
 def ledger_supplement(
     body: SupplementBody,
@@ -1170,8 +1478,9 @@ def ledger_supplement(
         return fail(1001, "补录说明过长")
     create = body.sessionCreate
     report_body = body.sessionReport
-    if not report_body.actualStart or not report_body.actualEnd:
-        return fail(1046, "必填项缺失")
+    rejected = reject_report_body(report_body)
+    if rejected is not None:
+        return rejected
     account = load_account(ops, actor, create.accountId)
     if account is None:
         return fail(1041, "账号不存在")

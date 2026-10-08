@@ -12,7 +12,11 @@
       </div>
     </div>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
-    <form class="qbar" @submit.prevent="loadList">
+    <div class="tabs">
+      <div class="tab" :class="{ on: view === 'sessions' }" data-testid="live-view-sessions" @click="view = 'sessions'">场次列表</div>
+      <div class="tab" :class="{ on: view === 'pending' }" data-testid="live-view-pending" @click="openPending">待录入督办</div>
+    </div>
+    <form v-if="view === 'sessions'" class="qbar" @submit.prevent="loadList">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 160px" />
       <select v-model="query.sessionStatus" style="width: 100px">
         <option value="">全部状态</option>
@@ -22,7 +26,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetQuery">重置</button>
     </form>
-    <div class="tbl-block">
+    <div v-if="view === 'sessions'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -69,6 +73,47 @@
       </div>
       <div class="pager">
         <span class="pg-total">共 {{ total }} 条</span>
+      </div>
+    </div>
+    <div v-else class="tbl-block" data-testid="live-pending-panel">
+      <p v-if="pendingHint" class="hint bad" data-testid="live-overdue-hint">{{ pendingHint }}</p>
+      <form class="qbar" @submit.prevent="loadPending">
+        <label class="hint">
+          <input v-model="overdueOnly" type="checkbox" data-testid="live-overdue-only" />
+          仅看超过 24 小时
+        </label>
+        <span class="sp"></span>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="live-pending-query">查询</button>
+      </form>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>场次 ID</th>
+              <th>主题</th>
+              <th>下播时间</th>
+              <th>责任人</th>
+              <th>超时小时</th>
+              <th>督办</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!pendingRows.length">
+              <td colspan="6"><div class="empty"><div class="et">暂无待录入场次</div></div></td>
+            </tr>
+            <tr v-for="row in pendingRows" v-else :key="row.sessionCode" data-testid="live-pending-row">
+              <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">{{ row.sessionCode }}</td>
+              <td>{{ row.topic }}</td>
+              <td class="num" style="font-size: 12px">{{ row.endedAt || '—' }}</td>
+              <td>{{ row.responsibleUserName || '—' }}</td>
+              <td class="num" data-testid="live-pending-hours">{{ row.overdueHours }}</td>
+              <td>
+                <span v-if="row.overdue" data-testid="live-pending-overdue" style="color: var(--red)">超 24h</span>
+                <span v-else>未超时</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -214,20 +259,31 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '下播与 GMV'" class="tbl-block" style="margin-top: 12px">
-        <div v-if="report" class="hint">录入状态 {{ report.entryStatus }} · GMV ¥{{ report.gmv?.toFixed(2) }}</div>
-        <div v-else class="formrow one">
-          <div class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" /></div>
-          <div class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" /></div>
-          <div class="fld"><label>GMV</label><input v-model.number="reportForm.gmv" type="number" step="0.01" /></div>
-          <div class="fld"><label>订单数</label><input v-model.number="reportForm.orderCount" type="number" /></div>
-          <div class="fld"><label>观看人数</label><input v-model.number="reportForm.viewerCount" type="number" /></div>
-          <div class="fld"><label>峰值在线</label><input v-model.number="reportForm.peakOnline" type="number" /></div>
-          <div class="fld"><label>涨粉</label><input v-model.number="reportForm.newFans" type="number" /></div>
-          <div class="fld"><label>退款</label><input v-model.number="reportForm.refundAmount" type="number" step="0.01" /></div>
-          <div class="fld"><label>投放成本</label><input v-model.number="reportForm.adCost" type="number" step="0.01" /></div>
+        <div v-if="report" class="hint">
+          录入状态 {{ report.entryStatus }} · GMV ¥{{ Number(report.gmv || 0).toFixed(2) }}
+          · 客单价 {{ Number(report.avgOrderValue || 0).toFixed(2) }} · ROAS {{ Number(report.roas || 0).toFixed(2) }}
         </div>
+        <div class="formrow one">
+          <div class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>GMV</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="reportLocked && !correcting" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="reportLocked && !correcting" /></div>
+          <div class="fld"><label>投放成本</label><input v-model="reportForm.adCost" type="number" step="0.01" data-testid="live-report-ad" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="correcting" class="fld">
+            <label>更正原因 *</label>
+            <input v-model="correctionReason" maxlength="512" data-testid="live-report-correction-reason" />
+          </div>
+        </div>
+        <p v-if="reportError" class="hint bad" data-testid="live-report-error">{{ reportError }}</p>
+        <p v-if="correctionTrace" class="hint" data-testid="live-correction-trace">
+          更正单 {{ correctionTrace.correctionId }} · GMV {{ correctionTrace.before?.gmv }} → {{ correctionTrace.after?.gmv }}
+        </p>
         <div class="acts" style="margin-top: 8px">
-          <button v-if="!report || report.entryStatus === 'DRAFT'" class="btn btn-pri btn-sm" type="button" @click="submitReport">提交下播</button>
+          <button v-if="!reportLocked" class="btn btn-pri btn-sm" type="button" data-testid="live-report-submit" @click="submitReport">提交下播</button>
           <button
             v-if="report && report.entryStatus === 'SUBMITTED'"
             class="btn btn-pri btn-sm"
@@ -237,6 +293,9 @@
           >
             核准下播
           </button>
+          <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-direct-save" @click="directSave">保存修改</button>
+          <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
+          <button v-if="correcting" class="btn btn-pri btn-sm" type="button" data-testid="live-report-correction-submit" @click="submitCorrection">提交更正单</button>
         </div>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
@@ -280,6 +339,15 @@ const error = ref('')
 const hint = ref('')
 const rows = ref<any[]>([])
 const total = ref(0)
+const view = ref<'sessions' | 'pending'>('sessions')
+const pendingRows = ref<any[]>([])
+const pendingHint = ref('')
+const overdueOnly = ref(false)
+const reportError = ref('')
+const reportMissing = ref<string[]>([])
+const correcting = ref(false)
+const correctionReason = ref('')
+const correctionTrace = ref<any>(null)
 const query = reactive({ sessionCode: '', sessionStatus: '' })
 const statusOptions = [
   { value: 'PENDING_RISK_CHECK', label: '待风控' },
@@ -325,14 +393,68 @@ const tabs = ['基本信息', '直播数据', '风控登记', '下播与 GMV', '
 const reportForm = reactive({
   actualStart: '2026-10-06T20:00:00+08:00',
   actualEnd: '2026-10-06T22:00:00+08:00',
-  gmv: 1000,
-  orderCount: 10,
-  viewerCount: 500,
-  peakOnline: 80,
-  newFans: 20,
-  refundAmount: 0,
-  adCost: 100,
+  gmv: '1000',
+  orderCount: '10',
+  viewerCount: '500',
+  peakOnline: '80',
+  newFans: '20',
+  refundAmount: '0',
+  adCost: '100',
 })
+
+const reportLocked = computed(() => !!report.value && report.value.entryStatus !== 'DRAFT')
+
+function resetReportForm() {
+  reportForm.actualStart = '2026-10-06T20:00:00+08:00'
+  reportForm.actualEnd = '2026-10-06T22:00:00+08:00'
+  reportForm.gmv = '1000'
+  reportForm.orderCount = '10'
+  reportForm.viewerCount = '500'
+  reportForm.peakOnline = '80'
+  reportForm.newFans = '20'
+  reportForm.refundAmount = '0'
+  reportForm.adCost = '100'
+}
+
+function applyReport(data: Record<string, unknown> | null) {
+  if (!data) {
+    resetReportForm()
+    return
+  }
+  reportForm.actualStart = String(data.actualStart || '')
+  reportForm.actualEnd = String(data.actualEnd || '')
+  reportForm.gmv = String(data.gmv ?? '')
+  reportForm.orderCount = String(data.orderCount ?? '')
+  reportForm.viewerCount = String(data.viewerCount ?? '')
+  reportForm.peakOnline = String(data.peakOnline ?? '')
+  reportForm.newFans = String(data.newFans ?? '')
+  reportForm.refundAmount = String(data.refundAmount ?? '')
+  reportForm.adCost = String(data.adCost ?? '')
+}
+
+function nullableNumber(value: unknown) {
+  if (value === '' || value === null || value === undefined) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function reportPayload() {
+  return {
+    actualStart: reportForm.actualStart.trim() || null,
+    actualEnd: reportForm.actualEnd.trim() || null,
+    gmv: nullableNumber(reportForm.gmv),
+    refundAmount: nullableNumber(reportForm.refundAmount),
+    orderCount: nullableNumber(reportForm.orderCount),
+    viewerCount: nullableNumber(reportForm.viewerCount),
+    peakOnline: nullableNumber(reportForm.peakOnline),
+    newFans: nullableNumber(reportForm.newFans),
+    adCost: nullableNumber(reportForm.adCost),
+  }
+}
+
+function fieldMissing(key: string) {
+  return reportMissing.value.includes(key)
+}
 
 const detailTitle = computed(() => (detail.value ? `场次 ${detail.value.sessionCode}` : '场次详情'))
 
@@ -446,12 +568,46 @@ const showSupplementApprove = computed(
 async function openDetail(row: any) {
   detailOpen.value = true
   tab.value = '基本信息'
+  reportError.value = ''
+  reportMissing.value = []
+  correcting.value = false
+  correctionReason.value = ''
+  correctionTrace.value = null
   const code = row.sessionCode
   detail.value = await apiGet(`/live/sessions/${code}`)
   metrics.value = detail.value.metricsSnapshot || (await apiGet(`/live/sessions/${code}/metrics`))
   report.value = detail.value.report || (await apiGet(`/live/report/${code}`))
+  applyReport(report.value)
   const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
   alarms.value = alarmRes.list || []
+}
+
+async function openPending() {
+  view.value = 'pending'
+  await loadPending()
+}
+
+async function loadPending() {
+  pendingHint.value = ''
+  try {
+    const res = await http.get('/live/report/pending', {
+      params: {
+        pageNo: 1,
+        pageSize: 20,
+        overdueOnly: overdueOnly.value ? true : undefined,
+      },
+    })
+    pendingRows.value = res.data.data?.list || []
+  } catch (error: unknown) {
+    const body = error as { code?: number; msg?: string; data?: { list?: unknown[] } }
+    if (body?.code === 1048) {
+      pendingRows.value = body.data?.list || []
+      pendingHint.value = `1048 ${body.msg || '24小时录入超时督办'}`
+      return
+    }
+    pendingRows.value = []
+    pendingHint.value = bizError(error)
+  }
 }
 
 async function switchTab(name: string) {
@@ -596,15 +752,73 @@ async function doSupplementApprove(pass: boolean) {
 
 async function submitReport() {
   if (!detail.value) return
-  report.value = await apiPost(`/live/report/${detail.value.sessionCode}`, { ...reportForm })
-  hint.value = '下播数据已提交'
+  reportError.value = ''
+  reportMissing.value = []
+  try {
+    report.value = await apiPost(`/live/report/${detail.value.sessionCode}`, reportPayload())
+    applyReport(report.value)
+    correcting.value = false
+    hint.value = '下播数据已提交'
+    await refreshDetail()
+    await loadList()
+  } catch (e: unknown) {
+    const body = e as { data?: { missing?: string[] } }
+    reportMissing.value = body.data?.missing || []
+    reportError.value = bizError(e)
+    hint.value = reportError.value
+  }
+}
+
+async function directSave() {
+  if (!detail.value) return
+  reportError.value = ''
+  try {
+    await apiPut(`/live/report/${detail.value.sessionCode}`, reportPayload())
+    hint.value = '草稿已保存'
+  } catch (e: unknown) {
+    reportError.value = bizError(e)
+    hint.value = reportError.value
+  }
+}
+
+function openCorrection() {
+  correcting.value = true
+  correctionReason.value = ''
+  reportError.value = ''
+}
+
+async function submitCorrection() {
+  if (!detail.value) return
+  reportError.value = ''
+  try {
+    const data = await apiPost(`/live/report/${detail.value.sessionCode}/correction`, {
+      ...reportPayload(),
+      correctionReason: correctionReason.value.trim(),
+    })
+    correctionTrace.value = data
+    correcting.value = false
+    report.value = await apiGet(`/live/report/${detail.value.sessionCode}`)
+    applyReport(report.value)
+    hint.value = `更正单 ${data.correctionId} 已留痕`
+  } catch (e: unknown) {
+    reportError.value = bizError(e)
+    hint.value = reportError.value
+  }
 }
 
 async function confirmReport() {
   if (!detail.value) return
-  await apiPut(`/live/report/${detail.value.sessionCode}/confirm`, {})
-  report.value = await apiGet(`/live/report/${detail.value.sessionCode}`)
-  hint.value = '下播数据已核准'
+  reportError.value = ''
+  try {
+    await apiPut(`/live/report/${detail.value.sessionCode}/confirm`, {})
+    report.value = await apiGet(`/live/report/${detail.value.sessionCode}`)
+    applyReport(report.value)
+    hint.value = '下播数据已核准'
+    await loadList()
+  } catch (e: unknown) {
+    reportError.value = bizError(e)
+    hint.value = reportError.value
+  }
 }
 
 onMounted(loadList)
