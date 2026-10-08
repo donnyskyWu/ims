@@ -95,6 +95,7 @@
           <input v-model="reg.planStartTime" placeholder="2026-10-06T20:00:00+08:00" />
         </div>
       </div>
+      <div v-if="registerError" class="hint bad" data-testid="live-register-error">{{ registerError }}</div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="registerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" @click="submitRegister">提交登记</button>
@@ -134,9 +135,10 @@
       <div v-else-if="detail && tab === '风控登记'" class="tbl-block" style="margin-top: 12px">
         <div class="acts" style="margin-bottom: 8px">
           <button class="btn btn-pri btn-sm" type="button" @click="doRisk">执行风控</button>
-          <button class="btn btn-sec btn-sm" type="button" @click="doStart">确认开播</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
         </div>
-        <p>风险分 {{ detail.riskScore ?? '—' }} · {{ detail.riskLevel || '—' }} · 状态 {{ detail.sessionStatus }}</p>
+        <p v-if="actionError" class="hint bad" data-testid="live-action-error">{{ actionError }}</p>
+        <p data-testid="live-session-status">风险分 {{ detail.riskScore ?? '—' }} · {{ detail.riskLevel || '—' }} · 状态 {{ detail.sessionStatus }}</p>
         <table v-if="detail.riskCheckResults?.length">
           <thead><tr><th>检查项</th><th>结果</th><th>权重分</th></tr></thead>
           <tbody>
@@ -223,6 +225,8 @@ const statusOptions = [
 ]
 
 const registerOpen = ref(false)
+const registerError = ref('')
+const actionError = ref('')
 const reg = reactive({
   accountId: 0,
   realnamePersonId: 0,
@@ -287,13 +291,25 @@ function resetQuery() {
   loadList()
 }
 
+function bizError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const body = error as { code?: number; msg?: string }
+    if (typeof body.code === 'number' && body.code !== 0) {
+      return `${body.code} ${body.msg || ''}`.trim()
+    }
+  }
+  return errorMessage(error)
+}
+
 function openRegister() {
   clientToken = crypto.randomUUID()
+  registerError.value = ''
   registerOpen.value = true
 }
 
 async function submitRegister() {
   hint.value = ''
+  registerError.value = ''
   try {
     const body = {
       accountId: reg.accountId,
@@ -313,7 +329,8 @@ async function submitRegister() {
     openDetail(data)
     tab.value = '风控登记'
   } catch (e: unknown) {
-    hint.value = errorMessage(e)
+    registerError.value = bizError(e)
+    hint.value = registerError.value
   }
 }
 
@@ -366,15 +383,27 @@ async function doSync() {
 
 async function doRisk() {
   if (!detail.value) return
-  await apiPost(`/live/register/${detail.value.sessionCode}/risk-check`, {})
-  detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
+  actionError.value = ''
+  try {
+    await apiPost(`/live/register/${detail.value.sessionCode}/risk-check`, {})
+    detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+  }
 }
 
 async function doStart() {
   if (!detail.value) return
-  await apiPut(`/live/register/${detail.value.sessionCode}/start`, {})
-  detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
-  hint.value = '已确认开播'
+  actionError.value = ''
+  try {
+    await apiPut(`/live/register/${detail.value.sessionCode}/start`, {})
+    detail.value = await apiGet(`/live/sessions/${detail.value.sessionCode}`)
+    hint.value = '已确认开播'
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+  }
 }
 
 async function submitReport() {
