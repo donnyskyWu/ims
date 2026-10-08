@@ -12,11 +12,14 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
+from app.bi_drill import router as bi_drill_router
 from app.core import utcnow
 from app.corp import count_of, ops_db, page_args, paged, tenant_of, visible
 from app.models import BiCustomQuery, MetadataEntity, MetadataField, User
 
 router = APIRouter(prefix="/bi/query", tags=["bi-query"])
+# 静态下钻路径必须先于 /{query_id}，否则 dimension-tree / export 会被当成查询 id。
+router.include_router(bi_drill_router)
 
 _IDENT = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _MAX_LIMIT = 1000

@@ -10,7 +10,8 @@
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/list">返回报表管理</router-link>
         <button class="btn btn-sec btn-sm" type="button" @click="runPreview">运行预览</button>
-        <button class="btn btn-pri btn-sm" type="button" :disabled="saving" @click="saveLayout">保存</button>
+        <button class="btn btn-pri btn-sm" type="button" :disabled="saving" data-testid="bi-save" @click="saveLayout">保存</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="bi-open-drill" @click="openDrill">预览下钻</button>
         <button class="btn btn-pri btn-sm" type="button" @click="publish">保存并发布</button>
       </div>
     </div>
@@ -24,27 +25,39 @@
           {{ ds.name }}
         </div>
         <b style="font-size: 13px; display: block; margin-top: 16px">组件库</b>
-        <button
+        <div
           v-for="c in compLib"
           :key="c.type"
           class="btn btn-sec btn-sm"
-          type="button"
-          style="display: block; width: 100%; margin-top: 8px"
-          @click="addComp(c)"
+          role="button"
+          draggable="true"
+          :data-testid="`bi-palette-${c.type}`"
+          style="display: block; width: 100%; margin-top: 8px; text-align: center; user-select: none"
+          @mousedown="onPaletteDown(c)"
+          @dragstart="onHtml5Start(c, $event)"
+          @click="onPaletteClick(c)"
         >
           + {{ c.name }}
-        </button>
+        </div>
       </div>
 
-      <div class="card" style="padding: 12px; position: relative; background: repeating-linear-gradient(0deg, #f5f7fa, #f5f7fa 39px, #e8ecf0 40px)">
+      <div
+        class="card"
+        data-testid="bi-canvas"
+        style="padding: 12px; position: relative; min-height: 480px; background: repeating-linear-gradient(0deg, #f5f7fa, #f5f7fa 39px, #e8ecf0 40px)"
+        @dragover="onCanvasDragOver"
+        @drop="onCanvasDrop"
+      >
         <div class="rowline" style="justify-content: space-between; margin-bottom: 8px">
-          <span class="csub">画布 · FREE · {{ comps.length }} 组件</span>
-          <span v-if="previewMsg" class="tag tag-info">{{ previewMsg }}</span>
+          <span class="csub">画布 · FREE · {{ comps.length }} 组件 · 从组件库拖入</span>
+          <span v-if="previewMsg" class="tag tag-info" data-testid="bi-save-status">{{ previewMsg }}</span>
         </div>
         <div
           v-for="comp in comps"
           :key="comp.id"
           class="card hov"
+          data-testid="bi-canvas-comp"
+          :data-comp-type="comp.type"
           :style="{
             position: 'absolute',
             left: comp.x + 'px',
@@ -55,12 +68,12 @@
             outline: selectedId === comp.id ? '2px solid var(--blue)' : '',
             cursor: 'pointer',
           }"
-          @click="selectedId = comp.id"
+          @click.stop="selectedId = comp.id"
         >
           <b>{{ comp.title }}</b>
           <div class="csub">{{ comp.type }} · {{ comp.dataset || activeDataset }}</div>
         </div>
-        <div v-if="!comps.length" class="empty" style="margin-top: 120px"><div class="et">从左侧拖入组件（点击添加）</div></div>
+        <div v-if="!comps.length" class="empty" style="margin-top: 120px"><div class="et">从左侧拖入组件（也可点击添加）</div></div>
       </div>
 
       <div class="card" style="padding: 12px">
@@ -87,8 +100,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
 type Comp = {
@@ -110,8 +123,14 @@ type ReportVo = {
   layoutMode: string
 }
 
+type CompMeta = { type: string; name: string; defaultSize: { w: number; h: number } }
+
 const route = useRoute()
+const router = useRouter()
 const reportId = computed(() => Number(route.query.reportId || 0))
+const pendingComp = ref<CompMeta | null>(null)
+let html5Handled = false
+let droppedOnCanvas = false
 const report = ref<ReportVo | null>(null)
 const comps = ref<Comp[]>([])
 const datasets = ref<{ code: string; name: string }[]>([])
@@ -128,19 +147,66 @@ function uid() {
   return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
 }
 
-function addComp(meta: { type: string; name: string; defaultSize: { w: number; h: number } }) {
+function addComp(meta: CompMeta) {
   const id = uid()
   comps.value.push({
     id,
     type: meta.type,
     title: meta.name,
     x: 40 + comps.value.length * 24,
-    y: 40 + comps.value.length * 16,
+    y: 72 + comps.value.length * 16,
     w: meta.defaultSize.w,
     h: meta.defaultSize.h,
     dataset: activeDataset.value,
   })
   selectedId.value = id
+}
+
+function onPaletteDown(meta: CompMeta) {
+  pendingComp.value = meta
+}
+
+function onPaletteClick(meta: CompMeta) {
+  if (droppedOnCanvas) return
+  addComp(meta)
+}
+
+function onHtml5Start(meta: CompMeta, ev: DragEvent) {
+  pendingComp.value = meta
+  ev.dataTransfer?.setData('text/bi-comp', meta.type)
+  if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copy'
+}
+
+function onCanvasDragOver(ev: DragEvent) {
+  ev.preventDefault()
+}
+
+function onCanvasDrop(ev: DragEvent) {
+  ev.preventDefault()
+  const type = ev.dataTransfer?.getData('text/bi-comp') || pendingComp.value?.type || ''
+  const meta = compLib.value.find((item) => item.type === type) || null
+  html5Handled = true
+  pendingComp.value = null
+  if (meta) addComp(meta)
+}
+
+function onWindowMouseUp(ev: MouseEvent) {
+  if (html5Handled) {
+    html5Handled = false
+    pendingComp.value = null
+    return
+  }
+  const meta = pendingComp.value
+  pendingComp.value = null
+  if (!meta) return
+  const canvas = document.querySelector('[data-testid="bi-canvas"]')
+  if (canvas && ev.target instanceof Node && canvas.contains(ev.target)) {
+    droppedOnCanvas = true
+    addComp(meta)
+    window.setTimeout(() => {
+      droppedOnCanvas = false
+    }, 0)
+  }
 }
 
 function removeSelected() {
@@ -192,6 +258,16 @@ async function saveLayout() {
   }
 }
 
+async function openDrill() {
+  try {
+    await saveLayout()
+  } catch {
+    return
+  }
+  if (!reportId.value || previewMsg.value !== '已保存') return
+  await router.push({ path: '/ims/bi/report/preview', query: { reportId: String(reportId.value) } })
+}
+
 async function publish() {
   await saveLayout()
   const res = await http.post(`/bi/report/${reportId.value}/publish`)
@@ -213,7 +289,12 @@ async function runPreview() {
 }
 
 onMounted(async () => {
+  window.addEventListener('mouseup', onWindowMouseUp, true)
   await loadMeta()
   await loadReport()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('mouseup', onWindowMouseUp, true)
 })
 </script>
