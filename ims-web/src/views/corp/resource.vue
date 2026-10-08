@@ -100,7 +100,7 @@
         <button class="btn btn-sec btn-sm" type="button" @click="resetExpire">重置</button>
       </form>
       <div class="tbl-block">
-        <div class="tbl-wrap">
+        <div class="expire-wrap">
           <table data-testid="corp-cert-expire-table">
             <thead>
               <tr>
@@ -783,3 +783,12 @@ onMounted(async () => {
   if (kind.value === 'certificate') await loadExpire()
 })
 </script>
+
+<style scoped>
+.expire-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r) var(--r) 0 0;
+  background: #fff;
+}
+</style>

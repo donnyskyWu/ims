@@ -30,6 +30,7 @@
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
 > **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
+> **v2.6.71（2026-10-08 · #61 S6 证书到期预警）**：`closure-corp-cert-expire.spec.ts`（**E2E-S6-02** · 纯 UI · 录入 T−30/T−7/T−0 → 审核生效 →「扫描到期」→ 预警表 **黄色/红色/锁定** · 档案「已过期」· 工作台消息三条）；`POST /cert/archive/upload` · `PUT /cert/archive/{id}/review` · `POST /cert/expire/scan` · `resource.vue`；同级不重复；钉钉不外发。换证 / **1035** / LIVE **1045** 仍未做。rebase 到 main `908bd56`（**#60**）后 `npm run test:e2e:ci` **55/55 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。  
 > **v2.6.70（2026-10-08 · #60 S4 账号流转 + 他人领用 1021）**：`closure-corp-account-transfer.spec.ts`（**E2E-S4-02/03** · 纯 UI · 种子 `AC-E2E-XFER` · admin 领用至在用 → `e2e_acct_peer` 再领用见 **1021** · admin 发起流转「待新责任人确认」→ 同事「确认接收」→ 责任人 **流转同事** · 时间线 **TRANSFER**）；`POST/GET /account/transfer` · `PUT …/confirm` · `PUT …/revoke` · `account.vue`；收回冻结 **1022** / 账实核对 **1026** 仍未做；rebase 到 main `6fa2a88` 后 `npm run test:e2e:ci` **54/54 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 本地 MySQL）。  
 > **v2.6.69（2026-10-08 · #59 S3 期间结账 LOCKED + 锁后更正）**：`closure-fin-period-lock.spec.ts`（**E2E-S3-06/07** · 纯 UI · 独立 `yyyy-MM`「结账」→ **LOCKED** · 该月录入拦截 **1142**（原 1010 已移除）· 成本已核准 **1141** · 未批更正 **1155** · `FL-REIMB` 审批通过后红冲「投放成本」· 利润 **82,400.00** · 详情 **RECALCULATED**）；`GET /fin/period` · `POST /fin/period/close` · `cost.vue`；与 **#58** 合并后当时 `npm run test:e2e:ci` **53/53 PASS**。已合入 main `6fa2a88`。  
 > **v2.6.68（2026-10-08 · #58 S4 冲话费登记 + 凭证门禁）**：`closure-corp-account-recharge.spec.ts`（**E2E-S4-05/06** · 纯 UI · `AC-E2E-POOL`「冲话费」· **1000** 无凭证成功 · **6000** 无凭证 **1025** · 补凭证后成功 · admin「仅财务可见」· `e2e_acct_r3` 可见凭证号）；`POST/GET /account/recharge` · `account.vue`；**E2E-S4-02/03**（1021 / 流转）见 **#60**；与 **#57** 合并后当时 `npm run test:e2e:ci` **52/52 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1`）。  
@@ -56,7 +57,7 @@
 | S3 | 场次-成本-利润-分成全链路 | BR-107/108/118/209 | V3 先行 | P0 | smoke-OK · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-profit-trace.spec.ts`（#51 · DC-002）** · **`closure-fin-share-payoff.spec.ts`（#57 · E2E-S3-05/08）** · `smoke-fin.spec.ts` |
 | S4 | 账号领用-流转-归还-冲话费 | BR-017/1024 | V1 | P0 | smoke-OK · **`closure-corp-account-checkout.spec.ts`（#47 · E2E-S4-01/08）** · **`closure-corp-account-recharge.spec.ts`（#58 · E2E-S4-05/06）** · **`closure-corp-account-transfer.spec.ts`（#60 · E2E-S4-02/03）** · `smoke-acct.spec.ts` |
 | S5 | 资产采购-领用-归还-报废 + 穿透 | BR-003~005 | V1 | P1 | smoke-OK · `smoke-asset.spec.ts` |
-| S6 | 证件录入-到期预警-水印访问 | BR-013 | V1 | P1 | smoke-OK · `smoke-cert.spec.ts` |
+| S6 | 证件录入-到期预警-水印访问 | BR-013 | V1 | P1 | smoke-OK · **`closure-corp-cert-watermark.spec.ts`（#55 · E2E-S6-03）** · **`closure-corp-cert-expire.spec.ts`（#61 · E2E-S6-02）** · `smoke-cert.spec.ts` |
 | S7 | 内容生产 AI 自动化全流程 | BR-016 | V1 | P1 | smoke-OK · `smoke-content.spec.ts` |
 | S8 | AI 资产分发链路（技能→专家包→Key→MCP 调用） | BR-019~035 | V2.2 | P0 | smoke-OK · `smoke-air-skill.spec.ts` |
 | S9 | 绩效考核周期（指标→计算→发布→员工查看） | BR-101~110 | V2 | P0 | smoke-OK · `smoke-perf.spec.ts` |
@@ -155,12 +156,12 @@
 ## S6 证件录入-预警-水印（P1）
 
 > smoke-OK（narrow）：证件管理列表页可加载。  
-> **闭环-OK（Playwright · v2.6.65 · #55 切片）**：`closure-corp-cert-watermark.spec.ts` — **E2E-S6-03** 查看水印 + 脱敏号。**E2E-S6-02** 证书到期预警为 **#61 进行中**（并行分支，非本片）。仍未覆盖 E2E-S6-01/04（录入/频次拦截）。
+> **闭环-OK（Playwright · v2.6.71 · #61）**：`closure-corp-cert-expire.spec.ts` — **E2E-S6-02** 纯 UI 构造 T−30/T−7/T−0 → 黄/红/锁定 + 工作台提醒。`closure-corp-cert-watermark.spec.ts` — **E2E-S6-03**（#55）查看水印 + 脱敏号。录入抽屉用于构造到期样本；**E2E-S6-01** 的重复 **1032** 仅 pytest，closure 未单列。仍未覆盖 **E2E-S6-04**（频次 **1035**）。
 
 | 编号 | 步骤 | 断言点 |
 |------|------|--------|
 | E2E-S6-01 | 录入证件→审核生效 | CertStatus 流转；重复录入 1032 |
-| E2E-S6-02 | 构造 T−30/T−7/T−0 到期 | 黄/红/锁定三级预警+工作台提醒 |
+| E2E-S6-02 | 构造 T−30/T−7/T−0 到期 | 黄/红/锁定三级预警+工作台提醒（**#61 closure** · 录入+审核+扫描） |
 | E2E-S6-03 | 查看证件（有权限角色） | 水印图（人名+尾号+时间戳）；原图接口 1034 |
 | E2E-S6-04 | 1 小时 11 次访问 | 第 11 次 1035 拦截 |
 

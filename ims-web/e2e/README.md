@@ -13,7 +13,7 @@
 | **S4 (#58)** | 冲话费 + 凭证门禁 | `closure-corp-account-recharge.spec.ts` | 1000 无凭证成功 · 6000 无凭证 **1025** · 补凭证后 admin 隐藏 URL · `e2e_acct_r3` 可见 |
 | **S4 (#60)** | 流转 + 他人领用 1021 | `closure-corp-account-transfer.spec.ts` | `AC-E2E-XFER` 领用至在用 · `e2e_acct_peer` 再领用 **1021** · 流转待确认 → 确认接收 · 责任人「流转同事」· 时间线 TRANSFER |
 | **S5** | 资产采购领用 | `smoke-asset.spec.ts` | 登录 → `/ims/corp/device/office` 标题「办公设备管理」+ table |
-| **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** | smoke：证件列表；closure：`E2E-Cert-Watermark` 查看水印 + 脱敏号 |
+| **S6** | 证件录入预警 | `smoke-cert.spec.ts` · **`closure-corp-cert-watermark.spec.ts`（#55）** · **`closure-corp-cert-expire.spec.ts`（#61）** | smoke：证件列表；#55：水印 + 脱敏号；#61：T−30/T−7/T−0 黄/红/锁定 + 工作台提醒 |
 | **S7** | 内容生产 AI | `smoke-content.spec.ts` | 登录 → `/ims/content/list` 标题「内容管理」+ table |
 | **S8** | AI 资产分发 | `smoke-air-skill.spec.ts` | 登录 → `/ims/air/skill` 标题「技能库」+ table |
 | **S9** | 绩效考核周期 | `smoke-perf.spec.ts` | 登录 → `/ims/perf/execution` 标题「执行考核」 |
@@ -52,6 +52,7 @@
 | **E2E-S7-切片 · 工作任务 (#35)** | `closure-content-work-task.spec.ts` | 工作任务登记确认 → CONTENT_GENERATION 执行/提审 → e2e_author 审过 → DONE |
 | **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
 | **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
+| **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
 | **E2E-S2 窄切片 (#56)** | `closure-live-session-report.spec.ts` | 登记→风控→下播核准 · 19 位场次 · 列表 CONFIRMED |
 | **E2E-S12-01 场次下钻 (#53)** | `closure-dc-session-drill.spec.ts` | 账号穿透 → 场次明细抽屉（GMV/净利润/投流成本）→ 导出 XLSX → 宽日期 **1181** |
