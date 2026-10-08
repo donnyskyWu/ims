@@ -62,7 +62,7 @@
               <td class="acts-cell">
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
                 <button
-                  v-if="row.status === 'IN_POOL' || row.status === 'IN_USE'"
+                  v-if="row.status === 'IN_POOL' || row.status === 'IN_USE' || row.status === 'FROZEN'"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="acct-checkout-open"
@@ -79,7 +79,16 @@
                   归还
                 </button>
                 <button
-                  v-if="row.status === 'IN_USE' && !pendingFor(row)"
+                  v-if="row.status === 'IN_USE'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-recall-open"
+                  @click="openRecall(row)"
+                >
+                  收回
+                </button>
+                <button
+                  v-if="(row.status === 'IN_USE' && !pendingFor(row)) || row.status === 'FROZEN'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-transfer-open"
@@ -125,7 +134,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021）· 流转 → POST /account/transfer · 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
@@ -345,6 +354,47 @@
           @click="submitTransfer"
         >
           提交流转
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="recallOpen" title="收回至冻结" width="520px" @close="closeRecall">
+      <div v-if="recallAccount" data-testid="acct-recall-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ recallAccount.accountNo }} · {{ recallAccount.nickname }}</div>
+        </div>
+        <div class="fld">
+          <label>原责任人</label>
+          <div>{{ recallAccount.holderUserName || '—' }}</div>
+        </div>
+        <div class="fld">
+          <label>原因分类<i class="req">*</i></label>
+          <select v-model="recallForm.reasonType" data-testid="acct-recall-reason">
+            <option v-for="item in transferReasons" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>交接说明<i class="req">*</i></label>
+          <input v-model="recallForm.remark" data-testid="acct-recall-remark" placeholder="收回说明" />
+        </div>
+        <p class="hint">收回后直接生效，账号进入冻结态（FROZEN）。领用与流转将被 1022 拦截。</p>
+        <p v-if="recallResult" class="hint" data-testid="acct-recall-status">
+          收回单 {{ recallResult.transferNo }} · 已生效 · 状态 FROZEN
+        </p>
+        <p v-if="recallMsg" class="hint" data-testid="acct-recall-msg">{{ recallMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeRecall">关闭</button>
+        <button
+          v-if="!recallResult"
+          class="btn btn-pri"
+          type="button"
+          data-testid="acct-recall-submit"
+          :disabled="recallBusy"
+          @click="submitRecall"
+        >
+          提交收回
         </button>
       </template>
     </ProtoDrawer>
@@ -575,6 +625,15 @@ const transferForm = reactive({
 const transferConfirmOpen = ref(false)
 const transferConfirm = ref<TransferRow | null>(null)
 const transferConfirmMsg = ref('')
+const recallOpen = ref(false)
+const recallAccount = ref<Record<string, unknown> | null>(null)
+const recallBusy = ref(false)
+const recallMsg = ref('')
+const recallResult = ref<{ transferNo: string; status: string } | null>(null)
+const recallForm = reactive({
+  reasonType: 'BUSINESS_ADJUST',
+  remark: 'E2E 账号收回冻结',
+})
 
 const rechargeNeedsVoucher = computed(() => {
   const amount = Number(rechargeForm.amount)
@@ -921,6 +980,47 @@ async function submitTransfer() {
     transferMsg.value = bizMessage(e)
   } finally {
     transferBusy.value = false
+  }
+}
+
+function closeRecall() {
+  recallOpen.value = false
+  recallAccount.value = null
+  recallResult.value = null
+}
+
+function openRecall(row: Record<string, unknown>) {
+  recallAccount.value = row
+  recallForm.reasonType = 'BUSINESS_ADJUST'
+  recallForm.remark = 'E2E 账号收回冻结'
+  recallMsg.value = ''
+  recallResult.value = null
+  recallOpen.value = true
+}
+
+async function submitRecall() {
+  if (!recallAccount.value) return
+  recallBusy.value = true
+  recallMsg.value = ''
+  try {
+    if (!recallForm.remark.trim()) {
+      recallMsg.value = '1001 交接说明必填'
+      return
+    }
+    const res = await http.post('/account/transfer', {
+      accountId: recallAccount.value.id,
+      transferType: 'RECALL',
+      reasonType: recallForm.reasonType,
+      remark: recallForm.remark.trim(),
+    })
+    const vo = res.data?.data as { transferNo: string; status: string }
+    recallResult.value = vo
+    recallMsg.value = `收回单 ${vo.transferNo} · 已生效 · 状态 FROZEN`
+    await load()
+  } catch (e: unknown) {
+    recallMsg.value = bizMessage(e)
+  } finally {
+    recallBusy.value = false
   }
 }
 

@@ -1567,7 +1567,7 @@ class AccountTimelineEvent(Base):
 
 
 class AccountTransfer(Base):
-    """ACCT-002 账号流转。新责任人确认后才改责任人并写时间线（TRF-R1/R3）。"""
+    """ACCT-002 账号流转/收回。流转待新责任人确认后改责任人（TRF-R1）；收回单管理员发起后直接生效并冻结（TRF-R2）。"""
 
     __tablename__ = "ims_acct_transfer"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

@@ -10,6 +10,7 @@ from app.acct_seed import (
     E2E_ACCT_FINANCE_USER,
     E2E_ACCT_PEER_USER,
     E2E_POOL_ACCOUNT_NO,
+    E2E_RECALL_ACCOUNT_NO,
     E2E_XFER_ACCOUNT_NO,
     refresh_acct_e2e_pool,
 )
@@ -311,17 +312,17 @@ def test_acct_other_user_1021_and_transfer_holder_change():
     )
     assert same_holder.json()["code"] == 1001
 
-    recall = client.post(
+    recall_blank = client.post(
         "/admin-api/ims/account/transfer",
         headers=auth,
         json={
             "accountId": account_id,
             "transferType": "RECALL",
             "reasonType": "BUSINESS_ADJUST",
-            "remark": "收回不在本切片",
+            "remark": "",
         },
     )
-    assert recall.json()["code"] == 1001
+    assert recall_blank.json()["code"] == 1001
 
     created = client.post(
         "/admin-api/ims/account/transfer",
@@ -420,3 +421,178 @@ def test_acct_other_user_1021_and_transfer_holder_change():
     assert transfer_events
     assert "流转同事" in transfer_events[0]["snapshotSummary"]
     assert "管理员" in transfer_events[0]["snapshotSummary"]
+
+
+def test_acct_recall_freezes_and_blocks_1022():
+    auth = headers()
+    peer_auth = headers(E2E_ACCT_PEER_USER)
+    from app.core import SessionLocal
+
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
+        refresh_acct_e2e_pool(db, admin)
+        db.commit()
+    finally:
+        db.close()
+
+    account_id = account_id_of(E2E_RECALL_ACCOUNT_NO)
+    admin_id = user_id_of("admin")
+    peer_id = user_id_of(E2E_ACCT_PEER_USER)
+
+    pool_recall = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "池内不可收回",
+        },
+    )
+    assert pool_recall.json()["code"] == 1023
+
+    checkout_in_use(auth, account_id)
+
+    peer_recall = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=peer_auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "reasonType": "VIOLATION",
+            "remark": "同事不可收回",
+        },
+    )
+    assert peer_recall.json()["code"] == 1008
+
+    with_target = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "toUserId": peer_id,
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "收回不指定新人",
+        },
+    )
+    assert with_target.json()["code"] == 1001
+
+    pending = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "TRANSFER",
+            "toUserId": peer_id,
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "先挂起流转",
+        },
+    )
+    assert pending.json()["code"] == 0, pending.json()
+    pending_id = pending.json()["data"]["id"]
+    blocked = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "待确认中不可收回",
+        },
+    )
+    assert blocked.json()["code"] == 1023
+    revoked = client.put(
+        f"/admin-api/ims/account/transfer/{pending_id}/revoke",
+        headers=auth,
+        json={"remark": "撤销以便收回"},
+    )
+    assert revoked.json()["code"] == 0
+
+    created = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "pytest 收回冻结",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    data = created.json()["data"]
+    assert data["transferType"] == "RECALL"
+    assert data["status"] == "EFFECTIVE"
+    assert data["transferNo"].startswith("TR")
+    assert data["toUserId"] is None
+    assert data["toUserName"] is None
+    recall_id = data["id"]
+
+    ops = ops_session()
+    try:
+        row = ops.get(PlatformAccount, account_id)
+        assert row.status == "FROZEN"
+        assert row.holder_user_id == admin_id
+    finally:
+        ops.close()
+
+    apply_blocked = client.post(
+        "/admin-api/ims/account/apply",
+        headers=peer_auth,
+        json={
+            "accountId": account_id,
+            "purpose": "冻结后再领用",
+            "planStart": "2026-10-08",
+            "planEnd": "2026-11-08",
+        },
+    )
+    assert apply_blocked.json()["code"] == 1022
+    assert "冻结" in apply_blocked.json()["msg"]
+
+    transfer_blocked = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "TRANSFER",
+            "toUserId": peer_id,
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "冻结后再流转",
+        },
+    )
+    assert transfer_blocked.json()["code"] == 1022
+
+    again = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "RECALL",
+            "reasonType": "PRE_RESIGN",
+            "remark": "重复收回",
+        },
+    )
+    assert again.json()["code"] == 1022
+
+    confirm_done = client.put(
+        f"/admin-api/ims/account/transfer/{recall_id}/confirm",
+        headers=auth,
+        json={"accept": True},
+    )
+    assert confirm_done.json()["code"] == 1023
+
+    listed = client.get(
+        "/admin-api/ims/account/transfer/list",
+        headers=auth,
+        params={"accountId": account_id, "transferType": "RECALL"},
+    )
+    assert listed.json()["code"] == 0
+    assert listed.json()["data"]["list"][0]["status"] == "EFFECTIVE"
+    assert listed.json()["data"]["list"][0]["transferType"] == "RECALL"
+
+    tl = client.get(f"/admin-api/ims/account/timeline/{account_id}", headers=auth)
+    freeze_events = [item for item in tl.json()["data"]["list"] if item["eventType"] == "FREEZE"]
+    assert freeze_events
+    assert "FROZEN" in freeze_events[0]["snapshotSummary"]
+    assert "管理员" in freeze_events[0]["snapshotSummary"]
