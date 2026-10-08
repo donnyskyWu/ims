@@ -1,5 +1,6 @@
 # IMS Python 执行进度（2026-10-06）
 
+> **2026-10-08 本回合（#57 · S3 分成 PAID_OFF + 台账对账）**：PO（zhang wu）**恢复自动链**。`ims_fin_share_result` · 成本核准/`upsert_profit` 按手工达人/实名人额生成 `PENDING_AUDIT` 分成单（已审/已发放/已冲销不改写）· `GET /fin/share/results` · `PUT /fin/share/result/{id}/audit`（财务+业务双审，本地 `sys:admin` 可代双岗）· `PUT …/payoff` → **PAID_OFF**（未双审 **1148** · 非法角色 **1149**）· 拆分累计 = `shareDaren+shareRealname`。前端 `/ims/fin/share/result` · `/ims/fin/ledger`（四账由既有 cost/profit/share GET 拼装，**无新对账 REST**）。`closure-fin-share-payoff.spec.ts` · `test_fin.py` **10 passed** · collect **170** · Checklist **v2.6.67** · E2E **51/51 PASS**。结账 LOCKED **未做**。**本 PR 不含 #58**。
 > **实时任务看板**（并行开发/测试/验证/修复）：[`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md)  
 > **PRD 功能点矩阵**：[`IMS-PRD功能点执行对照表.md`](./IMS-PRD功能点执行对照表.md)（**UAT 建议/状态** · PO 签收）  
 > **Agent 交付循环**：[`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md) · Cursor 规则 `.cursor/rules/ims-delivery.mdc`

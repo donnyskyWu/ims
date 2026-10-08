@@ -787,6 +787,87 @@ export async function submitFinCostCorrectionViaUi(
   await expect(drawer).not.toBeVisible({ timeout: 10_000 })
 }
 
+/** FIN 分成单双审 → 发放 PAID_OFF（纯 UI · 须已核准成本） */
+export async function approveAndPayoffFinSharesViaUi(page: Page, sessionCode: string) {
+  await page.goto('/ims/fin/share/result')
+  await expect(page.locator('h1')).toHaveText('分成单管理', { timeout: 15_000 })
+  await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+  const listResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/share/results') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  await listResp
+  const sum = page.getByTestId('fin-share-split-sum')
+  await expect(sum).toContainText('4,000.00')
+  await expect(sum).toContainText('总额')
+
+  for (const target of ['达人', '实名人']) {
+    const row = () => page.locator('tbody tr', { hasText: sessionCode }).filter({ hasText: target }).first()
+    await expect(row()).toContainText('待审', { timeout: 15_000 })
+
+    const finPut = page.waitForResponse(
+      (r) => r.url().includes('/audit') && r.request().method() === 'PUT' && r.status() === 200,
+    )
+    const finList = page.waitForResponse(
+      (r) => r.url().includes('/fin/share/results') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await row().getByTestId('fin-share-audit-finance').click()
+    const finBody = (await (await finPut).json()) as { code: number; data?: { bothPassed?: boolean; status?: string } }
+    expect(finBody.code).toBe(0)
+    expect(finBody.data?.bothPassed).toBe(false)
+    expect(finBody.data?.status).toBe('PENDING_AUDIT')
+    await finList
+
+    const bizPut = page.waitForResponse(
+      (r) => r.url().includes('/audit') && r.request().method() === 'PUT' && r.status() === 200,
+    )
+    const bizList = page.waitForResponse(
+      (r) => r.url().includes('/fin/share/results') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await row().getByTestId('fin-share-audit-business').click()
+    const bizBody = (await (await bizPut).json()) as { code: number; data?: { bothPassed?: boolean; status?: string } }
+    expect(bizBody.code).toBe(0)
+    expect(bizBody.data?.bothPassed).toBe(true)
+    expect(bizBody.data?.status).toBe('AUDITED')
+    await bizList
+    await expect(row()).toContainText('已审', { timeout: 10_000 })
+
+    await row().getByTestId('fin-share-payoff-open').click()
+    const drawer = page.getByTestId('fin-share-payoff-drawer')
+    await expect(drawer).toBeVisible()
+    await drawer.getByTestId('fin-share-payoff-note').fill(`E2E payoff ${target}`)
+    const payPut = page.waitForResponse(
+      (r) => r.url().includes('/payoff') && r.request().method() === 'PUT' && r.status() === 200,
+    )
+    const payList = page.waitForResponse(
+      (r) => r.url().includes('/fin/share/results') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await drawer.getByTestId('fin-share-payoff-submit').click()
+    const payBody = (await (await payPut).json()) as { code: number }
+    expect(payBody.code).toBe(0)
+    await payList
+    await expect(row()).toContainText('已发放', { timeout: 10_000 })
+  }
+}
+
+/** 台账对账：场次 × 成本 × 利润 × 分成 四账一致（纯 UI） */
+export async function openFinLedgerReconcileViaUi(page: Page, sessionCode: string) {
+  await page.goto('/ims/fin/ledger')
+  await expect(page.locator('h1')).toHaveText('台账对账', { timeout: 15_000 })
+  await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+  const profitResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/profit/') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  await profitResp
+  await expect(page.getByTestId('fin-ledger-consistent')).toHaveText('四账一致', { timeout: 15_000 })
+  await expect(page.getByTestId('fin-ledger-session')).toContainText(sessionCode)
+  await expect(page.getByTestId('fin-ledger-cost')).toContainText('16,600.00')
+  await expect(page.getByTestId('fin-ledger-profit')).toContainText('81,400.00')
+  await expect(page.getByTestId('fin-ledger-share')).toContainText('4,000.00')
+  await expect(page.getByTestId('fin-ledger-share')).toContainText('已发放')
+}
+
 /** DC-002 利润反查：列表筛选 + 打开 BR-209 链路抽屉（纯 UI） */
 export async function openFinProfitTraceChainViaUi(page: Page, sessionCode: string) {
   await page.goto('/ims/fin/profit-trace')

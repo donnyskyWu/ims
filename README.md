@@ -8,7 +8,7 @@ Python FastAPI 后端 + Vue 前端 · 本地 MySQL · Playwright E2E。
 
 | 文档 | 说明 |
 |------|------|
-| [IMS-任务进度计划表](doc/开发方案/IMS-任务进度计划表.md) | 全局 **#** 看板（当前 **#52** 已完成；**Agent 自动链已暂停**，待 PO 开 **#53+**） |
+| [IMS-任务进度计划表](doc/开发方案/IMS-任务进度计划表.md) | 全局 **#** 看板（当前 **#57** 已完成；**PO 已恢复自动链**，父代理继续 **#58+**，除非再暂停） |
 | [IMS-PRD功能点执行对照表](doc/开发方案/IMS-PRD功能点执行对照表.md) | 功能矩阵 · **UAT 建议 / UAT 状态** |
 | [IMS-Agent交付循环](doc/开发规范/IMS-Agent交付循环.md) | 开发 → pytest → E2E → 文档 → PO UAT 门禁 |
 | [云 MySQL 联调](doc/运维/云MySQL联调.md) | 可选云库 · `IMS_USE_CLOUD_DB` / `sync_ims_to_cloud.ps1` |

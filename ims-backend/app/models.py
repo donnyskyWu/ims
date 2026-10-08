@@ -1029,6 +1029,37 @@ class FinProfit(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class FinShareResult(Base):
+    """FIN-003 分成单（手工拆分窄切片 · #57）。规则引擎 CRUD 不在本表。"""
+
+    __tablename__ = "ims_fin_share_result"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "session_code", "share_target", name="uk_fin_share_session_target"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_code: Mapped[str] = mapped_column(String(32), index=True)
+    rule_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    rule_name: Mapped[str] = mapped_column(String(128), default="手工分成")
+    share_target: Mapped[str] = mapped_column(String(16), default="DAREN")
+    target_ref_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    target_ref_name: Mapped[str] = mapped_column(String(64), default="")
+    share_base: Mapped[float] = mapped_column(Float, default=0.0)
+    share_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    calc_detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(24), default="PENDING_AUDIT")
+    fin_audit_passed: Mapped[int] = mapped_column(Integer, default=0)
+    biz_audit_passed: Mapped[int] = mapped_column(Integer, default=0)
+    audited_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    audited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paid_off_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    payoff_note: Mapped[str] = mapped_column(String(256), default="")
+    payoff_voucher: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class PerfScheme(Base):
     __tablename__ = "ims_perf_scheme"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

@@ -716,6 +716,24 @@
       "parent": "场次财务",
       "desc": "DC-002 · /ims/fin/profit-trace · GET /dc/profit-trace/*"
     },
+    "finShareResult": {
+      "no": "11",
+      "name": "分成单",
+      "code": "FIN",
+      "icon": "yuan",
+      "page": "分成单管理",
+      "parent": "场次财务",
+      "desc": "FIN-003 · /ims/fin/share/result · 审批发放 PAID_OFF"
+    },
+    "finLedger": {
+      "no": "11",
+      "name": "台账对账",
+      "code": "FIN",
+      "icon": "chart",
+      "page": "台账对账",
+      "parent": "场次财务",
+      "desc": "E2E-S3-08 · 场次×成本×利润×分成 · 复用既有 GET"
+    },
     "fin": {
       "no": "11",
       "name": "成本核算",
@@ -1163,7 +1181,9 @@
           "children": [
             "finCost",
             "finProfit",
-            "finProfitTrace"
+            "finProfitTrace",
+            "finShareResult",
+            "finLedger"
           ]
         }
       ]

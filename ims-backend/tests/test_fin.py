@@ -325,6 +325,69 @@ def test_fin_cost_correction_recalc_profit_and_share_trace():
     assert daren["shareAmount"] == 3500.0
 
 
+def test_fin_share_audit_payoff_amounts_sum_to_total():
+    """#57 E2E-S3-05：核准成本后分成单双审 → PAID_OFF，拆分累计=总额。"""
+    auth = headers()
+    code = approved_session(auth)
+    confirm_cost_for_session(auth, code)
+
+    listed = client.get("/admin-api/ims/fin/share/results", headers=auth, params={"sessionCode": code})
+    assert listed.json()["code"] == 0
+    rows = listed.json()["data"]["list"]
+    assert len(rows) == 2
+    assert {row["shareTarget"] for row in rows} == {"DAREN", "REALNAME"}
+    assert sum(row["shareAmount"] for row in rows) == 4000.0
+    assert all(row["calcDetail"]["shareTotal"] == 4000.0 for row in rows)
+    assert all(row["status"] == "PENDING_AUDIT" for row in rows)
+
+    early = client.put(
+        f"/admin-api/ims/fin/share/result/{rows[0]['id']}/payoff",
+        headers=auth,
+        json={"payoffNote": "too soon"},
+    )
+    assert early.json()["code"] == 1148
+
+    denied = client.put(
+        f"/admin-api/ims/fin/share/result/{rows[0]['id']}/audit",
+        headers=auth,
+        json={"conclusion": "APPROVE", "auditRole": "NOPE"},
+    )
+    assert denied.json()["code"] == 1149
+
+    for row in rows:
+        fin = client.put(
+            f"/admin-api/ims/fin/share/result/{row['id']}/audit",
+            headers=auth,
+            json={"conclusion": "APPROVE", "auditRole": "FINANCE", "remark": "fin"},
+        )
+        assert fin.json()["code"] == 0
+        assert fin.json()["data"]["status"] == "PENDING_AUDIT"
+        assert fin.json()["data"]["finAuditPassed"] is True
+        assert fin.json()["data"]["bothPassed"] is False
+
+        biz = client.put(
+            f"/admin-api/ims/fin/share/result/{row['id']}/audit",
+            headers=auth,
+            json={"conclusion": "APPROVE", "auditRole": "BUSINESS"},
+        )
+        assert biz.json()["code"] == 0
+        assert biz.json()["data"]["status"] == "AUDITED"
+        assert biz.json()["data"]["bothPassed"] is True
+
+        paid = client.put(
+            f"/admin-api/ims/fin/share/result/{row['id']}/payoff",
+            headers=auth,
+            json={"payoffNote": "paid", "payoffVoucher": {"fileName": "v.txt", "fileKey": "k"}},
+        )
+        assert paid.json()["code"] == 0
+        assert paid.json()["data"] is None
+
+    again = client.get("/admin-api/ims/fin/share/results", headers=auth, params={"sessionCode": code, "status": "PAID_OFF"})
+    paid_rows = again.json()["data"]["list"]
+    assert len(paid_rows) == 2
+    assert sum(row["shareAmount"] for row in paid_rows) == 4000.0
+
+
 def test_fin_cost_rejects_unapproved_session():
     auth = headers()
     account_id, person_id, phone_id, _ = seed_live_deps()

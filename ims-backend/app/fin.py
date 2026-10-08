@@ -14,13 +14,15 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, tenant_of, user_names
 from app.live import get_session, iso, restrict_sessions
-from app.models import FinCost, FinProfit, LiveReport, LiveSession, User
+from app.models import FinCost, FinProfit, FinShareResult, LiveReport, LiveSession, User
 
 router = APIRouter(prefix="/fin", tags=["fin"])
 
 BJ = timezone(timedelta(hours=8))
 SHARE_TYPES = frozenset({"MANUAL", "ENGINE"})
 ENTRY_STATUSES = frozenset({"DRAFT", "SUBMITTED", "CONFIRMED"})
+AUDIT_ROLES = frozenset({"FINANCE", "BUSINESS"})
+LOCKED_SHARE_STATUSES = frozenset({"AUDITED", "PAID_OFF", "REVERSED"})
 
 
 class FinCostEntryBody(BaseModel):
@@ -41,6 +43,25 @@ class FinCostCorrectionBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     corrected: FinCostEntryBody
     correctionReason: str = Field(min_length=1)
+
+
+class FinShareAuditBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    conclusion: str
+    remark: str = ""
+    auditRole: str
+
+
+class FinSharePayoffVoucher(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    fileName: str = ""
+    fileKey: str = ""
+
+
+class FinSharePayoffBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    payoffVoucher: FinSharePayoffVoucher | None = None
+    payoffNote: str = ""
 
 
 def money(value: float) -> float:
@@ -187,6 +208,7 @@ def upsert_profit(
         profit.calc_status = "CALCULATED"
     profit.calc_version = (profit.calc_version or 0) + 1
     db.flush()
+    sync_share_results(db, tenant_id, session_code, cost, profit)
     return profit
 
 
@@ -820,3 +842,298 @@ def profit_recalc(
             "message": "利润已重算",
         }
     )
+
+
+def actor_may_share_write(db: Session, actor: User) -> bool:
+    """窄切片：本地 sys:admin 代财务审 + 业务审 + 发放（R3/R4 分岗留后续）。"""
+    from app.scope import enabled_roles
+
+    return any(role.role_key == "sys:admin" for role in enabled_roles(db, actor))
+
+
+def share_parts(session: LiveSession, cost: FinCost) -> list[dict]:
+    parts: list[dict] = []
+    daren = money(cost.share_daren)
+    realname = money(cost.share_realname)
+    if daren > 0:
+        parts.append(
+            {
+                "shareTarget": "DAREN",
+                "shareAmount": daren,
+                "targetRefId": int(session.responsible_user_id or 0),
+                "targetRefName": "达人",
+            }
+        )
+    if realname > 0:
+        parts.append(
+            {
+                "shareTarget": "REALNAME",
+                "shareAmount": realname,
+                "targetRefId": int(session.realname_person_id or 0),
+                "targetRefName": session.realname_name or "实名人",
+            }
+        )
+    return parts
+
+
+def sync_share_results(
+    db: Session,
+    tenant_id: int,
+    session_code: str,
+    cost: FinCost,
+    profit: FinProfit,
+) -> None:
+    """利润落库后按手工分成额生成/刷新待审分成单。已审/已发放/已冲销不改写。"""
+    session = db.scalar(
+        select(LiveSession).where(
+            LiveSession.session_code == session_code,
+            LiveSession.deleted == 0,
+            LiveSession.tenant_id == tenant_id,
+        )
+    )
+    if session is None:
+        return
+    existing = db.scalars(
+        select(FinShareResult).where(
+            FinShareResult.tenant_id == tenant_id,
+            FinShareResult.session_code == session_code,
+        )
+    ).all()
+    active = [row for row in existing if row.deleted == 0]
+    if any(row.status in LOCKED_SHARE_STATUSES for row in active):
+        return
+    parts = share_parts(session, cost)
+    share_total = money(sum(part["shareAmount"] for part in parts))
+    by_target = {row.share_target: row for row in existing}
+    keep = {part["shareTarget"] for part in parts}
+    for part in parts:
+        row = by_target.get(part["shareTarget"])
+        detail = {
+            "mode": "MANUAL",
+            "shareTotal": share_total,
+            "partAmount": part["shareAmount"],
+            "formula": "sum(shareAmount)=shareDaren+shareRealname",
+        }
+        created = row is None
+        if row is None:
+            row = FinShareResult(
+                session_code=session_code,
+                tenant_id=tenant_id,
+                rule_id=0,
+                rule_name="手工分成",
+                share_target=part["shareTarget"],
+                status="PENDING_AUDIT",
+            )
+            db.add(row)
+        amount_changed = (not created) and row.deleted == 0 and money(row.share_amount) != part["shareAmount"]
+        row.rule_id = 0
+        row.rule_name = "手工分成"
+        row.target_ref_id = part["targetRefId"]
+        row.target_ref_name = part["targetRefName"]
+        row.share_base = money(profit.net_profit)
+        row.share_amount = part["shareAmount"]
+        row.calc_detail = detail
+        row.deleted = 0
+        if created or amount_changed or row.status not in ("PENDING_AUDIT",):
+            row.status = "PENDING_AUDIT"
+            row.fin_audit_passed = 0
+            row.biz_audit_passed = 0
+    for row in active:
+        if row.share_target not in keep and row.status == "PENDING_AUDIT":
+            row.deleted = 1
+    db.flush()
+
+
+def share_result_vo(row: FinShareResult) -> dict:
+    return {
+        "id": row.id,
+        "sessionCode": row.session_code,
+        "ruleId": row.rule_id or 0,
+        "ruleName": row.rule_name or "手工分成",
+        "shareTarget": row.share_target,
+        "targetRefId": row.target_ref_id or 0,
+        "targetRefName": row.target_ref_name or "",
+        "shareBase": money(row.share_base),
+        "shareAmount": money(row.share_amount),
+        "calcDetail": row.calc_detail or {},
+        "status": row.status,
+        "finAuditPassed": bool(row.fin_audit_passed),
+        "bizAuditPassed": bool(row.biz_audit_passed),
+        "auditedBy": row.audited_by or None,
+        "auditedAt": iso(row.audited_at) if row.audited_at else None,
+        "paidOffAt": iso(row.paid_off_at) if row.paid_off_at else None,
+    }
+
+
+def audit_result_vo(row: FinShareResult) -> dict:
+    both = bool(row.fin_audit_passed) and bool(row.biz_audit_passed)
+    return {
+        "status": row.status,
+        "finAuditPassed": bool(row.fin_audit_passed),
+        "bizAuditPassed": bool(row.biz_audit_passed),
+        "bothPassed": both and row.status == "AUDITED",
+    }
+
+
+def visible_share_rows(
+    db: Session,
+    actor: User,
+    scope,
+    tenant_id: int,
+    *,
+    session_code: str = "",
+    share_target: str = "",
+    status: str = "",
+) -> list[FinShareResult]:
+    stmt = select(FinShareResult).where(FinShareResult.deleted == 0, FinShareResult.tenant_id == tenant_id)
+    if session_code:
+        stmt = stmt.where(FinShareResult.session_code.contains(session_code))
+    if share_target:
+        stmt = stmt.where(FinShareResult.share_target == share_target)
+    if status:
+        stmt = stmt.where(FinShareResult.status == status)
+    rows = db.scalars(stmt.order_by(FinShareResult.id.desc())).all()
+    visible: list[FinShareResult] = []
+    for row in rows:
+        session = db.scalar(
+            select(LiveSession).where(
+                LiveSession.session_code == row.session_code,
+                LiveSession.deleted == 0,
+                LiveSession.tenant_id == tenant_id,
+            )
+        )
+        if session is None or not session_fin_visible(db, actor, scope, session):
+            continue
+        visible.append(row)
+    return visible
+
+
+def load_visible_share(
+    db: Session,
+    actor: User,
+    scope,
+    tenant_id: int,
+    share_id: int,
+) -> FinShareResult | None:
+    row = db.scalar(
+        select(FinShareResult).where(
+            FinShareResult.id == share_id,
+            FinShareResult.deleted == 0,
+            FinShareResult.tenant_id == tenant_id,
+        )
+    )
+    if row is None:
+        return None
+    session = db.scalar(
+        select(LiveSession).where(
+            LiveSession.session_code == row.session_code,
+            LiveSession.deleted == 0,
+            LiveSession.tenant_id == tenant_id,
+        )
+    )
+    if session is None or not session_fin_visible(db, actor, scope, session):
+        return None
+    return row
+
+
+@router.get("/share/results")
+def share_results(
+    request: Request,
+    pageNo: int = 1,
+    pageSize: int = 20,
+    sessionCode: str = "",
+    shareTarget: str = "",
+    status: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    page_no, size = page_args(pageNo, pageSize)
+    tenant_id = tenant_of(actor)
+    visible = visible_share_rows(
+        db,
+        actor,
+        request.state.scope,
+        tenant_id,
+        session_code=sessionCode,
+        share_target=shareTarget,
+        status=status,
+    )
+    total = len(visible)
+    start = (page_no - 1) * size
+    page_rows = visible[start : start + size]
+    return ok(
+        {
+            "list": [share_result_vo(row) for row in page_rows],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+        }
+    )
+
+
+@router.put("/share/result/{share_id}/audit")
+def share_result_audit(
+    request: Request,
+    share_id: int,
+    body: FinShareAuditBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if body.auditRole not in AUDIT_ROLES or not actor_may_share_write(db, actor):
+        return fail(1149, "无该审批角色权限")
+    if body.conclusion not in ("APPROVE", "REJECT"):
+        return fail(1001, "审批结论无效")
+    tenant_id = tenant_of(actor)
+    row = load_visible_share(db, actor, request.state.scope, tenant_id, share_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.status in ("PAID_OFF", "REVERSED"):
+        return fail(1148, "分成单当前状态不可审批")
+    if body.conclusion == "REJECT":
+        row.status = "REVERSED"
+        row.audited_by = actor.id
+        row.audited_at = utcnow()
+        db.flush()
+        return ok(audit_result_vo(row))
+    if body.auditRole == "FINANCE":
+        row.fin_audit_passed = 1
+    else:
+        row.biz_audit_passed = 1
+    row.audited_by = actor.id
+    row.audited_at = utcnow()
+    if row.fin_audit_passed and row.biz_audit_passed:
+        row.status = "AUDITED"
+    else:
+        row.status = "PENDING_AUDIT"
+    db.flush()
+    return ok(audit_result_vo(row))
+
+
+@router.put("/share/result/{share_id}/payoff")
+def share_result_payoff(
+    request: Request,
+    share_id: int,
+    body: FinSharePayoffBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not actor_may_share_write(db, actor):
+        return fail(1149, "无该审批角色权限")
+    tenant_id = tenant_of(actor)
+    row = load_visible_share(db, actor, request.state.scope, tenant_id, share_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.status == "PAID_OFF":
+        return ok(None)
+    if row.status != "AUDITED":
+        return fail(1148, "双审未齐")
+    row.status = "PAID_OFF"
+    row.paid_off_at = utcnow()
+    row.payoff_note = (body.payoffNote or "")[:256]
+    if body.payoffVoucher is not None:
+        row.payoff_voucher = {
+            "fileName": body.payoffVoucher.fileName,
+            "fileKey": body.payoffVoucher.fileKey,
+        }
+    db.flush()
+    return ok(None)
