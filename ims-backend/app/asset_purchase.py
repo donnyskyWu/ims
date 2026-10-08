@@ -58,7 +58,8 @@ def _decode(raw: bytes) -> str | None:
 def _header_index(header: list[str]) -> dict[str, int] | None:
     found: dict[str, int] = {}
     for index, cell in enumerate(header):
-        key = HEADER_ALIAS.get(cell.strip().lstrip("\ufeff"))
+        raw = cell.strip().lstrip("\ufeff")
+        key = HEADER_ALIAS.get(raw) or HEADER_ALIAS.get(raw.lower())
         if key and key not in found:
             found[key] = index
     if "assetName" not in found or "purchaseDate" not in found:
