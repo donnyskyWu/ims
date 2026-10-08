@@ -15,11 +15,12 @@ async function searchFreq(page: Page) {
   const listResp = page.waitForResponse(
     (r) =>
       r.url().includes('/corp/resource/certificate/page') &&
+      r.url().includes(`holderName=${HOLDER}`) &&
       r.request().method() === 'GET' &&
       r.status() === 200,
   )
   await page.locator('input[placeholder="持有人"]').fill(HOLDER)
-  await page.getByRole('button', { name: '查询' }).click()
+  await page.locator('form.qbar').first().getByRole('button', { name: '查询' }).click()
   const body = (await (await listResp).json()) as {
     code: number
     data?: { list?: Array<{ holderName?: string }> }
