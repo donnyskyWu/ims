@@ -14,7 +14,7 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, tenant_of, user_names
 from app.live import get_session, iso, restrict_sessions
-from app.models import FinCost, FinProfit, FinShareResult, LiveReport, LiveSession, User
+from app.models import FinCost, FinPeriod, FinProfit, FinShareResult, FlowInstance, LiveReport, LiveSession, User
 
 router = APIRouter(prefix="/fin", tags=["fin"])
 
@@ -23,6 +23,10 @@ SHARE_TYPES = frozenset({"MANUAL", "ENGINE"})
 ENTRY_STATUSES = frozenset({"DRAFT", "SUBMITTED", "CONFIRMED"})
 AUDIT_ROLES = frozenset({"FINANCE", "BUSINESS"})
 LOCKED_SHARE_STATUSES = frozenset({"AUDITED", "PAID_OFF", "REVERSED"})
+PERIOD_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+LOCK_MSG = "财务期间已结账，录入/核准/更正均冻结"
+LOCK_ADJUST_MSG = "周期已锁定，锁后更正须 R4 审批"
+LOCK_ADJUST_PREFIX = "FIN-LOCK-"
 
 
 class FinCostEntryBody(BaseModel):
@@ -64,8 +68,106 @@ class FinSharePayoffBody(BaseModel):
     payoffNote: str = ""
 
 
+class FinPeriodCloseBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    periodMonth: str = ""
+
+
 def money(value: float) -> float:
     return round(float(value or 0), 2)
+
+
+def session_period_month(plan_start_time: str, session_code: str) -> str:
+    """期间取计划开播月；无计划开播时回退场次号 IMS+yyyyMMdd。"""
+    raw = (plan_start_time or "").strip()
+    if len(raw) >= 7 and raw[4] == "-" and raw[:4].isdigit() and raw[5:7].isdigit():
+        month = int(raw[5:7])
+        if 1 <= month <= 12:
+            return raw[:7]
+    if session_code.startswith("IMS") and len(session_code) >= 11 and session_code[3:11].isdigit():
+        return f"{session_code[3:7]}-{session_code[7:9]}"
+    return datetime.now(BJ).strftime("%Y-%m")
+
+
+def load_period(db: Session, tenant_id: int, period_month: str) -> FinPeriod | None:
+    return db.scalar(
+        select(FinPeriod).where(
+            FinPeriod.tenant_id == tenant_id,
+            FinPeriod.period_month == period_month,
+            FinPeriod.deleted == 0,
+        )
+    )
+
+
+def finance_status_of(db: Session, tenant_id: int, period_month: str) -> str:
+    row = load_period(db, tenant_id, period_month)
+    if row is not None and row.finance_status == "LOCKED":
+        return "LOCKED"
+    return "OPEN"
+
+
+def period_of_session(db: Session, tenant_id: int, session: LiveSession) -> tuple[str, str]:
+    month = session_period_month(session.plan_start_time or "", session.session_code)
+    return month, finance_status_of(db, tenant_id, month)
+
+
+def reject_if_period_locked(db: Session, tenant_id: int, session: LiveSession):
+    _month, status = period_of_session(db, tenant_id, session)
+    if status == "LOCKED":
+        return fail(1142, LOCK_MSG)
+    return None
+
+
+def lock_adjust_key(session_code: str) -> str:
+    return f"{LOCK_ADJUST_PREFIX}{session_code}"
+
+
+def lock_adjust_approved(db: Session, tenant_id: int, session_code: str) -> bool:
+    row = db.scalar(
+        select(FlowInstance).where(
+            FlowInstance.deleted == 0,
+            FlowInstance.tenant_id == tenant_id,
+            FlowInstance.business_key == lock_adjust_key(session_code),
+            FlowInstance.instance_status == "APPROVED",
+        )
+    )
+    return row is not None
+
+
+def reject_locked_correction(db: Session, tenant_id: int, session: LiveSession):
+    _month, status = period_of_session(db, tenant_id, session)
+    if status != "LOCKED":
+        return None
+    if lock_adjust_approved(db, tenant_id, session.session_code):
+        return None
+    return fail(1155, LOCK_ADJUST_MSG)
+
+
+def period_vo(db: Session, period_month: str, row: FinPeriod | None) -> dict:
+    if row is None or row.finance_status != "LOCKED":
+        return {
+            "periodMonth": period_month,
+            "financeStatus": "OPEN",
+            "lockedAt": "",
+            "lockedByName": "",
+        }
+    names = user_names(db, [row.locked_by])
+    return {
+        "periodMonth": row.period_month,
+        "financeStatus": "LOCKED",
+        "lockedAt": iso(row.locked_at) if row.locked_at else "",
+        "lockedByName": names.get(row.locked_by, ""),
+    }
+
+
+def live_session_row(db: Session, tenant_id: int, session_code: str) -> LiveSession | None:
+    return db.scalar(
+        select(LiveSession).where(
+            LiveSession.session_code == session_code,
+            LiveSession.deleted == 0,
+            LiveSession.tenant_id == tenant_id,
+        )
+    )
 
 
 def approved_report(db: Session, session_code: str, tenant_id: int) -> LiveReport | None:
@@ -114,6 +216,9 @@ def validate_body(body: FinCostEntryBody) -> str | None:
 
 def cost_vo(db: Session, row: FinCost) -> dict:
     names = user_names(db, [row.entry_user_id])
+    session = live_session_row(db, row.tenant_id, row.session_code)
+    plan = session.plan_start_time if session is not None else ""
+    month = session_period_month(plan, row.session_code)
     return {
         "id": row.id,
         "sessionCode": row.session_code,
@@ -136,6 +241,8 @@ def cost_vo(db: Session, row: FinCost) -> dict:
         "entryAt": iso(row.entry_at) if row.entry_at else "",
         "clientToken": row.client_token or "",
         "remark": row.remark or "",
+        "periodMonth": month,
+        "financeStatus": finance_status_of(db, row.tenant_id, month),
     }
 
 
@@ -651,6 +758,54 @@ def cost_complete_rate(
     )
 
 
+@router.get("/period")
+def period_status(
+    periodMonth: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """期间状态。无行 = OPEN。结账动作见 AT-FIN-002 POST /fin/period/close。"""
+    month = (periodMonth or "").strip()
+    if not PERIOD_MONTH_RE.match(month):
+        return fail(1001, "期间格式须为 yyyy-MM")
+    tenant_id = tenant_of(actor)
+    return ok(period_vo(db, month, load_period(db, tenant_id, month)))
+
+
+@router.post("/period/close")
+def period_close(
+    body: FinPeriodCloseBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """结账 → FinanceStatus.LOCKED。已锁定重复调用幂等返回。"""
+    month = (body.periodMonth or "").strip()
+    if not PERIOD_MONTH_RE.match(month):
+        return fail(1001, "期间格式须为 yyyy-MM")
+    tenant_id = tenant_of(actor)
+    row = load_period(db, tenant_id, month)
+    now = utcnow()
+    if row is None:
+        row = FinPeriod(
+            period_month=month,
+            finance_status="LOCKED",
+            locked_by=actor.id,
+            locked_at=now,
+            tenant_id=tenant_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+    else:
+        row.finance_status = "LOCKED"
+        if row.locked_at is None:
+            row.locked_by = actor.id
+            row.locked_at = now
+        row.updated_at = now
+    db.flush()
+    return ok(period_vo(db, month, row))
+
+
 @router.post("/cost/{session_code}")
 def cost_submit(
     request: Request,
@@ -681,9 +836,12 @@ def cost_submit(
     report = approved_report(db, session_code, tenant_id)
     if report is None:
         return fail(1141, "场次未核准下播数据")
+    locked = reject_if_period_locked(db, tenant_id, session)
+    if locked is not None:
+        return locked
     row = load_fin_cost(db, tenant_id, session_code)
     if row is not None and row.entry_status == "CONFIRMED":
-        return fail(1142, "成本已核准不可重复录入")
+        return fail(1141, "成本已核准，请走更正单")
     if row is None:
         row = FinCost(session_code=session_code, tenant_id=tenant_id, client_token=clientToken)
         db.add(row)
@@ -728,11 +886,14 @@ def cost_update(
     report = approved_report(db, session_code, tenant_id)
     if report is None:
         return fail(1141, "场次未核准下播数据")
+    locked = reject_if_period_locked(db, tenant_id, session)
+    if locked is not None:
+        return locked
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None:
         return fail(1141, "成本未录入")
     if row.entry_status == "CONFIRMED":
-        return fail(1142, "成本已核准")
+        return fail(1141, "成本已核准，请走更正单")
     apply_cost_row(row, session, report, body, actor)
     db.flush()
     return ok(cost_vo(db, row))
@@ -752,6 +913,9 @@ def cost_confirm(
     report = approved_report(db, session_code, tenant_id)
     if report is None:
         return fail(1141, "场次未核准下播数据")
+    locked = reject_if_period_locked(db, tenant_id, session)
+    if locked is not None:
+        return locked
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None or row.entry_status not in ("DRAFT", "SUBMITTED"):
         return fail(1141, "成本未提交")
@@ -804,6 +968,9 @@ def cost_correction(
     report = approved_report(db, session_code, tenant_id)
     if report is None:
         return fail(1141, "场次未核准下播数据")
+    locked_adjust = reject_locked_correction(db, tenant_id, session)
+    if locked_adjust is not None:
+        return locked_adjust
     before = cost_amount_snapshot(row)
     apply_cost_row(row, session, report, body.corrected, actor)
     row.entry_status = "CONFIRMED"
@@ -833,6 +1000,9 @@ def profit_recalc(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None or row.entry_status != "CONFIRMED":
         return fail(1145, "该场次成本未核准，利润未计算")
+    locked = reject_if_period_locked(db, tenant_id, session)
+    if locked is not None:
+        return locked
     profit = upsert_profit(db, session_code, report, row, tenant_id, after_correction=True)
     db.flush()
     return ok(
@@ -1087,6 +1257,11 @@ def share_result_audit(
     row = load_visible_share(db, actor, request.state.scope, tenant_id, share_id)
     if row is None:
         return fail(1504, "资源不可用")
+    session = live_session_row(db, tenant_id, row.session_code)
+    if session is not None:
+        locked = reject_if_period_locked(db, tenant_id, session)
+        if locked is not None:
+            return locked
     if row.status in ("PAID_OFF", "REVERSED"):
         return fail(1148, "分成单当前状态不可审批")
     if body.conclusion == "REJECT":
@@ -1125,6 +1300,11 @@ def share_result_payoff(
         return fail(1504, "资源不可用")
     if row.status == "PAID_OFF":
         return ok(None)
+    session = live_session_row(db, tenant_id, row.session_code)
+    if session is not None:
+        locked = reject_if_period_locked(db, tenant_id, session)
+        if locked is not None:
+            return locked
     if row.status != "AUDITED":
         return fail(1148, "双审未齐")
     row.status = "PAID_OFF"

@@ -403,3 +403,174 @@ def test_fin_cost_rejects_unapproved_session():
         json={"commissionRate": 0.05, "adCost": 0, "shareCostType": "MANUAL"},
     )
     assert denied.json()["code"] == 1141
+
+
+def _session_in_period(auth: dict, plan_start: str, deps: tuple[int, int, int, int]) -> str:
+    account_id, person_id, phone_id, _room_id = deps
+    payload = register_payload(account_id, person_id, phone_id, None)
+    payload["planStartTime"] = plan_start
+    payload["planEndTime"] = "2099-06-15T22:00:00+08:00"
+    payload["topic"] = f"pytest period {uuid.uuid4().hex[:6]}"
+    reg = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=payload,
+    )
+    assert reg.json()["code"] == 0, reg.json()
+    code = reg.json()["data"]["sessionCode"]
+    detail = client.get(f"/admin-api/ims/live/register/{code}", headers=auth).json()["data"]
+    if detail.get("sessionStatus") == "PENDING_RISK_CHECK":
+        client.put(
+            f"/admin-api/ims/live/register/{code}/approve",
+            headers=auth,
+            json={"approve": True},
+        )
+    report = client.post(
+        f"/admin-api/ims/live/report/{code}",
+        headers=auth,
+        json={
+            "actualStart": "2099-06-15T20:00:00+08:00",
+            "actualEnd": "2099-06-15T22:00:00+08:00",
+            "gmv": 100000.0,
+            "refundAmount": 2000.0,
+            "orderCount": 120,
+            "viewerCount": 5000,
+            "peakOnline": 800,
+            "newFans": 200,
+            "adCost": 5000.0,
+        },
+    )
+    assert report.json()["code"] == 0, report.json()
+    confirm = client.put(f"/admin-api/ims/live/report/{code}/confirm", headers=auth)
+    assert confirm.json()["code"] == 0, confirm.json()
+    return code
+
+
+def _cost_body(**overrides) -> dict:
+    body = {
+        "commissionRate": 0.05,
+        "adCost": 5000,
+        "rechargeCost": 100,
+        "fixedCost": 2000,
+        "sampleCost": 500,
+        "shareCostType": "MANUAL",
+        "shareDaren": 3000,
+        "shareRealname": 1000,
+    }
+    body.update(overrides)
+    return body
+
+
+def test_fin_period_close_locks_writes_then_r4_red_correction():
+    """#59 · 结账 LOCKED · 写入 1142 · 未审批更正 1155 · R4 通过后红冲。"""
+    auth = headers()
+    deps = seed_live_deps()
+    code = _session_in_period(auth, "2099-06-15T20:00:00+08:00", deps)
+    created = client.post(
+        f"/admin-api/ims/fin/cost/{code}",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=_cost_body(),
+    )
+    assert created.json()["code"] == 0, created.json()
+    confirmed = client.put(f"/admin-api/ims/fin/cost/{code}/confirm", headers=auth)
+    assert confirmed.json()["code"] == 0, confirmed.json()
+
+    opened = client.get("/admin-api/ims/fin/period", headers=auth, params={"periodMonth": "2099-06"})
+    assert opened.json()["code"] == 0
+    assert opened.json()["data"]["financeStatus"] == "OPEN"
+    assert client.post("/admin-api/ims/fin/period/close", headers=auth, json={"periodMonth": "2099-13"}).json()["code"] == 1001
+
+    closed = client.post("/admin-api/ims/fin/period/close", headers=auth, json={"periodMonth": "2099-06"})
+    assert closed.json()["code"] == 0, closed.json()
+    assert closed.json()["data"]["financeStatus"] == "LOCKED"
+    again = client.post("/admin-api/ims/fin/period/close", headers=auth, json={"periodMonth": "2099-06"})
+    assert again.json()["code"] == 0
+    assert again.json()["data"]["financeStatus"] == "LOCKED"
+
+    other = _session_in_period(auth, "2099-06-16T20:00:00+08:00", deps)
+    denied = client.post(
+        f"/admin-api/ims/fin/cost/{other}",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=_cost_body(),
+    )
+    assert denied.json()["code"] == 1142
+    assert "财务期间已结账" in denied.json()["msg"]
+
+    recalc = client.post(f"/admin-api/ims/fin/profit/recalc/{code}", headers=auth)
+    assert recalc.json()["code"] == 1142
+
+    blocked = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={"correctionReason": "锁后未批", "corrected": _cost_body(adCost=4000)},
+    )
+    assert blocked.json()["code"] == 1155
+    assert "R4" in blocked.json()["msg"]
+
+    shares = client.get(
+        "/admin-api/ims/fin/share/results",
+        headers=auth,
+        params={"sessionCode": code, "pageNo": 1, "pageSize": 10},
+    ).json()["data"]["list"]
+    assert shares
+    audit = client.put(
+        f"/admin-api/ims/fin/share/result/{shares[0]['id']}/audit",
+        headers=auth,
+        json={"conclusion": "APPROVE", "auditRole": "FINANCE", "remark": "locked"},
+    )
+    assert audit.json()["code"] == 1142
+
+    templates = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=auth,
+        params={"templateName": "费用报销", "status": "PUBLISHED", "pageNo": 1, "pageSize": 10},
+    )
+    assert templates.json()["code"] == 0, templates.json()
+    tpl = next(row for row in templates.json()["data"]["list"] if row["templateCode"] == "FL-REIMB")
+    started = client.post(
+        "/admin-api/ims/flow/instance",
+        headers=auth,
+        json={
+            "templateId": tpl["id"],
+            "businessKey": f"FIN-LOCK-{code}",
+            "formData": {"title": f"锁后更正 {code}", "sessionCode": code},
+        },
+    )
+    assert started.json()["code"] == 0, started.json()
+    assert started.json()["data"]["instanceStatus"] == "RUNNING"
+    todos = client.get(
+        "/admin-api/ims/flow/task/my-todo",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50},
+    ).json()["data"]["list"]
+    task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"锁后更正 {code}")
+    handled = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=auth,
+        json={"action": "APPROVE", "comment": "R4 锁后更正"},
+    )
+    assert handled.json()["code"] == 0, handled.json()
+    assert handled.json()["data"]["newStatus"] == "APPROVED"
+
+    fixed = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={"correctionReason": "锁后红冲投放", "corrected": _cost_body(adCost=4000)},
+    )
+    body = fixed.json()
+    assert body["code"] == 0, body
+    assert body["data"]["recalcTriggered"] is True
+    assert any(entry["item"] == "投放成本" and entry["amount"] == -1000 for entry in body["data"]["redEntries"])
+    profit = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth)
+    assert profit.json()["code"] == 0, profit.json()
+    assert profit.json()["data"]["calcStatus"] == "RECALCULATED"
+    assert profit.json()["data"]["netProfit"] == 82400.0
+
+    # 默认 2026-10 场次不受 2099-06 结账影响
+    open_month = _session_in_period(auth, "2026-10-06T20:00:00+08:00", deps)
+    still = client.post(
+        f"/admin-api/ims/fin/cost/{open_month}",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=_cost_body(),
+    )
+    assert still.json()["code"] == 0, still.json()

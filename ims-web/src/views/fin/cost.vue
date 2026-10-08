@@ -3,8 +3,49 @@
     <div class="pg-h">
       <div>
         <h1>成本核算</h1>
-        <div class="sub">FIN-001 · 场次成本录入 · 11 FIN（与账号财务 COST 分菜单）</div>
+        <div class="sub">FIN-001 · 场次成本录入 · 期间结账后写操作冻结（1142）</div>
       </div>
+    </div>
+
+    <div class="card" data-testid="fin-period-bar" style="margin-bottom: 12px; padding: 12px">
+      <div class="acts" style="align-items: center; gap: 8px; flex-wrap: wrap">
+        <label style="display: flex; align-items: center; gap: 6px">
+          财务期间
+          <input
+            v-model="periodMonth"
+            data-testid="fin-period-month"
+            placeholder="yyyy-MM"
+            style="width: 120px"
+            @change="loadPeriod"
+          />
+        </label>
+        <span class="tag" data-testid="fin-period-status">{{ periodStatus || 'OPEN' }}</span>
+        <button
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="fin-period-close"
+          :disabled="periodStatus === 'LOCKED'"
+          @click="closePeriod"
+        >
+          结账
+        </button>
+        <span class="hint">结账后该月场次录入/核准/重算冻结；锁后更正须 R4 审批</span>
+      </div>
+      <div
+        v-if="periodStatus === 'LOCKED'"
+        data-testid="fin-period-lock-banner"
+        class="hint"
+        style="color: var(--red); margin-top: 8px"
+      >
+        财务期间已结账，本期间写操作冻结
+      </div>
+    </div>
+
+    <div v-if="lastRed.length" data-testid="fin-lock-red-entries" class="hint" style="color: #c0392b; margin-bottom: 8px">
+      红冲
+      <span v-for="(entry, i) in lastRed" :key="'red' + i">
+        {{ entry.item }} （{{ fmt(Math.abs(Number(entry.amount))) }}）
+      </span>
     </div>
 
     <div v-if="rate" class="g3" style="margin-bottom: 12px">
@@ -138,6 +179,7 @@
       @close="drawerOpen = false"
     >
       <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
+      <p v-if="error" data-testid="fin-cost-entry-error" class="hint" style="color: var(--red)">{{ error }}</p>
       <div class="form-grid">
         <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
         <label>退款（只读）<input :value="'¥' + fmt(form.costRefund)" disabled /></label>
@@ -163,6 +205,27 @@
       @close="correctionOpen = false"
     >
       <p class="hint">核准后修改走更正单（红冲+蓝补），自动触发利润重算（FIN-P-R3）</p>
+      <div v-if="sessionLocked" data-testid="fin-lock-adjust-panel" class="hint" style="margin-bottom: 8px">
+        <div>期间已结账。锁后更正须 R4 审批通过后才能红冲调整。</div>
+        <div data-testid="fin-lock-adjust-status">{{ lockAdjustStatus || '未申请' }}</div>
+        <div class="acts" style="margin-top: 8px">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="fin-lock-adjust-apply" @click="applyLockAdjust">
+            申请锁后更正
+          </button>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="fin-lock-adjust-approve"
+            :disabled="!lockAdjustTaskId"
+            @click="approveLockAdjust"
+          >
+            审批通过
+          </button>
+        </div>
+      </div>
+      <p v-if="correctionError" data-testid="fin-lock-adjust-error" class="hint" style="color: var(--red)">
+        {{ correctionError }}
+      </p>
       <div class="form-grid">
         <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
         <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
@@ -210,7 +273,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http } from '../../api/http'
 
@@ -224,7 +287,21 @@ const drawerOpen = ref(false)
 const correctionOpen = ref(false)
 const correctionReason = ref('')
 const correctionPreview = ref<Record<string, unknown> | null>(null)
+const correctionError = ref('')
+const sessionFinanceStatus = ref('OPEN')
+const lockAdjustStatus = ref('')
+const lockAdjustTaskId = ref<number | null>(null)
+const lastRed = ref<Array<{ item: string; amount: number }>>([])
+const periodMonth = ref(currentPeriodMonth())
+const periodStatus = ref('OPEN')
 const query = reactive({ sessionCode: '', entryStatus: '' })
+
+const sessionLocked = computed(() => sessionFinanceStatus.value === 'LOCKED')
+
+function currentPeriodMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
 
 const form = reactive({
   sessionCode: '',
@@ -364,20 +441,100 @@ async function viewDetail(sessionCode: string) {
   }
 }
 
+async function loadPeriod() {
+  const month = periodMonth.value.trim()
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return
+  const res = await http.get('/fin/period', { params: { periodMonth: month } })
+  if (res.data?.code === 0) {
+    periodStatus.value = res.data.data?.financeStatus || 'OPEN'
+  }
+}
+
+async function closePeriod() {
+  const month = periodMonth.value.trim()
+  const res = await http.post('/fin/period/close', { periodMonth: month })
+  if (res.data?.code !== 0) {
+    error.value = res.data?.msg || '结账失败'
+    return
+  }
+  periodStatus.value = res.data.data?.financeStatus || 'LOCKED'
+  error.value = ''
+}
+
 async function openCorrection(sessionCode: string) {
   correctionReason.value = ''
   correctionPreview.value = null
+  correctionError.value = ''
+  lockAdjustStatus.value = ''
+  lockAdjustTaskId.value = null
   const res = await http.get(`/fin/cost/${sessionCode}`)
   if (res.data?.code !== 0) {
     error.value = res.data?.msg || '加载失败'
     return
   }
   assignFormFromCost(res.data.data)
+  sessionFinanceStatus.value = String(res.data.data?.financeStatus || 'OPEN')
   correctionOpen.value = true
 }
 
+async function applyLockAdjust() {
+  correctionError.value = ''
+  const listed = await http.get('/flow/template/list', {
+    params: { templateName: '费用报销', status: 'PUBLISHED', pageNo: 1, pageSize: 10 },
+  })
+  const templates = (listed.data?.data?.list || []) as Array<{ id?: number; templateCode?: string }>
+  const tpl = templates.find((row) => row.templateCode === 'FL-REIMB')
+  if (!tpl?.id) {
+    correctionError.value = '未找到已发布的费用报销流程'
+    return
+  }
+  const title = `锁后更正 ${form.sessionCode}`
+  const started = await http.post('/flow/instance', {
+    templateId: tpl.id,
+    businessKey: `FIN-LOCK-${form.sessionCode}`,
+    formData: { title, sessionCode: form.sessionCode },
+  })
+  if (started.data?.code !== 0) {
+    correctionError.value = started.data?.msg || '发起审批失败'
+    return
+  }
+  if (started.data.data?.instanceStatus === 'APPROVED') {
+    lockAdjustStatus.value = '已通过'
+    lockAdjustTaskId.value = null
+    return
+  }
+  const todos = await http.get('/flow/task/my-todo', { params: { pageNo: 1, pageSize: 50 } })
+  const hit = (todos.data?.data?.list || []).find(
+    (row: { id?: number; formData?: { title?: string }; taskStatus?: string }) =>
+      row.taskStatus === 'PENDING' && row.formData?.title === title,
+  )
+  if (!hit?.id) {
+    correctionError.value = '审批任务未出现在待办'
+    return
+  }
+  lockAdjustTaskId.value = hit.id
+  lockAdjustStatus.value = '待审批'
+}
+
+async function approveLockAdjust() {
+  if (!lockAdjustTaskId.value) return
+  correctionError.value = ''
+  const res = await http.put(`/flow/task/${lockAdjustTaskId.value}/handle`, {
+    action: 'APPROVE',
+    comment: 'R4 锁后更正',
+  })
+  if (res.data?.code !== 0) {
+    correctionError.value = res.data?.msg || '审批失败'
+    return
+  }
+  lockAdjustStatus.value = '已通过'
+  lockAdjustTaskId.value = null
+}
+
 async function submitCorrection() {
+  correctionError.value = ''
   if (!correctionReason.value.trim()) {
+    correctionError.value = '更正原因必填'
     error.value = '更正原因必填'
     return
   }
@@ -402,10 +559,12 @@ async function submitCorrection() {
     { headers: { clientToken: token } },
   )
   if (res.data?.code !== 0) {
+    correctionError.value = res.data?.msg || '更正失败'
     error.value = res.data?.msg || '更正失败'
     return
   }
   correctionPreview.value = res.data.data
+  lastRed.value = (res.data.data?.redEntries || []) as Array<{ item: string; amount: number }>
   correctionOpen.value = false
   error.value = ''
   await loadEntered()
@@ -422,6 +581,7 @@ async function confirmCost(sessionCode: string) {
 }
 
 onMounted(async () => {
+  await loadPeriod()
   await loadRate()
   await loadPending()
 })

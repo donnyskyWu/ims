@@ -614,7 +614,7 @@ export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
 export async function registerLiveSessionConfirmedReportViaUi(
   page: Page,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
-  opts?: { topic?: string; gmv?: number; refundAmount?: number },
+  opts?: { topic?: string; gmv?: number; refundAmount?: number; planStartTime?: string },
 ): Promise<{ sessionCode: string }> {
   const topic = opts?.topic ?? `E2E FIN ${Date.now()}`
   const gmv = opts?.gmv ?? 100_000
@@ -633,6 +633,9 @@ export async function registerLiveSessionConfirmedReportViaUi(
     .fill(String(ids.realnamePersonId))
   await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
   await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
+  if (opts?.planStartTime) {
+    await drawer.locator('label', { hasText: '计划开播' }).locator('..').locator('input').fill(opts.planStartTime)
+  }
 
   const regResp = page.waitForResponse(
     (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,

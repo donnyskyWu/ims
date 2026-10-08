@@ -1060,6 +1060,22 @@ class FinShareResult(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class FinPeriod(Base):
+    """财务期间结账（FinanceStatus.LOCKED · AT-FIN-002 POST /fin/period/close）。"""
+
+    __tablename__ = "ims_fin_period"
+    __table_args__ = (UniqueConstraint("tenant_id", "period_month", name="uk_fin_period_month"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="", index=True)
+    finance_status: Mapped[str] = mapped_column(String(16), default="OPEN")
+    locked_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class PerfScheme(Base):
     __tablename__ = "ims_perf_scheme"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
