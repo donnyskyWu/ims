@@ -17,6 +17,7 @@
             placeholder="yyyy-MM"
             style="width: 120px"
             @change="loadPeriod"
+            @blur="loadPeriod"
           />
         </label>
         <span class="tag" data-testid="fin-period-status">{{ periodStatus || 'OPEN' }}</span>
@@ -322,6 +323,14 @@ function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+function failMsg(err: unknown, fallback: string) {
+  if (err && typeof err === 'object' && 'msg' in err) {
+    const msg = (err as { msg?: string }).msg
+    if (msg) return msg
+  }
+  return fallback
+}
+
 function statusLabel(s: string) {
   const map: Record<string, string> = { DRAFT: '草稿', SUBMITTED: '已提交', CONFIRMED: '已核准' }
   return map[s] || s
@@ -393,6 +402,7 @@ function openEntry(row: Record<string, unknown>) {
 
 async function submitEntry(asDraft: boolean) {
   const token = crypto.randomUUID().replace(/-/g, '')
+  try {
   const res = await http.post(
     `/fin/cost/${form.sessionCode}`,
     {
@@ -416,6 +426,9 @@ async function submitEntry(asDraft: boolean) {
   drawerOpen.value = false
   await loadRate()
   await loadTab()
+  } catch (err) {
+    error.value = failMsg(err, '提交失败')
+  }
 }
 
 function assignFormFromCost(d: Record<string, unknown>) {
@@ -452,13 +465,13 @@ async function loadPeriod() {
 
 async function closePeriod() {
   const month = periodMonth.value.trim()
-  const res = await http.post('/fin/period/close', { periodMonth: month })
-  if (res.data?.code !== 0) {
-    error.value = res.data?.msg || '结账失败'
-    return
+  try {
+    const res = await http.post('/fin/period/close', { periodMonth: month })
+    periodStatus.value = res.data?.data?.financeStatus || 'LOCKED'
+    error.value = ''
+  } catch (err) {
+    error.value = failMsg(err, '结账失败')
   }
-  periodStatus.value = res.data.data?.financeStatus || 'LOCKED'
-  error.value = ''
 }
 
 async function openCorrection(sessionCode: string) {
@@ -479,6 +492,7 @@ async function openCorrection(sessionCode: string) {
 
 async function applyLockAdjust() {
   correctionError.value = ''
+  try {
   const listed = await http.get('/flow/template/list', {
     params: { templateName: '费用报销', status: 'PUBLISHED', pageNo: 1, pageSize: 10 },
   })
@@ -514,21 +528,24 @@ async function applyLockAdjust() {
   }
   lockAdjustTaskId.value = hit.id
   lockAdjustStatus.value = '待审批'
+  } catch (err) {
+    correctionError.value = failMsg(err, '发起审批失败')
+  }
 }
 
 async function approveLockAdjust() {
   if (!lockAdjustTaskId.value) return
   correctionError.value = ''
-  const res = await http.put(`/flow/task/${lockAdjustTaskId.value}/handle`, {
-    action: 'APPROVE',
-    comment: 'R4 锁后更正',
-  })
-  if (res.data?.code !== 0) {
-    correctionError.value = res.data?.msg || '审批失败'
-    return
+  try {
+    await http.put(`/flow/task/${lockAdjustTaskId.value}/handle`, {
+      action: 'APPROVE',
+      comment: 'R4 锁后更正',
+    })
+    lockAdjustStatus.value = '已通过'
+    lockAdjustTaskId.value = null
+  } catch (err) {
+    correctionError.value = failMsg(err, '审批失败')
   }
-  lockAdjustStatus.value = '已通过'
-  lockAdjustTaskId.value = null
 }
 
 async function submitCorrection() {
@@ -539,6 +556,7 @@ async function submitCorrection() {
     return
   }
   const token = crypto.randomUUID().replace(/-/g, '')
+  try {
   const res = await http.post(
     `/fin/cost/${form.sessionCode}/correction`,
     {
@@ -568,6 +586,11 @@ async function submitCorrection() {
   correctionOpen.value = false
   error.value = ''
   await loadEntered()
+  } catch (err) {
+    const msg = failMsg(err, '更正失败')
+    correctionError.value = msg
+    error.value = msg
+  }
 }
 
 async function confirmCost(sessionCode: string) {

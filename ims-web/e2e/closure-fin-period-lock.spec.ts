@@ -61,6 +61,17 @@ test.describe('fin period lock and post-lock correction', () => {
 
     await page.goto('/ims/fin/cost')
     await expect(page.locator('h1')).toHaveText('成本核算', { timeout: 15_000 })
+    const reloadPeriod = page.waitForResponse(
+      (r) =>
+        r.url().includes('/fin/period') &&
+        r.url().includes(encodeURIComponent(periodMonth)) &&
+        r.request().method() === 'GET' &&
+        r.status() === 200,
+    )
+    await page.getByTestId('fin-period-month').fill(periodMonth)
+    await page.getByTestId('fin-period-month').blur()
+    await reloadPeriod
+    await expect(page.getByTestId('fin-period-status')).toHaveText('LOCKED')
     await page.locator('.tab', { hasText: '待录入清单' }).click()
     await page.locator('input[placeholder="场次 ID"]').fill(blocked.sessionCode)
     const pendingResp = page.waitForResponse(
