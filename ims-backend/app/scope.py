@@ -160,6 +160,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/corp/device/live", "ims_asset_ledger"),
     ("GET", "/admin-api/ims/asset/ledger", "ims_asset_ledger"),
     ("POST", "/admin-api/ims/asset/ledger", "ims_asset_ledger"),
+    ("POST", "/admin-api/ims/asset/ledger/import", "ims_asset_ledger"),
     ("GET", "/admin-api/ims/asset/forward", "ims_asset_ledger"),
     ("GET", "/admin-api/ims/asset/reverse", "ims_asset_ledger"),
     ("GET", "/admin-api/ims/corp/device/phone", "oa_phone"),

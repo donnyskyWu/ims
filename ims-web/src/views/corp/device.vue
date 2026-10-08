@@ -9,6 +9,7 @@
         <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
         <template v-else>
           <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
+          <button class="btn btn-sec" type="button" data-testid="corp-asset-import-btn" @click="openImport">采购导入</button>
           <button class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
         </template>
       </div>
@@ -134,6 +135,37 @@
         <button class="btn btn-pri" type="button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="importOpen" title="采购导入" width="640px" @close="importOpen = false">
+      <p class="hint">CSV 表头：资产编号、资产名称、资产类型、规格、采购日期。合法行写入台账（待审核），非法行按行号和字段列出。已入库的行不会因为后面的错误行回滚。</p>
+      <div class="formrow one">
+        <div class="fld">
+          <label>采购文件<i class="req">*</i></label>
+          <input type="file" accept=".csv,text/csv" data-testid="corp-asset-import-file" @change="onImportFile" />
+        </div>
+      </div>
+      <div v-if="importResult" data-testid="corp-asset-import-result">
+        <p class="hint" data-testid="corp-asset-import-summary">{{ importSummary(importResult) }}</p>
+        <p class="hint">批次 <span data-testid="corp-asset-import-batch">{{ importResult.batchNo }}</span></p>
+        <ul v-if="importOk.length" data-testid="corp-asset-import-ok">
+          <li v-for="item in importOk" :key="String(item.assetCode)">{{ item.assetCode }} · {{ item.assetName }} · 待审核</li>
+        </ul>
+        <table v-if="importErrors.length" data-testid="corp-asset-import-errors">
+          <thead><tr><th>行号</th><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr v-for="item in importErrors" :key="String(item.rowNo) + String(item.field)" data-testid="corp-asset-import-error">
+              <td>第 {{ item.rowNo }} 行</td>
+              <td>{{ item.fieldLabel || item.field }}（{{ item.field }}）</td>
+              <td>{{ item.message }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="importOpen = false">关闭</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-import-save" :disabled="saving" @click="submitImport">{{ saving ? '导入中…' : '导入入台账' }}</button>
+      </template>
+    </ProtoDrawer>
     <ProtoDrawer :open="assetCreateOpen" title="资产登记" width="480px" @close="assetCreateOpen = false">
       <div class="formrow one"><div class="fld"><label>资产编号<i class="req">*</i></label><input v-model="assetForm.assetCode" data-testid="corp-asset-code" /></div></div>
       <div class="formrow one"><div class="fld"><label>名称<i class="req">*</i></label><input v-model="assetForm.assetName" data-testid="corp-asset-name" /></div></div>
@@ -219,6 +251,8 @@
         <div class="fld"><label>名称</label><div>{{ assetDetail.assetName }}</div></div>
         <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
         <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
+        <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
+        <div class="fld"><label>采购批次</label><div data-testid="corp-asset-detail-batch">{{ assetDetail.purchaseBatchNo || '—' }}</div></div>
       </div>
       <table data-testid="corp-asset-timeline">
         <thead><tr><th>事件</th><th>状态</th><th>说明</th></tr></thead>
@@ -311,6 +345,9 @@ const phoneTypes = ref<Opt[]>([])
 const assetTypes = ref<Opt[]>([])
 const assetStatuses = ref<Opt[]>([])
 const assetCreateOpen = ref(false)
+const importOpen = ref(false)
+const importFile = ref<File | null>(null)
+const importResult = ref<Row | null>(null)
 const checkoutOpen = ref(false)
 const useOpen = ref(false)
 const returnOpen = ref(false)
@@ -383,13 +420,13 @@ const specs: Record<string, {
 }> = {
   office: {
     title: '办公设备管理',
-    sub: 'CORP-D · 领用 → 使用 → 归还 → 报废 · 实名人穿透',
+    sub: 'CORP-D · 采购导入 → 领用 → 使用 → 归还 → 报废 · 实名人穿透',
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
-    emptyHint: '点「资产登记」写入台账，再按领用、使用、归还、报废流转。',
-    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。',
-    columns: ['编号', '名称', '类型', '规格', '状态', '责任人'],
-    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'status', 'ownerName'],
+    emptyHint: '点「资产登记」或「采购导入」写入台账，再按领用、使用、归还、报废流转。',
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。采购导入：合法行入台账，非法行按行号和字段定位，部分成功不回滚。正向穿透：实名人 → 资产，最多 5 层，超出返回 1013。反向穿透：资产 → 使用人，区分在用 / 已归还 / 已报废。',
+    columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
+    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
   },
   live: {
     title: '直播设备管理',
@@ -398,8 +435,8 @@ const specs: Record<string, {
     empty: '没有直播设备',
     emptyHint: '登记时类型选直播设备或拍摄设备。流转与办公设备相同。',
     hint: 'GET /corp/device/live/page 合并 assetType=LIVE 与 SHOOT。',
-    columns: ['编号', '名称', '类型', '规格', '状态', '责任人'],
-    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'status', 'ownerName'],
+    columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
+    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
   },
   phone: {
     title: '手机设备管理',
@@ -415,6 +452,8 @@ const specs: Record<string, {
 
 const meta = computed(() => specs[kind.value] || specs.office)
 const assetStatusOptions = computed(() => (assetStatuses.value.length ? assetStatuses.value : fallbackStatus))
+const importErrors = computed(() => (importResult.value?.errors as Row[] | undefined) || [])
+const importOk = computed(() => (importResult.value?.imported as Row[] | undefined) || [])
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const pageList = computed(() => {
   const end = Math.min(pageCount.value, Math.max(pageNo.value + 2, 5))
@@ -435,6 +474,7 @@ const labels: Record<string, string> = {
   assetName: '名称',
   assetType: '类型',
   spec: '规格',
+  purchaseDate: '采购日期',
   ownerName: '责任人',
 }
 
@@ -609,12 +649,54 @@ async function save() {
 
 function closeAssetDrawers() {
   assetCreateOpen.value = false
+  importOpen.value = false
   checkoutOpen.value = false
   useOpen.value = false
   returnOpen.value = false
   scrapOpen.value = false
   forwardOpen.value = false
   reverseOpen.value = false
+}
+
+function importSummary(result: Row) {
+  const passed = Number(result.successCount || 0)
+  const failed = Number(result.failCount || 0)
+  if (result.partial) return `部分成功：成功 ${passed} 条，失败 ${failed} 条`
+  if (failed && !passed) return `未能入库：失败 ${failed} 条`
+  return `全部成功：成功 ${passed} 条`
+}
+
+function openImport() {
+  closeAssetDrawers()
+  importFile.value = null
+  importResult.value = null
+  formError.value = ''
+  importOpen.value = true
+}
+
+function onImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  importFile.value = input.files && input.files[0] ? input.files[0] : null
+}
+
+async function submitImport() {
+  if (!importFile.value) {
+    formError.value = '请选择 CSV 文件'
+    return
+  }
+  saving.value = true
+  formError.value = ''
+  try {
+    const body = new FormData()
+    body.append('file', importFile.value)
+    const res = await http.post('/asset/ledger/import', body)
+    importResult.value = (res.data?.data || null) as Row | null
+    await load()
+  } catch (e: unknown) {
+    formError.value = bizError(e)
+  } finally {
+    saving.value = false
+  }
 }
 
 function openAssetCreate() {

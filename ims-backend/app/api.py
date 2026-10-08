@@ -293,6 +293,7 @@ from app.audit import router as audit_router
 from app.corp import router as corp_router
 from app.device import router as device_router
 from app.asset_ledger import router as asset_ledger_router
+from app.asset_purchase import router as asset_purchase_router
 from app.asset_penetrate import router as asset_penetrate_router
 from app.content import router as content_router
 from app.content_fb import router as content_fb_router
@@ -349,6 +350,7 @@ router.include_router(acct_flow_router)
 router.include_router(ip_group_router)
 router.include_router(device_router)
 router.include_router(asset_ledger_router)
+router.include_router(asset_purchase_router)
 router.include_router(asset_penetrate_router)
 router.include_router(live_router)
 router.include_router(content_router)
