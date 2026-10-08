@@ -1,6 +1,8 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, BigInteger, Date, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
+from decimal import Decimal
+
+from sqlalchemy import JSON, BigInteger, Date, DateTime, Float, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core import Base, utcnow
@@ -1171,6 +1173,34 @@ class FinShareResult(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FinShareRule(Base):
+    """FIN-003 分成规则。编辑在原行递增 version，不改写已生成分成单。"""
+
+    __tablename__ = "ims_fin_share_rule"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "client_token", name="uk_fin_share_rule_token"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    rule_name: Mapped[str] = mapped_column(String(64), default="")
+    share_target: Mapped[str] = mapped_column(String(16), default="DAREN", index=True)
+    base_type: Mapped[str] = mapped_column(String(16), default="NET_PROFIT")
+    rate_type: Mapped[str] = mapped_column(String(16), default="FIXED")
+    fixed_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    ladder_config: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    rule_scope: Mapped[dict] = mapped_column(JSON, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED", index=True)
+    effective_from: Mapped[str] = mapped_column(String(32), default="")
+    effective_to: Mapped[str] = mapped_column(String(32), default="")
+    client_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class FinPeriod(Base):

@@ -716,6 +716,15 @@
       "parent": "场次财务",
       "desc": "DC-002 · /ims/fin/profit-trace · GET /dc/profit-trace/*"
     },
+    "finShareRule": {
+      "no": "11",
+      "name": "分成规则",
+      "code": "FIN",
+      "icon": "yuan",
+      "page": "分成规则",
+      "parent": "场次财务",
+      "desc": "FIN-003 · /ims/fin/share/rule · 规则维护与试算"
+    },
     "finShareResult": {
       "no": "11",
       "name": "分成单",
@@ -1191,6 +1200,7 @@
             "finCost",
             "finProfit",
             "finProfitTrace",
+            "finShareRule",
             "finShareResult",
             "finLedger"
           ]

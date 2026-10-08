@@ -1,0 +1,27 @@
+-- FIN-003 分成规则（#84 · GET/POST/PUT/DELETE /fin/share/rule* · POST /fin/share/simulate）
+CREATE TABLE IF NOT EXISTS ims_fin_share_rule (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  rule_name VARCHAR(64) NOT NULL DEFAULT '',
+  share_target VARCHAR(16) NOT NULL DEFAULT 'DAREN',
+  base_type VARCHAR(16) NOT NULL DEFAULT 'NET_PROFIT',
+  rate_type VARCHAR(16) NOT NULL DEFAULT 'FIXED',
+  fixed_rate DECIMAL(5,4) NULL,
+  ladder_config JSON NULL,
+  rule_scope JSON NULL,
+  priority INT NOT NULL DEFAULT 0,
+  version INT NOT NULL DEFAULT 1,
+  status VARCHAR(16) NOT NULL DEFAULT 'ENABLED',
+  effective_from VARCHAR(32) NOT NULL DEFAULT '',
+  effective_to VARCHAR(32) NOT NULL DEFAULT '',
+  client_token VARCHAR(64) NULL,
+  created_by BIGINT NOT NULL DEFAULT 0,
+  deleted INT NOT NULL DEFAULT 0,
+  tenant_id BIGINT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_fin_share_rule_token (tenant_id, client_token),
+  KEY idx_fin_share_rule_target (share_target),
+  KEY idx_fin_share_rule_priority (priority),
+  KEY idx_fin_share_rule_status (status),
+  KEY idx_fin_share_rule_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
