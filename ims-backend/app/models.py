@@ -2005,3 +2005,18 @@ class AssetTraceLog(Base):
     query_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DcTraceLog(Base):
+    """穿透查询审计（DC-T-R4 · ims_dc_trace_log）。"""
+
+    __tablename__ = "ims_dc_trace_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    entry_type: Mapped[str] = mapped_column(String(32), default="")
+    entry_id: Mapped[str] = mapped_column(String(64), default="")
+    entry_label: Mapped[str] = mapped_column(String(128), default="")
+    query_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    result_rows: Mapped[int] = mapped_column(Integer, default=0)
+    cost_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

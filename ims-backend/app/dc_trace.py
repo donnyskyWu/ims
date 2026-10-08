@@ -1,7 +1,8 @@
-"""DC-001 穿透查询（#52 账号 · #53 场次下钻 · #88 实名人/责任人/资产/IP 组）。"""
+"""DC-001 穿透查询（#52 账号 · #53 场次下钻 · #88 六入口 · #91 聚合与性能）。"""
 
 from __future__ import annotations
 
+import math
 import secrets
 import time
 import zipfile
@@ -19,8 +20,8 @@ from app.core import mask_name
 from app.corp import page_args, tenant_of, user_names
 from app.dc_profit_trace import cost_detail_rows, parse_asset_ids
 from app.fin import approved_report, load_fin_cost, load_profit, money, net_profit_rate, operating_profit
-from app.live import get_session
-from app.models import LiveSession, User
+from app.live import get_session, role_tags
+from app.models import DcTraceLog, FinCost, FinProfit, LiveReport, LiveSession, User, UserDept
 from app.ops_db import ops_session
 from app.ops_models import IpGroup, Phone, PlatformAccount
 
@@ -28,8 +29,19 @@ router = APIRouter(prefix="/dc/trace", tags=["dc-trace"])
 
 BJ = timezone(timedelta(hours=8))
 ENTRY_TYPES = frozenset({"PERSON", "ACCOUNT", "ASSET", "SESSION", "RESPONSIBLE", "IP_GROUP"})
+AGGREGATE_BY = frozenset({"PERSON", "ACCOUNT", "TEAM", "IP_GROUP"})
+ENTRY_NAMES = {
+    "PERSON": "实名人",
+    "ACCOUNT": "账号",
+    "ASSET": "资产",
+    "SESSION": "场次",
+    "RESPONSIBLE": "责任人",
+    "IP_GROUP": "IP组",
+}
 WIDE_RANGE_DAYS = 92
 TIMEOUT_MS = 3000
+TARGET_P95_MS = 3000
+PRESSURE_SAMPLE = 10
 TIMEOUT_MSG = "穿透查询超时降级，请缩小日期范围"
 EXPORT_TTL_SEC = 300
 
@@ -172,12 +184,23 @@ def load_entry_sessions(db: Session, tenant_id: int, entry_type: str, entry_id: 
     return list(db.scalars(stmt.order_by(LiveSession.id.desc()).limit(50)).all())
 
 
-def build_graph_from_sessions(sessions: list[LiveSession], labels: dict[int, str] | None = None) -> dict:
+def build_graph_from_sessions(
+    sessions: list[LiveSession],
+    labels: dict[int, str] | None = None,
+    reports: dict[str, LiveReport] | None = None,
+    costs: dict[str, FinCost] | None = None,
+    profits: dict[str, FinProfit] | None = None,
+    *,
+    masked: bool = False,
+) -> dict:
     nodes: list[dict] = []
     edges: list[dict] = []
     seen: set[str] = set()
     seen_edges: set[tuple[str, str]] = set()
     asset_labels = labels or {}
+    report_map = reports or {}
+    cost_map = costs or {}
+    profit_map = profits or {}
 
     def add_node(node_type: str, node_id: str, label: str, **extra) -> str:
         key = f"{node_type}:{node_id}"
@@ -201,9 +224,29 @@ def build_graph_from_sessions(sessions: list[LiveSession], labels: dict[int, str
             row.account_no or f"账号#{row.account_id}",
             platform=row.platform or None,
         )
+        report = report_map.get(row.session_code)
+        cost = cost_map.get(row.session_code)
+        profit = profit_map.get(row.session_code)
+        gmv = money(report.gmv) if report is not None else None
+        total_cost = None if masked or cost is None else money(cost.total_cost)
+        net = None if masked or profit is None else money(profit.net_profit)
         session_id = add_node("SESSION", row.session_code, row.topic or row.session_code, platform=row.platform)
+        cost_id = add_node(
+            "COST",
+            f"cost:{row.session_code}",
+            "成本",
+            metrics={"sessionCount": 1, "totalCost": total_cost},
+        )
+        profit_id = add_node(
+            "PROFIT",
+            f"profit:{row.session_code}",
+            "利润",
+            metrics={"sessionCount": 1, "gmv": gmv, "netProfit": net},
+        )
         add_edge(person_id, account_id)
         add_edge(account_id, session_id)
+        add_edge(session_id, cost_id)
+        add_edge(cost_id, profit_id)
         for asset_id in parse_asset_ids(row.device_asset_ids or "[]"):
             asset_node = add_node("ASSET", str(asset_id), asset_labels.get(asset_id, f"资产#{asset_id}"))
             add_edge(asset_node, session_id)
@@ -640,6 +683,315 @@ def degraded_payload(elapsed: float) -> dict:
     }
 
 
+def amounts_masked(db: Session, actor: User, request: Request) -> bool:
+    """R7（本人）与 R9 的成本/利润金额返回 null。R1–R4 保留金额。"""
+    tags = role_tags(db, actor)
+    if tags & {"r1", "r2", "r3", "r4", "sys:admin"}:
+        return False
+    if "r9" in tags:
+        return True
+    scope = getattr(request.state, "scope", None)
+    return scope is not None and getattr(scope, "kind", "") == "SELF"
+
+
+def can_view_perf(db: Session, actor: User) -> bool:
+    tags = role_tags(db, actor)
+    return bool(tags & {"r1", "r9", "sys:admin"})
+
+
+def parse_range_param(raw: str | None) -> tuple[list[str] | None, str | None]:
+    text = (raw or "").strip()
+    if not text:
+        return None, None
+    parts = [part.strip()[:10] for part in text.split(",") if part.strip()]
+    if len(parts) != 2 or parts[0] > parts[1]:
+        return None, "dateRange 须为开始日,结束日"
+    try:
+        datetime.strptime(parts[0], "%Y-%m-%d")
+        datetime.strptime(parts[1], "%Y-%m-%d")
+    except ValueError:
+        return None, "dateRange 须为开始日,结束日"
+    return parts, None
+
+
+def finance_index(
+    db: Session, tenant_id: int, codes: list[str]
+) -> tuple[dict[str, LiveReport], dict[str, FinCost], dict[str, FinProfit]]:
+    unique = [code for code in dict.fromkeys(codes) if code]
+    if not unique:
+        return {}, {}, {}
+    reports = {
+        row.session_code: row
+        for row in db.scalars(
+            select(LiveReport).where(
+                LiveReport.deleted == 0,
+                LiveReport.tenant_id == tenant_id,
+                LiveReport.entry_status == "CONFIRMED",
+                LiveReport.session_code.in_(unique),
+            )
+        ).all()
+    }
+    costs = {
+        row.session_code: row
+        for row in db.scalars(
+            select(FinCost).where(
+                FinCost.deleted == 0,
+                FinCost.tenant_id == tenant_id,
+                FinCost.session_code.in_(unique),
+            )
+        ).all()
+    }
+    profits = {
+        row.session_code: row
+        for row in db.scalars(
+            select(FinProfit).where(
+                FinProfit.deleted == 0,
+                FinProfit.tenant_id == tenant_id,
+                FinProfit.session_code.in_(unique),
+            )
+        ).all()
+    }
+    return reports, costs, profits
+
+
+def add_amount(current: float | None, value: float | None) -> float | None:
+    if value is None:
+        return current
+    if current is None:
+        return money(value)
+    return money(current + value)
+
+
+def account_group_map(tenant_id: int, account_ids: set[int]) -> dict[int, tuple[int, str]]:
+    ids = [item for item in account_ids if item]
+    if not ids:
+        return {}
+    ops = ops_session()
+    try:
+        accounts = list(
+            ops.scalars(
+                select(PlatformAccount).where(
+                    PlatformAccount.deleted == 0,
+                    PlatformAccount.tenant_id == tenant_id,
+                    PlatformAccount.id.in_(ids),
+                )
+            ).all()
+        )
+        group_ids = {account.ip_group_id for account in accounts if account.ip_group_id}
+        groups = {}
+        if group_ids:
+            groups = {
+                row.id: row
+                for row in ops.scalars(select(IpGroup).where(IpGroup.id.in_(group_ids), IpGroup.deleted == 0)).all()
+            }
+    finally:
+        ops.close()
+    mapped: dict[int, tuple[int, str]] = {}
+    for account in accounts:
+        group = groups.get(account.ip_group_id or 0)
+        if group is None:
+            mapped[account.id] = (0, "未归属IP组")
+        else:
+            mapped[account.id] = (int(group.id), group.group_name or f"IP组#{group.id}")
+    return mapped
+
+
+def team_of_users(db: Session, tenant_id: int, user_ids: set[int]) -> dict[int, tuple[str, str]]:
+    ids = [item for item in user_ids if item]
+    found: dict[int, tuple[str, str]] = {}
+    if ids:
+        rows = db.execute(
+            select(UserDept.user_id, UserDept.dept_id).where(
+                UserDept.user_id.in_(ids),
+                UserDept.tenant_id == tenant_id,
+            )
+        ).all()
+        by_user: dict[int, list[int]] = {}
+        for user_id, dept_id in rows:
+            by_user.setdefault(int(user_id), []).append(int(dept_id))
+        for user_id, dept_ids in by_user.items():
+            dept_id = sorted(dept_ids)[0]
+            found[user_id] = (str(dept_id), f"团队#{dept_id}")
+    for user_id in ids:
+        found.setdefault(int(user_id), ("0", "未归属团队"))
+    return found
+
+
+def ip_group_label(tenant_id: int, group_id: int) -> str:
+    if not group_id:
+        return ""
+    ops = ops_session()
+    try:
+        group = ops.get(IpGroup, group_id)
+    finally:
+        ops.close()
+    if group is None or group.deleted or (group.tenant_id or 0) != tenant_id:
+        return ""
+    return (group.group_name or "").strip() or f"IP组#{group_id}"
+
+
+def describe_entry(
+    db: Session,
+    tenant_id: int,
+    entry_type: str,
+    entry_id: str,
+    sessions: list[LiveSession],
+    labels: dict[int, str] | None = None,
+) -> str:
+    entry_id = (entry_id or "").strip()
+    if sessions:
+        row = sessions[0]
+        if entry_type == "PERSON" and (row.realname_name or "").strip():
+            return row.realname_name.strip()
+        if entry_type == "ACCOUNT" and (row.account_no or "").strip():
+            return row.account_no.strip()
+        if entry_type == "SESSION":
+            return (row.topic or row.session_code or entry_id).strip()
+        if entry_type == "RESPONSIBLE" and row.responsible_user_id:
+            names = user_names(db, {int(row.responsible_user_id)})
+            named = names.get(int(row.responsible_user_id))
+            if named:
+                return named
+        if entry_type == "ASSET":
+            named = (labels or {}).get(as_int(entry_id))
+            if named:
+                return named
+        if entry_type == "IP_GROUP":
+            named = ip_group_label(tenant_id, as_int(entry_id))
+            if named:
+                return named
+    fallback = ENTRY_NAMES.get(entry_type, entry_type or "入口")
+    return f"{fallback} {entry_id}".strip()
+
+
+def record_trace(
+    db: Session,
+    actor: User,
+    entry_type: str,
+    entry_id: str,
+    entry_label: str,
+    result_rows: int,
+    cost_ms: float,
+) -> None:
+    db.add(
+        DcTraceLog(
+            entry_type=(entry_type or "")[:32],
+            entry_id=(entry_id or "")[:64],
+            entry_label=(entry_label or "")[:128],
+            query_user_id=actor.id,
+            result_rows=int(result_rows or 0),
+            cost_ms=float(cost_ms or 0),
+            tenant_id=tenant_of(actor),
+        )
+    )
+
+
+def aggregate_rows(
+    db: Session,
+    tenant_id: int,
+    sessions: list[LiveSession],
+    aggregate_by: str,
+    *,
+    masked: bool,
+) -> list[dict]:
+    reports, costs, profits = finance_index(db, tenant_id, [row.session_code for row in sessions])
+    groups = (
+        account_group_map(tenant_id, {int(row.account_id or 0) for row in sessions})
+        if aggregate_by == "IP_GROUP"
+        else {}
+    )
+    teams = (
+        team_of_users(db, tenant_id, {int(row.responsible_user_id or 0) for row in sessions})
+        if aggregate_by == "TEAM"
+        else {}
+    )
+    buckets: dict[str, dict] = {}
+    for row in sessions:
+        if aggregate_by == "PERSON":
+            key = str(row.realname_person_id or 0)
+            label = row.realname_name or (f"实名人#{key}" if key != "0" else "未归属实名人")
+        elif aggregate_by == "ACCOUNT":
+            key = str(row.account_id or 0)
+            label = row.account_no or (f"账号#{key}" if key != "0" else "未归属账号")
+        elif aggregate_by == "IP_GROUP":
+            group_id, label = groups.get(int(row.account_id or 0), (0, "未归属IP组"))
+            key = str(group_id)
+        else:
+            key, label = teams.get(int(row.responsible_user_id or 0), ("0", "未归属团队"))
+        bucket = buckets.get(key)
+        if bucket is None:
+            bucket = {
+                "dimensionValue": key,
+                "dimensionLabel": label,
+                "sessionCount": 0,
+                "gmv": None,
+                "totalCost": None,
+                "netProfit": None,
+                "_persons": set(),
+            }
+            buckets[key] = bucket
+        report = reports.get(row.session_code)
+        cost = costs.get(row.session_code)
+        profit = profits.get(row.session_code)
+        bucket["sessionCount"] += 1
+        bucket["gmv"] = add_amount(bucket["gmv"], money(report.gmv) if report is not None else None)
+        if not masked:
+            bucket["totalCost"] = add_amount(
+                bucket["totalCost"], money(cost.total_cost) if cost is not None else None
+            )
+            bucket["netProfit"] = add_amount(
+                bucket["netProfit"], money(profit.net_profit) if profit is not None else None
+            )
+        person_key = str(row.realname_person_id or 0) if row.realname_person_id else (row.realname_name or "")
+        if person_key:
+            bucket["_persons"].add(person_key)
+    rows_out: list[dict] = []
+    for bucket in buckets.values():
+        persons = bucket.pop("_persons")
+        bucket["personCount"] = len(persons)
+        rows_out.append(bucket)
+    rows_out.sort(key=lambda item: (-item["sessionCount"], item["dimensionValue"]))
+    return rows_out
+
+
+def percentile_ms(values: list[float], percent: float) -> float:
+    """最近秩：ceil(p% × n) 的那一条。无样本为 0。"""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = math.ceil(percent / 100 * len(ordered))
+    index = min(len(ordered), max(rank, 1)) - 1
+    return round(float(ordered[index]), 1)
+
+
+def default_perf_parts() -> list[str]:
+    today = datetime.now(BJ).date()
+    start = today - timedelta(days=6)
+    return [start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")]
+
+
+def utc_bounds(parts: list[str]) -> tuple[datetime, datetime]:
+    start = datetime.strptime(parts[0], "%Y-%m-%d").replace(tzinfo=BJ)
+    end = datetime.strptime(parts[1], "%Y-%m-%d").replace(hour=23, minute=59, second=59, tzinfo=BJ)
+    return (
+        start.astimezone(timezone.utc).replace(tzinfo=None),
+        end.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
+def bj_stamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(BJ)
+
+
+def pressure_passed(rows: list[DcTraceLog], day: str) -> bool:
+    sample = [row for row in rows if bj_stamp(row.created_at).strftime("%Y-%m-%d") == day]
+    if len(sample) < PRESSURE_SAMPLE:
+        return False
+    return percentile_ms([float(row.cost_ms or 0) for row in sample], 95) <= TARGET_P95_MS
+
+
 @router.get("/entry")
 def trace_entry(
     keyword: str = "",
@@ -704,16 +1056,28 @@ def trace_entry(
 @router.post("/query")
 def trace_query(
     body: TraceQueryBody,
+    request: Request,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
     started = time.perf_counter()
+    masked = amounts_masked(db, actor, request)
     if body.entryType not in ENTRY_TYPES:
         elapsed = round((time.perf_counter() - started) * 1000, 1)
+        record_trace(db, actor, body.entryType, body.entryId, body.entryType or "入口", 0, elapsed)
         return ok({"queryCostMs": elapsed, "dataAsOf": data_as_of(), "nodes": [], "edges": []})
     if range_too_wide(body.dateRange):
         elapsed = round((time.perf_counter() - started) * 1000, 1)
+        record_trace(
+            db,
+            actor,
+            body.entryType,
+            body.entryId,
+            describe_entry(db, tenant_id, body.entryType, body.entryId, []),
+            0,
+            elapsed,
+        )
         return fail(1181, TIMEOUT_MSG, degraded_payload(elapsed))
     sessions = filter_by_date(
         load_entry_sessions(db, tenant_id, body.entryType, body.entryId),
@@ -722,15 +1086,20 @@ def trace_query(
     asset_ids: set[int] = set()
     for row in sessions:
         asset_ids.update(parse_asset_ids(row.device_asset_ids or "[]"))
-    graph = build_graph_from_sessions(sessions, asset_label_map(asset_ids))
+    labels = asset_label_map(asset_ids)
+    reports, costs, profits = finance_index(db, tenant_id, [row.session_code for row in sessions])
+    graph = build_graph_from_sessions(sessions, labels, reports, costs, profits, masked=masked)
     page_no, size = page_args(body.pageNo, body.pageSize)
     detail_list = None
     if body.mode == "DETAIL":
         rows, total = detail_from_sessions(sessions, page_no, size)
         detail_list = {"list": rows, "total": total, "pageNo": page_no, "pageSize": size}
     elapsed = round((time.perf_counter() - started) * 1000, 1)
+    label = describe_entry(db, tenant_id, body.entryType, body.entryId, sessions, labels)
     if elapsed > TIMEOUT_MS:
+        record_trace(db, actor, body.entryType, body.entryId, label, 0, elapsed)
         return fail(1181, TIMEOUT_MSG, degraded_payload(elapsed))
+    record_trace(db, actor, body.entryType, body.entryId, label, len(sessions), elapsed)
     payload = {
         "queryCostMs": elapsed,
         "dataAsOf": data_as_of(),
@@ -739,6 +1108,93 @@ def trace_query(
     if detail_list is not None:
         payload["detailList"] = detail_list
     return ok(payload)
+
+
+@router.get("/aggregate")
+def trace_aggregate(
+    request: Request,
+    entryType: str = "",
+    entryId: str = "",
+    aggregateBy: str = "PERSON",
+    dateRange: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if entryType not in ENTRY_TYPES:
+        return fail(1001, "entryType 无效")
+    if aggregateBy not in AGGREGATE_BY:
+        return fail(1001, "aggregateBy 仅支持 PERSON、ACCOUNT、TEAM、IP_GROUP")
+    parts, error = parse_range_param(dateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    started = time.perf_counter()
+    if range_too_wide(parts):
+        elapsed = round((time.perf_counter() - started) * 1000, 1)
+        record_trace(db, actor, entryType, entryId, describe_entry(db, tenant_id, entryType, entryId, []), 0, elapsed)
+        return fail(1181, TIMEOUT_MSG, [])
+    sessions = filter_by_date(load_entry_sessions(db, tenant_id, entryType, entryId), parts)
+    rows = aggregate_rows(
+        db,
+        tenant_id,
+        sessions,
+        aggregateBy,
+        masked=amounts_masked(db, actor, request),
+    )
+    elapsed = round((time.perf_counter() - started) * 1000, 1)
+    label = describe_entry(db, tenant_id, entryType, entryId, sessions)
+    record_trace(db, actor, entryType, entryId, label, len(rows), elapsed)
+    if elapsed > TIMEOUT_MS:
+        return fail(1181, TIMEOUT_MSG, [])
+    return ok(rows)
+
+
+@router.get("/perf-metrics")
+def trace_perf_metrics(
+    dateRange: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_view_perf(db, actor):
+        return fail(1008, "无数据权限")
+    parts, error = parse_range_param(dateRange)
+    if error:
+        return fail(1001, error)
+    if parts is None:
+        parts = default_perf_parts()
+    start, end = utc_bounds(parts)
+    rows = list(
+        db.scalars(
+            select(DcTraceLog)
+            .where(
+                DcTraceLog.tenant_id == tenant_of(actor),
+                DcTraceLog.created_at >= start,
+                DcTraceLog.created_at <= end,
+            )
+            .order_by(DcTraceLog.id.asc())
+        ).all()
+    )
+    costs = [float(row.cost_ms or 0) for row in rows]
+    slow = [row for row in rows if float(row.cost_ms or 0) > TIMEOUT_MS]
+    slow.sort(key=lambda row: (-float(row.cost_ms or 0), -row.id))
+    return ok(
+        {
+            "p95Ms": percentile_ms(costs, 95),
+            "p99Ms": percentile_ms(costs, 99),
+            "targetP95Ms": TARGET_P95_MS,
+            "queryCount": len(rows),
+            "slowQueries": [
+                {
+                    "queryId": f"Q{row.id}",
+                    "entryLabel": row.entry_label or "",
+                    "costMs": round(float(row.cost_ms or 0), 1),
+                    "occurredAt": bj_stamp(row.created_at).strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+                }
+                for row in slow[:50]
+            ],
+            "dailyPressureTestPassed": pressure_passed(rows, parts[1]),
+        }
+    )
 
 
 @router.get("/detail/{session_code}")

@@ -8,10 +8,11 @@
     </div>
     <div class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">
       <span v-if="dataAsOf">数据截至 <b>{{ dataAsOf }}</b> · </span>
-      <span
+      <router-link
         data-testid="dc-trace-query-cost"
+        to="/ims/dc/trace/perf"
         :style="queryCostMs > 3000 ? { color: 'var(--orange)', fontWeight: '600' } : undefined"
-      >queryCostMs {{ queried ? queryCostMs : '—' }} ms</span>
+      >queryCostMs {{ queried ? queryCostMs : '—' }} ms</router-link>
       ·
       <span
         data-testid="dc-trace-timeout-hint"
@@ -77,12 +78,107 @@
     <p v-if="selectedEntry" class="hint" data-testid="dc-trace-current-entry">
       当前入口：{{ entryTypeLabel(selectedEntry.entryType) }} · {{ selectedEntry.entryLabel }}
     </p>
+    <div v-if="crumbs.length" class="hint" data-testid="dc-trace-breadcrumb" style="margin: 8px 0">
+      <button
+        v-for="(crumb, index) in crumbs"
+        :key="index"
+        type="button"
+        class="btn btn-sec btn-sm"
+        style="margin-right: 6px"
+        data-testid="dc-trace-crumb"
+        :data-crumb-index="index"
+        @click="truncateCrumb(index)"
+      >
+        {{ crumb.label }}
+      </button>
+    </div>
+    <div class="hint" style="margin: 8px 0">
+      <button
+        type="button"
+        class="btn btn-sm"
+        :class="viewMode === 'SPLIT' ? 'btn-pri' : 'btn-sec'"
+        data-testid="dc-trace-mode-split"
+        @click="viewMode = 'SPLIT'"
+      >
+        链路图/明细
+      </button>
+      <button
+        type="button"
+        class="btn btn-sm"
+        :class="viewMode === 'AGGREGATE' ? 'btn-pri' : 'btn-sec'"
+        data-testid="dc-trace-mode-aggregate"
+        style="margin-left: 6px"
+        @click="showAggregate"
+      >
+        聚合
+      </button>
+    </div>
     <div v-if="error" class="hint" style="color: var(--red)">{{ error }}</div>
-    <div class="g2" style="margin-top: 12px">
+    <div v-if="viewMode === 'AGGREGATE'" class="tbl-block" data-testid="dc-trace-aggregate" style="margin-top: 12px">
+      <div class="hint" style="margin-bottom: 8px">
+        汇总维度
+        <select :value="aggregateBy" data-testid="dc-trace-aggregate-by" @change="onAggregateBy">
+          <option value="PERSON">按人</option>
+          <option value="ACCOUNT">按账号</option>
+          <option value="TEAM">按团队</option>
+          <option value="IP_GROUP">按IP组</option>
+        </select>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>维度</th>
+              <th>场次数</th>
+              <th>GMV</th>
+              <th>总成本</th>
+              <th>净利润</th>
+              <th>涉及人数</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="row in aggregates"
+              :key="row.dimensionValue"
+              data-testid="dc-trace-aggregate-row"
+              :data-dimension-value="row.dimensionValue"
+            >
+              <td>
+                <button
+                  v-if="aggregateBy !== 'TEAM'"
+                  type="button"
+                  class="btn btn-sec btn-sm"
+                  data-testid="dc-trace-aggregate-drill"
+                  :data-dimension-value="row.dimensionValue"
+                  @click="drillAggregate(row)"
+                >
+                  {{ row.dimensionLabel }}
+                </button>
+                <template v-else>{{ row.dimensionLabel }}</template>
+              </td>
+              <td class="num">{{ row.sessionCount }}</td>
+              <td class="num">{{ moneyOrDash(row.gmv) }}</td>
+              <td class="num">{{ moneyOrDash(row.totalCost) }}</td>
+              <td class="num">{{ moneyOrDash(row.netProfit) }}</td>
+              <td class="num">{{ row.personCount }}</td>
+            </tr>
+            <tr v-if="!aggregates.length">
+              <td colspan="6"><div class="empty"><div class="et">暂无汇总</div></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div v-else class="g2" style="margin-top: 12px">
       <div class="card" style="padding: 12px; min-height: 200px" data-testid="dc-trace-graph">
         <b style="font-size: 13px">关系图</b>
         <ul style="margin: 10px 0 0; padding-left: 18px; font-size: 12px">
-          <li v-for="n in nodes" :key="n.nodeType + ':' + n.nodeId" :data-node-type="n.nodeType">
+          <li
+            v-for="n in nodes"
+            :key="n.nodeType + ':' + n.nodeId"
+            :data-node-type="n.nodeType"
+            :data-node-id="n.nodeId"
+          >
             {{ n.nodeType }} ·
             <button
               v-if="n.nodeType === 'SESSION'"
@@ -103,6 +199,16 @@
             >
               {{ n.nodeLabel }}
             </button>
+            <span
+              v-else-if="n.nodeType === 'COST'"
+              data-testid="dc-trace-cost-node"
+              :data-node-id="n.nodeId"
+            >{{ n.nodeLabel }} {{ moneyOrDash(n.metrics?.totalCost) }}</span>
+            <span
+              v-else-if="n.nodeType === 'PROFIT'"
+              data-testid="dc-trace-profit-node"
+              :data-node-id="n.nodeId"
+            >{{ n.nodeLabel }} {{ moneyOrDash(n.metrics?.netProfit) }}</span>
             <template v-else>{{ n.nodeLabel }}</template>
           </li>
         </ul>
@@ -206,12 +312,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 
 type Entry = { entryType: string; entryId: string; entryLabel: string; hint?: string }
-type Node = { nodeType: string; nodeId: string; nodeLabel: string }
+type Node = {
+  nodeType: string
+  nodeId: string
+  nodeLabel: string
+  metrics?: { totalCost?: number | null; netProfit?: number | null; gmv?: number | null }
+}
 type Detail = { sessionCode: string; platform: string; accountNo: string; realnameName: string }
+type AggregateRow = {
+  dimensionValue: string
+  dimensionLabel: string
+  sessionCount: number
+  gmv: number | null
+  totalCost: number | null
+  netProfit: number | null
+  personCount: number
+}
+type Crumb = { label: string; entry: Entry }
 type CostItem = { costItem: string; costItemLabel?: string; amount: number | null }
 type SessionDetail = {
   sessionCode: string
@@ -238,6 +360,7 @@ type TracePayload = {
 }
 type ApiFail = { code?: number; msg?: string; data?: TracePayload }
 
+const route = useRoute()
 const keyword = ref('')
 const entryType = ref('ACCOUNT')
 const dateFrom = ref('')
@@ -248,6 +371,10 @@ const entries = ref<Entry[]>([])
 const searched = ref(false)
 const nodes = ref<Node[]>([])
 const details = ref<Detail[]>([])
+const viewMode = ref<'SPLIT' | 'AGGREGATE'>('SPLIT')
+const aggregateBy = ref<'PERSON' | 'ACCOUNT' | 'TEAM' | 'IP_GROUP'>('ACCOUNT')
+const aggregates = ref<AggregateRow[]>([])
+const crumbs = ref<Crumb[]>([])
 const dataAsOf = ref('')
 const queryCostMs = ref(0)
 const queried = ref(false)
@@ -284,7 +411,26 @@ function onEntryTypeChange() {
   selectedEntry.value = null
   entries.value = []
   searched.value = false
+  crumbs.value = []
+  aggregates.value = []
 }
+
+function relationName(nodeType: string) {
+  if (nodeType === 'ACCOUNT') return '持有账号'
+  if (nodeType === 'ASSET') return '绑定资产'
+  if (nodeType === 'PERSON') return '实名人'
+  if (nodeType === 'SESSION') return '参与场次'
+  return nodeType
+}
+
+function rememberSource(entry: Entry) {
+  crumbs.value = [{ label: `源头：${entry.entryLabel}`, entry }]
+}
+
+onMounted(() => {
+  const preset = route.query.keyword
+  if (typeof preset === 'string' && preset) keyword.value = preset
+})
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -317,6 +463,7 @@ async function searchEntry() {
   error.value = ''
   searched.value = false
   selectedEntry.value = null
+  crumbs.value = []
   try {
     const res = await http.get('/dc/trace/entry', {
       params: { keyword: keyword.value, entryType: entryType.value, limit: 8 },
@@ -331,19 +478,90 @@ async function searchEntry() {
 }
 
 function drillNode(n: Node) {
+  const entry = { entryType: n.nodeType, entryId: n.nodeId, entryLabel: n.nodeLabel }
   entryType.value = n.nodeType
-  selectedEntry.value = { entryType: n.nodeType, entryId: n.nodeId, entryLabel: n.nodeLabel }
+  selectedEntry.value = entry
+  crumbs.value = [...crumbs.value, { label: `关联：${relationName(n.nodeType)} → ${n.nodeLabel}`, entry }]
+  viewMode.value = 'SPLIT'
+  runQuery()
+}
+
+function truncateCrumb(index: number) {
+  const crumb = crumbs.value[index]
+  if (!crumb) return
+  crumbs.value = crumbs.value.slice(0, index + 1)
+  entryType.value = crumb.entry.entryType
+  selectedEntry.value = crumb.entry
+  viewMode.value = 'SPLIT'
   runQuery()
 }
 
 function pickEntry(e: Entry) {
   selectedEntry.value = e
+  rememberSource(e)
+  if (viewMode.value === 'AGGREGATE') loadAggregate()
+  else runQuery()
+}
+
+function showAggregate() {
+  viewMode.value = 'AGGREGATE'
+  loadAggregate()
+}
+
+function onAggregateBy(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  if (value === 'PERSON' || value === 'ACCOUNT' || value === 'TEAM' || value === 'IP_GROUP') {
+    aggregateBy.value = value
+  }
+  loadAggregate()
+}
+
+function drillAggregate(row: AggregateRow) {
+  if (aggregateBy.value === 'TEAM') return
+  const entry = {
+    entryType: aggregateBy.value,
+    entryId: row.dimensionValue,
+    entryLabel: row.dimensionLabel,
+  }
+  entryType.value = aggregateBy.value
+  selectedEntry.value = entry
+  rememberSource(entry)
+  viewMode.value = 'SPLIT'
   runQuery()
+}
+
+async function loadAggregate() {
+  if (!selectedEntry.value) {
+    error.value = '请先选择穿透入口'
+    return
+  }
+  error.value = ''
+  try {
+    const res = await http.get('/dc/trace/aggregate', {
+      params: {
+        entryType: selectedEntry.value.entryType,
+        entryId: selectedEntry.value.entryId,
+        aggregateBy: aggregateBy.value,
+        dateRange: dateFrom.value && dateTo.value ? `${dateFrom.value},${dateTo.value}` : undefined,
+      },
+    })
+    aggregates.value = res.data.data || []
+    timeoutDegraded.value = false
+  } catch (err) {
+    const fail = asApiFail(err)
+    if (fail?.code === 1181) {
+      aggregates.value = []
+      timeoutDegraded.value = true
+      return
+    }
+    error.value = fail?.msg || '聚合加载失败'
+  }
 }
 
 async function onSubmit() {
   if (selectedEntry.value) {
-    await runQuery()
+    if (viewMode.value === 'AGGREGATE') await loadAggregate()
+    else await runQuery()
     return
   }
   await searchEntry()

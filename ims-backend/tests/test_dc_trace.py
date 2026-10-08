@@ -10,10 +10,10 @@ from app.main import app
 client = TestClient(app)
 
 
-def headers() -> dict:
-    token = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"][
-        "accessToken"
-    ]
+def headers(username: str = "admin") -> dict:
+    token = client.post(
+        "/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"}
+    ).json()["data"]["accessToken"]
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -274,3 +274,195 @@ def test_dc_trace_person_responsible_asset_and_ip_group():
     file_resp = client.get(exported.json()["data"]["downloadUrl"], headers=auth)
     assert file_resp.status_code == 200
     assert code.encode() in file_resp.content
+
+
+def test_dc_trace_aggregate_cost_profit_and_perf_metrics():
+    """#91 · 聚合四维、关系图成本/利润节点、审计留痕与 P95/慢查询。R9 金额脱敏，非 R1/R9 看不了性能页。"""
+    from datetime import datetime
+
+    from app.acct_seed import _ensure_cloned_user, ensure_acct_peer_user
+    from app.core import SessionLocal
+    from app.models import DcTraceLog
+    from tests.test_fin import approved_session, confirm_cost_for_session
+
+    auth = headers()
+    code = approved_session(auth)
+    confirm_cost_for_session(auth, code)
+    live = client.get(f"/admin-api/ims/live/register/{code}", headers=auth).json()["data"]
+    account_id = str(live["accountId"])
+    person_id = str(live["realnamePersonId"])
+
+    before = client.get("/admin-api/ims/dc/trace/perf-metrics", headers=auth)
+    assert before.json()["code"] == 0
+    before_count = before.json()["data"]["queryCount"]
+
+    queried = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=auth,
+        json={"entryType": "ACCOUNT", "entryId": account_id, "mode": "DETAIL", "pageNo": 1, "pageSize": 10},
+    )
+    body = queried.json()
+    assert body["code"] == 0
+    nodes = {node["nodeType"]: node for node in body["data"]["nodes"] if node["nodeId"] in {
+        f"cost:{code}",
+        f"profit:{code}",
+        code,
+    } or node["nodeType"] in {"COST", "PROFIT"}}
+    cost_node = next(node for node in body["data"]["nodes"] if node["nodeId"] == f"cost:{code}")
+    profit_node = next(node for node in body["data"]["nodes"] if node["nodeId"] == f"profit:{code}")
+    assert cost_node["nodeType"] == "COST"
+    assert cost_node["metrics"]["totalCost"] == 16600.0
+    assert profit_node["nodeType"] == "PROFIT"
+    assert profit_node["metrics"]["netProfit"] == 81400.0
+    assert profit_node["metrics"]["gmv"] == 100000.0
+    edge_pairs = {(edge["fromNodeId"], edge["toNodeId"]) for edge in body["data"]["edges"]}
+    assert (code, f"cost:{code}") in edge_pairs
+    assert (f"cost:{code}", f"profit:{code}") in edge_pairs
+
+    def aggregate(by: str, entry_type: str = "ACCOUNT", entry_id: str = account_id, date_range: str = ""):
+        params = {"entryType": entry_type, "entryId": entry_id, "aggregateBy": by}
+        if date_range:
+            params["dateRange"] = date_range
+        listed = client.get("/admin-api/ims/dc/trace/aggregate", headers=auth, params=params)
+        payload = listed.json()
+        assert payload["code"] == 0, payload
+        return payload["data"]
+
+    account_rows = aggregate("ACCOUNT")
+    assert len(account_rows) == 1
+    assert account_rows[0]["dimensionValue"] == account_id
+    assert account_rows[0]["sessionCount"] == 1
+    assert account_rows[0]["personCount"] == 1
+    assert account_rows[0]["gmv"] == 100000.0
+    assert account_rows[0]["totalCost"] == 16600.0
+    assert account_rows[0]["netProfit"] == 81400.0
+
+    person_rows = aggregate("PERSON", "PERSON", person_id)
+    assert person_rows[0]["dimensionValue"] == person_id
+    assert person_rows[0]["gmv"] == 100000.0
+    assert person_rows[0]["netProfit"] == 81400.0
+
+    group_rows = aggregate("IP_GROUP")
+    assert len(group_rows) == 1
+    assert group_rows[0]["dimensionLabel"]
+    assert group_rows[0]["sessionCount"] == 1
+    assert group_rows[0]["totalCost"] == 16600.0
+
+    team_rows = aggregate("TEAM")
+    assert len(team_rows) == 1
+    assert team_rows[0]["sessionCount"] == 1
+    assert team_rows[0]["netProfit"] == 81400.0
+    assert team_rows[0]["dimensionLabel"]
+
+    assert aggregate("ACCOUNT", date_range="2020-01-01,2020-01-02") == []
+    kept = aggregate("ACCOUNT", date_range="2026-10-06,2026-10-06")
+    assert kept[0]["sessionCount"] == 1
+
+    bad_by = client.get(
+        "/admin-api/ims/dc/trace/aggregate",
+        headers=auth,
+        params={"entryType": "ACCOUNT", "entryId": account_id, "aggregateBy": "MONTH"},
+    )
+    assert bad_by.json()["code"] == 1001
+    wide = client.get(
+        "/admin-api/ims/dc/trace/aggregate",
+        headers=auth,
+        params={"entryType": "ACCOUNT", "entryId": account_id, "aggregateBy": "ACCOUNT", "dateRange": "2020-01-01,2026-12-31"},
+    )
+    assert wide.json()["code"] == 1181
+
+    after = client.get("/admin-api/ims/dc/trace/perf-metrics", headers=auth).json()["data"]
+    assert after["queryCount"] >= before_count + 1
+    assert after["targetP95Ms"] == 3000
+    assert after["p99Ms"] >= after["p95Ms"]
+    assert isinstance(after["dailyPressureTestPassed"], bool)
+    assert isinstance(after["slowQueries"], list)
+
+    db = SessionLocal()
+    try:
+        stamp = datetime(2030, 1, 1, 2, 0, 0)
+        for cost_ms in [100, 200, 300, 400, 500, 600, 700, 800, 900, 4000]:
+            db.add(
+                DcTraceLog(
+                    entry_type="ACCOUNT",
+                    entry_id=account_id,
+                    entry_label="压测样本",
+                    query_user_id=1,
+                    result_rows=1,
+                    cost_ms=cost_ms,
+                    tenant_id=0,
+                    created_at=stamp,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    perf = client.get(
+        "/admin-api/ims/dc/trace/perf-metrics",
+        headers=auth,
+        params={"dateRange": "2030-01-01,2030-01-01"},
+    ).json()
+    assert perf["code"] == 0
+    assert perf["data"]["queryCount"] == 10
+    assert perf["data"]["p95Ms"] == 4000
+    assert perf["data"]["p99Ms"] == 4000
+    assert perf["data"]["targetP95Ms"] == 3000
+    assert perf["data"]["dailyPressureTestPassed"] is False
+    assert len(perf["data"]["slowQueries"]) == 1
+    assert perf["data"]["slowQueries"][0]["entryLabel"] == "压测样本"
+    assert perf["data"]["slowQueries"][0]["costMs"] == 4000
+    assert perf["data"]["slowQueries"][0]["queryId"].startswith("Q")
+    assert perf["data"]["slowQueries"][0]["occurredAt"].startswith("2030-01-01")
+
+    bad_range = client.get(
+        "/admin-api/ims/dc/trace/perf-metrics",
+        headers=auth,
+        params={"dateRange": "2030-02-01,2030-01-01"},
+    )
+    assert bad_range.json()["code"] == 1001
+
+    db = SessionLocal()
+    try:
+        ensure_acct_peer_user(db)
+        _ensure_cloned_user(
+            db,
+            username="e2e_dc_r9",
+            nickname="穿透数据分析师",
+            mobile="13900000091",
+            role_key="dc:r9",
+            role_name="数据分析师",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    peer = headers("e2e_acct_peer")
+    denied = client.get("/admin-api/ims/dc/trace/perf-metrics", headers=peer)
+    assert denied.status_code == 403
+    assert denied.json()["code"] == 1008
+
+    analyst = headers("e2e_dc_r9")
+    allowed = client.get(
+        "/admin-api/ims/dc/trace/perf-metrics",
+        headers=analyst,
+        params={"dateRange": "2030-01-01,2030-01-01"},
+    )
+    assert allowed.json()["code"] == 0
+    masked = client.get(
+        "/admin-api/ims/dc/trace/aggregate",
+        headers=analyst,
+        params={"entryType": "ACCOUNT", "entryId": account_id, "aggregateBy": "ACCOUNT"},
+    ).json()
+    assert masked["code"] == 0
+    assert masked["data"][0]["gmv"] == 100000.0
+    assert masked["data"][0]["totalCost"] is None
+    assert masked["data"][0]["netProfit"] is None
+    masked_graph = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=analyst,
+        json={"entryType": "ACCOUNT", "entryId": account_id, "mode": "GRAPH"},
+    ).json()
+    masked_cost = next(node for node in masked_graph["data"]["nodes"] if node["nodeId"] == f"cost:{code}")
+    assert masked_cost["metrics"]["totalCost"] is None
+    assert nodes  # 管理员图里成本/利润节点已取到
