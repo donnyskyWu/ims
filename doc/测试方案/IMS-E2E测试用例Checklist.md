@@ -30,7 +30,6 @@
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
 > **v2.6.63（2026-10-08 · #53 DC 场次下钻 + 明细导出）**：`closure-dc-session-drill.spec.ts`（**E2E-S12-01 场次下钻切片** · 纯 UI · 复用 **#52** 账号穿透 → 场次明细抽屉 GMV/净利润/投流成本 · 导出 `dc_trace_report.xlsx` 含场次号 · 页头 `queryCostMs` · 宽日期 **1181** 橙色提示）；`trace.vue` 抽屉/导出 · `dc_trace.py` `GET /dc/trace/detail/{sessionCode}` · `GET /dc/trace/export`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
-> **v2.6.83（2026-10-08 · #73 S1 模拟钉钉员工生命周期）**：`closure-s1-lifecycle.spec.ts`。入职/调岗/离职由 `python -m app.s1_lifecycle_seed` 在浏览器外用本地验签默认值入队（外部事件模拟，不是页面里调 admin-api 造数）。随后纯 UI：组织页可见「E2E主播小周 / 主播运营 / 内容部 / 在职」并登录工作台；员工领用 `AC-E2E-S1`；管理员领用资产并录入证件；调岗后部门「直播部」、保留主播运营、新增编导；离职「冻结」、登录「用户名或密码错误」（既有 **1006**，不是 403）；归还账号、归还资产、换证后旧档「已回收」，组织抽屉名下在用为 0、已回收 ≥1。**S1-02** SSO、**S1-10** AIR Key、真云 5 分钟 SLA、**1024**、sysTenant 仍未做。Checklist 状态 **开发完成/待UAT**。全量计数见 `e2e_result.txt`。**#72** 行保留。  
 > **v2.6.82（2026-10-08 · #72 S5 账号/场次反查）**：实物盘点不在 V1 契约中，本片改做 ASSET-002 剩余入口。`closure-asset-reverse-entry.spec.ts`（**E2E-S5-05** · 纯 UI · 办公设备登记绑定 `AC-E2E-FIN` 与场次 `IMS20261008DYE0072` · 不存在的账号/场次 **1500** · 账号反查两台「待审核」· 领用后该台「在用」· 场次反查只见场次那台）· `GET /asset/reverse/by-account/{accountId}` · `GET /asset/reverse/by-session/{sessionId}` · `device.vue`；rebase 到 main `1cd5403`（含 **#71**）后 `npx playwright test --workers=1` **67/67 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · 跑前 refresh workbench/acct/FIN/cert/资产反查场次种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#71** 保持开发完成/待UAT。本片不改 live-session / cert / `resource.vue` / `acct_flow` / `account.vue`。导出与关联校验仍未做。  
 > **v2.6.81（2026-10-08 · #71 LIVE 锁定证件拦截开播）**：`closure-live-locked-cert.spec.ts`（**E2E-S2-04** · 纯 UI · 种子 `AC-E2E-LIVE1045` / 实名人 `E2E-Live-1045` · 录入当天到期 → 审核 →「扫描到期」锁定 → 开播登记红字 **1045** →「换证」后旧档 **已回收**、新档 **生效**、预警 **已换证** → 再登记并「确认开播」状态 **LIVE**）；`POST /live/register` · `POST …/risk-check` · `PUT …/start` · `live/index.vue`；rebase 到 main `5d4d505`（含 **#70**）后 `npx playwright test --workers=1` **66/66 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#70** 保持开发完成/待UAT。本片不改 `acct_flow` / `account.vue` / `asset_ledger` / `device.vue`。评分 ≥70 的 **1043** 仍未做。**#72** 资产核验并行进行中。
 > **v2.6.80（2026-10-08 · #70 S4 冲话费成本汇总）**：`closure-corp-account-summary.spec.ts`（**E2E-S4-10** · 纯 UI · 种子 `AC-E2E-SUM` · 2026-04 登记 **120.50** + **79.50** → 账号 / 部门#70070 / 抖音 合计 **¥200.00** · **2 笔** · 2026-03 的 **50.00** 不进 4 月 · 3 月汇总 **¥50.00** · **1 笔**）；`GET /account/recharge/summary` · `account.vue`；rebase 到 main `ab529a1`（含 **#69**）后 `npx playwright test --workers=1` **65/65 PASS**（`e2e_result.txt` · API 18080 · Vite 6173 · `--workers=1` · 跑前 refresh workbench/acct/FIN/cert 种子 · 本地 MySQL）。状态 **开发完成/待UAT**。**#59–#69** 保持开发完成/待UAT。本片不改 cert / `resource.vue` / live-session / `asset_ledger` / `device.vue`。**#71** LIVE **1045** 并行进行中。
@@ -64,7 +63,7 @@
 
 | # | 场景 | 覆盖 BR | 期次 | 优先级 | smoke（2026-10-07） |
 |---|------|---------|------|--------|---------------------|
-| S1 | 员工全生命周期（入职→在岗→离职闭环） | BR-001/002/015/023 | V1+V2.2 | P0 | smoke-OK · **`closure-s1-lifecycle.spec.ts`（#73 · 模拟事件 · 开发完成/待UAT）** · `smoke-auth-org.spec.ts` |
+| S1 | 员工全生命周期（入职→在岗→离职闭环） | BR-001/002/015/023 | V1+V2.2 | P0 | smoke-OK · `smoke-auth-org.spec.ts` |
 | S2 | 直播场次全链路（登记→风控→开播→下播→数据） | BR-011/014/007 | V1 | P0 | smoke-OK · **`closure-live-session-report.spec.ts`（#56 · E2E-S2 窄切片）** · `smoke-live.spec.ts` |
 | S3 | 场次-成本-利润-分成全链路 | BR-107/108/118/209 | V3 先行 | P0 | smoke-OK · **`closure-fin-cost-profit.spec.ts`（#50）** · **`closure-fin-profit-trace.spec.ts`（#51 · DC-002）** · **`closure-fin-share-payoff.spec.ts`（#57 · E2E-S3-05/08）** · `smoke-fin.spec.ts` |
 | S4 | 账号领用-流转-归还-冲话费 | BR-017/1024 | V1 | P0 | smoke-OK · **`closure-corp-account-checkout.spec.ts`（#47 · E2E-S4-01/08）** · **`closure-corp-account-recharge.spec.ts`（#58 · E2E-S4-05/06）** · **`closure-corp-account-transfer.spec.ts`（#60 · E2E-S4-02/03）** · **`closure-corp-account-recall.spec.ts`（#62 · E2E-S4-04）** · **`closure-corp-account-reconcile.spec.ts`（#64 · E2E-S4-07）** · **`closure-corp-account-unfreeze.spec.ts`（#66）** · **`closure-corp-account-summary.spec.ts`（#70 · E2E-S4-10）** · `smoke-acct.spec.ts` |
@@ -81,25 +80,24 @@
 
 ## S1 员工全生命周期（P0）
 
-> smoke-OK（narrow）：组织架构同步列表页可加载。  
-> **#73 模拟覆盖**（`closure-s1-lifecycle.spec.ts` · 开发完成/待UAT）：本地验签事件模拟入职/调岗/离职，随后纯 UI。真云回调、5 分钟 SLA、钉钉 SSO、AIR Key、**1024**、sysTenant 仍是后续/外部闸口。
+> smoke-OK（narrow）：组织架构同步列表页可加载；**未**覆盖钉钉事件/SSO/离职闭环逐步。
 
-前置剧本：钉钉测试企业 + 空白部门 + 岗位模板「主播运营」。#73 在本地种子里启用「主播运营」「编导」两条岗位供给，不连真实钉钉。
+前置剧本：钉钉测试企业 + 空白部门 + 岗位模板「主播运营」。
 
 | 编号 | 步骤 | 断言点 |
 |------|------|--------|
 | E2E-ORG-DING-01 | L3：`IMS_DINGTALK_L3=1` · OAuth gettoken + 组织页/API 冒烟 | **L3 PASS**（`run_dingtalk_l3.ps1`）；真云回调/5 分钟 SLA 仍属 **E2E-S1-01** 扩展 |
-| E2E-S1-01 | 钉钉企业加入新员工（触发事件） | **#73 模拟**：组织页可见「E2E主播小周」，岗位「主播运营」，角色与工作台登录可见。真云回调与 5 分钟 SLA 仍未做 |
-| E2E-S1-02 | 员工登录钉钉→SSO 进 IMS | 免登成功；Token 2h（refresh 7d）；并发第 4 会话 1003。**#73 未做**（后续/外部闸口）。模拟链只用用户名密码 |
-| E2E-S1-03 | 在岗操作（领账号/领资产/录证件） | **#73 片段**：员工领用 `AC-E2E-S1` 后责任人为该员工；资产责任人同名；证件持有人同名 |
-| E2E-S1-04 | 钉钉调岗（换部门） | **#73 模拟**：部门「内容部→直播部」，diff 保留「主播运营」、新增「编导」，缓冲时间可见。旧部门数据不可见未按数据范围逐页断言 |
-| E2E-S1-05 | 钉钉移除员工（离职事件） | **#73 模拟**：离职事件后账号状态「冻结」，并出现归还待办 |
-| E2E-S1-06 | 检查权限失效 | **#73 部分**：冻结后登录页「用户名或密码错误」（既有 **1006**，不是 403）。在途单据未逐单断言 |
-| E2E-S1-07 | 账号归还闭环 | **#73 部分**：现有「归还」后状态「已归还」。未闭环前关权限 **1024** 未实现 |
-| E2E-S1-08 | 资产归还闭环 | **#73 部分**：先「使用」再「归还」后状态「已归还」。未单列时间线逐步 |
-| E2E-S1-09 | 证件回收 | **#73 部分**：走既有换证，列表见「已回收」。换证会留下一张新的生效证件。水印原图不可访问未在本片重复 |
-| E2E-S1-10 | AIR Key 吊销（若 V2.2 已上线，回归时执行） | 离职后 MCP 调用 403；60s 缓存窗口内生效。**#73 未做**（Deferred / 外部闸口） |
-| E2E-S1-11 | 终态检查 | **#73 子集**：组织抽屉见冻结、账号在用 0、资产在用 0、证件已回收 ≥1。Key 与审计全量未做 |
+| E2E-S1-01 | 钉钉企业加入新员工（触发事件） | 5 分钟内 IMS 用户可见；岗位模板权限自动生效；工作台可见 |
+| E2E-S1-02 | 员工登录钉钉→SSO 进 IMS | 免登成功；Token 2h（refresh 7d）；并发第 4 会话 1003 |
+| E2E-S1-03 | 在岗操作（领账号/领资产/录证件） | 各台账责任人=该员工 |
+| E2E-S1-04 | 钉钉调岗（换部门） | 旧部门数据不可见；新部门数据可见；权限 diff 正确 |
+| E2E-S1-05 | 钉钉移除员工（离职事件） | 触发 S1 剩余闭环步骤 |
+| E2E-S1-06 | 检查权限失效 | IMS 登录 403；在途单据全部进入待处理清单 |
+| E2E-S1-07 | 账号归还闭环 | 归还单创建→审批→RETURNED；未闭环前关权限返回 1024 |
+| E2E-S1-08 | 资产归还闭环 | 同上 ASSET 侧；时间线完整 |
+| E2E-S1-09 | 证件回收 | CertStatus=RECYCLED；水印原图不可访问 |
+| E2E-S1-10 | AIR Key 吊销（若 V2.2 已上线，回归时执行） | 离职后 MCP 调用 403；60s 缓存窗口内生效 |
+| E2E-S1-11 | 终态检查 | 员工所有关联（账号/资产/证件/Key）状态终态正确；审计全量可查 |
 
 ## S2 直播场次全链路（P0）
 
@@ -160,7 +158,6 @@
 ## S5 资产全生命周期 + 穿透（P1）
 
 > smoke-OK（narrow）：办公设备列表页可加载。  
-> **闭环-OK（Playwright · v2.6.83 · #73）**：`closure-s1-lifecycle.spec.ts` — **E2E-S1-01/03/04** 与 **S1-05～09/11** 现有能力子集。事件在浏览器外模拟，页面内完成领用、归还、换证。  
 > **闭环-OK（Playwright · v2.6.82 · #72）**：`closure-asset-reverse-entry.spec.ts` — **E2E-S5-05** 纯 UI 按账号 / 按场次反查，不存在入口 **1500**，领用后账号反查见「在用」。`closure-asset-purchase-import.spec.ts` — **E2E-S5-01**（**#68**）采购 CSV 入台账，第 3 行名称错误定位，部分成功且坏行不入库。`closure-asset-penetrate.spec.ts` — **E2E-S5-03/04**（**#65**）5 层内返回、第 6 层 **1013**、使用人三态。`closure-asset-lifecycle.spec.ts` — **E2E-S5-02**（**#63**）登记 → 领用 → 使用 → 归还 → 报废。
 
 | 编号 | 步骤 | 断言点 |
