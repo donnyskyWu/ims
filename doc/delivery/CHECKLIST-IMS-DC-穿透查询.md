@@ -13,16 +13,17 @@
 
 - [ ] 六种 entryType 搜索联想
 - [ ] 模式 GRAPH | DETAIL（+ AGGREGATE 若契约启用）
-- [ ] 结果区展示 queryCostMs；>3000ms 警示
-- [ ] 数据截至时间戳（BR-210）
-- [ ] 节点/chip 下钻 → 再次 query（无新 REST）
-- [ ] R7 成本字段渲染为 — / ***
+- [x] 结果区展示 queryCostMs；>3000ms 警示（#52/#53）
+- [x] 数据截至时间戳（BR-210）（#52）
+- [ ] 节点/chip 下钻 → 再次 query（无新 REST）（非场次节点仍待做）
+- [x] 场次节点/明细行 → `GET /dc/trace/detail/{sessionCode}`（#53）
+- [ ] R7 成本字段渲染为 — / ***（SELF 范围 API 已脱敏；角色矩阵 UI 未单测）
 
 ## 3. API §2.1
 
-- [ ] entry / query / detail / export 与契约 DTO 一致
-- [ ] 1181 超时降级文案
-- [ ] 1504 跨租户拒绝
+- [x] entry / query / detail / export 与契约 DTO 一致（#52 entry+query · #53 detail+export）
+- [x] 1181 超时降级文案（日期跨度 >92 天）
+- [x] 1504 场次不存在/不可见拒绝（与利润反查同口径）
 
 ## 4. 测试
 

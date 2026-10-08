@@ -880,3 +880,26 @@ export async function openDcAccountTraceViaUi(page: Page, accountNo: string, ses
   }
   return queryBody.data
 }
+
+/** DC-001 场次下钻：明细表点场次 ID 打开抽屉（纯 UI，须已在穿透结果页） */
+export async function openDcSessionDetailViaUi(page: Page, sessionCode: string) {
+  const detailResp = page.waitForResponse(
+    (r) => r.url().includes('/dc/trace/detail/') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByTestId('dc-trace-detail-table').getByRole('button', { name: sessionCode }).click()
+  const detailBody = (await (await detailResp).json()) as {
+    code: number
+    data?: {
+      sessionCode?: string
+      liveData?: { gmv?: number }
+      profit?: { netProfit?: number }
+      costDetail?: Array<{ costItem?: string; amount?: number | null }>
+    }
+  }
+  expect(detailBody.code).toBe(0)
+  expect(detailBody.data?.sessionCode).toBe(sessionCode)
+  const drawer = page.getByTestId('dc-trace-session-drawer')
+  await expect(drawer).toBeVisible()
+  await expect(drawer).toContainText(sessionCode)
+  return { drawer, detail: detailBody.data }
+}

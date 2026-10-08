@@ -1014,13 +1014,22 @@
 - **Live**：**重启 18080**（`-KillPort`）加载 `dc_trace` 修复。
 - **文档**：Checklist **v2.6.62** · 计划表 **#52** · 对照表 BI/DC UAT · 计划表 **#2** E2E **46/46**。
 
+## Follow-up · #53 DC 场次下钻 + 明细导出（2026-10-08）
+
+- **后端**：`dc_trace.py` — `GET /dc/trace/detail/{sessionCode}`（下播 GMV/退款/UV/时长 · 三级利润 · `costDetail` · 1504）· `GET /dc/trace/export`（`format=XLSX|PDF` · `{downloadUrl, expiresIn}` · 鉴权下载 `/dc/trace/export/file`）· `POST /dc/trace/query` 日期跨度 **>92 天** 返回 **1181**（`queryCostMs` 仍在 `data`）。
+- **前端**：`trace.vue` 场次 ID / 场次节点打开明细抽屉 ·「导出链路报告」· 页头 `queryCostMs` 与超时提示（降级时橙色 **1181**）。
+- **E2E**：`closure-dc-session-drill.spec.ts`（纯 UI · 复用 **#50/#52** 链 · 抽屉 **81400** · xlsx 含场次号 · 宽日期 1181）· `openDcSessionDetailViaUi`。
+- **测试**：`tests/test_dc_trace.py` **3 passed**（含 `test_dc_trace_session_detail_export_and_timeout`）· collect-only **167**（+1）· 未跑全量 pytest（外置签收）。
+- **E2E**：Playwright `--workers=1` → **47/47 PASS**（Web **6173** · API **18080** · 本地 MySQL · `e2e_result.txt`）。
+- **附带**：`smoke-train.spec.ts` 将 `waitForResponse(/train/stat/finish-rate)` 挪到 `goto` 之前，避免快 API 上响应先返回导致全量红。
+- **文档**：Checklist **v2.6.63** · 计划表 **#53** · 对照表 BI/DC UAT（场次下钻）。
+
 ## Follow-up · #54 FIN 成本更正→RECALCULATED closure（2026-10-08）
 
-- **选型**：#52 后矩阵最高价值 **E2E-S3-04**（**非** #53 场次 DC trace · #53 他人负责）。
 - **后端**：`fin.py` — `POST /fin/cost/{sessionCode}/correction`（红冲/蓝补 · remark 幂等 `__IDEM:`）· `POST /fin/profit/recalc/{sessionCode}` · 更正后 `calcStatus=RECALCULATED` · 分成明细随 `FinCost` 同步（`dc_profit_trace` share-detail）。
 - **前端**：`cost.vue` — 已核准行「更正」抽屉 + testid · 更正原因必填。
 - **E2E**：`closure-fin-cost-correction.spec.ts`（纯 UI · **81400→79900** · 反查 **3500** 达人分成）· `submitFinCostCorrectionViaUi`。
 - **测试**：`test_fin_cost_correction_recalc_profit_and_share_trace` **1 passed** · collect **167**（+1）。
-- **E2E**：`npm run test:e2e:ci` → **47/47 PASS**（Web **6173** · `e2e_result.txt`）。
+- **E2E**：本地 `npm run test:e2e:ci` → **47/47 PASS**（#54 分支 · Web **6173** · `e2e_result.txt`）；与 **#53** 合并 main 后预期 **48/48**。
 - **Live**：**重启 18080**（`-KillPort`）加载 correction 路由；云 MySQL 无 DDL（幂等写 remark）。
-- **文档**：Checklist **v2.6.63** · 计划表 **#54** · 对照表 FIN UAT · 计划表 **#2** E2E **47/47** · **未自动链 #55**。
+- **文档**：Checklist **v2.6.64** · 计划表 **#54** · 对照表 FIN UAT · **未自动链 #55**。

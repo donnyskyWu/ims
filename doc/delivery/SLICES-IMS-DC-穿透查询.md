@@ -9,12 +9,12 @@
 
 ## 1. 切片总览
 
-| Slice | 目标 | API |
-|-------|------|-----|
-| S-IMS-DC-01 | 入口搜索 | `GET /dc/trace/entry` |
-| S-IMS-DC-02 | 链路/明细查询 | `POST /dc/trace/query` |
-| S-IMS-DC-03 | 场次明细与导出 | `GET detail/{sessionCode}`、`GET export` |
-| S-IMS-DC-04 | 性能埋点展示 | queryCostMs；1181 超时提示 |
+| Slice | 目标 | API | 落地 |
+|-------|------|-----|------|
+| S-IMS-DC-01 | 入口搜索 | `GET /dc/trace/entry` | #52 账号/场次/实名人 |
+| S-IMS-DC-02 | 链路/明细查询 | `POST /dc/trace/query` | #52 |
+| S-IMS-DC-03 | 场次明细与导出 | `GET detail/{sessionCode}`、`GET export` | **#53** |
+| S-IMS-DC-04 | 性能埋点展示 | queryCostMs；1181 超时提示 | **#53**（宽日期 >92 天降级） |
 
 ---
 
