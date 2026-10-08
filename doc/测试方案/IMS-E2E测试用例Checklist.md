@@ -29,6 +29,7 @@
 > **v2.6.51（2026-10-08 · #41 BI 分享过期）**：`closure-bi-share-expired.spec.ts`（**E2E-S12-05 EXPIRED 切片** · 纯 UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」· 无「复制链接」）；`npm run test:e2e:ci` 预期 **33/33 PASS**（+ L3 门开 **34** · `--workers=1`）。
 > **v2.6.52（2026-10-08 · #42 内容二级审核 Tab）**：`closure-content-review-stage2.spec.ts`（**E2E-S7 切片** · 纯 UI 提审 → 一级通过 →「二级审核」Tab 轮次 2 → 二级通过 → 空态）；后端 ADR-017 `content.review.level2.enabled` 一级 PASS 链式入队；`npm run test:e2e:ci` 预期 **35/35 PASS**（+ L3 门开 **36** · `--workers=1`）。
 > **v2.6.53（2026-10-08 · #43 主数据 overview）**：`smoke-master.spec.ts` · `closure-master-overview.spec.ts`（**MASTER 切片** · `/ims/master` 六 KPI · 公司/平台账号 router-link 下钻）；`npm run test:e2e:ci` 预期 **36/36 PASS**（+ L3 门开 **37** · `--workers=1`）。
+> **v2.6.63（2026-10-08 · #54 FIN 成本更正→重算 closure）**：`closure-fin-cost-correction.spec.ts`（**E2E-S3-04** · 纯 UI · 复用 **#50** 链 → **CALCULATED 81400** → `/ims/fin/cost`「更正」投放 **6000** + 达人分成 **3500** → `/ims/fin/profit` **RECALCULATED** · **79900** · V≥2 → 利润反查抽屉达人 **3,500.00**）；`fin.py` correction/recalc · `cost.vue` testid · `submitFinCostCorrectionViaUi`；`npm run test:e2e:ci` 预期 **47/47 PASS**（+ L3 门开 **48** · `--workers=1`）。  
 > **v2.6.62（2026-10-08 · #52 DC-001 账号穿透 closure）**：`closure-dc-account-trace.spec.ts`（**E2E-S12-01 切片（账号入口）** · 纯 UI · 复用 **#50** LIVE 链 → `/ims/dc/trace` 搜 `AC-E2E-FIN` · 关系图 **ACCOUNT/PERSON/SESSION** · 明细表命中本场次 · `queryCostMs`/数据截至可见）；`trace.vue` testid · `dc_trace.py` **DETAIL** `detailList` DTO 修正 · `openDcAccountTraceViaUi`；`npm run test:e2e:ci` 预期 **46/46 PASS**（+ L3 门开 **47** · `--workers=1`）。  
 > **v2.6.61（2026-10-08 · #51 DC-002 利润反查 closure）**：`closure-fin-profit-trace.spec.ts`（**E2E-S3-09 / TC-IMS-FIN-02-01** · 纯 UI · 复用 **#50** 链 → `/ims/fin/profit-trace` 列表 **81400** ·「反查」抽屉 **BR-209** · 账号 `AC-E2E-FIN` · 成本/分成明细可见）；`profit-trace.vue` testid · `closure-helpers` `openFinProfitTraceChainViaUi`；`npm run test:e2e:ci` 预期 **45/45 PASS**（+ L3 门开 **46** · `--workers=1`）。  
 > **v2.6.60（2026-10-08 · #50 S3 FIN 成本→利润 closure）**：`closure-fin-cost-profit.spec.ts`（**E2E-S3-01/02/03 切片** · 纯 UI · LIVE「核准下播」→ `/ims/fin/cost` 提交/核准 → `/ims/fin/profit` **CALCULATED** · 净利润 **81400** · BR-107 完整率卡）；`live_fin_e2e_seed`（`AC-E2E-FIN`）· `live/index.vue` 核准下播 · `cost.vue` ProtoDrawer；`npm run test:e2e:ci` 预期 **44/44 PASS**（+ L3 门开 **45** · `--workers=1`）。  
@@ -100,7 +101,7 @@
 ## S3 场次-成本-利润-分成全链路（P0，V3 先行）
 
 > smoke-OK（narrow）：利润页可加载。  
-> **闭环-OK（Playwright · v2.6.61）**：**E2E-S3-切片** — `closure-fin-cost-profit.spec.ts`（#50 · 成本→利润 **CALCULATED**）+ `closure-fin-profit-trace.spec.ts`（#51 · **DC-002** 反查穿透 **BR-209**）；**未**覆盖 E2E-S3-04～08（重算/分成/结账/对账）。
+> **闭环-OK（Playwright · v2.6.63）**：**E2E-S3-切片** — `closure-fin-cost-profit.spec.ts`（#50 · **CALCULATED**）+ `closure-fin-profit-trace.spec.ts`（#51 · **DC-002**）+ `closure-fin-cost-correction.spec.ts`（#54 · **E2E-S3-04** · **RECALCULATED** · 分成明细同步）；**未**覆盖 E2E-S3-05～08（分成 PAID/结账/对账）。
 
 前置剧本：S2 完成的场次 + 分成规则（多级比例合计 100%）。
 
@@ -110,7 +111,7 @@
 | E2E-S3-02 | 成本核准（CONFIRMED） | 5 分钟内利润自动计算完成 |
 | E2E-S3-03 | 利润查看 | ProfitCalcStatus=CALCULATED；收入−成本数值正确（人工复算一致） |
 | E2E-S3-09 | 利润反查（DC-002） | `/ims/fin/profit-trace` 列表命中；反查抽屉 chain·成本/分成明细；queryCostMs 可见（**#51 closure**） |
-| E2E-S3-04 | 成本更正→重算 | RECALCULATED；分成单同步更新 |
+| E2E-S3-04 | 成本更正→重算 | RECALCULATED；分成单同步更新（**#54 closure** · 反查抽屉 shareAmount） |
 | E2E-S3-05 | 分成单审批→PAID_OFF | ShareResultStatus 流转；金额拆分累计=总额 |
 | E2E-S3-06 | 期间结账 | LOCKED；结账后录入拦截 1010 |
 | E2E-S3-07 | 结账后更正 | R4 审批流（FLOW 嵌入）；审批过才可更正 |

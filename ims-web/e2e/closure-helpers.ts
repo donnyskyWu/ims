@@ -745,6 +745,48 @@ export async function submitAndConfirmFinCostViaUi(page: Page, sessionCode: stri
   await expect(enteredRow).toContainText('已核准', { timeout: 10_000 })
 }
 
+/** FIN 成本更正（纯 UI · 须已 CONFIRMED）→ 触发利润重算 */
+export async function submitFinCostCorrectionViaUi(
+  page: Page,
+  sessionCode: string,
+  patch: { adCost?: number; shareDaren?: number },
+  reason: string,
+) {
+  await page.goto('/ims/fin/cost')
+  await expect(page.locator('h1')).toHaveText('成本核算', { timeout: 15_000 })
+  await page.locator('.tab', { hasText: '已录入管理' }).click()
+  await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+  const listResp = page.waitForResponse(
+    (r) => r.url().includes('/fin/cost/list') && r.request().method() === 'GET' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '查询' }).click()
+  await listResp
+  const enteredRow = page.locator('tbody tr', { hasText: sessionCode }).first()
+  await expect(enteredRow).toContainText('已核准', { timeout: 15_000 })
+  await enteredRow.getByTestId('fin-cost-correction-open').click()
+  const drawer = page.locator('.drawer.on').filter({ hasText: '成本更正' })
+  await expect(drawer).toBeVisible()
+  if (patch.adCost != null) {
+    await drawer.getByRole('spinbutton', { name: '投放成本' }).fill(String(patch.adCost))
+  }
+  if (patch.shareDaren != null) {
+    await drawer.getByRole('spinbutton', { name: '达人分成' }).fill(String(patch.shareDaren))
+  }
+  await drawer.getByTestId('fin-cost-correction-reason').fill(reason)
+  const corrResp = page.waitForResponse(
+    (r) => r.url().includes('/correction') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await drawer.getByTestId('fin-cost-correction-submit').click()
+  const corrBody = (await (await corrResp).json()) as {
+    code: number
+    data?: { recalcTriggered?: boolean; correctionNo?: string }
+  }
+  expect(corrBody.code).toBe(0)
+  expect(corrBody.data?.recalcTriggered).toBe(true)
+  expect(corrBody.data?.correctionNo).toBeTruthy()
+  await expect(drawer).not.toBeVisible({ timeout: 10_000 })
+}
+
 /** DC-002 利润反查：列表筛选 + 打开 BR-209 链路抽屉（纯 UI） */
 export async function openFinProfitTraceChainViaUi(page: Page, sessionCode: string) {
   await page.goto('/ims/fin/profit-trace')

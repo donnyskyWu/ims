@@ -1013,3 +1013,14 @@
 - **E2E**：`npm run test:e2e:ci` → **46/46 PASS**（Web **6173** · `e2e_result.txt`）。
 - **Live**：**重启 18080**（`-KillPort`）加载 `dc_trace` 修复。
 - **文档**：Checklist **v2.6.62** · 计划表 **#52** · 对照表 BI/DC UAT · 计划表 **#2** E2E **46/46**。
+
+## Follow-up · #54 FIN 成本更正→RECALCULATED closure（2026-10-08）
+
+- **选型**：#52 后矩阵最高价值 **E2E-S3-04**（**非** #53 场次 DC trace · #53 他人负责）。
+- **后端**：`fin.py` — `POST /fin/cost/{sessionCode}/correction`（红冲/蓝补 · remark 幂等 `__IDEM:`）· `POST /fin/profit/recalc/{sessionCode}` · 更正后 `calcStatus=RECALCULATED` · 分成明细随 `FinCost` 同步（`dc_profit_trace` share-detail）。
+- **前端**：`cost.vue` — 已核准行「更正」抽屉 + testid · 更正原因必填。
+- **E2E**：`closure-fin-cost-correction.spec.ts`（纯 UI · **81400→79900** · 反查 **3500** 达人分成）· `submitFinCostCorrectionViaUi`。
+- **测试**：`test_fin_cost_correction_recalc_profit_and_share_trace` **1 passed** · collect **167**（+1）。
+- **E2E**：`npm run test:e2e:ci` → **47/47 PASS**（Web **6173** · `e2e_result.txt`）。
+- **Live**：**重启 18080**（`-KillPort`）加载 correction 路由；云 MySQL 无 DDL（幂等写 remark）。
+- **文档**：Checklist **v2.6.63** · 计划表 **#54** · 对照表 FIN UAT · 计划表 **#2** E2E **47/47** · **未自动链 #55**。

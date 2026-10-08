@@ -7,7 +7,7 @@
 | 序号 | 工作流 | 任务/切片 | 状态 | 负责人 | 最后更新 | 备注/链接 |
 |------|--------|-----------|------|--------|----------|-----------|
 | 1 | 验证 | W0–W9-14 主线交付（菜单 ~98 IMPLEMENTED） | 已完成 | 多 Agent | 2026-10-07 | [执行进度](./IMS-Python执行进度-20261006.md) |
-| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **46/46 PASS**（`test:e2e:ci` · 含 **#52** DC-001 · **#51** DC-002 · 纯 UI · 不含 L3）· API **18080** · Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · **Agent 自动链已在 #52 暂停，待 PO 指令再开 #53+** |
+| 2 | 验证 | E2E Playwright smoke 全量 | 已完成 | Agent | 2026-10-08 | **47/47 PASS**（`test:e2e:ci` · 含 **#54** E2E-S3-04 · **#52** DC-001 · 纯 UI · 不含 L3）· API **18080** · Vite **6173** · `ims-web/e2e_result.txt` · L3 另计 +1 · **#53 由他人负责 · 本 Agent 未链 #55** |
 | 3 | 测试 | pytest 全量 154 条（外置单进程） | 已完成 | 用户本地 | 2026-10-07 | **#31** +3 `test_dingtalk_client_scopes` · 含 L3 3 条（默认 skip）· **collect-only 154** · 外置 **154 passed** · L3 另跑 `run_dingtalk_l3.ps1` |
 | 4 | 开发 | sysTenant 租户套餐 | 阻塞 | — | 2026-10-07 | **ADR / SLICES 批次外**，WIP=1，本批不做 |
 | 5 | 修复 | master/overview 404 → 200 | 已完成 | Agent | 2026-10-07 | `ops_db.create_all` · 需重启 18080 |
@@ -65,6 +65,7 @@
 | 50 | 开发/验证 | **S3 FIN** 成本登记→利润看板 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | `live_fin_e2e_seed` · `live/index.vue`「核准下播」· `cost.vue` ProtoDrawer · `closure-fin-cost-profit.spec.ts` · `closure-helpers` LIVE/FIN 链 · `test_live_fin_e2e_seed_deps` · Checklist **v2.6.60** · E2E **44/44 PASS** · Web **6173** · Live：**重启 18080** 加载 seed/核准 UI |
 | 51 | 开发/验证 | **DC-002** 利润反查 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | 复用 **#50** LIVE/FIN 链 · `/ims/fin/profit-trace`「反查」· `profit-trace.vue` `fin-profit-trace-chain-drawer` · `closure-fin-profit-trace.spec.ts` · `openFinProfitTraceChainViaUi` · `test_dc_profit_trace_list_and_chain` 定向 **2 passed** · Checklist **v2.6.61** · E2E **45/45 PASS** · Web **6173** |
 | 52 | 开发/验证 | **DC-001** 账号穿透 pure UI closure | 已完成 | 本回合 Agent | 2026-10-08 | 复用 **#50** LIVE 链 · `/ims/dc/trace` 账号入口 · `trace.vue` testid · `dc_trace.py` **detailList** 嵌套 `ok()` 修复 · `closure-dc-account-trace.spec.ts` · `openDcAccountTraceViaUi` · `test_dc_trace_account_keyword_detail_mode` · 定向 pytest **3 passed**（含 trace 基线）· Checklist **v2.6.62** · E2E **46/46 PASS** · Web **6173** · Live：**重启 18080** 加载 `dc_trace` 修复 · **交付自动链在此切片收口（PO 2026-10-08）** |
+| 54 | 开发/验证 | **S3 FIN** 成本更正→利润 **RECALCULATED** closure | 已完成 | 本回合 Agent | 2026-10-08 | **选型**：矩阵 #52 后 FIN 缺口 **E2E-S3-04**（非 #53 场次 DC trace）· `POST /fin/cost/{sessionCode}/correction` · `POST /fin/profit/recalc/{sessionCode}` · `cost.vue` 更正抽屉 · `closure-fin-cost-correction.spec.ts` · `submitFinCostCorrectionViaUi` · `test_fin_cost_correction_recalc_profit_and_share_trace` · Checklist **v2.6.63** · E2E **47/47 PASS** · collect **167** · Web **6173** · Live：**重启 18080** 加载 correction API · 云库：更正写 `ims_fin_cost.remark`（无 DDL）· **未自动链 #55** |
 
 ---
 

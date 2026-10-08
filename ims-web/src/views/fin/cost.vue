@@ -115,6 +115,15 @@
                 >
                   核准
                 </button>
+                <button
+                  v-if="row.entryStatus === 'CONFIRMED'"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="fin-cost-correction-open"
+                  @click="openCorrection(row.sessionCode)"
+                >
+                  更正
+                </button>
               </td>
             </tr>
           </tbody>
@@ -145,6 +154,58 @@
         <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
       </template>
     </ProtoDrawer>
+
+    <ProtoDrawer
+      :open="correctionOpen"
+      :title="'成本更正 · ' + form.sessionCode"
+      width="720px"
+      data-testid="fin-cost-correction-drawer"
+      @close="correctionOpen = false"
+    >
+      <p class="hint">核准后修改走更正单（红冲+蓝补），自动触发利润重算（FIN-P-R3）</p>
+      <div class="form-grid">
+        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
+        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
+        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
+        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
+        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
+        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
+        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
+        <label style="grid-column: 1 / -1">
+          更正原因（必填）
+          <input
+            v-model="correctionReason"
+            data-testid="fin-cost-correction-reason"
+            placeholder="例如：投放账单补录"
+          />
+        </label>
+      </div>
+      <div v-if="correctionPreview" class="hint" style="margin-top: 8px">
+        <div v-if="correctionPreview.redEntries?.length">
+          红冲：
+          <span v-for="(e, i) in correctionPreview.redEntries" :key="'r' + i">
+            {{ e.item }} {{ e.amount }}
+          </span>
+        </div>
+        <div v-if="correctionPreview.blueEntries?.length">
+          蓝补：
+          <span v-for="(e, i) in correctionPreview.blueEntries" :key="'b' + i">
+            {{ e.item }} +{{ e.amount }}
+          </span>
+        </div>
+      </div>
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="correctionOpen = false">取消</button>
+        <button
+          class="btn btn-pri"
+          type="button"
+          data-testid="fin-cost-correction-submit"
+          @click="submitCorrection"
+        >
+          提交更正
+        </button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -160,6 +221,9 @@ const rate = ref<Record<string, unknown> | null>(null)
 const pendingRows = ref<Record<string, unknown>[]>([])
 const enteredRows = ref<Record<string, unknown>[]>([])
 const drawerOpen = ref(false)
+const correctionOpen = ref(false)
+const correctionReason = ref('')
+const correctionPreview = ref<Record<string, unknown> | null>(null)
 const query = reactive({ sessionCode: '', entryStatus: '' })
 
 const form = reactive({
@@ -277,24 +341,74 @@ async function submitEntry(asDraft: boolean) {
   await loadTab()
 }
 
+function assignFormFromCost(d: Record<string, unknown>) {
+  Object.assign(form, {
+    sessionCode: d.sessionCode,
+    costGmv: d.costGmv,
+    costRefund: d.costRefund,
+    commissionRate: d.commissionRate,
+    adCost: d.adCost,
+    rechargeCost: d.rechargeCost,
+    fixedCost: d.fixedCost,
+    sampleCost: d.sampleCost,
+    shareDaren: d.shareDaren,
+    shareRealname: d.shareRealname,
+  })
+}
+
 async function viewDetail(sessionCode: string) {
   const res = await http.get(`/fin/cost/${sessionCode}`)
   if (res.data?.code === 0) {
-    const d = res.data.data
-    Object.assign(form, {
-      sessionCode: d.sessionCode,
-      costGmv: d.costGmv,
-      costRefund: d.costRefund,
-      commissionRate: d.commissionRate,
-      adCost: d.adCost,
-      rechargeCost: d.rechargeCost,
-      fixedCost: d.fixedCost,
-      sampleCost: d.sampleCost,
-      shareDaren: d.shareDaren,
-      shareRealname: d.shareRealname,
-    })
+    assignFormFromCost(res.data.data)
     drawerOpen.value = true
   }
+}
+
+async function openCorrection(sessionCode: string) {
+  correctionReason.value = ''
+  correctionPreview.value = null
+  const res = await http.get(`/fin/cost/${sessionCode}`)
+  if (res.data?.code !== 0) {
+    error.value = res.data?.msg || '加载失败'
+    return
+  }
+  assignFormFromCost(res.data.data)
+  correctionOpen.value = true
+}
+
+async function submitCorrection() {
+  if (!correctionReason.value.trim()) {
+    error.value = '更正原因必填'
+    return
+  }
+  const token = crypto.randomUUID().replace(/-/g, '')
+  const res = await http.post(
+    `/fin/cost/${form.sessionCode}/correction`,
+    {
+      correctionReason: correctionReason.value.trim(),
+      corrected: {
+        commissionRate: form.commissionRate,
+        adCost: form.adCost,
+        rechargeCost: form.rechargeCost,
+        fixedCost: form.fixedCost,
+        sampleCost: form.sampleCost,
+        shareCostType: 'MANUAL',
+        shareDaren: form.shareDaren,
+        shareRealname: form.shareRealname,
+        remark: form.remark,
+        asDraft: false,
+      },
+    },
+    { headers: { clientToken: token } },
+  )
+  if (res.data?.code !== 0) {
+    error.value = res.data?.msg || '更正失败'
+    return
+  }
+  correctionPreview.value = res.data.data
+  correctionOpen.value = false
+  error.value = ''
+  await loadEntered()
 }
 
 async function confirmCost(sessionCode: string) {

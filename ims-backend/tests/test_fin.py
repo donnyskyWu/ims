@@ -260,6 +260,71 @@ def test_live_fin_e2e_seed_deps():
         ops.close()
 
 
+def test_fin_cost_correction_recalc_profit_and_share_trace():
+    """#54 E2E-S3-04：成本更正 → 利润 RECALCULATED · 分成明细同步。"""
+    auth = headers()
+    code = approved_session(auth)
+    confirm_cost_for_session(auth, code)
+
+    listed = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code})
+    assert listed.json()["data"]["list"][0]["calcStatus"] == "CALCULATED"
+    assert listed.json()["data"]["list"][0]["netProfit"] == 81400.0
+
+    token = uuid.uuid4().hex
+    corrected = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": token},
+        json={
+            "correctionReason": "E2E 投放补录",
+            "corrected": {
+                "commissionRate": 0.05,
+                "adCost": 6000,
+                "rechargeCost": 100,
+                "fixedCost": 2000,
+                "sampleCost": 500,
+                "shareCostType": "MANUAL",
+                "shareDaren": 3500,
+                "shareRealname": 1000,
+            },
+        },
+    )
+    body = corrected.json()
+    assert body["code"] == 0
+    assert body["data"]["recalcTriggered"] is True
+    assert body["data"]["correctionNo"]
+    assert any(e["item"] == "投放成本" for e in body["data"]["blueEntries"])
+
+    dup = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": token},
+        json={
+            "correctionReason": "ignored",
+            "corrected": {
+                "commissionRate": 0.05,
+                "adCost": 6000,
+                "rechargeCost": 100,
+                "fixedCost": 2000,
+                "sampleCost": 500,
+                "shareCostType": "MANUAL",
+                "shareDaren": 3500,
+                "shareRealname": 1000,
+            },
+        },
+    )
+    assert dup.json()["code"] == 0
+    assert dup.json()["data"]["correctionNo"] == body["data"]["correctionNo"]
+
+    profit = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code})
+    row = profit.json()["data"]["list"][0]
+    assert row["calcStatus"] == "RECALCULATED"
+    assert row["netProfit"] == 79900.0
+    assert row["calcVersion"] >= 2
+
+    share = client.get(f"/admin-api/ims/dc/profit-trace/share-detail/{code}", headers=auth)
+    daren = next(x for x in share.json()["data"] if x["shareTarget"] == "DAREN")
+    assert daren["shareAmount"] == 3500.0
+
+
 def test_fin_cost_rejects_unapproved_session():
     auth = headers()
     account_id, person_id, phone_id, _ = seed_live_deps()

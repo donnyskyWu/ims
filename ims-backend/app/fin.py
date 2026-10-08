@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -34,6 +35,12 @@ class FinCostEntryBody(BaseModel):
     shareRealname: float = Field(ge=0, default=0)
     remark: str = ""
     asDraft: bool = False
+
+
+class FinCostCorrectionBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    corrected: FinCostEntryBody
+    correctionReason: str = Field(min_length=1)
 
 
 def money(value: float) -> float:
@@ -150,13 +157,22 @@ def apply_cost_row(row: FinCost, session: LiveSession, report: LiveReport, body:
     row.remark = body.remark or ""
 
 
-def upsert_profit(db: Session, session_code: str, report: LiveReport, cost: FinCost, tenant_id: int) -> FinProfit:
+def upsert_profit(
+    db: Session,
+    session_code: str,
+    report: LiveReport,
+    cost: FinCost,
+    tenant_id: int,
+    *,
+    after_correction: bool = False,
+) -> FinProfit:
     revenue = money(report.gmv)
     refund = money(report.refund_amount)
     total_cost = money(cost.total_cost)
     gross = money(revenue - refund - cost.commission_amount)
     net = money(revenue - refund - total_cost)
     profit = load_profit(db, tenant_id, session_code)
+    first_calc = profit is None
     if profit is None:
         profit = FinProfit(session_code=session_code, tenant_id=tenant_id)
         db.add(profit)
@@ -165,10 +181,72 @@ def upsert_profit(db: Session, session_code: str, report: LiveReport, cost: FinC
     profit.total_cost = total_cost
     profit.gross_profit = gross
     profit.net_profit = net
-    profit.calc_status = "CALCULATED"
+    if after_correction and not first_calc:
+        profit.calc_status = "RECALCULATED"
+    else:
+        profit.calc_status = "CALCULATED"
     profit.calc_version = (profit.calc_version or 0) + 1
     db.flush()
     return profit
+
+
+CORRECTION_ITEMS: tuple[tuple[str, str], ...] = (
+    ("commissionAmount", "平台佣金"),
+    ("adCost", "投放成本"),
+    ("rechargeCost", "冲话费摊销"),
+    ("fixedCost", "固定成本"),
+    ("sampleCost", "样品成本"),
+    ("shareDaren", "达人分成"),
+    ("shareRealname", "实名人分成"),
+)
+
+
+def cost_amount_snapshot(row: FinCost) -> dict[str, float]:
+    return {
+        "commissionAmount": money(row.commission_amount),
+        "adCost": money(row.ad_cost),
+        "rechargeCost": money(row.recharge_cost),
+        "fixedCost": money(row.fixed_cost),
+        "sampleCost": money(row.sample_cost),
+        "shareDaren": money(row.share_daren),
+        "shareRealname": money(row.share_realname),
+    }
+
+
+def correction_diff(before: dict[str, float], after: dict[str, float]) -> tuple[list[dict], list[dict]]:
+    red: list[dict] = []
+    blue: list[dict] = []
+    for key, label in CORRECTION_ITEMS:
+        delta = money(after[key] - before[key])
+        if delta < 0:
+            red.append({"item": label, "amount": delta})
+        elif delta > 0:
+            blue.append({"item": label, "amount": delta})
+    return red, blue
+
+
+_CORR_IDEM = re.compile(r"__IDEM:([0-9a-f]+):([^_\n]+)__")
+
+
+def correction_idem_no(remark: str, client_token: str) -> str | None:
+    for match in _CORR_IDEM.finditer(remark or ""):
+        if match.group(1) == client_token:
+            return match.group(2)
+    return None
+
+
+def remark_with_idem(reason: str, client_token: str, correction_no: str) -> str:
+    base = reason.strip()[:400]
+    return f"{base}\n__IDEM:{client_token}:{correction_no}__"[:512]
+
+
+def correction_response_vo(correction_no: str, red: list[dict], blue: list[dict]) -> dict:
+    return {
+        "correctionNo": correction_no,
+        "redEntries": red,
+        "blueEntries": blue,
+        "recalcTriggered": True,
+    }
 
 
 def load_profit(db: Session, tenant_id: int, session_code: str) -> FinProfit | None:
@@ -663,5 +741,82 @@ def cost_confirm(
             "entryStatus": "CONFIRMED",
             "profitTaskId": f"PT-{profit.id}",
             "message": "成本已核准，利润已计算",
+        }
+    )
+
+
+@router.post("/cost/{session_code}/correction")
+def cost_correction(
+    request: Request,
+    session_code: str,
+    body: FinCostCorrectionBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+    clientToken: str | None = Header(default=None),
+):
+    if not clientToken:
+        return fail(1001, "clientToken 必填")
+    reason = (body.correctionReason or "").strip()
+    if not reason:
+        return fail(1144, "更正原因必填")
+    err = validate_body(body.corrected)
+    if err:
+        return fail(1001, err)
+    tenant_id = tenant_of(actor)
+    row = load_fin_cost(db, tenant_id, session_code)
+    if row is None or row.entry_status != "CONFIRMED":
+        return fail(1141, "成本未核准，无法更正")
+    existing_no = correction_idem_no(row.remark or "", clientToken)
+    if existing_no:
+        return ok(
+            {
+                "correctionNo": existing_no,
+                "redEntries": [],
+                "blueEntries": [],
+                "recalcTriggered": True,
+            }
+        )
+    session = get_session(db, actor, request.state.scope, session_code)
+    if session is None:
+        return fail(1504, "资源不可用")
+    report = approved_report(db, session_code, tenant_id)
+    if report is None:
+        return fail(1141, "场次未核准下播数据")
+    before = cost_amount_snapshot(row)
+    apply_cost_row(row, session, report, body.corrected, actor)
+    row.entry_status = "CONFIRMED"
+    after = cost_amount_snapshot(row)
+    red, blue = correction_diff(before, after)
+    correction_no = f"CR-{row.id}-{int(utcnow().timestamp())}"
+    row.remark = remark_with_idem(reason, clientToken, correction_no)
+    upsert_profit(db, session_code, report, row, tenant_id, after_correction=True)
+    db.flush()
+    return ok(correction_response_vo(correction_no, red, blue))
+
+
+@router.post("/profit/recalc/{session_code}")
+def profit_recalc(
+    request: Request,
+    session_code: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    session = get_session(db, actor, request.state.scope, session_code)
+    if session is None:
+        return fail(1504, "资源不可用")
+    report = approved_report(db, session_code, tenant_id)
+    if report is None:
+        return fail(1141, "场次未核准下播数据")
+    row = load_fin_cost(db, tenant_id, session_code)
+    if row is None or row.entry_status != "CONFIRMED":
+        return fail(1145, "该场次成本未核准，利润未计算")
+    profit = upsert_profit(db, session_code, report, row, tenant_id, after_correction=True)
+    db.flush()
+    return ok(
+        {
+            "calcVersion": profit.calc_version or 1,
+            "calcStatus": "RECALCULATED",
+            "message": "利润已重算",
         }
     )

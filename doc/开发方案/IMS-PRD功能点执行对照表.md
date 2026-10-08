@@ -2,7 +2,7 @@
 
 > **用途**：对照完整 PRD / 菜单 IMPLEMENTED / 切片计划 / pytest·E2E 签收，回答「PRD 功能点做到哪了」——**不复制 PRD 全文**，仅矩阵视图。  
 > **SSOT 链**：[`IMS-PRD与原型完整性核验-20261001.md`](../产品规划/IMS-PRD与原型完整性核验-20261001.md) · [`IMS-Python完整开发计划-20261005.md`](./IMS-Python完整开发计划-20261005.md) · [`IMS-Python执行进度-20261006.md`](./IMS-Python执行进度-20261006.md) · [`IMS-任务进度计划表.md`](./IMS-任务进度计划表.md) · [`IMS-E2E测试用例Checklist.md`](../测试方案/IMS-E2E测试用例Checklist.md) · **[Agent 交付循环](../开发规范/IMS-Agent交付循环.md)**  
-> **最后刷新**：2026-10-08 · 菜单 **~98 IMPLEMENTED**（含隐藏路由）· pytest collect **157**（含 3× L3 skip）· E2E **36/36**（v2.6.53 · `npm run test:e2e:ci` / `run_e2e.ps1` · 含 **#42/#43** 内容二级审核/主数据 overview · **#39–#41** BI）
+> **最后刷新**：2026-10-08 · 菜单 **~98 IMPLEMENTED**（含隐藏路由）· pytest collect **167**（含 3× L3 skip）· E2E **47/47**（v2.6.63 · `npm run test:e2e:ci` · 含 **#54** FIN 更正重算 · **#50–#52** FIN/DC）
 
 **图例**
 
@@ -49,7 +49,7 @@
 | **运营看板 HOME** · 与个人工作台分菜单 | W6 · **#38** | 已实现 | 已实现 | `test_home.py` | **`smoke-home`** · **`closure-home-dashboard`** | **可 UAT**：`/ims/home` 四 KPI（账号数/今日作品延迟桩/待办/采集异常）· 刷新 · 账号数→抖音池 · 快捷→工作任务登记 | 未测 | 与 workbench 分菜单；Football 真实作品 KPI **仍桩** |
 | **公司资产 · 账号池领用/归还** · `/ims/corp/account/*` · ACCT apply/confirm/return · 时间线 Tab | W2 CORP · **#47** | 切片已实现 | 已实现（领用/归还抽屉） | **`test_acct_checkout`** | S4 smoke + **`closure-corp-account-checkout`（#47）** | **可 UAT（池领用 · #47）**：抖音页搜 `AC-E2E-POOL` →「领用」→ 提交/审批/交接 → 状态「在用」· 责任人 admin →「归还」→「已归还」· 详情「领用时间线」见 APPLY/RETURN | 未测 | 流转/冲话费/1022～1026 **未做**；已有 ims 库需 compat 或重启 API `ensure_acct_schema` |
 | **培训 TRAIN** · 资料/任务 · **progress/confirm/records** · 学习中心 · **TRAIN-003 完成率 Tab** | W7 · **#48/#49** | 切片已实现 | 已实现（`task`/`study`/`stat`） | **`test_train_task_progress_confirm_and_records`** · **`test_train_stat_finish_rate_after_confirm`（#49）** | S10 smoke + **`closure-train-dispatch-complete`（#48）** + **`closure-train-stat-finish-rate`（#49）** | **可 UAT（培训下发 · #48）**：资料→任务→学习中心 **CONFIRMED** → 学习记录。**可 UAT（完成率看板 · #49）**：`/ims/train/stat`「完成率总览」· 近30天 · 总完成率 KPI · 按任务/部门/个人表（纯 UI 链：学完后再进看板见该任务 **100%**） | 未测 | 部门统计/排行/逾期/资料热度 Tab **待接 API**；考试/补考 **未做** |
-| **财务 FIN** · **FIN-001/002** · **DC-002 利润反查** · BR-107/108/209 | W8 · **#50/#51** | 切片已实现 | 已实现（`/ims/fin/cost` · `/ims/fin/profit` · **`/ims/fin/profit-trace`**） | **`test_fin_*`** · **`test_dc_profit_trace_list_and_chain`（#51）** · **`test_live_fin_e2e_seed_deps`（#50）** | S3 smoke + **`closure-fin-cost-profit`（#50）** + **`closure-fin-profit-trace`（#51）** | **可 UAT（成本→利润 · #50）**：LIVE 核准下播 → 成本核准 → 利润 **CALCULATED** · **81400**。**可 UAT（利润反查 · #51）**：同链 →「场次财务→利润反查」→ 场次筛选 →「反查」→ 抽屉见 **BR-209** · 账号/实名人/投流成本/达人分成 | 未测 | 分成/结账/重算（E2E-S3-04～08）**未做**；聚合/异常 Tab **未做** |
+| **财务 FIN** · **FIN-001/002** · **成本更正/重算** · **DC-002 利润反查** · BR-107/108/209 | W8 · **#50/#51/#54** | 切片已实现 | 已实现（`/ims/fin/cost` · `/ims/fin/profit` · **`/ims/fin/profit-trace`**） | **`test_fin_*`** · **`test_fin_cost_correction_recalc_profit_and_share_trace`（#54）** · **`test_dc_profit_trace_list_and_chain`（#51）** · **`test_live_fin_e2e_seed_deps`（#50）** | S3 smoke + **`closure-fin-cost-profit`（#50）** + **`closure-fin-profit-trace`（#51）** + **`closure-fin-cost-correction`（#54 · E2E-S3-04）** | **可 UAT（成本→利润 · #50）**：LIVE 核准下播 → 成本核准 → 利润 **CALCULATED** · **81400**。**可 UAT（利润反查 · #51）**：同链 → 利润反查「反查」→ **BR-209**。**可 UAT（更正重算 · #54）**：已核准成本 →「更正」改投放/达人分成 + 原因 → 利润 **RECALCULATED** · **79900** · 反查抽屉达人分成 **3500** | 未测 | 分成 PAID/结账/对账（E2E-S3-05～08）**未做**；聚合/异常 Tab **未做** |
 | **直播 / 账号 / 资产 / 采集 / 会议 / 上报** 等 W2–W7 切片 | W2–W7 | 大部分已实现 | **~98 IMPLEMENTED** | 域内用例齐全 | S2/S4/S5/S6 等 smoke | 可 UAT | 未测 | Football/OPS 真实 KPI **待补数据**；详见 [执行进度](./IMS-Python执行进度-20261006.md) |
 | **sysTenant 租户套餐** | 批次外 | 未开始 | WIP | — | — | 阻塞 | 未测 | [计划表 #4](./IMS-任务进度计划表.md) **阻塞·本批不做** |
 
@@ -63,7 +63,7 @@
 |------|------------|--------------|-----------------|
 | S1 员工生命周期 | P0 | OK | 未 |
 | S2 直播 | P0 | OK | 未 |
-| S3 场次-成本-利润 | P0 | OK | **closure 成本→利润（#50）** · **closure 利润反查（#51 · DC-002）** · E2E-S3-01/02/03/09 切片 |
+| S3 场次-成本-利润 | P0 | OK | **closure 成本→利润（#50）** · **closure 利润反查（#51）** · **closure 更正重算（#54 · E2E-S3-04）** · E2E-S3-01/02/03/04/09 切片 |
 | S4 账号领用 | P0 | OK | **closure 池领用/归还（#47）** · E2E-S4-01/08 切片 |
 | S5 资产 | P1 | OK | 未 |
 | S6 证件 | P1 | OK | 未 |
