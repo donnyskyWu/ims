@@ -57,15 +57,15 @@ test.describe('corp asset penetration closure', () => {
       await registerAsset(page, codeOf(level), `穿透层${level}-${stamp}`, { parent: codeOf(level - 1) })
     }
 
-    await page.getByTestId('corp-asset-forward-open').click()
+    const withinResp = page.waitForResponse(
+      (r) => /\/asset\/forward\/trace\/[1-9]\d*/.test(r.url()) && r.request().method() === 'GET' && r.status() === 200,
+    )
+    const row5 = page.locator('.tbl-wrap').first().locator('tbody tr', { hasText: codeOf(5) })
+    await expect(row5).toBeVisible()
+    await row5.getByTestId('corp-asset-forward-btn').click()
     const forward = page.locator('.drawer.on').filter({ hasText: '正向穿透' })
     await expect(forward).toBeVisible()
-    await forward.getByTestId('asset-forward-realname').selectOption(personValue!)
-    const okResp = page.waitForResponse(
-      (r) => r.url().includes('/asset/forward/trace/0') && r.request().method() === 'GET' && r.status() === 200,
-    )
-    await forward.getByTestId('asset-forward-query').click()
-    const within = (await (await okResp).json()) as { code: number; data?: { depth?: number } }
+    const within = (await (await withinResp).json()) as { code: number; data?: { depth?: number } }
     expect(within.code).toBe(0)
     expect(within.data?.depth).toBe(5)
     const chain = forward.getByTestId('asset-forward-chain')
@@ -82,19 +82,32 @@ test.describe('corp asset penetration closure', () => {
     await expect(forward).toBeHidden()
 
     await registerAsset(page, codeOf(6), `穿透层6-${stamp}`, { parent: codeOf(5) })
-    await page.getByTestId('corp-asset-forward-open').click()
+    const blockedResp = page.waitForResponse(
+      (r) => /\/asset\/forward\/trace\/[1-9]\d*/.test(r.url()) && r.request().method() === 'GET' && r.status() === 200,
+    )
+    const row6 = page.locator('.tbl-wrap').first().locator('tbody tr', { hasText: codeOf(6) })
+    await expect(row6).toBeVisible()
+    await row6.getByTestId('corp-asset-forward-btn').click()
     const again = page.locator('.drawer.on').filter({ hasText: '正向穿透' })
     await expect(again).toBeVisible()
-    await again.getByTestId('asset-forward-realname').selectOption(personValue!)
-    const blockedResp = page.waitForResponse(
-      (r) => r.url().includes('/asset/forward/trace/0') && r.request().method() === 'GET' && r.status() === 200,
-    )
-    await again.getByTestId('asset-forward-query').click()
     const blocked = (await (await blockedResp).json()) as { code: number }
     expect(blocked.code).toBe(1013)
     await expect(again.getByTestId('asset-forward-error')).toContainText('1013')
     await expect(again.getByTestId('asset-forward-chain')).toHaveCount(0)
     await page.screenshot({ path: `${shotDir}/02-forward-1013.png`, fullPage: true })
+
+    await again.getByRole('button', { name: '关闭' }).click()
+    await page.getByTestId('corp-asset-forward-open').click()
+    const personDrawer = page.locator('.drawer.on').filter({ hasText: '正向穿透' })
+    await expect(personDrawer).toBeVisible()
+    await personDrawer.getByTestId('asset-forward-realname').selectOption(personValue!)
+    const personResp = page.waitForResponse(
+      (r) => r.url().includes('/asset/forward/trace/0') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await personDrawer.getByTestId('asset-forward-query').click()
+    const personBlocked = (await (await personResp).json()) as { code: number }
+    expect(personBlocked.code).toBe(1013)
+    await expect(personDrawer.getByTestId('asset-forward-error')).toContainText('穿透层级超限')
     expect(pageErrors).toEqual([])
   })
 

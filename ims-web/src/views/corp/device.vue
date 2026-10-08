@@ -8,7 +8,7 @@
       <div class="acts">
         <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
         <template v-else>
-          <button class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
+          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
           <button class="btn btn-pri" type="button" data-testid="corp-asset-create-btn" @click="openAssetCreate">资产登记</button>
         </template>
       </div>
@@ -63,8 +63,8 @@
                 <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-return-btn" @click="openReturn(row)">归还</button>
                 <button v-if="row.status === 'RETURNED'" class="btn btn-txt" type="button" data-testid="corp-asset-scrap-btn" @click="openScrap(row)">报废</button>
                 <button class="btn btn-txt" type="button" data-testid="corp-asset-detail-btn" @click="openAssetDetail(row)">详情</button>
-                <button class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">正向穿透</button>
-                <button class="btn btn-txt" type="button" data-testid="corp-asset-reverse-btn" @click="openReverse(row)">反向穿透</button>
+                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">正向穿透</button>
+                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-reverse-btn" @click="openReverse(row)">反向穿透</button>
               </td>
             </tr>
           </tbody>
@@ -234,7 +234,7 @@
         <button class="btn btn-sec" type="button" @click="assetDetailOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
-    <ProtoDrawer :open="forwardOpen" title="正向穿透" width="560px" @close="forwardOpen = false">
+    <ProtoDrawer v-if="kind === 'office'" :open="forwardOpen" title="正向穿透" width="560px" @close="forwardOpen = false">
       <div class="formrow one">
         <div class="fld">
           <label>实名人</label>
@@ -256,7 +256,7 @@
         <button class="btn btn-sec" type="button" @click="forwardOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
-    <ProtoDrawer :open="reverseOpen" title="反向穿透" width="560px" @close="reverseOpen = false">
+    <ProtoDrawer v-if="kind === 'office'" :open="reverseOpen" title="反向穿透" width="560px" @close="reverseOpen = false">
       <p class="hint">{{ reverseHint }}</p>
       <p v-if="reverseError" class="hint bad" data-testid="asset-reverse-error">{{ reverseError }}</p>
       <table v-else data-testid="asset-reverse-holders">
