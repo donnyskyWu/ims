@@ -224,6 +224,7 @@
     <div v-if="kind === 'certificate' && levelReady" data-testid="corp-cert-level-panel">
       <div class="sec">查看级别</div>
       <p class="hint">默认全员 L1，不可看原图。L2 按角色编码，水印透明度 0.05 到 0.3。L3 只放管理员或行政白名单。保存后下次查看即按新级别。</p>
+      <p class="hint" data-testid="corp-cert-level-edge">L1 范围不可改。L2 角色不能含空格，留空无法保存。透明度 0.05 与 0.30 是边界。L3 只通过白名单，不在级别下拉里。</p>
       <div class="tbl-block">
         <div class="expire-wrap">
           <table data-testid="corp-cert-level-table">
@@ -238,7 +239,7 @@
               <tr>
                 <td>L1</td>
                 <td>默认全员</td>
-                <td>不可看原图</td>
+                <td>不可看原图，范围不可改</td>
               </tr>
               <tr>
                 <td>L2</td>
@@ -255,7 +256,7 @@
         </div>
       </div>
       <p class="hint" data-testid="corp-cert-level-current">当前 L2 角色：{{ levelRole || '未配置' }} · 白名单 {{ levelWhitelist.length }} 人 · 透明度 {{ opacityText }} · 位置 {{ positionLabel }}</p>
-      <form class="qbar" @submit.prevent="saveLevel">
+      <form class="qbar" novalidate @submit.prevent="saveLevel">
         <input v-model="levelRole" placeholder="角色编码，如 sys:admin" style="width: 220px" data-testid="corp-cert-level-role" />
         <select v-model="levelValue" style="width: 100px" data-testid="corp-cert-level-select">
           <option value="2">L2</option>
@@ -268,11 +269,13 @@
         <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-level-save">保存级别</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="corp-cert-level-reset" @click="resetLevel">恢复默认</button>
       </form>
+      <p v-if="opacityEdge" class="hint" data-testid="corp-cert-level-opacity-edge">{{ opacityEdge }}</p>
       <form class="qbar" @submit.prevent="saveWhitelist">
         <select v-model="l3UserId" style="width: 220px" data-testid="corp-cert-l3-user">
           <option value="">选择白名单用户</option>
           <option v-for="user in users" :key="String(user.id)" :value="String(user.id)">{{ user.nickname || user.username }}</option>
         </select>
+        <p v-if="!users.length" class="hint" data-testid="corp-cert-l3-users-empty">没有可选的本地用户，白名单暂不可添加</p>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-l3-save">保存白名单</button>
       </form>
       <p v-if="levelMessage" class="hint" data-testid="corp-cert-level-message">{{ levelMessage }}</p>
@@ -322,6 +325,7 @@
                   <div class="empty">
                     <div class="et">没有查看记录</div>
                     <div v-if="auditFiltered" class="es" data-testid="corp-cert-audit-empty">当前筛选下没有匹配的查看记录</div>
+                    <div v-else class="es" data-testid="corp-cert-audit-none">还没有查看记录。打开原图后会记在这里。</div>
                   </div>
                 </td>
               </tr>
@@ -414,7 +418,14 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="fileOpen" title="原图链接" width="520px" @close="fileOpen = false">
-      <div v-if="fileError" class="hint bad" data-testid="corp-cert-file-error">{{ fileError }}</div>
+      <div v-if="fileLoading" class="hint" data-testid="corp-cert-file-loading">正在获取原图链接</div>
+      <div v-else-if="fileError" class="hint bad" data-testid="corp-cert-file-error">
+        {{ fileError }}
+        <div v-if="fileLevelDenied" data-testid="corp-cert-file-level">无原图查看权限，仅索引可见</div>
+      </div>
+      <div v-else-if="fileResult && !fileResult.signedUrl" class="empty" data-testid="corp-cert-file-empty">
+        <div class="et">没有可预览的原图链接</div>
+      </div>
       <div v-else-if="fileResult" data-testid="corp-cert-file-result">
         <p class="hint" data-testid="corp-cert-file-ttl">有效 {{ fileResult.expiresInSeconds }} 秒。禁止下载。</p>
         <p v-if="fileResult.watermark" class="hint" data-testid="corp-cert-file-watermark">
@@ -494,7 +505,8 @@
           </select>
         </div>
       </div>
-      <div class="formrow one"><div class="fld"><label>证件号<i class="req">*</i></label><input v-model="certForm.certNoPlain" data-testid="corp-cert-no" placeholder="至少 8 位，接口只回脱敏值" /></div></div>
+      <div class="formrow one"><div class="fld"><label>证件号<i class="req">*</i></label><input v-model="certForm.certNoPlain" data-testid="corp-cert-no" placeholder="身份证 18 位含校验位，其他至少 8 位" /></div></div>
+      <p v-if="certNoHint" class="hint" data-testid="corp-cert-no-hint">{{ certNoHint }}</p>
       <div class="formrow one"><div class="fld"><label>签发日期<i class="req">*</i></label><input v-model="certForm.issueDate" type="date" data-testid="corp-cert-issue" /></div></div>
       <div class="formrow one"><div class="fld"><label>有效期至<i class="req">*</i></label><input v-model="certForm.expireDate" type="date" data-testid="corp-cert-expire-date" /></div></div>
       <div class="formrow one"><div class="fld"><label>扫描件标识<i class="req">*</i></label><input v-model="certForm.fileKey" data-testid="corp-cert-file-key" /></div></div>
@@ -522,9 +534,11 @@
         <div class="fld"><label>证件号</label><div>{{ reviewRow?.certNoMasked || '—' }}</div></div>
         <div class="fld"><label>有效期至</label><div>{{ reviewRow?.expireDate || '—' }}</div></div>
       </div>
-      <div v-if="reviewError" class="hint bad">{{ reviewError }}</div>
+      <div class="formrow one"><div class="fld"><label>驳回原因</label><input v-model="reviewRemark" data-testid="corp-cert-review-remark" placeholder="驳回时必填，不超过 200 字" /></div></div>
+      <div v-if="reviewError" class="hint bad" data-testid="corp-cert-review-error">{{ reviewError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="reviewOpen = false">取消</button>
+        <button class="btn btn-sec" type="button" data-testid="corp-cert-review-reject" :disabled="reviewSaving" @click="rejectCert">驳回</button>
         <button class="btn btn-pri" type="button" data-testid="corp-cert-review-approve" :disabled="reviewSaving" @click="approveCert">通过</button>
       </template>
     </ProtoDrawer>
@@ -647,6 +661,7 @@ const digitalOpen = ref(false)
 const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
 const digitalReady = ref(false)
 const fileOpen = ref(false)
+const fileLoading = ref(false)
 const fileError = ref('')
 const filePreview = ref('')
 const fileResult = ref<{
@@ -682,6 +697,7 @@ const originalNote = ref('')
 const reviewOpen = ref(false)
 const reviewSaving = ref(false)
 const reviewError = ref('')
+const reviewRemark = ref('')
 const reviewRow = ref<Row | null>(null)
 const scanOpen = ref(false)
 const scanSaving = ref(false)
@@ -739,6 +755,23 @@ const auditFiltered = computed(() =>
   Boolean(auditHolder.value.trim() || auditViewer.value || auditLevel.value || auditFrom.value || auditTo.value),
 )
 const opacityText = computed(() => opacityTextOf(levelOpacity.value))
+const opacityEdge = computed(() => {
+  const amount = Number(levelOpacity.value)
+  if (!Number.isFinite(amount)) return '请填写 0.05 到 0.3 的透明度'
+  if (amount < 0.05 || amount > 0.3) return '水印透明度须在 0.05 到 0.3'
+  if (amount <= 0.05) return '已到透明度下限 0.05'
+  if (amount >= 0.3) return '已到透明度上限 0.30'
+  return ''
+})
+const certNoHint = computed(() => {
+  if (certForm.certType !== 'IDCARD') return ''
+  const no = certForm.certNoPlain.trim()
+  if (no.length >= 8 && no.length < 18) return '不足 18 位，未做校验位核验，仍可提交'
+  if (no.length === 18 && !idCardOk(no)) return '身份证校验位不正确。仍可提交，接口只要求至少 8 位'
+  if (no.length === 18 && idCardOk(no)) return '身份证校验位正确'
+  return ''
+})
+const fileLevelDenied = computed(() => /1034|访问级别不足/.test(fileError.value))
 const positionLabel = computed(() => positionLabelOf(levelPosition.value))
 const l3Label = computed(() => {
   if (!levelWhitelist.value.length) return '未配置'
@@ -1035,6 +1068,11 @@ async function confirmOriginal() {
 }
 
 async function saveCert() {
+  const problem = uploadProblem(certForm, true)
+  if (problem) {
+    certFormError.value = problem
+    return
+  }
   certSaving.value = true
   certFormError.value = ''
   try {
@@ -1067,8 +1105,34 @@ async function saveCert() {
 
 function openReview(row: Row) {
   reviewRow.value = row
+  reviewRemark.value = ''
   reviewError.value = ''
   reviewOpen.value = true
+}
+
+async function rejectCert() {
+  const id = reviewRow.value?.id
+  if (id === undefined || id === null || id === '') {
+    reviewError.value = '缺少证件 id'
+    return
+  }
+  const problem = reviewRemarkProblem(reviewRemark.value)
+  if (problem) {
+    reviewError.value = problem
+    return
+  }
+  reviewSaving.value = true
+  reviewError.value = ''
+  try {
+    await http.put(`/cert/archive/${id}/review`, { action: 'REJECT', remark: reviewRemark.value.trim() })
+    reviewOpen.value = false
+    await load()
+    await loadDigital()
+  } catch (e: unknown) {
+    reviewError.value = errorMessage(e)
+  } finally {
+    reviewSaving.value = false
+  }
 }
 
 async function approveCert() {
@@ -1149,6 +1213,88 @@ function roundedOpacity(value: number) {
 function styleError(opacity: number, position: string) {
   if (!(opacity >= 0.05 && opacity <= 0.3)) return '水印透明度须在 0.05 到 0.3'
   if (!watermarkPositions.some((item) => item.value === position)) return '水印位置不合法'
+  return ''
+}
+
+const ID_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+const ID_CODES = '10X98765432'
+
+function idCardOk(raw: string) {
+  const text = raw.trim().toUpperCase()
+  if (!/^\d{17}[\dX]$/.test(text)) return false
+  let sum = 0
+  for (let i = 0; i < 17; i += 1) sum += Number(text[i]) * ID_WEIGHTS[i]
+  return ID_CODES[sum % 11] === text[17]
+}
+
+function certNoProblem(raw: string) {
+  const no = raw.trim()
+  if (no.length < 8) return '证件号至少 8 位'
+  return ''
+}
+
+function certDateProblem(issueDate: string, expireDate: string) {
+  if (!issueDate || !expireDate) return '签发日期和有效期必填'
+  if (expireDate <= issueDate) return '有效期须晚于签发日期'
+  return ''
+}
+
+function fileKeyProblem(fileKey: string) {
+  if (!fileKey.trim()) return '扫描件标识必填'
+  return ''
+}
+
+function todayYmd() {
+  const date = new Date()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function plusDays(ymd: string, days: number) {
+  const date = new Date(`${ymd}T00:00:00`)
+  date.setDate(date.getDate() + days)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+function renewalFloor(oldExpire: string) {
+  const outside = plusDays(todayYmd(), 31)
+  const afterOld = plusDays(oldExpire, 1)
+  return outside > afterOld ? outside : afterOld
+}
+
+function renewWindowProblem(expireDate: string, oldExpire: string) {
+  if (!oldExpire) return '原有效期不合法'
+  if (expireDate < renewalFloor(oldExpire)) return '新证有效期须晚于旧证，且超出 30 天预警'
+  return ''
+}
+
+function uploadProblem(
+  input: { holderName?: string; certType: string; certNoPlain: string; issueDate: string; expireDate: string; fileKey: string },
+  requireHolder: boolean,
+) {
+  if (requireHolder && !(input.holderName || '').trim()) return '持有人必填'
+  const number = certNoProblem(input.certNoPlain)
+  if (number) return number
+  const dates = certDateProblem(input.issueDate, input.expireDate)
+  if (dates) return dates
+  return fileKeyProblem(input.fileKey)
+}
+
+function roleCodeProblem(raw: string) {
+  const role = raw.trim()
+  if (!role) return '角色编码必填'
+  if (/\s/.test(role)) return '角色编码不能含空格'
+  if (role.length > 64) return '角色编码不超过 64 字'
+  return ''
+}
+
+function reviewRemarkProblem(raw: string) {
+  const remark = raw.trim()
+  if (!remark) return '驳回须填写原因'
+  if (remark.length > 200) return '驳回原因不超过 200 字'
   return ''
 }
 
@@ -1285,6 +1431,25 @@ async function saveRenew() {
   const target = renewTarget.value
   if (!target) {
     renewError.value = '缺少预警记录'
+    return
+  }
+  const problem = uploadProblem(
+    {
+      certType: String(target.certType || 'IDCARD'),
+      certNoPlain: renewForm.certNoPlain,
+      issueDate: renewForm.issueDate,
+      expireDate: renewForm.expireDate,
+      fileKey: renewForm.fileKey,
+    },
+    false,
+  )
+  if (problem) {
+    renewError.value = problem
+    return
+  }
+  const windowProblem = renewWindowProblem(renewForm.expireDate, String(target.expireDate || ''))
+  if (windowProblem) {
+    renewError.value = windowProblem
     return
   }
   renewSaving.value = true
@@ -1566,11 +1731,18 @@ async function putLevel(
 
 async function saveLevel() {
   levelMessage.value = ''
-  const role = levelRole.value.trim()
-  if (!role) {
-    levelMessage.value = '角色编码必填'
+  const roleProblem = roleCodeProblem(levelRole.value)
+  if (roleProblem) {
+    levelMessage.value = roleProblem
     return
   }
+  const opacity = roundedOpacity(Number(levelOpacity.value))
+  const styleProblem = styleError(opacity, levelPosition.value.trim())
+  if (styleProblem) {
+    levelMessage.value = styleProblem
+    return
+  }
+  const role = levelRole.value.trim()
   try {
     await putLevel([{ target: 'ROLE', targetCode: role, viewLevel: 2 }], levelWhitelist.value)
   } catch (e: unknown) {
@@ -1611,6 +1783,7 @@ async function openFileUrl(row: Row) {
   fileError.value = ''
   filePreview.value = ''
   fileResult.value = null
+  fileLoading.value = true
   fileOpen.value = true
   detailOpen.value = false
   try {
@@ -1626,6 +1799,8 @@ async function openFileUrl(row: Row) {
   } catch (e: unknown) {
     fileError.value = errorMessage(e)
     fileResult.value = null
+  } finally {
+    fileLoading.value = false
   }
 }
 

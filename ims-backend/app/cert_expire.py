@@ -191,6 +191,11 @@ def archive_review(
     if action == "APPROVE":
         row.status = "EFFECTIVE"
     elif action == "REJECT":
+        remark = (body.remark or "").strip()
+        if not remark:
+            return fail(1001, "驳回须填写原因")
+        if len(remark) > 200:
+            return fail(1001, "驳回原因不超过 200 字")
         row.deleted = 1
     else:
         return fail(1001, "动作不合法")
