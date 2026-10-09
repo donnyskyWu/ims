@@ -19,12 +19,13 @@
 
     <form v-if="tab === 'instance'" class="qbar" @submit.prevent="loadInstances">
       <input v-model="instFilters.keyword" placeholder="标题/单号" style="width: 140px" />
-      <select v-model="instFilters.instanceStatus" style="width: 110px">
+      <select v-model="instFilters.instanceStatus" data-testid="flow-instance-status" style="width: 110px">
         <option value="">全部状态</option>
         <option value="RUNNING">进行中</option>
         <option value="APPROVED">已通过</option>
         <option value="REJECTED">已驳回</option>
         <option value="CANCELLED">已撤销</option>
+        <option value="TIMEOUT">已超时</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -73,6 +74,8 @@
         </template>
       </span>
     </div>
+
+    <p v-if="tab === 'todo' && rejectDone" class="hint" data-testid="flow-reject-done">{{ rejectDone }}</p>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -145,7 +148,7 @@
                 </button>
                 <template v-else>
                   <span class="btn-txt btn" @click="handleTask(row, 'APPROVE')">通过</span>
-                  <span class="btn-txt btn" style="color: var(--red)" @click="handleTask(row, 'REJECT')">驳回</span>
+                  <span class="btn-txt btn" style="color: var(--red)" data-testid="flow-reject" @click="openReject(row)">驳回</span>
                 </template>
               </td>
             </tr>
@@ -161,16 +164,22 @@
               <th>当前节点</th>
               <th>发起人</th>
               <th>发起时间</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!instRows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无实例' }}</div></div></td>
+              <td colspan="8">
+                <div class="empty" data-testid="flow-instance-empty">
+                  <div class="et">{{ error || instEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ instEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
-            <tr v-for="row in instRows" v-else :key="row.id">
+            <tr v-for="row in instRows" v-else :key="String(row.id)">
               <td class="mono" style="color: var(--blue)">{{ row.instanceNo }}</td>
               <td style="font-weight: 500">{{ row.title }}</td>
               <td>{{ row.templateName }}</td>
@@ -178,6 +187,16 @@
               <td>{{ row.currentNodeName || '—' }}</td>
               <td>{{ row.initiatorName || '—' }}</td>
               <td class="csub">{{ row.startedAt }}</td>
+              <td>
+                <button
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="flow-instance-detail"
+                  @click="openDetail(row)"
+                >
+                  详情
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -237,11 +256,97 @@
         </div>
       </div>
     </div>
+
+    <ProtoDrawer
+      :open="detailOpen"
+      :title="detail ? `实例详情 · ${detail.instanceNo}` : '实例详情'"
+      width="640px"
+      @close="detailOpen = false"
+    >
+      <div v-if="detailLoading" class="empty"><div class="et">加载中</div></div>
+      <template v-else-if="detail">
+        <p class="hint" data-testid="flow-detail-edge">{{ detail.edgeCopy }}</p>
+        <p class="csub" style="margin: 8px 0">
+          {{ detail.templateName }} · {{ detail.instanceStatusLabel }} · {{ detail.currentNodeName || '—' }}
+        </p>
+        <div class="fld">
+          <label>表单</label>
+          <div v-if="detail.formEmpty" class="empty" data-testid="flow-detail-form-empty" style="padding: 16px">
+            <div class="et">未填写表单字段</div>
+          </div>
+          <ul v-else style="margin: 4px 0 0; padding-left: 18px">
+            <li v-for="pair in formPairs" :key="pair[0]">{{ pair[0] }}：{{ pair[1] }}</li>
+          </ul>
+        </div>
+        <div class="fld" style="margin-top: 12px">
+          <label>流转轨迹</label>
+          <div v-if="!detail.traceLog.length" class="empty" data-testid="flow-detail-trace-empty" style="padding: 16px">
+            <div class="et">暂无流转记录</div>
+          </div>
+          <ul v-else style="margin: 4px 0 0; padding-left: 18px">
+            <li v-for="(item, i) in detail.traceLog" :key="`${item.nodeOrder}-${i}`">
+              {{ item.nodeName }} · {{ actionLabel(item.action) }}
+              <span v-if="item.comment"> · {{ item.comment }}</span>
+            </li>
+          </ul>
+        </div>
+        <div class="fld" style="margin-top: 12px">
+          <label>抄送</label>
+          <div v-if="!detail.ccRecords.length" class="empty" data-testid="flow-detail-cc-empty" style="padding: 16px">
+            <div class="et">暂无抄送记录</div>
+          </div>
+        </div>
+      </template>
+      <p v-else-if="detailError" class="hint err">{{ detailError }}</p>
+      <template #foot>
+        <button class="btn btn-sec btn-sm" type="button" @click="detailOpen = false">关闭</button>
+        <button
+          v-if="detail?.canRevoke"
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="flow-revoke"
+          @click="openRevoke"
+        >
+          撤销
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <div v-if="revokeOpen" class="modal-mask" data-testid="flow-revoke-modal" @click.self="closeRevoke">
+      <div class="modal-card" style="width: min(420px, 92vw)">
+        <h3 style="margin: 0 0 8px">撤销流程</h3>
+        <p data-testid="flow-revoke-copy">撤销后已完成节点留痕，实例进入已撤销。</p>
+        <p v-if="revokeMsg" class="hint err" data-testid="flow-revoke-msg">{{ revokeMsg }}</p>
+        <div class="acts" style="justify-content: flex-end; gap: 8px; margin-top: 12px">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="flow-revoke-cancel" @click="closeRevoke">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="flow-revoke-confirm" :disabled="revokeSaving" @click="submitRevoke">
+            {{ revokeSaving ? '提交中…' : '确认撤销' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <ProtoDrawer :open="rejectOpen" title="驳回待办" width="480px" @close="closeReject">
+      <p class="hint" data-testid="flow-reject-copy">建议填写退回意见，可不填。驳回后实例进入已驳回，已完成节点留痕。</p>
+      <p v-if="rejectTarget" class="csub">{{ rejectTarget.instanceNo }} · {{ rejectTarget.nodeName }}</p>
+      <div class="fld" style="margin-top: 10px">
+        <label>退回意见</label>
+        <textarea v-model="rejectComment" data-testid="flow-reject-comment" rows="3" placeholder="可不填" />
+      </div>
+      <p v-if="rejectMsg" class="hint err" data-testid="flow-reject-msg">{{ rejectMsg }}</p>
+      <template #foot>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="flow-reject-cancel" @click="closeReject">取消</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="flow-reject-confirm" :disabled="rejectSaving" @click="submitReject">
+          {{ rejectSaving ? '提交中…' : '确认驳回' }}
+        </button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -304,6 +409,64 @@ const timeoutDist = ref<{
 const tplRows = ref<Record<string, unknown>[]>([])
 const instFilters = ref({ keyword: '', instanceStatus: '' })
 const tplFilters = ref({ templateName: '', businessDomain: '', status: '' })
+
+const instFiltered = computed(() => !!(instFilters.value.keyword.trim() || instFilters.value.instanceStatus))
+const instEmptyTitle = computed(() => {
+  if (instFilters.value.instanceStatus === 'TIMEOUT') return '暂无已超时实例'
+  if (instFiltered.value) return '没有符合条件的流程实例'
+  return '暂无实例'
+})
+const instEmptyHint = computed(() => {
+  if (instFilters.value.instanceStatus === 'TIMEOUT') return '超时终态才会出现在这里；临期待办请到超时督办'
+  if (instFiltered.value) return '调整标题、单号或状态后再查询'
+  return '点右上角「发起流程」创建第一条实例'
+})
+
+type FlowDetail = {
+  instanceNo: string
+  title: string
+  templateName: string
+  instanceStatus: string
+  instanceStatusLabel: string
+  currentNodeName: string
+  initiatorName: string
+  formData: Record<string, string | number | null>
+  formEmpty: boolean
+  canRevoke: boolean
+  edgeCopy: string
+  traceLog: { nodeOrder: number; nodeName: string; action: string; comment?: string }[]
+  ccRecords: unknown[]
+}
+
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detailError = ref('')
+const detail = ref<FlowDetail | null>(null)
+const revokeOpen = ref(false)
+const revokeSaving = ref(false)
+const revokeMsg = ref('')
+const rejectOpen = ref(false)
+const rejectSaving = ref(false)
+const rejectComment = ref('')
+const rejectMsg = ref('')
+const rejectDone = ref('')
+const rejectTarget = ref<{ id: number; instanceNo: string; nodeName: string } | null>(null)
+
+const formPairs = computed(() => {
+  const data = detail.value?.formData || {}
+  return Object.entries(data).filter(([, value]) => value !== null && String(value).trim() !== '')
+})
+
+function actionLabel(action: string) {
+  const map: Record<string, string> = {
+    PENDING: '待处理',
+    APPROVED: '通过',
+    REJECTED: '驳回',
+    TRANSFERRED: '转交',
+    CANCELLED: '已撤销',
+  }
+  return map[action] || action
+}
 const startOpen = ref(false)
 const startLoading = ref(false)
 const startMsg = ref('')
@@ -316,7 +479,8 @@ async function loadInstances() {
   error.value = ''
   try {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
-    if (instFilters.value.keyword) params.keyword = instFilters.value.keyword
+    const keyword = instFilters.value.keyword.trim()
+    if (keyword) params.keyword = keyword
     if (instFilters.value.instanceStatus) params.instanceStatus = instFilters.value.instanceStatus
     const res = await http.get('/flow/instance/list', { params })
     if (res.data.code !== 0) {
@@ -467,6 +631,88 @@ function resetInst() {
   loadInstances()
 }
 
+async function openDetail(row: Record<string, unknown>) {
+  const instanceNo = String(row.instanceNo || '')
+  if (!instanceNo) return
+  detailOpen.value = true
+  detailLoading.value = true
+  detailError.value = ''
+  detail.value = null
+  revokeOpen.value = false
+  try {
+    const res = await http.get(`/flow/instance/${encodeURIComponent(instanceNo)}`)
+    detail.value = res.data.data as FlowDetail
+  } catch (e: unknown) {
+    const body = e as { msg?: string }
+    detailError.value = body.msg || (e instanceof Error ? e.message : '加载失败')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function openRevoke() {
+  revokeMsg.value = ''
+  revokeOpen.value = true
+}
+
+function closeRevoke() {
+  if (revokeSaving.value) return
+  revokeOpen.value = false
+}
+
+async function submitRevoke() {
+  if (!detail.value) return
+  revokeSaving.value = true
+  revokeMsg.value = ''
+  try {
+    await http.put(`/flow/instance/${encodeURIComponent(detail.value.instanceNo)}/revoke`, {})
+    revokeOpen.value = false
+    await openDetail({ instanceNo: detail.value.instanceNo })
+    await loadInstances()
+  } catch (e: unknown) {
+    const body = e as { code?: number; msg?: string }
+    if (body.code === 1140) revokeMsg.value = '实例已结束不可撤销'
+    else if (body.code === 1139) revokeMsg.value = '仅发起人或管理员可撤销'
+    else revokeMsg.value = body.msg || '撤销失败'
+  } finally {
+    revokeSaving.value = false
+  }
+}
+
+function openReject(row: { id: number; instanceNo: string; nodeName: string }) {
+  rejectTarget.value = row
+  rejectComment.value = ''
+  rejectMsg.value = ''
+  rejectOpen.value = true
+}
+
+function closeReject() {
+  if (rejectSaving.value) return
+  rejectOpen.value = false
+}
+
+async function submitReject() {
+  const row = rejectTarget.value
+  if (!row) return
+  rejectSaving.value = true
+  rejectMsg.value = ''
+  try {
+    await http.put(`/flow/task/${row.id}/handle`, {
+      action: 'REJECT',
+      comment: rejectComment.value.trim(),
+    })
+    rejectDone.value = `已驳回 ${row.instanceNo}。实例进入已驳回，已完成节点留痕。`
+    rejectOpen.value = false
+    await loadTodos()
+  } catch (e: unknown) {
+    const body = e as { code?: number; msg?: string }
+    const msg = body.msg || (e instanceof Error ? e.message : '驳回失败')
+    rejectMsg.value = body.code === 1001 && msg.includes('终态') ? '实例已结束，无法驳回' : msg
+  } finally {
+    rejectSaving.value = false
+  }
+}
+
 function resetTpl() {
   tplFilters.value = { templateName: '', businessDomain: '', status: '' }
   loadTemplates()
@@ -530,6 +776,7 @@ async function submitStart() {
 }
 
 watch(tab, (t) => {
+  rejectDone.value = ''
   if (t === 'instance') loadInstances()
   else if (t === 'todo') loadTodos()
   else if (t === 'timeout') loadTimeouts()
@@ -538,3 +785,18 @@ watch(tab, (t) => {
 
 onMounted(loadInstances)
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.hint.err {
+  color: var(--red);
+}
+</style>

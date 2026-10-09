@@ -43,6 +43,7 @@
 |------|--------------|----------|
 | **E2E-FLOW-01** | `closure-flow-start-todo.spec.ts` | 发起 → 实例表「进行中」→ 我的待办「通过」→ 待办消失 · 实例「已通过」 |
 | **E2E-FLOW-02** | `closure-flow-timeout-urge.spec.ts` | 超时督办 Tab · 时长分布 · 督办 → 提醒次数 +1 |
+| **E2E-FLOW-03** | `closure-flow-reject-revoke.spec.ts` | 已超时空态 · 详情边界文案 · 撤销留痕 · 驳回抽屉可取消且空意见可提交 |
 | **E2E-S11-01 切片** | `closure-alert-rule-trial.spec.ts` | 新建启用规则 → 试跑 toast → 命中 +1 |
 | **E2E-S11-处置 (#44)** | `closure-alert-handle-tab.spec.ts` | UI 试跑 → live「处理」→ 处置记录 HANDLED · 去重 DEDUP-LIVE |
 | **E2E-S11-01/05 (#81)** | `closure-alert-rule-guard.spec.ts` | 非法 DSL **1009** · 重复编码 **1165** · 误报 **FALSE_ALARM** · 再响应 **1167** |
