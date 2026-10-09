@@ -47,6 +47,7 @@ test.describe('perf local tails #208', () => {
 
     await page.goto('/ims/perf/exam')
     await expect(page.locator('h1')).toHaveText('在线考试', { timeout: 15_000 })
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15_000 })
     await page.getByTestId('exam-bank-no').fill('NO-SUCH-208')
     await page.getByRole('button', { name: '查询' }).click()
     await expect(page.getByTestId('exam-bank-empty')).toContainText('当前筛选下暂无题目', { timeout: 15_000 })

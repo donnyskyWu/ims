@@ -54,6 +54,10 @@ def test_perf_exam_questions_list():
     assert body["data"]["total"] >= 3
     assert all(row["knowledgeDomain"] == "LIVE_RULE" for row in body["data"]["list"])
     assert any(row["questionNo"] == "EQ-001" for row in body["data"]["list"])
+    again = client.get("/admin-api/ims/perf/exam/questions", headers=auth, params={"pageNo": 1, "pageSize": 50})
+    listed = again.json()["data"]["list"]
+    assert again.json()["data"]["total"] == 10
+    assert sum(1 for row in listed if row["questionNo"] == "EQ-001") == 1
 
 
 def _paper(auth: dict, payload: dict) -> dict:
