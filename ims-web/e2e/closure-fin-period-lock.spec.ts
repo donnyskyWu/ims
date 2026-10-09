@@ -169,10 +169,12 @@ test.describe('fin period lock and post-lock correction', () => {
     expect(hit?.netProfit).toBe(82_400)
     const profitRow = page.locator('tbody tr', { hasText: sessionCode }).first()
     await expect(profitRow).toContainText('82,400.00', { timeout: 15_000 })
+    await expect(profitRow.getByTestId('fin-profit-calc-status')).toHaveText('已重算')
+    await expect(profitRow.getByTestId('fin-profit-calculated-at')).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
     await profitRow.getByRole('button', { name: '详情' }).click()
     const detailDrawer = page.locator('.drawer').filter({ hasText: '利润详情' })
     await expect(detailDrawer).toBeVisible()
-    await expect(detailDrawer).toContainText('RECALCULATED')
+    await expect(detailDrawer).toContainText('已重算')
 
     expect(pageErrors).toEqual([])
   })
