@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import FlowInstance, FlowTask, FlowTemplate, User
+from app.models import FlowInstance, FlowTask, FlowTemplate, Role, User, UserRole
 
 router = APIRouter(prefix="/flow", tags=["flow"])
 
@@ -498,6 +498,128 @@ def instance_vo(row: FlowInstance, names: dict[int, str]) -> dict:
     }
 
 
+def _actor_is_r1(db: Session, actor: User) -> bool:
+    if actor.username == "admin":
+        return True
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == actor.id)).all())
+    if not role_ids:
+        return False
+    roles = db.scalars(
+        select(Role).where(Role.id.in_(role_ids), Role.deleted == 0, Role.status == "ENABLED")
+    ).all()
+    return any(role.role_key == "sys:admin" for role in roles)
+
+
+def _form_empty(form: dict | None) -> bool:
+    if not form:
+        return True
+    return not any(value is not None and str(value).strip() for value in form.values())
+
+
+def _edge_copy(db: Session, actor: User, inst: FlowInstance) -> str:
+    status = inst.instance_status
+    if status == "RUNNING":
+        if actor.id == inst.initiator_user_id or _actor_is_r1(db, actor):
+            return "进行中。撤销后已完成节点留痕，实例进入已撤销。"
+        return "进行中。仅发起人或管理员可撤销。"
+    if status == "CANCELLED":
+        return "已撤销，已完成节点留痕，不可再次撤销。"
+    if status == "REJECTED":
+        return "实例已驳回结束，不可撤销。"
+    if status == "TIMEOUT":
+        return "实例已超时结束，不可撤销。"
+    return "实例已结束不可撤销。"
+
+
+def _can_revoke(db: Session, actor: User, inst: FlowInstance) -> bool:
+    return inst.instance_status == "RUNNING" and (
+        actor.id == inst.initiator_user_id or _actor_is_r1(db, actor)
+    )
+
+
+def _load_instance(db: Session, tenant_id: int, instance_no: str) -> FlowInstance | None:
+    no = (instance_no or "").strip()
+    if not no:
+        return None
+    return db.scalar(
+        select(FlowInstance).where(
+            FlowInstance.deleted == 0,
+            FlowInstance.tenant_id == tenant_id,
+            FlowInstance.instance_no == no,
+        )
+    )
+
+
+def instance_detail_vo(db: Session, inst: FlowInstance, actor: User, names: dict[int, str]) -> dict:
+    tpl = db.get(FlowTemplate, inst.template_id)
+    tasks = list(
+        db.scalars(
+            select(FlowTask)
+            .where(
+                FlowTask.deleted == 0,
+                FlowTask.tenant_id == inst.tenant_id,
+                FlowTask.instance_id == inst.id,
+            )
+            .order_by(FlowTask.id.asc())
+        ).all()
+    )
+    extra_ids = [task.assignee_user_id for task in tasks]
+    extra_ids.append(inst.initiator_user_id)
+    if any(uid not in names for uid in extra_ids):
+        names = {**names, **user_names(db, extra_ids)}
+    trace: list[dict] = []
+    for task in tasks:
+        trace.append(
+            {
+                "nodeOrder": task.node_order,
+                "nodeName": task.node_name,
+                "assigneeUserId": task.assignee_user_id,
+                "assigneeName": names.get(task.assignee_user_id, ""),
+                "action": task.task_status,
+                "comment": task.comment or "",
+                "actedAt": iso(task.handled_at or task.started_at),
+                "isTimeout": False,
+            }
+        )
+    if inst.instance_status == "CANCELLED":
+        trace.append(
+            {
+                "nodeOrder": 0,
+                "nodeName": inst.current_node_name or "撤销",
+                "assigneeUserId": inst.initiator_user_id,
+                "assigneeName": names.get(inst.initiator_user_id, ""),
+                "action": "CANCELLED",
+                "comment": "已完成节点留痕，实例进入已撤销",
+                "actedAt": iso(inst.finished_at),
+                "isTimeout": False,
+            }
+        )
+    pending = next((task for task in tasks if task.task_status == "PENDING"), None)
+    if inst.instance_status == "RUNNING" and pending is not None:
+        current_nodes = [
+            {
+                "nodeOrder": pending.node_order,
+                "nodeName": pending.node_name,
+                "assigneeUserId": pending.assignee_user_id,
+                "assigneeName": names.get(pending.assignee_user_id, ""),
+            }
+        ]
+    else:
+        current_nodes = []
+    return {
+        **instance_vo(inst, names),
+        "templateVersion": template_version_no(tpl) if tpl is not None and not tpl.deleted else 1,
+        "initiatorUserId": inst.initiator_user_id,
+        "formData": inst.form_data or {},
+        "formEmpty": _form_empty(inst.form_data),
+        "currentNodes": current_nodes,
+        "canRevoke": _can_revoke(db, actor, inst),
+        "edgeCopy": _edge_copy(db, actor, inst),
+        "traceLog": trace,
+        "ccRecords": [],
+    }
+
+
 def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
     """补齐默认模板和示例实例。已有账号流转等业务实例时仍要补，不能因表非空整段跳过。"""
     now = utcnow()
@@ -719,6 +841,60 @@ def flow_instance_list(
     return paged([instance_vo(r, names) for r in rows], total, page_no, size)
 
 
+@router.get("/instance/{instance_no}")
+def flow_instance_detail(
+    instance_no: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """实例详情：表单、轨迹、抄送空态，以及撤销边界文案。"""
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    inst = _load_instance(db, tenant_id, instance_no)
+    if inst is None:
+        return fail(1001, "流程实例不存在")
+    names = user_names(db, [inst.initiator_user_id, actor.id])
+    return ok(instance_detail_vo(db, inst, actor, names))
+
+
+@router.put("/instance/{instance_no}/revoke")
+def flow_instance_revoke(
+    instance_no: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """撤销进行中实例。已完成节点留痕，待办不再出现在我的待办。"""
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    inst = _load_instance(db, tenant_id, instance_no)
+    if inst is None:
+        return fail(1001, "流程实例不存在")
+    if inst.instance_status != "RUNNING":
+        return fail(1140, "实例已结束不可撤销")
+    if actor.id != inst.initiator_user_id and not _actor_is_r1(db, actor):
+        return fail(1139, "非发起人不可撤销")
+    now = utcnow()
+    inst.instance_status = "CANCELLED"
+    inst.finished_at = now
+    inst.updated_at = now
+    pending = list(
+        db.scalars(
+            select(FlowTask).where(
+                FlowTask.deleted == 0,
+                FlowTask.tenant_id == tenant_id,
+                FlowTask.instance_id == inst.id,
+                FlowTask.task_status == "PENDING",
+            )
+        ).all()
+    )
+    for task in pending:
+        if not (task.comment or "").strip():
+            task.comment = "未办结，随实例撤销关闭"
+        task.updated_at = now
+    db.flush()
+    return ok(None)
+
+
 @router.post("/instance")
 def flow_instance_start(
     body: FlowInstanceStartBody,
@@ -801,6 +977,7 @@ def flow_task_my_todo(
             FlowTask.assignee_user_id == actor.id,
             FlowTask.task_status == "PENDING",
             FlowInstance.deleted == 0,
+            FlowInstance.instance_status == "RUNNING",
         )
     )
     if businessDomain and businessDomain.strip().upper() in DOMAINS:

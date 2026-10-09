@@ -141,7 +141,8 @@ test.describe('flow local tails closure', () => {
     const todoRow = todoTable.locator('tbody tr').filter({ hasText: instanceNo }).first()
     await expect(todoRow).toBeVisible({ timeout: 15_000 })
     promptText = ''
-    await todoRow.getByText('驳回').click()
+    await todoRow.getByTestId('flow-reject').click()
+    await page.getByTestId('flow-reject-confirm').click()
     await expect(page.getByTestId('flow-handle-hint')).toContainText('退回建议填写意见')
     await shot(page, 'flow-188-reject-empty-comment')
 

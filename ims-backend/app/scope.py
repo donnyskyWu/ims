@@ -298,6 +298,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/flow/template", "ims_flow_template"),
     ("GET", "/admin-api/ims/flow/instance", "ims_flow_instance"),
     ("POST", "/admin-api/ims/flow/instance", "ims_flow_instance"),
+    ("PUT", "/admin-api/ims/flow/instance", "ims_flow_instance"),
     ("GET", "/admin-api/ims/flow/task", "ims_flow_task"),
     ("PUT", "/admin-api/ims/flow/task", "ims_flow_task"),
     ("GET", "/admin-api/ims/flow/timeout", "ims_flow_task"),
