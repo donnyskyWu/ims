@@ -47,11 +47,27 @@ test.describe('fin cost to profit closure', () => {
     const uiRow = page.locator('tbody tr', { hasText: sessionCode }).first()
     await expect(uiRow).toBeVisible({ timeout: 15_000 })
     await expect(uiRow).toContainText('81,400.00')
+    await expect(page.getByTestId('fin-profit-col-calc-status')).toHaveText('计算状态')
+    await expect(page.getByTestId('fin-profit-col-calculated-at')).toHaveText('计算时间')
+    await expect(uiRow.getByTestId('fin-profit-calc-status')).toHaveText('已计算')
+    await expect(uiRow.getByTestId('fin-profit-calculated-at')).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+
+    await page.setViewportSize({ width: 1680, height: 900 })
+    await uiRow.getByTestId('fin-profit-calculated-at').scrollIntoViewIfNeeded()
+    await page.screenshot({
+      path: '/opt/cursor/artifacts/e2e-113-screenshots/profit-list-calc-columns.png',
+      fullPage: true,
+    })
 
     await uiRow.getByRole('button', { name: '详情' }).click()
     const detailDrawer = page.locator('.drawer').filter({ hasText: '利润详情' })
     await expect(detailDrawer).toBeVisible()
     await expect(detailDrawer).toContainText('netProfit = revenue - refund - totalCost')
+    await expect(detailDrawer).toContainText('已计算')
+    await page.screenshot({
+      path: '/opt/cursor/artifacts/e2e-113-screenshots/profit-detail-calc-status.png',
+      fullPage: true,
+    })
 
     expect(pageErrors).toEqual([])
   })
