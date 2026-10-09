@@ -149,20 +149,38 @@
               <th>进度</th>
               <th>确认状态</th>
               <th>得分</th>
+              <th v-if="recordsConfirmType === 'QUIZ'">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="recordsLoading">
-              <td colspan="4">加载中…</td>
+              <td :colspan="recordsColspan">加载中…</td>
             </tr>
             <tr v-else-if="!recordRows.length">
-              <td colspan="4">暂无记录</td>
+              <td :colspan="recordsColspan">暂无记录</td>
             </tr>
-            <tr v-for="r in recordRows" v-else :key="r.userId">
+            <tr v-for="r in recordRows" v-else :key="r.userId" data-testid="train-record-row">
               <td>{{ r.userName || r.userId }}</td>
               <td class="num">{{ r.progress }}%</td>
               <td>{{ r.confirmStatus }}</td>
-              <td class="num">{{ r.confirmScore == null ? '—' : r.confirmScore }}</td>
+              <td class="num">
+                <span
+                  v-if="recordsConfirmType === 'QUIZ' && r.confirmScore == null"
+                  data-testid="train-record-score-empty"
+                >暂无成绩</span>
+                <template v-else>{{ r.confirmScore == null ? '—' : r.confirmScore }}</template>
+              </td>
+              <td v-if="recordsConfirmType === 'QUIZ'">
+                <button
+                  v-if="r.confirmStatus !== 'CONFIRMED' && r.confirmScore != null && isSelfRecord(r.userId)"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="train-record-retake"
+                  @click="goRetake"
+                >
+                  去重答
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -175,9 +193,10 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
 const route = useRoute()
@@ -210,9 +229,18 @@ const publishedMaterials = ref<MatPick[]>([])
 const showRecords = ref(false)
 const recordsLoading = ref(false)
 const recordsTaskName = ref('')
+const recordsTaskId = ref(0)
+const recordsConfirmType = ref('')
 const recordRows = ref<
   Array<{ userId: number; userName: string; progress: number; confirmStatus: string; confirmScore: number | null }>
 >([])
+const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 5 : 4))
+const userStore = useUserStore()
+
+function isSelfRecord(userId: number) {
+  const mine = Number(userStore.profile?.userId || 0)
+  return mine > 0 && mine === Number(userId)
+}
 
 type QuizDraft = { question: string; options: string[]; answerIndex: number }
 
@@ -294,8 +322,16 @@ function goStudy(row: Row) {
   router.push(`/ims/train/study/${row.id}`)
 }
 
+function goRetake() {
+  const id = recordsTaskId.value
+  showRecords.value = false
+  if (id) router.push(`/ims/train/study/${id}`)
+}
+
 async function openRecords(row: Row) {
   recordsTaskName.value = row.taskName
+  recordsTaskId.value = row.id
+  recordsConfirmType.value = row.confirmType
   showRecords.value = true
   recordsLoading.value = true
   recordRows.value = []
