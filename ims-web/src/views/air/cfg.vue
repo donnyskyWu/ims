@@ -29,6 +29,23 @@
     </div>
 
     <div v-if="tab === 'key'" class="tbl-block">
+      <form class="qbar" data-testid="air-key-query" @submit.prevent="loadKeys">
+        <input
+          v-model="keyQuery.userName"
+          placeholder="归属人员"
+          style="width: 140px"
+          data-testid="air-key-user-filter"
+        />
+        <select v-model="keyQuery.status" style="width: 120px" data-testid="air-key-status">
+          <option value="">全部状态</option>
+          <option value="ACTIVE">启用</option>
+          <option value="FROZEN">冻结</option>
+          <option value="REVOKED">已吊销</option>
+        </select>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="air-key-search">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="air-key-reset" @click="resetKeys">重置</button>
+      </form>
+      <p v-if="keyListError" class="hint" style="color: var(--red)" data-testid="air-key-list-error">{{ keyListError }}</p>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -43,12 +60,17 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
-            <tr v-for="row in keys" v-else :key="row.id">
+            <tr v-else-if="!keys.length">
+              <td colspan="6">
+                <div class="empty" data-testid="air-key-empty"><div class="et">暂无 Key</div></div>
+              </td>
+            </tr>
+            <tr v-for="row in keys" v-else :key="row.id" :data-status="row.status">
               <td class="mono">{{ row.keyCode }}</td>
               <td>{{ row.ownerUsername || row.ownerName || row.ownerUserId }}</td>
               <td class="mono" data-testid="air-key-mask">{{ row.keyMask || row.keyPrefix }}</td>
               <td class="num" data-testid="air-qpm-cell">{{ row.qpmLimit }}</td>
-              <td>{{ keyStatusLabel(row) }}</td>
+              <td data-testid="air-key-status-cell">{{ keyStatusLabel(row) }}</td>
               <td>
                 <button
                   v-if="row.status === 'ACTIVE'"
@@ -58,6 +80,24 @@
                   @click="openRenew(row)"
                 >
                   换新
+                </button>
+                <button
+                  v-if="row.status === 'ACTIVE'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="air-key-freeze"
+                  @click="askKeyAction(row, 'freeze')"
+                >
+                  停用
+                </button>
+                <button
+                  v-if="row.status === 'FROZEN'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="air-key-unfreeze"
+                  @click="askKeyAction(row, 'unfreeze')"
+                >
+                  启用
                 </button>
                 <button
                   v-if="row.status === 'ACTIVE'"
@@ -81,7 +121,13 @@
           <b>MCP 调用审计</b>
           <span class="hint">数据来自 ims_mcp_log · 网关不执行模型，Token 记 0</span>
         </div>
-        <form class="qbar" @submit.prevent="loadMcpLogs">
+        <form class="qbar" data-testid="air-mcp-query" @submit.prevent="loadMcpLogs">
+          <input
+            v-model="mcpKeyword"
+            placeholder="工具名 / 人员"
+            style="width: 140px"
+            data-testid="air-mcp-keyword"
+          />
           <select v-model="mcpTool" style="width: 180px" data-testid="air-mcp-tool">
             <option value="">全部工具</option>
             <option value="skills.list">skills.list</option>
@@ -94,8 +140,13 @@
             <option value="SUCCESS">成功</option>
             <option value="FAIL">失败</option>
           </select>
+          <input v-model="mcpKeyCode" placeholder="Key 编号" style="width: 120px" data-testid="air-mcp-key" />
+          <input v-model="mcpFrom" type="date" aria-label="开始日期" data-testid="air-mcp-from" />
+          <input v-model="mcpTo" type="date" aria-label="结束日期" data-testid="air-mcp-to" />
           <button class="btn btn-pri btn-sm" type="submit" data-testid="air-mcp-search">查询</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-mcp-reset" @click="resetMcpLogs">重置</button>
         </form>
+        <p v-if="mcpFilterError" class="hint" style="color: var(--red)" data-testid="air-mcp-filter-error">{{ mcpFilterError }}</p>
         <p class="hint" data-testid="air-mcp-hint">
           过滤命中只计组装时被剔除的未发布技能。本期无检索，不返回 knowledgeContext。
         </p>
@@ -228,6 +279,28 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="keyAction" class="modal-mask" data-testid="air-key-action">
+      <div class="card" style="width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">{{ keyAction.kind === 'freeze' ? '停用 Key' : '启用 Key' }}</h3>
+        <p class="hint" data-testid="air-key-action-hint">
+          {{
+            keyAction.kind === 'freeze'
+              ? '停用期间所有 MCP 调用返回 401，恢复后即刻生效。'
+              : '解冻后清空认证失败计数，并按当前在职状态与授权实时鉴权。'
+          }}
+        </p>
+        <p style="margin: 8px 0 0">{{ keyAction.keyCode }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-key-action-cancel" @click="keyAction = null">
+            取消
+          </button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-key-action-ok" @click="confirmKeyAction">
+            {{ keyAction.kind === 'freeze' ? '确认停用' : '确认启用' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -378,6 +451,9 @@ type IssuedKey = {
 const keys = ref<KeyRow[]>([])
 const showKeyForm = ref(false)
 const keyError = ref('')
+const keyListError = ref('')
+const keyQuery = reactive({ userName: '', status: '' })
+const keyAction = ref<null | { id: number; keyCode: string; kind: 'freeze' | 'unfreeze' }>(null)
 const userKeyword = ref('')
 const userOptions = ref<{ id: string; username: string; nickname: string }[]>([])
 const issued = ref<IssuedKey | null>(null)
@@ -406,6 +482,11 @@ const mcpLogs = ref<McpLog[]>([])
 const mcpLoading = ref(false)
 const mcpTool = ref('')
 const mcpResult = ref('')
+const mcpKeyword = ref('')
+const mcpKeyCode = ref('')
+const mcpFrom = ref('')
+const mcpTo = ref('')
+const mcpFilterError = ref('')
 const audits = ref<
   {
     id: number
@@ -548,15 +629,53 @@ async function revokeKey(row: KeyRow) {
     await http.post(`/air/key/${row.id}/revoke`, { reason: '页面吊销' })
     await loadKeys()
   } catch (error) {
-    keyError.value = errorMessage(error)
+    keyListError.value = errorMessage(error)
   }
+}
+
+function askKeyAction(row: KeyRow, kind: 'freeze' | 'unfreeze') {
+  keyListError.value = ''
+  keyAction.value = { id: row.id, keyCode: row.keyCode, kind }
+}
+
+async function confirmKeyAction() {
+  const action = keyAction.value
+  if (!action) return
+  keyAction.value = null
+  try {
+    if (action.kind === 'freeze') {
+      await http.post(`/air/key/${action.id}/freeze`, { reason: '管理员停用' })
+    } else {
+      await http.post(`/air/key/${action.id}/unfreeze`)
+    }
+    await loadKeys()
+  } catch (error) {
+    keyListError.value = errorMessage(error)
+  }
+}
+
+function resetKeys() {
+  keyQuery.userName = ''
+  keyQuery.status = ''
+  loadKeys()
 }
 
 async function loadKeys() {
   loading.value = true
+  keyListError.value = ''
   try {
-    const res = await http.get('/air/cfg/key/page', { params: { pageNo: 1, pageSize: 100 } })
+    const res = await http.get('/air/cfg/key/page', {
+      params: {
+        pageNo: 1,
+        pageSize: 100,
+        userName: keyQuery.userName.trim() || undefined,
+        status: keyQuery.status || undefined,
+      },
+    })
     if (res.data.code === 0) keys.value = res.data.data.list || []
+  } catch (error) {
+    keys.value = []
+    keyListError.value = errorMessage(error)
   } finally {
     loading.value = false
   }
@@ -572,18 +691,46 @@ async function loadAudits() {
   }
 }
 
+function resetMcpLogs() {
+  mcpKeyword.value = ''
+  mcpTool.value = ''
+  mcpResult.value = ''
+  mcpKeyCode.value = ''
+  mcpFrom.value = ''
+  mcpTo.value = ''
+  mcpFilterError.value = ''
+  loadMcpLogs()
+}
+
 async function loadMcpLogs() {
+  mcpFilterError.value = ''
+  const from = mcpFrom.value.trim()
+  const to = mcpTo.value.trim()
+  if ((from && !to) || (!from && to)) {
+    mcpFilterError.value = '日期区间须同时填写开始日和结束日'
+    return
+  }
+  if (from && to && to < from) {
+    mcpFilterError.value = '结束日不能早于开始日'
+    return
+  }
   mcpLoading.value = true
   try {
     const res = await http.get('/air/mcp/audit-log', {
       params: {
         pageNo: 1,
         pageSize: 20,
+        keyword: mcpKeyword.value.trim() || undefined,
         tool: mcpTool.value || undefined,
         result: mcpResult.value || undefined,
+        keyCode: mcpKeyCode.value.trim() || undefined,
+        dateRange: from && to ? `${from},${to}` : undefined,
       },
     })
     if (res.data.code === 0) mcpLogs.value = res.data.data.list || []
+  } catch (error) {
+    mcpLogs.value = []
+    mcpFilterError.value = errorMessage(error)
   } finally {
     mcpLoading.value = false
   }
