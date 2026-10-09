@@ -837,3 +837,81 @@ def test_alert_stats_rank_merge_and_false_remark():
     )
     assert missing.json()["data"]["total"] == 0
     assert missing.json()["data"]["list"] == []
+
+
+def _set_push(alert_no: str, push_status: int) -> None:
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.models import AlertRecord
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(select(AlertRecord).where(AlertRecord.alert_no == alert_no))
+        assert row is not None
+        row.push_status = push_status
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_alert_channel_receipt_empty_and_local_stub():
+    auth = headers()
+    empty = client.get(
+        "/admin-api/ims/alert/stats/overview",
+        headers=auth,
+        params={"dateRange": "2098-01-01,2098-01-02"},
+    )
+    assert empty.json()["code"] == 0
+    channels = empty.json()["data"]["channelReceipts"]
+    assert [item["channel"] for item in channels] == ["WORKBENCH", "DINGTALK", "SMS"]
+    assert all(item["empty"] and item["outbound"] is False and item["receiptCount"] == 0 for item in channels)
+
+    rule_id = _enable_rule(auth, f"rcpt.{uuid.uuid4().hex[:8]}", level=3)
+    alert_no = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+    day = datetime(2098, 4, 4, 9, 0, 0)
+    _shift_alert(alert_no, day)
+    _set_push(alert_no, 0)
+
+    pending = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth)
+    body = pending.json()["data"]
+    assert pending.json()["code"] == 0
+    assert body["receiptEmpty"] is True
+    assert body["pushChannels"] == []
+    assert "ALR-P-R1" in body["priorityNote"]
+    assert body["retryNote"] == ""
+
+    _set_push(alert_no, 1)
+    delivered = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth).json()["data"]
+    by_code = {item["channel"]: item for item in delivered["pushChannels"]}
+    assert delivered["receiptEmpty"] is False
+    assert by_code["WORKBENCH"]["success"] is True and by_code["WORKBENCH"]["outbound"] is False
+    assert by_code["DINGTALK"]["success"] is True and by_code["DINGTALK"]["stub"] is True
+    assert by_code["DINGTALK"]["outbound"] is False
+    assert by_code["SMS"]["empty"] is True and by_code["SMS"]["success"] is False
+    assert by_code["SMS"]["outbound"] is False
+
+    overview = client.get(
+        "/admin-api/ims/alert/stats/overview",
+        headers=auth,
+        params={"dateRange": "2098-04-04,2098-04-04"},
+    ).json()["data"]
+    ranked = {item["channel"]: item for item in overview["channelReceipts"]}
+    assert ranked["WORKBENCH"]["receiptCount"] == 1 and ranked["WORKBENCH"]["empty"] is False
+    assert ranked["DINGTALK"]["receiptCount"] == 1 and ranked["DINGTALK"]["empty"] is False
+    assert ranked["SMS"]["empty"] is True and ranked["SMS"]["receiptCount"] == 0
+
+    _set_push(alert_no, 2)
+    fallback = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth).json()["data"]
+    fallback_codes = {item["channel"]: item for item in fallback["pushChannels"]}
+    assert fallback_codes["SMS"]["success"] is True and fallback_codes["SMS"]["empty"] is False
+    assert fallback_codes["DINGTALK"]["success"] is False
+    assert all(item["outbound"] is False for item in fallback["pushChannels"])
+
+    _set_push(alert_no, 3)
+    failed = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth).json()["data"]
+    assert "ALR-P-R2" in failed["retryNote"]
+    assert all(item["outbound"] is False for item in failed["pushChannels"])
+
+    missing = client.get("/admin-api/ims/alert/check/AL-NO-SUCH", headers=auth)
+    assert missing.json()["code"] == 1500

@@ -176,6 +176,14 @@
                   回执
                 </button>
                 <button
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-receipt-btn"
+                  @click="openReceipt(row.alertNo)"
+                >
+                  回执
+                </button>
+                <button
                   v-if="row.responseStatus === 'OPEN'"
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -215,24 +223,30 @@
         <p>{{ detail.content }}</p>
         <p class="hint">{{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ detail.responseStatus }}</p>
         <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
-        <table>
+        <p v-if="detail.priorityNote" class="hint" data-testid="alert-receipt-priority">{{ detail.priorityNote }}</p>
+        <div v-if="detail.receiptEmpty" class="empty" data-testid="alert-receipt-empty">
+          <div class="et">暂无通道回执（待推送，钉钉/短信不外发）</div>
+        </div>
+        <table v-else>
           <thead>
             <tr>
               <th>通道</th>
               <th>状态</th>
               <th>回执时间</th>
+              <th>外发</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="ch in detail.pushChannels" :key="ch.channel" data-testid="alert-receipt-row">
-              <td>{{ channelName(ch.channel) }}</td>
-              <td>{{ ch.success ? '✓' : '✗' }}</td>
+            <tr v-for="ch in detail.pushChannels" :key="ch.channel" data-testid="alert-receipt-row" :data-channel="ch.channel">
+              <td>{{ ch.label || channelName(ch.channel) }}</td>
+              <td>{{ ch.empty ? '未触发 ✗' : ch.success ? '✓' : '✗' }}</td>
               <td class="mono">{{ ch.receiptAt || '—' }}</td>
+              <td>不外发</td>
             </tr>
           </tbody>
         </table>
-        <p v-if="detail.retryCount" class="hint" style="color: var(--red)" data-testid="alert-receipt-retry">
-          已自动补发 1 次（ALR-P-R2）
+        <p v-if="detail.retryNote || detail.retryCount" class="hint" style="color: var(--red)" data-testid="alert-receipt-retry">
+          {{ detail.retryNote || '已自动补发 1 次（ALR-P-R2）' }}
         </p>
         <p v-if="detail.sourceJumpUrl" class="hint">
           <router-link :to="detail.sourceJumpUrl">查看来源</router-link>
@@ -264,8 +278,13 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
-
-type Channel = { channel: string; success: boolean; receiptAt?: string }
+type Channel = {
+  channel: string
+  label?: string
+  success: boolean
+  empty?: boolean
+  receiptAt?: string
+}
 
 type Row = {
   id: number
@@ -280,7 +299,13 @@ type Row = {
   occurredAt: string
 }
 
-type Detail = Row & { sourceJumpUrl?: string; retryCount?: number }
+type Detail = Row & {
+  sourceJumpUrl?: string
+  retryCount?: number
+  receiptEmpty?: boolean
+  priorityNote?: string
+  retryNote?: string
+}
 
 type DedupRow = {
   id: number
@@ -466,12 +491,25 @@ function closeDetail() {
 async function openDetail(alertNo: string) {
   detail.value = null
   detailOpen.value = true
+  toast.value = ''
   try {
     const res = await http.get(`/alert/check/${alertNo}`)
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '回执加载失败'
+      return
+    }
     detail.value = res.data.data
   } catch (err) {
     toast.value = errorMessage(err)
   }
+}
+
+function closeReceipt() {
+  closeDetail()
+}
+
+async function openReceipt(alertNo: string) {
+  await openDetail(alertNo)
 }
 
 function openFalse(alertNo: string) {

@@ -26,7 +26,8 @@ router.include_router(escalate_router)
 BJ = timezone(timedelta(hours=8))
 # 契约 AlertEventStatus。1=CONFIRMED（旧称 ACK），2=RESOLVED（旧称 HANDLED）。
 RESPONSE_LABELS = {0: "OPEN", 1: "CONFIRMED", 2: "RESOLVED", 3: "FALSE_ALARM"}
-# 0 待推送 / 1 工作台已落库视为已送达 / 2 钉钉桩失败后短信兜底 / 3 补发后仍失败。钉钉与短信只记本地回执，不外发。
+# 0 待推送（无回执）/ 1 工作台+钉钉本地记账 / 2 钉钉失败后短信兜底记账 / 3 补发后仍失败。
+# 钉钉与短信 success 只表示本地桩已记账，outbound 恒为 false，不外发。
 PUSH_LABELS = {0: "PENDING", 1: "DELIVERED", 2: "PARTIAL_FAILED", 3: "FAILED"}
 PUSH_CODES = {label: code for code, label in PUSH_LABELS.items()}
 SOURCE_JUMPS = {
@@ -36,6 +37,7 @@ SOURCE_JUMPS = {
     "COST": "/ims/cost",
     "MANUAL": "/ims/alert/rule",
 }
+PRIORITY_NOTE = "严重级 1 分钟内送达：工作台与钉钉优先，短信仅兜底。本地桩，不外发（ALR-P-R1）"
 STATUS_ALIASES = {
     "ACK": "CONFIRMED",
     "HANDLED": "RESOLVED",
@@ -122,31 +124,41 @@ def parse_push(raw: str | None) -> tuple[int | None, str | None]:
 
 
 def push_channels(row: AlertRecord) -> list[dict]:
-    """本地回执。钉钉/短信 success 只表示桩已记账，不表示已经外发。"""
+    """本地回执。待推送返回空列表。短信未触发时 empty=true。不外发。"""
     at = iso(row.occurred_at) if row.occurred_at else None
     status = row.push_status
-    if status == 1:
-        return [
-            {"channel": "WORKBENCH", "success": True, "receiptAt": at},
-            {"channel": "DINGTALK", "success": True, "receiptAt": at},
-            {"channel": "SMS", "success": False},
-        ]
+
+    def channel(code: str, label: str, success: bool, stub: bool, empty: bool = False) -> dict:
+        item = {
+            "channel": code,
+            "label": label,
+            "success": success,
+            "outbound": False,
+            "stub": stub,
+            "empty": empty,
+        }
+        if success and at:
+            item["receiptAt"] = at
+        return item
+
+    if status == 0:
+        return []
     if status == 2:
         return [
-            {"channel": "WORKBENCH", "success": True, "receiptAt": at},
-            {"channel": "DINGTALK", "success": False},
-            {"channel": "SMS", "success": True, "receiptAt": at},
+            channel("WORKBENCH", "工作台", True, False),
+            channel("DINGTALK", "钉钉", False, True),
+            channel("SMS", "短信", True, True),
         ]
     if status == 3:
         return [
-            {"channel": "WORKBENCH", "success": False},
-            {"channel": "DINGTALK", "success": False},
-            {"channel": "SMS", "success": False},
+            channel("WORKBENCH", "工作台", False, False),
+            channel("DINGTALK", "钉钉", False, True),
+            channel("SMS", "短信", False, True),
         ]
     return [
-        {"channel": "WORKBENCH", "success": False},
-        {"channel": "DINGTALK", "success": False},
-        {"channel": "SMS", "success": False},
+        channel("WORKBENCH", "工作台", True, False),
+        channel("DINGTALK", "钉钉", True, True),
+        channel("SMS", "短信", False, True, empty=True),
     ]
 
 
@@ -338,6 +350,39 @@ def _rules_for(db: Session, rows: list[AlertRecord]) -> dict[int, AlertRule]:
     if not rule_ids:
         return {}
     return {rule.id: rule for rule in db.scalars(select(AlertRule).where(AlertRule.id.in_(rule_ids))).all()}
+
+
+def channel_receipts(rows: list[AlertRecord]) -> list[dict]:
+    """范围内回执计数。短信仅在兜底记账后有数，否则为空态。"""
+    counts = {"WORKBENCH": 0, "DINGTALK": 0, "SMS": 0}
+    for row in rows:
+        if row.push_status == 1:
+            counts["WORKBENCH"] += 1
+            counts["DINGTALK"] += 1
+        elif row.push_status == 2:
+            counts["WORKBENCH"] += 1
+            counts["SMS"] += 1
+    specs = (
+        ("WORKBENCH", "工作台", "LOCAL", False, "工作台已落库才计入回执"),
+        ("DINGTALK", "钉钉", "STUB", True, "本地桩，不外发"),
+        ("SMS", "短信", "STUB", True, "短信仅兜底，未触发则无回执"),
+    )
+    result = []
+    for code, label, mode, stub, note in specs:
+        count = counts[code]
+        result.append(
+            {
+                "channel": code,
+                "label": label,
+                "mode": mode,
+                "outbound": False,
+                "stub": stub,
+                "receiptCount": count,
+                "empty": count == 0,
+                "note": note,
+            }
+        )
+    return result
 
 
 @router.get("/rule/list")
@@ -620,7 +665,13 @@ def check_detail(
     if row is None:
         return fail(1500, "预警不存在")
     rule = db.get(AlertRule, row.rule_id) if row.rule_id else None
+    channels = push_channels(row)
     data = record_vo(row, rule)
+    data["ruleCode"] = rule.rule_code if rule else data.get("ruleCode") or ""
+    data["pushChannels"] = channels
+    data["receiptEmpty"] = not channels
+    data["priorityNote"] = PRIORITY_NOTE if row.level == 3 else ""
+    data["retryNote"] = "已自动补发 1 次（ALR-P-R2）" if row.push_status == 3 else ""
     data["sourceJumpUrl"] = source_jump(row)
     data["escalationTimeline"] = []
     data["retryCount"] = 1 if row.push_status in (2, 3) else 0
@@ -790,6 +841,7 @@ def stats_overview(
 
     响应时长取已响应记录（非 OPEN）的 updated_at − occurred_at 均值（分钟）。
     送达率按 push_status=1（工作台已落库）计，不含钉钉/短信外发。
+    通道回执只做本地计数：钉钉为桩，短信未兜底时为空。
     升级率：越过起始级（默认一级 30 分钟，L3 从二级起）仍未在时限内响应的占比。
     """
     start, end, error = parse_day_range(dateRange)
@@ -838,6 +890,7 @@ def stats_overview(
             "resolvedCount": resolved,
             "falseAlarmCount": false_alarm,
             "channelStubs": CHANNEL_STUBS,
+            "channelReceipts": channel_receipts(rows),
         }
     )
 

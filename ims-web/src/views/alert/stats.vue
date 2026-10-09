@@ -45,7 +45,12 @@
       </div>
       <div class="card stat">
         <span class="l">响应率</span>
-        <div class="n" data-testid="alert-stats-response-rate" :style="{ color: rateColor(overview.responseRate, 90) }">
+        <div
+          class="n"
+          data-testid="alert-stats-response-rate"
+          :data-neutral="overview.totalAlertCount === 0 ? '1' : '0'"
+          :style="{ color: rateColor(overview.responseRate, 90) }"
+        >
           {{ overview.responseRate }}%
         </div>
         <div class="d">已响应 {{ overview.respondedCount }} / {{ overview.totalAlertCount }} · BR-112 &gt;90%</div>
@@ -62,7 +67,12 @@
     <div v-if="overview" class="g4">
       <div class="card stat">
         <span class="l">送达率</span>
-        <div class="n" data-testid="alert-stats-delivery-rate" :style="{ color: rateColor(overview.deliveryRate, 99) }">
+        <div
+          class="n"
+          data-testid="alert-stats-delivery-rate"
+          :data-neutral="overview.totalAlertCount === 0 ? '1' : '0'"
+          :style="{ color: rateColor(overview.deliveryRate, 99) }"
+        >
           {{ overview.deliveryRate }}%
         </div>
         <div class="d">只计工作台落库</div>
@@ -98,6 +108,35 @@
       data-testid="alert-stats-empty"
     >
       <div class="empty"><div class="et">当前筛选范围内暂无预警</div></div>
+    </div>
+
+    <div v-if="overview" class="card" style="margin-top: 12px; padding: 16px" data-testid="alert-channel-receipts">
+      <div class="hd-row"><h3 style="margin: 0">通道回执</h3></div>
+      <p class="hint">钉钉、短信为本地桩，不实际外发。短信只在兜底记账后才有回执。</p>
+      <div v-if="overview.totalAlertCount === 0" class="empty" data-testid="alert-channel-empty">
+        <div class="et">当前范围内暂无通道回执</div>
+      </div>
+      <table v-else>
+        <thead>
+          <tr>
+            <th>通道</th>
+            <th>回执</th>
+            <th>外发</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="ch in overview.channelReceipts"
+            :key="ch.channel"
+            :data-testid="`alert-channel-${ch.channel}`"
+            :data-empty="ch.empty ? '1' : '0'"
+          >
+            <td>{{ ch.label }}</td>
+            <td>{{ ch.empty ? `暂无回执 · ${ch.note}` : `${ch.receiptCount} 条 · ${ch.note}` }}</td>
+            <td>不外发</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <div class="card" style="margin-top: 16px; padding: 16px" data-testid="alert-weekly">
@@ -307,6 +346,16 @@ type Overview = {
   respondedCount: number
   resolvedCount: number
   channelStubs: ChannelStub[]
+  channelReceipts: ChannelReceipt[]
+}
+
+type ChannelReceipt = {
+  channel: string
+  label: string
+  receiptCount: number
+  empty: boolean
+  note: string
+  outbound: boolean
 }
 
 type RankRow = {
