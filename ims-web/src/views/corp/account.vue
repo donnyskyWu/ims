@@ -152,7 +152,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 账号已绑定资产时提交或确认后提示同步办理资产转移（不阻断）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
@@ -808,17 +808,39 @@
         <button class="btn btn-pri" type="button" @click="submitCreate">保存</button>
       </template>
     </ProtoDrawer>
+
+    <div v-if="assetHintOpen" class="asset-hint-mask" data-testid="acct-asset-transfer-hint">
+      <div class="asset-hint-card" role="dialog" aria-modal="true">
+        <h2>资产同步转移</h2>
+        <p data-testid="acct-asset-transfer-text">{{ assetHintText }}</p>
+        <ul data-testid="acct-asset-transfer-list">
+          <li v-for="item in assetHintAssets" :key="item.assetId" data-testid="acct-asset-transfer-item">
+            {{ item.assetCode }} · {{ item.assetName }}
+          </li>
+        </ul>
+        <p class="hint">账号流转已经提交，资产不会自动过户。请相关责任人另行办理资产转移。</p>
+        <div class="asset-hint-acts">
+          <button class="btn btn-sec" type="button" data-testid="acct-asset-transfer-skip" @click="skipAssetTransfer">
+            仅转账号
+          </button>
+          <button class="btn btn-pri" type="button" data-testid="acct-asset-transfer-jump" @click="jumpAssetTransfer">
+            跳转资产处理
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { useUserStore } from '../../stores/user'
 
 const route = useRoute()
+const router = useRouter()
 const userStore = useUserStore()
 const currentUserId = computed(() => Number(userStore.profile?.userId || 0))
 
@@ -972,6 +994,38 @@ type TransferRow = {
   status: string
   remark: string
   reasonType: string
+}
+
+type BoundAsset = {
+  assetId: number
+  assetCode: string
+  assetName: string
+  assetType?: string
+  status?: string
+}
+type AssetHintPayload = {
+  boundAssets?: BoundAsset[]
+  assetTransferHint?: string | null
+}
+const assetHintOpen = ref(false)
+const assetHintText = ref('')
+const assetHintAssets = ref<BoundAsset[]>([])
+
+function showAssetHint(data: AssetHintPayload | null | undefined) {
+  const assets = data?.boundAssets || []
+  if (!assets.length) return
+  assetHintAssets.value = assets
+  assetHintText.value = data?.assetTransferHint || `该账号绑定了 ${assets.length} 项资产，是否同步发起资产转移？`
+  assetHintOpen.value = true
+}
+
+function skipAssetTransfer() {
+  assetHintOpen.value = false
+}
+
+function jumpAssetTransfer() {
+  assetHintOpen.value = false
+  router.push('/ims/corp/device/office')
 }
 
 const transferReasons = [
@@ -1412,9 +1466,10 @@ async function submitTransfer() {
       reasonType: transferForm.reasonType,
       remark: transferForm.remark.trim(),
     })
-    const vo = res.data?.data as { transferNo: string; status: string }
+    const vo = res.data?.data as { transferNo: string; status: string } & AssetHintPayload
     transferResult.value = vo
     transferMsg.value = `流转单 ${vo.transferNo} · 审批流：待新责任人确认`
+    showAssetHint(vo)
     await loadTransfers()
   } catch (e: unknown) {
     transferMsg.value = bizMessage(e)
@@ -1453,9 +1508,10 @@ async function submitRecall() {
       reasonType: recallForm.reasonType,
       remark: recallForm.remark.trim(),
     })
-    const vo = res.data?.data as { transferNo: string; status: string }
+    const vo = res.data?.data as { transferNo: string; status: string } & AssetHintPayload
     recallResult.value = vo
     recallMsg.value = `收回单 ${vo.transferNo} · 已生效 · 状态 FROZEN`
+    showAssetHint(vo)
     await load()
   } catch (e: unknown) {
     recallMsg.value = bizMessage(e)
@@ -1513,9 +1569,10 @@ async function confirmTransfer() {
   transferBusy.value = true
   transferConfirmMsg.value = ''
   try {
-    await http.put(`/account/transfer/${transferConfirm.value.id}/confirm`, { accept: true })
+    const res = await http.put(`/account/transfer/${transferConfirm.value.id}/confirm`, { accept: true })
     transferConfirmMsg.value = '已生效'
     transferConfirmOpen.value = false
+    showAssetHint(res.data?.data as AssetHintPayload)
     await load()
   } catch (e: unknown) {
     transferConfirmMsg.value = bizMessage(e)
@@ -1878,5 +1935,35 @@ watch(activeTab, (tab) => {
 .verify-over {
   color: #c45656;
   font-weight: 600;
+}
+.asset-hint-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+.asset-hint-card {
+  width: min(480px, 92vw);
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+.asset-hint-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+.asset-hint-card ul {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+}
+.asset-hint-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }
 </style>
