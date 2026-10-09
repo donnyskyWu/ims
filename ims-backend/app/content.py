@@ -68,6 +68,10 @@ class SopNodeReq(BaseModel):
     ownerRole: str = "R6"
     nodeType: str = "NORMAL"
     documentType: str = ""
+    predecessors: list[int] = Field(default_factory=list)
+    parallelGroup: str = ""
+    needReview: int = 0
+    reviewerRole: str = ""
     slaHours: int = 24
 
 
@@ -170,6 +174,10 @@ def node_vo(row: ContentSopNode) -> dict:
         "ownerRole": row.owner_role,
         "nodeType": row.node_type or "NORMAL",
         "documentType": row.document_type or "",
+        "predecessors": list(row.predecessors or []),
+        "parallelGroup": row.parallel_group or "",
+        "needReview": int(row.need_review or 0),
+        "reviewerRole": row.reviewer_role or "",
         "slaHours": row.sla_hours,
     }
 
@@ -181,11 +189,72 @@ def load_sop(db: Session, sop_id: int, actor: User) -> ContentSop | None:
     return row
 
 
+_NODE_TYPES = {"NORMAL", "CONTENT_GENERATION", "CONTENT_PUBLISH"}
+
+
+def validate_sop_nodes(nodes: list[SopNodeReq]) -> str | None:
+    """SOP 节点与 DAG。环、缺执行岗位等返回 1500 文案；通过则 None。"""
+    if not nodes:
+        return "参数校验失败"
+    names: list[str] = []
+    orders: list[int] = []
+    for item in nodes:
+        name = (item.nodeName or "").strip()
+        if not name or len(name) > 64:
+            return "参数校验失败"
+        if name in names:
+            return "节点名重复"
+        names.append(name)
+        if item.nodeOrder in orders:
+            return "参数校验失败"
+        orders.append(item.nodeOrder)
+        ntype = (item.nodeType or "NORMAL").strip() or "NORMAL"
+        if ntype not in _NODE_TYPES:
+            return "参数校验失败"
+        if ntype == "CONTENT_GENERATION" and not (item.documentType or "").strip():
+            return "内容生成节点须填写文档类型"
+        if not (item.ownerRole or "").strip():
+            return "节点缺执行岗位"
+        if int(item.slaHours or 0) < 1:
+            return "参数校验失败"
+        if int(item.needReview or 0) not in (0, 1):
+            return "参数校验失败"
+        if int(item.needReview or 0) == 1 and not (item.reviewerRole or "").strip():
+            return "审核岗位必填"
+    order_set = set(orders)
+    graph: dict[int, list[int]] = {}
+    for item in nodes:
+        preds = [int(p) for p in (item.predecessors or [])]
+        if item.nodeOrder in preds:
+            return "DAG 存在环"
+        for pred in preds:
+            if pred not in order_set:
+                return "前置节点不存在"
+        graph[item.nodeOrder] = preds
+    color = {order: 0 for order in order_set}
+
+    def walk(node_order: int) -> bool:
+        color[node_order] = 1
+        for pred in graph[node_order]:
+            if color[pred] == 1:
+                return True
+            if color[pred] == 0 and walk(pred):
+                return True
+        color[node_order] = 2
+        return False
+
+    for order in order_set:
+        if color[order] == 0 and walk(order):
+            return "DAG 存在环"
+    return None
+
+
 def save_nodes(db: Session, sop: ContentSop, nodes: list[SopNodeReq]) -> None:
     if not nodes:
         raise ValueError("empty nodes")
     ordered = sorted(nodes, key=lambda item: item.nodeOrder)
     for item in ordered:
+        ntype = (item.nodeType or "NORMAL").strip() or "NORMAL"
         db.add(
             ContentSopNode(
                 sop_id=sop.id,
@@ -195,8 +264,12 @@ def save_nodes(db: Session, sop: ContentSop, nodes: list[SopNodeReq]) -> None:
                 deliverable_spec=item.deliverableSpec or {},
                 quality_checklist=item.qualityChecklist or [],
                 owner_role=item.ownerRole[:16],
-                node_type=(item.nodeType or "NORMAL")[:32],
+                node_type=ntype[:32],
                 document_type=(item.documentType or "")[:32],
+                predecessors=[int(p) for p in (item.predecessors or [])],
+                parallel_group=(item.parallelGroup or "")[:64],
+                need_review=1 if int(item.needReview or 0) else 0,
+                reviewer_role=(item.reviewerRole or "")[:32],
                 sla_hours=max(1, int(item.slaHours or 24)),
                 tenant_id=sop.tenant_id,
             )
@@ -291,8 +364,9 @@ def sop_create(body: SopCreateBody, db: Session = Depends(db_session), actor: Us
         return fail(1500, "参数校验失败")
     if body.sopLevel not in ("STANDARD", "GUIDE"):
         return fail(1500, "参数校验失败")
-    if not body.nodes:
-        return fail(1500, "参数校验失败")
+    node_err = validate_sop_nodes(body.nodes)
+    if node_err:
+        return fail(1500, node_err)
     code = next_seq(db, ContentSopSeq, tenant(actor), "SP")
     sop = ContentSop(
         sop_code=code,
@@ -322,19 +396,38 @@ def sop_update(
     if old is None:
         return fail(1504, "资源不可用")
     name = (body.sopName or old.sop_name).strip()
-    if not name or not body.nodes:
+    if not name:
         return fail(1500, "参数校验失败")
-    old.status = "DISABLED"
+    node_err = validate_sop_nodes(body.nodes)
+    if node_err:
+        return fail(1500, node_err)
+    tid = tenant(actor)
+    max_ver = db.scalar(
+        select(func.max(ContentSop.version)).where(
+            ContentSop.sop_code == old.sop_code,
+            ContentSop.tenant_id == tid,
+        )
+    )
+    next_version = int(max_ver or old.version) + 1
+    for prev in db.scalars(
+        select(ContentSop).where(
+            ContentSop.sop_code == old.sop_code,
+            ContentSop.tenant_id == tid,
+            ContentSop.deleted == 0,
+            ContentSop.status == "ENABLED",
+        )
+    ).all():
+        prev.status = "DISABLED"
     sop = ContentSop(
         sop_code=old.sop_code,
         sop_name=name,
         content_type=(body.contentType or old.content_type).strip(),
         sop_level=body.sopLevel if body.sopLevel in ("STANDARD", "GUIDE") else old.sop_level,
         marketing_plan=(body.marketingPlan or old.marketing_plan or "").strip()[:32],
-        version=old.version + 1,
+        version=next_version,
         status="ENABLED",
         creator=actor.id,
-        tenant_id=tenant(actor),
+        tenant_id=tid,
     )
     db.add(sop)
     db.flush()

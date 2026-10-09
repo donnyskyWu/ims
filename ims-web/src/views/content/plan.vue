@@ -94,9 +94,25 @@
           <input v-model="form.planName" />
         </div>
         <div class="fld">
+          <label>SOP 模板</label>
+          <select v-model="sopPick" @change="onSopPick">
+            <option value="">— 选择已启用模板 —</option>
+            <option v-for="sop in sopOptions" :key="sop.id" :value="String(sop.id)">
+              {{ sop.sopName }} · v{{ sop.version }}（{{ sop.sopCode }}）
+            </option>
+          </select>
+        </div>
+        <div class="fld">
           <label>SOP 模板 id *</label>
           <input v-model.number="form.sopId" type="number" />
-          <p class="hint">请先在 SOP 管理创建并填写已启用模板 id</p>
+          <p class="hint">须为启用版本。下拉与 id 同步，保存即草稿。</p>
+        </div>
+        <div class="fld">
+          <label>IP 组</label>
+          <select @change="onIpPick">
+            <option value="">— 选择 IP 组，或手工填写 —</option>
+            <option v-for="g in ipOptions" :key="g.id" :value="String(g.id)">{{ g.name }}（{{ g.id }}）</option>
+          </select>
         </div>
         <div class="fld">
           <label>IP 组 id *</label>
@@ -138,6 +154,42 @@ const form = ref({
   startDate: '',
   endDate: '',
 })
+const sopPick = ref('')
+const sopOptions = ref<{ id: number; sopName: string; sopCode: string; version: number }[]>([])
+const ipOptions = ref<{ id: number; name: string }[]>([])
+
+function flattenGroups(nodes: { id: number; groupName: string; status: number; children?: unknown[] }[], out: { id: number; name: string }[] = []) {
+  for (const node of nodes || []) {
+    if (node.status === 1) out.push({ id: node.id, name: node.groupName })
+    flattenGroups((node.children || []) as { id: number; groupName: string; status: number; children?: unknown[] }[], out)
+  }
+  return out
+}
+
+async function loadCreateOptions() {
+  try {
+    const { data } = await http.get('/content/sop/list', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
+    sopOptions.value = data.data.list || []
+  } catch {
+    sopOptions.value = []
+  }
+  try {
+    const { data } = await http.get('/ip-group/tree')
+    ipOptions.value = flattenGroups(data.data || [])
+  } catch {
+    ipOptions.value = []
+  }
+}
+
+function onSopPick() {
+  const id = parseInt(sopPick.value, 10)
+  if (!Number.isNaN(id) && id > 0) form.value.sopId = id
+}
+
+function onIpPick(ev: Event) {
+  const id = (ev.target as HTMLSelectElement).value
+  if (id) form.value.ipGroupIds = id
+}
 
 async function loadList() {
   loading.value = true
@@ -155,7 +207,9 @@ async function loadList() {
 
 function openCreate() {
   form.value = { planName: '', sopId: 0, ipGroupIds: '', startDate: '', endDate: '' }
+  sopPick.value = ''
   createOpen.value = true
+  void loadCreateOptions()
 }
 
 function parseIpIds(raw: string): number[] {

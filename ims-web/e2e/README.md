@@ -56,6 +56,7 @@
 | **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
 | **E2E-S9-01/02 (#86)** | `closure-perf-metric-pack.spec.ts` | 纯 UI · 得分规则重叠 **1152** · 重复编码 **1151** · 权重合计 99/101 **1154** · 合计 100 绑定成功 · 启用 COMPETE_SUBMIT_RATE **1153** |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
+| **E2E-S7-切片 · SOP/计划 (#101)** | `closure-content-sop-plan.spec.ts` | 纯 UI · DAG 保存 → 新版本 v2 → 逻辑删除 → 计划草稿 DRAFT |
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
 | **E2E-S7-切片 · 任务** | `closure-content-task-execute.spec.ts` | UI 启动计划 → 执行页工作说明 → DONE |
 | **E2E-S7-切片 · 工作任务 (#35)** | `closure-content-work-task.spec.ts` | 工作任务登记确认 → CONTENT_GENERATION 执行/提审 → e2e_author 审过 → DONE |

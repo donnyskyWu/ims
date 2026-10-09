@@ -268,9 +268,33 @@ def ensure_air_slice92_columns() -> None:
                 )
 
 
+def ensure_content_sop_dag_columns() -> None:
+    """已有库补 SOP 节点 DAG 列。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_sop_node" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_sop_node")}
+    alters: list[str] = []
+    if "predecessors" not in cols:
+        alters.append("ADD COLUMN predecessors JSON NULL")
+    if "parallel_group" not in cols:
+        alters.append("ADD COLUMN parallel_group VARCHAR(64) NOT NULL DEFAULT ''")
+    if "need_review" not in cols:
+        alters.append("ADD COLUMN need_review INT NOT NULL DEFAULT 0")
+    if "reviewer_role" not in cols:
+        alters.append("ADD COLUMN reviewer_role VARCHAR(32) NOT NULL DEFAULT ''")
+    if alters:
+        with engine.begin() as conn:
+            for clause in alters:
+                conn.execute(text(f"ALTER TABLE ims_content_sop_node {clause}"))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_content_sop_dag_columns()
     ensure_bi_br212_columns()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()
