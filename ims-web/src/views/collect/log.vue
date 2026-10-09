@@ -20,10 +20,12 @@
         <button class="btn btn-sec btn-sm" type="button" @click="openManualFill">手工补录</button>
       </div>
     </div>
+    <p class="hint" data-testid="collect-health-note">{{ healthNote }}</p>
+    <p class="hint" data-testid="collect-failure-note" style="margin-bottom: 10px">{{ failureNote }}</p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model.number="filters.taskId" type="number" placeholder="任务 id" style="width: 100px" />
       <input v-model.number="filters.accountId" type="number" placeholder="账号 id" style="width: 100px" />
-      <select v-model="filters.status" style="width: 110px">
+      <select v-model="filters.status" data-testid="log-status" style="width: 110px">
         <option value="">全部状态</option>
         <option value="SUCCESS">成功</option>
         <option value="FAILED">失败</option>
@@ -31,7 +33,8 @@
         <option value="COOKIE_EXPIRED">Cookie 已失效</option>
         <option value="ENGINE_UNAVAILABLE">浏览器引擎不可用</option>
       </select>
-      <input v-model="filters.dateFrom" placeholder="开始日期 YYYY-MM-DD" style="width: 150px" />
+      <input v-model="filters.dateFrom" data-testid="log-date-from" placeholder="开始日期 YYYY-MM-DD" style="width: 150px" />
+      <input v-model="filters.dateTo" data-testid="log-date-to" placeholder="结束日期 YYYY-MM-DD" style="width: 150px" />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
@@ -56,7 +59,12 @@
               <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无日志' }}</div></div></td>
+              <td colspan="8">
+                <div class="empty" data-testid="log-empty">
+                  <div class="et">{{ error || emptyTitle }}</div>
+                  <div v-if="!error" class="es" data-testid="log-empty-hint">{{ emptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.taskName }}</td>
@@ -71,6 +79,7 @@
               <td>
                 <span v-if="row.errorSummary" class="btn-txt btn btn-danger-txt">{{ row.errorSummary }}</span>
                 <span v-else style="color: var(--green)">—</span>
+                <div v-if="row.localNote" class="hint" data-testid="log-row-note">{{ row.localNote }}</div>
               </td>
               <td>
                 <button class="btn-txt btn" type="button" @click="openDetail(row)">详情</button>
@@ -101,6 +110,9 @@
         <label>补录条数<input v-model.number="manual.recordCount" type="number" min="1" style="width: 100%" /></label>
         <label>数据类型<input v-model="manual.dataType" placeholder="WORK" style="width: 100%" /></label>
         <label>备注<textarea v-model="manual.remark" rows="2" style="width: 100%" /></label>
+        <p class="hint" data-testid="log-manual-note">
+          手工补录只在本地写入一条成功日志，不调用 Collector，也不校验 Cookie 或浏览器引擎。
+        </p>
         <button class="btn btn-pri btn-sm" type="submit" :disabled="manualSaving">提交补录</button>
         <p v-if="manualMsg" class="hint">{{ manualMsg }}</p>
       </form>
@@ -111,6 +123,7 @@
         <p><b>状态</b> {{ detail.statusLabel || detail.status }} · {{ detail.startedAt }}</p>
         <p data-testid="collect-log-retry-detail"><b>重试</b> {{ detail.retryHint || '—' }}</p>
         <p v-if="detail.errorSummary" class="hint" style="color: var(--red)">{{ detail.errorSummary }}</p>
+        <p v-if="detail.localNote" class="hint" data-testid="log-detail-note">{{ detail.localNote }}</p>
         <p class="hint">重试次数 {{ detail.retryCount ?? 0 }}</p>
         <button
           v-if="detail.retryable"
@@ -126,7 +139,13 @@
           <summary>{{ tr.dataType }} · {{ tr.status }} · {{ tr.recordCount ?? 0 }} 条</summary>
           <pre class="mono" style="font-size: 11px; white-space: pre-wrap">{{ JSON.stringify(tr, null, 2) }}</pre>
         </details>
-        <button v-if="detail.repairAccountId" class="btn btn-pri btn-sm" type="button" @click="repairBind(detail)">
+        <button
+          v-if="detail.repairAccountId"
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="log-repair"
+          @click="repairBind(detail)"
+        >
           前往账号采集 Tab
         </button>
       </div>
@@ -135,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
@@ -148,6 +167,18 @@ const loading = ref(false)
 const error = ref('')
 const successRate24h = ref<number | null>(null)
 const failureAccountCount = ref(0)
+const healthEmptyNote = ref('')
+const failureEmptyNote = ref('')
+const emptyTitle = ref('暂无日志')
+const emptyHint = ref('本地定时器尚未写入采集记录。Cookie 与浏览器引擎不在任务页维护。')
+const healthNote = computed(
+  () =>
+    healthEmptyNote.value ||
+    '近 24h 成功率按本地日志计算。Cookie 失效与浏览器引擎不可用记为未成功，不代表已连上真实平台。',
+)
+const failureNote = computed(
+  () => failureEmptyNote.value || '连续失败含失败、Cookie 失效与浏览器引擎不可用。',
+)
 const detailOpen = ref(false)
 const detail = ref<any | null>(null)
 const manualOpen = ref(false)
@@ -166,6 +197,7 @@ const filters = reactive({
   accountId: undefined as number | undefined,
   status: '',
   dateFrom: '',
+  dateTo: '',
 })
 
 const PLATFORM_SLUG: Record<string, string> = {
@@ -182,7 +214,10 @@ async function loadQuality() {
     const body = res.data
     if (body?.code === 0) {
       if (body.data.successRate24h != null) successRate24h.value = body.data.successRate24h
+      else successRate24h.value = null
       failureAccountCount.value = body.data.consecutiveFailureAccountCount ?? 0
+      healthEmptyNote.value = body.data.healthEmptyNote || ''
+      failureEmptyNote.value = body.data.failureEmptyNote || ''
     }
   } catch {
     /* optional */
@@ -235,10 +270,13 @@ async function loadList() {
     if (filters.accountId) params.accountId = filters.accountId
     if (filters.status) params.status = filters.status
     if (filters.dateFrom) params.dateFrom = filters.dateFrom
+    if (filters.dateTo) params.dateTo = filters.dateTo
     const res = await http.get('/collect/log/page', { params })
     rows.value = res.data?.data?.list || []
     total.value = res.data?.data?.total || 0
     successRate24h.value = res.data?.data?.successRate24h ?? null
+    if (res.data?.data?.emptyTitle) emptyTitle.value = res.data.data.emptyTitle
+    if (res.data?.data?.emptyHint) emptyHint.value = res.data.data.emptyHint
   } catch (e: unknown) {
     error.value = errorMessage(e)
     rows.value = []
@@ -252,6 +290,7 @@ function resetFilters() {
   filters.accountId = undefined
   filters.status = ''
   filters.dateFrom = ''
+  filters.dateTo = ''
   loadList()
 }
 
