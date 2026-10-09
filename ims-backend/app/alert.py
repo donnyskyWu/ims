@@ -35,6 +35,14 @@ DSL_KEYS = {"source", "condition", "conditions", "mergeWindowMinutes"}
 COND_KEYS = {"field", "op", "value"}
 IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 LEGACY_EXPR_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*\s*(>=|<=|==|!=|>|<)\s*-?\d+(\.\d+)?$")
+# BR-114：默认同规则+同对象 30 分钟窗口。本环境只做统计归并，不改写入、不外发。
+MERGE_WINDOW_MINUTES = 30
+# 钉钉/短信只在统计页标明本地桩。outbound=False 表示没有外发。
+CHANNEL_STUBS = [
+    {"channel": "WORKBENCH", "label": "工作台", "mode": "LOCAL", "outbound": False, "countsTowardDelivery": True},
+    {"channel": "DINGTALK", "label": "钉钉", "mode": "STUB", "outbound": False, "countsTowardDelivery": False},
+    {"channel": "SMS", "label": "短信", "mode": "STUB", "outbound": False, "countsTowardDelivery": False},
+]
 
 
 class RuleBody(BaseModel):
@@ -455,9 +463,13 @@ def respond_alert(
     if target not in ALLOWED_NEXT.get(row.response_status, set()):
         return fail(1001, "当前状态不可执行该响应")
     row.response_status = target
+    notes: list[str] = []
     if action == "FALSE_ALARM" and (body.falseAlarmReason or "").strip():
-        note = body.falseAlarmReason.strip()
-        row.content = f"{row.content}；误报原因：{note}"[:512]
+        notes.append(f"误报原因：{body.falseAlarmReason.strip()}")
+    if (body.handleRemark or "").strip():
+        notes.append(f"处理说明：{body.handleRemark.strip()}")
+    if notes:
+        row.content = f"{row.content}；{'；'.join(notes)}"[:512]
     row.updated_at = utcnow()
     db.flush()
     rule = db.get(AlertRule, row.rule_id) if row.rule_id else None
@@ -621,8 +633,132 @@ def stats_overview(
             "avgResponseMinutes": avg,
             "respondedCount": responded,
             "resolvedCount": resolved,
+            "falseAlarmCount": false_alarm,
+            "channelStubs": CHANNEL_STUBS,
         }
     )
+
+
+def _record_time(row: AlertRecord) -> datetime:
+    return row.occurred_at or row.created_at or datetime.min
+
+
+def _rules_for(db: Session, rows: list[AlertRecord]) -> dict[int, AlertRule]:
+    rule_ids = {row.rule_id for row in rows if row.rule_id}
+    if not rule_ids:
+        return {}
+    return {rule.id: rule for rule in db.scalars(select(AlertRule).where(AlertRule.id.in_(rule_ids))).all()}
+
+
+def _cluster_records(rows: list[AlertRecord]) -> list[list[AlertRecord]]:
+    """同规则+同对象，自第一条起 30 分钟内归成一组。单条不构成合并。"""
+    groups: dict[tuple, list[AlertRecord]] = {}
+    for row in rows:
+        key = (row.rule_id, row.source_ref_type or "", int(row.source_ref_id or 0))
+        groups.setdefault(key, []).append(row)
+    window = timedelta(minutes=MERGE_WINDOW_MINUTES)
+    clusters: list[list[AlertRecord]] = []
+    for bucket in groups.values():
+        bucket.sort(key=lambda item: (_record_time(item), item.id))
+        current: list[AlertRecord] = []
+        master_at: datetime | None = None
+        for row in bucket:
+            at = _record_time(row)
+            if not current or master_at is None or at > master_at + window:
+                if current:
+                    clusters.append(current)
+                current = [row]
+                master_at = at
+            else:
+                current.append(row)
+        if current:
+            clusters.append(current)
+    return clusters
+
+
+@router.get("/stats/rule-rank")
+def stats_rule_rank(
+    dateRange: str | None = None,
+    topN: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """规则命中排行。合并节省数是窗口内被归并掉的重复条数，不触发推送。"""
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    if topN < 1 or topN > 50:
+        return fail(1001, "topN 无效")
+    tenant_id = tenant_of(actor)
+    rows = _overview_rows(db, tenant_id, start, end)
+    rules = _rules_for(db, rows)
+    savings: dict[int, int] = {}
+    for cluster in _cluster_records(rows):
+        rule_id = cluster[0].rule_id
+        savings[rule_id] = savings.get(rule_id, 0) + max(0, len(cluster) - 1)
+    grouped: dict[int, list[AlertRecord]] = {}
+    for row in rows:
+        grouped.setdefault(row.rule_id, []).append(row)
+    items = []
+    for rule_id, group in grouped.items():
+        rule = rules.get(rule_id)
+        responded = sum(1 for row in group if row.response_status in (1, 2, 3))
+        items.append(
+            {
+                "ruleCode": rule.rule_code if rule else "",
+                "ruleName": rule.rule_name if rule else "",
+                "alertCount": len(group),
+                "mergedSavingsCount": savings.get(rule_id, 0),
+                "responseRate": rate_pct(responded, len(group)),
+            }
+        )
+    items.sort(key=lambda item: (-item["alertCount"], item["ruleCode"]))
+    ranked = [{"rank": index, **item} for index, item in enumerate(items[:topN], start=1)]
+    return ok(ranked)
+
+
+@router.get("/stats/merge-logs")
+def stats_merge_logs(
+    ruleCode: str | None = None,
+    dateRange: str | None = None,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """合并记录。只读归并，窗口固定 30 分钟。钉钉/短信不外发。"""
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    rows = _overview_rows(db, tenant_id, start, end)
+    rules = _rules_for(db, rows)
+    code = (ruleCode or "").strip()
+    logs = []
+    for cluster in _cluster_records(rows):
+        if len(cluster) < 2:
+            continue
+        master = cluster[0]
+        rule = rules.get(master.rule_id)
+        if code and (rule is None or rule.rule_code != code):
+            continue
+        last = max(cluster, key=lambda item: (_record_time(item), item.id))
+        logs.append(
+            {
+                "id": master.id,
+                "ruleCode": rule.rule_code if rule else "",
+                "masterAlertNo": master.alert_no,
+                "mergedAlertNos": [item.alert_no for item in cluster[1:]],
+                "mergedCount": len(cluster),
+                "mergeWindowMinutes": MERGE_WINDOW_MINUTES,
+                "masterOccurredAt": iso(master.occurred_at),
+                "lastMergedAt": iso(last.occurred_at or last.updated_at),
+            }
+        )
+    logs.sort(key=lambda item: (item["masterOccurredAt"], item["masterAlertNo"]), reverse=True)
+    page_no, size = page_args(pageNo, pageSize)
+    offset = (page_no - 1) * size
+    return paged(logs[offset : offset + size], len(logs), page_no, size)
 
 
 def run_check_impl(rule_id: int, db: Session, actor: User):

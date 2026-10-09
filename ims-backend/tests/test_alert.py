@@ -405,3 +405,122 @@ def test_alert_stats_overview_rates_and_range():
     assert data["avgResponseMinutes"] == 12.0
     assert data["respondedCount"] == 1
     assert data["resolvedCount"] == 1
+    stubs = {item["channel"]: item for item in data["channelStubs"]}
+    assert stubs["WORKBENCH"]["outbound"] is False
+    assert stubs["WORKBENCH"]["countsTowardDelivery"] is True
+    assert stubs["DINGTALK"]["mode"] == "STUB"
+    assert stubs["DINGTALK"]["outbound"] is False
+    assert stubs["SMS"]["mode"] == "STUB"
+    assert stubs["SMS"]["outbound"] is False
+
+
+def test_alert_stats_rank_merge_and_false_remark():
+    auth = headers()
+    code = f"rank.merge.{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": code,
+            "ruleName": "排行合并",
+            "thresholdExpr": "delayMinutes>1",
+            "level": 2,
+            "enabled": True,
+        },
+    )
+    assert created.json()["code"] == 0
+    rule_id = created.json()["data"]["id"]
+    first = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+    second = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+    third = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+    closed = client.put(
+        f"/admin-api/ims/alert/check/{first}/respond",
+        headers=auth,
+        json={"action": "HANDLE", "handleRemark": "已核对"},
+    )
+    assert closed.json()["code"] == 0
+    assert "处理说明：已核对" in closed.json()["data"]["content"]
+
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.models import AlertRecord
+
+    window = datetime(1800, 6, 1) + timedelta(days=uuid.uuid4().int % 20000)
+    day = window.strftime("%Y-%m-%d")
+    db = SessionLocal()
+    try:
+        for alert_no, minute in ((first, 0), (second, 10), (third, 31)):
+            row = db.scalar(select(AlertRecord).where(AlertRecord.alert_no == alert_no))
+            assert row is not None
+            row.occurred_at = window.replace(hour=12, minute=minute, second=0)
+            row.updated_at = window.replace(hour=12, minute=minute, second=30)
+        db.commit()
+    finally:
+        db.close()
+
+    bad = client.get(
+        "/admin-api/ims/alert/stats/rule-rank",
+        headers=auth,
+        params={"dateRange": f"{day},{day}", "topN": 0},
+    )
+    assert bad.json()["code"] == 1001
+    inverted = client.get(
+        "/admin-api/ims/alert/stats/merge-logs",
+        headers=auth,
+        params={"dateRange": "2020-02-02,2020-01-01"},
+    )
+    assert inverted.json()["code"] == 1001
+
+    empty = client.get(
+        "/admin-api/ims/alert/stats/rule-rank",
+        headers=auth,
+        params={"dateRange": "1799-01-01,1799-01-02"},
+    )
+    assert empty.json()["code"] == 0
+    assert empty.json()["data"] == []
+    empty_logs = client.get(
+        "/admin-api/ims/alert/stats/merge-logs",
+        headers=auth,
+        params={"dateRange": "1799-01-01,1799-01-02", "ruleCode": code},
+    )
+    assert empty_logs.json()["code"] == 0
+    assert empty_logs.json()["data"]["total"] == 0
+
+    ranked = client.get(
+        "/admin-api/ims/alert/stats/rule-rank",
+        headers=auth,
+        params={"dateRange": f"{day},{day}", "topN": 10},
+    )
+    body = ranked.json()
+    assert body["code"] == 0
+    assert len(body["data"]) == 1
+    row = body["data"][0]
+    assert row["rank"] == 1
+    assert row["ruleCode"] == code
+    assert row["alertCount"] == 3
+    assert row["mergedSavingsCount"] == 1
+    assert row["responseRate"] == 33.33
+
+    logs = client.get(
+        "/admin-api/ims/alert/stats/merge-logs",
+        headers=auth,
+        params={"dateRange": f"{day},{day}", "ruleCode": code},
+    )
+    listed = logs.json()["data"]
+    assert logs.json()["code"] == 0
+    assert listed["total"] == 1
+    item = listed["list"][0]
+    assert item["masterAlertNo"] == first
+    assert item["mergedAlertNos"] == [second]
+    assert item["mergedCount"] == 2
+    assert item["mergeWindowMinutes"] == 30
+    assert third not in item["mergedAlertNos"]
+
+    missing = client.get(
+        "/admin-api/ims/alert/stats/merge-logs",
+        headers=auth,
+        params={"dateRange": f"{day},{day}", "ruleCode": f"{code}.missing"},
+    )
+    assert missing.json()["data"]["total"] == 0
+    assert missing.json()["data"]["list"] == []

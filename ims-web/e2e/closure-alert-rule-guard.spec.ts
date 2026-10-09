@@ -80,11 +80,17 @@ test.describe('alert rule guard and false alarm closure S11', () => {
     await expect(liveRow).toBeVisible({ timeout: 15_000 })
     await expect(liveRow).toContainText('OPEN')
     await liveRow.getByTestId('alert-false-alarm-btn').click()
+    const falseModal = page.getByTestId('alert-false-modal')
+    await expect(falseModal).toBeVisible()
+    await expect(falseModal).toContainText('ALR-S-R3')
+    await falseModal.getByTestId('alert-false-reason').fill('阈值过严')
+    await page.screenshot({ path: `${shotDir}/03-false-alarm.png`, fullPage: true })
+    await falseModal.getByTestId('alert-false-submit').click()
     await expect(liveRow).toContainText('FALSE_ALARM', { timeout: 15_000 })
     await expect(page.locator('p.hint').filter({ hasText: /已标记误报/ })).toBeVisible()
-    await page.screenshot({ path: `${shotDir}/03-false-alarm.png`, fullPage: true })
 
     await liveRow.getByTestId('alert-false-alarm-btn').click()
+    await page.getByTestId('alert-false-submit').click()
     await expect(page.locator('p.hint').filter({ hasText: /1167/ })).toBeVisible({ timeout: 10_000 })
     await page.screenshot({ path: `${shotDir}/04-repeat-1167.png`, fullPage: true })
 

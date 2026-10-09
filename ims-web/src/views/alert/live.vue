@@ -21,13 +21,19 @@
       <div class="card stat"><span class="l">累计</span><div class="n">{{ summary.totalAlerts }}</div></div>
       <div class="card stat"><span class="l">已处置</span><div class="n">{{ summary.handledCount }}</div></div>
       <div class="card stat"><span class="l">待响应</span><div class="n">{{ summary.openCount }}</div></div>
-      <div class="card stat"><span class="l">误报</span><div class="n">{{ summary.falsePositiveCount }}</div></div>
+      <div class="card stat">
+        <span class="l">误报</span>
+        <div class="n">{{ summary.falsePositiveCount }}</div>
+        <div v-if="summary.falsePositiveCount >= 5" class="d" data-testid="alert-history-false-hint">
+          连续误报 ≥5，建议复核阈值
+        </div>
+      </div>
     </div>
 
     <form v-if="tab !== 'dedup'" class="qbar" @submit.prevent="loadList">
-      <select v-model="filters.responseStatus" style="width: 120px">
+      <select v-model="filters.responseStatus" data-testid="alert-history-status" style="width: 120px">
         <option value="">全部处置</option>
-        <option value="OPEN">待响应</option>
+        <option v-if="tab === 'live'" value="OPEN">待响应</option>
         <option value="CONFIRMED">已确认</option>
         <option value="RESOLVED">已解决</option>
         <option value="FALSE_ALARM">误报</option>
@@ -51,6 +57,9 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-else-if="!dedupRows.length">
+              <td colspan="6"><div class="empty" data-testid="alert-dedup-empty"><div class="et">暂无去重策略</div></div></td>
+            </tr>
             <tr v-for="row in dedupRows" v-else :key="row.id">
               <td class="mono">{{ row.policyCode }}</td>
               <td>{{ row.policyName }}</td>
@@ -83,7 +92,11 @@
               <td :colspan="tab === 'live' ? 7 : 6"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td :colspan="tab === 'live' ? 7 : 6"><div class="empty"><div class="et">{{ error || '暂无预警' }}</div></div></td>
+              <td :colspan="tab === 'live' ? 7 : 6">
+                <div class="empty" data-testid="alert-tab-empty">
+                  <div class="et">{{ error || (tab === 'history' ? '暂无处置记录' : '暂无预警') }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.alertNo }}</td>
@@ -116,7 +129,7 @@
                   class="btn btn-txt btn-sm"
                   type="button"
                   data-testid="alert-false-alarm-btn"
-                  @click="respond(row.alertNo, 'FALSE_ALARM')"
+                  @click="openFalse(row.alertNo)"
                 >
                   误报
                 </button>
@@ -127,6 +140,23 @@
       </div>
     </div>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
+
+    <div v-if="falseTarget" class="modal-mask" @click.self="falseTarget = ''">
+      <div class="card" style="width: 480px; padding: 20px" data-testid="alert-false-modal">
+        <h3 style="margin: 0 0 8px">标记误报</h3>
+        <p class="hint">误报反馈将用于规则阈值复核，连续误报 ≥5 次建议管理员复核阈值（ALR-S-R3）。</p>
+        <label class="fld">误报原因（选填）</label>
+        <input v-model="falseReason" class="fld-in" data-testid="alert-false-reason" />
+        <label class="fld">处理说明（选填）</label>
+        <input v-model="handleRemark" class="fld-in" data-testid="alert-false-remark" />
+        <div style="margin-top: 12px; display: flex; gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="alert-false-submit" @click="submitFalse">
+            确认误报
+          </button>
+          <button class="btn btn-sec btn-sm" type="button" @click="falseTarget = ''">取消</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -167,6 +197,9 @@ const summary = ref<{ totalAlerts: number; handledCount: number; openCount: numb
 )
 const filters = reactive({ responseStatus: '' })
 const toast = ref('')
+const falseTarget = ref('')
+const falseReason = ref('')
+const handleRemark = ref('')
 
 function tabFromRoute() {
   const q = String(route.query.tab || '')
@@ -227,10 +260,33 @@ async function loadList() {
   }
 }
 
-async function respond(alertNo: string, action: string) {
+function openFalse(alertNo: string) {
+  falseTarget.value = alertNo
+  falseReason.value = ''
+  handleRemark.value = ''
+}
+
+async function submitFalse() {
+  const alertNo = falseTarget.value
+  if (!alertNo) return
+  falseTarget.value = ''
+  await respond(alertNo, 'FALSE_ALARM', {
+    falseAlarmReason: falseReason.value.trim(),
+    handleRemark: handleRemark.value.trim(),
+  })
+}
+
+async function respond(
+  alertNo: string,
+  action: string,
+  extra?: { falseAlarmReason?: string; handleRemark?: string },
+) {
   toast.value = ''
   try {
-    const res = await http.put(`/alert/check/${alertNo}/respond`, { action })
+    const payload: Record<string, string> = { action }
+    if (extra?.falseAlarmReason) payload.falseAlarmReason = extra.falseAlarmReason
+    if (extra?.handleRemark) payload.handleRemark = extra.handleRemark
+    const res = await http.put(`/alert/check/${alertNo}/respond`, payload)
     if (res.data.code !== 0) {
       toast.value = res.data.msg || '处置失败'
       return
