@@ -574,3 +574,101 @@ def test_fin_period_close_locks_writes_then_r4_red_correction():
         json=_cost_body(),
     )
     assert still.json()["code"] == 0, still.json()
+
+
+def test_fin_profit_history_versions_stay_immutable():
+    """#107：核准 / 手动重算 / 成本更正各留一版，旧版金额不可改。"""
+    auth = headers()
+    missing = client.get("/admin-api/ims/fin/profit/history/IMS0000000000000000", headers=auth)
+    assert missing.json()["code"] == 1504
+
+    code = approved_session(auth)
+    denied = client.get(f"/admin-api/ims/fin/profit/history/{code}", headers=auth)
+    assert denied.json()["code"] == 1145
+
+    confirm_cost_for_session(auth, code)
+    first = client.get(f"/admin-api/ims/fin/profit/history/{code}", headers=auth).json()
+    assert first["code"] == 0, first
+    assert len(first["data"]) == 1
+    v1 = first["data"][0]
+    assert v1["calcVersion"] == 1
+    assert v1["triggerType"] == "AUTO_CONFIRM"
+    assert v1["triggerReason"] == "成本核准自动计算"
+    assert v1["calcStatus"] == "CALCULATED"
+    assert v1["netProfit"] == 81400.0
+    assert v1["grossProfit"] == 93000.0
+    assert v1["operatingProfit"] == 87900.0
+
+    manual = client.post(f"/admin-api/ims/fin/profit/recalc/{code}", headers=auth)
+    assert manual.json()["code"] == 0, manual.json()
+    assert manual.json()["data"]["calcVersion"] == 2
+    assert manual.json()["data"]["calcStatus"] == "RECALCULATED"
+
+    listed = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code}).json()
+    assert listed["data"]["list"][0]["calcVersion"] == 2
+    assert listed["data"]["list"][0]["netProfit"] == 81400.0
+
+    mid = client.get(f"/admin-api/ims/fin/profit/history/{code}", headers=auth).json()["data"]
+    assert [row["calcVersion"] for row in mid] == [2, 1]
+    assert mid[0]["triggerType"] == "MANUAL"
+    assert mid[0]["triggerReason"] == "手动触发重算"
+    assert mid[0]["netProfit"] == 81400.0
+    assert mid[0]["operatingProfit"] == 87900.0
+    assert mid[1]["netProfit"] == 81400.0
+    assert mid[1]["operatingProfit"] == 87900.0
+
+    token = uuid.uuid4().hex
+    corrected = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": token},
+        json={
+            "correctionReason": "E2E 投放补录",
+            "corrected": {
+                "commissionRate": 0.05,
+                "adCost": 6000,
+                "rechargeCost": 100,
+                "fixedCost": 2000,
+                "sampleCost": 500,
+                "shareCostType": "MANUAL",
+                "shareDaren": 3500,
+                "shareRealname": 1000,
+            },
+        },
+    )
+    body = corrected.json()
+    assert body["code"] == 0, body
+    assert body["data"]["recalcTriggered"] is True
+
+    dup = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": token},
+        json={
+            "correctionReason": "ignored",
+            "corrected": {
+                "commissionRate": 0.05,
+                "adCost": 1,
+                "shareCostType": "MANUAL",
+            },
+        },
+    )
+    assert dup.json()["code"] == 0
+    assert dup.json()["data"]["correctionNo"] == body["data"]["correctionNo"]
+
+    versions = client.get(f"/admin-api/ims/fin/profit/history/{code}", headers=auth).json()["data"]
+    assert [row["calcVersion"] for row in versions] == [3, 2, 1]
+    assert versions[0]["triggerType"] == "AUTO_CORRECTION"
+    assert versions[0]["triggerReason"] == "E2E 投放补录"
+    assert versions[0]["calcStatus"] == "RECALCULATED"
+    assert versions[0]["netProfit"] == 79900.0
+    assert versions[0]["grossProfit"] == 93000.0
+    assert versions[0]["operatingProfit"] == 86900.0
+    assert versions[1]["netProfit"] == 81400.0
+    assert versions[1]["operatingProfit"] == 87900.0
+    assert versions[2]["triggerType"] == "AUTO_CONFIRM"
+    assert versions[2]["netProfit"] == 81400.0
+    assert versions[2]["operatingProfit"] == 87900.0
+
+    after = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code}).json()
+    assert after["data"]["list"][0]["calcVersion"] == 3
+    assert after["data"]["list"][0]["netProfit"] == 79900.0
+    assert after["data"]["list"][0]["calcStatus"] == "RECALCULATED"
