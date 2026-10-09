@@ -71,6 +71,15 @@ def stub_mode() -> str:
     return "off"
 
 
+def provider_name() -> str:
+    """stub | remote | unconfigured。不回传地址或 Token。"""
+    if stub_mode() != "off":
+        return "stub"
+    if base_url():
+        return "remote"
+    return "unconfigured"
+
+
 def base_url() -> str:
     return get_param("comfyui.baseUrl").strip().rstrip("/")
 
