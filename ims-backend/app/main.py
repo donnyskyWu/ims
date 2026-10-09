@@ -393,9 +393,36 @@ def ensure_work_task_sop_column() -> None:
         )
 
 
+def ensure_asset_verify_schedule_columns() -> None:
+    """已有库补校验限期、升级与定时标记。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_asset_verify_batch" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_asset_verify_batch")}
+    alters: list[str] = []
+    if "deadline_at" not in cols:
+        alters.append("ADD COLUMN deadline_at DATETIME NULL")
+    if "escalated_at" not in cols:
+        alters.append("ADD COLUMN escalated_at DATETIME NULL")
+    if "escalate_user_id" not in cols:
+        alters.append("ADD COLUMN escalate_user_id BIGINT NULL")
+    if "trigger_mode" not in cols:
+        alters.append("ADD COLUMN trigger_mode VARCHAR(16) NOT NULL DEFAULT 'MANUAL'")
+    if "schedule_date" not in cols:
+        alters.append("ADD COLUMN schedule_date VARCHAR(10) NOT NULL DEFAULT ''")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_asset_verify_batch {clause}"))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()
     ensure_bi_br212_columns()

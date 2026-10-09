@@ -15,6 +15,10 @@ def main() -> None:
         db = SessionLocal()
         try:
             process_due(db)
+            from app.asset_verify import escalate_overdue, run_scheduled_verify
+
+            run_scheduled_verify(db)
+            escalate_overdue(db)
             ops = ops_session()
             try:
                 process_due_outbox(db, ops)
