@@ -53,19 +53,71 @@
     </div>
 
     <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="760px" @close="drawerOpen = false">
-      <p><b>{{ active?.contentTitle }}</b></p>
-      <p class="hint">提交人：{{ active?.submitterName }} · 轮次 {{ active?.reviewRound }}</p>
+      <div data-testid="content-review-meta">
+        <p><b>{{ active?.contentTitle }}</b></p>
+        <p class="hint">
+          作者：{{ preview.authorName || active?.submitterName || '—' }}
+          · IP 组：{{ preview.ipGroupName || '—' }}
+          · {{ preview.documentType || '—' }} / {{ preview.contentType || '—' }}
+          · 轮次 {{ active?.reviewRound }}
+        </p>
+        <p class="hint">Football：{{ preview.fbSyncStatusLabel || '未同步' }}</p>
+      </div>
+
+      <div class="dsec">审核流程</div>
+      <ol v-if="steps.length" class="review-steps" data-testid="content-review-steps">
+        <li v-for="step in steps" :key="step.round" :data-status="step.status">
+          <span class="tag">{{ stepStatusLabel(step.status) }}</span>
+          <span>{{ step.label }}</span>
+        </li>
+      </ol>
+      <p v-else class="hint" data-testid="content-review-steps">审核级数未开启，可直接发布</p>
+
+      <div v-if="preview.matchSummary" class="dsec">玩法</div>
+      <p v-if="preview.matchSummary" class="hint" data-testid="content-review-match">{{ preview.matchSummary }}</p>
+
       <div class="dsec">正文</div>
-      <LayoutViewer :html="active?.layoutHtml" :plain="active?.body" :loading="layoutLoading" />
-      <ContentLayoutPreview :layout-html="previewLayout" :body="previewBody" />
+      <div data-testid="content-review-preview">
+        <LayoutViewer :html="active?.layoutHtml" :plain="active?.body" :loading="layoutLoading" />
+        <ContentLayoutPreview :layout-html="preview.layoutHtml || previewLayout" :body="preview.body || previewBody" />
+      </div>
+
+      <div class="dsec" data-testid="content-review-conclusion">审核结论</div>
+      <p class="hint">先看正文，再勾选清单并下结论。</p>
       <div class="dsec">质量清单</div>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
         <span>{{ item.itemDesc }}</span>
       </label>
+      <div class="fld" style="margin-top: 12px">
+        <label>驳回意见</label>
+        <textarea
+          v-model="remark"
+          data-testid="content-review-reject-opinion"
+          rows="3"
+          maxlength="512"
+          placeholder="驳回时必填，不超过 512 字"
+        />
+      </div>
       <template #footer>
-        <button class="btn btn-sec" type="button" @click="submit('REJECT_BACK')">打回</button>
-        <button class="btn btn-pri" type="button" :disabled="submitting" @click="submit('PASS')">通过</button>
+        <button
+          class="btn btn-sec"
+          type="button"
+          data-testid="content-review-reject"
+          :disabled="submitting || !detailReady"
+          @click="submit('REJECT_BACK')"
+        >
+          驳回
+        </button>
+        <button
+          class="btn btn-pri"
+          type="button"
+          data-testid="content-review-pass"
+          :disabled="submitting || !detailReady"
+          @click="submit('PASS')"
+        >
+          通过
+        </button>
       </template>
     </ProtoDrawer>
   </div>
@@ -92,6 +144,10 @@ const checklistModel = ref<Record<string, boolean>>({})
 const submitting = ref(false)
 const previewLayout = ref('')
 const previewBody = ref('')
+const detailReady = ref(false)
+const remark = ref('')
+const steps = ref<any[]>([])
+const preview = ref<Record<string, any>>({})
 
 const filteredRows = computed(() => {
   let list = rows.value.filter((r) => (stage.value === 1 ? r.reviewRound <= 1 : r.reviewRound >= 2))
@@ -101,6 +157,12 @@ const filteredRows = computed(() => {
   }
   return list
 })
+
+function stepStatusLabel(status: string) {
+  if (status === 'CURRENT') return '当前'
+  if (status === 'DONE') return '已完成'
+  return '待审'
+}
 
 async function loadStats() {
   try {
@@ -143,19 +205,30 @@ async function loadPreview(contentId: number | null | undefined) {
 async function openReview(row: any) {
   active.value = { ...row, layoutHtml: '', body: '' }
   layoutLoading.value = true
+  detailReady.value = false
+  remark.value = ''
+  steps.value = []
+  preview.value = {}
+  checklist.value = []
+  checklistModel.value = {}
   drawerOpen.value = true
   previewLayout.value = ''
   previewBody.value = ''
   try {
     const { data } = await http.get(`/content/review/${row.reviewNo}`)
-    active.value = { ...row, ...data.data }
-    checklist.value = data.data.checklist || []
+    const payload = data.data || {}
+    active.value = { ...row, ...payload }
+    checklist.value = payload.checklist || []
     const model: Record<string, boolean> = {}
     for (const item of checklist.value) {
       model[item.itemCode] = Boolean(item.passed)
     }
     checklistModel.value = model
-    await loadPreview(data.data?.contentProjectId || row.contentProjectId)
+    preview.value = payload.preview || {}
+    steps.value = payload.reviewSteps || []
+    previewLayout.value = payload.layoutHtml || payload.preview?.layoutHtml || ''
+    previewBody.value = payload.body || payload.preview?.body || ''
+    detailReady.value = true
   } catch (e) {
     alert(errorMessage(e))
   } finally {
@@ -164,19 +237,34 @@ async function openReview(row: any) {
 }
 
 async function submit(conclusion: 'PASS' | 'REJECT_BACK') {
-  if (!active.value) return
-  submitting.value = true
+  if (!active.value || !detailReady.value) return
   const checklistResult: Record<string, boolean> = { ...checklistModel.value }
+  const opinion = remark.value.trim()
+  if (conclusion === 'PASS') {
+    const missed = checklist.value.filter((item) => !checklistResult[item.itemCode])
+    if (missed.length && !window.confirm('仍有未勾选清单项，确认通过？')) return
+  }
   const body: any = { conclusion, checklistResult }
   if (conclusion === 'REJECT_BACK') {
+    if (!opinion) {
+      window.alert('请先填写驳回意见')
+      return
+    }
+    if (opinion.length > 512) {
+      window.alert('驳回意见不超过 512 字')
+      return
+    }
+    if (!window.confirm('确认驳回？意见将退回作者修改。')) return
     const failed = Object.entries(checklistResult)
-      .filter(([, v]) => !v)
-      .map(([code]) => ({ itemCode: code, reason: '未通过' }))
+      .filter(([, passed]) => !passed)
+      .map(([code]) => ({ itemCode: code, reason: opinion }))
     if (!failed.length) {
-      failed.push({ itemCode: 'QUALITY', reason: '需修改' })
+      failed.push({ itemCode: 'QUALITY', reason: opinion })
     }
     body.rejectItems = failed
+    body.remark = opinion
   }
+  submitting.value = true
   try {
     await http.put(`/content/review/${active.value.reviewNo}/conclusion`, body)
     drawerOpen.value = false
@@ -190,3 +278,23 @@ async function submit(conclusion: 'PASS' | 'REJECT_BACK') {
 
 loadQueue()
 </script>
+
+<style scoped>
+.review-steps {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.review-steps li {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.fld textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+}
+</style>

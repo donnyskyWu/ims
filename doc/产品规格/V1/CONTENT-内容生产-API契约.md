@@ -424,6 +424,8 @@ interface ContentReviewVO {
   checklistResult?: Record<string, boolean>;
   conclusion?: 'PASS' | 'REJECT_BACK' | 'TERMINATE';   // 1 通过 / 2 打回 / 3 驳回终止
   rejectItems?: Array<{ itemCode: string; reason: string }>;
+  /** 驳回/终止意见（≤512）；通过为空 */
+  remark?: string;
   firstPass?: boolean;           // 一次通过（BR-009 统计）
   reviewedAt?: string;
   createdAt: string;
@@ -432,7 +434,11 @@ interface ContentReviewVO {
 
 #### 2.5.2 GET /admin-api/ims/content/review/{reviewNo} — 审核单详情
 
-**响应** `data`：`ContentReviewVO` + `checklist: Array<{ itemCode: string; itemDesc: string; passed?: boolean }>`（审核维度：合规/质量清单/品牌一致性）。
+**响应** `data`：`ContentReviewVO` + `checklist: Array<{ itemCode: string; itemDesc: string; passed?: boolean }>`（审核维度：合规/质量清单/品牌一致性）+ `preview` + `reviewSteps`。
+
+`preview`（只读，先看正文再下结论）：`body`、`layoutHtml`、`documentType`、`contentType`、`matchType`、`matchSummary`、`matchScheme`、`ipGroupName`、`authorName`、`fbSyncStatus`、`fbSyncStatusLabel`。有 `layoutHtml` 时前端用只读预览渲染；否则 fallback `body` 纯文本。
+
+`reviewSteps[]`：`{ round, roleCode, roleName, reviewerNames, label, status, conclusion?, remark? }`。`label` 格式 `{角色名}：{用户1、用户2}`（无人则 `—`）。`status`：`CURRENT` | `DONE` | `PENDING`。级数与角色来自 `content.review.level1/2.enabled` 与 `content.review.level1/2.role`。
 
 #### 2.5.3 PUT /admin-api/ims/content/review/{reviewNo}/conclusion — 提交审核结论
 
@@ -446,10 +452,12 @@ interface ReviewConclusionReq {
   rejectItems?: Array<{ itemCode: string; reason: string }>;
   /** 打回回到指定 SOP/DAG 节点 */
   backToNodeName?: string;
+  /** 驳回/驳回终止必填 ≤512（空或超长错误码 1500） */
+  remark?: string;
 }
 ```
 
-**响应**：`data: null`。**审核人不可审自己提交的内容（REV-R1，错误码 1057）**；第 3 轮仍打回自动升级运营总监裁决（REV-R3）；审核 SLA 12 小时超时督办（REV-R4）。
+**响应**：`data: null`。**审核人不可审自己提交的内容（REV-R1，错误码 1057）**；第 3 轮仍打回自动升级运营总监裁决（REV-R3）；审核 SLA 12 小时超时督办（REV-R4）。`REJECT_BACK` / `TERMINATE` 须带 `remark`。
 
 #### 2.5.4 GET /admin-api/ims/content/review/first-pass-stats — 一次通过率统计
 

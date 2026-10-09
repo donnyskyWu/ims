@@ -22,10 +22,12 @@ from app.models import (
     ContentSopNode,
     ContentSopSeq,
     ContentTask,
+    Role,
     User,
+    UserRole,
 )
 from app.ops_models import IpGroup, PlatformAccount
-from app.settings_runtime import param_bool
+from app.settings_runtime import get_param, param_bool
 
 router = APIRouter(prefix="/content", tags=["content"])
 
@@ -113,6 +115,7 @@ class ReviewConclusionBody(BaseModel):
     checklistResult: dict
     rejectItems: list[dict] | None = None
     backToNodeName: str | None = None
+    remark: str | None = None
 
 
 class PublishCreateBody(BaseModel):
@@ -327,9 +330,161 @@ def review_vo(db: Session, row: ContentReview) -> dict:
         "checklistResult": row.checklist_result,
         "conclusion": row.conclusion,
         "rejectItems": row.reject_items,
+        "remark": row.remark or "",
         "firstPass": bool(row.first_pass) if row.first_pass is not None else None,
         "reviewedAt": row.reviewed_at,
         "createdAt": iso(row.created_at),
+    }
+
+
+_REVIEW_ROLE_LABELS = {
+    "OPS_LEADER": "运营组长",
+    "ip_group_leader": "IP组长",
+    "OPS_DIRECTOR": "运营总监",
+    "DEPT_HEAD": "部门负责人",
+    "ops_manager": "运营经理",
+}
+_LEADER_ROLE_KEYS = {"OPS_LEADER", "ip_group_leader"}
+_FB_STATUS_LABELS = {
+    "NONE": "未同步",
+    "PENDING": "待同步",
+    "SYNCED": "成功",
+    "COMPENSATING": "补偿中",
+    "FAILED": "失败",
+}
+
+
+def _role_label(code: str) -> str:
+    text = (code or "").strip()
+    return _REVIEW_ROLE_LABELS.get(text, text or "审核人")
+
+
+def _user_label(user: User | None) -> str:
+    if user is None or user.deleted or user.status != "ENABLED":
+        return ""
+    return (user.nickname or user.username or "").strip()
+
+
+def _names_for_role(db: Session, role_key: str) -> list[str]:
+    key = (role_key or "").strip()
+    if not key:
+        return []
+    role = db.scalar(select(Role).where(Role.role_key == key, Role.deleted == 0))
+    if role is None:
+        return []
+    user_ids = list(db.scalars(select(UserRole.user_id).where(UserRole.role_id == role.id)).all())
+    if not user_ids:
+        return []
+    users = db.scalars(select(User).where(User.id.in_(user_ids), User.deleted == 0)).all()
+    names: list[str] = []
+    seen: set[str] = set()
+    for user in users:
+        name = _user_label(user)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _ip_leader_name(db: Session, ops: Session, project: ContentProject | None) -> str:
+    if project is None or not project.ip_group_id:
+        return ""
+    group = ops.get(IpGroup, int(project.ip_group_id))
+    if group is None or group.deleted or not group.leader_user_id:
+        return ""
+    return _user_label(db.get(User, int(group.leader_user_id)))
+
+
+def _latest_review_for_round(rows: list[ContentReview], round_no: int) -> ContentReview | None:
+    matched = [row for row in rows if row.review_round == round_no]
+    if not matched:
+        return None
+    pending = [row for row in matched if row.conclusion is None]
+    pool = pending or matched
+    return max(pool, key=lambda row: row.id)
+
+
+def build_review_steps(
+    db: Session,
+    ops: Session,
+    project: ContentProject | None,
+    reviews: list[ContentReview],
+) -> list[dict]:
+    stages: list[tuple[int, str]] = []
+    if param_bool("content.review.level1.enabled", db=db):
+        stages.append((1, get_param("content.review.level1.role", "OPS_LEADER", db=db)))
+    if param_bool("content.review.level2.enabled", db=db):
+        stages.append((2, get_param("content.review.level2.role", "OPS_DIRECTOR", db=db)))
+    steps: list[dict] = []
+    for round_no, role_code in stages:
+        names = _names_for_role(db, role_code)
+        if round_no == 1 and role_code in _LEADER_ROLE_KEYS:
+            leader = _ip_leader_name(db, ops, project)
+            if leader and leader not in names:
+                names = [leader, *names]
+        role_name = _role_label(role_code)
+        current = _latest_review_for_round(reviews, round_no)
+        if current is None:
+            status = "PENDING"
+            conclusion = None
+            remark = ""
+        elif current.conclusion is None:
+            status = "CURRENT"
+            conclusion = None
+            remark = current.remark or ""
+        else:
+            status = "DONE"
+            conclusion = current.conclusion
+            remark = current.remark or ""
+        joined = "、".join(names) if names else "—"
+        steps.append(
+            {
+                "round": round_no,
+                "roleCode": role_code,
+                "roleName": role_name,
+                "reviewerNames": names,
+                "label": f"{role_name}：{joined}",
+                "status": status,
+                "conclusion": conclusion,
+                "remark": remark,
+            }
+        )
+    return steps
+
+
+def review_preview(ops: Session, project: ContentProject | None, author_name: str) -> dict:
+    if project is None:
+        return {
+            "body": "",
+            "layoutHtml": "",
+            "documentType": "",
+            "contentType": "",
+            "matchType": None,
+            "matchSummary": "",
+            "matchScheme": [],
+            "ipGroupName": "",
+            "authorName": author_name,
+            "fbSyncStatus": "NONE",
+            "fbSyncStatusLabel": _FB_STATUS_LABELS["NONE"],
+        }
+    ip_name = ""
+    if project.ip_group_id:
+        group = ops.get(IpGroup, int(project.ip_group_id))
+        if group is not None and not group.deleted:
+            ip_name = group.group_name or ""
+    status = project.fb_sync_status or "NONE"
+    return {
+        "body": project.body or "",
+        "layoutHtml": project.layout_html or "",
+        "documentType": project.document_type or "",
+        "contentType": project.content_type or "",
+        "matchType": project.match_type,
+        "matchSummary": project.match_summary or project.competition_name or "",
+        "matchScheme": project.match_scheme or [],
+        "ipGroupName": ip_name,
+        "authorName": author_name,
+        "fbSyncStatus": status,
+        "fbSyncStatusLabel": _FB_STATUS_LABELS.get(status, status),
     }
 
 
@@ -754,7 +909,12 @@ def review_queue(
 
 
 @router.get("/review/{review_no}")
-def review_detail(review_no: str, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+def review_detail(
+    review_no: str,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
     row = db.scalar(
         select(ContentReview).where(
             ContentReview.review_no == review_no,
@@ -771,14 +931,27 @@ def review_detail(review_no: str, db: Session = Depends(db_session), actor: User
         if row.checklist_result and item["itemCode"] in row.checklist_result:
             passed = bool(row.checklist_result[item["itemCode"]])
         checklist.append({**item, "passed": passed})
-    data["checklist"] = checklist
     project = db.get(ContentProject, row.content_project_id)
-    if project is None or project.deleted or (project.tenant_id or 0) != tenant(actor):
+    if project is not None and (project.deleted or (project.tenant_id or 0) != tenant(actor)):
+        project = None
+    history = list(
+        db.scalars(
+            select(ContentReview).where(
+                ContentReview.content_project_id == row.content_project_id,
+                ContentReview.deleted == 0,
+                ContentReview.tenant_id == tenant(actor),
+            )
+        ).all()
+    )
+    data["checklist"] = checklist
+    if project is None:
         data["layoutHtml"] = ""
         data["body"] = ""
     else:
         data["layoutHtml"] = sanitize_layout_html(project.layout_html or "")
         data["body"] = project.body or ""
+    data["preview"] = review_preview(ops, project, data["submitterName"])
+    data["reviewSteps"] = build_review_steps(db, ops, project, history)
     return ok(data)
 
 
@@ -806,9 +979,25 @@ def review_conclusion(
         return fail(1500, "参数校验失败")
     if body.conclusion == "REJECT_BACK" and not body.rejectItems:
         return fail(1058, "打回缺少结构化未通过项")
+    remark = (body.remark or "").strip()
+    if body.conclusion in ("REJECT_BACK", "TERMINATE"):
+        if not remark:
+            return fail(1500, "驳回意见必填")
+        if len(remark) > 512:
+            return fail(1500, "驳回意见超过 512 字")
+    else:
+        remark = ""
+    reject_items = body.rejectItems
+    if remark and reject_items:
+        filled = []
+        for item in reject_items:
+            reason = str(item.get("reason") or "").strip()
+            filled.append({**item, "reason": reason or remark})
+        reject_items = filled
     row.conclusion = body.conclusion
     row.checklist_result = body.checklistResult or {}
-    row.reject_items = body.rejectItems
+    row.reject_items = reject_items
+    row.remark = remark
     row.reviewer_user_id = actor.id
     row.reviewed_at = iso(utcnow())
     row.first_pass = 1 if body.conclusion == "PASS" and row.review_round == 1 else 0
