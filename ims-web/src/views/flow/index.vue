@@ -12,7 +12,9 @@
     </div>
     <div class="cattabs">
       <button type="button" class="cattab" :class="{ on: tab === 'instance' }" @click="tab = 'instance'">流程实例</button>
-      <button type="button" class="cattab" :class="{ on: tab === 'todo' }" @click="tab = 'todo'">我的待办</button>
+      <button type="button" class="cattab" :class="{ on: tab === 'todo' }" @click="tab = 'todo'">
+        我的待办<span v-if="todoBadge">({{ todoBadge }})</span>
+      </button>
       <button type="button" class="cattab" :class="{ on: tab === 'timeout' }" @click="tab = 'timeout'">超时督办</button>
       <button type="button" class="cattab" :class="{ on: tab === 'template' }" @click="tab = 'template'">流程模板</button>
     </div>
@@ -44,10 +46,31 @@
         <option value="">全部状态</option>
         <option value="PUBLISHED">已发布</option>
         <option value="DRAFT">草稿</option>
+        <option value="DISABLED">停用</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetTpl">重置</button>
+    </form>
+
+    <form v-else-if="tab === 'todo'" class="qbar" @submit.prevent="loadTodos">
+      <select v-model="todoFilters.businessDomain" style="width: 110px" data-testid="flow-todo-domain">
+        <option value="">全部域</option>
+        <option value="ADMIN">行政域</option>
+        <option value="FINANCE">财务域</option>
+        <option value="BUSINESS">业务域</option>
+        <option value="COMMON">通用</option>
+      </select>
+      <span class="sp"></span>
+      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetTodo">重置</button>
+    </form>
+
+    <form v-else-if="tab === 'timeout'" class="qbar" @submit.prevent="loadTimeouts">
+      <input v-model="timeoutFilters.templateName" placeholder="模板名称" style="width: 150px" data-testid="flow-timeout-template" />
+      <span class="sp"></span>
+      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetTimeout">重置</button>
     </form>
 
     <div
@@ -74,6 +97,24 @@
       </span>
     </div>
 
+    <p
+      v-if="tab === 'todo' && handleHint"
+      class="hint"
+      :class="{ err: handleHintErr }"
+      data-testid="flow-handle-hint"
+    >
+      {{ handleHint }}
+    </p>
+    <p
+      v-if="tab === 'template' && draftHint"
+      class="hint"
+      :class="{ err: draftHintErr }"
+      data-testid="flow-draft-hint"
+    >
+      {{ draftHint }}
+    </p>
+    <p v-if="tab === 'timeout' && urgeHint" class="hint" data-testid="flow-dingtalk-stub">{{ urgeHint }}</p>
+
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table v-if="tab === 'timeout'">
@@ -93,7 +134,11 @@
               <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!timeoutRows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无超时待办' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="flow-timeout-empty">
+                  <div class="et">{{ timeoutEmptyText }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in timeoutRows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.instanceNo }}</td>
@@ -115,15 +160,21 @@
               <th>模板</th>
               <th>节点</th>
               <th>发起人</th>
+              <th>SLA 截止</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="5"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!todoRows.length">
-              <td colspan="5"><div class="empty"><div class="et">{{ error || '暂无待办' }}</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="flow-todo-empty">
+                  <div class="et">{{ todoEmptyText }}</div>
+                  <div v-if="todoFilters.businessDomain && !error" class="es">换一个业务域，或清空筛选后再查</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in todoRows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.instanceNo }}</td>
@@ -133,6 +184,11 @@
               </td>
               <td>{{ row.nodeName }}</td>
               <td>{{ row.initiatorName || '—' }}</td>
+              <td data-testid="flow-sla" :style="{ color: slaColor(row.slaTone), fontWeight: row.slaTone === 'normal' ? 400 : 600 }">
+                {{ row.slaDeadline || '—' }}
+                <span v-if="row.slaTone === 'warn'">临期</span>
+                <span v-if="row.slaTone === 'timeout'">超时</span>
+              </td>
               <td>
                 <button
                   v-if="row.formData?.transferId"
@@ -191,14 +247,19 @@
               <th>节点数</th>
               <th>状态</th>
               <th>更新</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!tplRows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无模板' }}</div></div></td>
+              <td colspan="8">
+                <div class="empty" data-testid="flow-template-empty">
+                  <div class="et">{{ templateEmptyText }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in tplRows" v-else :key="row.id">
               <td class="mono">{{ row.templateCode }}</td>
@@ -208,6 +269,12 @@
               <td class="num">{{ row.nodeCount }}</td>
               <td><span class="tag tag-info">{{ row.statusLabel }}</span></td>
               <td class="csub">{{ row.updatedAt }}</td>
+              <td>
+                <span class="btn-txt btn" @click="previewTemplate(row)">预览</span>
+                <span v-if="row.status === 'DRAFT'" class="btn-txt btn" data-testid="flow-draft-try" @click="tryStartDraft(row)">
+                  试发起
+                </span>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -237,11 +304,26 @@
         </div>
       </div>
     </div>
+
+    <div v-if="previewOpen" class="modal-mask" data-testid="flow-template-preview" @click.self="previewOpen = false">
+      <div class="modal-card" style="width: min(480px, 92vw)">
+        <h3 style="margin: 0 0 8px">流程预览 · {{ previewTitle }}</h3>
+        <p class="hint">{{ previewMeta }}</p>
+        <ol style="margin: 8px 0 12px; padding-left: 18px">
+          <li v-for="node in previewNodes" :key="node.nodeOrder" style="margin: 4px 0">
+            {{ node.nodeName }}（{{ node.nodeType }}）· {{ node.assigneePreview }}
+          </li>
+        </ol>
+        <div class="acts" style="justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="previewOpen = false">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -276,9 +358,23 @@ const todoRows = ref<
     templateName: string
     nodeName: string
     initiatorName: string
+    slaDeadline?: string
+    slaTone?: string
     formData?: { transferId?: number; platform?: string; accountNo?: string }
   }[]
 >([])
+const todoBadge = ref(0)
+const todoFilters = ref({ businessDomain: '' })
+const timeoutFilters = ref({ templateName: '' })
+const handleHint = ref('')
+const handleHintErr = ref(false)
+const draftHint = ref('')
+const draftHintErr = ref(false)
+const urgeHint = ref('')
+const previewOpen = ref(false)
+const previewTitle = ref('')
+const previewMeta = ref('')
+const previewNodes = ref<{ nodeOrder: number; nodeName: string; nodeType: string; assigneePreview: string }[]>([])
 const timeoutRows = ref<
   {
     id: number
@@ -304,6 +400,35 @@ const timeoutDist = ref<{
 const tplRows = ref<Record<string, unknown>[]>([])
 const instFilters = ref({ keyword: '', instanceStatus: '' })
 const tplFilters = ref({ templateName: '', businessDomain: '', status: '' })
+
+const todoEmptyText = computed(() => {
+  if (error.value) return error.value
+  if (todoFilters.value.businessDomain) return '该业务域暂无待办'
+  return '暂无待办'
+})
+const templateEmptyText = computed(() => {
+  if (error.value) return error.value
+  if (tplFilters.value.status === 'DRAFT') return '暂无草稿模板'
+  if (tplFilters.value.status === 'DISABLED') return '暂无停用模板'
+  if (tplFilters.value.templateName.trim() || tplFilters.value.businessDomain) return '没有符合条件的模板'
+  return '暂无模板'
+})
+const timeoutEmptyText = computed(() => {
+  if (error.value) return error.value
+  if (timeoutFilters.value.templateName.trim()) return '没有符合条件的超时待办'
+  return '暂无超时待办'
+})
+
+function rejectedBody(e: unknown): { code?: number; msg?: string; data?: { remindCount?: number; commentHint?: string } } | null {
+  if (e && typeof e === 'object' && 'code' in e) return e as { code?: number; msg?: string; data?: { remindCount?: number; commentHint?: string } }
+  return null
+}
+
+function slaColor(tone?: string) {
+  if (tone === 'timeout') return 'var(--red)'
+  if (tone === 'warn') return '#b86e00'
+  return 'inherit'
+}
 const startOpen = ref(false)
 const startLoading = ref(false)
 const startMsg = ref('')
@@ -372,7 +497,9 @@ async function loadTimeouts() {
   try {
     await loadTimeoutRate()
     await loadTimeoutDistribution()
-    const res = await http.get('/flow/timeout/list', { params: { pageNo: 1, pageSize: 20 } })
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
+    if (timeoutFilters.value.templateName.trim()) params.templateName = timeoutFilters.value.templateName.trim()
+    const res = await http.get('/flow/timeout/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       timeoutRows.value = []
@@ -392,13 +519,17 @@ async function urgeTask(row: { id: number; remindCount: number }) {
   const msg = window.prompt('督办说明（可选，≤256 字）', '请尽快处理该审批待办') || ''
   try {
     const res = await http.put(`/flow/timeout/${row.id}/urge`, { urgeMessage: msg.slice(0, 256) })
-    if (res.data.code !== 0) {
-      alert(res.data.msg || '督办失败')
-      return
-    }
+    const count = res.data.data?.remindCount
+    urgeHint.value = `已通过钉钉桩提醒处理人${count != null ? `（第 ${count} 次）` : ''}`
     await loadTimeouts()
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : '网络错误')
+    const body = rejectedBody(e)
+    if (body?.code === 5003) {
+      urgeHint.value = body.msg || '钉钉推送失败已入补发队列'
+      await loadTimeouts()
+      return
+    }
+    alert(body?.msg || (e instanceof Error ? e.message : '网络错误'))
   }
 }
 
@@ -406,7 +537,9 @@ async function loadTodos() {
   loading.value = true
   error.value = ''
   try {
-    const res = await http.get('/flow/task/my-todo', { params: { pageNo: 1, pageSize: 20 } })
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
+    if (todoFilters.value.businessDomain) params.businessDomain = todoFilters.value.businessDomain
+    const res = await http.get('/flow/task/my-todo', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       todoRows.value = []
@@ -415,6 +548,7 @@ async function loadTodos() {
     }
     todoRows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
+    if (!todoFilters.value.businessDomain) todoBadge.value = total.value
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '网络错误'
   } finally {
@@ -422,19 +556,91 @@ async function loadTodos() {
   }
 }
 
+async function refreshTodoBadge() {
+  try {
+    const res = await http.get('/flow/task/my-todo', { params: { pageNo: 1, pageSize: 1 } })
+    if (res.data.code === 0) todoBadge.value = res.data.data.total || 0
+  } catch {
+    /* 徽标失败不阻断列表 */
+  }
+}
+
 async function handleTask(row: { id: number }, action: 'APPROVE' | 'REJECT') {
   const label = action === 'APPROVE' ? '通过' : '驳回'
+  const entered = window.prompt(`${label}意见（可选，驳回建议填写）`, action === 'APPROVE' ? '同意' : '')
+  if (entered === null) return
   if (!confirm(`确认${label}该待办？`)) return
+  handleHint.value = ''
+  handleHintErr.value = false
   try {
-    const res = await http.put(`/flow/task/${row.id}/handle`, { action, comment: `前端${label}` })
+    const res = await http.put(`/flow/task/${row.id}/handle`, { action, comment: entered })
+    const hint = String(res.data.data?.commentHint || '')
+    handleHintErr.value = false
+    handleHint.value = hint ? `${label}成功。${hint}` : `${label}成功`
+    await loadTodos()
+    await refreshTodoBadge()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    handleHintErr.value = true
+    handleHint.value = body?.msg || (e instanceof Error ? e.message : '网络错误')
+    if (body?.code === 1135 || String(body?.msg || '').includes('已处理')) await loadTodos()
+  }
+}
+
+function resetTodo() {
+  todoFilters.value = { businessDomain: '' }
+  handleHint.value = ''
+  loadTodos()
+}
+
+function resetTimeout() {
+  timeoutFilters.value = { templateName: '' }
+  urgeHint.value = ''
+  loadTimeouts()
+}
+
+async function previewTemplate(row: Record<string, unknown>) {
+  draftHint.value = ''
+  try {
+    const res = await http.get(`/flow/template/${Number(row.id)}/preview`)
     if (res.data.code !== 0) {
-      alert(res.data.msg || `${label}失败`)
+      draftHintErr.value = true
+      draftHint.value = res.data.msg || '预览失败'
       return
     }
-    await loadTodos()
-    if (tab.value === 'instance') await loadInstances()
+    const data = res.data.data
+    previewTitle.value = data.templateName || String(row.templateName || '')
+    const graph = data.graphType === 'SERIAL' ? '串行' : data.graphType
+    const draftNote = data.canStart ? '已发布，可发起' : '草稿仅可预览，不可发起'
+    previewMeta.value = `${graph} · ${data.statusLabel || ''} · ${draftNote}`
+    previewNodes.value = data.nodes || []
+    previewOpen.value = true
   } catch (e: unknown) {
-    alert(e instanceof Error ? e.message : '网络错误')
+    draftHintErr.value = true
+    draftHint.value = e instanceof Error ? e.message : '网络错误'
+  }
+}
+
+async function tryStartDraft(row: Record<string, unknown>) {
+  draftHint.value = ''
+  draftHintErr.value = false
+  const templateId = Number(row.id)
+  try {
+    const res = await http.post('/flow/instance', {
+      templateId,
+      formData: { title: '草稿试发起' },
+      businessKey: `draft-try-${templateId}-${Date.now()}`,
+    })
+    draftHintErr.value = false
+    draftHint.value = `已发起：${res.data.data.instanceNo}`
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    draftHintErr.value = true
+    if (body?.code === 1134) {
+      draftHint.value = `草稿不可发起（1134）：${body.msg || '仅已发布模板可发起新实例'}`
+      return
+    }
+    draftHint.value = body?.msg || (e instanceof Error ? e.message : '网络错误')
   }
 }
 
@@ -536,5 +742,29 @@ watch(tab, (t) => {
   else loadTemplates()
 })
 
-onMounted(loadInstances)
+onMounted(() => {
+  loadInstances()
+  refreshTodoBadge()
+})
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.modal-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+.hint.err {
+  color: var(--red);
+}
+</style>

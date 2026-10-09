@@ -154,7 +154,12 @@ def test_flow_timeout_list_and_urge():
         headers=auth,
         json={"urgeMessage": "pytest 督办"},
     )
-    assert urged.json()["code"] == 0
+    urged_body = urged.json()
+    assert urged_body["code"] == 0
+    assert urged_body["data"]["notifyChannel"] == "DINGTALK_STUB"
+    assert urged_body["data"]["delivery"] == "STUB_OK"
+    assert urged_body["data"]["queued"] is False
+    assert urged_body["data"]["remindCount"] == before + 1
 
     again = client.get(
         "/admin-api/ims/flow/timeout/list",
@@ -202,3 +207,151 @@ def test_flow_timeout_distribution_stub():
     ).json()
     assert by_dom["code"] == 0
     assert by_dom["data"]["groupBy"] == "domain"
+
+
+def test_flow_sla_tone_thresholds():
+    from datetime import timedelta
+
+    from app.core import utcnow
+    from app.flow import sla_view
+    from app.models import FlowTask
+
+    now = utcnow()
+    fresh = sla_view(FlowTask(started_at=now - timedelta(hours=1)), now=now)
+    assert fresh["slaTone"] == "normal"
+    assert fresh["isTimeout"] is False
+    warn = sla_view(FlowTask(started_at=now - timedelta(hours=20)), now=now)
+    assert warn["slaTone"] == "warn"
+    assert warn["isTimeout"] is False
+    late = sla_view(FlowTask(started_at=now - timedelta(hours=26)), now=now)
+    assert late["slaTone"] == "timeout"
+    assert late["isTimeout"] is True
+    assert late["slaDeadline"]
+
+
+def test_flow_todo_sla_and_empty_domain():
+    auth = headers()
+    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 20})
+    body = todo.json()
+    assert body["code"] == 0
+    assert body["data"]["total"] >= 1
+    tones = {row["slaTone"] for row in body["data"]["list"]}
+    assert tones <= {"normal", "warn", "timeout"}
+    assert any(row["isTimeout"] for row in body["data"]["list"])
+    assert any(row["slaTone"] == "warn" for row in body["data"]["list"])
+    assert all(row["slaDeadline"] for row in body["data"]["list"])
+
+    empty = client.get(
+        "/admin-api/ims/flow/task/my-todo",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "businessDomain": "COMMON"},
+    ).json()
+    assert empty["code"] == 0
+    assert empty["data"]["total"] == 0
+    assert empty["data"]["list"] == []
+
+
+def test_flow_template_preview_draft_and_published():
+    auth = headers()
+    drafts = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "status": "DRAFT"},
+    ).json()
+    draft = next(r for r in drafts["data"]["list"] if r["templateCode"] == "FL-LIVE")
+    preview = client.get(f"/admin-api/ims/flow/template/{draft['id']}/preview", headers=auth).json()
+    assert preview["code"] == 0
+    data = preview["data"]
+    assert data["canStart"] is False
+    assert data["status"] == "DRAFT"
+    assert data["graphType"] == "SERIAL"
+    assert any(n["nodeName"] == "直属领导审批" for n in data["nodes"])
+    assert len(data["edges"]) == len(data["nodes"]) - 1
+
+    published = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "status": "PUBLISHED"},
+    ).json()
+    leave = next(r for r in published["data"]["list"] if r["templateCode"] == "FL-LEAVE")
+    leave_preview = client.get(f"/admin-api/ims/flow/template/{leave['id']}/preview", headers=auth).json()
+    assert leave_preview["code"] == 0
+    assert leave_preview["data"]["canStart"] is True
+    assert len(leave_preview["data"]["nodes"]) == 4
+
+    missing = client.get("/admin-api/ims/flow/template/999999/preview", headers=auth).json()
+    assert missing["code"] == 1001
+
+
+def test_flow_reject_edges_and_repeat_handle():
+    auth = headers()
+    published = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "status": "PUBLISHED"},
+    ).json()
+    leave = next(r for r in published["data"]["list"] if r["templateCode"] == "FL-LEAVE")
+    start = client.post(
+        "/admin-api/ims/flow/instance",
+        headers=auth,
+        json={
+            "templateId": leave["id"],
+            "formData": {"title": "pytest · 驳回边界"},
+            "businessKey": "pytest-flow-reject-edge-001",
+        },
+    ).json()
+    assert start["code"] == 0
+    instance_no = start["data"]["instanceNo"]
+    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 50}).json()
+    task = next(r for r in todo["data"]["list"] if r["instanceNo"] == instance_no)
+    assert task["slaTone"] == "normal"
+
+    bad_node = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=auth,
+        json={"action": "REJECT", "comment": "退回", "rejectToNodeOrder": 0},
+    ).json()
+    assert bad_node["code"] == 1001
+    assert "退回目标节点" in bad_node["msg"]
+
+    rejected = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=auth,
+        json={"action": "REJECT", "comment": "   "},
+    ).json()
+    assert rejected["code"] == 0
+    assert rejected["data"]["newStatus"] == "REJECTED"
+    assert rejected["data"]["rejectToNodeOrder"] == 1
+    assert rejected["data"]["commentHint"] == "退回建议填写意见"
+
+    again = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=auth,
+        json={"action": "APPROVE", "comment": "再次处理"},
+    ).json()
+    assert again["code"] == 1001
+    assert "已处理" in again["msg"]
+
+
+def test_flow_urge_dingtalk_timeout_queues():
+    auth = headers()
+    listed = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 10},
+    ).json()
+    assert listed["code"] == 0
+    assert listed["data"]["total"] >= 1
+    row = listed["data"]["list"][0]
+    before = row["remindCount"]
+    urged = client.put(
+        f"/admin-api/ims/flow/timeout/{row['id']}/urge",
+        headers=auth,
+        json={"urgeMessage": "__DINGTALK_TIMEOUT__"},
+    ).json()
+    assert urged["code"] == 5003
+    assert urged["msg"] == "钉钉推送失败已入补发队列"
+    assert urged["data"]["queued"] is True
+    assert urged["data"]["delivery"] == "QUEUED"
+    assert urged["data"]["notifyChannel"] == "DINGTALK_STUB"
+    assert urged["data"]["remindCount"] == before + 1
