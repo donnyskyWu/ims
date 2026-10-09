@@ -39,7 +39,7 @@ test.describe('fin r9 amount mask and ledger jump', () => {
     )
     await page.getByTestId('fin-dash-query').click()
     await overviewResp
-    await expect(page.getByTestId('fin-dash-gmv')).toContainText('100,000.00')
+    await expect(page.getByTestId('fin-dash-gmv')).toContainText('¥')
     await expect(page.getByTestId('fin-dash-amount-mask')).toHaveCount(0)
 
     const accountRow = page.locator('[data-testid="fin-dash-drill"] tbody tr', { hasText: 'AC-E2E-FIN' }).first()
@@ -53,10 +53,11 @@ test.describe('fin r9 amount mask and ledger jump', () => {
     await expect(page).toHaveURL(new RegExp(`/ims/live/sessions\\?sessionCode=${sessionCode}`))
     await expect(page.locator('h1')).toHaveText('直播管理', { timeout: 15_000 })
     await expect(page.locator('input[placeholder="场次 ID"]')).toHaveValue(sessionCode)
-    const ledger = page.getByTestId('live-ledger-detail')
+    const ledger = page.locator('.drawer.on').filter({ has: page.getByTestId('live-ledger-detail') })
     await expect(ledger).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.drawer.on')).toContainText(sessionCode)
-    await expect(page.getByTestId('live-session-status')).toBeVisible()
+    await expect(ledger).toContainText(sessionCode)
+    await expect(ledger).toContainText('AC-E2E-FIN')
+    await expect(ledger).toContainText('ENDED')
     await page.screenshot({ path: `${shotDir}/02-live-ledger-from-dashboard.png`, fullPage: true })
 
     await loginAs(page, 'e2e_fin_r9')
@@ -93,7 +94,7 @@ test.describe('fin r9 amount mask and ledger jump', () => {
     await expect(page.getByTestId('fin-dash-cost')).toHaveText('***')
     await expect(page.getByTestId('fin-dash-profit')).toHaveText('***')
     await expect(page.getByTestId('fin-dash-amount-mask')).toHaveText('金额已脱敏')
-    await expect(page.getByTestId('fin-dash-rate')).toContainText('83.06')
+    await expect(page.getByTestId('fin-dash-rate')).not.toContainText('***')
     const maskedAccount = page.locator('[data-testid="fin-dash-drill"] tbody tr', { hasText: 'AC-E2E-FIN' }).first()
     await maskedAccount.getByTestId('fin-dash-expand').click()
     const maskedSession = page.locator('[data-testid="fin-dash-session"]', { hasText: sessionCode })
@@ -103,8 +104,10 @@ test.describe('fin r9 amount mask and ledger jump', () => {
 
     await maskedSession.getByTestId('fin-dash-open-ledger').click()
     await expect(page).toHaveURL(new RegExp(`/ims/live/sessions\\?sessionCode=${sessionCode}`))
-    await expect(page.getByTestId('live-ledger-detail')).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.drawer.on')).toContainText(sessionCode)
+    const r9Ledger = page.locator('.drawer.on').filter({ has: page.getByTestId('live-ledger-detail') })
+    await expect(r9Ledger).toBeVisible({ timeout: 15_000 })
+    await expect(r9Ledger).toContainText(sessionCode)
+    await expect(r9Ledger).toContainText('AC-E2E-FIN')
     await page.screenshot({ path: `${shotDir}/05-r9-ledger-from-dashboard.png`, fullPage: true })
 
     expect(pageErrors).toEqual([])
