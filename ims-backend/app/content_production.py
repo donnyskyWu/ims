@@ -21,7 +21,10 @@ class ContentSaveBody(BaseModel):
     contentType: str = "SHORT_VIDEO"
     platformType: str = ""
     body: str = ""
-    layoutHtml: str = ""
+    layoutHtml: str | None = None
+    layoutJson: str | None = None
+    bodyFormat: str | None = None
+    layoutTemplateId: int | None = None
     documentType: str = ""
     taskId: int | None = None
     ipGroupId: int | None = None
@@ -59,6 +62,21 @@ def apply_match_fields(project: ContentProject, body: ContentSaveBody) -> None:
         project.competition_name = body.competitionName[:256]
 
 
+def _layout_html(value: str | None) -> str:
+    from app.content_typeset import sanitize_layout_html
+
+    return sanitize_layout_html(value or "")
+
+
+def normalize_body_format(value: str | None) -> str | None:
+    if value is None:
+        return None
+    fmt = value.strip().upper()
+    if fmt not in ("PLAIN", "LAYOUT"):
+        return ""
+    return fmt
+
+
 def project_vo(row: ContentProject) -> dict:
     return {
         "id": row.id,
@@ -71,6 +89,9 @@ def project_vo(row: ContentProject) -> dict:
         "ipGroupId": row.ip_group_id,
         "body": row.body,
         "layoutHtml": row.layout_html,
+        "layoutJson": row.layout_json or "",
+        "bodyFormat": row.body_format or "PLAIN",
+        "layoutTemplateId": row.layout_template_id,
         "matchType": row.match_type,
         "matchScheme": row.match_scheme or [],
         "matchSummary": row.match_summary or row.competition_name,
@@ -134,6 +155,8 @@ def content_create(
     title = (body.title or "").strip()
     if not title or len(title) > 200:
         return fail(1500, "参数校验失败")
+    if body.bodyFormat is not None and not normalize_body_format(body.bodyFormat):
+        return fail(1500, "参数校验失败")
     tid = tenant(actor)
     if body.taskId is not None:
         task = db.get(ContentTask, body.taskId)
@@ -154,7 +177,10 @@ def content_create(
         platform_type=(body.platformType or "")[:32],
         document_type=(body.documentType or "")[:32],
         body=body.body or "",
-        layout_html=body.layoutHtml or "",
+        layout_html=_layout_html(body.layoutHtml),
+        layout_json=body.layoutJson or "",
+        body_format=normalize_body_format(body.bodyFormat) or "PLAIN",
+        layout_template_id=body.layoutTemplateId,
         task_id=body.taskId,
         ip_group_id=body.ipGroupId,
         content_status="DRAFT",
@@ -185,6 +211,8 @@ def content_update(
     title = (body.title or row.title).strip()
     if not title:
         return fail(1500, "参数校验失败")
+    if body.bodyFormat is not None and not normalize_body_format(body.bodyFormat):
+        return fail(1500, "参数校验失败")
     row.title = title[:256]
     if body.contentType:
         row.content_type = body.contentType[:32]
@@ -195,7 +223,14 @@ def content_update(
     if body.body is not None:
         row.body = body.body
     if body.layoutHtml is not None:
-        row.layout_html = body.layoutHtml
+        row.layout_html = _layout_html(body.layoutHtml)
+    if body.layoutJson is not None:
+        row.layout_json = body.layoutJson
+    fmt = normalize_body_format(body.bodyFormat)
+    if fmt:
+        row.body_format = fmt
+    if body.layoutTemplateId is not None:
+        row.layout_template_id = body.layoutTemplateId
     if body.ipGroupId is not None:
         row.ip_group_id = body.ipGroupId
     apply_match_fields(row, body)

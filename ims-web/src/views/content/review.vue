@@ -55,6 +55,8 @@
     <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="640px" @close="drawerOpen = false">
       <p><b>{{ active?.contentTitle }}</b></p>
       <p class="hint">提交人：{{ active?.submitterName }} · 轮次 {{ active?.reviewRound }}</p>
+      <div class="dsec">版式</div>
+      <ContentLayoutPreview :layout-html="layoutHtml" :body="layoutBody" test-id="content-layout-preview" />
       <div class="dsec">质量清单</div>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
@@ -72,6 +74,7 @@
 import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
 
 const rows = ref<any[]>([])
 const loading = ref(false)
@@ -84,6 +87,8 @@ const active = ref<any>(null)
 const checklist = ref<any[]>([])
 const checklistModel = ref<Record<string, boolean>>({})
 const submitting = ref(false)
+const layoutHtml = ref('')
+const layoutBody = ref('')
 
 const filteredRows = computed(() => {
   let list = rows.value.filter((r) => (stage.value === 1 ? r.reviewRound <= 1 : r.reviewRound >= 2))
@@ -124,6 +129,8 @@ async function openReview(row: any) {
   try {
     const { data } = await http.get(`/content/review/${row.reviewNo}`)
     checklist.value = data.data.checklist || []
+    layoutHtml.value = data.data.layoutHtml || ''
+    layoutBody.value = data.data.body || ''
     const model: Record<string, boolean> = {}
     for (const item of checklist.value) {
       model[item.itemCode] = Boolean(item.passed)

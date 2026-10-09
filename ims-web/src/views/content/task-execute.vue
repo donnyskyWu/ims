@@ -55,7 +55,7 @@
       </div>
     </template>
 
-    <ProtoDrawer :open="editOpen" title="内容编辑（玩法区）" width="720px" @close="editOpen = false">
+    <ProtoDrawer :open="editOpen" title="内容编辑（玩法区）" width="880px" @close="editOpen = false">
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
@@ -73,6 +73,13 @@
           <label>正文</label>
           <textarea v-model="editForm.body" rows="4" />
         </div>
+        <ContentLayoutPanel
+          :content-id="vo.linkedContent?.id || null"
+          :body="editForm.body"
+          :body-format="editForm.bodyFormat"
+          :layout-html="editForm.layoutHtml"
+          @applied="onLayoutApplied"
+        />
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="editOpen = false">取消</button>
@@ -87,6 +94,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -101,6 +109,10 @@ const editForm = ref({
   matchType: 1,
   matchSchemeJson: '[]',
   body: '',
+  layoutHtml: '',
+  layoutJson: '',
+  bodyFormat: 'PLAIN',
+  layoutTemplateId: null as number | null,
 })
 
 const approvedStatuses = new Set(['PENDING_PUBLISH', 'PUBLISHED_DRAFT', 'FORMALLY_PUBLISHED', 'PUBLISHED', 'UNPUBLISHED'])
@@ -160,13 +172,40 @@ async function completeTask() {
   }
 }
 
-function openContentEdit() {
+async function openContentEdit() {
   const lc = vo.value.linkedContent
-  editForm.value.title = lc?.title || ''
-  editForm.value.body = ''
-  editForm.value.matchType = 1
-  editForm.value.matchSchemeJson = '[]'
-  editOpen.value = true
+  if (!lc?.id) return
+  try {
+    const { data } = await http.get(`/content/${lc.id}`)
+    const row = data.data || {}
+    editForm.value = {
+      title: row.title || lc.title || '',
+      matchType: row.matchType || 1,
+      matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
+      body: row.body || '',
+      layoutHtml: row.layoutHtml || '',
+      layoutJson: typeof row.layoutJson === 'string' ? row.layoutJson : JSON.stringify(row.layoutJson || ''),
+      bodyFormat: row.bodyFormat || 'PLAIN',
+      layoutTemplateId: row.layoutTemplateId ?? null,
+    }
+    editOpen.value = true
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
+function onLayoutApplied(payload: {
+  layoutHtml: string
+  layoutJson: string
+  bodyFormat: string
+  layoutTemplateId: number | null
+  body: string
+}) {
+  editForm.value.layoutHtml = payload.layoutHtml
+  editForm.value.layoutJson = payload.layoutJson
+  editForm.value.bodyFormat = payload.bodyFormat
+  editForm.value.layoutTemplateId = payload.layoutTemplateId
+  editForm.value.body = payload.body
 }
 
 async function saveContent() {
@@ -185,6 +224,10 @@ async function saveContent() {
       matchType: editForm.value.matchType,
       matchScheme: scheme,
       body: editForm.value.body,
+      layoutHtml: editForm.value.layoutHtml,
+      layoutJson: editForm.value.layoutJson,
+      bodyFormat: editForm.value.bodyFormat,
+      layoutTemplateId: editForm.value.layoutTemplateId,
     })
     editOpen.value = false
     await loadExecute()

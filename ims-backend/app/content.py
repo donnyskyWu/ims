@@ -678,6 +678,11 @@ def review_detail(review_no: str, db: Session = Depends(db_session), actor: User
             passed = bool(row.checklist_result[item["itemCode"]])
         checklist.append({**item, "passed": passed})
     data["checklist"] = checklist
+    project = db.get(ContentProject, row.content_project_id)
+    data["body"] = (project.body if project else "") or ""
+    data["layoutHtml"] = (project.layout_html if project else "") or ""
+    data["bodyFormat"] = (project.body_format if project and project.body_format else "PLAIN")
+    data["layoutJson"] = (project.layout_json if project else "") or ""
     return ok(data)
 
 

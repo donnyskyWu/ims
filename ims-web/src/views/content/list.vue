@@ -76,7 +76,7 @@
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
 
-    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑内容' : '新增内容'" width="720px" @close="drawerOpen = false">
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑内容' : '新增内容'" width="880px" @close="drawerOpen = false">
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
@@ -98,6 +98,13 @@
           <label>正文</label>
           <textarea v-model="form.body" rows="4" />
         </div>
+        <ContentLayoutPanel
+          :content-id="editingId"
+          :body="form.body"
+          :body-format="form.bodyFormat"
+          :layout-html="form.layoutHtml"
+          @applied="onLayoutApplied"
+        />
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
@@ -111,6 +118,7 @@
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 
 const rows = ref<any[]>([])
 const total = ref(0)
@@ -121,13 +129,18 @@ const statusKw = ref('')
 const drawerOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
-const form = ref({
+const emptyForm = () => ({
   title: '',
   contentType: 'SHORT_VIDEO',
   matchType: 1,
   matchSchemeJson: '[]',
   body: '',
+  layoutHtml: '',
+  layoutJson: '',
+  bodyFormat: 'PLAIN',
+  layoutTemplateId: null as number | null,
 })
+const form = ref(emptyForm())
 
 async function loadList() {
   loading.value = true
@@ -149,7 +162,7 @@ async function loadList() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
+  form.value = emptyForm()
   drawerOpen.value = true
 }
 
@@ -161,8 +174,26 @@ function openEdit(row: any) {
     matchType: row.matchType || 1,
     matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
     body: row.body || '',
+    layoutHtml: row.layoutHtml || '',
+    layoutJson: typeof row.layoutJson === 'string' ? row.layoutJson : JSON.stringify(row.layoutJson || ''),
+    bodyFormat: row.bodyFormat || 'PLAIN',
+    layoutTemplateId: row.layoutTemplateId ?? null,
   }
   drawerOpen.value = true
+}
+
+function onLayoutApplied(payload: {
+  layoutHtml: string
+  layoutJson: string
+  bodyFormat: string
+  layoutTemplateId: number | null
+  body: string
+}) {
+  form.value.layoutHtml = payload.layoutHtml
+  form.value.layoutJson = payload.layoutJson
+  form.value.bodyFormat = payload.bodyFormat
+  form.value.layoutTemplateId = payload.layoutTemplateId
+  form.value.body = payload.body
 }
 
 async function saveContent() {
@@ -185,6 +216,10 @@ async function saveContent() {
       matchType: form.value.matchType,
       matchScheme: scheme,
       body: form.value.body,
+      layoutHtml: form.value.layoutHtml,
+      layoutJson: form.value.layoutJson,
+      bodyFormat: form.value.bodyFormat,
+      layoutTemplateId: form.value.layoutTemplateId,
     }
     if (editingId.value) {
       await http.put(`/content/${editingId.value}`, payload)
