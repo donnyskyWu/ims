@@ -51,7 +51,7 @@ test.describe('live ledger filter export and supervise tails', () => {
     await page.getByRole('button', { name: '查询' }).click()
     await missResp
     await expect(page.locator('tbody tr', { hasText: SESSION })).toHaveCount(0)
-    await expect(page.locator('.empty .et')).toContainText('暂无场次')
+    await expect(page.getByText('暂无场次', { exact: true })).toBeVisible()
     await page.screenshot({ path: `${shotDir}/02-filters-miss.png`, fullPage: true })
 
     await page.getByRole('button', { name: '重置' }).click()

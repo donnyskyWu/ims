@@ -37,8 +37,15 @@ async function openReportTab(
 
   const detail = page.locator('.drawer').filter({ hasText: '场次' })
   await expect(detail).toBeVisible({ timeout: 15_000 })
+  const reportLoad = page.waitForResponse(
+    (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
+    { timeout: 15_000 },
+  )
   await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
-  await expect(detail.getByTestId('live-report-gmv')).toBeVisible()
+  await reportLoad.catch(() => null)
+  const gmv = detail.getByTestId('live-report-gmv')
+  await expect(gmv).toBeVisible()
+  await expect(gmv).toHaveValue('1000', { timeout: 5_000 })
   return { detail, sessionCode: sessionCode! }
 }
 

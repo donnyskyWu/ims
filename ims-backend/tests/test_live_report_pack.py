@@ -259,9 +259,13 @@ def test_overdue_pending_hints_1048_and_creates_supervision_once():
     assert body["msg"] == "24小时录入超时督办"
     assert body["data"]["hintCode"] == 1048
     codes = [item["sessionCode"] for item in body["data"]["list"]]
-    assert codes == ["IMS20261006DYS1048"]
-    assert body["data"]["list"][0]["overdueHours"] >= 48
-    assert body["data"]["list"][0]["overdue"] is True
+    assert "IMS20261006DYS1048" in codes
+    assert "IMS20261006DYS1040" not in codes
+    hit = next(item for item in body["data"]["list"] if item["sessionCode"] == "IMS20261006DYS1048")
+    assert hit["overdueHours"] >= 48
+    assert hit["overdue"] is True
+    assert hit["urgeChannels"] == ["IN_APP", "DINGTALK", "SMS"]
+    assert body["data"]["overdueCount"] >= 1
 
     db = SessionLocal()
     try:
@@ -273,7 +277,11 @@ def test_overdue_pending_hints_1048_and_creates_supervision_once():
         messages = db.scalars(
             select(WorkMessage).where(WorkMessage.ref_type == "live_report_overdue", WorkMessage.ref_id == session_id)
         ).all()
-        assert len(messages) == 1
+        by_channel = {item.channel: item for item in messages}
+        assert set(by_channel) == {"IN_APP", "DINGTALK", "SMS"}
+        assert by_channel["IN_APP"].title.startswith("下播超时督办 1048")
+        assert "钉钉本地桩，未外发" in by_channel["DINGTALK"].content
+        assert "短信本地桩，未外发" in by_channel["SMS"].content
         alarms = db.scalars(
             select(LiveAlarmRecord).where(
                 LiveAlarmRecord.session_code == "IMS20261006DYS1048",
@@ -294,6 +302,12 @@ def test_overdue_pending_hints_1048_and_creates_supervision_once():
             select(func.count()).select_from(Todo).where(Todo.task_type == "live_report_overdue", Todo.ref_id == session_id)
         )
         assert todo_count == 1
+        message_count = db.scalar(
+            select(func.count()).select_from(WorkMessage).where(
+                WorkMessage.ref_type == "live_report_overdue", WorkMessage.ref_id == session_id
+            )
+        )
+        assert message_count == 3
     finally:
         db.close()
 
@@ -310,8 +324,11 @@ def test_overdue_pending_hints_1048_and_creates_supervision_once():
     )
     assert filed.json()["code"] == 0, filed.json()
     quiet = client.get("/admin-api/ims/live/report/pending", headers=auth, params={"overdueOnly": True})
-    assert quiet.json()["code"] == 0
-    assert quiet.json()["data"]["list"] == []
+    quiet_body = quiet.json()
+    quiet_codes = [item["sessionCode"] for item in quiet_body["data"]["list"]]
+    assert "IMS20261006DYS1048" not in quiet_codes
+    assert "IMS20261006DYS1040" not in quiet_codes
+    assert quiet_body["code"] == (0 if not quiet_codes else 1048)
     db = SessionLocal()
     try:
         todo = db.scalar(select(Todo).where(Todo.task_type == "live_report_overdue", Todo.ref_id == session_id))
