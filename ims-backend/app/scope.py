@@ -214,6 +214,8 @@ PREFIXES = [
     ("GET", "/admin-api/ims/content/task", "ims_content_task"),
     ("POST", "/admin-api/ims/content/task", "ims_content_task"),
     ("PUT", "/admin-api/ims/content/task", "ims_content_task"),
+    ("POST", "/admin-api/ims/content/file", "ims_content_task"),
+    ("GET", "/admin-api/ims/file", "ims_content_task"),
     ("GET", "/admin-api/ims/content/sop", "ims_content_sop"),
     ("POST", "/admin-api/ims/content/sop", "ims_content_sop"),
     ("PUT", "/admin-api/ims/content/sop", "ims_content_sop"),

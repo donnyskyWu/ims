@@ -302,6 +302,8 @@ from app.content_topic import router as content_topic_router
 from app.content_fb import router as content_fb_router
 from app.content_production import router as content_production_router
 from app.content_task import router as content_task_router
+from app.content_file import download_router as content_file_download_router
+from app.content_file import upload_router as content_file_upload_router
 from app.work_task import router as work_task_router
 from app.collect import router as collect_router
 from app.home import router as home_router
@@ -369,6 +371,8 @@ router.include_router(content_router)
 router.include_router(content_topic_router)
 router.include_router(content_fb_router)
 router.include_router(content_production_router)
+router.include_router(content_file_upload_router)
+router.include_router(content_file_download_router)
 router.include_router(content_task_router)
 router.include_router(work_task_router)
 router.include_router(cost_router, prefix="/cost")
