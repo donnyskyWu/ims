@@ -13,7 +13,15 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.bi_br212 import primary_dept_id
-from app.models import TrainMaterial, TrainMaterialCate, TrainStatDaily, TrainTask, TrainTaskRecord, User
+from app.models import (
+    TrainMaterial,
+    TrainMaterialCate,
+    TrainMaterialVersion,
+    TrainStatDaily,
+    TrainTask,
+    TrainTaskRecord,
+    User,
+)
 
 router = APIRouter(prefix="/train", tags=["train"])
 
@@ -150,6 +158,31 @@ def next_material_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
+def material_versions(db: Session, material_id: int, tenant_id: int) -> list[dict]:
+    rows = list(
+        db.scalars(
+            select(TrainMaterialVersion)
+            .where(
+                TrainMaterialVersion.tenant_id == tenant_id,
+                TrainMaterialVersion.material_id == material_id,
+            )
+            .order_by(TrainMaterialVersion.version.desc())
+        ).all()
+    )
+    names = user_names(db, {row.editor_user_id for row in rows})
+    return [
+        {
+            "version": row.version,
+            "title": row.title,
+            "fileKey": row.file_key or None,
+            "linkUrl": row.link_url or None,
+            "editorName": names.get(row.editor_user_id, ""),
+            "updatedAt": iso(row.updated_at),
+        }
+        for row in rows
+    ]
+
+
 def material_vo(db: Session, row: TrainMaterial) -> dict:
     names = user_names(db, {row.uploader_user_id})
     codes = row.position_codes if isinstance(row.position_codes, list) else []
@@ -163,11 +196,78 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
         "linkUrl": row.link_url,
         "positionCodes": codes,
         "version": row.version,
+        "versions": material_versions(db, row.id, row.tenant_id),
         "status": row.status,
         "uploaderUserId": row.uploader_user_id,
         "uploaderName": names.get(row.uploader_user_id, ""),
         "updatedAt": iso(row.updated_at),
     }
+
+
+def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
+    if not body.title.strip():
+        return fail(1001, "title 必填")
+    if body.materialType not in MATERIAL_TYPES:
+        return fail(1001, "materialType 无效")
+    cate = db.get(TrainMaterialCate, body.cateId)
+    if cate is None or cate.deleted or cate.tenant_id != tenant_id:
+        return fail(1101, "分类不存在")
+    if body.materialType == "LINK":
+        if not body.linkUrl.strip():
+            return fail(1001, "linkUrl 必填")
+    elif not body.fileKey.strip():
+        return fail(1001, "fileKey 必填")
+    return cate
+
+
+def archive_material(db: Session, row: TrainMaterial) -> None:
+    db.add(
+        TrainMaterialVersion(
+            material_id=row.id,
+            version=int(row.version or 1),
+            title=row.title,
+            cate_id=row.cate_id,
+            material_type=row.material_type,
+            file_key=row.file_key,
+            link_url=row.link_url,
+            position_codes=row.position_codes if isinstance(row.position_codes, list) else [],
+            status=row.status,
+            editor_user_id=row.uploader_user_id,
+            tenant_id=row.tenant_id,
+            updated_at=row.updated_at or utcnow(),
+        )
+    )
+
+
+def apply_material_fields(row: TrainMaterial, body: MaterialBody, cate: TrainMaterialCate, actor: User) -> None:
+    codes = body.positionCodes or ([cate.position_code] if cate.position_code else [])
+    row.title = body.title.strip()
+    row.cate_id = body.cateId
+    row.material_type = body.materialType
+    row.file_key = body.fileKey.strip()
+    row.link_url = body.linkUrl.strip()
+    row.position_codes = codes
+    if body.publish:
+        row.status = "PUBLISHED"
+    elif row.status != "OFFLINE":
+        row.status = "DRAFT"
+    row.uploader_user_id = actor.id
+    row.updated_at = utcnow()
+
+
+def week_window(week_start: str | None) -> tuple[datetime, datetime, str] | None:
+    text = (week_start or "").strip()
+    if text:
+        try:
+            day = datetime.strptime(text, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    else:
+        today = datetime.now(BJ).date()
+        day = today - timedelta(days=today.weekday())
+    start_bj = datetime(day.year, day.month, day.day, tzinfo=BJ)
+    start_utc = start_bj.astimezone(timezone.utc).replace(tzinfo=None)
+    return start_utc, start_utc + timedelta(days=7), day.isoformat()
 
 
 @router.get("/material/cates")
@@ -186,19 +286,10 @@ def create_material(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    if not body.title.strip():
-        return fail(1001, "title 必填")
-    if body.materialType not in MATERIAL_TYPES:
-        return fail(1001, "materialType 无效")
     tenant_id = tenant_of(actor)
-    cate = db.get(TrainMaterialCate, body.cateId)
-    if cate is None or cate.deleted or cate.tenant_id != tenant_id:
-        return fail(1101, "分类不存在")
-    if body.materialType == "LINK":
-        if not body.linkUrl.strip():
-            return fail(1001, "linkUrl 必填")
-    elif not body.fileKey.strip():
-        return fail(1001, "fileKey 必填")
+    cate = validate_material_body(db, tenant_id, body)
+    if not isinstance(cate, TrainMaterialCate):
+        return cate
     row = TrainMaterial(
         material_no=next_material_no(db, tenant_id),
         title=body.title.strip(),
@@ -256,6 +347,79 @@ def material_list(
         ).all()
     )
     return paged([material_vo(db, row) for row in rows], total, page_no, size)
+
+
+@router.get("/material/weekly-update-metrics")
+def weekly_update_metrics(
+    weekStart: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """BR-101 每周更新率。分母是已发布资料，分子是本周更新过的。"""
+    window = week_window(weekStart)
+    if window is None:
+        return fail(1001, "weekStart 无效")
+    start, end, label = window
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(TrainMaterial).where(
+                TrainMaterial.deleted == 0,
+                TrainMaterial.tenant_id == tenant_id,
+                TrainMaterial.status == "PUBLISHED",
+            )
+        ).all()
+    )
+    names = user_names(db, {row.uploader_user_id for row in rows})
+    updated = 0
+    unupdated: list[dict] = []
+    for row in rows:
+        touched = row.updated_at or row.created_at
+        if touched is not None and start <= touched < end:
+            updated += 1
+            continue
+        unupdated.append(
+            {
+                "materialNo": row.material_no,
+                "title": row.title,
+                "lastUpdatedAt": iso(touched),
+                "ownerName": names.get(row.uploader_user_id, ""),
+            }
+        )
+    unupdated.sort(key=lambda item: (item["lastUpdatedAt"], item["materialNo"]))
+    should = len(rows)
+    rate = 100.0 if should == 0 else round(updated * 100.0 / should, 2)
+    return ok(
+        {
+            "weekStart": label,
+            "shouldUpdateCount": should,
+            "updatedCount": updated,
+            "weeklyUpdateRate": rate,
+            "unupdatedList": unupdated,
+        }
+    )
+
+
+@router.put("/material/{material_id}")
+def update_material(
+    material_id: int,
+    body: MaterialBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """TRN-M-R2：当前行升版本，旧内容写入快照且不再改。"""
+    tenant_id = tenant_of(actor)
+    row = db.get(TrainMaterial, material_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1101, "资料不存在")
+    cate = validate_material_body(db, tenant_id, body)
+    if not isinstance(cate, TrainMaterialCate):
+        return cate
+    archive_material(db, row)
+    row.version = int(row.version or 1) + 1
+    apply_material_fields(row, body, cate, actor)
+    db.flush()
+    return ok(material_vo(db, row))
 
 
 @router.delete("/material/{material_id}")
@@ -792,6 +956,8 @@ def score_quiz(quiz: list, chosen: dict[int, int]) -> int:
 
 def task_vo(db: Session, row: TrainTask) -> dict:
     material_ids = row.material_ids if isinstance(row.material_ids, list) else []
+    targets = row.assign_targets if isinstance(row.assign_targets, list) else []
+    user_ids = [int(item) for item in targets if isinstance(item, int) or str(item).isdigit()]
     quiz = public_quiz(row.quiz)
     return {
         "id": row.id,
@@ -799,6 +965,7 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "taskName": row.task_name,
         "materialIds": material_ids,
         "assignScope": row.assign_scope,
+        "assignTargetUserIds": user_ids if row.assign_scope == "BY_USER" else [],
         "assignedCount": row.assigned_count,
         "deadline": iso(row.deadline),
         "confirmType": row.confirm_type,
@@ -902,6 +1069,72 @@ def create_task(
                 tenant_id=tenant_id,
             )
         )
+    db.flush()
+    return ok(task_vo(db, row))
+
+
+@router.put("/task/{task_id}")
+def update_task(
+    task_id: int,
+    body: TaskBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """截止前编辑进行中任务。已有学习记录不删除、不改进度。"""
+    tenant_id = tenant_of(actor)
+    row = db.get(TrainTask, task_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1500, "任务不存在")
+    if resolve_task_status(row) != "IN_PROGRESS":
+        return fail(1102, "已过截止时间，不能编辑")
+    if not body.taskName.strip():
+        return fail(1001, "taskName 必填")
+    if body.confirmType not in CONFIRM_TYPES:
+        return fail(1001, "confirmType 无效")
+    deadline = parse_deadline(body.deadline)
+    if deadline is None:
+        return fail(1001, "deadline 无效")
+    if deadline.astimezone(timezone.utc) <= utcnow().astimezone(timezone.utc):
+        return fail(1102, "截止时间早于当前时间")
+    err = validate_materials(db, tenant_id, body.materialIds)
+    if err:
+        return err
+    if body.confirmType == "QUIZ":
+        parsed = normalize_quiz(body.quiz, body.passScore)
+        if not isinstance(parsed, tuple):
+            return parsed
+        quiz_rows, pass_score = parsed
+    else:
+        quiz_rows, pass_score = [], 0
+    assignees = expand_assignees(db, tenant_id, body)
+    if not isinstance(assignees, list):
+        return assignees
+    unique_users = sorted(set(assignees))
+    row.task_name = body.taskName.strip()
+    row.material_ids = body.materialIds
+    row.assign_scope = body.assignScope
+    row.assign_targets = unique_users if body.assignScope == "BY_USER" else body.assignTargetPositionCodes or []
+    row.deadline = deadline.replace(tzinfo=None)
+    row.confirm_type = body.confirmType
+    row.quiz = quiz_rows
+    row.pass_score = pass_score
+    row.updated_at = utcnow()
+    existing = list(
+        db.scalars(
+            select(TrainTaskRecord).where(
+                TrainTaskRecord.deleted == 0,
+                TrainTaskRecord.tenant_id == tenant_id,
+                TrainTaskRecord.task_id == row.id,
+            )
+        ).all()
+    )
+    have = {item.user_id for item in existing}
+    for uid in unique_users:
+        if uid in have:
+            continue
+        db.add(TrainTaskRecord(task_id=row.id, user_id=uid, tenant_id=tenant_id))
+        have.add(uid)
+    row.assigned_count = len(have)
     db.flush()
     return ok(task_vo(db, row))
 

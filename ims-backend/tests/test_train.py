@@ -1,5 +1,6 @@
 import os
 import uuid
+from datetime import timedelta
 
 os.environ.pop("IMS_DATABASE_URL", None)
 os.environ["IMS_MYSQL_HOST"] = "127.0.0.1"
@@ -9,9 +10,9 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core import SessionLocal
+from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import TrainTask, UserRole
+from app.models import TrainMaterial, TrainTask, TrainTaskRecord, UserRole
 
 client = TestClient(app)
 
@@ -468,3 +469,205 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     missing = client.post(f"/admin-api/ims/train/task/{bare_id}/confirm", headers=auth, json={"answers": []})
     assert missing.json()["code"] == 1104
     assert missing.json()["msg"] == "问卷未配置"
+
+
+def _leaf_cate(auth: dict) -> int:
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    return cates.json()["data"][0]["children"][0]["id"]
+
+
+def _publish_material(auth: dict, title: str, file_key: str = "train/v1.pdf") -> dict:
+    created = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": title,
+            "cateId": _leaf_cate(auth),
+            "materialType": "DOC",
+            "fileKey": file_key,
+            "positionCodes": ["R5"],
+            "publish": True,
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    return created.json()["data"]
+
+
+def test_train_material_new_version_keeps_snapshot_and_weekly_rate():
+    auth = headers()
+    original = _publish_material(auth, "周更资料原文", "train/week-v1.pdf")
+    assert original["version"] == 1
+    assert original["versions"] == []
+
+    revised = client.put(
+        f"/admin-api/ims/train/material/{original['id']}",
+        headers=auth,
+        json={
+            "title": "周更资料修订",
+            "cateId": original["cateId"],
+            "materialType": "DOC",
+            "fileKey": "train/week-v2.pdf",
+            "positionCodes": ["R5"],
+            "publish": True,
+        },
+    )
+    body = revised.json()
+    assert body["code"] == 0, body
+    assert body["data"]["version"] == 2
+    assert body["data"]["materialNo"] == original["materialNo"]
+    assert body["data"]["versions"][0]["version"] == 1
+    assert body["data"]["versions"][0]["title"] == "周更资料原文"
+    assert body["data"]["versions"][0]["fileKey"] == "train/week-v1.pdf"
+
+    third = client.put(
+        f"/admin-api/ims/train/material/{original['id']}",
+        headers=auth,
+        json={
+            "title": "周更资料再修订",
+            "cateId": original["cateId"],
+            "materialType": "DOC",
+            "fileKey": "train/week-v3.pdf",
+            "positionCodes": ["R5"],
+            "publish": True,
+        },
+    )
+    third_body = third.json()
+    assert third_body["code"] == 0, third_body
+    history = {item["version"]: item for item in third_body["data"]["versions"]}
+    assert history[1]["title"] == "周更资料原文"
+    assert history[1]["fileKey"] == "train/week-v1.pdf"
+    assert history[2]["title"] == "周更资料修订"
+
+    stale = _publish_material(auth, "上周未更新资料", "train/stale.pdf")
+    db = SessionLocal()
+    try:
+        material = db.get(TrainMaterial, stale["id"])
+        assert material is not None
+        material.updated_at = utcnow() - timedelta(days=10)
+        db.commit()
+    finally:
+        db.close()
+
+    metrics = client.get("/admin-api/ims/train/material/weekly-update-metrics", headers=auth)
+    data = metrics.json()
+    assert data["code"] == 0, data
+    assert data["data"]["shouldUpdateCount"] >= 2
+    assert data["data"]["weeklyUpdateRate"] < 100
+    numbers = {item["materialNo"] for item in data["data"]["unupdatedList"]}
+    assert stale["materialNo"] in numbers
+    assert original["materialNo"] not in numbers
+
+    bad = client.get(
+        "/admin-api/ims/train/material/weekly-update-metrics",
+        headers=auth,
+        params={"weekStart": "2026/10/09"},
+    )
+    assert bad.json()["code"] == 1001
+
+    missing = client.put(
+        "/admin-api/ims/train/material/99999999",
+        headers=auth,
+        json={
+            "title": "不存在",
+            "cateId": original["cateId"],
+            "materialType": "DOC",
+            "fileKey": "train/missing.pdf",
+            "positionCodes": ["R5"],
+            "publish": True,
+        },
+    )
+    assert missing.json()["code"] == 1101
+
+
+def test_train_task_edit_before_deadline_keeps_progress():
+    auth = headers()
+    material = _publish_material(auth, "任务编辑资料", "train/task-edit.pdf")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "编辑前任务",
+            "materialIds": [material["id"]],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    task_id = created.json()["data"]["id"]
+    prog = client.put(
+        f"/admin-api/ims/train/task/{task_id}/progress",
+        headers=auth,
+        json={
+            "materialId": material["id"],
+            "currentPage": 1,
+            "totalPages": 1,
+            "heartbeatAt": "2026-10-09T12:00:00+08:00",
+        },
+    )
+    assert prog.json()["data"]["progress"] == 100
+
+    renamed = client.put(
+        f"/admin-api/ims/train/task/{task_id}",
+        headers=auth,
+        json={
+            "taskName": "编辑后任务",
+            "materialIds": [material["id"]],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    renamed_body = renamed.json()
+    assert renamed_body["code"] == 0, renamed_body
+    assert renamed_body["data"]["taskName"] == "编辑后任务"
+    assert renamed_body["data"]["status"] == "IN_PROGRESS"
+
+    db = SessionLocal()
+    try:
+        record = db.scalar(select(TrainTaskRecord).where(TrainTaskRecord.task_id == task_id, TrainTaskRecord.user_id == 1))
+        assert record is not None
+        assert record.progress == 100
+        assert record.deleted == 0
+    finally:
+        db.close()
+
+    past = client.put(
+        f"/admin-api/ims/train/task/{task_id}",
+        headers=auth,
+        json={
+            "taskName": "编辑后任务",
+            "materialIds": [material["id"]],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2020-01-01T00:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert past.json()["code"] == 1102
+    assert past.json()["msg"] == "截止时间早于当前时间"
+
+    db = SessionLocal()
+    try:
+        task = db.get(TrainTask, task_id)
+        assert task is not None
+        task.deadline = utcnow() - timedelta(hours=1)
+        db.commit()
+    finally:
+        db.close()
+    locked = client.put(
+        f"/admin-api/ims/train/task/{task_id}",
+        headers=auth,
+        json={
+            "taskName": "过期后再改",
+            "materialIds": [material["id"]],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert locked.json()["code"] == 1102
+    assert locked.json()["msg"] == "已过截止时间，不能编辑"

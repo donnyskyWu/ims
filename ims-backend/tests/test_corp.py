@@ -26,8 +26,9 @@ def test_company_and_realname_are_query_only_and_masked():
     auth = headers()
     empty = client.get("/admin-api/ims/corp/resource/company/page", headers=auth)
     assert empty.json()["code"] == 0
-    assert empty.json()["data"]["total"] == 0
-    assert empty.json()["data"]["list"] == []
+    seeded_names = [row["companyName"] for row in empty.json()["data"]["list"]]
+    assert "E2E内容公司" in seeded_names
+    assert "甲公司" not in seeded_names
     missing = client.get("/admin-api/ims/corp/resource/company/999", headers=auth)
     assert missing.json()["code"] == 1504
     assert missing.json()["msg"] == "资源不可用"
@@ -37,7 +38,10 @@ def test_company_and_realname_are_query_only_and_masked():
     ops = ops_session()
     try:
         ops.add(Company(company_name="甲公司", credit_code="91330100MA0000001X", legal_name="李四", status="ENABLED", tenant_id=0))
-        ops.add(Company(company_name="乙公司", credit_code="91330100MA0000002X", status="ENABLED", tenant_id=9))
+        foreign_company = Company(company_name="乙公司", credit_code="91330100MA0000002X", status="ENABLED", tenant_id=9)
+        ops.add(foreign_company)
+        ops.flush()
+        foreign_company_id = foreign_company.id
         for index in range(11):
             number = f"1380000{index:04d}"
             card = f"33010119900101{index:04d}"
@@ -61,10 +65,14 @@ def test_company_and_realname_are_query_only_and_masked():
     assert listed.json()["data"]["list"][0]["companyName"] == "甲公司"
     foreign = client.get("/admin-api/ims/corp/resource/company/page", headers=auth, params={"companyName": "乙"})
     assert foreign.json()["data"]["total"] == 0
-    other = client.get("/admin-api/ims/corp/resource/company/2", headers=auth)
+    other = client.get(f"/admin-api/ims/corp/resource/company/{foreign_company_id}", headers=auth)
     assert other.json()["code"] == 1504
 
-    page = client.get("/admin-api/ims/corp/resource/realname/page", headers=auth, params={"pageNo": 2, "pageSize": 10})
+    page = client.get(
+        "/admin-api/ims/corp/resource/realname/page",
+        headers=auth,
+        params={"pageNo": 2, "pageSize": 10, "realName": "张"},
+    )
     body = page.json()["data"]
     assert body["total"] == 11
     assert len(body["list"]) == 1
@@ -170,12 +178,21 @@ def test_sim_write_rules_and_certificate_view():
             )
         )
         db.commit()
-        cert_id = db.query(CertArchive).filter(CertArchive.tenant_id == 0).one().id
+        cert_id = (
+            db.query(CertArchive)
+            .filter(CertArchive.tenant_id == 0, CertArchive.cert_no_hash == sha256_hex(plain))
+            .one()
+            .id
+        )
         foreign_id = db.query(CertArchive).filter(CertArchive.tenant_id == 9).one().id
     finally:
         db.close()
 
-    certs = client.get("/admin-api/ims/corp/resource/certificate/page", headers=auth)
+    certs = client.get(
+        "/admin-api/ims/corp/resource/certificate/page",
+        headers=auth,
+        params={"holderName": "管理员"},
+    )
     assert certs.json()["data"]["total"] == 1
     item = certs.json()["data"]["list"][0]
     assert item["certNoMasked"].startswith("110")

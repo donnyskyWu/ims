@@ -314,6 +314,7 @@ PREFIXES = [
     ("POST", "/admin-api/ims/train/task", "ims_train_task_record"),
     ("GET", "/admin-api/ims/train/material", "ims_train_material"),
     ("POST", "/admin-api/ims/train/material", "ims_train_material"),
+    ("PUT", "/admin-api/ims/train/material", "ims_train_material"),
     ("DELETE", "/admin-api/ims/train/material", "ims_train_material"),
     ("GET", "/admin-api/ims/train/material/cates", "ims_train_material_cate"),
     ("GET", "/admin-api/ims/fin/cost", "ims_fin_cost"),
