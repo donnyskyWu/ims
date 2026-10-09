@@ -10,7 +10,14 @@
         <router-link class="btn btn-sec btn-sm" to="/ims/content/list">内容管理</router-link>
       </div>
     </div>
-    <div v-if="pendingHint" class="hint" style="margin-bottom: 10px; color: var(--orange)">{{ pendingHint }}</div>
+    <div class="hint" data-testid="publish-supervise" style="margin-bottom: 10px">
+      督办：待发布 {{ pendingCount }}
+      <span
+        v-if="overdueCount > 0"
+        data-testid="publish-overdue-count"
+        style="margin-left: 12px; color: var(--red); font-weight: 600"
+      >超计划 24h {{ overdueCount }}</span>
+    </div>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.publishNo" placeholder="发布单号" style="width: 140px" />
       <select v-model="filters.publishStatus" style="width: 130px">
@@ -51,7 +58,11 @@
               <td><span class="chip">{{ statusLabel(row.publishStatus) }}</span></td>
               <td>
                 <a v-if="row.publishUrl" :href="row.publishUrl" target="_blank" rel="noopener">已回填</a>
-                <span v-else style="color: var(--orange)">待回填</span>
+                <span
+                  v-else
+                  data-testid="publish-receipt-pending"
+                  :style="receiptOverdue(row) ? 'color: var(--red); font-weight: 600' : 'color: var(--orange)'"
+                >{{ receiptOverdue(row) ? '待回填 · 超 24h' : '待回填' }}</span>
               </td>
               <td>
                 <button
@@ -143,7 +154,8 @@ const loading = ref(false)
 const error = ref('')
 const rows = ref<any[]>([])
 const total = ref(0)
-const pendingHint = ref('')
+const pendingCount = ref(0)
+const overdueCount = ref(0)
 const filters = reactive({ publishNo: '', publishStatus: '' })
 
 const createOpen = ref(false)
@@ -172,14 +184,37 @@ function statusLabel(s: string) {
   return map[s] || s
 }
 
+function receiptOverdue(row: { planPublishAt?: string; publishStatus?: string; publishUrl?: string }) {
+  if (row.publishUrl) return false
+  if (row.publishStatus !== 'PENDING_PUBLISH' && row.publishStatus !== 'PUBLISH_FAILED') return false
+  return overdueHours(row.planPublishAt || '') >= 24
+}
+
+function overdueHours(planPublishAt: string) {
+  const raw = planPublishAt.trim()
+  if (!raw) return 0
+  const text = raw.replace(/Z$/i, '+00:00')
+  const hasZone = /[+-]\d{2}:\d{2}$/.test(text)
+  const parsed = new Date(hasZone ? text : `${text}+08:00`)
+  if (Number.isNaN(parsed.getTime())) return 0
+  return Math.max(0, (Date.now() - parsed.getTime()) / 3600000)
+}
+
+async function pendingTotal(overdueOnly: boolean) {
+  const params: Record<string, string | number | boolean> = { pageNo: 1, pageSize: 1 }
+  if (overdueOnly) params.overdueOnly = true
+  const { data } = await http.get('/content/publish/pending', { params })
+  if (data.code !== 0) return 0
+  return Number(data.data?.total || 0)
+}
+
 async function loadPendingHint() {
   try {
-    const { data } = await http.get('/content/publish/pending', { params: { pageSize: 5, overdueOnly: true } })
-    if (data.code !== 0) return
-    const n = data.data?.total || 0
-    if (n > 0) pendingHint.value = `督办：${n} 条待发布/回填已超计划 24h`
+    const [pending, overdue] = await Promise.all([pendingTotal(false), pendingTotal(true)])
+    pendingCount.value = pending
+    overdueCount.value = overdue
   } catch {
-    /* ignore */
+    /* 督办条失败不挡列表 */
   }
 }
 

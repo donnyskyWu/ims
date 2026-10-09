@@ -12,6 +12,18 @@
     <p class="hint" style="margin-bottom: 10px">
       创建为草稿（DRAFT）；草稿可「启动」→ IN_PROGRESS；执行中可申请终止 → TERMINATE_PENDING，审批通过后 TERMINATED 并终止关联任务。
     </p>
+    <form class="qbar" @submit.prevent="loadList">
+      <input v-model="planNameKw" data-testid="plan-name-filter" placeholder="计划名" style="width: 160px" />
+      <select v-model="statusKw" data-testid="plan-status-filter" style="width: 180px">
+        <option value="">全部状态</option>
+        <option value="DRAFT">草稿 DRAFT</option>
+        <option value="IN_PROGRESS">执行中 IN_PROGRESS</option>
+        <option value="TERMINATE_PENDING">终止待审 TERMINATE_PENDING</option>
+        <option value="TERMINATED">已终止 TERMINATED</option>
+      </select>
+      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetQuery">重置</button>
+    </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -30,7 +42,12 @@
               <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无计划' }}</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="plan-empty">
+                  <div class="et">{{ planEmptyTitle }}</div>
+                  <div v-if="planEmptyHint" class="es">{{ planEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td><b>{{ row.planName }}</b></td>
@@ -136,7 +153,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
@@ -154,6 +171,8 @@ const form = ref({
   startDate: '',
   endDate: '',
 })
+const planNameKw = ref('')
+const statusKw = ref('')
 const sopPick = ref('')
 const sopOptions = ref<{ id: number; sopName: string; sopCode: string; version: number }[]>([])
 const ipOptions = ref<{ id: number; name: string }[]>([])
@@ -191,18 +210,48 @@ function onIpPick(ev: Event) {
   if (id) form.value.ipGroupIds = id
 }
 
+const planQueryActive = computed(() => Boolean(planNameKw.value.trim() || statusKw.value))
+const planEmptyTitle = computed(() => {
+  if (error.value) return error.value
+  return planQueryActive.value ? '没有符合条件的计划' : '暂无计划'
+})
+const planEmptyHint = computed(() => {
+  if (error.value) return ''
+  return planQueryActive.value
+    ? '换个计划名或状态后再查。'
+    : '点右上角「新增计划」保存草稿，再启动才会生成任务。'
+})
+
 async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await http.get('/content/plan', { params: { pageNo: 1, pageSize: 50 } })
-    rows.value = data.data.list
-    total.value = data.data.total
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 50 }
+    const name = planNameKw.value.trim()
+    if (name) params.planName = name
+    if (statusKw.value) params.status = statusKw.value
+    const { data } = await http.get('/content/plan', { params })
+    if (data.code !== 0) {
+      error.value = data.msg || '加载失败'
+      rows.value = []
+      total.value = 0
+      return
+    }
+    rows.value = data.data?.list || []
+    total.value = data.data?.total || 0
   } catch (e) {
     error.value = errorMessage(e)
+    rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function resetQuery() {
+  planNameKw.value = ''
+  statusKw.value = ''
+  void loadList()
 }
 
 function openCreate() {
