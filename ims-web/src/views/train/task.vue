@@ -13,20 +13,32 @@
       从已发布资料多选关联；按人指派；完成率 = 已完成人次 / 应完成人次（BR-102）。
     </p>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.taskName" placeholder="任务名称" style="width: 140px" />
-      <select v-model="filters.status" style="width: 100px">
+      <input
+        v-model="filters.taskName"
+        placeholder="任务名称"
+        style="width: 140px"
+        data-testid="train-task-filter-name"
+      />
+      <select v-model="filters.status" style="width: 100px" data-testid="train-task-filter-status">
         <option value="">全部状态</option>
         <option value="IN_PROGRESS">进行中</option>
         <option value="FINISHED">已结束</option>
       </select>
-      <select v-model="filters.confirmType" style="width: 110px">
+      <select v-model="filters.confirmType" style="width: 110px" data-testid="train-task-filter-confirm">
         <option value="">确认方式</option>
         <option value="DURATION">学时达标</option>
         <option value="QUIZ">自测问卷</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="train-task-filter-reset" @click="resetFilters">
+        重置
+      </button>
     </form>
+    <p v-if="hasActiveFilters" class="filter-note" data-testid="train-task-filter-summary">
+      当前筛选：{{ filterSummary }}
+      <button type="button" class="linkish" @click="resetFilters">清除筛选</button>
+    </p>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -49,7 +61,21 @@
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无任务' }}</div></div></td>
+              <td colspan="9">
+                <div class="empty" data-testid="train-task-empty">
+                  <div class="et">{{ error || (hasActiveFilters ? '没有符合筛选的任务' : '暂无任务') }}</div>
+                  <div v-if="!error && hasActiveFilters" class="es">调整任务名称、状态或确认方式后再查询</div>
+                  <button
+                    v-if="!error && hasActiveFilters"
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    data-testid="train-task-filter-clear-empty"
+                    @click="resetFilters"
+                  >
+                    清除筛选
+                  </button>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.taskNo }}</td>
@@ -78,6 +104,7 @@
           </tbody>
         </table>
       </div>
+      <div class="hint" style="margin-top: 8px" data-testid="train-task-total">共 {{ total }} 条</div>
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
@@ -129,6 +156,7 @@
             </div>
           </div>
           <button class="btn btn-sec btn-sm" type="button" style="margin-top: 8px" @click="addQuestion">添加题目</button>
+          <p v-if="mustAnswerAll" class="hint" data-testid="train-quiz-all-correct">须全部答对才能通过</p>
         </div>
         <p v-if="editingId" class="hint">已产生的学习记录不会回滚。</p>
         <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-task-form-error">{{ formError }}</p>
@@ -140,15 +168,29 @@
     </div>
 
     <div v-if="showRecords" class="modal-mask" @click.self="showRecords = false">
-      <div class="card" style="width: 520px; padding: 20px; max-height: 85vh; overflow: auto">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 85vh; overflow: auto">
         <h3 style="margin: 0 0 8px">学习记录 · {{ recordsTaskName }}</h3>
+        <form class="qbar" @submit.prevent="loadRecords">
+          <select v-model="recordFilters.confirmStatus" data-testid="train-record-filter-status">
+            <option value="">全部确认状态</option>
+            <option value="NOT_CONFIRMED">未确认</option>
+            <option value="CONFIRMED">已确认</option>
+          </select>
+          <label class="hint" style="display: flex; align-items: center; gap: 4px">
+            <input v-model="recordFilters.overdueOnly" type="checkbox" data-testid="train-record-filter-overdue" />
+            仅逾期
+          </label>
+          <button class="btn btn-pri btn-sm" type="submit" data-testid="train-record-query">筛选</button>
+        </form>
         <table>
           <thead>
             <tr>
               <th>用户</th>
+              <th>部门</th>
               <th>进度</th>
               <th>确认状态</th>
               <th>得分</th>
+              <th>逾期</th>
               <th v-if="recordsConfirmType === 'QUIZ'">操作</th>
             </tr>
           </thead>
@@ -157,10 +199,24 @@
               <td :colspan="recordsColspan">加载中…</td>
             </tr>
             <tr v-else-if="!recordRows.length">
-              <td :colspan="recordsColspan">暂无记录</td>
+              <td :colspan="recordsColspan">
+                <div class="empty" data-testid="train-record-empty">
+                  <div class="et">{{ recordFilterOn ? '没有符合筛选的学习记录' : '暂无学习记录' }}</div>
+                  <button
+                    v-if="recordFilterOn"
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    data-testid="train-record-clear"
+                    @click="clearRecordFilters"
+                  >
+                    清除筛选
+                  </button>
+                </div>
+              </td>
             </tr>
             <tr v-for="r in recordRows" v-else :key="r.userId" data-testid="train-record-row">
               <td>{{ r.userName || r.userId }}</td>
+              <td>{{ r.deptName || '未分配' }}</td>
               <td class="num">{{ r.progress }}%</td>
               <td>{{ r.confirmStatus }}</td>
               <td class="num">
@@ -169,6 +225,10 @@
                   data-testid="train-record-score-empty"
                 >暂无成绩</span>
                 <template v-else>{{ r.confirmScore == null ? '—' : r.confirmScore }}</template>
+              </td>
+              <td>
+                <span v-if="r.isOverdue" data-testid="train-record-overdue">已逾期 {{ r.overdueDays || '' }}天</span>
+                <span v-else>—</span>
               </td>
               <td v-if="recordsConfirmType === 'QUIZ'">
                 <button
@@ -218,6 +278,7 @@ type Row = {
 }
 
 const rows = ref<Row[]>([])
+const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
@@ -228,19 +289,49 @@ type MatPick = { id: number; title: string }
 const publishedMaterials = ref<MatPick[]>([])
 const showRecords = ref(false)
 const recordsLoading = ref(false)
-const recordsTaskName = ref('')
 const recordsTaskId = ref(0)
+const recordsTaskName = ref('')
 const recordsConfirmType = ref('')
+const recordFilters = reactive({ confirmStatus: '', overdueOnly: false })
 const recordRows = ref<
-  Array<{ userId: number; userName: string; progress: number; confirmStatus: string; confirmScore: number | null }>
+  Array<{
+    userId: number
+    userName: string
+    deptName: string
+    progress: number
+    confirmStatus: string
+    confirmScore: number | null
+    isOverdue: boolean
+    overdueDays: number
+  }>
 >([])
-const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 5 : 4))
+const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 7 : 6))
 const userStore = useUserStore()
 
 function isSelfRecord(userId: number) {
   const mine = Number(userStore.profile?.userId || 0)
   return mine > 0 && mine === Number(userId)
 }
+
+const hasActiveFilters = computed(
+  () => Boolean(filters.taskName.trim() || filters.status || filters.confirmType),
+)
+
+const filterSummary = computed(() => {
+  const parts: string[] = []
+  if (filters.taskName.trim()) parts.push(`名称「${filters.taskName.trim()}」`)
+  if (filters.status === 'IN_PROGRESS') parts.push('进行中')
+  if (filters.status === 'FINISHED') parts.push('已结束')
+  if (filters.confirmType === 'DURATION') parts.push('学时达标')
+  if (filters.confirmType === 'QUIZ') parts.push('自测问卷')
+  return parts.join(' · ')
+})
+
+const recordFilterOn = computed(() => Boolean(recordFilters.confirmStatus || recordFilters.overdueOnly))
+
+const mustAnswerAll = computed(
+  () => form.confirmType === 'QUIZ' && form.quiz.length > 0 && form.passScore === form.quiz.length,
+)
 
 type QuizDraft = { question: string; options: string[]; answerIndex: number }
 
@@ -286,12 +377,16 @@ function removeOption(questionIndex: number, optionIndex: number) {
 }
 
 function quizError(): string {
-  if (!form.quiz.length) return 'quiz 必填'
+  if (!form.quiz.length) return '请至少添加 1 道题目'
+  const seen = new Set<string>()
   for (const question of form.quiz) {
-    if (!question.question.trim() || question.question.trim().length > 256) return '题目必填且不超过 256 字'
+    const title = question.question.trim()
+    if (!title || title.length > 256) return '题目必填且不超过 256 字'
+    if (seen.has(title)) return '题目不能重复'
+    seen.add(title)
     const options = question.options.map((opt) => opt.trim())
     if (options.length < 2 || options.some((opt) => !opt)) return '每题选项至少 2 项'
-    if (new Set(options).size !== options.length) return '选项不能重复'
+    if (new Set(options).size !== options.length) return '选项内容不能重复'
     if (question.answerIndex < 0 || question.answerIndex >= options.length) return '请设定正确答案'
   }
   if (!form.passScore || form.passScore < 1 || form.passScore > form.quiz.length) {
@@ -329,23 +424,48 @@ function goRetake() {
   if (id) router.push(`/ims/train/study/${id}`)
 }
 
-async function openRecords(row: Row) {
-  recordsTaskName.value = row.taskName
-  recordsTaskId.value = row.id
-  recordsConfirmType.value = row.confirmType
-  showRecords.value = true
+async function loadRecords() {
+  if (!recordsTaskId.value) return
   recordsLoading.value = true
   recordRows.value = []
   try {
-    const res = await http.get('/train/task/records', {
-      params: { taskId: row.id, pageNo: 1, pageSize: 20 },
-    })
+    const params: Record<string, string | number | boolean> = {
+      taskId: recordsTaskId.value,
+      pageNo: 1,
+      pageSize: 20,
+    }
+    if (recordFilters.confirmStatus) params.confirmStatus = recordFilters.confirmStatus
+    if (recordFilters.overdueOnly) params.overdue = true
+    const res = await http.get('/train/task/records', { params })
     if (res.data.code === 0) {
       recordRows.value = res.data.data.list || []
     }
   } finally {
     recordsLoading.value = false
   }
+}
+
+function clearRecordFilters() {
+  recordFilters.confirmStatus = ''
+  recordFilters.overdueOnly = false
+  void loadRecords()
+}
+
+async function openRecords(row: Row) {
+  recordsTaskId.value = row.id
+  recordsTaskName.value = row.taskName
+  recordsConfirmType.value = row.confirmType
+  recordFilters.confirmStatus = ''
+  recordFilters.overdueOnly = false
+  showRecords.value = true
+  await loadRecords()
+}
+
+function resetFilters() {
+  filters.taskName = ''
+  filters.status = ''
+  filters.confirmType = ''
+  void loadList()
 }
 
 function finishColor(rate: number) {
@@ -366,19 +486,23 @@ async function loadList() {
   error.value = ''
   try {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 30 }
-    if (filters.taskName) params.taskName = filters.taskName
+    const name = filters.taskName.trim()
+    if (name) params.taskName = name
     if (filters.status) params.status = filters.status
     if (filters.confirmType) params.confirmType = filters.confirmType
     const res = await http.get('/train/task/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
+      total.value = 0
       return
     }
     rows.value = res.data.data.list || []
+    total.value = res.data.data.total || 0
   } catch {
     error.value = '网络错误'
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -532,5 +656,21 @@ onMounted(async () => {
 }
 .opt-row .fld-in {
   flex: 1;
+}
+.filter-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 12px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.linkish {
+  background: none;
+  border: none;
+  color: var(--blue);
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
 }
 </style>

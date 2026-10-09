@@ -100,7 +100,7 @@ test.describe('train quiz compose grade and retake', () => {
     expect(failed.data?.isPassed).toBe(false)
     expect(failed.data?.confirmScore).toBe(0)
     expect(failed.data?.confirmStatus).toBe('NOT_CONFIRMED')
-    await expect(page.getByText('得分 0，及格 2，未通过，可重答')).toBeVisible()
+    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 2，未通过，可重答')
     await shot(page, '03-retake-not-passed')
 
     await page.locator('.quiz-q').nth(0).locator('label.opt', { hasText: '对' }).locator('input').check()

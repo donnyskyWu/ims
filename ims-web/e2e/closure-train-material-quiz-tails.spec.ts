@@ -134,7 +134,7 @@ test.describe('train material preview and quiz tails', () => {
     await block.locator('input[placeholder="选项内容"]').nth(0).fill('相同')
     await block.locator('input[placeholder="选项内容"]').nth(1).fill('相同')
     await modal.getByRole('button', { name: '保存' }).click()
-    await expect(modal.getByTestId('train-task-form-error')).toContainText('选项不能重复')
+    await expect(modal.getByTestId('train-task-form-error')).toContainText('选项内容不能重复')
     await shot(page, '06-quiz-duplicate')
 
     await block.locator('input[placeholder="选项内容"]').nth(1).fill('不同')

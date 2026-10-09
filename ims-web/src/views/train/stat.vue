@@ -34,10 +34,16 @@
       >
         本月
       </button>
-      <input v-model="customRange" placeholder="自定义 yyyy-MM-dd,yyyy-MM-dd" style="width: 220px" />
+      <input
+        v-model="customRange"
+        placeholder="自定义 yyyy-MM-dd,yyyy-MM-dd"
+        style="width: 220px"
+        data-testid="train-stat-range"
+      />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">刷新</button>
     </form>
+    <p v-if="rangeError" class="hint" style="color: var(--red)" data-testid="train-stat-range-error">{{ rangeError }}</p>
 
     <div class="tabs" style="margin-top: 12px">
       <button type="button" class="tab" :class="{ on: tab === 'finish' }" data-testid="train-stat-tab-finish" @click="selectTab('finish')">
@@ -123,7 +129,17 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in finish?.byDept || []" :key="row.deptId" data-testid="train-stat-finish-dept-row">
+                  <tr v-if="loading">
+                    <td colspan="4"><div class="empty"><div class="et">加载中</div></div></td>
+                  </tr>
+                  <tr v-else-if="!(finish?.byDept || []).length">
+                    <td colspan="4">
+                      <div class="empty" data-testid="train-stat-finish-dept-empty">
+                        <div class="et">暂无统计数据</div>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-for="row in finish?.byDept || []" v-else :key="row.deptId" data-testid="train-stat-finish-dept-row">
                     <td :class="{ 'low-dept': row.finishRate < 85 }">
                       {{ row.deptName }}
                       <span v-if="row.finishRate < 85" data-testid="train-stat-finish-dept-low">低于85%</span>
@@ -151,7 +167,17 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in personPageRows" :key="row.userId">
+                  <tr v-if="loading">
+                    <td colspan="5"><div class="empty"><div class="et">加载中</div></div></td>
+                  </tr>
+                  <tr v-else-if="!(finish?.byPerson || []).length">
+                    <td colspan="5">
+                      <div class="empty" data-testid="train-stat-finish-person-empty">
+                        <div class="et">暂无统计数据</div>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-for="row in personPageRows" v-else :key="row.userId">
                     <td>{{ row.userName || `用户#${row.userId}` }}</td>
                     <td>{{ row.deptName }}</td>
                     <td class="num">{{ row.assignedCount }}</td>
@@ -332,7 +358,21 @@
                     <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
                   </tr>
                   <tr v-else-if="!overdueRows.length">
-                    <td colspan="8"><div class="empty"><div class="et">暂无统计数据</div></div></td>
+                    <td colspan="8">
+                      <div class="empty" data-testid="train-stat-overdue-empty">
+                        <div class="et">{{ overdueFilterOn ? '没有符合筛选的逾期记录' : '暂无统计数据' }}</div>
+                        <div v-if="overdueFilterOn" class="es">调整任务或部门后再筛选</div>
+                        <button
+                          v-if="overdueFilterOn"
+                          class="btn btn-sec btn-sm"
+                          type="button"
+                          data-testid="train-stat-overdue-clear"
+                          @click="clearOverdueFilters"
+                        >
+                          清除筛选
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                   <tr v-for="row in overdueRows" v-else :key="`${row.taskId}-${row.userId}`" data-testid="train-stat-overdue-row">
                     <td class="mono">{{ row.taskNo }}</td>
@@ -512,7 +552,7 @@ const tab = ref<'finish' | 'dept' | 'rank' | 'overdue'>('finish')
 const rangePreset = ref<'7' | '30' | 'month' | 'custom'>('30')
 const customRange = ref('')
 const finish = ref<FinishResp | null>(null)
-const loading = ref(false)
+const loading = ref(true)
 const error = ref('')
 const personPage = ref(1)
 const personPageSize = 10
@@ -524,6 +564,7 @@ const overdueRows = ref<OverdueRow[]>([])
 const overdueTaskId = ref('')
 const overdueDeptId = ref('')
 const exportMsg = ref('')
+const rangeError = ref('')
 const heatRows = ref<HeatRow[]>([])
 const heatError = ref('')
 const panelLoading = ref(false)
@@ -542,6 +583,8 @@ const personPageRows = computed(() => {
 })
 
 const asOf = computed(() => deptRows.value[0]?.statDate || '')
+
+const overdueFilterOn = computed(() => Boolean(overdueTaskId.value.trim() || overdueDeptId.value.trim()))
 
 const trendPoints = computed(() => {
   const byDate = new Map<string, { assigned: number; finished: number }>()
@@ -577,9 +620,26 @@ function fmtDate(d: Date) {
   return `${y}-${m}-${day}`
 }
 
+function customRangeError(raw: string): string {
+  const parts = raw
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length !== 2) return '日期范围无效'
+  const day = /^\d{4}-\d{2}-\d{2}$/
+  if (!parts.every((part) => day.test(part))) return '日期范围无效'
+  if (parts[0] > parts[1]) return '日期范围起大于止'
+  return ''
+}
+
 function activeDateRange(): string | undefined {
-  if (rangePreset.value === 'custom' && customRange.value.trim()) {
-    return customRange.value.trim()
+  const raw = customRange.value.trim()
+  if (rangePreset.value === 'custom' && raw) {
+    return raw
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(',')
   }
   const end = new Date()
   const start = new Date()
@@ -751,12 +811,38 @@ function goSupervise(row: OverdueRow) {
   })
 }
 
+function clearOverdueFilters() {
+  overdueTaskId.value = ''
+  overdueDeptId.value = ''
+  void loadOverdue()
+}
+
+function applyRangeError(message: string) {
+  rangeError.value = message
+  error.value = message
+  heatError.value = message
+  finish.value = null
+  heatRows.value = []
+  loading.value = false
+  if (tab.value === 'dept' || tab.value === 'rank') {
+    panelError.value = message
+    panelLoading.value = false
+    deptRows.value = []
+    rankRows.value = []
+  }
+}
+
 async function exportOverdue() {
-  exportMsg.value = '导出任务已提交'
+  exportMsg.value = ''
   try {
     const data = await fetchOverduePage(1)
     const rows = data.list || []
     overdueRows.value = rows
+    if (!rows.length) {
+      exportMsg.value = '没有可导出的逾期记录'
+      return
+    }
+    exportMsg.value = '导出任务已提交'
     const header = ['任务编号', '任务名称', '学员', '部门', '截止时间', '逾期天数', '进度']
     const body = rows.map((row) => [
       row.taskNo,
@@ -792,6 +878,14 @@ async function exportOverdue() {
 async function selectTab(next: 'finish' | 'dept' | 'rank' | 'overdue') {
   deptDrawerId.value = null
   tab.value = next
+  const raw = customRange.value.trim()
+  if (raw && next !== 'overdue') {
+    const bad = customRangeError(raw)
+    if (bad) {
+      applyRangeError(bad)
+      return
+    }
+  }
   if (next === 'finish') await loadFinishRate()
   else if (next === 'dept') await loadDept()
   else if (next === 'rank') await loadRank()
@@ -799,6 +893,18 @@ async function selectTab(next: 'finish' | 'dept' | 'rank' | 'overdue') {
 }
 
 async function reloadAll() {
+  const raw = customRange.value.trim()
+  if (raw) {
+    rangePreset.value = 'custom'
+    const bad = customRangeError(raw)
+    rangeError.value = bad
+    if (bad) {
+      applyRangeError(bad)
+      return
+    }
+  } else {
+    rangeError.value = ''
+  }
   await Promise.all([loadFinishRate(), loadHeat()])
   if (tab.value === 'dept') await loadDept()
   else if (tab.value === 'rank') await loadRank()
