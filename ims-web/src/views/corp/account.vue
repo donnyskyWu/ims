@@ -13,12 +13,16 @@
       UX-M4 P-M4-008 · <code>platformType={{ meta.platform }}</code> · 采集 Tab 见 ADR-047 ·
       <b>≠</b> 数据采集·竞品账号配置。
     </p>
-    <form class="qbar" @submit.prevent="search">
-      <input v-model="keyword" placeholder="账号编号/昵称" style="width: 130px" />
+    <form class="qbar" data-testid="acct-list-filters" @submit.prevent="search">
+      <input v-model="keyword" placeholder="账号编号/昵称" style="width: 130px" data-testid="acct-filter-keyword" />
       <input v-model="ipGroupKeyword" placeholder="IP 组" style="width: 100px" />
-      <select v-model="status" style="width: 100px">
+      <select v-model="holderUserId" data-testid="acct-filter-holder" style="width: 140px">
+        <option value="">全部责任人</option>
+        <option v-for="user in holders" :key="user.id" :value="user.id">{{ user.nickname || user.username }}</option>
+      </select>
+      <select v-model="status" data-testid="acct-filter-status" style="width: 110px">
         <option value="">全部状态</option>
-        <option v-for="item in statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        <option v-for="item in filterStatusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -46,9 +50,9 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="7" style="white-space: normal">
-                <div class="empty">
-                  <div class="et">{{ error || '暂无该平台账号' }}</div>
-                  <div class="es">请先在资源管理完成主数据，再通过登记账号创建。</div>
+                <div class="empty" data-testid="acct-list-empty">
+                  <div class="et">{{ emptyTitle }}</div>
+                  <div v-if="emptyHint" class="es">{{ emptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -984,6 +988,7 @@ const statusOptions = [
   { value: 'FROZEN', label: '冻结' },
   { value: 'RETURNED', label: '已归还' },
 ]
+const filterStatusOptions = [...statusOptions, { value: 'CANCELLED', label: '已注销' }]
 
 const tabs = [
   { id: 'basic', label: '基本信息' },
@@ -1001,6 +1006,30 @@ const error = ref('')
 const keyword = ref('')
 const ipGroupKeyword = ref('')
 const status = ref('')
+const holderUserId = ref('')
+const holders = ref<{ id: string; username: string; nickname: string }[]>([])
+
+const listFiltered = computed(
+  () => !!(keyword.value.trim() || ipGroupKeyword.value.trim() || status.value || holderUserId.value),
+)
+const emptyTitle = computed(() => {
+  if (error.value) return error.value
+  if (status.value) {
+    const label = statusLabel(status.value)
+    if (keyword.value.trim() || ipGroupKeyword.value.trim() || holderUserId.value) {
+      return `当前没有「${label}」账号符合当前筛选`
+    }
+    return `当前没有「${label}」账号`
+  }
+  if (holderUserId.value) return '没有该责任人名下的账号'
+  if (listFiltered.value) return '没有符合筛选的账号'
+  return '暂无该平台账号'
+})
+const emptyHint = computed(() => {
+  if (error.value) return ''
+  if (listFiltered.value) return '换一个池状态或责任人，或重置筛选。'
+  return '请先在资源管理完成主数据，再通过登记账号创建。'
+})
 
 const detailOpen = ref(false)
 const detail = ref<Record<string, unknown> | null>(null)
@@ -1312,6 +1341,7 @@ async function load() {
         platformType: meta.value.platform,
         keyword: keyword.value || undefined,
         status: status.value || undefined,
+        holderUserId: holderUserId.value || undefined,
       },
     })
     const data = res.data?.data as { list: Record<string, unknown>[]; total: number }
@@ -1422,7 +1452,18 @@ function reset() {
   keyword.value = ''
   ipGroupKeyword.value = ''
   status.value = ''
+  holderUserId.value = ''
   search()
+}
+
+async function loadHolders() {
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
+    const data = res.data?.data as { list?: { id: string; username: string; nickname: string }[] }
+    holders.value = data?.list || []
+  } catch {
+    holders.value = []
+  }
 }
 
 function goto(n: number) {
@@ -2045,6 +2086,7 @@ watch(
   () => route.params.platform,
   () => {
     pageNo.value = 1
+    loadHolders()
     load().then(() => applyDeepLink())
   },
   { immediate: true },

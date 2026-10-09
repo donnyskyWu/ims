@@ -31,6 +31,8 @@ SCAN_STATUS = ("EFFECTIVE", "EXPIRING", "EXPIRED")
 OPEN_LOG = ("WARNING", "EXPIRED_LOCKED")
 RANK = {"YELLOW": 1, "RED": 2, "LOCKED": 3}
 LABEL = {"YELLOW": "黄色", "RED": "红色", "LOCKED": "锁定"}
+WARN_LEVELS = frozenset(RANK)
+EXPIRE_STATUSES = frozenset({"WARNING", "RENEW_RESOLVED", "EXPIRED_LOCKED"})
 
 
 def warn_level(days: int) -> str | None:
@@ -527,6 +529,35 @@ def notified_ids(raw: str) -> list[int]:
     return [int(item) for item in data if str(item).isdigit() or isinstance(item, int)]
 
 
+def notify_labels(db: Session, user_ids: list[int]) -> dict[int, str]:
+    if not user_ids:
+        return {}
+    rows = db.scalars(select(User).where(User.id.in_(user_ids), User.deleted == 0)).all()
+    return {row.id: (row.nickname or row.username or str(row.id)) for row in rows}
+
+
+def notified_summary(user_ids: list[int], labels: dict[int, str]) -> str:
+    names = [labels[item] for item in user_ids if labels.get(item)]
+    if not names:
+        return "尚未通知"
+    return "已通知：" + "、".join(names)
+
+
+def remind_index(db: Session, log_ids: list[int]) -> dict[int, tuple[int, str]]:
+    if not log_ids:
+        return {}
+    rows = db.scalars(
+        select(CertRemindLog)
+        .where(CertRemindLog.deleted == 0, CertRemindLog.expire_log_id.in_(log_ids))
+        .order_by(CertRemindLog.id.asc())
+    ).all()
+    facts: dict[int, tuple[int, str]] = {}
+    for row in rows:
+        count, _latest = facts.get(row.expire_log_id, (0, ""))
+        facts[row.expire_log_id] = (count + 1, iso(row.reminded_at))
+    return facts
+
+
 def expire_vo(log: CertExpireLog, cert: CertArchive | None, today: date) -> dict:
     plain = decrypt_text(cert.cert_no_enc) if cert and cert.cert_no_enc else ""
     expire_date = cert.expire_date if cert else ""
@@ -566,6 +597,10 @@ def expire_list(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
+    if level and level not in WARN_LEVELS:
+        return fail(1001, "预警级别无效")
+    if status and status not in EXPIRE_STATUSES:
+        return fail(1001, "预警状态无效")
     page_no, size = page_args(pageNo, pageSize)
     stmt = expire_stmt(actor, request)
     if level:
@@ -587,7 +622,18 @@ def expire_list(
         ids = [row.cert_id for row in rows]
         for cert in db.scalars(select(CertArchive).where(CertArchive.id.in_(ids))).all():
             certs[cert.id] = cert
-    return paged([expire_vo(row, certs.get(row.cert_id), today) for row in rows], total, page_no, size)
+    labels = notify_labels(db, sorted({item for row in rows for item in notified_ids(row.notify_user_ids)}))
+    reminds = remind_index(db, [row.id for row in rows])
+    payload = []
+    for row in rows:
+        item = expire_vo(row, certs.get(row.cert_id), today)
+        ids = item["notifiedUserIds"]
+        count, latest = reminds.get(row.id, (0, ""))
+        item["notifiedSummary"] = notified_summary(ids, labels)
+        item["remindCount"] = count
+        item["lastRemindedAt"] = latest
+        payload.append(item)
+    return paged(payload, total, page_no, size)
 
 
 @router.get("/cert/expire/stats")

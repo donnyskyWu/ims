@@ -90,16 +90,28 @@
     <div v-if="kind === 'certificate'" data-testid="corp-cert-expire-panel">
       <div class="sec rowline" style="justify-content: space-between; align-items: baseline">
         <span>到期预警</span>
-        <span data-testid="corp-cert-expire-stats">黄色 {{ expireStats.yellow }} · 红色 {{ expireStats.red }} · 锁定 {{ expireStats.locked }}</span>
+        <span data-testid="corp-cert-expire-stats">黄色 {{ expireStats.yellow }} · 红色 {{ expireStats.red }} · 锁定 {{ expireStats.locked }} · 本月换证 {{ expireStats.renewed }}</span>
       </div>
       <p v-if="scanMessage" class="hint" data-testid="corp-cert-scan-message">{{ scanMessage }}</p>
       <p v-if="renewMessage" class="hint" data-testid="corp-cert-renew-message">{{ renewMessage }}</p>
       <p v-if="remindMessage" class="hint" data-testid="corp-cert-remind-message">{{ remindMessage }}</p>
-      <form class="qbar" @submit.prevent="searchExpire">
+      <form class="qbar" data-testid="corp-cert-expire-filters" @submit.prevent="searchExpire">
         <input v-model="expireHolder" placeholder="预警持有人" style="width: 180px" data-testid="corp-cert-expire-holder" />
+        <select v-model="expireLevel" data-testid="corp-cert-expire-level" style="width: 120px">
+          <option value="">全部级别</option>
+          <option value="YELLOW">黄色</option>
+          <option value="RED">红色</option>
+          <option value="LOCKED">锁定</option>
+        </select>
+        <select v-model="expireStatus" data-testid="corp-cert-expire-status" style="width: 120px">
+          <option value="">全部状态</option>
+          <option value="WARNING">预警中</option>
+          <option value="RENEW_RESOLVED">已换证</option>
+          <option value="EXPIRED_LOCKED">已锁定</option>
+        </select>
         <span class="sp"></span>
-        <button class="btn btn-pri btn-sm" type="submit">筛选</button>
-        <button class="btn btn-sec btn-sm" type="button" @click="resetExpire">重置</button>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-expire-search">筛选</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="corp-cert-expire-reset" @click="resetExpire">重置</button>
       </form>
       <div class="tbl-block">
         <div class="expire-wrap">
@@ -111,17 +123,21 @@
                 <th>有效期至</th>
                 <th>剩余天数</th>
                 <th>预警级别</th>
+                <th>通知</th>
                 <th>状态</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="expireLoading">
-                <td colspan="7" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+                <td colspan="8" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!expireRows.length">
-                <td colspan="7" style="white-space: normal">
-                  <div class="empty"><div class="et">{{ expireError || '当前无到期预警' }}</div></div>
+                <td colspan="8" style="white-space: normal">
+                  <div class="empty" data-testid="corp-cert-expire-empty">
+                    <div class="et">{{ expireEmptyTitle }}</div>
+                    <div v-if="expireEmptyHint" class="es">{{ expireEmptyHint }}</div>
+                  </div>
                 </td>
               </tr>
               <tr v-for="row in expireRows" v-else :key="String(row.id)">
@@ -132,6 +148,7 @@
                 <td>
                   <span data-testid="corp-cert-level" :style="levelStyle(String(row.level || ''))">{{ levelLabel(String(row.level || '')) }}</span>
                 </td>
+                <td data-testid="corp-cert-notify">{{ notifyText(row) }}</td>
                 <td>{{ expireStatusLabel(String(row.status || '')) }}</td>
                 <td>
                   <template v-if="row.status === 'WARNING' || row.status === 'EXPIRED_LOCKED'">
@@ -464,7 +481,16 @@ const expireRows = ref<Row[]>([])
 const expireLoading = ref(false)
 const expireError = ref('')
 const expireHolder = ref('')
-const expireStats = reactive({ yellow: 0, red: 0, locked: 0 })
+const expireLevel = ref('')
+const expireStatus = ref('')
+const expireStats = reactive({ yellow: 0, red: 0, locked: 0, renewed: 0 })
+const expireFiltered = computed(() => !!(expireHolder.value.trim() || expireLevel.value || expireStatus.value))
+const expireEmptyTitle = computed(() => {
+  if (expireError.value) return expireError.value
+  if (expireFiltered.value) return '没有符合筛选的到期预警'
+  return '当前无到期预警'
+})
+const expireEmptyHint = computed(() => (expireFiltered.value ? '换一个预警级别或状态，或重置筛选。' : ''))
 const remindOpen = ref(false)
 const remindSaving = ref(false)
 const remindError = ref('')
@@ -743,6 +769,7 @@ async function confirmRemind() {
     const at = String(res.data?.data?.remindedAt || '')
     remindOpen.value = false
     remindMessage.value = `已催办 ${at}。工作台已写入待办。重复催办会再写一条。钉钉未外发。`
+    await loadExpire()
   } catch (e: unknown) {
     remindError.value = bizError(e)
   } finally {
@@ -938,6 +965,8 @@ async function loadExpire() {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
     const text = expireHolder.value.trim()
     if (text) params.holderName = text
+    if (expireLevel.value) params.level = expireLevel.value
+    if (expireStatus.value) params.status = expireStatus.value
     const [listRes, statsRes] = await Promise.all([
       http.get('/cert/expire/list', { params }),
       http.get('/cert/expire/stats'),
@@ -948,6 +977,7 @@ async function loadExpire() {
     expireStats.yellow = Number(stats.yellowCount || 0)
     expireStats.red = Number(stats.redCount || 0)
     expireStats.locked = Number(stats.lockedCount || 0)
+    expireStats.renewed = Number(stats.renewedThisMonth || 0)
   } catch (e: unknown) {
     expireRows.value = []
     expireError.value = errorMessage(e)
@@ -962,7 +992,16 @@ function searchExpire() {
 
 function resetExpire() {
   expireHolder.value = ''
+  expireLevel.value = ''
+  expireStatus.value = ''
   loadExpire()
+}
+
+function notifyText(row: Row) {
+  const summary = String(row.notifiedSummary || '尚未通知')
+  const at = String(row.lastRemindedAt || '')
+  if (at) return `${summary} · 催办 ${at}`
+  return summary
 }
 
 async function confirmScan() {
