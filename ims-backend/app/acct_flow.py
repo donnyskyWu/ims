@@ -27,6 +27,8 @@ from app.models import (
     AccountRechargeVerify,
     AccountTimelineEvent,
     AccountTransfer,
+    AssetBind,
+    AssetLedger,
     FlowInstance,
     FlowTask,
     FlowTemplate,
@@ -44,6 +46,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 DIFF_RATE_LIMIT = Decimal("2.00")
 TRANSFER_REASONS = frozenset({"TRANSFER_POSITION", "PRE_RESIGN", "VIOLATION", "BUSINESS_ADJUST"})
+ASSET_TRANSFER_REF = "acct_asset_transfer"
 SUMMARY_GROUPS = frozenset({"ACCOUNT", "DEPT", "PLATFORM"})
 PLATFORM_LABELS = {
     "DOUYIN": "抖音",
@@ -379,6 +382,96 @@ def _display_name(db: Session, user_id: int) -> str:
     return user.nickname or user.username
 
 
+def _bound_account_assets(db: Session, actor: User, account_id: int) -> list[dict]:
+    """账号上仍有效的资产绑定（ims_asset_bind）。已报废不再提示转移。"""
+    tenant = tenant_of(actor)
+    rows = db.execute(
+        select(AssetLedger)
+        .join(AssetBind, AssetBind.asset_id == AssetLedger.id)
+        .where(
+            AssetBind.deleted == 0,
+            AssetBind.tenant_id == tenant,
+            AssetBind.bind_status == "ACTIVE",
+            AssetBind.account_id == account_id,
+            AssetLedger.deleted == 0,
+            AssetLedger.tenant_id == tenant,
+            AssetLedger.status != "SCRAPPED",
+        )
+        .order_by(AssetLedger.id)
+    ).scalars()
+    return [
+        {
+            "assetId": row.id,
+            "assetCode": row.asset_code,
+            "assetName": row.asset_name,
+            "assetType": row.asset_type,
+            "status": row.status,
+            "ownerUserId": row.owner_user_id,
+        }
+        for row in rows
+    ]
+
+
+def _notify_asset_transfer(db: Session, actor: User, transfer: AccountTransfer, assets: list[dict]) -> None:
+    """向原责任人、新责任人、资产保管人发工作台消息。不建待办。同一流转单每人只发一次。"""
+    if not assets:
+        return
+    codes = "、".join(item["assetCode"] for item in assets if item.get("assetCode"))
+    title = f"资产同步转移：{transfer.account_no}"[:128]
+    content = (
+        f"账号 {transfer.account_no} 绑定了 {len(assets)} 项资产（{codes}），请同步办理资产转移。"
+    )[:512]
+    recipients: set[int] = set()
+    if transfer.from_user_id:
+        recipients.add(int(transfer.from_user_id))
+    if transfer.to_user_id:
+        recipients.add(int(transfer.to_user_id))
+    for item in assets:
+        owner = item.get("ownerUserId")
+        if owner:
+            recipients.add(int(owner))
+    tenant = tenant_of(actor)
+    for user_id in sorted(recipients):
+        user = db.get(User, user_id)
+        if user is None or user.deleted or user.status != "ENABLED":
+            continue
+        if (user.tenant_id or 0) != tenant:
+            continue
+        exists = db.scalar(
+            select(WorkMessage.id).where(
+                WorkMessage.user_id == user_id,
+                WorkMessage.ref_type == ASSET_TRANSFER_REF,
+                WorkMessage.ref_id == transfer.id,
+            )
+        )
+        if exists is not None:
+            continue
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="ACCT",
+                ref_type=ASSET_TRANSFER_REF,
+                ref_id=transfer.id,
+                tenant_id=tenant,
+            )
+        )
+
+
+def _attach_asset_hint(db: Session, actor: User, transfer: AccountTransfer, payload: dict) -> dict:
+    assets = _bound_account_assets(db, actor, transfer.account_id)
+    _notify_asset_transfer(db, actor, transfer, assets)
+    hinted = dict(payload)
+    hinted["boundAssets"] = assets
+    hinted["assetTransferHint"] = (
+        f"该账号绑定了 {len(assets)} 项资产，是否同步发起资产转移？" if assets else None
+    )
+    return hinted
+
+
 def transfer_vo(row: AccountTransfer, names: dict[int, str]) -> dict:
     return {
         "id": row.id,
@@ -601,7 +694,7 @@ def _create_recall(body: TransferCreateBody, remark: str, actor: User, db: Sessi
             summary=f"收回冻结 · 原责任人 {from_name} · 状态 FROZEN",
             tenant_id=tenant_of(actor),
         )
-        return ok(transfer_vo(row, {from_id: from_name}))
+        return ok(_attach_asset_hint(db, actor, row, transfer_vo(row, {from_id: from_name})))
     finally:
         ops.close()
 
@@ -666,7 +759,7 @@ def create_transfer(
             row.from_user_id: _display_name(db, row.from_user_id),
             row.to_user_id: target.nickname or target.username,
         }
-        return ok(transfer_vo(row, names))
+        return ok(_attach_asset_hint(db, actor, row, transfer_vo(row, names)))
     finally:
         ops.close()
 
@@ -757,7 +850,14 @@ def confirm_transfer(
             tenant_id=tenant_of(actor),
         )
         _close_transfer_followups(db, row, accepted=True)
-        return ok(None)
+        return ok(
+            _attach_asset_hint(
+                db,
+                actor,
+                row,
+                {"transferNo": row.transfer_no, "status": row.status},
+            )
+        )
     finally:
         ops.close()
 
