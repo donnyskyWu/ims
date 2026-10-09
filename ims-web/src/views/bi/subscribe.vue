@@ -116,7 +116,9 @@
                 >撤销</span>
                 <span v-else-if="row.approvalStatus === 'PENDING'" class="csub">待「分享审批」Tab 处理</span>
                 <span v-else-if="row.approvalStatus === 'EXPIRED'" class="csub">链接已失效</span>
-                <span v-else-if="row.approvalStatus === 'REJECTED'" class="csub">链接已驳回</span>
+                <span v-else-if="row.approvalStatus === 'REJECTED'" class="csub" data-testid="bi-share-reject-note">
+                  链接已驳回<span v-if="row.approvalNote"> · {{ row.approvalNote }}</span>
+                </span>
               </td>
             </tr>
           </tbody>
@@ -151,7 +153,7 @@
               <td>{{ row.expireAt }}</td>
               <td>
                 <span class="btn-txt btn" @click="approveShare(row)">通过</span>
-                <span class="btn-txt btn" @click="rejectShare(row)">驳回</span>
+                <span class="btn-txt btn" data-testid="bi-share-reject" @click="askReject(row)">驳回</span>
               </td>
             </tr>
             <tr v-if="!pendingApprovals.length">
@@ -209,7 +211,8 @@
         </select>
         <label class="fld">推送时刻</label>
         <input v-model="form.pushTime" class="fld-in" data-testid="bi-sub-push-time" placeholder="09:00" />
-        <p class="csub" style="margin: 8px 0 0">下次推送按本地时刻估算，不触发外部定时任务。</p>
+        <p class="csub" style="margin: 8px 0 0">下次推送按本地时刻估算，不触发外部定时任务。时刻写 HH:mm，也可写「周一 09:00」。</p>
+        <p v-if="pushTimeError" class="hint" data-testid="bi-sub-push-error" style="color: var(--red)">{{ pushTimeError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitSub">保存</button>
@@ -244,6 +247,27 @@
       </div>
     </div>
 
+    <div v-if="rejectTarget" class="modal-mask" data-testid="bi-share-reject-confirm" @click.self="rejectTarget = null">
+      <div class="card" style="width: 420px; padding: 18px">
+        <h3 style="margin: 0 0 10px">驳回分享</h3>
+        <p style="margin: 0 0 8px">驳回「{{ rejectTarget.targetName }}」后链接不可打开。请填写说明。</p>
+        <textarea
+          v-model="rejectNote"
+          data-testid="bi-share-reject-note-input"
+          rows="3"
+          class="fld-in"
+          placeholder="驳回说明"
+        />
+        <p v-if="rejectError" class="hint" data-testid="bi-share-reject-error" style="color: var(--red)">{{ rejectError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="rejectTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-share-reject-ok" @click="confirmReject">
+            确认驳回
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showShareForm" class="modal-mask" @click.self="showShareForm = false">
       <div class="card" style="width: 420px; padding: 18px">
         <h3 style="margin: 0 0 10px">生成分享链接</h3>
@@ -273,7 +297,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type SubRow = {
   id: number
@@ -307,6 +331,7 @@ type ShareRow = {
   creatorName: string
   shareUrl?: string
   sensitive?: boolean
+  approvalNote?: string
 }
 
 const shares = ref<ShareRow[]>([])
@@ -319,8 +344,25 @@ const showShareForm = ref(false)
 const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
 const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
 const shareExpireError = ref('')
+const pushTimeError = ref('')
 const pushTarget = ref<SubRow | null>(null)
 const revokeTarget = ref<ShareRow | null>(null)
+const rejectTarget = ref<ShareRow | null>(null)
+const rejectNote = ref('')
+const rejectError = ref('')
+
+function pushClockOk(raw: string) {
+  const text = raw.trim()
+  if (!text) return true
+  for (const token of text.replace(/：/g, ':').split(/\s+/)) {
+    const matched = /^(\d{1,2}):(\d{2})$/.exec(token)
+    if (!matched) continue
+    const hour = Number(matched[1])
+    const minute = Number(matched[2])
+    if (hour <= 23 && minute <= 59) return true
+  }
+  return false
+}
 
 const pendingApprovals = computed(() => shares.value.filter((r) => r.approvalStatus === 'PENDING'))
 const visibleShares = computed(() => {
@@ -447,14 +489,24 @@ function loadTab() {
 }
 
 function openCreate() {
+  pushTimeError.value = ''
   showForm.value = true
 }
 
 async function submitSub() {
-  const res = await http.post('/bi/subscribe', form)
-  if (res.data.code === 0) {
-    showForm.value = false
-    await loadSubs()
+  pushTimeError.value = ''
+  if (!pushClockOk(form.pushTime)) {
+    pushTimeError.value = '推送时刻应为 HH:mm'
+    return
+  }
+  try {
+    const res = await http.post('/bi/subscribe', form)
+    if (res.data.code === 0) {
+      showForm.value = false
+      await loadSubs()
+    }
+  } catch (error: unknown) {
+    pushTimeError.value = errorMessage(error)
   }
 }
 
@@ -503,7 +555,7 @@ async function submitShare() {
     return
   }
   const days = Number(shareForm.expireDays)
-  if (!Number.isFinite(days) || days < 7 || days > 30) {
+  if (!Number.isInteger(days) || days < 7 || days > 30) {
     shareExpireError.value = '1197 分享有效期须为 7~30 天'
     return
   }
@@ -537,13 +589,28 @@ async function approveShare(row: ShareRow) {
   await loadShares()
 }
 
-async function rejectShare(row: ShareRow) {
-  const res = await http.put(`/bi/subscribe/share-approval/${row.id}`, { approvalStatus: 'REJECTED' })
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '驳回失败')
+function askReject(row: ShareRow) {
+  rejectTarget.value = row
+  rejectNote.value = ''
+  rejectError.value = ''
+}
+
+async function confirmReject() {
+  const row = rejectTarget.value
+  if (!row) return
+  const note = rejectNote.value.trim()
+  if (!note) {
+    rejectError.value = '驳回说明必填'
     return
   }
-  await loadShares()
+  rejectError.value = ''
+  try {
+    await http.put(`/bi/subscribe/share-approval/${row.id}`, { approvalStatus: 'REJECTED', note })
+    rejectTarget.value = null
+    await loadShares()
+  } catch (error: unknown) {
+    rejectError.value = errorMessage(error)
+  }
 }
 
 function askRevoke(row: ShareRow) {

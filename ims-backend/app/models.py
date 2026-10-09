@@ -1687,6 +1687,7 @@ class BiShareLink(Base):
     target_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     target_name: Mapped[str] = mapped_column(String(128), default="")
     approval_status: Mapped[str] = mapped_column(String(24), default="NOT_REQUIRED")
+    approval_note: Mapped[str] = mapped_column(String(256), default="")
     expire_at: Mapped[str] = mapped_column(String(32), default="")
     creator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)

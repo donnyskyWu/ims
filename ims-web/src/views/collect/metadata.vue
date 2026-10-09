@@ -42,7 +42,7 @@
       </div>
     </div>
     <div v-if="createOpen" class="drawer-mask" @click.self="createOpen = false">
-      <div class="drawer">
+      <div class="drawer on">
         <h3>新建实体</h3>
         <div class="formrow">
           <label>未映射表</label>
@@ -69,7 +69,7 @@
       </div>
     </div>
     <div v-if="fieldOpen" class="drawer-mask" @click.self="fieldOpen = false">
-      <div class="drawer wide">
+      <div class="drawer on wide">
         <h3>字段配置 · {{ activeEntity?.entityCode }}</h3>
         <div v-for="(f, idx) in fieldRows" :key="idx" class="formrow one">
           <input v-model="f.columnName" placeholder="列名" class="mono" style="width: 120px" />

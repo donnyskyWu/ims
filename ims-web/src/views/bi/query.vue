@@ -47,8 +47,24 @@
               </div>
               <div class="qb-row">
                 <label>行数上限</label>
-                <input v-model.number="builder.limit" type="number" min="1" max="1000" style="width: 100px" />
+                <input v-model.number="builder.limit" data-testid="bi-query-limit" type="number" min="1" max="1000" style="width: 100px" />
               </div>
+              <div class="qb-row">
+                <label>统计日期</label>
+                <input v-model="builder.dateFrom" data-testid="bi-query-from" type="date" />
+                <span class="csub">至</span>
+                <input v-model="builder.dateTo" data-testid="bi-query-to" type="date" />
+              </div>
+              <div class="qb-row">
+                <label>条件值</label>
+                <input
+                  v-model="builder.condValue"
+                  data-testid="bi-query-cond"
+                  placeholder="可选，精确匹配首个展示字段"
+                  style="width: 240px"
+                />
+              </div>
+              <p v-if="formError" class="hint" data-testid="bi-query-form-error" style="color: var(--red)">{{ formError }}</p>
               <div class="qb-cond-hd"><b>SQL 预览</b></div>
               <textarea class="code-edit" readonly rows="4" :value="previewSql" />
             </div>
@@ -60,7 +76,12 @@
           </div>
         </div>
       </div>
-      <div v-if="result" class="card bi0-result-card">
+      <div v-if="result && !result.rows.length" class="card bi0-result-card">
+        <div class="empty" data-testid="bi-query-result-empty">
+          <div class="et">{{ result.emptyReason || '当前条件下暂无数据' }}</div>
+        </div>
+      </div>
+      <div v-else-if="result" class="card bi0-result-card">
         <div class="bi0-result-hd"><div class="collapse-h"><b>查询结果</b> · 共 {{ result.total }} 行</div></div>
         <div class="tbl-wrap">
           <table>
@@ -84,13 +105,13 @@
         <div class="bi0-mine-hd"><h3>已保存查询</h3></div>
         <div class="bi0-mine-body">
           <div class="qbar">
-            <input v-model="mineFilter.queryName" placeholder="名称" />
-            <select v-model="mineFilter.status">
+            <input v-model="mineFilter.queryName" data-testid="bi-query-name" placeholder="名称" />
+            <select v-model="mineFilter.status" data-testid="bi-query-status">
               <option value="">全部状态</option>
               <option value="DRAFT">DRAFT</option>
               <option value="PUBLISHED">PUBLISHED</option>
             </select>
-            <button class="btn btn-sec btn-sm" type="button" @click="loadMine">查询</button>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="bi-query-mine-search" @click="loadMine">查询</button>
           </div>
           <div class="tbl-wrap">
             <table>
@@ -106,7 +127,9 @@
               </thead>
               <tbody>
                 <tr v-if="!mineRows.length">
-                  <td colspan="6"><div class="empty"><div class="et">暂无保存的查询</div></div></td>
+                  <td colspan="6">
+                    <div class="empty" data-testid="bi-query-mine-empty"><div class="et">{{ mineEmptyText }}</div></div>
+                  </td>
                 </tr>
                 <tr v-for="row in mineRows" :key="row.id">
                   <td>{{ row.queryName }}</td>
@@ -139,9 +162,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
-type FieldVo = { fieldCode: string; displayName: string; columnName: string }
+type FieldVo = { fieldCode: string; displayName: string; columnName: string; queryConditionType?: string }
 type EntityOpt = { entityCode: string; entityName: string }
 type QueryRow = {
   id: string
@@ -151,6 +174,13 @@ type QueryRow = {
   creatorName: string
   updatedAt: string
 }
+type QueryResult = {
+  columns: string[]
+  rows: Record<string, unknown>[]
+  total: number
+  sql?: string
+  emptyReason?: string
+}
 
 const router = useRouter()
 const tab = ref<'builder' | 'mine'>('builder')
@@ -158,92 +188,161 @@ const entities = ref<EntityOpt[]>([])
 const fields = ref<FieldVo[]>([])
 const fieldHint = ref('')
 const toast = ref('')
+const formError = ref('')
 const running = ref(false)
-const result = ref<{ columns: string[]; rows: Record<string, unknown>[]; total: number; sql?: string } | null>(null)
+const result = ref<QueryResult | null>(null)
 const previewSql = ref('SELECT … FROM …（执行后展示实际 SQL）')
 
 const builder = reactive({
   entityCode: '',
   selectFields: [] as string[],
   limit: 100,
+  dateFrom: '',
+  dateTo: '',
+  condValue: '',
 })
 
 const mineFilter = reactive({ queryName: '', status: '' })
+const appliedMine = reactive({ queryName: '', status: '' })
 const mineRows = ref<QueryRow[]>([])
+const mineEmptyText = computed(() =>
+  appliedMine.queryName || appliedMine.status ? '当前筛选下暂无查询' : '暂无保存的查询',
+)
 
-const payloadConfig = computed(() => ({
-  selectFields: builder.selectFields.length ? builder.selectFields : fields.value.map((f) => f.fieldCode),
-  conditions: [] as unknown[],
-  limit: builder.limit || 100,
-}))
+function rejectedCode(error: unknown): number {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return Number((error as { code?: number }).code || 0)
+  }
+  return 0
+}
+
+function dateEdge(): string {
+  const from = builder.dateFrom
+  const to = builder.dateTo
+  if ((from && !to) || (!from && to)) return '请同时填写开始和结束日期'
+  if (from && to && from > to) return '开始日期不能晚于结束日期'
+  return ''
+}
+
+function limitEdge(): string {
+  const limit = Number(builder.limit)
+  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) return '行数上限须为 1~1000'
+  return ''
+}
+
+const payloadConfig = computed(() => {
+  const selectFields = builder.selectFields.length ? builder.selectFields : fields.value.map((f) => f.fieldCode)
+  const conditions: { fieldCode: string; operator: string; value: string }[] = []
+  const probe = builder.condValue.trim()
+  if (probe && selectFields.length) {
+    conditions.push({ fieldCode: selectFields[0], operator: 'EQ', value: probe })
+  }
+  if (builder.dateFrom && builder.dateTo) {
+    const rangeField = fields.value.find((f) => (f.queryConditionType || '').toUpperCase() === 'RANGE')
+    if (rangeField) {
+      conditions.push({
+        fieldCode: rangeField.fieldCode,
+        operator: 'RANGE',
+        value: `${builder.dateFrom},${builder.dateTo}`,
+      })
+    }
+  }
+  return { selectFields, conditions, limit: Number(builder.limit) || 100 }
+})
 
 async function loadEntities() {
-  const res = await http.get('/collect/metadata/list', { params: { pageNo: 1, pageSize: 100 } })
-  if (res.code !== 0) return
-  entities.value = res.data.list.map((r: { entityCode: string; entityName: string }) => ({
-    entityCode: r.entityCode,
-    entityName: r.entityName,
-  }))
+  try {
+    const res = await http.get('/collect/metadata/list', { params: { pageNo: 1, pageSize: 100 } })
+    const list = res.data.data?.list || []
+    entities.value = list.map((r: { entityCode: string; entityName: string }) => ({
+      entityCode: r.entityCode,
+      entityName: r.entityName,
+    }))
+  } catch (error: unknown) {
+    fieldHint.value = errorMessage(error)
+  }
 }
 
 async function loadFields() {
   fields.value = []
   fieldHint.value = ''
   if (!builder.entityCode) return
-  const res = await http.get(`/collect/metadata/entity/${builder.entityCode}/fields`)
-  if (res.code === 1261) {
-    fieldHint.value = '实体未映射（1261）· 请点击右上角「元数据维护」完成 COLLECT P4m 映射'
-    return
+  try {
+    const res = await http.get(`/collect/metadata/entity/${builder.entityCode}/fields`)
+    fields.value = res.data.data?.fields || []
+    builder.selectFields = fields.value.slice(0, 2).map((f) => f.fieldCode)
+  } catch (error: unknown) {
+    if (rejectedCode(error) === 1261) {
+      fieldHint.value = '实体未映射（1261）· 请点击右上角「元数据维护」完成 COLLECT P4m 映射'
+      return
+    }
+    fieldHint.value = errorMessage(error)
   }
-  if (res.code !== 0) {
-    fieldHint.value = res.msg || '加载字段失败'
-    return
-  }
-  fields.value = res.data.fields
-  builder.selectFields = fields.value.slice(0, 2).map((f) => f.fieldCode)
 }
 
 async function ensureSaved(name: string) {
-  const res = await http.post('/bi/query', {
-    queryName: name,
-    entityCode: builder.entityCode,
-    status: 'DRAFT',
-    config: payloadConfig.value,
-  })
-  if (res.code === 1261) {
-    toast.value = '实体未映射（1261）'
+  try {
+    const res = await http.post('/bi/query', {
+      queryName: name,
+      entityCode: builder.entityCode,
+      status: 'DRAFT',
+      config: payloadConfig.value,
+    })
+    return res.data.data.id as string
+  } catch (error: unknown) {
+    const msg = rejectedCode(error) === 1261 ? '实体未映射（1261）' : errorMessage(error)
+    formError.value = msg
+    toast.value = msg
     return null
   }
-  if (res.code !== 0) {
-    toast.value = res.msg || '保存失败'
-    return null
-  }
-  return res.data.id as string
 }
 
 async function runAdhoc() {
+  formError.value = ''
+  toast.value = ''
+  result.value = null
+  const dates = dateEdge()
+  if (dates) {
+    formError.value = dates
+    return
+  }
+  const limitMsg = limitEdge()
+  if (limitMsg) {
+    formError.value = limitMsg
+    return
+  }
   if (!builder.entityCode) {
-    toast.value = '请选择数据源'
+    formError.value = '请选择数据源'
+    return
+  }
+  if (builder.dateFrom && builder.dateTo && !fields.value.some((f) => (f.queryConditionType || '').toUpperCase() === 'RANGE')) {
+    formError.value = '当前实体没有日期字段'
     return
   }
   running.value = true
-  toast.value = ''
   try {
     const id = await ensureSaved(`临时查询 ${new Date().toLocaleTimeString()}`)
     if (!id) return
     const run = await http.post(`/bi/query/${id}/run`, {})
-    if (run.code !== 0) {
-      toast.value = run.msg || '执行失败'
-      return
-    }
-    result.value = run.data
-    previewSql.value = run.data.sql || previewSql.value
+    result.value = run.data.data
+    previewSql.value = run.data.data.sql || previewSql.value
+  } catch (error: unknown) {
+    formError.value = errorMessage(error)
   } finally {
     running.value = false
   }
 }
 
 async function saveDraft() {
+  const blocked = dateEdge() || limitEdge()
+  if (blocked) {
+    formError.value = blocked
+    return
+  }
+  if (!builder.entityCode) {
+    formError.value = '请选择数据源'
+    return
+  }
   const name = window.prompt('查询名称', '我的查询')
   if (!name?.trim()) return
   const id = await ensureSaved(name.trim())
@@ -251,10 +350,17 @@ async function saveDraft() {
 }
 
 async function loadMine() {
-  const res = await http.get('/bi/query/page', {
-    params: { pageNo: 1, pageSize: 50, queryName: mineFilter.queryName, status: mineFilter.status },
-  })
-  if (res.code === 0) mineRows.value = res.data.list
+  appliedMine.queryName = mineFilter.queryName.trim()
+  appliedMine.status = mineFilter.status
+  try {
+    const res = await http.get('/bi/query/page', {
+      params: { pageNo: 1, pageSize: 50, queryName: appliedMine.queryName, status: appliedMine.status },
+    })
+    mineRows.value = res.data.data?.list || []
+  } catch (error: unknown) {
+    mineRows.value = []
+    toast.value = errorMessage(error)
+  }
 }
 
 function switchMine() {
@@ -263,23 +369,25 @@ function switchMine() {
 }
 
 async function runSaved(id: string) {
-  const run = await http.post(`/bi/query/${id}/run`, {})
-  if (run.code !== 0) {
-    toast.value = run.msg || '执行失败'
-    return
+  try {
+    const run = await http.post(`/bi/query/${id}/run`, {})
+    tab.value = 'builder'
+    result.value = run.data.data
+    previewSql.value = run.data.data.sql || previewSql.value
+    toast.value = '已加载结果'
+  } catch (error: unknown) {
+    toast.value = errorMessage(error)
   }
-  tab.value = 'builder'
-  result.value = run.data
-  previewSql.value = run.data.sql || previewSql.value
-  toast.value = '已加载结果'
 }
 
 async function publishRow(id: string) {
-  const res = await http.put(`/bi/query/${id}/publish`, {})
-  if (res.code === 0) {
+  try {
+    await http.put(`/bi/query/${id}/publish`, {})
     toast.value = '已发布'
-    loadMine()
-  } else toast.value = res.msg || '发布失败'
+    await loadMine()
+  } catch (error: unknown) {
+    toast.value = errorMessage(error)
+  }
 }
 
 function goMetadata() {
