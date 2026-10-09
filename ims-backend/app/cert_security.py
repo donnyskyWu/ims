@@ -92,6 +92,8 @@ def view_logs(
         end = parse_dt(timeRange[1])
         if start is None or end is None:
             return fail(1001, "时间范围不合法")
+        if start > end:
+            return fail(1001, "开始时间不能晚于结束时间")
         stmt = stmt.where(CertViewLog.created_at >= start, CertViewLog.created_at <= end)
     total = count_of(db, stmt)
     rows = db.scalars(stmt.order_by(CertViewLog.id.desc()).offset((page_no - 1) * size).limit(size)).all()
