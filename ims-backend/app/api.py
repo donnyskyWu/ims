@@ -279,6 +279,11 @@ def user_update(request: Request, user_id: int, body: UserBody, db: Session = De
     if body.mobile is not None:
         user.mobile = body.mobile
     if body.status is not None:
+        if str(body.status).strip().upper() == "DISABLED":
+            from app.acct_return import permission_close_blocked
+
+            if permission_close_blocked(db, user.id):
+                return fail(1024, "归还单未闭环，禁止关闭权限")
         user.status = body.status
     if body.dingtalkUserId is not None:
         user.dingtalk_user_id = body.dingtalkUserId
@@ -345,6 +350,7 @@ from app.system_dict import router as dict_router
 from app.system_role import router as role_router
 from app.workbench import router as workbench_router
 from app.acct_flow import router as acct_flow_router
+from app.acct_return import router as acct_return_router
 from app.cert_expire import router as cert_expire_router
 from app.cert_security import router as cert_security_router
 
@@ -357,6 +363,7 @@ router.include_router(audit_router)
 router.include_router(corp_router)
 router.include_router(account_router)
 router.include_router(acct_flow_router)
+router.include_router(acct_return_router)
 router.include_router(ip_group_router)
 router.include_router(device_router)
 router.include_router(asset_ledger_router)
