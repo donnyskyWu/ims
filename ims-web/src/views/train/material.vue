@@ -261,6 +261,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 
 type Cate = {
@@ -301,6 +302,7 @@ type Weekly = {
   unupdatedList: Array<{ materialNo: string; title: string; lastUpdatedAt: string; ownerName: string }>
 }
 
+const route = useRoute()
 const cates = ref<Cate[]>([])
 const rows = ref<Row[]>([])
 const total = ref(0)
@@ -565,9 +567,17 @@ async function offline(row: Row) {
 }
 
 onMounted(async () => {
+  const rawTitle = route.query.title
+  const title = typeof rawTitle === 'string' ? rawTitle : ''
+  if (title) filters.title = title
   await loadCates()
   await loadList()
   await loadWeekly()
+  const rawId = route.query.materialId
+  const materialId = Number(typeof rawId === 'string' ? rawId : '')
+  if (!materialId) return
+  const hit = rows.value.find((row) => row.id === materialId)
+  if (hit) openDetail(hit)
 })
 </script>
 
