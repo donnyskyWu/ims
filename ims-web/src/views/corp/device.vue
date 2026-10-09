@@ -300,6 +300,8 @@
           {{ node.layer === 'PERSON' ? '实名人' : `第${node.level}层` }} · {{ node.label }}
         </li>
       </ol>
+      <p v-if="forwardEmpty" class="hint" data-testid="asset-forward-empty">该实名人下没有资产层级</p>
+      <p v-else-if="!forwardAssetId && !forwardNodes.length && !forwardError" class="hint" data-testid="asset-forward-guide">请选择实名人并查询，再导出穿透报告</p>
       <div v-if="forwardSessions.length" data-testid="asset-forward-sessions">
         <p class="hint">场次层</p>
         <p v-for="item in forwardSessions" :key="String(item.sessionId)" data-testid="asset-forward-session">
@@ -364,12 +366,17 @@
           </select>
         </div>
       </div>
+      <label v-if="entryType === 'PERSON'" data-testid="asset-entry-include-history" style="display: inline-flex; align-items: center; gap: 6px; margin: 8px 0">
+        <input type="checkbox" :checked="entryIncludeHistory" @change="toggleHistory" />
+        含历史已归还
+      </label>
       <button class="btn btn-pri btn-sm" type="button" data-testid="asset-entry-query" @click="queryEntry">查询</button>
       <button v-if="kind === 'office'" class="btn btn-sec btn-sm" type="button" data-testid="asset-entry-export" :disabled="exporting" @click="exportEntry">导出</button>
       <p v-if="exportNote && entryOpen" class="hint" data-testid="asset-export-note">{{ exportNote }}</p>
+      <p v-if="!entryQueried && !entryError" class="hint" data-testid="asset-entry-guide">请选择入口维度并输入查询条件</p>
       <p v-if="entryError" class="hint bad" data-testid="asset-entry-error">{{ entryError }}</p>
       <p v-else-if="entrySummary" class="hint" data-testid="asset-entry-summary">{{ entrySummary }}</p>
-      <table v-if="!entryError" data-testid="asset-entry-table">
+      <table v-if="entryQueried && !entryError" data-testid="asset-entry-table">
         <thead><tr><th>资产编号</th><th>名称</th><th>状态</th><th>绑定</th><th>账号</th></tr></thead>
         <tbody>
           <tr v-if="!entryRows.length">
@@ -475,6 +482,9 @@ const entryUserId = ref('')
 const entryRows = ref<Row[]>([])
 const entryError = ref('')
 const entrySummary = ref('')
+const entryQueried = ref(false)
+const entryIncludeHistory = ref(true)
+const SESSION_CODE = /^IMS\d{8}[A-Z]{3}\d{4}$/
 const forwardAssetId = ref(0)
 const forwardSessions = ref<Row[]>([])
 const forwardFinance = ref<Row | null>(null)
@@ -979,6 +989,10 @@ function clearForwardLayers() {
   forwardFinance.value = null
 }
 
+const forwardEmpty = computed(
+  () => forwardNodes.value.length > 0 && forwardNodes.value.every((node) => node.layer === 'PERSON'),
+)
+
 function openForwardPerson() {
   closeAssetDrawers()
   forwardOpen.value = true
@@ -1082,25 +1096,56 @@ function openEntryReverse() {
   entryRows.value = []
   entryError.value = ''
   entrySummary.value = ''
+  entryQueried.value = false
+  entryIncludeHistory.value = true
   exportNote.value = ''
+}
+
+function clearEntryResult() {
+  entryRows.value = []
+  entryError.value = ''
+  entrySummary.value = ''
+  entryQueried.value = false
+  exportNote.value = ''
+}
+
+function toggleHistory(event: Event) {
+  entryIncludeHistory.value = (event.target as HTMLInputElement).checked
+  clearEntryResult()
+}
+
+function sessionCodeOrError(): string {
+  const code = entrySessionCode.value.trim().toUpperCase()
+  if (!code) {
+    entryError.value = '请填写场次编号'
+    return ''
+  }
+  if (!SESSION_CODE.test(code)) {
+    entryError.value = '场次编号格式不正确'
+    return ''
+  }
+  entrySessionCode.value = code
+  return code
 }
 
 function pickEntry(type: 'ACCOUNT' | 'SESSION' | 'PERSON') {
   entryType.value = type
-  entryRows.value = []
-  entryError.value = ''
-  entrySummary.value = ''
-  exportNote.value = ''
+  clearEntryResult()
   if (type === 'PERSON' && !entryUserId.value && users.value.length) {
     const admin = users.value.find((user) => (user.nickname || user.username) === '管理员')
     entryUserId.value = String((admin || users.value[0]).id)
   }
 }
 
+function entrySummaryText(summary: Row) {
+  return `命中 ${summary.total || 0} 条（在用 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
+}
+
 async function queryEntry() {
   entryError.value = ''
   entryRows.value = []
   entrySummary.value = ''
+  entryQueried.value = false
   try {
     let res
     if (entryType.value === 'ACCOUNT') {
@@ -1109,26 +1154,25 @@ async function queryEntry() {
         entryError.value = '请填写账号编号'
         return
       }
-      res = await http.get('/asset/reverse/by-account/0', { params: { accountNo } })
+      res = await http.get('/asset/reverse/by-account/0', { params: { accountNo, pageNo: 1, pageSize: 20 } })
     } else if (entryType.value === 'SESSION') {
-      const sessionCode = entrySessionCode.value.trim()
-      if (!sessionCode) {
-        entryError.value = '请填写场次编号'
-        return
-      }
-      res = await http.get(`/asset/reverse/by-session/${encodeURIComponent(sessionCode)}`)
+      const sessionCode = sessionCodeOrError()
+      if (!sessionCode) return
+      res = await http.get(`/asset/reverse/by-session/${encodeURIComponent(sessionCode)}`, { params: { pageNo: 1, pageSize: 20 } })
     } else {
       const userId = Number(entryUserId.value)
       if (!userId) {
         entryError.value = '请选择使用人'
         return
       }
-      res = await http.get(`/asset/reverse/by-person/${userId}`)
+      res = await http.get(`/asset/reverse/by-person/${userId}`, {
+        params: { includeHistory: entryIncludeHistory.value, pageNo: 1, pageSize: 20 },
+      })
     }
     const data = (res.data?.data || {}) as { list?: Row[]; summary?: Row }
     entryRows.value = data.list || []
-    const summary = data.summary || {}
-    entrySummary.value = `命中 ${summary.total || 0} 条（在用 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
+    entrySummary.value = entrySummaryText(data.summary || {})
+    entryQueried.value = true
   } catch (e: unknown) {
     entryError.value = bizError(e)
   }
@@ -1172,7 +1216,10 @@ async function downloadExport(
     URL.revokeObjectURL(a.href)
     if (target === 'forward') forwardError.value = ''
     else entryError.value = ''
-    exportNote.value = note
+    const empty = Boolean((res.data?.data as { empty?: boolean } | undefined)?.empty)
+    if (empty && target === 'forward') exportNote.value = '已导出穿透报告 PDF（暂无资产层级）'
+    else if (empty) exportNote.value = '已导出空表（命中 0 条）'
+    else exportNote.value = note
   } catch (e: unknown) {
     exportNote.value = ''
     const text = bizError(e)
@@ -1204,7 +1251,9 @@ async function exportForward() {
 }
 
 async function exportEntry() {
-  const params: Record<string, string | number> = { entryType: entryType.value, entryId: 0 }
+  entryError.value = ''
+  exportNote.value = ''
+  const params: Record<string, string | number | boolean> = { entryType: entryType.value, entryId: 0 }
   if (entryType.value === 'ACCOUNT') {
     const accountNo = entryAccountNo.value.trim()
     if (!accountNo) {
@@ -1213,11 +1262,8 @@ async function exportEntry() {
     }
     params.accountNo = accountNo
   } else if (entryType.value === 'SESSION') {
-    const sessionCode = entrySessionCode.value.trim()
-    if (!sessionCode) {
-      entryError.value = '请填写场次编号'
-      return
-    }
+    const sessionCode = sessionCodeOrError()
+    if (!sessionCode) return
     params.sessionCode = sessionCode
   } else {
     const userId = Number(entryUserId.value)
@@ -1226,6 +1272,7 @@ async function exportEntry() {
       return
     }
     params.entryId = userId
+    params.includeHistory = entryIncludeHistory.value
   }
   await downloadExport('/asset/reverse/export', params, 'asset_reverse_report.xlsx', '已导出反查 xlsx', 'entry')
 }
