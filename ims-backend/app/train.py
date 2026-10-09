@@ -174,6 +174,7 @@ def material_versions(db: Session, material_id: int, tenant_id: int) -> list[dic
         {
             "version": row.version,
             "title": row.title,
+            "materialType": row.material_type,
             "fileKey": row.file_key or None,
             "linkUrl": row.link_url or None,
             "editorName": names.get(row.editor_user_id, ""),
@@ -204,6 +205,17 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
     }
 
 
+def is_http_url(value: str) -> bool:
+    text = value.strip()
+    if not text or any(ch.isspace() for ch in text):
+        return False
+    lowered = text.lower()
+    for prefix in ("https://", "http://"):
+        if lowered.startswith(prefix) and len(text) > len(prefix):
+            return True
+    return False
+
+
 def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
     if not body.title.strip():
         return fail(1001, "title 必填")
@@ -215,6 +227,8 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
     if body.materialType == "LINK":
         if not body.linkUrl.strip():
             return fail(1001, "linkUrl 必填")
+        if not is_http_url(body.linkUrl):
+            return fail(1001, "linkUrl 须为 http(s) 地址")
     elif not body.fileKey.strip():
         return fail(1001, "fileKey 必填")
     return cate
@@ -910,6 +924,8 @@ def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
         options = [opt.strip() for opt in item.options]
         if len(options) < 2 or any(not opt for opt in options):
             return fail(1001, "每题选项至少 2 项")
+        if len(set(options)) != len(options):
+            return fail(1001, "选项不能重复")
         if item.answerIndex < 0 or item.answerIndex >= len(options):
             return fail(1001, "答案下标超出选项")
         normalized.append(

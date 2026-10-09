@@ -263,6 +263,7 @@ function quizError(): string {
     if (!question.question.trim() || question.question.trim().length > 256) return '题目必填且不超过 256 字'
     const options = question.options.map((opt) => opt.trim())
     if (options.length < 2 || options.some((opt) => !opt)) return '每题选项至少 2 项'
+    if (new Set(options).size !== options.length) return '选项不能重复'
     if (question.answerIndex < 0 || question.answerIndex >= options.length) return '请设定正确答案'
   }
   if (!form.passScore || form.passScore < 1 || form.passScore > form.quiz.length) {
