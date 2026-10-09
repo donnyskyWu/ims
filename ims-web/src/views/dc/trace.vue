@@ -5,6 +5,9 @@
         <h1>穿透查询</h1>
         <div class="sub">DC-001 · /ims/dc/trace · GET/POST /dc/trace/* · 12 DC</div>
       </div>
+      <div class="acts">
+        <router-link class="btn btn-sec btn-sm" data-testid="dc-trace-dashboard" to="/ims/dc/dashboard">全链路看板</router-link>
+      </div>
     </div>
     <div class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">
       <span v-if="dataAsOf">数据截至 <b>{{ dataAsOf }}</b> · </span>

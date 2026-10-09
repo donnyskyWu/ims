@@ -319,6 +319,7 @@ from app.fin_dashboard import router as fin_dashboard_router
 from app.fin_share_rule import router as fin_share_rule_router
 from app.dc_profit_trace import router as dc_profit_trace_router
 from app.dc_trace import router as dc_trace_router
+from app.dc_dashboard import router as dc_dashboard_router
 from app.perf import router as perf_router
 from app.perf_calc import router as perf_calc_router
 from app.alert import router as alert_router
@@ -388,6 +389,7 @@ router.include_router(fin_dashboard_router)
 router.include_router(fin_share_rule_router)
 router.include_router(dc_profit_trace_router)
 router.include_router(dc_trace_router)
+router.include_router(dc_dashboard_router)
 router.include_router(perf_router)
 router.include_router(perf_calc_router)
 router.include_router(alert_router)

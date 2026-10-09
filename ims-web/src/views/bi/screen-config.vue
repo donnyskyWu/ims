@@ -7,6 +7,7 @@
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/list">报表管理</router-link>
+        <router-link class="btn btn-sec btn-sm" data-testid="bi-screen-dc-dashboard" to="/ims/dc/dashboard">全链路看板</router-link>
         <button class="btn btn-pri btn-sm" type="button" disabled>新建大屏</button>
       </div>
     </div>

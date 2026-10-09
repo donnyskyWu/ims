@@ -91,6 +91,7 @@ const router = createRouter({
         { path: 'content/layout', component: () => import('../views/content/layout.vue') },
         { path: 'dc/trace/perf', component: () => import('../views/dc/perf.vue') },
         { path: 'dc/trace', component: () => import('../views/dc/trace.vue') },
+        { path: 'dc/dashboard', component: () => import('../views/dc/dashboard.vue') },
         { path: 'alert/rule', component: () => import('../views/alert/rule.vue') },
         { path: 'alert/live', component: () => import('../views/alert/live.vue') },
         { path: 'alert/stats', component: () => import('../views/alert/stats.vue') },

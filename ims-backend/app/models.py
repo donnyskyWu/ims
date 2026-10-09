@@ -2245,3 +2245,34 @@ class DcTraceLog(Base):
     cost_ms: Mapped[float] = mapped_column(Float, default=0.0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class DcDashboard(Base):
+    """全链路看板布局（DC-003 · 元数据写，不回写业务表）。"""
+
+    __tablename__ = "ims_dc_dashboard"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    dashboard_name: Mapped[str] = mapped_column(String(64), default="")
+    owner_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED", index=True)
+    refresh_cron: Mapped[str] = mapped_column(String(64), default="0 * * * *")
+    layout_config: Mapped[str] = mapped_column(Text, default="[]")
+    refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DcSyncTask(Base):
+    """聚合层同步任务（BR-210 · GET /dc/dashboard/freshness）。"""
+
+    __tablename__ = "ims_dc_sync_task"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_name: Mapped[str] = mapped_column(String(64), default="")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="SUCCESS")
+    delay_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
