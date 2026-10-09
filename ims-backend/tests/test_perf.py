@@ -213,7 +213,8 @@ def test_perf_result_list_after_confirmed():
     )
     assert listed.json()["code"] == 0
     hit = [r for r in listed.json()["data"]["list"] if r["id"] == record_id]
-    assert hit and hit[0]["grade"] == "S"
+    assert hit and hit[0]["grade"] == "A"
+    assert hit[0]["gradeEdge"] == "A 80-89"
 
     detail = client.get(f"/admin-api/ims/perf/result/{record_id}", headers=auth)
     assert detail.json()["code"] == 0

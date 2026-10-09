@@ -9,7 +9,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -27,7 +27,16 @@ RECORD_STATUSES = frozenset(
 )
 RESULT_STATUSES = frozenset({"CALCULATED", "REVIEWED", "CONFIRMED", "ISSUED"})
 EXPORT_STATUSES = frozenset({"CONFIRMED", "ISSUED"})
-GRADE_THRESHOLDS = ((85, "S"), (70, "A"), (60, "B"), (0, "C"))
+# PRD-M3 绩效等级 PerfGrade。与 PerfGradeLevel（≥85 / ≥60）分开，不在这里混用。
+GRADE_THRESHOLDS = ((90, "S"), (80, "A"), (70, "B"), (60, "C"))
+GRADE_LETTERS = frozenset({"S", "A", "B", "C", "D"})
+GRADE_EDGES = {
+    "S": "S ≥90",
+    "A": "A 80-89",
+    "B": "B 70-79",
+    "C": "C 60-69",
+    "D": "D <60",
+}
 CALC_RULES = frozenset({"AUTO", "MANUAL", "MIXED"})
 QUESTION_TYPES = frozenset({"SINGLE", "MULTIPLE", "JUDGE", "ESSAY"})
 KNOWLEDGE_DOMAINS = frozenset(
@@ -183,9 +192,88 @@ def grade_of(score: float | None) -> str:
     return "D"
 
 
+def grade_edge(letter: str) -> str:
+    return GRADE_EDGES.get(letter, letter)
+
+
+def grade_counts(rows: list[PerfRecord]) -> dict[str, int]:
+    counts = {letter: 0 for letter in ("S", "A", "B", "C", "D")}
+    for row in rows:
+        letter = grade_of(row.total_score)
+        if letter in counts:
+            counts[letter] += 1
+    return counts
+
+
+def matching_user_ids(db: Session, tenant_id: int, keyword: str) -> list[int] | None:
+    text = keyword.strip()
+    if not text:
+        return None
+    like = f"%{text}%"
+    return list(
+        db.scalars(
+            select(User.id).where(
+                User.deleted == 0,
+                User.tenant_id == tenant_id,
+                or_(User.nickname.like(like), User.username.like(like)),
+            )
+        ).all()
+    )
+
+
+def result_records(
+    db: Session,
+    tenant_id: int,
+    *,
+    statuses: frozenset[str],
+    target_user_id: int | None,
+    period_type: str | None,
+    status: str | None,
+    evaluatee_name: str | None,
+    grade: str | None,
+    record_no: str | None = None,
+) -> tuple[list[PerfRecord], dict[str, int], str | None]:
+    if grade and grade not in GRADE_LETTERS:
+        return [], {}, "grade 无效"
+    if status and status not in statuses:
+        return [], {}, "status 无效"
+    if period_type and period_type not in PERIOD_TYPES:
+        return [], {}, "periodType 无效"
+    user_ids = matching_user_ids(db, tenant_id, evaluatee_name or "")
+    empty_counts = {letter: 0 for letter in ("S", "A", "B", "C", "D")}
+    if user_ids is not None and not user_ids:
+        return [], empty_counts, None
+    stmt = select(PerfRecord).where(
+        PerfRecord.deleted == 0,
+        PerfRecord.tenant_id == tenant_id,
+        PerfRecord.status.in_(statuses),
+    )
+    if target_user_id:
+        stmt = stmt.where(PerfRecord.target_user_id == target_user_id)
+    if user_ids is not None:
+        stmt = stmt.where(PerfRecord.target_user_id.in_(user_ids))
+    if period_type:
+        stmt = stmt.where(PerfRecord.period_type == period_type)
+    if status:
+        stmt = stmt.where(PerfRecord.status == status)
+    if record_no and record_no.strip():
+        stmt = stmt.where(PerfRecord.record_no.like(f"%{record_no.strip()}%"))
+    rows = list(
+        db.scalars(
+            stmt.order_by(PerfRecord.total_score.desc(), PerfRecord.id.desc())
+        ).all()
+    )
+    counts = grade_counts(rows)
+    if grade:
+        rows = [row for row in rows if grade_of(row.total_score) == grade]
+    return rows, counts, None
+
+
 def result_vo(db: Session, row: PerfRecord, scheme: PerfScheme | None = None) -> dict:
     base = record_vo(db, row, scheme)
-    base["grade"] = grade_of(row.total_score)
+    letter = grade_of(row.total_score)
+    base["grade"] = letter
+    base["gradeEdge"] = grade_edge(letter)
     base["published"] = row.status in ("CONFIRMED", "ISSUED")
     return base
 
@@ -421,76 +509,7 @@ def create_execution(
     return ok(record_vo(db, row, scheme))
 
 
-@router.get("/result/list")
-def result_list(
-    targetUserId: int | None = None,
-    periodType: str | None = None,
-    status: str | None = None,
-    pageNo: int = 1,
-    pageSize: int = 10,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
-    tenant_id = tenant_of(actor)
-    page_no, size = page_args(pageNo, pageSize)
-    stmt = select(PerfRecord).where(
-        PerfRecord.deleted == 0,
-        PerfRecord.tenant_id == tenant_id,
-        PerfRecord.status.in_(RESULT_STATUSES),
-    )
-    if targetUserId:
-        stmt = stmt.where(PerfRecord.target_user_id == targetUserId)
-    if periodType:
-        stmt = stmt.where(PerfRecord.period_type == periodType)
-    if status:
-        if status not in RESULT_STATUSES:
-            return fail(1001, "status 无效")
-        stmt = stmt.where(PerfRecord.status == status)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = list(
-        db.scalars(
-            stmt.order_by(PerfRecord.total_score.desc(), PerfRecord.id.desc())
-            .offset((page_no - 1) * size)
-            .limit(size)
-        ).all()
-    )
-    scheme_ids = {row.scheme_id for row in rows if row.scheme_id}
-    schemes = {}
-    if scheme_ids:
-        for scheme in db.scalars(
-            select(PerfScheme).where(PerfScheme.id.in_(scheme_ids), PerfScheme.deleted == 0)
-        ).all():
-            schemes[scheme.id] = scheme
-    return paged([result_vo(db, row, schemes.get(row.scheme_id)) for row in rows], total, page_no, size)
-
-
-@router.get("/result/export")
-def result_export(
-    targetUserId: int | None = None,
-    periodType: str | None = None,
-    status: str | None = None,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
-    tenant_id = tenant_of(actor)
-    stmt = select(PerfRecord).where(
-        PerfRecord.deleted == 0,
-        PerfRecord.tenant_id == tenant_id,
-        PerfRecord.status.in_(EXPORT_STATUSES),
-    )
-    if targetUserId:
-        stmt = stmt.where(PerfRecord.target_user_id == targetUserId)
-    if periodType:
-        stmt = stmt.where(PerfRecord.period_type == periodType)
-    if status:
-        if status not in EXPORT_STATUSES:
-            return fail(1001, "status 无效")
-        stmt = stmt.where(PerfRecord.status == status)
-    rows = list(
-        db.scalars(
-            stmt.order_by(PerfRecord.total_score.desc(), PerfRecord.id.desc()).limit(5000)
-        ).all()
-    )
+def scheme_map(db: Session, rows: list[PerfRecord]) -> dict[int, PerfScheme]:
     scheme_ids = {row.scheme_id for row in rows if row.scheme_id}
     schemes: dict[int, PerfScheme] = {}
     if scheme_ids:
@@ -498,6 +517,77 @@ def result_export(
             select(PerfScheme).where(PerfScheme.id.in_(scheme_ids), PerfScheme.deleted == 0)
         ).all():
             schemes[scheme.id] = scheme
+    return schemes
+
+
+@router.get("/result/list")
+def result_list(
+    targetUserId: int | None = None,
+    periodType: str | None = None,
+    status: str | None = None,
+    evaluateeName: str | None = None,
+    grade: str | None = None,
+    recordNo: str | None = None,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    page_no, size = page_args(pageNo, pageSize)
+    rows, counts, err = result_records(
+        db,
+        tenant_id,
+        statuses=RESULT_STATUSES,
+        target_user_id=targetUserId,
+        period_type=periodType,
+        status=status,
+        evaluatee_name=evaluateeName,
+        grade=grade,
+        record_no=recordNo,
+    )
+    if err:
+        return fail(1001, err)
+    total = len(rows)
+    page_rows = rows[(page_no - 1) * size : page_no * size]
+    schemes = scheme_map(db, page_rows)
+    payload = paged(
+        [result_vo(db, row, schemes.get(row.scheme_id)) for row in page_rows],
+        total,
+        page_no,
+        size,
+    )
+    payload["data"]["gradeCounts"] = counts
+    return payload
+
+
+@router.get("/result/export")
+def result_export(
+    targetUserId: int | None = None,
+    periodType: str | None = None,
+    status: str | None = None,
+    evaluateeName: str | None = None,
+    grade: str | None = None,
+    recordNo: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    rows, _, err = result_records(
+        db,
+        tenant_id,
+        statuses=EXPORT_STATUSES,
+        target_user_id=targetUserId,
+        period_type=periodType,
+        status=status,
+        evaluatee_name=evaluateeName,
+        grade=grade,
+        record_no=recordNo,
+    )
+    if err:
+        return fail(1001, err)
+    rows = rows[:5000]
+    schemes = scheme_map(db, rows)
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(
@@ -520,7 +610,10 @@ def result_export(
     return Response(
         content=payload.encode("utf-8"),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="perf_results.csv"'},
+        headers={
+            "Content-Disposition": 'attachment; filename="perf_results.csv"',
+            "X-Export-Rows": str(len(rows)),
+        },
     )
 
 
