@@ -7,6 +7,9 @@
 credentials.json
 **/secrets/
 
+# Local file storage (全局规范 §6.3，不上对象存储)
+ims-backend/data/
+
 # Python
 __pycache__/
 *.py[cod]

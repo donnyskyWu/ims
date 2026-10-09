@@ -299,6 +299,7 @@ from app.asset_export import router as asset_export_router
 from app.asset_verify import router as asset_verify_router
 from app.content import router as content_router
 from app.content_fb import router as content_fb_router
+from app.content_file import file_read_router, router as content_file_router
 from app.content_production import router as content_production_router
 from app.content_task import router as content_task_router
 from app.work_task import router as work_task_router
@@ -365,6 +366,8 @@ router.include_router(asset_verify_router)
 router.include_router(live_router)
 router.include_router(content_router)
 router.include_router(content_fb_router)
+router.include_router(content_file_router)
+router.include_router(file_read_router)
 router.include_router(content_production_router)
 router.include_router(content_task_router)
 router.include_router(work_task_router)
