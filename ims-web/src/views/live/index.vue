@@ -337,6 +337,10 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '下播与 GMV'" class="tbl-block" style="margin-top: 12px">
+        <div v-if="!reportLoaded" class="empty" data-testid="live-report-loading">
+          <div class="et">加载中</div>
+        </div>
+        <template v-else>
         <p v-if="financeView" class="hint" data-testid="live-report-finance-scope">财务字段：仅 GMV 与成本</p>
         <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
         <div v-if="report" class="hint" data-testid="live-report-headline">
@@ -401,6 +405,7 @@
           <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
           <button v-if="correcting" class="btn btn-pri btn-sm" type="button" data-testid="live-report-correction-submit" @click="submitCorrection">提交更正单</button>
         </div>
+        </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
         <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
@@ -509,6 +514,8 @@ const detailOpen = ref(false)
 const detail = ref<any>(null)
 const metrics = ref<any>(null)
 const report = ref<any>(null)
+const reportLoaded = ref(false)
+let detailTicket = 0
 const alarms = ref<any[]>([])
 const tab = ref('基本信息')
 const tabs = ['基本信息', '直播数据', '风控登记', '下播与 GMV', '关联']
@@ -860,6 +867,8 @@ const showSupplementApprove = computed(
 )
 
 async function openDetail(row: any) {
+  const ticket = ++detailTicket
+  reportLoaded.value = false
   detailOpen.value = true
   tab.value = '基本信息'
   reportError.value = ''
@@ -868,12 +877,18 @@ async function openDetail(row: any) {
   correctionReason.value = ''
   correctionTrace.value = null
   const code = row.sessionCode
-  detail.value = await apiGet(`/live/sessions/${code}`)
-  metrics.value = detail.value.metricsSnapshot || (await apiGet(`/live/sessions/${code}/metrics`))
-  report.value = detail.value.report || (await apiGet(`/live/report/${code}`))
+  const session = await apiGet(`/live/sessions/${code}`)
+  if (ticket !== detailTicket) return
+  detail.value = session
+  metrics.value = session.metricsSnapshot || (await apiGet(`/live/sessions/${code}/metrics`))
+  if (ticket !== detailTicket) return
+  report.value = session.report || (await apiGet(`/live/report/${code}`))
+  if (ticket !== detailTicket) return
   applyReport(report.value)
   bindCorrections(Array.isArray(detail.value?.corrections) ? detail.value : report.value)
+  reportLoaded.value = true
   const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
+  if (ticket !== detailTicket) return
   alarms.value = alarmRes.list || []
 }
 
@@ -919,11 +934,6 @@ async function switchTab(name: string) {
   const code = detail.value.sessionCode
   if (name === '直播数据') {
     metrics.value = await apiGet(`/live/sessions/${code}/metrics`)
-  }
-  if (name === '下播与 GMV' && !report.value) {
-    report.value = await apiGet(`/live/report/${code}`)
-    applyReport(report.value)
-    bindCorrections(report.value?.corrections ? report.value : detail.value)
   }
   if (name === '关联') {
     const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
