@@ -17,6 +17,7 @@ from app.models import (
     LiveAlarmRecord,
     LiveCost,
     LiveReport,
+    LiveRiskCheck,
     LiveSession,
     LiveSessionSeq,
     Todo,
@@ -486,7 +487,11 @@ def ensure_live_ledger_export_session(db: Session, admin: User) -> None:
         row.actual_start = start_iso
         row.actual_end = ended_iso
         row.is_supplement = 0
+        row.risk_level = "GREEN"
+        row.risk_score = 0
         row.tenant_id = tenant_id
+    db.flush()
+    db.execute(delete(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id))
     report = db.scalar(select(LiveReport).where(LiveReport.session_code == E2E_LEDGER_SESSION))
     if report is None:
         report = LiveReport(session_code=E2E_LEDGER_SESSION, tenant_id=tenant_id)

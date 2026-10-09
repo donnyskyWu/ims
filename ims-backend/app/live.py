@@ -508,8 +508,8 @@ def report_vo(report: LiveReport | None) -> dict | None:
     if report is None or report.deleted:
         return None
     total_cost = float(report.ad_cost or 0)
-    avg_order = round(report.gmv / report.order_count, 2) if report.order_count else 0.0
-    roas = round(report.gmv / total_cost, 2) if total_cost else 0.0
+    avg_order = round(report.gmv / report.order_count, 2) if report.order_count else None
+    roas = round(report.gmv / total_cost, 2) if total_cost else None
     return {
         "id": report.id,
         "sessionCode": report.session_code,
@@ -935,7 +935,7 @@ def report_payload(db: Session, report: LiveReport | None) -> dict | None:
     vo["costDetails"] = details
     if details:
         total = round(sum(float(item["amount"]) for item in details), 2)
-        vo["roas"] = round(vo["gmv"] / total, 2) if total else 0.0
+        vo["roas"] = round(vo["gmv"] / total, 2) if total else None
     return vo
 
 
@@ -1865,6 +1865,13 @@ def report_update(
     rejected = reject_cost_details(body.costDetails)
     if rejected is not None:
         return rejected
+    start = parse_iso(body.actualStart) if (body.actualStart or "").strip() else None
+    end = parse_iso(body.actualEnd) if (body.actualEnd or "").strip() else None
+    if (body.actualStart or "").strip() and (body.actualEnd or "").strip():
+        if start is None or end is None:
+            return fail(1001, "时间格式无效")
+        if end <= start:
+            return fail(1001, "实际结束须晚于实际开始")
     upsert_report(db, row, body, actor, submit=False)
     return ok(None)
 
