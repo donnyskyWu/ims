@@ -64,6 +64,7 @@
 | **E2E-S7 · 选题库 (#136)** | `closure-content-topic-library.spec.ts` | 纯 UI · 来源/编号/提报人筛选与重置 → 详情无项目 → 待评审编辑 → 落选意见保留并复活 → 立项详情草稿链 → 取消 **已取消** |
 | **E2E-S7 · 选题排期甘特 (#140)** | `closure-content-topic-gantt.spec.ts` | 纯 UI 立项两条选题 → 选题计划「排期甘特」按计划发布日打点；区间外不出现 |
 | **E2E-S7 · 选题筛选空态 (#223)** | `closure-content-topic-filter-tails.spec.ts` | 纯 UI · 编号/关键词/来源/落选/提报人筛选空态 → 落选与取消缺意见不提交 → 甘特日期留痕 |
+| **E2E-S7 · 选题表单边角 (#241)** | `closure-content-topic-form-edges.spec.ts` | 纯 UI · 缺标题/内容要求与过期日不提交 → 评审带出计划日并红框定位 **1052** → 甘特拒绝无效账号、失败可重试 |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
 | **E2E-S7-切片 · SOP/计划 (#101)** | `closure-content-sop-plan.spec.ts` | 纯 UI · DAG 保存 → 新版本 v2 → 逻辑删除 → 计划草稿 DRAFT |
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
