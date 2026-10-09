@@ -5,6 +5,7 @@ import {
   E2E_OPS_AUTHOR_ID,
   loginAdmin,
   loginAs,
+  fillMatchSchemeViaUi,
   passContentReviewViaUi,
   prepareIpGroupWithAdminMember,
   registerWorkTaskRowViaUi,
@@ -60,11 +61,7 @@ test.describe('content work task CONTENT_GENERATION closure', () => {
     await page.getByRole('button', { name: '进入内容创作' }).click()
     const editDrawer = page.locator('.drawer.on').filter({ hasText: '内容编辑' })
     await editDrawer.locator('.fld').filter({ hasText: '标题' }).locator('input').fill(contentTitle)
-    await editDrawer
-      .locator('.fld')
-      .filter({ hasText: 'matchScheme JSON' })
-      .locator('textarea')
-      .fill('[{"matchId":"1001","homeName":"主队","awayName":"客队","matchPlays":[]}]')
+    await fillMatchSchemeViaUi(editDrawer, { matchId: '1001', homeName: '主队', awayName: '客队' })
     const saveContentResp = page.waitForResponse(
       (r) => /\/content\/\d+$/.test(r.url()) && r.request().method() === 'PUT' && r.status() === 200,
     )

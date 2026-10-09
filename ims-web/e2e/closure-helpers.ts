@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 export const ADMIN_USER = 'admin'
 export const ADMIN_PASS = 'Admin@123'
@@ -37,6 +37,19 @@ export function attachClosurePageHooks(page: Page): string[] {
   page.on('pageerror', (err) => pageErrors.push(err.message))
   page.on('dialog', (d) => d.accept())
   return pageErrors
+}
+
+/** 内容抽屉内的结构化玩法区（竞足默认 Tab） */
+export async function fillMatchSchemeViaUi(
+  scope: Locator,
+  opts: { matchId: string; homeName: string; awayName: string },
+) {
+  await scope.getByPlaceholder('matchId').fill(opts.matchId)
+  await scope.getByPlaceholder('主队').fill(opts.homeName)
+  await scope.getByPlaceholder('客队').fill(opts.awayName)
+  await scope.getByRole('button', { name: '添加场次' }).click()
+  await scope.getByRole('button', { name: '确定玩法' }).click()
+  await expect(scope.getByText('已确定 1 场')).toBeVisible()
 }
 
 /** 内容审核队列 · 指定 Tab 打开抽屉并通过（ADR-017 二级审核链） */

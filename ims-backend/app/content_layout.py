@@ -140,6 +140,29 @@ def layout_detail(
     return ok(layout_vo(row))
 
 
+@router.put("/{template_id}")
+def update_layout(
+    template_id: int,
+    body: LayoutBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(ContentLayoutTemplate, template_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1500, "模板不存在")
+    if row.source == "PRESET":
+        return fail(1001, "预置模板不可编辑")
+    name = body.templateName.strip()
+    if not name:
+        return fail(1001, "templateName 必填")
+    row.template_name = name[:128]
+    row.preview_html = body.previewHtml or ""
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(layout_vo(row))
+
+
 @router.post("/{template_id}/publish")
 def publish_layout(
     template_id: int,

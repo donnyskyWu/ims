@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, fillMatchSchemeViaUi, loginAdmin } from './closure-helpers'
 
 const SHOTS = '/opt/cursor/artifacts/e2e-102-screenshots'
 
@@ -27,11 +27,7 @@ test.describe('content AI copy and ComfyUI stub closure', () => {
     await page.getByRole('button', { name: '新增内容' }).click()
     const createDrawer = page.locator('.drawer.on').filter({ hasText: '新增内容' })
     await createDrawer.locator('.fld').filter({ hasText: '标题' }).locator('input').fill(title)
-    await createDrawer
-      .locator('.fld')
-      .filter({ hasText: 'matchScheme JSON' })
-      .locator('textarea')
-      .fill('[{"matchId":"1001","homeName":"主队","awayName":"客队","matchPlays":[]}]')
+    await fillMatchSchemeViaUi(createDrawer, { matchId: '1001', homeName: '主队', awayName: '客队' })
     const createResp = page.waitForResponse(
       (r) => r.url().endsWith('/content') && r.request().method() === 'POST' && r.status() === 200,
     )

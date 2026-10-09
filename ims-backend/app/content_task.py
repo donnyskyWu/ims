@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -34,7 +34,7 @@ ACTIVE_TASK_STATUSES = frozenset({"PENDING", "IN_PROGRESS", "PENDING_REVIEW"})
 class ExecuteSaveBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     deliverables: str | None = None
-    userAttachments: list[dict] = Field(default_factory=list)
+    userAttachments: list[dict] | None = None
 
 
 class CompleteBody(BaseModel):
