@@ -25,6 +25,15 @@
       >
         近30天
       </button>
+      <button
+        type="button"
+        class="btn btn-sm"
+        :class="rangePreset === 'month' ? 'btn-pri' : 'btn-sec'"
+        data-testid="train-stat-range-month"
+        @click="setPreset('month')"
+      >
+        本月
+      </button>
       <input v-model="customRange" placeholder="自定义 yyyy-MM-dd,yyyy-MM-dd" style="width: 220px" />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">刷新</button>
@@ -114,8 +123,11 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in finish?.byDept || []" :key="row.deptId">
-                    <td>{{ row.deptName }}</td>
+                  <tr v-for="row in finish?.byDept || []" :key="row.deptId" data-testid="train-stat-finish-dept-row">
+                    <td :class="{ 'low-dept': row.finishRate < 85 }">
+                      {{ row.deptName }}
+                      <span v-if="row.finishRate < 85" data-testid="train-stat-finish-dept-low">低于85%</span>
+                    </td>
                     <td class="num">{{ row.assignedCount }}</td>
                     <td class="num">{{ row.finishedCount }}</td>
                     <td :style="{ color: rateColor(row.finishRate) }">{{ row.finishRate }}%</td>
@@ -171,6 +183,22 @@
             数据截至 {{ asOf || '—' }} · 来源 ims_train_stat_daily（读取时按完成率口径重算）
           </p>
           <p v-if="panelError" class="hint" style="color: var(--red)">{{ panelError }}</p>
+          <div v-if="trendPoints.length" class="card dept-trend" data-testid="train-stat-dept-trend">
+            <h3>部门完成率趋势</h3>
+            <div class="bars">
+              <div
+                v-for="point in trendPoints"
+                :key="point.statDate"
+                class="b"
+                data-testid="train-stat-dept-trend-bar"
+                :title="`${point.statDate} ${point.finishRate}%`"
+                :style="{ height: `${Math.max(point.finishRate, 4)}%` }"
+              />
+            </div>
+            <p class="hint">
+              {{ trendPoints[0].statDate }} 至 {{ trendPoints[trendPoints.length - 1].statDate }} · 按日加权完成率
+            </p>
+          </div>
           <div class="tbl-block">
             <div class="tbl-wrap">
               <table>
@@ -191,7 +219,14 @@
                   <tr v-else-if="!deptRows.length">
                     <td colspan="6"><div class="empty"><div class="et">暂无统计数据</div></div></td>
                   </tr>
-                  <tr v-for="row in deptRows" v-else :key="`${row.statDate}-${row.deptId}`" :data-testid="'train-stat-dept-row'">
+                  <tr
+                    v-for="row in deptRows"
+                    v-else
+                    :key="`${row.statDate}-${row.deptId}`"
+                    data-testid="train-stat-dept-row"
+                    class="click-row"
+                    @click="openDeptDrawer(row.deptId)"
+                  >
                     <td class="mono">{{ row.statDate }}</td>
                     <td :style="row.alertPushed ? { color: 'var(--red)', fontWeight: '600' } : undefined">
                       {{ row.deptName }}
@@ -306,7 +341,12 @@
                     <td>{{ row.deptName }}</td>
                     <td class="mono">{{ row.deadline }}</td>
                     <td class="num" style="color: var(--red)" data-testid="train-stat-overdue-days">{{ row.overdueDays }}</td>
-                    <td>{{ row.progress }}%</td>
+                    <td>
+                      <div class="meter" data-testid="train-stat-overdue-progress">
+                        <span :style="{ width: `${Math.min(100, Math.max(0, row.progress))}%` }"></span>
+                      </div>
+                      {{ row.progress }}%
+                    </td>
                     <td>
                       <button class="btn btn-txt" type="button" @click="goSupervise(row)">去督办</button>
                     </td>
@@ -336,7 +376,13 @@
             <tr v-if="!heatRows.length">
               <td colspan="5"><div class="empty"><div class="et">暂无统计数据</div></div></td>
             </tr>
-            <tr v-for="row in heatRows" :key="row.materialId" data-testid="train-stat-heat-row">
+            <tr
+              v-for="row in heatRows"
+              :key="row.materialId"
+              data-testid="train-stat-heat-row"
+              class="click-row"
+              @click="openMaterial(row)"
+            >
               <td class="mono">{{ row.materialNo }}</td>
               <td>{{ row.title }}</td>
               <td>{{ materialTypeLabel(row.materialType) }}</td>
@@ -346,6 +392,46 @@
           </tbody>
         </table>
       </aside>
+    </div>
+
+    <div v-if="deptDrawerId != null" class="modal-mask" @click.self="deptDrawerId = null">
+      <div class="card dept-drawer" data-testid="train-stat-dept-drawer">
+        <h3>部门明细 · {{ deptDrawerName }}</h3>
+        <p v-if="deptDrawerAlert" class="hint" data-testid="train-stat-drawer-alert">已推送负责人</p>
+        <p v-else class="hint">该部门日汇总。负责人推送由预警中心执行，本页只标记。</p>
+        <div v-if="deptDrawerTrend.length" class="bars" data-testid="train-stat-drawer-trend">
+          <div
+            v-for="point in deptDrawerTrend"
+            :key="point.statDate"
+            class="b"
+            :title="`${point.statDate} ${point.finishRate}%`"
+            :style="{ height: `${Math.max(point.finishRate, 4)}%` }"
+          />
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>统计日期</th>
+              <th>应完成</th>
+              <th>已完成</th>
+              <th>完成率</th>
+              <th>人均时长</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in deptDrawerRows" :key="row.statDate" data-testid="train-stat-drawer-row">
+              <td class="mono">{{ row.statDate }}</td>
+              <td class="num">{{ row.assignedCount }}</td>
+              <td class="num">{{ row.finishedCount }}</td>
+              <td :style="{ color: rateColor(row.finishRate) }">{{ row.finishRate }}%</td>
+              <td>{{ formatDuration(row.avgDurationMinutes) }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-pri btn-sm" type="button" @click="deptDrawerId = null">关闭</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -423,7 +509,7 @@ type HeatRow = {
 
 const router = useRouter()
 const tab = ref<'finish' | 'dept' | 'rank' | 'overdue'>('finish')
-const rangePreset = ref<'7' | '30' | 'custom'>('30')
+const rangePreset = ref<'7' | '30' | 'month' | 'custom'>('30')
 const customRange = ref('')
 const finish = ref<FinishResp | null>(null)
 const loading = ref(false)
@@ -442,6 +528,7 @@ const heatRows = ref<HeatRow[]>([])
 const heatError = ref('')
 const panelLoading = ref(false)
 const panelError = ref('')
+const deptDrawerId = ref<number | null>(null)
 
 const personTotalPages = computed(() => {
   const n = finish.value?.byPerson?.length || 0
@@ -456,6 +543,33 @@ const personPageRows = computed(() => {
 
 const asOf = computed(() => deptRows.value[0]?.statDate || '')
 
+const trendPoints = computed(() => {
+  const byDate = new Map<string, { assigned: number; finished: number }>()
+  for (const row of deptRows.value) {
+    const cell = byDate.get(row.statDate) || { assigned: 0, finished: 0 }
+    cell.assigned += row.assignedCount
+    cell.finished += row.finishedCount
+    byDate.set(row.statDate, cell)
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([statDate, cell]) => ({
+      statDate,
+      finishRate: cell.assigned ? Math.round((cell.finished * 10000) / cell.assigned) / 100 : 0,
+    }))
+})
+
+const deptDrawerRows = computed(() => {
+  if (deptDrawerId.value == null) return []
+  return deptRows.value.filter((row) => row.deptId === deptDrawerId.value)
+})
+
+const deptDrawerName = computed(() => deptDrawerRows.value[0]?.deptName || '')
+const deptDrawerAlert = computed(() => deptDrawerRows.value.some((row) => row.alertPushed))
+const deptDrawerTrend = computed(() =>
+  [...deptDrawerRows.value].sort((a, b) => a.statDate.localeCompare(b.statDate)),
+)
+
 function fmtDate(d: Date) {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -469,15 +583,30 @@ function activeDateRange(): string | undefined {
   }
   const end = new Date()
   const start = new Date()
-  const days = rangePreset.value === '7' ? 7 : 30
-  start.setDate(end.getDate() - (days - 1))
+  if (rangePreset.value === 'month') {
+    start.setDate(1)
+  } else {
+    const days = rangePreset.value === '7' ? 7 : 30
+    start.setDate(end.getDate() - (days - 1))
+  }
   return `${fmtDate(start)},${fmtDate(end)}`
 }
 
-function setPreset(p: '7' | '30') {
+function setPreset(p: '7' | '30' | 'month') {
   rangePreset.value = p
   customRange.value = ''
   void reloadAll()
+}
+
+function openDeptDrawer(deptId: number) {
+  deptDrawerId.value = deptId
+}
+
+function openMaterial(row: HeatRow) {
+  router.push({
+    path: '/ims/train/material',
+    query: { materialId: String(row.materialId), title: row.title },
+  })
 }
 
 function rateColor(rate: number) {
@@ -661,6 +790,7 @@ async function exportOverdue() {
 }
 
 async function selectTab(next: 'finish' | 'dept' | 'rank' | 'overdue') {
+  deptDrawerId.value = null
   tab.value = next
   if (next === 'finish') await loadFinishRate()
   else if (next === 'dept') await loadDept()
@@ -698,6 +828,59 @@ onMounted(() => {
 }
 .stat-heat table {
   width: 100%;
+}
+.dept-trend {
+  margin: 8px 0 12px;
+  padding: 12px;
+}
+.dept-trend h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.click-row {
+  cursor: pointer;
+}
+.low-dept {
+  background: rgba(255, 204, 0, 0.35);
+  font-weight: 600;
+}
+.meter {
+  display: inline-block;
+  width: 72px;
+  height: 8px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--line, #e5e5ea);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.meter span {
+  display: block;
+  height: 100%;
+  background: var(--orange);
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.dept-drawer {
+  width: 640px;
+  max-width: 92vw;
+  padding: 20px;
+  max-height: 80vh;
+  overflow: auto;
+}
+.dept-drawer h3 {
+  margin: 0 0 8px;
+}
+.dept-drawer table {
+  width: 100%;
+  margin-top: 12px;
 }
 @media (max-width: 960px) {
   .stat-body {
