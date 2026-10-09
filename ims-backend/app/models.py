@@ -1872,6 +1872,22 @@ class ExamRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AlertEscalateConfig(Base):
+    """租户一条升级链路。未保存时按 BR-113 默认 30/60 分钟、L3 从二级起跳。"""
+
+    __tablename__ = "ims_alert_escalate_config"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    level1_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    level2_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    severe_start_level: Mapped[int] = mapped_column(Integer, default=2)
+    level2_extra_ids: Mapped[str] = mapped_column(String(512), default="")
+    level3_role_codes: Mapped[str] = mapped_column(String(128), default="R4,R1")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AlertDedupPolicy(Base):
     __tablename__ = "ims_alert_dedup_policy"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

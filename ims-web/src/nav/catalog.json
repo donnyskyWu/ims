@@ -1047,6 +1047,15 @@
       "parent": "预警中心",
       "desc": "ALERT-004 · 统计总览"
     },
+    "alertEscalate": {
+      "no": "13",
+      "name": "升级中心",
+      "code": "ALERT",
+      "icon": "warn",
+      "page": "升级中心",
+      "parent": "预警中心",
+      "desc": "ALERT-003 · 30/60 分钟三级升级，L3 从二级起跳"
+    },
     "alertHistory": {
       "no": "13",
       "name": "处置记录",
@@ -1346,7 +1355,8 @@
           "children": [
             "alertRule",
             "alertLive",
-            "alertStats"
+            "alertStats",
+            "alertEscalate"
           ]
         }
       ]

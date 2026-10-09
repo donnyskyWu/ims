@@ -45,6 +45,7 @@
 | **E2E-S11-01 切片** | `closure-alert-rule-trial.spec.ts` | 新建启用规则 → 试跑 toast → 命中 +1 |
 | **E2E-S11-处置 (#44)** | `closure-alert-handle-tab.spec.ts` | UI 试跑 → live「处理」→ 处置记录 HANDLED · 去重 DEDUP-LIVE |
 | **E2E-S11-01/05 (#81)** | `closure-alert-rule-guard.spec.ts` | 非法 DSL **1009** · 重复编码 **1165** · 误报 **FALSE_ALARM** · 再响应 **1167** |
+| **E2E-S11 升级链 (#130)** | `closure-alert-escalate.spec.ts` | 纯 UI · 时限 0 → 试跑后当前级别 **三级** · 时间轴一级到三级 · 确认后升级停止 |
 | **E2E-S3-切片 · FIN (#50)** | `closure-fin-cost-profit.spec.ts` | 纯 UI · LIVE 核准下播 → 成本提交/核准 → 利润 **CALCULATED** · **81400** · BR-107 完整率卡 |
 | **E2E-S3-05/08 · FIN (#57)** | `closure-fin-share-payoff.spec.ts` | 纯 UI · 复用 #50 链 → 分成单财务审+业务审 → **已发放** · 拆分 **4,000** = 总额 → 台账 **四账一致** |
 | **E2E-S3-06/07 · FIN (#59)** | `closure-fin-period-lock.spec.ts` | 纯 UI · 独立期间结账 **LOCKED** · 录入 **1142** · 未批更正 **1155** · R4 通过后红冲投放成本 · 利润 **82,400.00** / **RECALCULATED** |

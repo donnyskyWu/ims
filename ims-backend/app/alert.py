@@ -14,9 +14,11 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
+from app.alert_escalate import router as escalate_router
 from app.models import AlertDedupPolicy, AlertRecord, AlertRule, User
 
 router = APIRouter(prefix="/alert", tags=["alert"])
+router.include_router(escalate_router)
 
 BJ = timezone(timedelta(hours=8))
 # 契约 AlertEventStatus。1=CONFIRMED（旧称 ACK），2=RESOLVED（旧称 HANDLED）。
@@ -449,6 +451,11 @@ def respond_alert(
     )
     if row is None:
         return fail(1500, "预警不存在")
+    from app.alert_escalate import actor_may_respond
+
+    rule = db.get(AlertRule, row.rule_id) if row.rule_id else None
+    if not actor_may_respond(db, actor, rule):
+        return fail(1166, "仅预警目标人或运营总监可响应（1166）")
     if row.response_status in TERMINAL_STATUS:
         return fail(1167, "预警已终态不可重复响应（1167）")
     target = mapping[action]
@@ -460,8 +467,9 @@ def respond_alert(
         row.content = f"{row.content}；误报原因：{note}"[:512]
     row.updated_at = utcnow()
     db.flush()
-    rule = db.get(AlertRule, row.rule_id) if row.rule_id else None
-    return ok(record_vo(row, rule))
+    data = record_vo(row, rule)
+    data["escalationStopped"] = True
+    return ok(data)
 
 
 def seed_dedup_policies(db: Session, tenant_id: int) -> None:
@@ -578,7 +586,7 @@ def stats_overview(
 
     响应时长取已响应记录（非 OPEN）的 updated_at − occurred_at 均值（分钟）。
     送达率按 push_status=1（工作台已落库）计，不含钉钉/短信外发。
-    升级率固定 0：本环境没有升级台账。
+    升级率：越过起始级（默认一级 30 分钟，L3 从二级起）仍未在时限内响应的占比。
     """
     start, end, error = parse_day_range(dateRange)
     if error:
@@ -609,6 +617,9 @@ def stats_overview(
         elif row.response_status == 3:
             false_alarm += 1
     avg = round(sum(minutes) / len(minutes), 2) if minutes else 0.0
+    from app.alert_escalate import count_escalated
+
+    escalated = count_escalated(db, tenant_id, rows)
     return ok(
         {
             "totalAlertCount": total,
@@ -617,7 +628,7 @@ def stats_overview(
             "resolutionRate": rate_pct(resolved, total),
             "deliveryRate": rate_pct(delivered, total),
             "falseAlarmRate": rate_pct(false_alarm, total),
-            "escalateRate": 0.0,
+            "escalateRate": rate_pct(escalated, total),
             "avgResponseMinutes": avg,
             "respondedCount": responded,
             "resolvedCount": resolved,

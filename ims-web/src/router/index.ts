@@ -94,6 +94,7 @@ const router = createRouter({
         { path: 'alert/rule', component: () => import('../views/alert/rule.vue') },
         { path: 'alert/live', component: () => import('../views/alert/live.vue') },
         { path: 'alert/stats', component: () => import('../views/alert/stats.vue') },
+        { path: 'alert/escalate', component: () => import('../views/alert/escalate.vue') },
         { path: 'cost/account', redirect: '/ims/cost' },
         { path: 'cost/roi', redirect: '/ims/cost' },
         { path: 'live/register', redirect: '/ims/live/sessions' },
