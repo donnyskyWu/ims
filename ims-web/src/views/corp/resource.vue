@@ -26,6 +26,15 @@
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
+      <select v-if="kind === 'certificate'" v-model="certTypeFilter" style="width: 120px" data-testid="corp-cert-filter-type">
+        <option value="">全部类型</option>
+        <option value="IDCARD">身份证</option>
+        <option value="PASSPORT">护照</option>
+        <option value="OTHER">其他</option>
+      </select>
+      <span v-if="kind === 'certificate'">有效期</span>
+      <input v-if="kind === 'certificate'" v-model="certExpireFrom" type="date" data-testid="corp-cert-filter-from" />
+      <input v-if="kind === 'certificate'" v-model="certExpireTo" type="date" data-testid="corp-cert-filter-to" />
       <input
         v-if="kind === 'company'"
         v-model="creditCode"
@@ -76,7 +85,7 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
-                <div class="empty">
+                <div class="empty" :data-testid="kind === 'certificate' ? 'corp-cert-list-empty' : undefined">
                   <div class="et">{{ error || emptyTitle }}</div>
                   <div class="es">{{ error ? meta.emptyHint : emptyHintText }}</div>
                 </div>
@@ -189,7 +198,7 @@
                 <td>{{ show(row, 'holderName') }}</td>
                 <td>{{ show(row, 'certNoMasked') }}</td>
                 <td>{{ show(row, 'expireDate') }}</td>
-                <td>{{ show(row, 'remainDays') }}</td>
+                <td data-testid="corp-cert-remain" :style="remainStyle(row.remainDays)">{{ remainText(row.remainDays) }}</td>
                 <td>
                   <span data-testid="corp-cert-level" :style="levelStyle(String(row.level || ''))">{{ levelLabel(String(row.level || '')) }}</span>
                 </td>
@@ -286,7 +295,7 @@
         <button class="btn btn-sec btn-sm" type="button" @click="resetAudit">重置</button>
       </form>
       <p class="hint" data-testid="corp-cert-audit-total">共 {{ auditTotal }} 条</p>
-      <p v-if="auditError" class="hint bad">{{ auditError }}</p>
+      <p v-if="auditError" class="hint bad" data-testid="corp-cert-audit-error">{{ auditError }}</p>
       <div class="tbl-block">
         <div class="expire-wrap">
           <table data-testid="corp-cert-audit-table">
@@ -611,6 +620,10 @@ const idType = ref('')
 const operator = ref('')
 const realnameId = ref('')
 const status = ref('')
+const certTypeFilter = ref('')
+const certExpireFrom = ref('')
+const certExpireTo = ref('')
+const certRangeHint = ref('')
 const phoneHint = ref('')
 const idTypes = ref<Opt[]>([
   { value: 'ID_CARD', label: '身份证' },
@@ -696,7 +709,7 @@ const expireEmptyTitle = computed(() => {
   if (expireFiltered.value) return '没有符合筛选的到期预警'
   return '当前无到期预警'
 })
-const expireEmptyHint = computed(() => (expireFiltered.value ? '换一个预警级别或状态，或重置筛选。' : ''))
+const expireEmptyHint = computed(() => (expireFiltered.value ? '换一个持有人、预警级别或状态，或重置筛选。' : ''))
 const remindOpen = ref(false)
 const remindSaving = ref(false)
 const remindError = ref('')
@@ -834,16 +847,23 @@ const hasFilter = computed(() =>
       idType.value ||
       operator.value ||
       realnameId.value ||
-      status.value,
+      status.value ||
+      certTypeFilter.value ||
+      certExpireFrom.value ||
+      certExpireTo.value,
   ),
 )
 const emptyTitle = computed(() => {
   if (phoneHint.value) return phoneHint.value
+  if (certRangeHint.value) return certRangeHint.value
+  if (kind.value === 'certificate' && hasFilter.value) return '当前筛选下没有证件'
   if (hasFilter.value) return '没有符合筛选的记录'
   return meta.value.empty
 })
 const emptyHintText = computed(() => {
   if (phoneHint.value) return '号码按完整手机号精确匹配，不支持片段。'
+  if (certRangeHint.value) return '有效期需成对填写，且开始日期不能晚于结束日期。'
+  if (kind.value === 'certificate' && hasFilter.value) return '换一个持有人、类型、状态或有效期，或重置筛选。'
   if (hasFilter.value) return '换个条件，或点重置看全部。'
   return meta.value.emptyHint
 })
@@ -1139,6 +1159,23 @@ function ipDevice(row: Row) {
   return `${ip} / ${short}`
 }
 
+function remainText(value: unknown) {
+  if (value === undefined || value === null || value === '') return '—'
+  const days = Number(value)
+  if (!Number.isFinite(days)) return '—'
+  if (days <= 0) return '已过期'
+  return String(Math.floor(days))
+}
+
+function remainStyle(value: unknown) {
+  if (value === undefined || value === null || value === '') return ''
+  const days = Number(value)
+  if (!Number.isFinite(days)) return ''
+  if (days <= 7) return 'color:#b91c1c;font-weight:600'
+  if (days <= 30) return 'color:#a16207;font-weight:600'
+  return 'color:#15803d'
+}
+
 function durationLabel(value: unknown) {
   const seconds = Number(value)
   if (!Number.isFinite(seconds) || seconds < 0) return '—'
@@ -1184,15 +1221,15 @@ async function loadAudit() {
           params: { pageNo: 1, pageSize: 20, holderName: holder },
         })
         const list = asList(found.data?.data)
-        const exact = list.find((item) => String(item.holderName) === holder) || list[0]
-        if (!exact) {
+        const exact = list.filter((item) => String(item.holderName) === holder)
+        if (exact.length !== 1) {
           auditRows.value = []
           auditTotal.value = 0
-          auditError.value = '没有匹配的证件'
+          auditError.value = exact.length ? '有多本同名证件，请改填档案编号' : '没有匹配的证件'
           await loadRisk()
           return
         }
-        params.certId = Number(exact.id)
+        params.certId = Number(exact[0].id)
       }
     }
     if (auditViewer.value) params.viewerUserId = Number(auditViewer.value)
@@ -1408,7 +1445,8 @@ function typeLabel(value: string) {
 
 function params() {
   phoneHint.value = ''
-  const query: Record<string, string | number> = { pageNo: pageNo.value, pageSize: pageSize.value }
+  certRangeHint.value = ''
+  const query: Record<string, string | number | string[]> = { pageNo: pageNo.value, pageSize: pageSize.value }
   const text = keyword.value.trim()
   if (text) {
     if (kind.value === 'company') query.companyName = text
@@ -1425,6 +1463,14 @@ function params() {
   if (kind.value === 'sim-card' && operator.value) query.operator = operator.value
   if (kind.value === 'sim-card' && realnameId.value) query.realnameId = Number(realnameId.value)
   if (status.value) query.status = status.value
+  if (kind.value === 'certificate') {
+    if (certTypeFilter.value) query.certType = certTypeFilter.value
+    const from = certExpireFrom.value
+    const to = certExpireTo.value
+    if ((from && !to) || (!from && to)) certRangeHint.value = '请同时填写开始和结束日期'
+    else if (from && to && from > to) certRangeHint.value = '开始日期不能晚于结束日期'
+    else if (from && to) query.expireDateRange = [from, to]
+  }
   return query
 }
 
@@ -1432,14 +1478,17 @@ async function load() {
   loading.value = true
   error.value = ''
   const query = params()
-  if (phoneHint.value) {
+  if (phoneHint.value || certRangeHint.value) {
     rows.value = []
     total.value = 0
     loading.value = false
     return
   }
   try {
-    const res = await http.get(`/corp/resource/${kind.value}/page`, { params: query })
+    const res = await http.get(`/corp/resource/${kind.value}/page`, {
+      params: query,
+      paramsSerializer: { indexes: null },
+    })
     const data = res.data?.data
     rows.value = asList(data)
     total.value = asTotal(data, rows.value.length)
@@ -1464,6 +1513,10 @@ function reset() {
   operator.value = ''
   realnameId.value = ''
   status.value = ''
+  certTypeFilter.value = ''
+  certExpireFrom.value = ''
+  certExpireTo.value = ''
+  certRangeHint.value = ''
   phoneHint.value = ''
   search()
 }
@@ -1719,6 +1772,10 @@ watch(kind, async () => {
   operator.value = ''
   realnameId.value = ''
   status.value = ''
+  certTypeFilter.value = ''
+  certExpireFrom.value = ''
+  certExpireTo.value = ''
+  certRangeHint.value = ''
   phoneHint.value = ''
   pageNo.value = 1
   detailOpen.value = false
