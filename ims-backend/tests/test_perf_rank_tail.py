@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 
 from app.core import SessionLocal
 from app.main import app
-from app.models import PerfCalcResult, User, WorkMessage
+from app.models import PerfCalcResult, PerfMetric, User, WorkMessage
 from app.perf_calc import write_ranks
 
 client = TestClient(app)
@@ -130,6 +130,29 @@ def test_auto_coverage_and_local_test_fetch():
     )
     assert staff_fetch.status_code == 403
     assert staff_fetch.json()["code"] == 403
+
+    db = SessionLocal()
+    db.add(
+        PerfMetric(
+            metric_code="COMPETE_SUBMIT_RATE",
+            metric_name="重复竞品",
+            data_source="MANUAL",
+            weight=0,
+            score_rule={"ruleType": "LINEAR", "linear": {"minMetric": 0, "maxMetric": 100, "minScore": 0, "maxScore": 100}},
+            status="DISABLED",
+            enable_note="dup",
+            tenant_id=0,
+        )
+    )
+    db.commit()
+    db.close()
+    listed = client.get(
+        "/admin-api/ims/perf/metric/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50},
+    ).json()
+    compete_rows = [row for row in listed["data"]["list"] if row["metricCode"] == "COMPETE_SUBMIT_RATE"]
+    assert len(compete_rows) == 1
 
 
 def test_rank_alerts_handle_and_two_month_coaching():

@@ -978,14 +978,24 @@ def metric_vo(row: PerfMetric) -> dict:
 
 
 def ensure_compete_metric(db: Session, tenant_id: int, actor_id: int) -> PerfMetric:
-    row = db.scalar(
-        select(PerfMetric).where(
-            PerfMetric.deleted == 0,
-            PerfMetric.tenant_id == tenant_id,
-            PerfMetric.metric_code == COMPETE_CODE,
-        )
+    rows = list(
+        db.scalars(
+            select(PerfMetric)
+            .where(
+                PerfMetric.deleted == 0,
+                PerfMetric.tenant_id == tenant_id,
+                PerfMetric.metric_code == COMPETE_CODE,
+            )
+            .order_by(PerfMetric.id.asc())
+        ).all()
     )
-    if row is not None:
+    if rows:
+        row = rows[0]
+        for extra in rows[1:]:
+            extra.deleted = 1
+            extra.updated_at = utcnow()
+        if len(rows) > 1:
+            db.flush()
         if row.status != "DISABLED":
             row.status = "DISABLED"
         if not row.enable_note:

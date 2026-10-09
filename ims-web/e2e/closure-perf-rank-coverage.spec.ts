@@ -23,9 +23,13 @@ test.describe('perf coverage and rank alert closure', () => {
     const autoCode = `E2E_AUTO_${stamp}`
 
     await loginAdmin(page)
+    const coverageReady = page.waitForResponse(
+      (res) => res.url().includes('/perf/metric/auto-coverage') && res.request().method() === 'GET',
+    )
     await page.goto('/ims/perf/metric')
+    await coverageReady
     await expect(page.locator('h1')).toHaveText('指标配置', { timeout: 15_000 })
-    await expect(page.getByTestId('metric-coverage')).toBeVisible()
+    await expect(page.getByTestId('metric-coverage-count')).toBeVisible()
     const before = await readCoverage(page)
 
     await createMetric(page, { code: manualCode, name: `手工 ${stamp}`, source: 'MANUAL' })
@@ -108,6 +112,7 @@ test.describe('perf coverage and rank alert closure', () => {
     await coachRow.getByTestId('perf-coaching-detail').click()
     await expect(page.getByTestId('perf-coaching-periods')).toContainText('待改进')
     await page.screenshot({ path: `${shotDir}/07-coaching.png` })
+    await page.locator('.drawer.on .dr-x').click()
 
     await logout(page)
     await loginAs(page, 'e2e_perf_staff')
@@ -166,15 +171,18 @@ async function publishLow(page: Page, period: string) {
   }
   expect(runJson.code, runJson.msg || '').toBe(0)
   await expect(page.getByTestId(`perf-row-${STAFF}`)).toBeVisible({ timeout: 15_000 })
-  for (let i = 0; i < 6; i += 1) {
-    const button = page.getByTestId('perf-supplement').first()
-    if (!(await button.count()) || !(await button.isVisible())) break
-    await button.click()
+  for (const name of [STAFF, '绩效员工乙']) {
+    const row = page.getByTestId(`perf-row-${name}`)
+    const status = row.getByTestId(`perf-status-${name}`)
+    const label = await status.innerText()
+    if (label.includes('待核准') || label.includes('已发布')) continue
+    await row.getByTestId('perf-supplement').click()
     await page.getByTestId('perf-manual-reason').fill('预警演示补录')
     await page.getByTestId('perf-manual-value').fill('40')
     await page.getByTestId('perf-manual-save').click()
-    await expect(page.getByTestId('perf-calc-toast')).toContainText('缺项已补充', { timeout: 15_000 })
+    await expect(status).toContainText('待核准', { timeout: 15_000 })
   }
+  if ((await page.getByTestId(`perf-status-${STAFF}`).innerText()).includes('已发布')) return
   await page.getByTestId('perf-approve-open').click()
   await page.getByTestId('perf-approve-confirm').click()
   await expect(page.getByTestId('perf-approve-result')).toContainText('已发布', { timeout: 15_000 })
@@ -183,6 +191,8 @@ async function publishLow(page: Page, period: string) {
 }
 
 async function logout(page: Page) {
+  const close = page.locator('.drawer.on .dr-x')
+  if (await close.count()) await close.first().click()
   await page.locator('.rolebtn').click()
   await page.getByText('退出登录', { exact: true }).click()
   await page.waitForURL(/\/login/, { timeout: 20_000 })

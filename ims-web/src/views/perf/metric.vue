@@ -684,8 +684,8 @@ async function runFetch() {
   }
 }
 
-onMounted(() => {
-  void loadList()
-  void loadCoverage()
+onMounted(async () => {
+  await loadList()
+  await loadCoverage()
 })
 </script>
