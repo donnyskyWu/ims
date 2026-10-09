@@ -7,8 +7,8 @@
       <input v-model="to" type="date" data-testid="topic-gantt-to" />
       <input
         v-model="accountId"
-        type="number"
-        min="1"
+        type="text"
+        inputmode="numeric"
         placeholder="发布账号 ID"
         style="width: 140px"
         data-testid="topic-gantt-account"
@@ -16,9 +16,21 @@
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="topic-gantt-query" :disabled="loading">查询</button>
     </form>
-    <p v-if="error" class="hint bad" data-testid="topic-gantt-error">{{ error }}</p>
+    <p v-if="error" class="hint bad" data-testid="topic-gantt-error">
+      {{ error }}
+      <button
+        v-if="errorRetry"
+        class="btn btn-sec btn-sm"
+        type="button"
+        data-testid="topic-gantt-retry"
+        @click="load"
+      >重试</button>
+    </p>
     <p v-else-if="conflictCount" class="hint warn" data-testid="topic-gantt-conflict-summary">
       {{ conflictCount }} 条选题同账号同日超量，仅提示，不阻断排期
+    </p>
+    <p v-if="!loading && !error && items.length" class="hint" data-testid="topic-gantt-legend">
+      蓝条为计划发布日，黄底为同账号同日超量。
     </p>
     <div class="tbl-block">
       <div class="tbl-wrap gantt-scroll">
@@ -103,6 +115,7 @@ const accountId = ref('')
 const items = ref<GanttItem[]>([])
 const loading = ref(false)
 const error = ref('')
+const errorRetry = ref(false)
 
 const days = computed(() => enumerate(from.value, to.value))
 const conflictCount = computed(() => items.value.filter((item) => item.conflictHint).length)
@@ -170,8 +183,15 @@ function formatBiz(err: unknown) {
   return errorMessage(err)
 }
 
+function invalidAccount(value: string) {
+  const text = value.trim()
+  if (!text) return false
+  return !/^[1-9]\d*$/.test(text)
+}
+
 async function load() {
   error.value = ''
+  errorRetry.value = false
   if (!from.value || !to.value || from.value > to.value) {
     error.value = '请选择有效的计划发布日区间'
     items.value = []
@@ -179,6 +199,11 @@ async function load() {
   }
   if (spanTooWide(from.value, to.value)) {
     error.value = '区间超过 62 天，请缩小后再看甘特'
+    items.value = []
+    return
+  }
+  if (invalidAccount(String(accountId.value ?? ''))) {
+    error.value = '请填写有效的发布账号 ID'
     items.value = []
     return
   }
@@ -193,6 +218,7 @@ async function load() {
     items.value = data.data.items || []
   } catch (e) {
     error.value = formatBiz(e)
+    errorRetry.value = true
     items.value = []
   } finally {
     loading.value = false
@@ -214,6 +240,9 @@ onMounted(() => {
 }
 .hint.warn {
   color: #9a6700;
+}
+.hint .btn {
+  margin-left: 8px;
 }
 .gantt-scroll {
   overflow-x: auto;

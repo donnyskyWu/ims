@@ -65,13 +65,13 @@
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.topicNo }}</td>
-              <td><b>{{ row.title }}</b></td>
+              <td><b :title="row.title">{{ row.title }}</b></td>
               <td>{{ sourceLabel(row.sourceType) }}</td>
               <td>{{ row.submitterName || '—' }}</td>
               <td>{{ row.planPublishDate || '—' }}</td>
               <td>{{ row.sopName || '—' }}</td>
               <td data-testid="topic-status">{{ statusLabel(row.topicStatus) }}</td>
-              <td data-testid="topic-opinion-cell">{{ row.reviewOpinion || '—' }}</td>
+              <td data-testid="topic-opinion-cell" :title="row.reviewOpinion || undefined">{{ row.reviewOpinion || '—' }}</td>
               <td data-testid="topic-task-gate">{{ row.canCreateTask ? '可出任务' : '未立项不可出任务' }}</td>
               <td>
                 <div class="row-acts">
@@ -125,11 +125,28 @@
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
-          <input v-model="form.title" maxlength="256" data-testid="topic-title" />
+          <input
+            v-model="form.title"
+            maxlength="256"
+            data-testid="topic-title"
+            :class="{ err: !!titleError }"
+            @input="titleError = ''"
+          />
+          <p class="hint">不超过 256 字</p>
+          <p v-if="titleError" class="ferr" data-testid="topic-title-error">{{ titleError }}</p>
         </div>
         <div class="fld">
           <label>内容要求 *</label>
-          <textarea v-model="form.description" maxlength="2000" rows="4" data-testid="topic-description" />
+          <textarea
+            v-model="form.description"
+            maxlength="2000"
+            rows="4"
+            data-testid="topic-description"
+            :class="{ err: !!descriptionError }"
+            @input="descriptionError = ''"
+          />
+          <p class="hint">不超过 2000 字</p>
+          <p v-if="descriptionError" class="ferr" data-testid="topic-description-error">{{ descriptionError }}</p>
         </div>
         <div class="fld">
           <label>来源类型 *</label>
@@ -155,8 +172,15 @@
         </div>
         <div class="fld">
           <label>计划发布日</label>
-          <input v-model="form.planPublishDate" type="date" data-testid="topic-edit-plan-date" />
-          <p class="hint">可选。填写后，待评审选题也会出现在排期甘特。</p>
+          <input
+            v-model="form.planPublishDate"
+            type="date"
+            data-testid="topic-edit-plan-date"
+            :class="{ err: !!planEarlyError }"
+            @input="planEarlyError = ''"
+          />
+          <p class="hint">可选。填写后，待评审选题也会出现在排期甘特。不能早于今天。</p>
+          <p v-if="planEarlyError" class="ferr" data-testid="topic-plan-early-error">{{ planEarlyError }}</p>
         </div>
         <template v-if="editorMode === 'edit'">
           <div class="fld">
@@ -165,6 +189,8 @@
               <option value="">不挂接</option>
               <option v-for="sop in sops" :key="sop.id" :value="String(sop.id)">{{ sop.sopName }}</option>
             </select>
+            <p v-if="sopLoading" class="hint">正在加载启用中的 SOP</p>
+            <p v-else-if="!createError && !sops.length" class="hint" data-testid="topic-edit-sop-empty">暂无启用中的 SOP，建议项可以留空。</p>
           </div>
         </template>
       </div>
@@ -187,20 +213,30 @@
         </div>
         <div class="fld">
           <label>挂接 SOP *</label>
-          <select v-model="reviewForm.sopId" data-testid="topic-sop">
+          <select v-model="reviewForm.sopId" data-testid="topic-sop" :class="{ err: !!sopFieldError }" @change="onReviewSopChange">
             <option value="">请选择 SOP</option>
             <option v-for="sop in sops" :key="sop.id" :value="String(sop.id)">{{ sop.sopName }}</option>
           </select>
+          <p v-if="sopFieldError" class="ferr" data-testid="topic-sop-error">{{ sopFieldError }}</p>
           <p v-if="sopLoading" class="hint">正在加载启用中的 SOP</p>
           <p v-else-if="!reviewError && !sops.length" class="hint" data-testid="topic-sop-empty">暂无启用中的 SOP。请先在 SOP 管理启用一条，再立项。</p>
         </div>
         <div class="fld">
           <label>计划发布日 *</label>
-          <input v-model="reviewForm.planPublishDate" type="date" data-testid="topic-plan-date" />
+          <input
+            v-model="reviewForm.planPublishDate"
+            type="date"
+            data-testid="topic-plan-date"
+            :class="{ err: !!planFieldError }"
+            @input="onReviewDateInput"
+          />
+          <p v-if="planDatePrefilled && !planFieldError" class="hint" data-testid="topic-plan-prefill">已带出提报时的计划发布日，立项前请确认。</p>
+          <p v-if="planFieldError" class="ferr" data-testid="topic-plan-date-error">{{ planFieldError }}</p>
         </div>
         <div class="fld">
           <label>评审意见</label>
           <textarea v-model="reviewForm.reviewOpinion" maxlength="512" rows="3" data-testid="topic-opinion" placeholder="落选时必填" />
+          <p class="hint">不超过 512 字。</p>
         </div>
       </div>
       <p v-if="reviewError" class="hint bad" data-testid="topic-review-error">{{ reviewError }}</p>
@@ -275,6 +311,7 @@
         <h3>取消选题</h3>
         <p>取消后进入已取消，不可出任务。</p>
         <textarea v-model="cancelOpinion" maxlength="512" rows="3" placeholder="取消原因 *" data-testid="topic-cancel-opinion" />
+        <p class="hint">不超过 512 字。</p>
         <p v-if="cancelError" class="hint bad">{{ cancelError }}</p>
         <div class="modal-acts">
           <button class="btn btn-sec btn-sm" type="button" @click="cancelRow = null">关闭</button>
@@ -287,7 +324,7 @@
 
 <script setup lang="ts">
 import axios from 'axios'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import TopicGantt from './topic-gantt.vue'
@@ -353,11 +390,20 @@ const editingId = ref<number | null>(null)
 const saving = ref(false)
 const createError = ref('')
 const form = ref({ title: '', description: '', sourceType: 'ORIGINAL', planPublishDate: '', sopId: '' })
+const titleError = ref('')
+const descriptionError = ref('')
+const planEarlyError = ref('')
 const reviewOpen = ref(false)
 const reviewing = ref(false)
 const reviewError = ref('')
 const reviewRow = ref<TopicRow | null>(null)
 const reviewForm = ref({ sopId: '', planPublishDate: '', reviewOpinion: '' })
+const sopFieldError = ref('')
+const planFieldError = ref('')
+const planDatePrefilled = computed(() => {
+  const saved = (reviewRow.value?.planPublishDate || '').trim()
+  return Boolean(saved) && reviewForm.value.planPublishDate === saved
+})
 const sops = ref<{ id: number; sopName: string }[]>([])
 const sopLoading = ref(false)
 const hotspotRows = ref<{ dimensionKey: string; dimensionLabel: string; workCount: number; hitCount: number }[]>([])
@@ -383,6 +429,32 @@ function sourceLabel(source: string) {
 
 function projectStatusLabel(status: string) {
   return PROJECT_LABEL[status] || status || '—'
+}
+
+function todayText() {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+function planDateTooEarly(value: string) {
+  const text = value.trim()
+  return Boolean(text) && text < todayText()
+}
+
+function resetFormErrors() {
+  titleError.value = ''
+  descriptionError.value = ''
+  planEarlyError.value = ''
+}
+
+function onReviewSopChange() {
+  if (reviewForm.value.sopId) sopFieldError.value = ''
+}
+
+function onReviewDateInput() {
+  if (!reviewForm.value.planPublishDate) return
+  if (!planDateTooEarly(reviewForm.value.planPublishDate)) planFieldError.value = ''
 }
 
 function formatBiz(err: unknown) {
@@ -454,6 +526,7 @@ function openCreate() {
   editingId.value = null
   form.value = { title: '', description: '', sourceType: 'ORIGINAL', planPublishDate: '', sopId: '' }
   createError.value = ''
+  resetFormErrors()
   resetHotspot()
   createOpen.value = true
 }
@@ -497,6 +570,9 @@ async function openEdit(row: TopicRow) {
     sopId: row.sopId ? String(row.sopId) : '',
   }
   createError.value = ''
+  resetFormErrors()
+  sops.value = []
+  sopLoading.value = true
   createOpen.value = true
   onSourceChange()
   try {
@@ -504,15 +580,24 @@ async function openEdit(row: TopicRow) {
   } catch (e) {
     sops.value = []
     createError.value = formatBiz(e)
+  } finally {
+    sopLoading.value = false
   }
 }
 
 async function saveTopic() {
-  saving.value = true
+  resetFormErrors()
   createError.value = ''
+  const title = form.value.title.trim()
+  const description = form.value.description.trim()
+  if (!title) titleError.value = '请填写选题标题'
+  if (!description) descriptionError.value = '请填写内容要求'
+  if (planDateTooEarly(form.value.planPublishDate)) planEarlyError.value = '计划发布日不能早于今天'
+  if (titleError.value || descriptionError.value || planEarlyError.value) return
+  saving.value = true
   const payload = {
-    title: form.value.title,
-    description: form.value.description,
+    title,
+    description,
     sourceType: form.value.sourceType,
     planPublishDate: form.value.planPublishDate || undefined,
     sopId: form.value.sopId ? Number(form.value.sopId) : undefined,
@@ -539,8 +624,10 @@ async function saveTopic() {
 
 async function openReview(row: TopicRow) {
   reviewRow.value = row
-  reviewForm.value = { sopId: '', planPublishDate: '', reviewOpinion: '' }
+  reviewForm.value = { sopId: '', planPublishDate: row.planPublishDate || '', reviewOpinion: '' }
   reviewError.value = ''
+  sopFieldError.value = ''
+  planFieldError.value = ''
   sops.value = []
   sopLoading.value = true
   reviewOpen.value = true
@@ -556,6 +643,14 @@ async function openReview(row: TopicRow) {
 
 async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
   if (!reviewRow.value) return
+  if (action === 'APPROVE_PROJECT') {
+    sopFieldError.value = reviewForm.value.sopId ? '' : '请选择挂接 SOP'
+    if (!reviewForm.value.planPublishDate) planFieldError.value = '请填写计划发布日'
+    else if (planDateTooEarly(reviewForm.value.planPublishDate)) {
+      planFieldError.value = '计划发布日不能早于今天'
+      return
+    } else planFieldError.value = ''
+  }
   reviewing.value = true
   reviewError.value = ''
   try {
@@ -569,6 +664,7 @@ async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
     await loadList()
   } catch (e) {
     reviewError.value = formatBiz(e)
+    if (reviewError.value.startsWith('1051')) sopFieldError.value = 'SOP 不存在或未启用'
   } finally {
     reviewing.value = false
   }
