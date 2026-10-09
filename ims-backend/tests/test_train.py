@@ -781,7 +781,6 @@ def test_train_task_edit_before_deadline_keeps_progress():
     assert locked.json()["code"] == 1102
     assert locked.json()["msg"] == "已过截止时间，不能编辑"
 
-
 def test_train_link_preview_snapshot_and_quiz_duplicate_options():
     auth = headers()
     cate_id = _leaf_cate(auth)
@@ -994,3 +993,133 @@ def test_train_finish_rate_rejects_inverted_range():
     )
     assert malformed.json()["code"] == 1001
     assert malformed.json()["msg"] == "日期范围无效"
+
+
+def test_train_title_and_task_name_length():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    too_long = "资" * 129
+    rejected = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": too_long,
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/long.pdf",
+            "publish": True,
+        },
+    )
+    assert rejected.json()["code"] == 1001
+    assert rejected.json()["msg"] == "标题不超过 128 字"
+
+    ok_title = "资" * 128
+    created = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": ok_title,
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/long.pdf",
+            "publish": True,
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    material_id = body["data"]["id"]
+
+    renamed = client.put(
+        f"/admin-api/ims/train/material/{material_id}",
+        headers=auth,
+        json={
+            "title": "更" * 129,
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/long.pdf",
+            "publish": True,
+        },
+    )
+    assert renamed.json()["code"] == 1001
+    assert renamed.json()["msg"] == "标题不超过 128 字"
+
+    long_task = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "任" * 129,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert long_task.json()["code"] == 1001
+    assert long_task.json()["msg"] == "任务名称不超过 128 字"
+
+    short = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "任" * 128,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    short_body = short.json()
+    assert short_body["code"] == 0, short_body
+    edited = client.put(
+        f"/admin-api/ims/train/task/{short_body['data']['id']}",
+        headers=auth,
+        json={
+            "taskName": "改" * 129,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert edited.json()["code"] == 1001
+    assert edited.json()["msg"] == "任务名称不超过 128 字"
+
+
+def test_train_offline_keeps_referenced_material():
+    auth = headers()
+    material_id = _published_material(auth, f"引用下架 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": f"引用任务 {uuid.uuid4().hex[:6]}",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    created_body = created.json()
+    assert created_body["code"] == 0, created_body
+    task_id = created_body["data"]["id"]
+
+    offline = client.delete(f"/admin-api/ims/train/material/{material_id}", headers=auth)
+    assert offline.json()["code"] == 0
+    assert offline.json()["data"] is None
+
+    db = SessionLocal()
+    try:
+        row = db.get(TrainMaterial, material_id)
+        assert row is not None
+        assert row.deleted == 0
+        assert row.status == "OFFLINE"
+        task = db.get(TrainTask, task_id)
+        assert task is not None
+        assert material_id in list(task.material_ids or [])
+    finally:
+        db.close()

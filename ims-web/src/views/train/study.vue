@@ -46,6 +46,13 @@
         </ul>
         <div v-else class="empty"><div class="et">无关联资料</div></div>
 
+        <p
+          v-if="materials.length && task.confirmType !== 'QUIZ' && confirmStatus !== 'CONFIRMED' && remainingMaterials > 0"
+          class="hint"
+          data-testid="train-study-gap"
+        >
+          还差 {{ remainingMaterials }} 份资料未学完，学完后才能完成确认
+        </p>
         <div v-if="materials.length && confirmStatus !== 'CONFIRMED'" class="acts" style="margin-top: 16px; flex-wrap: wrap; gap: 8px">
           <button class="btn btn-sec btn-sm" type="button" :disabled="busy" @click="markCurrentMaterialDone">
             标记当前资料已学完
@@ -55,7 +62,7 @@
             class="btn btn-pri btn-sm"
             type="button"
             :disabled="busy || !allMaterialsDone"
-            :title="allMaterialsDone ? '' : '请先完成全部资料学习'"
+            :title="allMaterialsDone ? '' : `还差 ${remainingMaterials} 份资料未学完`"
             @click="confirmComplete"
           >
             完成确认
@@ -217,9 +224,14 @@ const overdueDays = computed(() => {
   return days >= 1 ? days : 1
 })
 
+const remainingMaterials = computed(() => {
+  const ids = task.value?.materialIds || []
+  return ids.filter((id) => (materialProgress.value[id] ?? 0) < 100).length
+})
+
 const allMaterialsDone = computed(() => {
   if (!task.value?.materialIds?.length) return false
-  return task.value.materialIds.every((id) => (materialProgress.value[id] ?? 0) >= 100)
+  return remainingMaterials.value === 0
 })
 
 function materialPct(id: number) {
