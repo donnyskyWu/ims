@@ -534,6 +534,23 @@ class LiveDataSnapshot(Base):
     deleted: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class LiveAlarmRule(Base):
+    """直播事中告警规则。热更新即时生效，命中只写站内记录。"""
+
+    __tablename__ = "ims_live_alarm_rule"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    rule_name: Mapped[str] = mapped_column(String(64), default="")
+    rule_type: Mapped[str] = mapped_column(String(16), default="THRESHOLD")
+    rule_expr: Mapped[dict] = mapped_column(JSON, default=dict)
+    level: Mapped[int] = mapped_column(Integer, default=2)
+    notify_users: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED")
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class LiveAlarmRecord(Base):
     __tablename__ = "ims_live_alarm_record"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -546,6 +563,7 @@ class LiveAlarmRecord(Base):
     handle_status: Mapped[str] = mapped_column(String(16), default="UNHANDLED")
     handler_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     handle_remark: Mapped[str] = mapped_column(String(512), default="")
+    merge_count: Mapped[int] = mapped_column(Integer, default=1)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
 

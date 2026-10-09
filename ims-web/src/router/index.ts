@@ -15,6 +15,7 @@ const router = createRouter({
         { path: 'workbench/messages', component: () => import('../views/workbench/messages.vue') },
         { path: 'ip-group', component: () => import('../views/ip-group/index.vue') },
         { path: 'live/sessions', component: () => import('../views/live/index.vue') },
+        { path: 'live/alarm', component: () => import('../views/live/alarm.vue') },
         { path: 'cost', component: () => import('../views/cost/index.vue') },
         { path: 'fin/cost', component: () => import('../views/fin/cost.vue') },
         { path: 'fin/profit', component: () => import('../views/fin/profit.vue') },
