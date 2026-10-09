@@ -62,6 +62,8 @@ def role_tags(db: Session, actor: User) -> set[str]:
             tags.add(key)
         if key == "sys:admin" or "系统管理员" in name:
             tags.update({"r1", "sys:admin"})
+        if key == "r2" or key.endswith(":r2") or "人事" in name or "行政管理" in name:
+            tags.add("r2")
         if key == "r4" or key.endswith(":r4") or "运营总监" in name:
             tags.add("r4")
         if key == "r9" or key.endswith(":r9") or "数据分析" in name:
@@ -133,6 +135,11 @@ def grade_level_of(score: Decimal | float | None) -> str:
 
 def is_manager(tags: set[str]) -> bool:
     return bool(tags & {"r1", "r4", "sys:admin"})
+
+
+def can_view_rank_board(tags: set[str]) -> bool:
+    """全量排名：R1/R2/R4/R9。不含预警处置。"""
+    return bool(tags & {"r1", "r2", "r4", "r9", "sys:admin"})
 
 
 def can_approve(tags: set[str]) -> bool:
@@ -477,14 +484,27 @@ def current_results(db: Session, tenant_id: int, period: str) -> list[PerfCalcRe
     )
 
 
+def score_cents(value: Decimal | float | None) -> Decimal:
+    return Decimal(str(value or 0)).quantize(Decimal("0.01"))
+
+
 def assign_ranks(rows: list[PerfCalcResult]) -> None:
+    """部门内按得分降序。同分并列，下一名跳号。"""
     grouped: dict[int, list[PerfCalcResult]] = {}
     for row in rows:
         grouped.setdefault(int(row.dept_id or 0), []).append(row)
     for group in grouped.values():
-        group.sort(key=lambda item: (-float(item.total_score or 0), int(item.user_id or 0)))
+        group.sort(key=lambda item: (-score_cents(item.total_score), int(item.user_id or 0)))
+        last_score: Decimal | None = None
+        last_rank = 0
         for index, row in enumerate(group, start=1):
-            row.rank_in_dept = index
+            score = score_cents(row.total_score)
+            if last_score is not None and score == last_score:
+                row.rank_in_dept = last_rank
+            else:
+                row.rank_in_dept = index
+                last_rank = index
+            last_score = score
 
 
 def build_details(
@@ -770,6 +790,108 @@ def distribution(rows: list[PerfRank]) -> dict:
     }
 
 
+PIP_STUB = "低于 60 分列入末位预警，将触发绩效改进计划（PIP），并通知本人、直属上级与 HR。本地只记说明，不外发钉钉。"
+GRADE_LINE = "优秀 ≥85 · 合格 60~84 · 待改进 <60"
+MEDALS = {1: "GOLD", 2: "SILVER", 3: "BRONZE"}
+
+
+def average_score(rows: list[PerfRank]) -> float | None:
+    if not rows:
+        return None
+    total = sum((score_cents(row.total_score) for row in rows), Decimal("0"))
+    return float((total / Decimal(len(rows))).quantize(Decimal("0.01")))
+
+
+def board_item(row: PerfRank, board_rank: int) -> dict:
+    data = rank_vo(row)
+    data["boardRank"] = board_rank
+    data["medal"] = MEDALS.get(board_rank, "")
+    data["belowLine"] = score_cents(row.total_score) < GRADE_QUALIFIED
+    return data
+
+
+def competition_board(rows: list[PerfRank]) -> list[tuple[int, PerfRank]]:
+    ordered = sorted(rows, key=lambda item: (-score_cents(item.total_score), int(item.user_id or 0)))
+    last_score: Decimal | None = None
+    last_rank = 0
+    ranked: list[tuple[int, PerfRank]] = []
+    for index, row in enumerate(ordered, start=1):
+        score = score_cents(row.total_score)
+        if last_score is not None and score == last_score:
+            rank = last_rank
+        else:
+            rank = index
+            last_rank = index
+        last_score = score
+        ranked.append((rank, row))
+    return ranked
+
+
+def dept_options(rows: list[PerfRank]) -> list[dict]:
+    seen: set[int] = set()
+    options: list[dict] = []
+    for row in rows:
+        dept_id = int(row.dept_id or 0)
+        if dept_id in seen:
+            continue
+        seen.add(dept_id)
+        options.append({"deptId": dept_id, "deptName": row.dept_name or "未分配"})
+    return options
+
+
+def dept_averages(rows: list[PerfRank]) -> list[dict]:
+    grouped: dict[int, list[PerfRank]] = {}
+    for row in rows:
+        grouped.setdefault(int(row.dept_id or 0), []).append(row)
+    items = []
+    for dept_id, group in grouped.items():
+        items.append(
+            {
+                "deptId": dept_id,
+                "deptName": group[0].dept_name or "未分配",
+                "average": average_score(group),
+                "headcount": len(group),
+            }
+        )
+    items.sort(key=lambda item: int(item["deptId"]))
+    return items
+
+
+def build_rank_board(visible: list[PerfRank], period_rows: list[PerfRank]) -> dict:
+    """考核结果页排名区：红榜前三、末位预警桩、部门均分。不创建预警单、不外发。"""
+    depts = dept_options(period_rows)
+    empty = {
+        "top3": [],
+        "tail": [],
+        "deptAverage": None,
+        "deptAverages": [],
+        "depts": depts,
+        "pipStub": PIP_STUB,
+        "gradeLine": GRADE_LINE,
+    }
+    if not period_rows:
+        return {**empty, "emptyReason": "UNPUBLISHED", "depts": []}
+    if not visible:
+        return {**empty, "emptyReason": "DEPT_EMPTY"}
+    ranked = competition_board(visible)
+    top3 = [board_item(row, rank) for rank, row in ranked if rank <= 3]
+    tail_rows = sorted(
+        [row for row in visible if row.grade_level == "IMPROVE" or row.alert_status == "ALERTED"],
+        key=lambda row: (score_cents(row.total_score), int(row.user_id or 0)),
+    )
+    tail = [board_item(row, 0) for row in tail_rows[:3]]
+    return {
+        "emptyReason": "",
+        "top3": top3,
+        "tail": tail,
+        "deptAverage": average_score(visible),
+        "deptAverages": dept_averages(visible),
+        "depts": depts,
+        "pipStub": PIP_STUB,
+        "gradeLine": GRADE_LINE,
+    }
+
+
 @router.post("/calc/run")
 def calc_run(
     body: CalcRunBody,
@@ -1014,22 +1136,36 @@ def rank_period(
 ):
     if not period_ok(period):
         return fail(1001, "绩效月格式须为 yyyy-MM")
-    if not is_manager(role_tags(db, actor)):
+    if not can_view_rank_board(role_tags(db, actor)):
         return fail(403, "仅管理者可查看全量排名")
     tenant_id = tenant_of(actor)
-    stmt = select(PerfRank).where(
-        PerfRank.deleted == 0,
-        PerfRank.tenant_id == tenant_id,
-        PerfRank.period_month == period,
-        PerfRank.is_current == 1,
+    period_rows = list(
+        db.scalars(
+            select(PerfRank)
+            .where(
+                PerfRank.deleted == 0,
+                PerfRank.tenant_id == tenant_id,
+                PerfRank.period_month == period,
+                PerfRank.is_current == 1,
+            )
+            .order_by(PerfRank.dept_id.asc(), PerfRank.rank_no.asc(), PerfRank.user_id.asc())
+        ).all()
     )
+    visible = period_rows
     if deptId:
-        stmt = stmt.where(PerfRank.dept_id == deptId)
+        visible = [row for row in period_rows if int(row.dept_id or 0) == int(deptId)]
     page_no, size = page_args(pageNo, pageSize)
-    ordered = stmt.order_by(PerfRank.dept_id.asc(), PerfRank.rank_no.asc())
-    total = int(db.scalar(select(func.count()).select_from(ordered.subquery())) or 0)
-    rows = db.scalars(ordered.offset((page_no - 1) * size).limit(size)).all()
-    return paged([rank_vo(row) for row in rows], total, page_no, size)
+    start = (page_no - 1) * size
+    page = visible[start : start + size]
+    return ok(
+        {
+            "list": [rank_vo(row) for row in page],
+            "total": len(visible),
+            "pageNo": page_no,
+            "pageSize": size,
+            "rankBoard": build_rank_board(visible, period_rows),
+        }
+    )
 
 
 @router.get("/rank/mine")
