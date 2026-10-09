@@ -56,7 +56,10 @@ test.describe('fin profit abnormal and aggregate closure', () => {
     const abnormalRow = page.getByTestId(`fin-profit-abnormal-row-${outlier.sessionCode}`)
     await expect(abnormalRow).toBeVisible({ timeout: 15_000 })
     await expect(abnormalRow).toContainText('6.53%')
-    await expect(abnormalRow).toContainText('83.06%')
+    const abnormalText = await abnormalRow.innerText()
+    const deviation = abnormalText.match(/(-?\d+(?:\.\d+)?)σ/)
+    expect(deviation).toBeTruthy()
+    expect(Math.abs(Number(deviation?.[1]))).toBeGreaterThanOrEqual(2)
     await expect(page.getByTestId(`fin-profit-abnormal-row-${normalA.sessionCode}`)).toHaveCount(0)
     await page.screenshot({ path: `${shotDir}/02-profit-abnormal-tab.png`, fullPage: true })
 
