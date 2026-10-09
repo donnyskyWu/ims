@@ -30,7 +30,16 @@ DINGTALK_WEBHOOK_PARAM = "bi.dingtalk.webhook.url"
 DINGTALK_WEBHOOK_ENV = "IMS_BI_DINGTALK_WEBHOOK_URL"
 
 BJ = timezone(timedelta(hours=8))
-PERIODS = frozenset({"DAY", "WEEK", "MONTH"})
+# 库存仍用 DAY/WEEK/MONTH。页面与契约写 DAILY/WEEKLY/MONTHLY，写入时归一，避免另开调度。
+PERIOD_CANON = {
+    "DAY": "DAY",
+    "DAILY": "DAY",
+    "WEEK": "WEEK",
+    "WEEKLY": "WEEK",
+    "MONTH": "MONTH",
+    "MONTHLY": "MONTH",
+}
+PERIOD_CODE = {"DAY": "DAILY", "WEEK": "WEEKLY", "MONTH": "MONTHLY"}
 SUB_STATUSES = frozenset({"ACTIVE", "PAUSED"})
 APPROVAL_STATUSES = frozenset({"NOT_REQUIRED", "PENDING", "APPROVED", "REJECTED", "EXPIRED"})
 
@@ -64,6 +73,45 @@ class ShareApprovalBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     approvalStatus: str
     note: str = ""
+
+
+def canon_period(raw: str) -> str | None:
+    return PERIOD_CANON.get((raw or "").strip().upper())
+
+
+def next_push_stub(period: str, push_time: str, status: str) -> str:
+    """按周期与时刻估算下次推送。只给界面展示，不注册外部定时任务。"""
+    if (status or "").upper() != "ACTIVE":
+        return ""
+    clock = "09:00"
+    for token in (push_time or "").replace("：", ":").split():
+        if ":" in token and len(token) >= 4:
+            clock = token[:5]
+            break
+    try:
+        hour_text, minute_text = clock.split(":", 1)
+        hour, minute = int(hour_text), int(minute_text)
+        if hour > 23 or minute > 59:
+            raise ValueError
+    except ValueError:
+        hour, minute = 9, 0
+    now = datetime.now(BJ)
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if period == "WEEK":
+        candidate = candidate + timedelta(days=(0 - candidate.weekday()) % 7)
+        if candidate <= now:
+            candidate += timedelta(days=7)
+    elif period == "MONTH":
+        if candidate <= now:
+            month = candidate.month + 1
+            year = candidate.year
+            if month > 12:
+                month = 1
+                year += 1
+            candidate = candidate.replace(year=year, month=month, day=1)
+    elif candidate <= now:
+        candidate += timedelta(days=1)
+    return candidate.strftime("%Y-%m-%d %H:%M")
 
 
 def iso(dt: datetime | None) -> str:
@@ -107,7 +155,9 @@ def sub_vo(row: BiSubscription) -> dict:
         "reportId": row.report_id,
         "reportName": row.report_name,
         "period": row.period,
+        "periodCode": PERIOD_CODE.get(row.period, row.period),
         "pushTime": row.push_time,
+        "nextPushAt": next_push_stub(row.period, row.push_time, row.status),
         "channels": row.channels,
         "status": row.status,
         "lastPushStatus": row.last_push_status or "—",
@@ -276,8 +326,8 @@ def subscribe_create(
         if row and not row.deleted and row.tenant_id == tenant_id:
             return fail(1008, "无权查看该报表")
         return fail(1001, "报表不存在")
-    period = body.period.strip().upper()
-    if period not in PERIODS:
+    period = canon_period(body.period)
+    if period is None:
         return fail(1001, "周期无效")
     now = utcnow()
     row = BiSubscription(
@@ -315,8 +365,8 @@ def subscribe_update(
     if body.subName is not None and body.subName.strip():
         row.sub_name = body.subName.strip()
     if body.period is not None:
-        p = body.period.strip().upper()
-        if p not in PERIODS:
+        p = canon_period(body.period)
+        if p is None:
             return fail(1001, "周期无效")
         row.period = p
     if body.pushTime is not None:

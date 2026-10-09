@@ -37,9 +37,17 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="8"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-else-if="!subs.length">
+              <td colspan="8"><div class="empty" data-testid="bi-sub-empty"><div class="et">暂无订阅</div></div></td>
+            </tr>
             <tr v-for="row in subs" v-else :key="row.id">
               <td>{{ row.subName }}</td>
-              <td>{{ periodLabel(row.period) }} {{ row.pushTime }}</td>
+              <td>
+                {{ periodLabel(row.period) }}
+                <span class="csub" data-testid="bi-sub-period-code">{{ periodCode(row.period) }}</span>
+                {{ row.pushTime }}
+                <div class="csub" data-testid="bi-sub-next-push">下次 {{ row.nextPushAt || '不调度' }}</div>
+              </td>
               <td>{{ row.reportName }}</td>
               <td>{{ row.channels }}</td>
               <td><span class="tag" :style="subStatusStyle(row.status)"><span class="dot"></span>{{ row.status === 'ACTIVE' ? '生效' : '暂停' }}</span></td>
@@ -182,11 +190,14 @@
         <label class="fld">报表 ID</label>
         <input v-model.number="form.reportId" class="fld-in" type="number" />
         <label class="fld">周期</label>
-        <select v-model="form.period" class="fld-in">
-          <option value="DAY">每日</option>
-          <option value="WEEK">每周</option>
-          <option value="MONTH">每月</option>
+        <select v-model="form.period" class="fld-in" data-testid="bi-sub-period">
+          <option value="DAILY">每日</option>
+          <option value="WEEKLY">每周</option>
+          <option value="MONTHLY">每月</option>
         </select>
+        <label class="fld">推送时刻</label>
+        <input v-model="form.pushTime" class="fld-in" data-testid="bi-sub-push-time" placeholder="09:00" />
+        <p class="csub" style="margin: 8px 0 0">下次推送按本地时刻估算，不触发外部定时任务。</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitSub">保存</button>
@@ -227,6 +238,7 @@ type SubRow = {
   subName: string
   period: string
   pushTime: string
+  nextPushAt?: string
   reportName: string
   channels: string
   status: string
@@ -260,7 +272,7 @@ const published = ref<Record<string, unknown>[]>([])
 const snapshot = ref<{ subName: string; snapshotAt: string; summary: { gmv: number } } | null>(null)
 const showForm = ref(false)
 const showShareForm = ref(false)
-const form = reactive({ subName: '', reportId: 0, period: 'WEEK' })
+const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
 const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
 
 const pendingApprovals = computed(() => shares.value.filter((r) => r.approvalStatus === 'PENDING'))
@@ -272,7 +284,27 @@ function switchTab(key: string) {
 }
 
 function periodLabel(p: string) {
-  return { DAY: '每日', WEEK: '每周', MONTH: '每月' }[p] || p
+  const map: Record<string, string> = {
+    DAY: '每日',
+    DAILY: '每日',
+    WEEK: '每周',
+    WEEKLY: '每周',
+    MONTH: '每月',
+    MONTHLY: '每月',
+  }
+  return map[p] || p
+}
+
+function periodCode(p: string) {
+  const map: Record<string, string> = {
+    DAY: 'DAILY',
+    DAILY: 'DAILY',
+    WEEK: 'WEEKLY',
+    WEEKLY: 'WEEKLY',
+    MONTH: 'MONTHLY',
+    MONTHLY: 'MONTHLY',
+  }
+  return map[p] || p
 }
 
 function subStatusStyle(st: string) {

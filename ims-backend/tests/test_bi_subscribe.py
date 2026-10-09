@@ -143,6 +143,43 @@ def test_bi_subscribe_push_now_dingtalk_webhook():
     assert mock_http.post.call_args[1]["json"]["msgtype"] == "markdown"
 
 
+def test_bi_subscribe_daily_period_alias_without_cron():
+    """契约 DAILY/WEEKLY/MONTHLY 写入后仍存 DAY/WEEK/MONTH，并给出本地下次推送估算。"""
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "DAILY 订阅测", "reportType": "REPORT", "category": "内容分析"},
+    )
+    assert created.json()["code"] == 0
+    rid = created.json()["data"]["id"]
+    sub = client.post(
+        "/admin-api/ims/bi/subscribe",
+        headers=auth,
+        json={"subName": "日报订阅", "reportId": rid, "period": "DAILY", "pushTime": "09:00"},
+    )
+    body = sub.json()
+    assert body["code"] == 0, body
+    assert body["data"]["period"] == "DAY"
+    assert body["data"]["periodCode"] == "DAILY"
+    assert body["data"]["nextPushAt"]
+    updated = client.put(
+        f"/admin-api/ims/bi/subscribe/{body['data']['id']}",
+        headers=auth,
+        json={"period": "WEEKLY", "status": "PAUSED"},
+    )
+    assert updated.json()["code"] == 0
+    assert updated.json()["data"]["period"] == "WEEK"
+    assert updated.json()["data"]["periodCode"] == "WEEKLY"
+    assert updated.json()["data"]["nextPushAt"] == ""
+    invalid = client.post(
+        "/admin-api/ims/bi/subscribe",
+        headers=auth,
+        json={"subName": "非法周期", "reportId": rid, "period": "HOURLY"},
+    )
+    assert invalid.json()["code"] == 1001
+
+
 def test_bi_report_preview_run_and_drill():
     auth = headers()
     run = client.post(

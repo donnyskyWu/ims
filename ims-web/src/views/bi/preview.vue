@@ -78,6 +78,7 @@
       <b>异步任务 {{ asyncCard.taskId }}</b>
       <div class="csub">{{ asyncCard.message }}</div>
     </div>
+    <p class="csub" data-testid="bi-drill-scope-hint">按您的数据权限过滤展示</p>
     <p v-if="drillToast" class="hint bad" data-testid="bi-drill-toast">{{ drillToast }}</p>
     <p v-if="exportNote" class="hint" data-testid="bi-export-note">{{ exportNote }}</p>
     <p v-if="drillMeta" class="csub" data-testid="bi-drill-meta">{{ drillMeta }}</p>
@@ -87,7 +88,10 @@
       <div class="csub mono">{{ jump.jumpUrl }}</div>
     </div>
 
-    <div v-if="!tableRows.length && drillReady" class="empty" data-testid="bi-drill-empty" style="margin-top: 12px">
+    <div v-if="denied" class="card" data-testid="bi-drill-denied" style="margin-top: 12px; padding: 24px">
+      <div class="empty"><div class="et">{{ denied }}</div></div>
+    </div>
+    <div v-else-if="!tableRows.length && drillReady" class="empty" data-testid="bi-drill-empty" style="margin-top: 12px">
       <div class="et">当前层暂无下钻数据</div>
     </div>
     <div v-else-if="tableRows.length" class="tbl-block" style="margin-top: 12px">
@@ -149,6 +153,7 @@ const filterContext = ref<Record<string, string>>({})
 const tableRows = ref<DrillRow[]>([])
 const drillToast = ref('')
 const asyncCard = ref<{ taskId: string; message: string } | null>(null)
+const denied = ref('')
 const exportNote = ref('')
 const drillMeta = ref('')
 const jump = ref<Jump | null>(null)
@@ -246,6 +251,7 @@ async function runPreview(options?: { user?: boolean }) {
   drillToast.value = ''
   asyncCard.value = null
   exportNote.value = ''
+  denied.value = ''
   try {
     const res = await http.post('/bi/report/preview/run', {
       reportId: filters.reportId,
@@ -254,6 +260,13 @@ async function runPreview(options?: { user?: boolean }) {
       platform: filters.platform,
       timeGrain: 'DAY',
     })
+    if (res.data.code === 1008) {
+      denied.value = '您无权查看该报表'
+      preview.value = null
+      tableRows.value = []
+      drillMeta.value = ''
+      return
+    }
     const data = res.data.data
     if (data?.queryMode === 'ASYNC') {
       preview.value = null
@@ -263,12 +276,26 @@ async function runPreview(options?: { user?: boolean }) {
       filterContext.value = queryFilter()
       return
     }
-    preview.value = data
+    if (res.data.code === 0) preview.value = data
+    else {
+      preview.value = null
+      tableRows.value = []
+      drillMeta.value = ''
+      const text = `${res.data.code} ${res.data.msg || ''}`
+      filterError.value = text
+      drillToast.value = text
+      filterContext.value = queryFilter()
+      return
+    }
   } catch (error: unknown) {
     const body = rejected(error)
     preview.value = null
     tableRows.value = []
     drillMeta.value = ''
+    if (body?.code === 1008) {
+      denied.value = '您无权查看该报表'
+      return
+    }
     const text = body ? `${body.code} ${body.msg}` : errorMessage(error)
     filterError.value = text
     drillToast.value = text
@@ -281,6 +308,7 @@ async function runPreview(options?: { user?: boolean }) {
 
 async function loadLevel(path: string[], filter: Record<string, string>, direction: 'DOWN' | 'UP') {
   drillToast.value = ''
+  denied.value = ''
   try {
     const res = await http.post('/bi/query/drill', {
       reportId: filters.reportId,
@@ -308,6 +336,12 @@ async function loadLevel(path: string[], filter: Record<string, string>, directi
     return true
   } catch (error: unknown) {
     const body = rejected(error)
+    if (body?.code === 1008) {
+      denied.value = '您无权查看该报表'
+      tableRows.value = []
+      drillToast.value = ''
+      return false
+    }
     if (body?.code === 1195) {
       drillToast.value = `1195 ${body.msg || '已到达预定义层级末端或路径非法'}`
       return false
