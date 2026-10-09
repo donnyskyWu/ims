@@ -29,7 +29,7 @@
         <form class="qbar" style="margin-top: 8px" @submit.prevent="loadDelivery">
           <input v-model="deliveryFrom" data-testid="alert-delivery-from" type="date" />
           <input v-model="deliveryTo" data-testid="alert-delivery-to" type="date" />
-          <button class="btn btn-pri btn-sm" type="submit" data-testid="alert-delivery-apply">查询</button>
+          <button class="btn btn-pri btn-sm" type="submit" data-testid="alert-delivery-apply">刷新送达</button>
           <button class="btn btn-sec btn-sm" type="button" data-testid="alert-delivery-reset" @click="resetDelivery">
             清空
           </button>
