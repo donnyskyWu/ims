@@ -20,7 +20,15 @@
             @blur="loadPeriod"
           />
         </label>
-        <span class="tag" data-testid="fin-period-status">{{ periodStatus || 'OPEN' }}</span>
+        <span
+          class="tag"
+          data-testid="fin-period-status"
+          :style="
+            periodStatus === 'LOCKED'
+              ? 'background: rgba(255, 59, 48, 0.12); color: #c0392b'
+              : 'background: rgba(52, 199, 89, 0.12); color: #1f8a4c'
+          "
+        >{{ periodStatus || 'OPEN' }}</span>
         <button
           class="btn btn-pri btn-sm"
           type="button"
@@ -92,6 +100,7 @@
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="button" @click="loadTab">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-cost-filter-reset" @click="resetQuery">重置</button>
     </form>
 
     <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
@@ -116,7 +125,11 @@
               <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!pendingRows.length">
-              <td colspan="8"><div class="empty"><div class="et">暂无待录入场次</div></div></td>
+              <td colspan="8">
+                <div class="empty" data-testid="fin-cost-pending-empty">
+                  <div class="et">{{ pendingEmptyText }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in pendingRows" v-else :key="row.sessionCode">
               <td class="mono">{{ row.sessionCode }}</td>
@@ -131,6 +144,14 @@
               </td>
               <td>
                 <button class="btn btn-pri btn-sm" type="button" @click="openEntry(row)">录入</button>
+                <button
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-cost-ledger-jump"
+                  @click="jumpLedger(String(row.sessionCode || ''))"
+                >
+                  对账
+                </button>
               </td>
             </tr>
           </tbody>
@@ -147,7 +168,17 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in enteredRows" :key="row.id">
+            <tr v-if="loading">
+              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+            </tr>
+            <tr v-else-if="!enteredRows.length">
+              <td colspan="6">
+                <div class="empty" data-testid="fin-cost-entered-empty">
+                  <div class="et">{{ enteredEmptyText }}</div>
+                </div>
+              </td>
+            </tr>
+            <tr v-for="row in enteredRows" v-else :key="row.id">
               <td class="mono">{{ row.sessionCode }}</td>
               <td>{{ row.platform }}</td>
               <td class="num">¥{{ fmt(row.totalCost) }}</td>
@@ -155,6 +186,14 @@
               <td>{{ row.entryUserName || row.entryUserId }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="viewDetail(row.sessionCode)">详情</button>
+                <button
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-cost-ledger-jump"
+                  @click="jumpLedger(String(row.sessionCode || ''))"
+                >
+                  对账
+                </button>
                 <button
                   v-if="row.entryStatus === 'SUBMITTED'"
                   class="btn btn-pri btn-sm"
@@ -281,8 +320,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http } from '../../api/http'
+
+const router = useRouter()
 
 const tab = ref<'pending' | 'entered'>('pending')
 const loading = ref(false)
@@ -307,6 +349,9 @@ const periodLockedBy = ref('')
 const periodLockedAt = ref('')
 const periodMonthValid = computed(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(periodMonth.value.trim()))
 const query = reactive({ sessionCode: '', entryStatus: '' })
+const costFiltered = ref(false)
+const pendingEmptyText = computed(() => (costFiltered.value ? '当前筛选无待录入场次' : '暂无待录入场次'))
+const enteredEmptyText = computed(() => (costFiltered.value ? '当前筛选无已录入成本' : '暂无已录入成本'))
 
 const sessionLocked = computed(() => sessionFinanceStatus.value === 'LOCKED')
 
@@ -352,9 +397,26 @@ async function loadRate() {
   if (res.data?.code === 0) rate.value = res.data.data
 }
 
+function markCostFiltered() {
+  costFiltered.value = Boolean(query.sessionCode.trim() || (tab.value === 'entered' && query.entryStatus))
+}
+
+function jumpLedger(code: string) {
+  const session = code.trim()
+  if (!session) return
+  router.push({ path: '/ims/fin/ledger', query: { sessionCode: session } })
+}
+
+function resetQuery() {
+  query.sessionCode = ''
+  query.entryStatus = ''
+  loadTab()
+}
+
 async function loadPending() {
   loading.value = true
   error.value = ''
+  markCostFiltered()
   try {
     const res = await http.get('/fin/cost/pending-sessions', {
       params: { pageNo: 1, pageSize: 50, sessionCode: query.sessionCode || undefined },
@@ -373,6 +435,7 @@ async function loadPending() {
 async function loadEntered() {
   loading.value = true
   error.value = ''
+  markCostFiltered()
   try {
     const res = await http.get('/fin/cost/list', {
       params: {

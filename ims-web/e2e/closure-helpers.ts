@@ -640,6 +640,19 @@ export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
 }
 
 /** LIVE 登记 → 下播提交/核准（纯 UI）· 返回场次 ID */
+/** 下播 Tab 的报告 GET 会在响应之后把表单重置成默认 GMV。填完再核对，避免被重置盖掉。 */
+async function fillAfterReportReset(field: Locator, value: string) {
+  const deadline = Date.now() + 4_000
+  let last = ''
+  while (Date.now() < deadline) {
+    await field.fill(value)
+    await field.page().waitForTimeout(200)
+    last = await field.inputValue()
+    if (last === value) return
+  }
+  throw new Error(`下播字段未保持为 ${value}，当前 ${last}`)
+}
+
 export async function registerLiveSessionConfirmedReportViaUi(
   page: Page,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
@@ -708,19 +721,23 @@ export async function registerLiveSessionConfirmedReportViaUi(
     await riskResp
   }
 
+  const reportLoad = page.waitForResponse(
+    (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
+    { timeout: 15_000 },
+  )
   await detailDrawer.locator('.tab', { hasText: '下播与 GMV' }).click()
+  await reportLoad.catch(() => null)
+  const gmvInput = detailDrawer.getByTestId('live-report-gmv')
+  const refundInput = detailDrawer.getByTestId('live-report-refund')
+  await expect(gmvInput).toBeVisible()
   if (opts?.actualStart) {
     await detailDrawer.getByTestId('live-report-start').fill(opts.actualStart)
   }
   if (opts?.actualEnd) {
     await detailDrawer.getByTestId('live-report-end').fill(opts.actualEnd)
   }
-  await detailDrawer.locator('label', { hasText: 'GMV' }).locator('..').locator('input').fill(String(gmv))
-  await detailDrawer
-    .locator('label', { hasText: '退款' })
-    .locator('..')
-    .locator('input')
-    .fill(String(refundAmount))
+  await fillAfterReportReset(gmvInput, String(gmv))
+  await fillAfterReportReset(refundInput, String(refundAmount))
 
   const reportResp = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'POST' && r.status() === 200,
