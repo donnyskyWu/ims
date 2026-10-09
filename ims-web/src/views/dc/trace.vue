@@ -17,6 +17,8 @@
         :style="queryCostMs > 3000 ? { color: 'var(--orange)', fontWeight: '600' } : undefined"
       >queryCostMs {{ queried ? queryCostMs : '—' }} ms</router-link>
       ·
+      <router-link data-testid="dc-workbench-link" to="/ims/workbench/messages?sourceModule=DC">工作台消息</router-link>
+      ·
       <span
         data-testid="dc-trace-timeout-hint"
         :data-degraded="timeoutDegraded ? '1' : '0'"
@@ -59,6 +61,7 @@
       </button>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="dc-trace-submit">穿透查询</button>
     </form>
+    <p v-if="filterRestored" class="hint" data-testid="dc-filter-restored">已恢复上次筛选</p>
     <p v-if="exportNote" class="hint" data-testid="dc-trace-export-note">{{ exportNote }}</p>
     <div v-if="entries.length" class="hint" style="margin: 8px 0">
       入口：
@@ -93,6 +96,15 @@
         @click="truncateCrumb(index)"
       >
         {{ crumb.label }}
+      </button>
+      <button
+        v-if="crumbs.length > 1"
+        type="button"
+        class="btn btn-txt btn-sm"
+        data-testid="dc-trace-rollup"
+        @click="truncateCrumb(crumbs.length - 2)"
+      >
+        返回上卷
       </button>
     </div>
     <div class="hint" style="margin: 8px 0">
@@ -215,7 +227,9 @@
             <template v-else>{{ n.nodeLabel }}</template>
           </li>
         </ul>
-        <p v-if="!nodes.length" class="csub">选择入口后查询</p>
+        <div v-if="!nodes.length" class="empty" data-testid="dc-trace-graph-empty">
+          <div class="et">{{ queried ? '当前链路暂无节点' : '选择入口后查询' }}</div>
+        </div>
       </div>
       <div class="tbl-block" data-testid="dc-trace-detail-table">
         <div class="tbl-wrap">
@@ -384,6 +398,8 @@ const queried = ref(false)
 const timeoutDegraded = ref(false)
 const error = ref('')
 const exportNote = ref('')
+const filterRestored = ref(false)
+const DC_FILTER_KEY = 'ims.dc.trace.filters'
 const drawerOpen = ref(false)
 const sessionDetail = ref<SessionDetail | null>(null)
 
@@ -430,18 +446,53 @@ function rememberSource(entry: Entry) {
   crumbs.value = [{ label: `源头：${entry.entryLabel}`, entry }]
 }
 
-onMounted(() => {
-  const presetType = route.query.entryType
-  const allowed = ['PERSON', 'ACCOUNT', 'ASSET', 'SESSION', 'RESPONSIBLE', 'IP_GROUP']
-  if (typeof presetType === 'string' && allowed.includes(presetType)) entryType.value = presetType
-  const preset = route.query.keyword
-  if (typeof preset === 'string' && preset) {
-    keyword.value = preset
-    searchEntry().then(() => {
-      const hit = entries.value.find((item) => (item.entryLabel || '').includes(preset)) || entries.value[0]
-      if (hit) pickEntry(hit)
-    })
+function persistDcFilters() {
+  sessionStorage.setItem(
+    DC_FILTER_KEY,
+    JSON.stringify({
+      entryType: entryType.value,
+      keyword: keyword.value,
+      dateFrom: dateFrom.value,
+      dateTo: dateTo.value,
+    }),
+  )
+}
+
+function restoreDcFilters() {
+  const raw = sessionStorage.getItem(DC_FILTER_KEY)
+  if (!raw) return false
+  try {
+    const saved = JSON.parse(raw) as {
+      entryType?: string
+      keyword?: string
+      dateFrom?: string
+      dateTo?: string
+    }
+    if (saved.entryType && ENTRY_LABELS[saved.entryType]) entryType.value = saved.entryType
+    if (typeof saved.keyword === 'string') keyword.value = saved.keyword
+    if (typeof saved.dateFrom === 'string') dateFrom.value = saved.dateFrom
+    if (typeof saved.dateTo === 'string') dateTo.value = saved.dateTo
+    return true
+  } catch {
+    return false
   }
+}
+
+onMounted(() => {
+  const presetKeyword = typeof route.query.keyword === 'string' ? route.query.keyword : ''
+  const presetType = typeof route.query.entryType === 'string' ? route.query.entryType : ''
+  if (presetKeyword || (presetType && ENTRY_LABELS[presetType])) {
+    if (presetType && ENTRY_LABELS[presetType]) entryType.value = presetType
+    if (presetKeyword) {
+      keyword.value = presetKeyword
+      searchEntry().then(() => {
+        const hit = entries.value.find((item) => (item.entryLabel || '').includes(presetKeyword)) || entries.value[0]
+        if (hit) pickEntry(hit)
+      })
+    }
+    return
+  }
+  filterRestored.value = restoreDcFilters()
 })
 
 function fmt(n: unknown) {
@@ -472,6 +523,8 @@ function applyResult(data: TracePayload | undefined, degraded: boolean) {
 }
 
 async function searchEntry() {
+  filterRestored.value = false
+  persistDcFilters()
   error.value = ''
   searched.value = false
   selectedEntry.value = null
@@ -571,6 +624,8 @@ async function loadAggregate() {
 }
 
 async function onSubmit() {
+  filterRestored.value = false
+  persistDcFilters()
   if (selectedEntry.value) {
     if (viewMode.value === 'AGGREGATE') await loadAggregate()
     else await runQuery()
@@ -633,13 +688,24 @@ async function exportReport() {
         format: exportFormat.value,
       },
     })
-    const downloadUrl = res.data.data?.downloadUrl as string
+    const payload = (res.data.data || {}) as { downloadUrl?: string; expiresIn?: number; sessionCount?: number }
+    const downloadUrl = payload.downloadUrl || ''
+    if (!downloadUrl) {
+      error.value = '导出失败'
+      return
+    }
     const token = localStorage.getItem('ims_access')
     const fileRes = await fetch(downloadUrl, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (!fileRes.ok) {
-      error.value = `导出失败（${fileRes.status}）`
+      let body: { code?: number; msg?: string } = {}
+      try {
+        body = await fileRes.json()
+      } catch {
+        body = {}
+      }
+      error.value = body.code === 1002 ? '下载链接已过期，请重新导出' : body.msg || `导出失败（${fileRes.status}）`
       return
     }
     const blob = await fileRes.blob()
@@ -649,7 +715,9 @@ async function exportReport() {
     a.download = `dc_trace_report.${ext}`
     a.click()
     URL.revokeObjectURL(a.href)
-    exportNote.value = `已导出 ${exportFormat.value}`
+    const ttl = Number(payload.expiresIn || 0)
+    const emptyFile = payload.sessionCount === 0 ? ' · 当前入口无场次，文件仅含表头' : ''
+    exportNote.value = `已导出 ${exportFormat.value}${ttl > 0 ? ` · ${ttl} 秒内有效` : ''}${emptyFile}`
   } catch (err) {
     const fail = asApiFail(err)
     error.value = fail?.msg || '导出失败'

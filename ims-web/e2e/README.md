@@ -90,6 +90,7 @@
 | **E2E-S12-05 切片 · share-approve (#40)** | `closure-bi-share-approve.spec.ts` | UI 敏感分享 →「分享审批」Tab 通过/驳回 → 分享链接 Tab 状态 |
 | **E2E-S12-05 EXPIRED · share-expired (#41)** | `closure-bi-share-expired.spec.ts` | UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」 |
 | **E2E-S12-02 (#87)** | `closure-bi-drill-pack.spec.ts` | 设计器拖入表格 → 六维逐级下钻 → 末端 **1195** → 导出 xlsx → 单元格穿透来源模块详情 |
+| **E2E-S12 切片 · BI/DC 本地收尾 (#150)** | `closure-bi-dc-tails.spec.ts` | 预览筛选记住 · 窗外指标卡空态 · 返回上卷 · 导出 60 秒 · 工作台来源 BI/DC |
 | **WORKBENCH · AUTH-004 (#46)** | `closure-workbench-todo-message.spec.ts` | 种子未读消息标已读 · 种子待办关闭 · dashboard 计数联动 |
 
 ### 纯 UI 门禁（closure · Checklist v2.6.44+）

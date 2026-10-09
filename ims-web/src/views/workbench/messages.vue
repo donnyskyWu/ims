@@ -7,9 +7,22 @@
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="readAll">全部已读</button>
+        <router-link
+          v-if="sourceModule === 'BI'"
+          class="btn btn-sec btn-sm"
+          data-testid="wb-back-bi"
+          to="/ims/bi/report/preview"
+        >返回报表预览</router-link>
+        <router-link
+          v-if="sourceModule === 'DC'"
+          class="btn btn-sec btn-sm"
+          data-testid="wb-back-dc"
+          to="/ims/dc/trace"
+        >返回穿透查询</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/workbench">工作台首页</router-link>
       </div>
     </div>
+    <p v-if="sourceModule" class="hint" data-testid="wb-source-filter">来源 {{ sourceModule }}</p>
     <form class="qbar" @submit.prevent="load">
       <select v-model="filters.read" style="width: 110px">
         <option value="">全部</option>
@@ -35,10 +48,14 @@
             <tr v-if="loading">
               <td colspan="5"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!rows.length">
-              <td colspan="5"><div class="empty"><div class="et">{{ error || '暂无消息' }}</div></div></td>
+            <tr v-else-if="!visibleRows.length">
+              <td colspan="5">
+                <div class="empty" :data-testid="sourceModule ? 'wb-source-empty' : undefined">
+                  <div class="et">{{ emptyText }}</div>
+                </div>
+              </td>
             </tr>
-            <tr v-for="row in rows" v-else :key="row.id">
+            <tr v-for="row in visibleRows" v-else :key="row.id">
               <td>{{ row.title }}</td>
               <td>{{ row.sourceModule || '—' }}</td>
               <td>{{ row.read ? '是' : '否' }}</td>
@@ -57,15 +74,30 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 
 type Row = { id: number; title: string; sourceModule?: string; read: boolean; createdAt?: string }
 
+const route = useRoute()
 const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const filters = reactive({ read: 'false' })
+const sourceModule = computed(() => {
+  const raw = route.query.sourceModule
+  return typeof raw === 'string' ? raw : ''
+})
+const visibleRows = computed(() => {
+  if (!sourceModule.value) return rows.value
+  return rows.value.filter((row) => (row.sourceModule || '') === sourceModule.value)
+})
+const emptyText = computed(() => {
+  if (error.value) return error.value
+  if (sourceModule.value) return `来源 ${sourceModule.value} 暂无消息`
+  return '暂无消息'
+})
 
 async function load() {
   loading.value = true
