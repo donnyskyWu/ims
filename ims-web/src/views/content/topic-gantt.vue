@@ -16,6 +16,7 @@
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="topic-gantt-query" :disabled="loading">查询</button>
     </form>
+    <p class="hint" data-testid="topic-gantt-scope">只显示已填写计划发布日的选题。落选或已取消若仍留有日期，按该日打点，状态写在行首。</p>
     <p v-if="error" class="hint bad" data-testid="topic-gantt-error">{{ error }}</p>
     <p v-else-if="conflictCount" class="hint warn" data-testid="topic-gantt-conflict-summary">
       {{ conflictCount }} 条选题同账号同日超量，仅提示，不阻断排期
@@ -38,12 +39,13 @@
                 <div class="empty"><div class="et">{{ emptyText }}</div></div>
               </td>
             </tr>
-            <tr
+              <tr
               v-for="item in items"
               v-else
               :key="item.topicNo"
               data-testid="topic-gantt-row"
               :data-topic="item.topicNo"
+              :data-status="item.topicStatus"
             >
               <td class="sticky">
                 <b>{{ item.title }}</b>
@@ -51,6 +53,7 @@
                 <div class="meta">
                   {{ statusLabel(item.topicStatus) }}
                   <span v-if="item.sopName"> · {{ item.sopName }}</span>
+                  <span v-if="traceStatus(item.topicStatus)" data-testid="topic-gantt-trace"> · 日期留痕</span>
                 </div>
                 <div v-if="item.conflictHint" class="hint warn" data-testid="topic-gantt-conflict">{{ item.conflictHint }}</div>
               </td>
@@ -61,7 +64,7 @@
                 :data-date="day"
                 :class="cellClass(item, day)"
                 :data-testid="item.planPublishDate === day ? 'topic-gantt-mark' : undefined"
-                :title="item.planPublishDate === day ? item.title : ''"
+                :title="item.planPublishDate === day ? markTitle(item) : ''"
               >
                 <span v-if="item.planPublishDate === day" class="bar" />
               </td>
@@ -108,6 +111,14 @@ const emptyText = computed(() => (days.value.length ? '该区间暂无排期' : 
 
 function statusLabel(status: string) {
   return STATUS_LABEL[status] || status
+}
+
+function traceStatus(status: string) {
+  return status === 'REJECTED' || status === 'CANCELLED'
+}
+
+function markTitle(item: GanttItem) {
+  return `${item.title} · ${statusLabel(item.topicStatus)}`
 }
 
 function pad(value: number) {
