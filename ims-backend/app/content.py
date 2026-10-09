@@ -24,6 +24,7 @@ from app.models import (
     User,
 )
 from app.ops_models import IpGroup, PlatformAccount
+from app.content_review_preview import build_content_preview
 from app.settings_runtime import param_bool
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -678,6 +679,10 @@ def review_detail(review_no: str, db: Session = Depends(db_session), actor: User
             passed = bool(row.checklist_result[item["itemCode"]])
         checklist.append({**item, "passed": passed})
     data["checklist"] = checklist
+    project = db.get(ContentProject, row.content_project_id)
+    if project is not None and (project.deleted or (project.tenant_id or 0) != tenant(actor)):
+        project = None
+    data["contentPreview"] = build_content_preview(project)
     return ok(data)
 
 
