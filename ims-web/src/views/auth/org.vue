@@ -44,7 +44,38 @@
       <div class="tab" :class="{ on: tab === 'users' }" @click="tab = 'users'">人员列表</div>
       <div class="tab" :class="{ on: tab === 'events' }" @click="tab = 'events'">同步事件</div>
     </div>
-    <div v-if="tab === 'users'" class="tbl-block">
+    <template v-if="tab === 'users'">
+    <div class="card" data-testid="org-dept-tree" style="margin-bottom: 12px">
+      <div style="font-weight: 600; margin-bottom: 8px">部门树</div>
+      <div class="sub" style="margin-bottom: 8px">来自已同步人员的部门，不另建部门接口。</div>
+      <form class="qbar" style="margin-bottom: 10px" @submit.prevent>
+        <input v-model="deptQuery" data-testid="org-dept-filter" placeholder="筛选部门" style="width: 180px" />
+        <button class="btn btn-sec btn-sm" type="button" data-testid="org-dept-all" @click="clearDept">全部部门</button>
+      </form>
+      <div v-if="!deptReady" class="empty"><div class="et">加载中</div></div>
+      <div v-else-if="!deptNodes.length" class="empty" data-testid="org-dept-empty">
+        <div class="et">还没有部门</div>
+        <div class="es">模拟入职或钉钉同步写入部门后，部门会显示在这里。</div>
+      </div>
+      <div v-else-if="!visibleDeptNodes.length" class="empty" data-testid="org-dept-empty">
+        <div class="et">没有匹配的部门</div>
+        <div class="es">换一个部门名称或编号再筛。</div>
+      </div>
+      <div v-else class="cattabs" style="margin-bottom: 0">
+        <button
+          v-for="node in visibleDeptNodes"
+          :key="node.id"
+          class="cattab"
+          :class="{ on: selectedDeptId === node.id }"
+          type="button"
+          data-testid="org-dept-node"
+          @click="pickDept(node.id)"
+        >
+          {{ node.name }}<span class="cbadge">{{ node.count }}</span>
+        </button>
+      </div>
+    </div>
+    <div class="tbl-block">
       <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchUsers">
         <input v-model="keyword" data-testid="org-user-keyword" placeholder="姓名 / 钉钉用户" style="width: 180px" />
         <button class="btn btn-pri btn-sm" type="submit" data-testid="org-user-search">查询</button>
@@ -71,7 +102,7 @@
             <tr v-else-if="!users.length">
               <td colspan="9" style="white-space: normal">
                 <div class="empty">
-                  <div class="et">{{ userError || '没有已同步人员' }}</div>
+                  <div class="et">{{ userError || userEmpty }}</div>
                   <div class="es">人员来自验签后的组织事件，列表只展示接口返回的行。</div>
                 </div>
               </td>
@@ -96,6 +127,7 @@
       </div>
       <div class="pager"><span class="pg-total">共 {{ userTotal }} 条</span></div>
     </div>
+    </template>
     <div v-else class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -192,8 +224,41 @@ const msg = ref('')
 const confirming = ref(false)
 const tab = ref<'users' | 'events'>('users')
 const keyword = ref('')
+const deptQuery = ref('')
+const deptCatalog = ref<Record<string, unknown>[]>([])
+const deptReady = ref(false)
+const selectedDeptId = ref<number | null>(null)
 const detailOpen = ref(false)
 const detail = ref<Record<string, unknown> | null>(null)
+
+type DeptNode = { id: number; name: string; count: number }
+
+const deptNodes = computed(() => {
+  const map = new Map<number, DeptNode>()
+  for (const row of deptCatalog.value) {
+    const ids = Array.isArray(row.deptIds) ? row.deptIds.map((item) => Number(item)).filter((id) => id > 0) : []
+    const names = Array.isArray(row.deptNames) ? row.deptNames.map((item) => String(item || '')) : []
+    ids.forEach((id, index) => {
+      const name = names[index] || names.find((item) => item) || `部门 ${id}`
+      const prev = map.get(id)
+      if (prev) prev.count += 1
+      else map.set(id, { id, name, count: 1 })
+    })
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+})
+
+const visibleDeptNodes = computed(() => {
+  const query = deptQuery.value.trim()
+  if (!query) return deptNodes.value
+  return deptNodes.value.filter((node) => node.name.includes(query) || String(node.id).includes(query))
+})
+
+const userEmpty = computed(() => {
+  if (selectedDeptId.value) return '该部门下没有已同步人员'
+  if (keyword.value.trim()) return '没有匹配的人员'
+  return '没有已同步人员'
+})
 
 const diff = computed(() => {
   const value = detail.value?.permissionDiff
@@ -273,11 +338,10 @@ async function load() {
   metricError.value = metricRes.error
   if (metricRes.data && typeof metricRes.data === 'object') Object.assign(metrics, metricRes.data)
 
-  const userRes = await readData('/auth/org/users', {
-    pageNo: 1,
-    pageSize: 20,
-    keyword: keyword.value.trim() || undefined,
-  })
+  const userParams: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+  if (keyword.value.trim()) userParams.keyword = keyword.value.trim()
+  if (selectedDeptId.value) userParams.deptId = selectedDeptId.value
+  const userRes = await readData('/auth/org/users', userParams)
   userReady.value = true
   userError.value = userRes.error
   users.value = asList(userRes.data)
@@ -294,9 +358,26 @@ async function load() {
     : events.value.length
 }
 
+async function loadDeptTree() {
+  const res = await readData('/auth/org/users', { pageNo: 1, pageSize: 100 })
+  deptReady.value = true
+  deptCatalog.value = asList(res.data)
+}
+
 function searchUsers() {
   userReady.value = false
   load()
+}
+
+function clearDept() {
+  selectedDeptId.value = null
+  deptQuery.value = ''
+  searchUsers()
+}
+
+function pickDept(id: number) {
+  selectedDeptId.value = selectedDeptId.value === id ? null : id
+  searchUsers()
 }
 
 function openUser(row: Record<string, unknown>) {
@@ -319,11 +400,14 @@ async function reconcile() {
       : '同步完成'
     confirming.value = false
     tab.value = 'users'
-    await load()
+    await Promise.all([load(), loadDeptTree()])
   } catch (error) {
     msg.value = errorMessage(error)
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadDeptTree()
+})
 </script>

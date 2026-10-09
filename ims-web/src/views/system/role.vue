@@ -6,7 +6,7 @@
         <div class="sub">SYS-002 · 角色=权限唯一载体 · 菜单 + 功能点 R/W/D + 数据范围 + 钉钉岗位</div>
       </div>
       <div class="acts">
-        <input v-model="positionName" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
+        <input v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
         <button class="btn btn-pri" type="button" @click="fromPosition">从岗位生成角色</button>
       </div>
     </div>
@@ -17,6 +17,11 @@
       <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">PENDING_CONFIG</div></div>
       <div class="card stat"><span class="l">自动创建</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
       <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">ENABLED</div></div>
+    </div>
+    <div class="cattabs" data-testid="role-status-tabs">
+      <button class="cattab" :class="{ on: statusFilter === '' }" type="button" @click="statusFilter = ''">全部</button>
+      <button class="cattab" :class="{ on: statusFilter === 'PENDING_CONFIG' }" type="button" data-testid="role-status-pending" @click="statusFilter = 'PENDING_CONFIG'">待配置</button>
+      <button class="cattab" :class="{ on: statusFilter === 'ENABLED' }" type="button" @click="statusFilter = 'ENABLED'">启用</button>
     </div>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -38,10 +43,15 @@
             <tr v-if="!ready">
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '没有角色' }}</div></div></td>
+            <tr v-else-if="!filtered.length">
+              <td colspan="9">
+                <div class="empty" data-testid="role-list-empty">
+                  <div class="et">{{ error || (statusFilter ? '没有符合条件的角色' : '没有角色') }}</div>
+                  <div v-if="statusFilter === 'PENDING_CONFIG'" class="es">从钉钉岗位生成的角色会停在待配置，权限矩阵为空时不放行。</div>
+                </div>
+              </td>
             </tr>
-            <tr v-for="row in rows" v-else :key="String(row.id)">
+            <tr v-for="row in filtered" v-else :key="String(row.id)" data-testid="role-row">
               <td class="mono">{{ cell(row, ['roleKey']) }}</td>
               <td>{{ cell(row, ['roleName']) }}</td>
               <td class="num">{{ menuCount(row) }}</td>
@@ -55,7 +65,7 @@
                 </span>
               </td>
               <td>
-                <button class="btn btn-txt" type="button" @click="openEdit(row)">编辑权限</button>
+                <button class="btn btn-txt" type="button" data-testid="role-edit" @click="openEdit(row)">编辑权限</button>
                 <button class="btn btn-txt" type="button" @click="preview(row)">预览</button>
               </td>
             </tr>
@@ -69,6 +79,10 @@
       <pre v-else class="mono" style="white-space: pre-wrap; margin: 8px 0 0">{{ diff }}</pre>
     </div>
     <ProtoDrawer :open="drawer" title="编辑角色权限" @close="drawer = false">
+      <div v-if="!draft.menuIds.length" class="empty" data-testid="role-matrix-empty" style="margin-bottom: 12px">
+        <div class="et">权限矩阵为空</div>
+        <div class="es">待配置角色在勾选功能点并保存前不放行任何权限。</div>
+      </div>
       <div class="fld" style="margin-bottom: 12px">
         <label>数据范围（本部门不含下级）</label>
         <select v-model="draft.scope">
@@ -120,6 +134,7 @@ const error = ref('')
 const diff = ref('')
 const previewError = ref('')
 const positionName = ref('')
+const statusFilter = ref('')
 const drawer = ref(false)
 const saveError = ref('')
 const editingId = ref<number | string>('')
@@ -130,6 +145,9 @@ const user = useUserStore()
 const pending = computed(() => rows.value.filter((row) => row.status === 'PENDING_CONFIG').length)
 const autoCount = computed(() => rows.value.filter((row) => row.source === 'DINGTALK_AUTO').length)
 const enabled = computed(() => rows.value.filter((row) => row.status === 'ENABLED').length)
+const filtered = computed(() =>
+  statusFilter.value ? rows.value.filter((row) => row.status === statusFilter.value) : rows.value,
+)
 
 function menuCount(row: Record<string, unknown>) {
   return Array.isArray(row.menuIds) ? row.menuIds.length : 0
