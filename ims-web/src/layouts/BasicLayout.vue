@@ -64,6 +64,7 @@
           <Ico name="search" :size="14" />
           <input v-model="query" placeholder="搜索菜单…" />
         </div>
+        <MessageBell />
         <div ref="roleBtn" class="rolebtn" @click="userMenu = !userMenu">
           <span class="av" style="background:#34c759">{{ initial }}</span>
           <span>{{ displayName }}</span>
@@ -87,6 +88,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Ico from '../components/Ico.vue'
+import MessageBell from '../components/MessageBell.vue'
 import { codeLabel, crumbOf, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
 import { useUserStore } from '../stores/user'
 

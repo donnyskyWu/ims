@@ -16,6 +16,12 @@
     </div>
     <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
     <div class="g4">
+      <div v-if="dashReady && !kpis.length" class="card" data-testid="home-kpi-empty">
+        <div class="empty">
+          <div class="et">{{ error || '暂无指标' }}</div>
+          <div class="es">当前筛选下没有可展示的指标卡片</div>
+        </div>
+      </div>
       <div
         v-for="kpi in kpis"
         :key="kpi.key"
@@ -33,7 +39,10 @@
           <h3>播放 / 互动</h3>
           <span class="csub">占位趋势 · 不请求 Football</span>
         </div>
-        <div class="bars">
+        <div v-if="dashReady && !trend.length" class="empty" data-testid="home-trend-empty">
+          <div class="et">暂无播放趋势</div>
+        </div>
+        <div v-else class="bars">
           <div
             v-for="(pt, idx) in trend"
             :key="idx"
@@ -47,9 +56,11 @@
           <h3>待办聚合</h3>
           <span class="csub">不请求 OPS</span>
         </div>
-        <div v-if="!todos.length" class="empty"><div class="et">暂无待办</div></div>
+        <div v-if="!dashReady" class="empty"><div class="et">加载中</div></div>
+        <div v-else-if="!todos.length" class="empty" data-testid="home-todo-empty"><div class="et">暂无待办</div></div>
         <div
           v-for="(row, idx) in todos"
+          v-else
           :key="idx"
           class="mg-i"
           style="border-radius: 8px; cursor: pointer"
@@ -63,7 +74,13 @@
       </div>
     </div>
     <div class="sec">快捷入口</div>
-    <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px">
+    <div v-if="dashReady && !shortcuts.length" class="card" data-testid="home-shortcut-empty">
+      <div class="empty">
+        <div class="et">暂无可用快捷入口</div>
+        <div class="es">当前账号没有可打开的快捷入口</div>
+      </div>
+    </div>
+    <div v-else-if="shortcuts.length" style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px">
       <div
         v-for="sc in shortcuts"
         :key="sc.code"
@@ -88,6 +105,7 @@ const todos = ref<{ type: string; title: string; bizId: string; url: string }[]>
 const shortcuts = ref<{ code: string; name: string; route: string }[]>([])
 const trend = ref<{ label: string; play: number; engage: number }[]>([])
 const error = ref('')
+const dashReady = ref(false)
 const ipGroupId = ref<number | null>(null)
 const rangeDays = ref(7)
 
@@ -116,6 +134,8 @@ async function loadDashboard() {
     trend.value = data.trendPlayEngage || []
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '网络错误'
+  } finally {
+    dashReady.value = true
   }
 }
 

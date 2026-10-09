@@ -113,6 +113,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import { notifyInboxChanged } from '../../inbox/sync'
 
 type Row = {
   id: number
@@ -199,12 +200,14 @@ function openDetail(row: Row) {
 async function readOne(id: number) {
   await http.put(`/auth/workbench/messages/${id}/read`)
   if (detail.value?.id === id) detail.value = { ...detail.value, read: true }
+  notifyInboxChanged()
   await load()
 }
 
 async function readAll() {
   await http.put('/auth/workbench/messages/read-all')
   detailOpen.value = false
+  notifyInboxChanged()
   await load()
 }
 

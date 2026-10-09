@@ -135,7 +135,21 @@
         </table>
       </div>
     </div>
-    <div class="sec">消息</div>
+    <div class="sec rowline" style="justify-content: space-between; align-items: center">
+      <span>
+        消息
+        <span
+          v-if="dashReady && (dash.unreadMessageCount || 0) > 0"
+          class="badge"
+          style="position: static; margin-left: 8px"
+          data-testid="wb-msg-unread"
+        >{{ dash.unreadMessageCount }}</span>
+      </span>
+      <span>
+        <button class="btn btn-txt btn-sm" type="button" data-testid="wb-msg-read-all" @click="readAll">全部已读</button>
+        <router-link class="btn btn-txt btn-sm" to="/ims/workbench/messages">查看更多</router-link>
+      </span>
+    </div>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -172,10 +186,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import { asList, cell, readData } from '../../api/read'
+import { notifyInboxChanged, onInboxChanged } from '../../inbox/sync'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
@@ -289,6 +304,18 @@ async function read(row: Record<string, unknown>) {
   }
   try {
     await http.put(`/auth/workbench/messages/${id}/read`)
+    notifyInboxChanged()
+    await load()
+  } catch (error) {
+    actionError.value = errorMessage(error)
+  }
+}
+
+async function readAll() {
+  actionError.value = ''
+  try {
+    await http.put('/auth/workbench/messages/read-all')
+    notifyInboxChanged()
     await load()
   } catch (error) {
     actionError.value = errorMessage(error)
@@ -310,5 +337,10 @@ async function closeTodo(row: Record<string, unknown>) {
   }
 }
 
-onMounted(load)
+let stopInbox: (() => void) | null = null
+onMounted(() => {
+  load()
+  stopInbox = onInboxChanged(load)
+})
+onBeforeUnmount(() => stopInbox?.())
 </script>
