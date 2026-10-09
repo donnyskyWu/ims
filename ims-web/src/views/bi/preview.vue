@@ -131,6 +131,7 @@
 </template>
 
 <script setup lang="ts">
+import axios from 'axios'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
@@ -205,9 +206,13 @@ function restoreFilters() {
 }
 
 function rejected(error: unknown): { code: number; msg: string } | null {
-  if (error && typeof error === 'object' && 'code' in error) {
-    const body = error as { code?: number; msg?: string }
-    if (typeof body.code === 'number') return { code: body.code, msg: body.msg || '' }
+  const direct = error as { code?: number; msg?: string }
+  if (error && typeof error === 'object' && typeof direct.code === 'number') {
+    return { code: direct.code, msg: direct.msg || '' }
+  }
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { code?: number; msg?: string } | undefined
+    if (data && typeof data.code === 'number') return { code: data.code, msg: data.msg || '' }
   }
   return null
 }
