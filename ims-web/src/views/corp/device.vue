@@ -18,6 +18,15 @@
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
+      <select
+        v-if="kind === 'phone'"
+        v-model="phoneType"
+        style="width: 140px"
+        data-testid="master-phone-type"
+      >
+        <option value="">全部类型</option>
+        <option v-for="item in phoneTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
       <select v-if="kind === 'phone'" v-model="status" style="width: 120px">
         <option value="">全部状态</option>
         <option v-for="item in phoneStatus" :key="item.value" :value="item.value">{{ item.label }}</option>
@@ -78,9 +87,9 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
-                <div class="empty">
-                  <div class="et">{{ error || meta.empty }}</div>
-                  <div class="es">{{ meta.emptyHint }}</div>
+                <div class="empty" :data-testid="kind === 'phone' ? 'master-phone-empty' : undefined">
+                  <div class="et">{{ error || emptyTitle }}</div>
+                  <div class="es">{{ emptyHintText }}</div>
                 </div>
               </td>
             </tr>
@@ -122,6 +131,7 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
+    <p v-if="kind === 'phone'" class="hint" data-testid="master-phone-type-hint">{{ phoneTypeHint }}</p>
     <p class="hint">{{ meta.hint }}</p>
     <ProtoDrawer :open="detailOpen" title="手机详情" width="480px" @close="detailOpen = false">
       <div v-if="detail" class="formrow one">
@@ -130,7 +140,7 @@
           <div>{{ show(detail, key) }}</div>
         </div>
       </div>
-      <div class="hint">绑定账号 0 个。没有实名人字段。影像只保存 key，不提供上传。</div>
+      <div class="hint" data-testid="master-phone-linked">{{ phoneLinkedHint }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
       </template>
@@ -152,7 +162,7 @@
       <div class="formrow one">
         <div class="fld">
           <label>类型</label>
-          <select v-model="form.phoneType">
+          <select v-model="form.phoneType" data-testid="master-phone-form-type">
             <option value="">可不选</option>
             <option v-for="item in phoneTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
@@ -519,6 +529,7 @@ const total = ref(0)
 const pageNo = ref(1)
 const pageSize = ref(10)
 const keyword = ref('')
+const phoneType = ref('')
 const status = ref('')
 const ownerFilter = ref('')
 const assetTypeFilter = ref('')
@@ -672,6 +683,28 @@ const specs: Record<string, {
 }
 
 const meta = computed(() => specs[kind.value] || specs.office)
+const phoneFiltering = computed(
+  () => kind.value === 'phone' && Boolean(keyword.value.trim() || phoneType.value || status.value),
+)
+const emptyTitle = computed(() => (phoneFiltering.value ? '没有符合筛选的记录' : meta.value.empty))
+const emptyHintText = computed(() => {
+  if (error.value) return meta.value.emptyHint
+  if (phoneFiltering.value) return '换个编号、型号、类型或状态，或点重置。'
+  return meta.value.emptyHint
+})
+const phoneDictReady = ref(false)
+const phoneTypeHint = computed(() => {
+  if (!phoneDictReady.value) return '类型来自字典 dict_phone_type。'
+  return phoneTypes.value.length
+    ? '类型来自字典 dict_phone_type。停用项和未列入字典的类型不会出现在下拉里。'
+    : '字典 dict_phone_type 没有启用项，暂时不能按类型筛选。'
+})
+const phoneLinkedHint = computed(() => {
+  const list = detail.value?.linkedAccounts
+  const count = Array.isArray(list) ? list.length : 0
+  const linked = count ? `绑定账号 ${count} 个` : '暂无绑定账号'
+  return `${linked}。没有实名人字段。影像只保存 key，不提供上传。`
+})
 const assetStatusOptions = computed(() => (assetStatuses.value.length ? assetStatuses.value : fallbackStatus))
 const importErrors = computed(() => (importResult.value?.errors as Row[] | undefined) || [])
 const importOk = computed(() => (importResult.value?.imported as Row[] | undefined) || [])
@@ -779,14 +812,18 @@ async function loadUserOptions() {
 }
 
 async function preparePhone() {
-  const [st, types, userPage] = await Promise.all([
-    loadDict('dict_phone_status'),
-    loadDict('dict_phone_type'),
-    loadUserOptions(),
-  ])
-  phoneStatus.value = st
-  phoneTypes.value = types
-  users.value = userPage
+  try {
+    const [st, types, userPage] = await Promise.all([
+      loadDict('dict_phone_status'),
+      loadDict('dict_phone_type'),
+      loadUserOptions(),
+    ])
+    phoneStatus.value = st
+    phoneTypes.value = types
+    users.value = userPage
+  } finally {
+    phoneDictReady.value = true
+  }
 }
 
 function bizError(error: unknown) {
@@ -827,6 +864,7 @@ async function load() {
       if (/^[A-Za-z0-9-]+$/.test(text) && !/^\d{11}$/.test(text)) query.deviceNumber = text
       else query.phoneModel = text
     }
+    if (kind.value === 'phone' && phoneType.value) query.phoneType = phoneType.value
     if (kind.value === 'phone' && status.value) query.status = status.value
     if (kind.value !== 'phone') {
       Object.assign(query, ledgerQuery(false))
@@ -854,6 +892,7 @@ function search() {
 
 function reset() {
   keyword.value = ''
+  phoneType.value = ''
   status.value = ''
   ownerFilter.value = ''
   assetTypeFilter.value = ''
@@ -1578,6 +1617,7 @@ function submitScrap() {
 
 watch(kind, async () => {
   keyword.value = ''
+  phoneType.value = ''
   status.value = ''
   ownerFilter.value = ''
   assetTypeFilter.value = ''

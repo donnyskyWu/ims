@@ -66,6 +66,20 @@ def test_phone_follows_master_contract():
     assert "realnameId" not in created.json()["data"]
     listed = client.get("/admin-api/ims/corp/device/phone/page", headers=auth, params={"deviceNumber": "DV-9"})
     assert listed.json()["data"]["total"] == 1
+    typed = client.get(
+        "/admin-api/ims/master/phone/page",
+        headers=auth,
+        params={"phoneType": "IPHONE", "deviceNumber": "DV-9"},
+    )
+    assert typed.json()["code"] == 0
+    assert typed.json()["data"]["total"] == 1
+    assert typed.json()["data"]["list"][0]["phoneType"] == "IPHONE"
+    other = client.get(
+        "/admin-api/ims/master/phone/page",
+        headers=auth,
+        params={"phoneType": "ANDROID", "deviceNumber": "DV-9"},
+    )
+    assert other.json()["data"]["total"] == 0
     again = client.post(
         "/admin-api/ims/master/phone",
         headers=auth,

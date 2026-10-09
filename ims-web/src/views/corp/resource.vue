@@ -345,6 +345,22 @@
           <label>{{ item.label }}</label>
           <div>{{ item.value }}</div>
         </div>
+        <template v-if="kind === 'company'">
+          <div class="fld">
+            <label>地址</label>
+            <div data-testid="master-company-address">{{ companyAddressText }}</div>
+          </div>
+          <div class="fld">
+            <label>扩容记录</label>
+            <div v-if="!expansionItems.length" class="empty" data-testid="master-company-expansion-empty">
+              <div class="et">暂无扩容记录</div>
+              <div class="es">容量变更会记在这里。当前没有扩容。</div>
+            </div>
+            <ul v-else data-testid="master-company-expansion">
+              <li v-for="(item, index) in expansionItems" :key="index">{{ expansionText(item) }}</li>
+            </ul>
+          </div>
+        </template>
       </div>
       <div
         v-if="kind === 'certificate' && viewError"
@@ -807,6 +823,14 @@ const detailLines = computed(() => {
   if (!detail.value) return []
   return meta.value.keys.map((key) => ({ label: labelOf(key), value: show(detail.value || {}, key) }))
 })
+const companyAddressText = computed(() => {
+  const text = String(detail.value?.address || '').trim()
+  return text || '未填写地址'
+})
+const expansionItems = computed(() => {
+  const raw = detail.value?.expansionHistory
+  return Array.isArray(raw) ? raw : []
+})
 
 const labels: Record<string, string> = {
   companyName: '公司',
@@ -836,8 +860,19 @@ function labelOf(key: string) {
   return labels[key] || key
 }
 
+function expansionText(item: unknown) {
+  if (!item || typeof item !== 'object') return String(item ?? '—')
+  const row = item as Row
+  const date = String(row.date || '—')
+  const from = row.from ?? '—'
+  const to = row.to ?? '—'
+  const operator = row.operator ? ` · ${row.operator}` : ''
+  return `${date}　${from} → ${to}${operator}`
+}
+
 function show(row: Row, key: string) {
   const value = row[key]
+  if (key === 'industry' && (value === undefined || value === null || String(value).trim() === '')) return '未填写行业'
   if (value === undefined || value === null || value === '') return '—'
   if (key === 'status') return statusLabel(String(value))
   if (key === 'operator') return operators.value.find((item) => item.value === value)?.label || String(value)
