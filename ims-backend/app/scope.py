@@ -342,6 +342,7 @@ PREFIXES = [
     ("POST", "/admin-api/ims/perf/execution", "ims_perf_record"),
     ("GET", "/admin-api/ims/dc/trace", "ims_live_session"),
     ("POST", "/admin-api/ims/dc/trace", "ims_live_session"),
+    ("GET", "/admin-api/ims/dc/dashboard", "ims_live_session"),
     ("GET", "/admin-api/ims/alert/rule", "ims_alert_rule"),
     ("POST", "/admin-api/ims/alert/rule", "ims_alert_rule"),
     ("PUT", "/admin-api/ims/alert/rule", "ims_alert_rule"),

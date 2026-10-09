@@ -97,6 +97,7 @@ export const IMPLEMENTED: Record<string, string> = {
   trainStat: '/ims/train/stat',
   contentLayout: '/ims/content/layout',
   dc: '/ims/dc/trace',
+  dcDashboard: '/ims/dc/dashboard',
   eff: '/ims/eff',
   effRelation: '/ims/eff?tab=relation',
   effInventory: '/ims/eff?tab=inventory',

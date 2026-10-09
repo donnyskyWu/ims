@@ -88,6 +88,7 @@ const router = createRouter({
         { path: 'meet', component: () => import('../views/meet/index.vue') },
         { path: 'train/stat', component: () => import('../views/train/stat.vue') },
         { path: 'content/layout', component: () => import('../views/content/layout.vue') },
+        { path: 'dc/dashboard', component: () => import('../views/dc/dashboard.vue') },
         { path: 'dc/trace/perf', component: () => import('../views/dc/perf.vue') },
         { path: 'dc/trace', component: () => import('../views/dc/trace.vue') },
         { path: 'alert/rule', component: () => import('../views/alert/rule.vue') },

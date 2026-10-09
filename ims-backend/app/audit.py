@@ -54,6 +54,7 @@ def describe(method: str, path: str) -> tuple[str, str, str]:
         ("/auth/position", "岗位供给"),
         ("/auth/org", "组织"),
         ("/auth/workbench", "工作台"),
+        ("/dc/dashboard", "全链路看板"),
         ("/fin/dashboard", "利润看板"),
         ("/fin/share/result", "分成单"),
         ("/fin/cost", "成本"),

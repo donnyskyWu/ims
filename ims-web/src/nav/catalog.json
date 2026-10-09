@@ -949,6 +949,15 @@
       "parent": "数据分析",
       "desc": "DC-001 · /ims/dc/trace · 页内无 Tab"
     },
+    "dcDashboard": {
+      "no": "12",
+      "name": "全链路看板",
+      "code": "DC",
+      "icon": "chart",
+      "page": "全链路看板",
+      "parent": "数据分析",
+      "desc": "DC-003 · /ims/dc/dashboard · 经营总览、健康度、维度下钻"
+    },
     "eff": {
       "no": "19b",
       "name": "组织人效",
@@ -1326,6 +1335,7 @@
             "bi0Query",
             "biPreview",
             "dc",
+            "dcDashboard",
             "eff"
           ]
         },

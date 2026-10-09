@@ -70,6 +70,7 @@
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
 | **E2E-S2 窄切片 (#56)** | `closure-live-session-report.spec.ts` | 登记→风控→下播核准 · 19 位场次 · 列表 CONFIRMED |
 | **E2E-S12-01 场次下钻 (#53)** | `closure-dc-session-drill.spec.ts` | 账号穿透 → 场次明细抽屉（GMV/净利润/投流成本）→ 导出 XLSX → 宽日期 **1181** |
+| **E2E-S12 切片 · DC-003 (#129)** | `closure-dc-dashboard.spec.ts` | 纯 UI 核准场次 → 全链路看板总览 GMV/净利润 · 健康度目标 98 · 账号下钻到场次并跳穿透 |
 | **E2E-S12-切片 · push-now (#39)** | `closure-bi-subscribe-push-now.spec.ts` | UI 新建报表+订阅 →「立即推送」→ 快照 GMV · 推送结果/上次推送 |
 | **E2E-S12-05 切片 · share-approve (#40)** | `closure-bi-share-approve.spec.ts` | UI 敏感分享 →「分享审批」Tab 通过/驳回 → 分享链接 Tab 状态 |
 | **E2E-S12-05 EXPIRED · share-expired (#41)** | `closure-bi-share-expired.spec.ts` | UI 敏感分享审批通过 →「分享链接」Tab「标记过期」→「已过期」 |
