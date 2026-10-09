@@ -23,7 +23,7 @@
 
     <div class="card" style="margin-bottom: 12px">
       <h3 style="margin: 0 0 12px">升级链路配置</h3>
-      <form class="qbar" @submit.prevent="saveConfig">
+      <form class="qbar" novalidate @submit.prevent="saveConfig">
         <label>
           一级（分钟）
           <input
