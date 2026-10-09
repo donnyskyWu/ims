@@ -310,7 +310,7 @@
         </div>
         <div class="fld">
           <label>凭证</label>
-          <div :data-testid="meta.platform === 'DOUYIN' ? 'dy-tab-mask' : 'ks-tab-mask'">
+          <div :data-testid="meta.platform === 'DOUYIN' ? 'dy-tab-mask' : meta.platform === 'WECHAT_CHANNELS' ? 'wx-tab-mask' : 'ks-tab-mask'">
             {{ detail.credentialMask || (detail.hasCookie ? '已配置（脱敏）' : '未配置') }}
           </div>
         </div>
@@ -478,6 +478,71 @@
             <router-link to="/ims/collect/kuaishou">快手内部账号采集</router-link>
             。
           </p>
+        </template>
+        <template v-if="meta.platform === 'WECHAT_CHANNELS'">
+          <div class="fld">
+            <label>平台账号 ID</label>
+            <div class="mono" data-testid="wx-tab-platform-id">{{ detail.platformAccountId || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>凭证引用</label>
+            <div class="mono">{{ detail.credentialRef || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>采集健康</label>
+            <div data-testid="wx-tab-health">{{ detail.healthLabel || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>最新粉丝</label>
+            <div data-testid="wx-tab-follower">{{ followerText(detail) }}</div>
+          </div>
+          <h3 style="margin: 8px 0; font-size: 14px">粉丝日快照</h3>
+          <table data-testid="wx-tab-follower-daily">
+            <thead>
+              <tr>
+                <th>统计日</th>
+                <th>粉丝数</th>
+                <th>新增</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!followerDailyOf(detail).length">
+                <td colspan="3">暂无粉丝日快照</td>
+              </tr>
+              <tr v-for="snap in followerDailyOf(detail)" :key="String(snap.statDate)">
+                <td>{{ snap.statDate }}</td>
+                <td data-testid="wx-tab-follower-count">{{ snap.followerCount }}</td>
+                <td>{{ snap.newFollowerCount }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="hint">
+            定时采集与立即采集见
+            <router-link to="/ims/collect/wechat-channels">视频号内部账号采集</router-link>
+            。
+          </p>
+          <h3 style="margin: 8px 0; font-size: 14px">采集记录</h3>
+          <table data-testid="wx-tab-logs">
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>条数</th>
+                <th>开始时间</th>
+                <th>错误</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!wxLogs.length">
+                <td colspan="4">暂无采集记录</td>
+              </tr>
+              <tr v-for="row in wxLogs" :key="row.id">
+                <td data-testid="wx-tab-log-status">{{ row.statusLabel || row.status }}</td>
+                <td data-testid="wx-tab-log-count">{{ row.recordCount }}</td>
+                <td>{{ row.startedAt }}</td>
+                <td>{{ row.errorSummary || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
         </template>
         <p class="hint">本 Tab 为 ADR-047 平台账号采集配置，不是 COLLECT 竞品账号配置。</p>
         <div class="acts" style="margin-top: 12px">
@@ -920,6 +985,7 @@ const collectSummary = ref('—')
 const ksPlatformAccountId = ref('')
 const ksCredential = ref('')
 const dyLogs = ref<Array<Record<string, unknown>>>([])
+const wxLogs = ref<Array<Record<string, unknown>>>([])
 
 const timelineEvents = ref<
   { id: number; eventType: string; refNo: string; snapshotSummary: string; eventTime: string }[]
@@ -1316,6 +1382,19 @@ async function loadDyLogs(accountId: unknown) {
   }
 }
 
+async function loadWxLogs(accountId: unknown) {
+  if (meta.value.platform !== 'WECHAT_CHANNELS' || !accountId) {
+    wxLogs.value = []
+    return
+  }
+  try {
+    const res = await http.get('/collect/wechat-channels/log/page', { params: { pageNo: 1, pageSize: 10, accountId } })
+    wxLogs.value = res.data?.data?.list || []
+  } catch {
+    wxLogs.value = []
+  }
+}
+
 async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   activeTab.value = tab
   collectMsg.value = ''
@@ -1327,8 +1406,10 @@ async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   collectSummary.value = String(data.collectBindSummary || '—')
   if (tab === 'collect') {
     await loadDyLogs(row.id)
+    await loadWxLogs(row.id)
   } else {
     dyLogs.value = []
+    wxLogs.value = []
   }
   try {
     const bindRes = await http.get(`/corp/account/${row.id}/collector-bind`)
@@ -1896,6 +1977,7 @@ watch(activeTab, (tab) => {
   }
   if (tab === 'collect' && detail.value?.id) {
     loadDyLogs(detail.value.id)
+    loadWxLogs(detail.value.id)
   }
 })
 </script>

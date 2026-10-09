@@ -30,10 +30,13 @@ from app.collector_client import (
     MSG_COOKIE,
     MSG_ENGINE,
     MSG_FOLLOWER,
+    WECHAT_CHANNELS_FOLLOWER_STATS_PATH,
+    WECHAT_CHANNELS_VIDEO_LIST_PATH,
 )
 
 DOUYIN_FOLLOWER_COUNT = 12880
 KUAISHOU_FOLLOWER_COUNT = 8600
+WECHAT_CHANNELS_FOLLOWER_COUNT = 24600
 
 _DOUYIN_VIDEOS = [
     {
@@ -90,6 +93,37 @@ _DOUYIN_FOLLOWERS = [
     {"follower_id": "dyf-3002", "nickname": "抖音粉丝乙", "followed_at": "2026-10-02 09:00:00"},
 ]
 
+_WECHAT_VIDEOS = [
+    {
+        "export_id": "wxv-4001",
+        "object_id": "obj-4001",
+        "title": "视频号内部作品甲",
+        "description": "视频号内部作品甲",
+        "create_time": "2026-10-05 12:00:00",
+        "read_count": 3200,
+        "like_count": 55,
+        "fav_count": 4,
+        "comment_count": 8,
+        "forward_count": 3,
+        "cover_url": "",
+        "duration": 19,
+    },
+    {
+        "export_id": "wxv-4002",
+        "object_id": "obj-4002",
+        "title": "视频号内部作品乙",
+        "description": "视频号内部作品乙",
+        "create_time": "2026-10-06 13:10:00",
+        "read_count": 1500,
+        "like_count": 22,
+        "fav_count": 1,
+        "comment_count": 3,
+        "forward_count": 1,
+        "cover_url": "",
+        "duration": 27,
+    },
+]
+
 _DY_VIDEO_RE = re.compile(r"^/api/v1/internal/douyin/accounts/([^/]+)/videos$")
 _DY_FOLLOWER_RE = re.compile(r"^/api/v1/internal/douyin/accounts/([^/]+)/followers$")
 
@@ -107,7 +141,12 @@ def scenario_of(*parts: str, follower: bool = False) -> str:
 
 def collector_account_id(platform_account_id: str, platform: str = "kuaishou") -> str:
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", platform_account_id or "")[:80] or "unknown"
-    slug = "douyin" if platform == "douyin" else "kuaishou"
+    if platform == "douyin":
+        slug = "douyin"
+    elif platform in {"wechat_channels", "wechat-channels"}:
+        slug = "wechat_channels"
+    else:
+        slug = "kuaishou"
     return f"acc_{slug}_{safe}"
 
 
@@ -128,6 +167,15 @@ def _stats(account_id: str, platform: str) -> dict:
             "follower_count": DOUYIN_FOLLOWER_COUNT,
             "following_count": 36,
             "new_follower_count": 12,
+        }
+    if platform == "wechat_channels":
+        return {
+            "account_id": account_id,
+            "total_followers": WECHAT_CHANNELS_FOLLOWER_COUNT,
+            "new_followers_today": 18,
+            "unfollowed_today": 2,
+            "net_growth_today": 16,
+            "stat_date": "",
         }
     return {
         "account_id": account_id,
@@ -271,6 +319,16 @@ def _handler_factory():
                 account_id = self._query_account()
                 kind = scenario_of(account_id, follower=True)
                 self._fail_or_data(kind, _stats(account_id, "kuaishou") if kind == "ok" else None)
+                return
+            if path == WECHAT_CHANNELS_VIDEO_LIST_PATH:
+                account_id = self._query_account()
+                kind = scenario_of(account_id)
+                self._fail_or_data(kind, {"videos": _WECHAT_VIDEOS, "total": len(_WECHAT_VIDEOS)} if kind == "ok" else None)
+                return
+            if path == WECHAT_CHANNELS_FOLLOWER_STATS_PATH:
+                account_id = self._query_account()
+                kind = scenario_of(account_id, follower=True)
+                self._fail_or_data(kind, _stats(account_id, "wechat_channels") if kind == "ok" else None)
                 return
             self._send(404, {"code": 404, "message": "not found", "data": None})
 

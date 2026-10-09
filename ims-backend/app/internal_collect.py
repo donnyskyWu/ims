@@ -1,6 +1,6 @@
 """内部账号作品与粉丝日统计公共层。
 
-快手与抖音共用：账号凭证掩码、Collector 绑定、IMS 定时器、幂等写入、采集记录和健康状态。
+快手、抖音与视频号共用：账号凭证掩码、Collector 绑定、IMS 定时器、幂等写入、采集记录和健康状态。
 平台差异只放在 PlatformProfile（接口、表、source / dataType）。
 同一条定时器先写 FOLLOWER_STATS（契约里有粉丝列表时再写列表），再写作品。
 作品日快照已覆盖：不另调 video-stats / videos/stats，播放、点赞、评论、转发随作品列表写入当日快照。

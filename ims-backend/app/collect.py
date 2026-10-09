@@ -556,6 +556,20 @@ def task_run(
             return ok(execute_douyin_task(ops, row))
         except Exception:
             return fail(2022, "采集失败")
+    # 视频号采集页创建的内部作品任务走 Collector。任务页 / 统一任务 / 外部任务仍走 simulate_run。
+    if (
+        row.platform_type == "WECHAT_CHANNELS"
+        and (row.source or "") == "WECHAT_CHANNELS_API"
+        and row.method != "EXTERNAL"
+        and not row.collect_config_id
+        and not row.is_external_unified
+    ):
+        from app.wechat_channels_collect import execute_wechat_channels_task
+
+        try:
+            return ok(execute_wechat_channels_task(ops, row))
+        except Exception:
+            return fail(2022, "采集失败")
     started = utcnow().strftime("%Y-%m-%d %H:%M:%S")
     status, type_results, record_count, error_summary, log_account = simulate_run(ops, row)
     duration_ms = 8200 if status == "FAILED" else 45000
@@ -810,6 +824,8 @@ def log_get(
 
 from app.kuaishou_collect import router as kuaishou_collect_router  # noqa: E402
 from app.douyin_collect import router as douyin_collect_router  # noqa: E402
+from app.wechat_channels_collect import router as wechat_channels_collect_router  # noqa: E402
 
 router.include_router(kuaishou_collect_router)
 router.include_router(douyin_collect_router)
+router.include_router(wechat_channels_collect_router)
