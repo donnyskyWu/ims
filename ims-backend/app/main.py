@@ -267,6 +267,20 @@ def ensure_content_review_remark_column() -> None:
         conn.execute(text("ALTER TABLE ims_content_review ADD COLUMN remark VARCHAR(512) NOT NULL DEFAULT ''"))
 
 
+def ensure_cert_file_key_column() -> None:
+    """已有库补扫描件标识。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_cert_archive" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_cert_archive")}
+    if "file_key" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_cert_archive ADD COLUMN file_key VARCHAR(512) NOT NULL DEFAULT ''"))
+
+
 def ensure_live_approve_comment_column() -> None:
     from sqlalchemy import inspect, text
 
@@ -390,6 +404,7 @@ def init_db() -> None:
     ensure_exam_question_answer_columns()
     ensure_content_review_remark_column()
     ensure_live_approve_comment_column()
+    ensure_cert_file_key_column()
     ensure_air_key_columns()
     ensure_air_slice92_columns()
     from app.ops_db import ensure_ops

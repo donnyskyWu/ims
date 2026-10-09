@@ -162,6 +162,7 @@ def archive_upload(body: UploadBody, db: Session = Depends(db_session), actor: U
         issue_date=issue.isoformat(),
         expire_date=expire.isoformat(),
         status="PENDING_REVIEW",
+        file_key=(body.fileKey or "").strip()[:512],
         uploaded_by=actor.id,
         creator=actor.id,
         updater=actor.id,
