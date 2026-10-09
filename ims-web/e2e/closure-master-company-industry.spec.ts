@@ -16,7 +16,7 @@ test.describe('master company industry dict filter closure', () => {
     const industryType = page.locator('tr', { hasText: 'dict_industry' })
     await expect(industryType).toBeVisible()
     await industryType.click()
-    await expect(page.locator('td.mono', { hasText: 'SPORT' })).toBeVisible()
+    await expect(page.getByRole('cell', { name: 'SPORT', exact: true })).toBeVisible()
     await expect(page.getByRole('cell', { name: '体育', exact: true })).toBeVisible()
     await page.screenshot({
       path: '/opt/cursor/artifacts/master-industry-dict.png',
