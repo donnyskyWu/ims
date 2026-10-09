@@ -87,7 +87,10 @@ test.describe('alert receipt filter closure', () => {
     await page.getByTestId('alert-stats-start').fill('2099-01-01')
     await page.getByTestId('alert-stats-end').fill('2099-01-02')
     const emptyResp = page.waitForResponse(
-      (r) => r.url().includes('/alert/stats/overview') && r.request().method() === 'GET',
+      (r) =>
+        r.url().includes('/alert/stats/overview') &&
+        r.url().includes('dateRange=2099-01-01') &&
+        r.request().method() === 'GET',
     )
     await page.getByRole('button', { name: '刷新' }).click()
     const emptyBody = (await (await emptyResp).json()) as { code: number; data?: { totalAlertCount?: number } }
