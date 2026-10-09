@@ -3,25 +3,27 @@
     <div class="pg-h">
       <div>
         <h1>选题计划</h1>
-        <div class="sub">选题提报与立项（CONTENT-002 · TOP-R1）</div>
+        <div class="sub">选题提报、状态空态与立项（CONTENT-002 · TOP-R1）</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" data-testid="topic-create-open" @click="openCreate">提报选题</button>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="keyword" placeholder="标题关键词" style="width: 180px" />
-      <select v-model="statusFilter" style="width: 140px">
+    <div class="tabs" data-testid="topic-view-switch">
+      <div class="tab" :class="{ on: view === 'list' }" data-testid="topic-view-list" @click="showList">列表</div>
+      <div class="tab" :class="{ on: view === 'board' }" data-testid="topic-view-board" @click="showBoard">状态看板</div>
+    </div>
+    <form v-if="view === 'list'" class="qbar" @submit.prevent="loadList">
+      <input v-model="keyword" placeholder="标题关键词" style="width: 180px" data-testid="topic-filter-keyword" />
+      <select v-model="statusFilter" style="width: 140px" data-testid="topic-filter-status">
         <option value="">全部状态</option>
-        <option value="PENDING_REVIEW">待评审</option>
-        <option value="APPROVED_PROJECT">已立项</option>
-        <option value="REJECTED">落选</option>
-        <option value="CANCELLED">已取消</option>
+        <option v-for="item in statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="topic-filter-search">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="topic-filter-reset" @click="resetFilters">重置</button>
     </form>
-    <div class="tbl-block">
+    <div v-if="view === 'list'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -43,7 +45,10 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="9">
-                <div class="empty"><div class="et">{{ error || '暂无选题' }}</div></div>
+                <div class="empty" data-testid="topic-list-empty" :data-status="statusFilter || 'ALL'">
+                  <div class="et">{{ listEmptyTitle }}</div>
+                  <div class="es">{{ listEmptyHint }}</div>
+                </div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
@@ -71,6 +76,59 @@
         </table>
       </div>
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
+    </div>
+
+    <div v-else class="topic-board" data-testid="topic-status-board">
+      <section
+        v-for="item in statusOptions"
+        :key="item.value"
+        class="topic-col"
+        :data-testid="`topic-status-col-${item.value}`"
+      >
+        <header>
+          <b>{{ item.label }}</b>
+          <span class="count" :data-testid="`topic-status-count-${item.value}`">{{ boardCol(item.value).total }}</span>
+        </header>
+        <div v-if="boardCol(item.value).loading" class="empty"><div class="et">加载中</div></div>
+        <div
+          v-else-if="boardCol(item.value).error"
+          class="empty"
+          :data-testid="`topic-status-empty-${item.value}`"
+          :data-status="item.value"
+        >
+          <div class="et">{{ boardCol(item.value).error }}</div>
+          <div class="es">这一列加载失败，可重新打开状态看板</div>
+        </div>
+        <div
+          v-else-if="!boardCol(item.value).rows.length"
+          class="empty"
+          :data-testid="`topic-status-empty-${item.value}`"
+          :data-status="item.value"
+        >
+          <div class="et">暂无{{ item.label }}选题</div>
+          <div class="es">{{ item.emptyHint }}</div>
+        </div>
+        <article
+          v-for="row in boardCol(item.value).rows"
+          v-else
+          :key="row.id"
+          class="topic-card"
+          data-testid="topic-board-card"
+          :data-status="item.value"
+        >
+          <b>{{ row.title }}</b>
+          <div class="mono">{{ row.topicNo }}</div>
+          <div class="meta">{{ row.planPublishDate || '未排期' }}<span v-if="row.sopName"> · {{ row.sopName }}</span></div>
+          <button
+            v-if="row.topicStatus === 'PENDING_REVIEW'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            @click="openReview(row)"
+          >
+            评审
+          </button>
+        </article>
+      </section>
     </div>
 
     <ProtoDrawer :open="createOpen" title="提报选题" width="600px" @close="createOpen = false">
@@ -110,16 +168,24 @@
           <label>内容要求</label>
           <div data-testid="topic-review-requirement">{{ reviewRow.description }}</div>
         </div>
-        <div class="fld">
+        <div class="fld" :class="{ err: sopError }">
           <label>挂接 SOP *</label>
-          <select v-model="reviewForm.sopId" data-testid="topic-sop">
+          <select v-model="reviewForm.sopId" data-testid="topic-sop" :class="{ err: sopError }" @change="clearSopError">
             <option value="">请选择 SOP</option>
             <option v-for="sop in sops" :key="sop.id" :value="String(sop.id)">{{ sop.sopName }}</option>
           </select>
+          <p v-if="sopError" class="ferr" data-testid="topic-sop-error">{{ sopError }}</p>
         </div>
         <div class="fld">
           <label>计划发布日 *</label>
-          <input v-model="reviewForm.planPublishDate" type="date" data-testid="topic-plan-date" />
+          <input
+            v-model="reviewForm.planPublishDate"
+            type="date"
+            data-testid="topic-plan-date"
+            :class="{ err: planDateError }"
+            @input="clearPlanDateError"
+          />
+          <p v-if="planDateError" class="ferr" data-testid="topic-plan-date-error">{{ planDateError }}</p>
         </div>
         <div class="fld">
           <label>评审意见</label>
@@ -136,7 +202,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
@@ -154,12 +220,21 @@ type TopicRow = {
   canCreateTask: boolean
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  PENDING_REVIEW: '待评审',
-  APPROVED_PROJECT: '已立项',
-  REJECTED: '落选',
-  CANCELLED: '已取消',
+type BoardCol = {
+  rows: TopicRow[]
+  total: number
+  loading: boolean
+  error: string
 }
+
+const STATUS_OPTIONS = [
+  { value: 'PENDING_REVIEW', label: '待评审', emptyHint: '提报后会出现在这一列' },
+  { value: 'APPROVED_PROJECT', label: '已立项', emptyHint: '评审立项并通过后会出现在这一列' },
+  { value: 'REJECTED', label: '落选', emptyHint: '落选归档后会出现在这一列' },
+  { value: 'CANCELLED', label: '已取消', emptyHint: '取消后的选题会出现在这一列' },
+] as const
+
+const STATUS_LABEL: Record<string, string> = Object.fromEntries(STATUS_OPTIONS.map((item) => [item.value, item.label]))
 const SOURCE_LABEL: Record<string, string> = {
   HOTSPOT: '热点',
   TALENT: '达人',
@@ -167,12 +242,15 @@ const SOURCE_LABEL: Record<string, string> = {
   ORIGINAL: '自主',
 }
 
+const statusOptions = STATUS_OPTIONS
+const view = ref<'list' | 'board'>('list')
 const rows = ref<TopicRow[]>([])
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const keyword = ref('')
 const statusFilter = ref('')
+const board = ref<Record<string, BoardCol>>({})
 const createOpen = ref(false)
 const saving = ref(false)
 const createError = ref('')
@@ -180,9 +258,27 @@ const form = ref({ title: '', description: '', sourceType: 'ORIGINAL' })
 const reviewOpen = ref(false)
 const reviewing = ref(false)
 const reviewError = ref('')
+const sopError = ref('')
+const planDateError = ref('')
 const reviewRow = ref<TopicRow | null>(null)
 const reviewForm = ref({ sopId: '', planPublishDate: '', reviewOpinion: '' })
 const sops = ref<{ id: number; sopName: string }[]>([])
+
+const listEmptyTitle = computed(() => {
+  if (error.value) return error.value
+  const status = STATUS_LABEL[statusFilter.value]
+  const text = keyword.value.trim()
+  if (status && text) return `暂无符合条件的${status}选题`
+  if (status) return `暂无${status}选题`
+  if (text) return '没有符合关键词的选题'
+  return '暂无选题'
+})
+
+const listEmptyHint = computed(() => {
+  if (error.value) return '请稍后重试'
+  if (statusFilter.value || keyword.value.trim()) return '调整筛选条件，或重置后查看全部选题'
+  return '点击「提报选题」后进入待评审'
+})
 
 function statusLabel(status: string) {
   return STATUS_LABEL[status] || status
@@ -190,6 +286,10 @@ function statusLabel(status: string) {
 
 function sourceLabel(source: string) {
   return SOURCE_LABEL[source] || source
+}
+
+function boardCol(status: string): BoardCol {
+  return board.value[status] || { rows: [], total: 0, loading: true, error: '' }
 }
 
 function formatBiz(err: unknown) {
@@ -200,6 +300,40 @@ function formatBiz(err: unknown) {
   return errorMessage(err)
 }
 
+function bizCode(err: unknown) {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = (err as { code?: number }).code
+    return typeof code === 'number' ? code : 0
+  }
+  return 0
+}
+
+function clearApproveFieldErrors() {
+  sopError.value = ''
+  planDateError.value = ''
+}
+
+function markMissingApproveFields() {
+  sopError.value = reviewForm.value.sopId ? '' : '请选择挂接 SOP'
+  planDateError.value = reviewForm.value.planPublishDate ? '' : '请填写计划发布日'
+}
+
+function clearSopError() {
+  if (reviewForm.value.sopId) sopError.value = ''
+}
+
+function clearPlanDateError() {
+  if (reviewForm.value.planPublishDate) planDateError.value = ''
+}
+
+watch(() => reviewForm.value.sopId, (value) => {
+  if (value) sopError.value = ''
+})
+
+watch(() => reviewForm.value.planPublishDate, (value) => {
+  if (value) planDateError.value = ''
+})
+
 async function loadList() {
   loading.value = true
   error.value = ''
@@ -208,7 +342,7 @@ async function loadList() {
       params: {
         pageNo: 1,
         pageSize: 20,
-        keyword: keyword.value || undefined,
+        keyword: keyword.value.trim() || undefined,
         topicStatus: statusFilter.value || undefined,
       },
     })
@@ -217,9 +351,56 @@ async function loadList() {
   } catch (e) {
     error.value = formatBiz(e)
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  keyword.value = ''
+  statusFilter.value = ''
+  void loadList()
+}
+
+async function loadBoard() {
+  const next: Record<string, BoardCol> = {}
+  for (const item of STATUS_OPTIONS) {
+    next[item.value] = { rows: [], total: 0, loading: true, error: '' }
+  }
+  board.value = next
+  await Promise.all(
+    STATUS_OPTIONS.map(async (item) => {
+      try {
+        const { data } = await http.get('/content/topic/list', {
+          params: { pageNo: 1, pageSize: 20, topicStatus: item.value },
+        })
+        board.value[item.value] = {
+          rows: data.data.list || [],
+          total: data.data.total || 0,
+          loading: false,
+          error: '',
+        }
+      } catch (e) {
+        board.value[item.value] = { rows: [], total: 0, loading: false, error: formatBiz(e) }
+      }
+    }),
+  )
+}
+
+function showList() {
+  view.value = 'list'
+  void loadList()
+}
+
+function showBoard() {
+  view.value = 'board'
+  void loadBoard()
+}
+
+async function refreshCurrent() {
+  if (view.value === 'board') await loadBoard()
+  else await loadList()
 }
 
 function openCreate() {
@@ -238,7 +419,7 @@ async function saveTopic() {
       sourceType: form.value.sourceType,
     })
     createOpen.value = false
-    await loadList()
+    await refreshCurrent()
   } catch (e) {
     createError.value = formatBiz(e)
   } finally {
@@ -250,6 +431,7 @@ async function openReview(row: TopicRow) {
   reviewRow.value = row
   reviewForm.value = { sopId: '', planPublishDate: '', reviewOpinion: '' }
   reviewError.value = ''
+  clearApproveFieldErrors()
   reviewOpen.value = true
   try {
     const { data } = await http.get('/content/sop/list', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
@@ -264,6 +446,8 @@ async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
   if (!reviewRow.value) return
   reviewing.value = true
   reviewError.value = ''
+  if (action === 'APPROVE_PROJECT') markMissingApproveFields()
+  else clearApproveFieldErrors()
   try {
     await http.put(`/content/topic/${reviewRow.value.id}/review`, {
       action,
@@ -272,9 +456,16 @@ async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
       reviewOpinion: reviewForm.value.reviewOpinion || undefined,
     })
     reviewOpen.value = false
-    await loadList()
+    clearApproveFieldErrors()
+    await refreshCurrent()
   } catch (e) {
+    const code = bizCode(e)
     reviewError.value = formatBiz(e)
+    if (code === 1052) markMissingApproveFields()
+    else if (code === 1051) {
+      sopError.value = 'SOP 不存在或未启用'
+      planDateError.value = ''
+    }
   } finally {
     reviewing.value = false
   }
@@ -282,3 +473,55 @@ async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
 
 onMounted(loadList)
 </script>
+
+<style scoped>
+.topic-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.topic-col {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 220px;
+  padding: 10px 10px 12px;
+}
+.topic-col header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.topic-col .count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.topic-col .empty {
+  padding: 28px 8px;
+}
+.topic-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+.topic-card .meta {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--text2);
+}
+@media (max-width: 960px) {
+  .topic-board {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+</style>
