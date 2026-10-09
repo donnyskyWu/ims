@@ -58,6 +58,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
     </form>
+    <p v-if="kind === 'realname'" class="hint" data-testid="master-realname-idtype-hint">{{ idTypeHint }}</p>
     <p v-if="kind === 'certificate' && originalNote" class="hint" data-testid="corp-cert-original-note">{{ originalNote }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -370,6 +371,13 @@
           <div>{{ item.value }}</div>
         </div>
       </div>
+      <p
+        v-if="kind === 'company' && companyIndustryEdge"
+        class="hint"
+        data-testid="master-company-industry-edge"
+      >
+        {{ companyIndustryEdge }}
+      </p>
       <div
         v-if="kind === 'certificate' && viewError"
         class="hint bad"
@@ -384,8 +392,34 @@
       >
         水印：{{ detail.watermarkText || '当前查看没有水印文本' }}。本接口不返回原图。
       </div>
-      <div v-if="kind === 'realname'" class="hint">中介人与关联账号暂无。契约没有实名人写入接口。</div>
-      <div v-if="kind === 'sim-card' && detail" class="hint">关联账号 {{ linkedCount }} 个。平台账号在下一片接入前这里是空列表。</div>
+      <div v-if="kind === 'realname' && detailReady" data-testid="master-realname-relations">
+        <div v-if="!intermediaryItems.length" class="empty" data-testid="master-realname-intermediary-empty">
+          <div class="et">暂无中介人</div>
+          <div class="es">契约没有实名人写入接口，中介关系不会在这里新增。</div>
+        </div>
+        <ul v-else data-testid="master-realname-intermediaries">
+          <li v-for="(item, index) in intermediaryItems" :key="index">{{ relationText(item) }}</li>
+        </ul>
+        <div v-if="!linkedItems.length" class="empty" data-testid="master-realname-linked-empty">
+          <div class="et">暂无关联账号</div>
+          <div class="es">平台账号绑定这位实名人之后，会列在这里。</div>
+        </div>
+        <ul v-else data-testid="master-realname-linked">
+          <li v-for="item in linkedItems" :key="String(item.accountId || item.accountNo)">{{ relationText(item) }}</li>
+        </ul>
+      </div>
+      <div v-if="kind === 'sim-card' && detailReady" data-testid="master-sim-linked">
+        <div v-if="!linkedItems.length" class="empty" data-testid="master-sim-linked-empty">
+          <div class="et">暂无关联账号</div>
+          <div class="es">这张卡还没有挂到平台账号。绑定后会列在这里。</div>
+        </div>
+        <div v-else>
+          <div>关联账号 {{ linkedItems.length }} 个</div>
+          <ul data-testid="master-sim-linked-list">
+            <li v-for="item in linkedItems" :key="String(item.accountId || item.accountNo)">{{ relationText(item) }}</li>
+          </ul>
+        </div>
+      </div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
       </template>
@@ -418,7 +452,8 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="formOpen" :title="editingId ? '编辑手机卡' : '新建手机卡'" width="480px" @close="formOpen = false">
-      <div class="formrow one"><div class="fld"><label>手机号<i class="req">*</i></label><input v-model="form.phoneNumber" placeholder="11 位，编辑时留空表示不改" /></div></div>
+      <p class="hint" data-testid="master-sim-dict-hint">{{ simDictHint }}</p>
+      <div class="formrow one"><div class="fld"><label>手机号<i class="req">*</i></label><input v-model="form.phoneNumber" data-testid="master-sim-phone" placeholder="11 位，编辑时留空表示不改" /></div></div>
       <div class="formrow one">
         <div class="fld">
           <label>是否主卡<i class="req">*</i></label>
@@ -462,9 +497,9 @@
         </div>
       </div>
       <div class="formrow one"><div class="fld"><label>套餐</label><input v-model="form.packageName" /></div></div>
-      <div class="formrow one"><div class="fld"><label>月租</label><input v-model="form.monthlyRent" /></div></div>
+      <div class="formrow one"><div class="fld"><label>月租</label><input v-model="form.monthlyRent" data-testid="master-sim-rent" placeholder="非负数字，可空" /></div></div>
       <div class="formrow one"><div class="fld"><label>ICCID</label><input v-model="form.iccid" /></div></div>
-      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <div v-if="formError" class="hint bad" data-testid="master-sim-form-error">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="formOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
@@ -612,6 +647,12 @@ const operator = ref('')
 const realnameId = ref('')
 const status = ref('')
 const phoneHint = ref('')
+const idTypeDictReady = ref(false)
+const idTypeDictFailed = ref(false)
+const industryOptions = ref<Opt[]>([])
+const industryDictReady = ref(false)
+const industryDictFailed = ref(false)
+const simDictReady = ref(false)
 const idTypes = ref<Opt[]>([
   { value: 'ID_CARD', label: '身份证' },
   { value: 'PASSPORT', label: '护照' },
@@ -855,9 +896,34 @@ const pageList = computed(() => {
   for (let i = start; i <= Math.min(pageCount.value, start + 4); i += 1) list.push(i)
   return list
 })
-const linkedCount = computed(() => {
+const detailReady = computed(() => detail.value?.id != null)
+const linkedItems = computed(() => {
   const list = detail.value?.linkedAccounts
-  return Array.isArray(list) ? list.length : 0
+  return Array.isArray(list) ? (list as Row[]) : []
+})
+const intermediaryItems = computed(() => {
+  const list = detail.value?.intermediaries
+  return Array.isArray(list) ? (list as Row[]) : []
+})
+const idTypeHint = computed(() => {
+  if (!idTypeDictReady.value) return '证件类型来自字典 dict_id_type。'
+  if (idTypeDictFailed.value) return '证件类型字典暂时读不到，先用本地证件类型。'
+  if (!idTypes.value.length) return '字典 dict_id_type 没有启用项，暂时不能按证件类型筛选。'
+  return '证件类型来自字典 dict_id_type。停用项和未列入字典的类型不会出现在下拉里。'
+})
+const simDictHint = computed(() => {
+  if (!simDictReady.value) return '运营商、状态和是否主卡来自已启用的字典。'
+  const missing = [
+    !operators.value.length ? 'dict_sim_operator' : '',
+    !simStatus.value.length ? 'dict_sim_status' : '',
+    !yesNo.value.length ? 'dict_yes_no' : '',
+  ].filter(Boolean)
+  if (missing.length) return `字典 ${missing.join('、')} 没有启用项，暂时不能保存手机卡。`
+  return '运营商、状态和是否主卡只接受已启用的字典项。停用项不会出现在下拉里。'
+})
+const companyIndustryEdge = computed(() => {
+  if (kind.value !== 'company' || !detailReady.value || !industryDictReady.value) return ''
+  return industryEdgeText(detail.value?.industry, industryOptions.value, industryDictFailed.value)
 })
 const detailLines = computed(() => {
   if (!detail.value) return []
@@ -1394,6 +1460,51 @@ async function confirmScan() {
   }
 }
 
+function relationText(item: Row) {
+  const name = String(item.nickname || item.name || item.realName || item.accountNo || '').trim()
+  const platform = String(item.platformType || '').trim()
+  if (name && platform) return `${name} · ${platform}`
+  return name || platform || '—'
+}
+
+function industryEdgeText(raw: unknown, options: Opt[], failed: boolean) {
+  if (failed) return '行业字典暂时读不到，无法对照这家公司的行业。'
+  const text = String(raw ?? '').trim()
+  if (!options.length) {
+    return text
+      ? `「${text}」无法对照：字典 dict_industry 没有启用项。`
+      : '字典 dict_industry 没有启用项。公司行业还不能按字典对照。'
+  }
+  if (!text) return '这家公司还没有行业。可选行业以字典 dict_industry 的启用项为准，停用项不参与对照。'
+  const found = options.find((item) => item.value === text)
+  if (!found) return `「${text}」未列入启用的行业字典，不能当作标准行业。`
+  return `行业对照字典 dict_industry：${found.label}。停用项不参与对照。`
+}
+
+function optionIncludes(options: Opt[], value: string) {
+  return options.some((item) => item.value === value)
+}
+
+function simFormError() {
+  const phone = form.phoneNumber.trim()
+  if (!editingId.value && !phone) return '手机号必填'
+  if (phone && !/^1\d{10}$/.test(phone)) return '手机号须为 11 位'
+  if (!form.assignedUserId) return '归属人必填'
+  if (!operators.value.length) return '字典 dict_sim_operator 没有启用项，暂时不能保存手机卡。'
+  if (!optionIncludes(operators.value, form.operator)) return '运营商不在启用字典中'
+  if (!simStatus.value.length) return '字典 dict_sim_status 没有启用项，暂时不能保存手机卡。'
+  if (!optionIncludes(simStatus.value, form.status)) return '状态不在启用字典中'
+  if (!yesNo.value.length) return '字典 dict_yes_no 没有启用项，暂时不能保存手机卡。'
+  if (!optionIncludes(yesNo.value, form.isPrimary)) return '是否主卡不在启用字典中'
+  const rent = form.monthlyRent.trim()
+  if (rent) {
+    const number = Number(rent)
+    if (!Number.isFinite(number)) return '月租须为数字'
+    if (number < 0) return '月租不能为负'
+  }
+  return ''
+}
+
 function typeLabel(value: string) {
   const map: Record<string, string> = {
     ID_CARD: '身份证',
@@ -1610,6 +1721,7 @@ async function openDetail(row: Row) {
   detailOpen.value = true
   const id = row.id
   const url = kind.value === 'certificate' ? `/corp/resource/certificate/${id}/view` : `/corp/resource/${kind.value}/${id}`
+  if (kind.value === 'company') void ensureIndustryDict()
   try {
     const res = await http.get(url)
     const data = res.data?.data || {}
@@ -1632,28 +1744,48 @@ async function loadDict(dictType: string) {
 }
 
 async function prepareRealname() {
+  idTypeDictFailed.value = false
   try {
     const rows = await loadDict('dict_id_type')
-    if (rows.length) idTypes.value = rows
+    idTypes.value = rows
   } catch {
-    /* 字典失败时保留本地证件类型 */
+    idTypeDictFailed.value = true
+  } finally {
+    idTypeDictReady.value = true
+  }
+}
+
+async function ensureIndustryDict() {
+  if (industryDictReady.value) return
+  industryDictFailed.value = false
+  try {
+    industryOptions.value = await loadDict('dict_industry')
+  } catch {
+    industryDictFailed.value = true
+    industryOptions.value = []
+  } finally {
+    industryDictReady.value = true
   }
 }
 
 async function prepareSim() {
-  const [yn, ops, st, userPage, personPage] = await Promise.all([
-    loadDict('dict_yes_no'),
-    loadDict('dict_sim_operator'),
-    loadDict('dict_sim_status'),
-    http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } }),
-    http.get('/corp/resource/realname/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } }),
-  ])
-  yesNo.value = yn
-  operators.value = ops
-  simStatus.value = st
-  specs['sim-card'].statusOptions = st
-  users.value = asList(userPage.data?.data) as unknown as { id: string; username: string; nickname: string }[]
-  persons.value = asList(personPage.data?.data) as unknown as { id: number; realName: string }[]
+  try {
+    const [yn, ops, st, userPage, personPage] = await Promise.all([
+      loadDict('dict_yes_no'),
+      loadDict('dict_sim_operator'),
+      loadDict('dict_sim_status'),
+      http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } }),
+      http.get('/corp/resource/realname/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } }),
+    ])
+    yesNo.value = yn
+    operators.value = ops
+    simStatus.value = st
+    specs['sim-card'].statusOptions = st
+    users.value = asList(userPage.data?.data) as unknown as { id: string; username: string; nickname: string }[]
+    persons.value = asList(personPage.data?.data) as unknown as { id: number; realName: string }[]
+  } finally {
+    simDictReady.value = true
+  }
 }
 
 function openCreate() {
@@ -1687,8 +1819,9 @@ function openEdit(row: Row) {
 }
 
 async function save() {
+  formError.value = simFormError()
+  if (formError.value) return
   saving.value = true
-  formError.value = ''
   const payload: Record<string, unknown> = {
     isPrimary: form.isPrimary,
     operator: form.operator,
