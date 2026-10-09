@@ -101,8 +101,12 @@
         >
           {{ item.label }}
         </button>
+        <input v-model="aggregateFrom" type="date" data-testid="fin-trace-aggregate-from" aria-label="聚合开始" />
+        <input v-model="aggregateTo" type="date" data-testid="fin-trace-aggregate-to" aria-label="聚合结束" />
+        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-trace-aggregate-query" @click="loadAggregate">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="fin-trace-aggregate-reset" @click="resetAggregate">重置</button>
       </div>
-      <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+      <div v-if="error" class="hint" data-testid="fin-trace-aggregate-error" style="color: var(--red); margin: 8px 0">{{ error }}</div>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table data-testid="fin-trace-aggregate-table">
@@ -146,6 +150,9 @@
                         </tr>
                       </thead>
                       <tbody>
+                        <tr v-if="!(row.children || []).length">
+                          <td colspan="4"><div class="empty"><div class="et">该维度暂无场次</div></div></td>
+                        </tr>
                         <tr v-for="child in row.children || []" :key="child.sessionCode">
                           <td class="mono">{{ child.sessionCode }}</td>
                           <td>{{ child.sessionTitle }}</td>
@@ -167,7 +174,15 @@
 
     <template v-else>
       <p class="hint" style="margin: 8px 0">联动利润核算 2σ：偏离同类均值的场次，直达金额最大的成本项。</p>
-      <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+      <form class="qbar" data-testid="fin-trace-abnormal-filters" @submit.prevent="loadAbnormal">
+        <input v-model="abnormalPlatform" placeholder="平台" style="width: 120px" data-testid="fin-trace-abnormal-platform" />
+        <input v-model="abnormalFrom" type="date" data-testid="fin-trace-abnormal-from" aria-label="异常开始" />
+        <input v-model="abnormalTo" type="date" data-testid="fin-trace-abnormal-to" aria-label="异常结束" />
+        <span class="sp"></span>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-trace-abnormal-query" @click="loadAbnormal">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="fin-trace-abnormal-reset" @click="resetAbnormal">重置</button>
+      </form>
+      <div v-if="error" class="hint" data-testid="fin-trace-abnormal-error" style="color: var(--red); margin: 8px 0">{{ error }}</div>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table data-testid="fin-trace-abnormal-table">
@@ -287,11 +302,16 @@ const aggregateOptions = [
   { value: 'MONTH', label: '按月份' },
 ]
 const aggregateBy = ref('ACCOUNT')
+const aggregateFrom = ref('')
+const aggregateTo = ref('')
 const aggregateLoading = ref(false)
 const aggregateRows = ref<Record<string, any>[]>([])
 const expanded = ref('')
 const abnormalLoading = ref(false)
 const abnormalRows = ref<Record<string, any>[]>([])
+const abnormalPlatform = ref('')
+const abnormalFrom = ref('')
+const abnormalTo = ref('')
 
 const costLabels: Record<string, string> = {
   commission: '平台佣金',
@@ -309,6 +329,17 @@ function fmt(n: unknown) {
 
 function costLabel(key: string) {
   return costLabels[key] || key || '—'
+}
+
+function rangeParam(from: string, to: string): { range?: string; error?: string } {
+  if (!from && !to) return { range: '' }
+  if (!from || !to || from > to) return { error: 'dateRange 须为开始日,结束日' }
+  return { range: `${from},${to}` }
+}
+
+function errText(err: unknown) {
+  const body = err as { msg?: string }
+  return body?.msg || '加载失败'
 }
 
 async function loadList() {
@@ -339,17 +370,36 @@ async function loadList() {
 async function loadAggregate() {
   aggregateLoading.value = true
   error.value = ''
+  const range = rangeParam(aggregateFrom.value, aggregateTo.value)
+  if (range.error) {
+    error.value = range.error
+    aggregateRows.value = []
+    aggregateLoading.value = false
+    return
+  }
   try {
-    const res = await http.get('/dc/profit-trace/aggregate', { params: { aggregateBy: aggregateBy.value } })
+    const res = await http.get('/dc/profit-trace/aggregate', {
+      params: { aggregateBy: aggregateBy.value, dateRange: range.range || undefined },
+    })
     if (res.data?.code !== 0) {
       error.value = res.data?.msg || '加载失败'
       aggregateRows.value = []
       return
     }
     aggregateRows.value = res.data.data || []
+  } catch (err) {
+    error.value = errText(err)
+    aggregateRows.value = []
   } finally {
     aggregateLoading.value = false
   }
+}
+
+function resetAggregate() {
+  aggregateFrom.value = ''
+  aggregateTo.value = ''
+  expanded.value = ''
+  loadAggregate()
 }
 
 function openAggregate() {
@@ -370,8 +420,22 @@ function toggleAggregate(value: string) {
 async function loadAbnormal() {
   abnormalLoading.value = true
   error.value = ''
+  const range = rangeParam(abnormalFrom.value, abnormalTo.value)
+  if (range.error) {
+    error.value = range.error
+    abnormalRows.value = []
+    abnormalLoading.value = false
+    return
+  }
   try {
-    const res = await http.get('/dc/profit-trace/abnormal', { params: { pageNo: 1, pageSize: 50 } })
+    const res = await http.get('/dc/profit-trace/abnormal', {
+      params: {
+        pageNo: 1,
+        pageSize: 50,
+        platform: abnormalPlatform.value || undefined,
+        dateRange: range.range || undefined,
+      },
+    })
     if (res.data?.code !== 0) {
       error.value = res.data?.msg || '加载失败'
       abnormalRows.value = []
@@ -379,9 +443,19 @@ async function loadAbnormal() {
     }
     abnormalRows.value = res.data.data?.list || []
     dataAsOf.value = res.data.data?.dataAsOf || dataAsOf.value
+  } catch (err) {
+    error.value = errText(err)
+    abnormalRows.value = []
   } finally {
     abnormalLoading.value = false
   }
+}
+
+function resetAbnormal() {
+  abnormalPlatform.value = ''
+  abnormalFrom.value = ''
+  abnormalTo.value = ''
+  loadAbnormal()
 }
 
 function openAbnormal() {

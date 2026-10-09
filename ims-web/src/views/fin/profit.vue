@@ -181,13 +181,13 @@
       <p class="hint" style="margin: 8px 0">同类为同平台已核算场次。净利率偏离同行均值达到 2 倍标准差时列入本表。</p>
       <form class="qbar" @submit.prevent="loadAbnormal">
         <input v-model="abnormalPlatform" placeholder="平台" style="width: 120px" data-testid="fin-profit-abnormal-platform" />
-        <input v-model="abnormalFrom" placeholder="开始日" style="width: 130px" data-testid="fin-profit-abnormal-from" />
-        <input v-model="abnormalTo" placeholder="结束日" style="width: 130px" data-testid="fin-profit-abnormal-to" />
+        <input v-model="abnormalDateFrom" type="date" data-testid="fin-profit-abnormal-from" aria-label="异常开始" />
+        <input v-model="abnormalDateTo" type="date" data-testid="fin-profit-abnormal-to" aria-label="异常结束" />
         <span class="sp"></span>
         <button class="btn btn-pri btn-sm" type="button" data-testid="fin-profit-abnormal-query" @click="loadAbnormal">查询</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="fin-profit-abnormal-reset" @click="resetAbnormal">重置</button>
       </form>
-      <div v-if="error" class="hint" data-testid="fin-profit-abnormal-error" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+      <div v-if="abnormalError" class="hint" data-testid="fin-profit-abnormal-error" style="color: var(--red); margin: 8px 0">{{ abnormalError }}</div>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table data-testid="fin-profit-abnormal-table">
@@ -478,8 +478,9 @@ const tab = ref<'list' | 'abnormal'>('list')
 const abnormalLoading = ref(false)
 const abnormalRows = ref<Record<string, unknown>[]>([])
 const abnormalPlatform = ref('')
-const abnormalFrom = ref('')
-const abnormalTo = ref('')
+const abnormalDateFrom = ref('')
+const abnormalDateTo = ref('')
+const abnormalError = ref('')
 const abnormalFiltered = ref(false)
 const abnormalEmptyText = computed(() =>
   abnormalFiltered.value ? '当前筛选下暂无偏离 2σ 的场次' : '暂无偏离 2σ 的场次',
@@ -743,39 +744,60 @@ async function switchMetric(kind: ProfitMetric) {
   await reload()
 }
 
+function abnormalRange(): { range?: string; error?: string } {
+  const from = abnormalDateFrom.value
+  const to = abnormalDateTo.value
+  if (!from && !to) return { range: '' }
+  if (!from || !to) return { error: '请同时填写开始日与结束日' }
+  if (from > to) return { error: 'dateRange 须为开始日,结束日' }
+  return { range: `${from},${to}` }
+}
+
+let abnormalSeq = 0
+
 async function loadAbnormal() {
+  const seq = ++abnormalSeq
   const platform = abnormalPlatform.value.trim()
-  const from = abnormalFrom.value.trim()
-  const to = abnormalTo.value.trim()
-  if ((from && !to) || (!from && to)) {
-    error.value = '请同时填写开始日与结束日'
+  abnormalLoading.value = true
+  abnormalError.value = ''
+  abnormalFiltered.value = Boolean(platform || abnormalDateFrom.value || abnormalDateTo.value)
+  const range = abnormalRange()
+  if (range.error) {
+    if (seq !== abnormalSeq) return
+    abnormalError.value = range.error
+    abnormalRows.value = []
+    abnormalLoading.value = false
     return
   }
-  abnormalLoading.value = true
-  error.value = ''
-  abnormalFiltered.value = Boolean(platform || from || to)
   try {
     const res = await http.get('/fin/profit/abnormal', {
       params: {
         pageNo: 1,
         pageSize: 50,
         platform: platform || undefined,
-        dateRange: from && to ? `${from},${to}` : undefined,
+        dateRange: range.range || undefined,
       },
     })
+    if (seq !== abnormalSeq) return
+    if (res.data?.code !== 0) {
+      abnormalError.value = res.data?.msg || '加载失败'
+      abnormalRows.value = []
+      return
+    }
     abnormalRows.value = res.data.data?.list || []
   } catch (err) {
+    if (seq !== abnormalSeq) return
     abnormalRows.value = []
-    error.value = errorMessage(err)
+    abnormalError.value = errorMessage(err)
   } finally {
-    abnormalLoading.value = false
+    if (seq === abnormalSeq) abnormalLoading.value = false
   }
 }
 
 function resetAbnormal() {
   abnormalPlatform.value = ''
-  abnormalFrom.value = ''
-  abnormalTo.value = ''
+  abnormalDateFrom.value = ''
+  abnormalDateTo.value = ''
   return loadAbnormal()
 }
 

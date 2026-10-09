@@ -278,3 +278,56 @@ def test_fin_share_simulate_fixed_and_ladder():
     assert negative.json()["code"] == 1001
     missing = client.delete("/admin-api/ims/fin/share/rule/999999", headers=auth)
     assert missing.json()["code"] == 1504
+
+
+def test_fin_share_rule_ip_group_scope_roundtrip_and_distinct():
+    """IP 组属于适用范围。编辑回传后仍在；编号非法 1001；不同 IP 组不算 1147。"""
+    auth = headers()
+    scope = {"platforms": ["DYS"], "accountIds": [84088], "ipGroupIds": [88001, 88002]}
+    created = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="IP组规则", shareTarget="TEAM", fixedRate=1, priority=3, scope=scope),
+    )
+    assert created.json()["code"] == 0
+    data = created.json()["data"]
+    assert data["scope"]["ipGroupIds"] == [88001, 88002]
+    rule_id = data["id"]
+
+    edited = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}",
+        headers=auth,
+        json=rule_body(ruleName="IP组规则修订", shareTarget="TEAM", fixedRate=1, priority=3, scope=scope),
+    )
+    assert edited.json()["code"] == 0
+    assert edited.json()["data"]["version"] == 2
+    assert edited.json()["data"]["scope"]["ipGroupIds"] == [88001, 88002]
+    assert edited.json()["data"]["scope"]["accountIds"] == [84088]
+
+    bad = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="非法IP组",
+            shareTarget="TEAM",
+            fixedRate=1,
+            priority=4,
+            scope={"platforms": ["DYS"], "accountIds": [84088], "ipGroupIds": [0]},
+        ),
+    )
+    assert bad.json()["code"] == 1001
+    assert "编号" in bad.json()["msg"]
+
+    other = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="另一IP组",
+            shareTarget="TEAM",
+            fixedRate=1,
+            priority=4,
+            scope={"platforms": ["DYS"], "accountIds": [84088], "ipGroupIds": [88009]},
+        ),
+    )
+    assert other.json()["code"] == 0
+    assert other.json()["data"]["scope"]["ipGroupIds"] == [88009]
