@@ -198,7 +198,7 @@
     </div>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
 
-    <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="detailOpen = false">
+    <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="closeDetail">
       <div v-if="detail" data-testid="alert-receipt-drawer">
         <p>{{ detail.content }}</p>
         <p class="hint">{{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ detail.responseStatus }}</p>
@@ -225,6 +225,7 @@
         <p v-if="detail.sourceJumpUrl" class="hint">
           <router-link :to="detail.sourceJumpUrl">查看来源</router-link>
         </p>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="alert-receipt-close" @click="closeDetail">关闭</button>
       </div>
     </ProtoDrawer>
   </div>
@@ -424,6 +425,11 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function closeDetail() {
+  detailOpen.value = false
+  detail.value = null
 }
 
 async function openDetail(alertNo: string) {
