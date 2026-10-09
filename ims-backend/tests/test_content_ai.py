@@ -376,6 +376,38 @@ def test_provider_name_follows_stub_and_base_url(monkeypatch):
     assert provider_name() == "remote"
 
 
+def test_content_detail_reports_stub_providers():
+    auth = headers()
+    draft = create_draft(auth, "桩状态草稿")
+    assert draft["videoProvider"] == "stub"
+    assert draft["aiCopyProvider"] == "stub"
+    blob = json.dumps(draft)
+    assert "tokenSecret" not in blob
+    assert "baseUrl" not in blob
+    assert "http://" not in blob
+
+
+def test_content_detail_video_provider_unconfigured(monkeypatch):
+    monkeypatch.setenv("IMS_COMFYUI_STUB", "0")
+    monkeypatch.delenv("IMS_COMFYUI_BASE_URL", raising=False)
+    monkeypatch.delenv("IMS_CONTENT_GEN_STUB", raising=False)
+    invalidate_param_cache()
+    auth = headers()
+    draft = create_draft(auth, "未配置视频")
+    assert draft["videoProvider"] == "unconfigured"
+    assert draft["aiCopyProvider"] == "stub"
+
+
+def test_copy_provider_http_without_url_is_unconfigured(monkeypatch):
+    from app.content_ai_client import copy_provider_name
+
+    monkeypatch.setenv("IMS_CONTENT_AI_STUB", "http")
+    monkeypatch.delenv("IMS_CONTENT_AI_BASE_URL", raising=False)
+    monkeypatch.delenv("IMS_CONTENT_GEN_STUB", raising=False)
+    invalidate_param_cache()
+    assert copy_provider_name() == "unconfigured"
+
+
 def test_param_secret_masked():
     auth = headers()
     saved = client.put(

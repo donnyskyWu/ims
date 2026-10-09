@@ -37,7 +37,16 @@
               <td>{{ row.sopName || row.sopId }}</td>
               <td>{{ row.ipGroupName || '—' }}</td>
               <td class="num">{{ row.startDate }} ~ {{ row.endDate }}</td>
-              <td>{{ row.status }}</td>
+              <td>
+                {{ row.status }}
+                <div
+                  v-if="row.status === 'TERMINATE_PENDING' || row.status === 'TERMINATED'"
+                  class="hint"
+                  data-testid="plan-terminate-reason"
+                >
+                  {{ terminateLabel(row) }}
+                </div>
+              </td>
               <td class="acts-inline">
                 <button
                   v-if="row.status === 'DRAFT'"
@@ -126,10 +135,29 @@
           <label>结束日期 *</label>
           <input v-model="form.endDate" type="date" />
         </div>
+        <p v-if="sopLoaded && !sopOptions.length" class="hint" data-testid="plan-sop-empty">
+          没有已启用的 SOP 模板。先到 SOP 管理保存模板。
+        </p>
+        <p v-if="dateError" class="hint bad" data-testid="plan-date-error">{{ dateError }}</p>
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="createOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="savePlan">保存草稿</button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="terminateOpen" title="申请终止" width="480px" @close="terminateOpen = false">
+      <p>计划「{{ terminateTarget?.planName }}」进入终止待审。原因可留空。</p>
+      <div class="fld">
+        <label>终止原因</label>
+        <textarea v-model="terminateReason" data-testid="plan-terminate-reason-input" rows="3" placeholder="可留空" />
+      </div>
+      <p class="hint">留空时列表显示「未填写终止原因」。</p>
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="terminateOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="plan-terminate-submit" :disabled="actingId != null" @click="submitTerminate">
+          提交申请
+        </button>
       </template>
     </ProtoDrawer>
   </div>
@@ -155,8 +183,13 @@ const form = ref({
   endDate: '',
 })
 const sopPick = ref('')
+const sopLoaded = ref(false)
+const dateError = ref('')
 const sopOptions = ref<{ id: number; sopName: string; sopCode: string; version: number }[]>([])
 const ipOptions = ref<{ id: number; name: string }[]>([])
+const terminateOpen = ref(false)
+const terminateReason = ref('')
+const terminateTarget = ref<{ id: number; planName: string } | null>(null)
 
 function flattenGroups(nodes: { id: number; groupName: string; status: number; children?: unknown[] }[], out: { id: number; name: string }[] = []) {
   for (const node of nodes || []) {
@@ -166,12 +199,20 @@ function flattenGroups(nodes: { id: number; groupName: string; status: number; c
   return out
 }
 
+function terminateLabel(row: { terminateReason?: string }) {
+  const reason = String(row.terminateReason || '').trim()
+  return reason || '未填写终止原因'
+}
+
 async function loadCreateOptions() {
+  sopLoaded.value = false
   try {
     const { data } = await http.get('/content/sop/list', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
     sopOptions.value = data.data.list || []
   } catch {
     sopOptions.value = []
+  } finally {
+    sopLoaded.value = true
   }
   try {
     const { data } = await http.get('/ip-group/tree')
@@ -208,6 +249,8 @@ async function loadList() {
 function openCreate() {
   form.value = { planName: '', sopId: 0, ipGroupIds: '', startDate: '', endDate: '' }
   sopPick.value = ''
+  dateError.value = ''
+  sopLoaded.value = false
   createOpen.value = true
   void loadCreateOptions()
 }
@@ -220,6 +263,11 @@ function parseIpIds(raw: string): number[] {
 }
 
 async function savePlan() {
+  dateError.value = ''
+  if (form.value.startDate && form.value.endDate && form.value.endDate < form.value.startDate) {
+    dateError.value = '结束日期不能早于开始日期'
+    return
+  }
   const ipGroupIds = parseIpIds(form.value.ipGroupIds)
   if (!form.value.planName || !form.value.sopId || !ipGroupIds.length || !form.value.startDate || !form.value.endDate) {
     alert('请填写必填项')
@@ -258,12 +306,19 @@ async function startPlan(row: { id: number; planName: string }) {
   }
 }
 
-async function requestTerminate(row: { id: number; planName: string }) {
-  const reason = window.prompt(`申请终止计划「${row.planName}」？请填写原因（可选）`, '') ?? ''
-  if (reason === null) return
-  actingId.value = row.id
+function requestTerminate(row: { id: number; planName: string }) {
+  terminateTarget.value = { id: row.id, planName: row.planName }
+  terminateReason.value = ''
+  terminateOpen.value = true
+}
+
+async function submitTerminate() {
+  const target = terminateTarget.value
+  if (!target) return
+  actingId.value = target.id
   try {
-    await http.post(`/content/plan/${row.id}/terminate`, { reason })
+    await http.post(`/content/plan/${target.id}/terminate`, { reason: terminateReason.value.trim() })
+    terminateOpen.value = false
     alert('已提交终止申请')
     await loadList()
   } catch (e) {

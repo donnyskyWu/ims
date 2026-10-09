@@ -303,11 +303,12 @@ const videoLabels: Record<string, string> = {
   FAILED: '失败',
 }
 function copyLabel(status: string | null | undefined) {
-  if (!status) return '—'
+  if (!status) return '未生成'
+  if (status === 'GENERATED') return '已生成'
   return copyLabels[status] || status
 }
 function videoLabel(status: string | null | undefined) {
-  if (!status) return '—'
+  if (!status) return '未生成'
   return videoLabels[status] || status
 }
 const typeLabels: Record<string, string> = { SHORT_VIDEO: '短视频', ARTICLE: '图文' }

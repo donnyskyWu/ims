@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, object_session
 
 from app.api import current_user, db_session, fail, ok
 from app.content import iso
-from app.content_ai_client import CopyJob, copy_status, submit_copy
+from app.content_ai_client import CopyJob, copy_provider_name, copy_status, submit_copy
 from app.content_ai_models import ContentAiJob, ContentAiTask, ContentDraftMedia, ContentScript, ContentWorkflow
 from app.comfyui_client import VideoJob, prompt_status, provider_name, submit_prompt
 from app.core import utcnow
@@ -132,6 +132,8 @@ def media_fields(project: ContentProject) -> dict:
         "videoJobId": None,
         "videoRetryHint": None,
         "defaultWorkflowId": None,
+        "videoProvider": provider_name(),
+        "aiCopyProvider": copy_provider_name(),
     }
     db = object_session(project)
     if db is None:

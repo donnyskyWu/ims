@@ -224,6 +224,10 @@
 
     <ProtoDrawer :open="nodesOpen" :title="nodeTitle" width="640px" @close="nodesOpen = false">
       <div v-if="nodesLoading" class="empty"><div class="et">加载中</div></div>
+      <div v-else-if="!detailNodes.length" class="empty" data-testid="sop-nodes-empty">
+        <div class="et">这个模板还没有节点</div>
+        <div class="es">编辑模板，从节点库加入节点后保存。</div>
+      </div>
       <ul v-else class="tl">
         <li v-for="n in detailNodes" :key="n.id" class="tl-i">
           <b>{{ n.nodeOrder }}. {{ n.nodeName }}</b>
