@@ -268,6 +268,24 @@ def ensure_air_slice92_columns() -> None:
                 )
 
 
+def ensure_content_layout_columns() -> None:
+    """已有库补语义排版列。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_project" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_project")}
+    alters: list[str] = []
+    if "layout_json" not in cols:
+        alters.append("ADD COLUMN layout_json TEXT NULL")
+    if "body_format" not in cols:
+        alters.append("ADD COLUMN body_format VARCHAR(16) NOT NULL DEFAULT 'PLAIN'")
+    if alters:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE ims_content_project {', '.join(alters)}"))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
@@ -277,6 +295,7 @@ def init_db() -> None:
     ensure_live_approve_comment_column()
     ensure_air_key_columns()
     ensure_air_slice92_columns()
+    ensure_content_layout_columns()
     from app.ops_db import ensure_ops
 
     ensure_ops()

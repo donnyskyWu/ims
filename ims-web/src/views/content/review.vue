@@ -55,6 +55,12 @@
     <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="640px" @close="drawerOpen = false">
       <p><b>{{ active?.contentTitle }}</b></p>
       <p class="hint">提交人：{{ active?.submitterName }} · 轮次 {{ active?.reviewRound }}</p>
+      <div class="dsec">版式正文</div>
+      <div class="layout-viewer" data-readonly="true">
+        <div v-if="layoutHtml" v-html="layoutHtml"></div>
+        <pre v-else>{{ reviewBody || '无正文' }}</pre>
+      </div>
+      <p class="hint">只读同一版式，审核不改排版、不改纯文本。</p>
       <div class="dsec">质量清单</div>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
@@ -84,6 +90,8 @@ const active = ref<any>(null)
 const checklist = ref<any[]>([])
 const checklistModel = ref<Record<string, boolean>>({})
 const submitting = ref(false)
+const layoutHtml = ref('')
+const reviewBody = ref('')
 
 const filteredRows = computed(() => {
   let list = rows.value.filter((r) => (stage.value === 1 ? r.reviewRound <= 1 : r.reviewRound >= 2))
@@ -120,9 +128,13 @@ async function loadQueue() {
 
 async function openReview(row: any) {
   active.value = row
+  layoutHtml.value = ''
+  reviewBody.value = ''
   drawerOpen.value = true
   try {
     const { data } = await http.get(`/content/review/${row.reviewNo}`)
+    layoutHtml.value = data.data.layoutHtml || ''
+    reviewBody.value = data.data.body || ''
     checklist.value = data.data.checklist || []
     const model: Record<string, boolean> = {}
     for (const item of checklist.value) {

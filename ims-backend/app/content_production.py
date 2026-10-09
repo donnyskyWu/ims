@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -21,7 +23,7 @@ class ContentSaveBody(BaseModel):
     contentType: str = "SHORT_VIDEO"
     platformType: str = ""
     body: str = ""
-    layoutHtml: str = ""
+    layoutHtml: str | None = None
     documentType: str = ""
     taskId: int | None = None
     ipGroupId: int | None = None
@@ -59,6 +61,16 @@ def apply_match_fields(project: ContentProject, body: ContentSaveBody) -> None:
         project.competition_name = body.competitionName[:256]
 
 
+def parse_layout_json(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def project_vo(row: ContentProject) -> dict:
     return {
         "id": row.id,
@@ -70,7 +82,9 @@ def project_vo(row: ContentProject) -> dict:
         "taskId": row.task_id,
         "ipGroupId": row.ip_group_id,
         "body": row.body,
-        "layoutHtml": row.layout_html,
+        "layoutHtml": row.layout_html or "",
+        "layoutJson": parse_layout_json(row.layout_json),
+        "bodyFormat": row.body_format or "PLAIN",
         "matchType": row.match_type,
         "matchScheme": row.match_scheme or [],
         "matchSummary": row.match_summary or row.competition_name,
@@ -196,6 +210,8 @@ def content_update(
         row.body = body.body
     if body.layoutHtml is not None:
         row.layout_html = body.layoutHtml
+        if not (body.layoutHtml or "").strip() and (row.body_format or "PLAIN") == "LAYOUT":
+            row.body_format = "PLAIN"
     if body.ipGroupId is not None:
         row.ip_group_id = body.ipGroupId
     apply_match_fields(row, body)
@@ -259,6 +275,7 @@ def content_retry_ai(content_id: int, db: Session = Depends(db_session), actor: 
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
+    # 文案重试只改生成状态，不写 layout_*，也不调用语义排版。
     row.ai_generate_status = "QUEUED"
     row.ai_generate_error = None
     return ok({"aiGenerateStatus": row.ai_generate_status})

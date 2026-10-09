@@ -603,6 +603,8 @@ class ContentProject(Base):
     match_scheme: Mapped[list] = mapped_column(JSON, default=list)
     match_summary: Mapped[str] = mapped_column(String(128), default="")
     layout_html: Mapped[str] = mapped_column(Text, default="")
+    layout_json: Mapped[str] = mapped_column(Text, default="{}")
+    body_format: Mapped[str] = mapped_column(String(16), default="PLAIN")
     ai_generate_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
     author_article_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fb_sync_status: Mapped[str] = mapped_column(String(16), default="NONE")

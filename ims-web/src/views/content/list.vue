@@ -98,6 +98,38 @@
           <label>正文</label>
           <textarea v-model="form.body" rows="4" />
         </div>
+        <div v-if="showLayoutPanel" class="fld">
+          <label>排版</label>
+          <p class="hint">AI 语义排版只生成版式，不改写纯文本，也不调用文案生成。</p>
+          <button
+            class="btn btn-sec btn-sm"
+            type="button"
+            :disabled="!canAiLayout"
+            :title="aiLayoutTip"
+            @click="openAiLayout"
+          >
+            AI 语义排版
+          </button>
+          <div v-if="aiPanelOpen" class="ai-layout-panel">
+            <p class="hint">按正文语义自动选择决策扫读版或情报分析版。</p>
+            <button class="btn btn-pri btn-sm" type="button" :disabled="aiBusy || !canAiLayout" @click="previewAi">
+              AI 排版预览
+            </button>
+            <template v-if="aiPreview">
+              <div class="tabs" style="margin-top: 10px">
+                <div class="tab" :class="{ on: aiTab === 'before' }" @click="aiTab = 'before'">排版前</div>
+                <div class="tab" :class="{ on: aiTab === 'after' }" @click="aiTab = 'after'">排版后</div>
+              </div>
+              <pre v-if="aiTab === 'before'" class="layout-viewer">{{ form.body }}</pre>
+              <div v-else class="layout-viewer" v-html="aiPreview.layoutHtml"></div>
+              <p class="hint">已选版式：{{ aiPreview.selectedTemplateName }}</p>
+              <p v-if="segmentSummary" class="hint">分段：{{ segmentSummary }}</p>
+              <button class="btn btn-pri btn-sm" type="button" :disabled="aiBusy" @click="applyAi">写回版式</button>
+            </template>
+            <p v-if="aiNote" class="hint">{{ aiNote }}</p>
+          </div>
+          <div v-if="savedLayoutHtml" class="layout-viewer" style="margin-top: 8px" v-html="savedLayoutHtml"></div>
+        </div>
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
@@ -108,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
@@ -127,6 +159,36 @@ const form = ref({
   matchType: 1,
   matchSchemeJson: '[]',
   body: '',
+})
+const aiPanelOpen = ref(false)
+const aiBusy = ref(false)
+const aiPreview = ref<any>(null)
+const aiTab = ref<'before' | 'after'>('after')
+const aiNote = ref('')
+const savedLayoutHtml = ref('')
+const savedBodyFormat = ref('PLAIN')
+
+const showLayoutPanel = computed(() => (form.value.contentType || '').trim().toUpperCase() === 'ARTICLE')
+const aiLayoutTip = computed(() => {
+  if (!editingId.value) return '请先保存内容'
+  if (!showLayoutPanel.value) return '仅文章类型可语义排版'
+  if (!form.value.body.trim()) return '请先输入正文'
+  return ''
+})
+const canAiLayout = computed(() => aiLayoutTip.value === '')
+const segmentSummary = computed(() => {
+  const counts = aiPreview.value?.segmentationReport?.segmentTypeCounts || {}
+  const labels: Record<string, string> = {
+    ARTICLE_TITLE: '标题',
+    ANALYSIS_PARAGRAPH: '分析',
+    PLAIN_PARAGRAPH: '段落',
+    TEAM_VS: '对阵',
+    SUBHEADING: '小标题',
+    DISCLAIMER: '声明',
+  }
+  return Object.entries(counts)
+    .map(([key, count]) => `${labels[key] || key}×${count}`)
+    .join(' · ')
 })
 
 async function loadList() {
@@ -147,9 +209,19 @@ async function loadList() {
   }
 }
 
+function resetLayoutState() {
+  aiPanelOpen.value = false
+  aiPreview.value = null
+  aiNote.value = ''
+  aiTab.value = 'after'
+  savedLayoutHtml.value = ''
+  savedBodyFormat.value = 'PLAIN'
+}
+
 function openCreate() {
   editingId.value = null
   form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
+  resetLayoutState()
   drawerOpen.value = true
 }
 
@@ -162,7 +234,58 @@ function openEdit(row: any) {
     matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
     body: row.body || '',
   }
+  resetLayoutState()
+  savedLayoutHtml.value = row.layoutHtml || ''
+  savedBodyFormat.value = row.bodyFormat || 'PLAIN'
   drawerOpen.value = true
+}
+
+function openAiLayout() {
+  if (!canAiLayout.value) return
+  aiPanelOpen.value = true
+  aiPreview.value = null
+  aiNote.value = ''
+}
+
+async function previewAi() {
+  if (!editingId.value) return
+  aiBusy.value = true
+  aiNote.value = ''
+  try {
+    const { data } = await http.post(`/content/${editingId.value}/typeset/preview`, {
+      mode: 'AUTO',
+      body: form.value.body,
+    })
+    aiPreview.value = data.data
+    aiTab.value = 'after'
+  } catch (e) {
+    window.alert(errorMessage(e))
+  } finally {
+    aiBusy.value = false
+  }
+}
+
+async function applyAi() {
+  if (!editingId.value) return
+  const hasLayout = savedBodyFormat.value === 'LAYOUT' || !!savedLayoutHtml.value
+  if (hasLayout && !window.confirm('将覆盖当前版式，正文文字不会改动')) return
+  aiBusy.value = true
+  try {
+    const { data } = await http.post(`/content/${editingId.value}/typeset/apply`, {
+      mode: 'AUTO',
+      body: form.value.body,
+      overwrite: hasLayout,
+    })
+    savedLayoutHtml.value = data.data?.layoutHtml || ''
+    savedBodyFormat.value = data.data?.bodyFormat || 'LAYOUT'
+    if (typeof data.data?.body === 'string') form.value.body = data.data.body
+    aiNote.value = 'AI 排版已写回，正文未改动'
+    await loadList()
+  } catch (e) {
+    window.alert(errorMessage(e))
+  } finally {
+    aiBusy.value = false
+  }
 }
 
 async function saveContent() {
