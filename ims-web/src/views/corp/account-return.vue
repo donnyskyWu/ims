@@ -10,16 +10,33 @@
       </div>
     </div>
     <p class="hint">离职归还单由钉钉离职事件自动生成。名下账号、资产、证件未全部归还或转交时，不能关闭权限。</p>
-    <form class="qbar" @submit.prevent="loadList">
+    <form class="qbar" data-testid="return-filters" @submit.prevent="loadList">
       <input v-model="returnNo" data-testid="return-filter-no" placeholder="归还单号" style="width: 160px" />
+      <label>
+        离职人
+        <select v-model="filterUserId" data-testid="return-filter-user" style="width: 140px">
+          <option value="">全部</option>
+          <option v-for="user in users" :key="String(user.id)" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+        </select>
+      </label>
       <select v-model="status" data-testid="return-filter-status" style="width: 140px">
         <option value="">全部状态</option>
         <option value="IN_PROGRESS">进行中</option>
         <option value="EXCEPTION_SUSPENDED">异常挂起</option>
         <option value="CLOSED">已闭环</option>
       </select>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <label>
+        生效日起
+        <input v-model="timeFrom" data-testid="return-filter-from" type="date" />
+      </label>
+      <label>
+        生效日止
+        <input v-model="timeTo" data-testid="return-filter-to" type="date" />
+      </label>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="return-filter-search">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="return-filter-reset" @click="resetFilters">清空</button>
     </form>
+    <p v-if="rangeError" class="hint bad" data-testid="return-filter-msg">{{ rangeError }}</p>
     <p v-if="listError" class="hint bad" data-testid="return-list-error">{{ listError }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -37,7 +54,12 @@
           </thead>
           <tbody>
             <tr v-if="!orders.length">
-              <td colspan="7">暂无离职归还单。漏单时使用手动补建。</td>
+              <td colspan="7" style="white-space: normal">
+                <div class="empty" data-testid="return-list-empty">
+                  <div class="et">{{ returnEmptyTitle }}</div>
+                  <div class="es">{{ returnEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in orders" :key="String(row.id)" data-testid="return-order-row">
               <td class="mono" data-testid="return-order-no">{{ row.returnNo }}</td>
@@ -128,6 +150,10 @@ const users = ref<UserOpt[]>([])
 const listError = ref('')
 const returnNo = ref('')
 const status = ref('')
+const filterUserId = ref('')
+const timeFrom = ref('')
+const timeTo = ref('')
+const rangeError = ref('')
 const generateOpen = ref(false)
 const generateUserId = ref('')
 const generateDate = ref('')
@@ -138,6 +164,15 @@ const detailError = ref('')
 const busy = ref(false)
 
 const items = computed(() => ((detail.value?.items as Row[]) || []))
+const returnFiltered = computed(
+  () => !!(returnNo.value.trim() || status.value || filterUserId.value || timeFrom.value || timeTo.value),
+)
+const returnEmptyTitle = computed(() => (returnFiltered.value ? '没有符合筛选的离职归还单' : '暂无离职归还单'))
+const returnEmptyHint = computed(() =>
+  returnFiltered.value
+    ? '换一个单号或状态，或换离职人、生效日，或清空筛选。'
+    : '离职归还单由钉钉离职事件自动生成，异常缺单时使用手动补建。',
+)
 
 function statusText(value: string) {
   const labels: Record<string, string> = {
@@ -196,11 +231,27 @@ async function loadUsers() {
   users.value = first.concat(last.filter((user) => !seen.has(String(user.id))))
 }
 
+function rangeProblem() {
+  const from = timeFrom.value
+  const to = timeTo.value
+  if (!from && !to) return ''
+  if (!from || !to) return '请同时填写生效日起止'
+  if (to < from) return '生效日结束早于开始'
+  return ''
+}
+
 async function loadList() {
   listError.value = ''
+  rangeError.value = rangeProblem()
+  if (rangeError.value) return
   const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
   if (returnNo.value.trim()) params.returnNo = returnNo.value.trim()
   if (status.value) params.status = status.value
+  if (filterUserId.value) params.userId = Number(filterUserId.value)
+  if (timeFrom.value && timeTo.value) {
+    params.timeFrom = timeFrom.value
+    params.timeTo = timeTo.value
+  }
   try {
     const res = await http.get('/account/return/list', { params })
     orders.value = (res.data?.data?.list || []) as Row[]
@@ -208,6 +259,16 @@ async function loadList() {
     listError.value = rejectText(error)
     orders.value = []
   }
+}
+
+function resetFilters() {
+  returnNo.value = ''
+  status.value = ''
+  filterUserId.value = ''
+  timeFrom.value = ''
+  timeTo.value = ''
+  rangeError.value = ''
+  return loadList()
 }
 
 function today() {

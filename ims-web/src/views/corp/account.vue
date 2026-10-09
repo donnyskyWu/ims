@@ -15,7 +15,12 @@
     </p>
     <form class="qbar" data-testid="acct-list-filters" @submit.prevent="search">
       <input v-model="keyword" placeholder="账号编号/昵称" style="width: 130px" data-testid="acct-filter-keyword" />
-      <input v-model="ipGroupKeyword" placeholder="IP 组" style="width: 100px" />
+      <input
+        v-model="ipGroupKeyword"
+        placeholder="完整 IP 组名称"
+        style="width: 140px"
+        data-testid="acct-filter-ip-group"
+      />
       <select v-model="holderUserId" data-testid="acct-filter-holder" style="width: 140px">
         <option value="">全部责任人</option>
         <option v-for="user in holders" :key="user.id" :value="user.id">{{ user.nickname || user.username }}</option>
@@ -28,6 +33,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
     </form>
+    <p v-if="ipGroupMiss" class="hint" data-testid="acct-ip-group-msg">{{ ipGroupMiss }}</p>
     <p class="hint" data-testid="acct-pool-status">
       池状态 · 可领用 {{ poolCounts.IN_POOL }} · 在用 {{ poolCounts.IN_USE }} · 冻结 {{ poolCounts.FROZEN }} · 已归还
       {{ poolCounts.RETURNED }} · 已注销 {{ poolCounts.CANCELLED }}
@@ -1148,6 +1154,8 @@ const loading = ref(false)
 const error = ref('')
 const keyword = ref('')
 const ipGroupKeyword = ref('')
+const ipGroupMiss = ref('')
+const ipGroupApplied = ref(false)
 const status = ref('')
 const holderUserId = ref('')
 const holders = ref<{ id: string; username: string; nickname: string }[]>([])
@@ -1157,6 +1165,7 @@ const listFiltered = computed(
 )
 const emptyTitle = computed(() => {
   if (error.value) return error.value
+  if (ipGroupMiss.value) return ipGroupMiss.value
   if (status.value) {
     const label = statusLabel(status.value)
     if (keyword.value.trim() || ipGroupKeyword.value.trim() || holderUserId.value) {
@@ -1165,11 +1174,18 @@ const emptyTitle = computed(() => {
     return `当前没有「${label}」账号`
   }
   if (holderUserId.value) return '没有该责任人名下的账号'
+  if (ipGroupApplied.value && !keyword.value.trim() && !holderUserId.value) return '当前没有该 IP 组的账号'
   if (listFiltered.value) return '没有符合筛选的账号'
   return '暂无该平台账号'
 })
 const emptyHint = computed(() => {
   if (error.value) return ''
+  if (ipGroupMiss.value) {
+    return ipGroupMiss.value.includes('完整')
+      ? '请改成完整 IP 组名称，或重置筛选。'
+      : '换一个 IP 组名称，或重置筛选。'
+  }
+  if (ipGroupApplied.value) return '换一个 IP 组名称，或重置筛选。'
   if (listFiltered.value) return '换一个池状态或责任人，或重置筛选。'
   return '请先在资源管理完成主数据，再通过登记账号创建。'
 })
@@ -1521,30 +1537,52 @@ const basicLines = computed(() => {
   ]
 })
 
+async function resolveIpGroupId(name: string): Promise<{ id?: number; message: string }> {
+  const res = await http.get('/ip-group/list', { params: { pageNo: 1, pageSize: 200, keyword: name } })
+  const data = (res.data?.data || {}) as { list?: { id: number; groupName?: string }[]; total?: number }
+  const list = data.list || []
+  const total = Number(data.total ?? list.length)
+  const exact = list.filter((row) => (row.groupName || '') === name)
+  if (exact.length === 1) return { id: Number(exact[0].id), message: '' }
+  if (exact.length > 1) return { message: '匹配到多个 IP 组，请输入完整 IP 组名称' }
+  if (total > list.length) return { message: '匹配过多，请输入完整 IP 组名称' }
+  if (!list.length) return { message: '未找到该 IP 组' }
+  return { message: '请输入完整 IP 组名称' }
+}
+
 async function load() {
   loading.value = true
   error.value = ''
+  ipGroupMiss.value = ''
+  ipGroupApplied.value = false
   try {
-    const res = await http.get('/corp/account/page', {
-      params: {
-        pageNo: pageNo.value,
-        pageSize: pageSize.value,
-        platformType: meta.value.platform,
-        keyword: keyword.value || undefined,
-        status: status.value || undefined,
-        holderUserId: holderUserId.value || undefined,
-      },
-    })
-    const data = res.data?.data as { list: Record<string, unknown>[]; total: number }
-    let list = data?.list || []
-    if (ipGroupKeyword.value.trim()) {
-      const key = ipGroupKeyword.value.trim()
-      list = list.filter((row) => String(row.ipGroupName || '').includes(key))
+    const params: Record<string, unknown> = {
+      pageNo: pageNo.value,
+      pageSize: pageSize.value,
+      platformType: meta.value.platform,
+      keyword: keyword.value || undefined,
+      status: status.value || undefined,
+      holderUserId: holderUserId.value || undefined,
     }
-    rows.value = list
+    const groupKey = ipGroupKeyword.value.trim()
+    if (groupKey) {
+      const resolved = await resolveIpGroupId(groupKey)
+      if (!resolved.id) {
+        ipGroupMiss.value = resolved.message
+        rows.value = []
+        total.value = 0
+        return
+      }
+      params.ipGroupId = resolved.id
+      ipGroupApplied.value = true
+    }
+    const res = await http.get('/corp/account/page', { params })
+    const data = res.data?.data as { list: Record<string, unknown>[]; total: number }
+    rows.value = data?.list || []
     total.value = data?.total || 0
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载失败'
+    ipGroupApplied.value = false
     rows.value = []
     total.value = 0
   } finally {
