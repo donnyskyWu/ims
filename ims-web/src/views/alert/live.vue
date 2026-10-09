@@ -95,6 +95,14 @@
               <td class="mono">{{ row.occurredAt?.slice(0, 16) || '—' }}</td>
               <td v-if="tab === 'live'">
                 <button
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-receipt-btn"
+                  @click="openReceipt(row.alertNo)"
+                >
+                  回执
+                </button>
+                <button
                   v-if="row.responseStatus === 'OPEN'"
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -128,6 +136,45 @@
       </div>
     </div>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
+
+    <ProtoDrawer
+      :open="receiptOpen"
+      :title="receipt ? `预警回执 · ${receipt.alertNo}` : '预警回执'"
+      width="640px"
+      @close="closeReceipt"
+    >
+      <div v-if="receipt" data-testid="alert-receipt-drawer">
+        <p>{{ receipt.content }}</p>
+        <p class="hint">L{{ receipt.level }} · {{ receipt.responseStatus }}</p>
+        <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
+        <p v-if="receipt.priorityNote" class="hint" data-testid="alert-receipt-priority">{{ receipt.priorityNote }}</p>
+        <div v-if="receipt.receiptEmpty" class="empty" data-testid="alert-receipt-empty">
+          <div class="et">暂无通道回执（待推送，钉钉/短信不外发）</div>
+        </div>
+        <table v-else>
+          <thead>
+            <tr>
+              <th>通道</th>
+              <th>状态</th>
+              <th>回执时间</th>
+              <th>外发</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="ch in receipt.pushChannels" :key="ch.channel" data-testid="alert-receipt-row" :data-channel="ch.channel">
+              <td>{{ ch.label }}</td>
+              <td>{{ ch.empty ? '未触发' : ch.success ? '✓' : '✗' }}</td>
+              <td class="mono">{{ ch.receiptAt || '—' }}</td>
+              <td>不外发</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="receipt.retryNote" class="hint" style="color: var(--red)" data-testid="alert-receipt-retry">
+          {{ receipt.retryNote }}
+        </p>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="alert-receipt-close" @click="closeReceipt">关闭</button>
+      </div>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -135,6 +182,7 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 type Row = {
   id: number
@@ -144,6 +192,27 @@ type Row = {
   content: string
   responseStatus: string
   occurredAt: string
+}
+
+type ReceiptChannel = {
+  channel: string
+  label: string
+  success: boolean
+  empty?: boolean
+  stub?: boolean
+  outbound?: boolean
+  receiptAt?: string
+}
+
+type Receipt = {
+  alertNo: string
+  level: number
+  content: string
+  responseStatus: string
+  pushChannels: ReceiptChannel[]
+  receiptEmpty: boolean
+  priorityNote: string
+  retryNote: string
 }
 
 type DedupRow = {
@@ -168,6 +237,8 @@ const summary = ref<{ totalAlerts: number; handledCount: number; openCount: numb
 )
 const filters = reactive({ responseStatus: '' })
 const toast = ref('')
+const receiptOpen = ref(false)
+const receipt = ref<Receipt | null>(null)
 
 function tabFromRoute() {
   const q = String(route.query.tab || '')
@@ -225,6 +296,26 @@ async function loadList() {
     rows.value = []
   } finally {
     loading.value = false
+  }
+}
+
+function closeReceipt() {
+  receiptOpen.value = false
+  receipt.value = null
+}
+
+async function openReceipt(alertNo: string) {
+  toast.value = ''
+  try {
+    const res = await http.get(`/alert/check/${alertNo}`)
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '回执加载失败'
+      return
+    }
+    receipt.value = res.data.data
+    receiptOpen.value = true
+  } catch (error) {
+    toast.value = errorMessage(error)
   }
 }
 

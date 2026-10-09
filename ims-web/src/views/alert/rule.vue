@@ -132,6 +132,12 @@
         <p v-if="codeError" data-testid="alert-rule-code-error" class="hint" style="color: var(--red)">{{ codeError }}</p>
         <label class="fld">规则名称</label>
         <input v-model="form.ruleName" class="fld-in" />
+        <label class="fld">级别</label>
+        <select v-model.number="form.level" data-testid="alert-rule-level" class="fld-in">
+          <option :value="1">L1 提示</option>
+          <option :value="2">L2 警告</option>
+          <option :value="3">L3 严重</option>
+        </select>
         <label class="fld">阈值表达式</label>
         <input v-model="form.thresholdExpr" class="fld-in" placeholder="delayMinutes>30" />
         <label class="fld">触发条件 DSL</label>
@@ -181,6 +187,7 @@ const filters = reactive({ ruleName: '', enabled: '' })
 const form = reactive({
   ruleCode: '',
   ruleName: '',
+  level: 2,
   thresholdExpr: '',
   dslSource: '',
   dslField: '',
@@ -263,6 +270,7 @@ async function loadList() {
 function resetForm() {
   form.ruleCode = ''
   form.ruleName = ''
+  form.level = 2
   form.thresholdExpr = ''
   form.dslSource = ''
   form.dslField = ''
@@ -285,6 +293,7 @@ function openEdit(row: Row) {
   resetForm()
   form.ruleCode = row.ruleCode
   form.ruleName = row.ruleName
+  form.level = row.level || 2
   form.thresholdExpr = row.thresholdExpr || ''
   form.enabled = row.enabled
   showForm.value = true
@@ -296,6 +305,7 @@ async function submitCreate() {
   dslError.value = ''
   const payload: Record<string, unknown> = {
     ruleName: form.ruleName,
+    level: form.level,
     thresholdExpr: form.thresholdExpr,
     enabled: form.enabled,
   }
