@@ -65,47 +65,45 @@
       </div>
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
-    <div v-if="drawerOpen" class="drawer-mask" @click.self="drawerOpen = false">
-      <div class="drawer">
-        <h3>{{ editingId ? '编辑关键词' : '新增关键词' }}</h3>
-        <div class="formrow">
-          <label>平台</label>
-          <select v-model="form.platformType">
-            <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
-          </select>
-        </div>
-        <div class="formrow">
-          <label>关键词</label>
-          <input v-model="form.keyword" data-testid="kw-form-keyword" />
-        </div>
-        <div class="formrow">
-          <label>匹配类型</label>
-          <select v-model="form.matchType">
-            <option value="EXACT">EXACT</option>
-            <option value="CONTAINS">CONTAINS</option>
-            <option value="FUZZY">FUZZY</option>
-          </select>
-        </div>
-        <div class="formrow">
-          <label>状态</label>
-          <select v-model="form.status">
-            <option value="ENABLED">ENABLED</option>
-            <option value="DISABLED">DISABLED</option>
-          </select>
-        </div>
-        <p v-if="formMsg" class="hint" data-testid="kw-form-msg">{{ formMsg }}</p>
-        <div class="drawer-acts">
-          <button class="btn btn-sec btn-sm" type="button" @click="drawerOpen = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" data-testid="kw-save" @click="save">保存</button>
-        </div>
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑关键词' : '新增关键词'" width="480px" @close="drawerOpen = false">
+      <div class="formrow">
+        <label>平台</label>
+        <select v-model="form.platformType" data-testid="kw-form-platform">
+          <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
+        </select>
       </div>
-    </div>
+      <div class="formrow">
+        <label>关键词</label>
+        <input v-model="form.keyword" data-testid="kw-form-keyword" />
+      </div>
+      <div class="formrow">
+        <label>匹配类型</label>
+        <select v-model="form.matchType">
+          <option value="EXACT">EXACT</option>
+          <option value="CONTAINS">CONTAINS</option>
+          <option value="FUZZY">FUZZY</option>
+        </select>
+      </div>
+      <div class="formrow">
+        <label>状态</label>
+        <select v-model="form.status">
+          <option value="ENABLED">ENABLED</option>
+          <option value="DISABLED">DISABLED</option>
+        </select>
+      </div>
+      <p v-if="formMsg" class="hint" data-testid="kw-form-msg">{{ formMsg }}</p>
+      <template #footer>
+        <button class="btn btn-sec btn-sm" type="button" @click="drawerOpen = false">取消</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="kw-save" @click="save">保存</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const platforms = ['DOUYIN', 'KUAISHOU', 'XIAOHONGSHU']
 const rows = ref<Record<string, unknown>[]>([])
