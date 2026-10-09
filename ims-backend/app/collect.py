@@ -30,6 +30,12 @@ router.include_router(collect_config_router)
 
 UNIFIED_CRON = "0 2 * * *"
 EXT_UNIFIED_CRON = "0 0 22 * * ?"
+TASK_STATUS_LABEL = {
+    "ENABLED": "启用",
+    "DISABLED": "停用",
+    "RUNNING": "运行中",
+}
+RETRYABLE_LOG_STATUS = {"FAILED", "PARTIAL", "COOKIE_EXPIRED", "ENGINE_UNAVAILABLE"}
 
 
 class TaskBody(BaseModel):
@@ -99,6 +105,20 @@ def account_label(ops: Session, account_id: int | None) -> str:
     return f"{row.platform_type} / {row.account_no or row.id} {row.account_name}"
 
 
+def schedule_next(frequency: str) -> str:
+    from app.internal_collect import initial_next_run
+
+    return initial_next_run(frequency or "DAILY")
+
+
+def account_health_label(ops: Session, account_id: int | None) -> str:
+    if not account_id:
+        return ""
+    from app.internal_collect import health_label
+
+    return health_label(bind_of(ops, account_id))
+
+
 def bind_warning(ops: Session, account_id: int | None) -> str | None:
     if not account_id:
         return None
@@ -153,6 +173,8 @@ def task_vo(
         "failCount": row.fail_count,
         "memberCount": member_count(ops, row.id, row.tenant_id or 0) if (row.is_unified or row.is_external_unified) else None,
         "bindWarning": warning,
+        "healthLabel": account_health_label(ops, row.account_id),
+        "statusLabel": TASK_STATUS_LABEL.get(row.status, row.status),
     }
 
 
@@ -178,6 +200,7 @@ def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None =
         "durationMs": row.duration_ms,
         "recordCount": row.record_count,
         "retryCount": row.retry_count,
+        "retryable": row.status in RETRYABLE_LOG_STATUS,
         "errorSummary": row.error_summary or None,
         "repairAccountId": repair_account_id,
         "statusLabel": {
@@ -436,13 +459,10 @@ def task_create(
     warning = bind_warning(ops, body.accountId)
     source = "API" if method == "INTERNAL" else "EXTERNAL"
     data_type = None
-    next_run = ""
     if method == "INTERNAL" and body.platformType == "KUAISHOU":
-        from app.kuaishou_collect import initial_next_run
-
         source = "KUAISHOU_OPEN_API"
         data_type = "KUAISHOU_VIDEO_LIST"
-        next_run = initial_next_run(body.frequency)
+    next_run = "" if body.status == "DISABLED" else schedule_next(body.frequency)
     row = CollectTask(
         task_name=body.taskName.strip(),
         platform_type=body.platformType,
@@ -495,6 +515,10 @@ def task_update(
     row.frequency = body.frequency
     row.cron = body.cron.strip()
     row.status = body.status
+    if body.status == "DISABLED":
+        row.next_run_at = ""
+    elif body.status == "ENABLED" and not row.next_run_at:
+        row.next_run_at = schedule_next(row.frequency)
     row.updated_at = utcnow()
     data = task_vo(ops, row)
     warning = bind_warning(ops, row.account_id)
@@ -519,6 +543,153 @@ def task_delete(
     return ok(None)
 
 
+def _platform_owned(row: CollectTask) -> bool:
+    """C1–C5 内部作品任务由平台定时器执行，本地桩调度不再重复跑。"""
+    from app.internal_collect import profiles
+
+    owned = {item.source for item in profiles()}
+    return (
+        row.method == "INTERNAL"
+        and not row.collect_config_id
+        and not row.is_external_unified
+        and (row.source or "") in owned
+    )
+
+
+def perform_task_run(ops: Session, row: CollectTask) -> dict:
+    if (
+        row.platform_type == "KUAISHOU"
+        and row.method != "EXTERNAL"
+        and not row.collect_config_id
+        and not row.is_external_unified
+    ):
+        from app.kuaishou_collect import execute_kuaishou_task
+
+        return execute_kuaishou_task(ops, row)
+    # 抖音采集页创建的内部作品任务走 Collector。任务页 / 统一任务 / 外部任务仍走 simulate_run。
+    if (
+        row.platform_type == "DOUYIN"
+        and (row.source or "") == "DOUYIN_OPEN_API"
+        and row.method != "EXTERNAL"
+        and not row.collect_config_id
+        and not row.is_external_unified
+    ):
+        from app.douyin_collect import execute_douyin_task
+
+        return execute_douyin_task(ops, row)
+    # 视频号采集页创建的内部作品任务走 Collector。任务页 / 统一任务 / 外部任务仍走 simulate_run。
+    if (
+        row.platform_type == "WECHAT_CHANNELS"
+        and (row.source or "") == "WECHAT_CHANNELS_API"
+        and row.method != "EXTERNAL"
+        and not row.collect_config_id
+        and not row.is_external_unified
+    ):
+        from app.wechat_channels_collect import execute_wechat_channels_task
+
+        return execute_wechat_channels_task(ops, row)
+    from app.internal_collect import retry_count_for_run
+
+    started = utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    status, type_results, record_count, error_summary, log_account = simulate_run(ops, row)
+    retries = retry_count_for_run(ops, row.id)
+    duration_ms = 8200 if status == "FAILED" else 45000
+    log = CollectLog(
+        task_id=row.id,
+        account_id=log_account or row.account_id,
+        status=status,
+        started_at=started,
+        duration_ms=duration_ms,
+        record_count=record_count,
+        retry_count=retries,
+        error_summary=error_summary,
+        type_results_json=json.dumps(type_results, ensure_ascii=False),
+        tenant_id=row.tenant_id or 0,
+    )
+    ops.add(log)
+    row.last_run_at = started
+    if status == "SUCCESS":
+        row.success_count += 1
+    else:
+        row.fail_count += 1
+    if row.status == "ENABLED":
+        row.next_run_at = schedule_next(row.frequency)
+    row.updated_at = utcnow()
+    ops.flush()
+    return {"logId": str(log.id), "taskId": str(row.id), "status": status, "retryCount": retries}
+
+
+def tick_local_tasks(now=None) -> int:
+    """到期的任务页 / 外部桩任务。平台 source 仍交给 C1–C5 定时器。"""
+    from app.ops_db import ops_session
+
+    stamp = (now or utcnow()).strftime("%Y-%m-%d %H:%M:%S")
+    ops = ops_session()
+    ran = 0
+    try:
+        due = ops.scalars(
+            select(CollectTask).where(
+                CollectTask.deleted == 0,
+                CollectTask.status == "ENABLED",
+                CollectTask.next_run_at != "",
+                CollectTask.next_run_at <= stamp,
+            )
+        ).all()
+        ids = [row.id for row in due if not _platform_owned(row)]
+        for task_id in ids:
+            task = ops.get(CollectTask, task_id)
+            if task is None or task.deleted or task.status != "ENABLED":
+                continue
+            if not task.next_run_at or task.next_run_at > stamp:
+                continue
+            try:
+                perform_task_run(ops, task)
+                ops.commit()
+                ran += 1
+            except Exception:
+                ops.rollback()
+        return ran
+    except Exception:
+        ops.rollback()
+        raise
+    finally:
+        ops.close()
+
+
+@router.post("/task/{task_id}/start")
+def task_start(
+    task_id: int,
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = load_task(ops, actor, task_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.status == "DISABLED":
+        row.status = "ENABLED"
+        row.next_run_at = schedule_next(row.frequency)
+        row.updated_at = utcnow()
+    elif not row.next_run_at:
+        row.next_run_at = schedule_next(row.frequency)
+        row.updated_at = utcnow()
+    return ok(task_vo(ops, row))
+
+
+@router.post("/task/{task_id}/stop")
+def task_stop(
+    task_id: int,
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = load_task(ops, actor, task_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    row.status = "DISABLED"
+    row.next_run_at = ""
+    row.updated_at = utcnow()
+    return ok(task_vo(ops, row))
+
+
 @router.post("/task/{task_id}/run")
 def task_run(
     task_id: int,
@@ -530,70 +701,10 @@ def task_run(
         return fail(1504, "资源不可用")
     if row.status == "DISABLED":
         return fail(1001, "任务已停用")
-    if (
-        row.platform_type == "KUAISHOU"
-        and row.method != "EXTERNAL"
-        and not row.collect_config_id
-        and not row.is_external_unified
-    ):
-        from app.kuaishou_collect import execute_kuaishou_task
-
-        try:
-            return ok(execute_kuaishou_task(ops, row))
-        except Exception:
-            return fail(2022, "采集失败")
-    # 抖音采集页创建的内部作品任务走 Collector。任务页 / 统一任务 / 外部任务仍走 simulate_run。
-    if (
-        row.platform_type == "DOUYIN"
-        and (row.source or "") == "DOUYIN_OPEN_API"
-        and row.method != "EXTERNAL"
-        and not row.collect_config_id
-        and not row.is_external_unified
-    ):
-        from app.douyin_collect import execute_douyin_task
-
-        try:
-            return ok(execute_douyin_task(ops, row))
-        except Exception:
-            return fail(2022, "采集失败")
-    # 视频号采集页创建的内部作品任务走 Collector。任务页 / 统一任务 / 外部任务仍走 simulate_run。
-    if (
-        row.platform_type == "WECHAT_CHANNELS"
-        and (row.source or "") == "WECHAT_CHANNELS_API"
-        and row.method != "EXTERNAL"
-        and not row.collect_config_id
-        and not row.is_external_unified
-    ):
-        from app.wechat_channels_collect import execute_wechat_channels_task
-
-        try:
-            return ok(execute_wechat_channels_task(ops, row))
-        except Exception:
-            return fail(2022, "采集失败")
-    started = utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    status, type_results, record_count, error_summary, log_account = simulate_run(ops, row)
-    duration_ms = 8200 if status == "FAILED" else 45000
-    log = CollectLog(
-        task_id=row.id,
-        account_id=log_account or row.account_id,
-        status=status,
-        started_at=started,
-        duration_ms=duration_ms,
-        record_count=record_count,
-        retry_count=0,
-        error_summary=error_summary,
-        type_results_json=json.dumps(type_results, ensure_ascii=False),
-        tenant_id=tenant_of(actor),
-    )
-    ops.add(log)
-    row.last_run_at = started
-    if status == "SUCCESS":
-        row.success_count += 1
-    else:
-        row.fail_count += 1
-    row.updated_at = utcnow()
-    ops.flush()
-    return ok({"logId": str(log.id), "taskId": str(row.id), "status": status})
+    try:
+        return ok(perform_task_run(ops, row))
+    except Exception:
+        return fail(2022, "采集失败")
 
 
 @router.post("/task/ensure-unified")
@@ -622,6 +733,7 @@ def ensure_unified(
             cron=UNIFIED_CRON,
             status="ENABLED",
             is_unified=1,
+            next_run_at=schedule_next("DAILY"),
             tenant_id=tenant_id,
         )
         ops.add(existing)
@@ -679,6 +791,7 @@ def ensure_external_unified(
             cron=EXT_UNIFIED_CRON,
             status="ENABLED",
             is_external_unified=1,
+            next_run_at=schedule_next("DAILY"),
             tenant_id=tenant_id,
         )
         ops.add(existing)
