@@ -252,6 +252,9 @@
             <span v-if="n.parallelGroup"> · 并行 {{ n.parallelGroup }}</span>
           </div>
           <div class="hint">{{ n.standardDesc || '—' }}</div>
+          <div class="hint" data-testid="sop-node-meta">
+            SLA {{ n.slaHours ?? '—' }} 小时 · {{ n.needReview ? `需审核 ${n.reviewerRole || '未选岗位'}` : '节点免审' }}
+          </div>
         </li>
       </ul>
     </ProtoDrawer>

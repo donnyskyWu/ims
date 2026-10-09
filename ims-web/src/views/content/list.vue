@@ -15,8 +15,8 @@
       <router-link to="/ims/content/fb-sync">补偿队列</router-link> · 审核通过后
       <router-link to="/ims/content/publish">发布管理</router-link>（回填/督办）。
     </p>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="titleKw" placeholder="标题" style="width: 160px" />
+    <form class="qbar" data-testid="content-filters" @submit.prevent="loadList">
+      <input v-model="titleKw" data-testid="content-filter-title" placeholder="标题" style="width: 160px" />
       <select v-model="statusKw" style="width: 160px">
         <option value="">全部状态</option>
         <option value="DRAFT">DRAFT</option>
@@ -42,7 +42,7 @@
         <option value="SCRIPT">脚本</option>
       </select>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
-      <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-filter-reset" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -67,7 +67,12 @@
               <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="11"><div class="empty"><div class="et">{{ error || '暂无内容' }}</div></div></td>
+              <td colspan="11">
+                <div class="empty" data-testid="content-list-empty">
+                  <div class="et">{{ error || contentEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ contentEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.id }}</td>
@@ -122,7 +127,8 @@
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
-          <input v-model="editTitle" />
+          <input v-model="editTitle" data-testid="content-edit-title" />
+          <p v-if="titleError" class="hint bad" data-testid="content-title-error">{{ titleError }}</p>
         </div>
         <div class="fld">
           <label>内容类型</label>
@@ -178,7 +184,7 @@
               <img :src="img.objectUrl" :alt="img.alt" />
               <figcaption>{{ img.alt }}</figcaption>
             </figure>
-            <div v-if="!previewImages.length" class="hint">{{ previewHint }}</div>
+            <div v-if="!previewImages.length" class="hint" data-testid="content-image-empty">{{ previewHint }}</div>
           </div>
         </div>
         <div class="fld">
@@ -200,11 +206,15 @@
         <div v-if="editContentType === 'ARTICLE'" class="fld">
           <label>排版</label>
           <p class="hint">AI 语义排版只生成版式，不改写纯文本，也不调用文案生成。</p>
+          <p v-if="!editBody.trim()" class="hint" data-testid="content-ai-layout-need-body">正文为空时不能做语义排版。</p>
           <button class="btn btn-sec btn-sm" type="button" :disabled="!canAiLayout" @click="openAiLayout">
             AI 语义排版
           </button>
           <div v-if="aiPanelOpen" class="ai-layout-panel">
             <p class="hint">按正文语义自动选择决策扫读版或情报分析版。</p>
+            <p v-if="!aiPreview && !aiNote" class="hint" data-testid="content-ai-layout-empty">
+              尚未预览版式。点「AI 排版预览」后才写回，不会改正文。
+            </p>
             <button class="btn btn-pri btn-sm" type="button" :disabled="aiBusy || !canAiLayout" @click="previewAi">
               AI 排版预览
             </button>
@@ -234,6 +244,12 @@
         {{ viewRow?.contentType || '—' }}
       </p>
       <p v-if="viewRow?.matchSummary" class="hint">赛事摘要 {{ viewRow.matchSummary }}</p>
+      <p class="hint" data-testid="content-view-media">
+        文案 {{ viewRow?.aiGenerateStatus || '未生成' }} · 视频 {{ viewRow?.videoJobStatus || '未生成' }}
+      </p>
+      <p v-if="!viewRow?.layoutHtml" class="hint" data-testid="content-view-layout-empty">
+        未写版式 HTML，查看按正文只读回退。
+      </p>
       <div class="dsec">正文</div>
       <ContentLayoutPreview :layout-html="viewRow?.layoutHtml || ''" :body="viewRow?.body || ''" />
       <template #footer>
@@ -262,6 +278,15 @@ const statusKw = ref('')
 const typeKw = ref('')
 const platformKw = ref('')
 const docKw = ref('')
+const filtering = computed(
+  () => !!(titleKw.value.trim() || statusKw.value || typeKw.value || platformKw.value || docKw.value),
+)
+const contentEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的内容' : '暂无内容'))
+const contentEmptyHint = computed(() =>
+  filtering.value
+    ? '换标题、状态、类型、平台或文档类型，或重置筛选'
+    : '点「新增内容」保存草稿',
+)
 const drawerOpen = ref(false)
 const viewOpen = ref(false)
 const viewRow = ref<any>(null)
@@ -277,6 +302,7 @@ const editingId = ref<number | null>(null)
 const editingRow = ref<any>(null)
 const editorSeed = ref(0)
 const editTitle = ref('')
+const titleError = ref('')
 const editContentType = ref('SHORT_VIDEO')
 const editPlatform = ref('')
 const editDocType = ref('COPY')
@@ -449,6 +475,7 @@ function resetForm() {
 function openCreate() {
   editingId.value = null
   editingRow.value = null
+  titleError.value = ''
   resetForm()
   editorSeed.value += 1
   uploadError.value = ''
@@ -469,6 +496,7 @@ function adoptAi(payload: { markdown: string }) {
 function openEdit(row: any) {
   editingId.value = row.id
   editingRow.value = row
+  titleError.value = ''
   editTitle.value = row.title || ''
   editContentType.value = row.contentType || 'SHORT_VIDEO'
   editPlatform.value = row.platformType || ''
@@ -564,7 +592,9 @@ function onLayoutApplied(payload: {
 }
 
 async function saveContent() {
+  titleError.value = ''
   if (!editTitle.value.trim()) {
+    titleError.value = '请填写标题'
     window.alert('请填写标题')
     return
   }
