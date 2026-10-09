@@ -13,6 +13,10 @@
         <option value="PENDING">待处理</option>
         <option value="DONE">已完成</option>
       </select>
+      <select v-model="filters.taskType" style="width: 120px" data-testid="todo-task-type">
+        <option value="">全部类型</option>
+        <option value="exam">考试</option>
+      </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
     </form>
@@ -37,10 +41,18 @@
             </tr>
             <tr v-for="row in rows" v-else :key="row.id" :style="row.overdue ? 'background:#fff4f2' : ''">
               <td>{{ row.title }}</td>
-              <td>{{ row.taskType }}</td>
+              <td>{{ typeLabel(row.taskType) }}</td>
               <td class="mono">{{ row.deadline || '—' }}</td>
               <td>{{ row.status }}</td>
               <td>
+                <router-link
+                  v-if="row.taskType === 'exam'"
+                  class="btn btn-sec btn-sm"
+                  to="/ims/perf/exam"
+                  data-testid="todo-exam-entry"
+                >
+                  去考试
+                </router-link>
                 <button
                   v-if="row.status === 'PENDING' && transferTodoPath(row)"
                   class="btn btn-pri btn-sm"
@@ -105,14 +117,24 @@ function transferTodoPath(row: Row) {
 const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
-const filters = reactive({ status: 'PENDING' })
+const filters = reactive({ status: 'PENDING', taskType: '' })
+
+function typeLabel(taskType: string) {
+  if (taskType === 'exam') return '考试'
+  return taskType
+}
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
     const res = await http.get('/auth/workbench/todos', {
-      params: { pageNo: 1, pageSize: 50, status: filters.status || undefined },
+      params: {
+        pageNo: 1,
+        pageSize: 50,
+        status: filters.status || undefined,
+        taskType: filters.taskType || undefined,
+      },
     })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'

@@ -505,7 +505,15 @@ def build_details(
         if source == "MANUAL":
             status = "MISSING"
         elif source == "EXAM":
-            status = "MISSING"
+            module = "EXAM"
+            from app.exam_paper import exam_metric_value
+
+            fetched = exam_metric_value(db, tenant_id, user_id, period)
+            if fetched is None:
+                status = "MISSING"
+            else:
+                value = fetched
+                status = "EXAM"
         elif source == "AUTO":
             config = metric.source_config or {}
             module = str(config.get("module") or "")

@@ -8,13 +8,14 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
-from app.models import ExamAssignment, ExamPaper, ExamQuestion, ExamRecord, User
+from app.models import ExamAssignment, ExamPaper, ExamQuestion, ExamRecord, Todo, User
 
 router = APIRouter(tags=["perf-exam"])
 
@@ -29,6 +30,9 @@ TYPE_ALIAS = {
     "ESSAY": "ESSAY",
 }
 SUBJECTIVE = frozenset({"ESSAY"})
+GRADE_OVERDUE = timedelta(hours=48)
+EXAM_TASK = "exam"
+EXAM_REF = "exam_paper"
 # 种子题答案。题库没有难度字段，抽题只按知识域 + 题型，题目 id 去重。
 SEED_ANSWERS: dict[str, dict] = {
     "EQ-001": {
@@ -166,6 +170,17 @@ class SubmitBody(BaseModel):
     record_id: int = Field(alias="recordId")
     answers: list[AnswerBody]
     switch_screen_count: int = Field(default=0, alias="switchScreenCount")
+
+
+class GradeItem(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    question_id: int = Field(alias="questionId")
+    score: float
+    comment: str | None = None
+
+
+class GradeBody(BaseModel):
+    gradings: list[GradeItem]
 
 
 def paper_of(db: Session, tenant_id: int, paper_id: int) -> ExamPaper | None:
@@ -353,6 +368,124 @@ def assignment_of(db: Session, tenant_id: int, paper_id: int, user_id: int) -> E
     )
 
 
+def pending_exam_todo(db: Session, tenant_id: int, user_id: int, paper_id: int) -> Todo | None:
+    return db.scalar(
+        select(Todo).where(
+            Todo.tenant_id == tenant_id,
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == EXAM_TASK,
+            Todo.ref_type == EXAM_REF,
+            Todo.ref_id == paper_id,
+            Todo.status == "PENDING",
+        )
+    )
+
+
+def upsert_exam_todo(db: Session, tenant_id: int, user_id: int, paper: ExamPaper, deadline: datetime) -> None:
+    title = f"考试待办：{paper.paper_name}"[:128]
+    content = "工作台考试待办，进入在线考试作答"
+    row = pending_exam_todo(db, tenant_id, user_id, paper.id)
+    if row is None:
+        db.add(
+            Todo(
+                assignee_user_id=user_id,
+                task_type=EXAM_TASK,
+                ref_type=EXAM_REF,
+                ref_id=paper.id,
+                title=title,
+                content=content,
+                status="PENDING",
+                deadline=deadline,
+                tenant_id=tenant_id,
+            )
+        )
+        return
+    row.title = title
+    row.content = content
+    row.deadline = deadline
+
+
+def close_exam_todo(db: Session, tenant_id: int, user_id: int, paper_id: int) -> None:
+    row = pending_exam_todo(db, tenant_id, user_id, paper_id)
+    if row is not None:
+        row.status = "DONE"
+
+
+def essay_questions(record: ExamRecord) -> list[dict]:
+    return [item for item in (record.questions or []) if item.get("questionType") in SUBJECTIVE]
+
+
+def grade_overdue(record: ExamRecord, now: datetime) -> bool:
+    if record.exam_status != "SUBMITTED" or record.submit_at is None:
+        return False
+    return record.submit_at <= now - GRADE_OVERDUE
+
+
+def answer_text(record: ExamRecord, question_id: int):
+    for item in record.answers or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            if int(item.get("questionId")) == question_id:
+                return item.get("answer")
+        except (TypeError, ValueError):
+            continue
+    return ""
+
+
+def subjective_items(record: ExamRecord, include_reference: bool) -> list[dict]:
+    key = record.answer_key or {}
+    items = []
+    for question in essay_questions(record):
+        try:
+            question_id = int(question.get("questionId"))
+        except (TypeError, ValueError):
+            continue
+        item = {
+            "questionId": question_id,
+            "content": question.get("content") or "",
+            "maxScore": question.get("score"),
+            "answer": answer_text(record, question_id),
+        }
+        if include_reference:
+            item["reference"] = key.get(str(question_id), "")
+        items.append(item)
+    return items
+
+
+def can_grade(request: Request) -> bool:
+    scope = getattr(request.state, "scope", None)
+    return scope is None or getattr(scope, "kind", "") != "SELF"
+
+
+def exam_metric_value(db: Session, tenant_id: int, user_id: int, period: str) -> float | None:
+    """已判分考试折成百分制，供考试成绩类指标取数（PER-E-R4）。"""
+    text = (period or "").strip()
+    if len(text) != 7:
+        return None
+    rows = db.scalars(
+        select(ExamRecord).where(
+            ExamRecord.deleted == 0,
+            ExamRecord.tenant_id == tenant_id,
+            ExamRecord.user_id == user_id,
+            ExamRecord.exam_status.in_(("GRADED", "MAKEUP_EXAM")),
+            ExamRecord.score.is_not(None),
+        )
+    ).all()
+    percents: list[float] = []
+    for row in rows:
+        if row.submit_at is None or row.submit_at.strftime("%Y-%m") != text:
+            continue
+        paper = db.get(ExamPaper, row.paper_id)
+        total = float(paper.total_score) if paper is not None and paper.total_score else 0
+        if total <= 0 or row.score is None:
+            continue
+        percents.append(float(row.score) / total * 100)
+    if not percents:
+        return None
+    return round(sum(percents) / len(percents), 2)
+
+
 def open_attempt(paper: ExamPaper, record: ExamRecord, questions: list, answer_key: dict, status: str) -> None:
     now = utcnow()
     record.questions = questions
@@ -523,6 +656,7 @@ def assign_paper(
             current.window_from = window_from
             current.window_to = window_to
             current.updated_at = now
+        upsert_exam_todo(db, tenant_id, uid, row, window_to)
     db.flush()
     assigned = db.scalar(
         select(func.count())
@@ -663,6 +797,7 @@ def submit_exam(
             record.makeup_consumed = 1
         else:
             record.exam_status = "GRADED"
+    close_exam_todo(db, tenant_id, actor.id, paper.id)
     db.flush()
     return ok(
         {
@@ -676,6 +811,76 @@ def submit_exam(
     )
 
 
+@router.put("/exam/record/{record_id}/grade")
+def grade_record(
+    record_id: int,
+    body: GradeBody,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_grade(request):
+        return fail(403, "考生不能阅卷")
+    tenant_id = tenant_of(actor)
+    record = db.get(ExamRecord, record_id)
+    if record is None or record.deleted or record.tenant_id != tenant_id:
+        return fail(1001, "答卷不存在")
+    if record.exam_status != "SUBMITTED":
+        return fail(1001, "仅已交卷的主观题可阅卷")
+    essays = essay_questions(record)
+    if not essays:
+        return fail(1001, "本卷没有简答题")
+    expected = {}
+    for question in essays:
+        try:
+            question_id = int(question.get("questionId"))
+        except (TypeError, ValueError):
+            return fail(1001, "题目无效")
+        expected[question_id] = q2(question.get("score"))
+    if not body.gradings:
+        return fail(1001, "请评完主观题")
+    seen: set[int] = set()
+    subjective = Decimal("0")
+    comments: dict[int, str] = {}
+    for item in body.gradings:
+        if item.question_id in seen:
+            return fail(1001, "题目重复")
+        seen.add(item.question_id)
+        if item.question_id not in expected:
+            return fail(1001, "题目不是简答题")
+        score = q2(item.score)
+        if score < 0 or score > expected[item.question_id]:
+            return fail(1001, "评分须在 0 到该题分值之间")
+        comment = (item.comment or "").strip()
+        if len(comment) > 200:
+            return fail(1001, "评语不超过 200 字")
+        subjective += score
+        comments[item.question_id] = comment
+    if seen != set(expected):
+        return fail(1001, "主观题未评完")
+    questions = list(record.questions or [])
+    for question in questions:
+        try:
+            question_id = int(question.get("questionId"))
+        except (TypeError, ValueError):
+            continue
+        if question_id not in comments:
+            continue
+        question["gradedScore"] = float(q2(next(item.score for item in body.gradings if item.question_id == question_id)))
+        question["gradeComment"] = comments[question_id]
+    record.questions = questions
+    flag_modified(record, "questions")
+    objective = q2(record.objective_score)
+    record.subjective_score = float(subjective)
+    record.score = float(objective + subjective)
+    record.exam_status = "GRADED"
+    if record.is_makeup:
+        record.makeup_consumed = 1
+    record.updated_at = utcnow()
+    db.flush()
+    return ok(None)
+
+
 @router.get("/exam/record/scores")
 def list_scores(
     request: Request,
@@ -683,6 +888,7 @@ def list_scores(
     pageSize: int = 10,
     paperId: int = 0,
     userId: int = 0,
+    userKeyword: str = "",
     examStatus: str = "",
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
@@ -694,14 +900,40 @@ def list_scores(
         stmt = stmt.where(ExamRecord.user_id == actor.id)
     elif userId:
         stmt = stmt.where(ExamRecord.user_id == userId)
+    keyword = (userKeyword or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        matched = list(
+            db.scalars(
+                select(User.id).where(
+                    User.deleted == 0,
+                    User.tenant_id == tenant_id,
+                    or_(User.nickname.like(like), User.username.like(like)),
+                )
+            ).all()
+        )
+        if keyword.isdigit():
+            matched.append(int(keyword))
+        stmt = stmt.where(ExamRecord.user_id.in_(matched or [-1]))
     if paperId:
         stmt = stmt.where(ExamRecord.paper_id == paperId)
     status = (examStatus or "").strip().upper()
     if status:
         stmt = stmt.where(ExamRecord.exam_status == status)
     page_no, size = page_args(pageNo, pageSize)
+    now = utcnow()
+    overdue_rank = case(
+        (
+            (ExamRecord.exam_status == "SUBMITTED")
+            & ExamRecord.submit_at.is_not(None)
+            & (ExamRecord.submit_at <= now - GRADE_OVERDUE),
+            0,
+        ),
+        else_=1,
+    )
+    ordered = stmt.order_by(overdue_rank.asc(), ExamRecord.id.desc())
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = db.scalars(stmt.order_by(ExamRecord.id.desc()).offset((page_no - 1) * size).limit(size)).all()
+    rows = db.scalars(ordered.offset((page_no - 1) * size).limit(size)).all()
     paper_ids = {row.paper_id for row in rows}
     user_ids = {row.user_id for row in rows}
     papers = {
@@ -709,25 +941,33 @@ def list_scores(
         for row in db.scalars(select(ExamPaper).where(ExamPaper.id.in_(paper_ids or [0]))).all()
     }
     users = {row.id: row for row in db.scalars(select(User).where(User.id.in_(user_ids or [0]))).all()}
+    manager = can_grade(request)
     data = []
     for row in rows:
         paper = papers.get(row.paper_id)
         user = users.get(row.user_id)
-        data.append(
-            {
-                "id": row.id,
-                "paperId": row.paper_id,
-                "paperName": paper.paper_name if paper else "",
-                "userId": row.user_id,
-                "userName": (user.nickname or user.username) if user else str(row.user_id),
-                "score": row.score,
-                "objectiveScore": row.objective_score,
-                "subjectiveScore": row.subjective_score,
-                "switchScreenCount": row.switch_screen_count or 0,
-                "examStatus": row.exam_status,
-                "isMakeup": bool(row.is_makeup) or row.exam_status == "MAKEUP_EXAM",
-                "startAt": iso_utc(row.start_at),
-                "submitAt": iso_utc(row.submit_at) if row.submit_at else "",
-            }
-        )
+        essays = essay_questions(row)
+        overdue = grade_overdue(row, now)
+        item = {
+            "id": row.id,
+            "paperId": row.paper_id,
+            "paperName": paper.paper_name if paper else "",
+            "userId": row.user_id,
+            "userName": (user.nickname or user.username) if user else str(row.user_id),
+            "score": row.score,
+            "objectiveScore": row.objective_score,
+            "subjectiveScore": row.subjective_score,
+            "switchScreenCount": row.switch_screen_count or 0,
+            "forcedSubmit": bool(row.forced_submit) or (row.switch_screen_count or 0) >= 3,
+            "examStatus": row.exam_status,
+            "isMakeup": bool(row.is_makeup) or row.exam_status == "MAKEUP_EXAM",
+            "hasSubjective": bool(essays),
+            "gradeOverdue": overdue,
+            "canGrade": manager and row.exam_status == "SUBMITTED" and bool(essays),
+            "startAt": iso_utc(row.start_at),
+            "submitAt": iso_utc(row.submit_at) if row.submit_at else "",
+        }
+        if manager and essays and row.exam_status == "SUBMITTED":
+            item["subjectiveItems"] = subjective_items(row, True)
+        data.append(item)
     return paged(data, int(total or 0), page_no, size)
