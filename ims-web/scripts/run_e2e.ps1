@@ -1,4 +1,7 @@
 # One-command IMS Playwright E2E: preflight API (18080) + Vite (6173), run full suite, write e2e_result.txt.
+# Default workers=2 (PO 2026-10-09). Unstable failures: set E2E_WORKERS=1 and record why in e2e_result.txt.
+#   $env:E2E_WORKERS = "1"
+#   .\scripts\run_e2e.ps1
 # DB: loads ims-backend/.env before starting API (local MySQL vs cloud — see doc/运维/云MySQL联调.md).
 param(
     [switch]$SkipServe,
@@ -170,7 +173,18 @@ if ($env:E2E_BASE_URL -and $env:E2E_BASE_URL -ne $WebBase) {
 $env:E2E_BASE_URL = $WebBase
 Write-Host "[e2e] E2E_BASE_URL=$env:E2E_BASE_URL"
 
-Write-Host "[e2e] Running Playwright (--workers=1, HTML -> playwright-report/) ..."
+# 全量默认 workers=2。回退：$env:E2E_WORKERS = "1"（并在 e2e_result.txt 写明原因）。
+$E2eWorkers = 2
+if ($env:E2E_WORKERS) {
+    $parsedWorkers = 0
+    if ([int]::TryParse($env:E2E_WORKERS, [ref]$parsedWorkers) -and $parsedWorkers -ge 1) {
+        $E2eWorkers = $parsedWorkers
+    } else {
+        Write-Warning "[e2e] Ignoring invalid E2E_WORKERS='$($env:E2E_WORKERS)'; using default 2. Rollback: `$env:E2E_WORKERS='1'"
+    }
+}
+
+Write-Host "[e2e] Running Playwright (--workers=$E2eWorkers, HTML -> playwright-report/) ..."
 $logPath = Join-Path $WebRoot "e2e_run.log"
 if (Test-Path $logPath) {
     Remove-Item $logPath -Force -ErrorAction SilentlyContinue
@@ -180,7 +194,7 @@ Push-Location $WebRoot
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
-    & npx playwright test --workers=1 --reporter=list,html 2>&1 | Tee-Object -FilePath $logPath
+    & npx playwright test --workers=$E2eWorkers --reporter=list,html 2>&1 | Tee-Object -FilePath $logPath
     $exitCode = $LASTEXITCODE
     if ($null -eq $exitCode) { $exitCode = 0 }
 } finally {
@@ -201,6 +215,7 @@ if ($summaryLine -and $summaryLine -match '(\d+)\s+passed') {
 @(
     "IMS E2E run $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     "API: $ApiBase  Web: $WebBase"
+    "Workers: $E2eWorkers"
     "ExitCode: $exitCode"
     "Report: $reportDir/index.html"
     "--- playwright list output (tail) ---"

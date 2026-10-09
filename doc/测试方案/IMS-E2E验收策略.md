@@ -1,6 +1,6 @@
 # IMS E2E 验收策略（PO / Agent / CI）
 
-> 版本 2026-10-07 · 配套 [`IMS-E2E测试用例Checklist.md`](./IMS-E2E测试用例Checklist.md) · 执行入口 **`ims-web/scripts/run_e2e.ps1`** · 完整交付环与 PO **UAT 状态** 列见 [`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md)、[`IMS-PRD功能点执行对照表.md`](../开发方案/IMS-PRD功能点执行对照表.md)
+> 版本 2026-10-09 · 配套 [`IMS-E2E测试用例Checklist.md`](./IMS-E2E测试用例Checklist.md) · 执行入口 **`ims-web/scripts/run_e2e.ps1`** · 完整交付环、合入窗口与 PO **UAT 状态** 列见 [`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md)、[`IMS-PRD功能点执行对照表.md`](../开发方案/IMS-PRD功能点执行对照表.md)
 
 ## 角色分工
 
@@ -39,7 +39,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1
 npm run test:e2e:ci
 ```
 
-服务已手动启动时：`.\scripts\run_e2e.ps1 -SkipServe`
+API **18080**、Vite **6173**、seed 已就绪时优先复用，避免每次冷启动：
+
+```powershell
+.\scripts\run_e2e.ps1 -SkipServe
+```
+
+端口或 seed 不在时，不带 `-SkipServe`，由脚本拉起服务。
+
+## 运行节奏（PO 2026-10-09）
+
+合入细则见 [`IMS-Agent交付循环.md`](../开发规范/IMS-Agent交付循环.md)。这里只列和 E2E 一起执行的口径：每天北京时间 **09:00、18:00、24:00** 才推 main；同模块先合并 **2–3** 个相关小需求再合入；并行约 **2** 片且仅解耦模块。禁止 force push。
+
+- 开发中途只跑定向 pytest 与相关 closure。全量 E2E 只在推 main 之前。
+- 推 main 前质量门槛不变：必须全量 PASS。默认 **`--workers=2`**（`playwright.config.ts` 与 `run_e2e.ps1` 读取 **`E2E_WORKERS`**，未设置时为 2）。
+- 全量失败：用**同一命令**自动重试 **1** 次，不改断言、不改用例。第二次仍失败再排查。
+- 不稳定失败（含 admin 登录锁定）在重试仍失败之后，再设 **`E2E_WORKERS=1`** 回退，并在 `e2e_result.txt` 写明原因。不要把 workers=1 当作长期默认。
+
+回退示例：
+
+```powershell
+$env:E2E_WORKERS = "1"
+# 18080 + 6173 + seed 仍在时加 -SkipServe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1 -SkipServe
+```
 
 L3 钉钉（不计入 21 spec）：
 
@@ -61,7 +84,8 @@ npm run test:e2e:dingtalk
 
 ## 失败排查
 
-1. `e2e_result.txt` 末行 `N passed` 与 ExitCode  
-2. 登录 preflight 失败 → `ims-backend/scripts/init_ims_db.ps1` 后重启 API  
-3. admin 锁定 → 保持 **`--workers=1`**（已在脚本与 `playwright.config.ts` 固定）  
-4. HTML 报告逐步截图与 trace（Playwright 默认 list + html）
+1. 全量失败 → **同一命令再跑 1 次**（不改断言、不改用例）。仍失败再往下排查  
+2. `e2e_result.txt` 末行 `N passed` 与 ExitCode  
+3. 登录 preflight 失败 → `ims-backend/scripts/init_ims_db.ps1` 后重启 API  
+4. 不稳定失败或 admin 登录锁定 → 优先保持默认 **`--workers=2`**；确认是并发不稳后再设 **`E2E_WORKERS=1`** 回退，并在报告里说明。不要把 workers=1 当作长期默认  
+5. HTML 报告逐步截图与 trace（Playwright 默认 list + html）
