@@ -43,19 +43,24 @@ def _upsert_workbench_e2e_rows(db: Session, user: User, *, fresh: bool) -> None:
         todo.deadline = now + timedelta(days=7)
 
     if msg is None:
-        db.add(
-            WorkMessage(
-                user_id=user.id,
-                title=E2E_WB_MSG_TITLE,
-                content="Playwright closure：标为已读后未读数减 1",
-                channel="IN_APP",
-                read_flag=0,
-                source_module="E2E",
-                tenant_id=0,
-            )
+        msg = WorkMessage(
+            user_id=user.id,
+            title=E2E_WB_MSG_TITLE,
+            content="Playwright closure：标为已读后未读数减 1",
+            channel="IN_APP",
+            read_flag=0,
+            source_module="E2E",
+            ref_type="cert_expire",
+            ref_id=1,
+            tenant_id=0,
         )
-    elif fresh:
-        msg.read_flag = 0
+        db.add(msg)
+    else:
+        if fresh:
+            msg.read_flag = 0
+        if not (msg.ref_type or "").strip():
+            msg.ref_type = "cert_expire"
+            msg.ref_id = 1
 
 
 def ensure_workbench_e2e_seed(db: Session, user: User) -> None:

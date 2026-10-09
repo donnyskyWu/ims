@@ -40,7 +40,21 @@ def test_home_date_span_1202():
         headers=auth,
         params={"dateFrom": "2025-01-01", "dateTo": "2025-06-01"},
     )
-    assert resp.json()["code"] == 1202
+    body = resp.json()
+    assert body["code"] == 1202
+    assert "90" in body["msg"]
+
+
+def test_home_unknown_ip_group_1201():
+    auth = headers()
+    resp = client.get(
+        "/admin-api/ims/home/dashboard",
+        headers=auth,
+        params={"ipGroupId": 999999999},
+    )
+    body = resp.json()
+    assert body["code"] == 1201
+    assert "IP 组" in body["msg"]
 
 
 def test_home_todos_page():

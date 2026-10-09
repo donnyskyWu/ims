@@ -32,9 +32,10 @@
         <div class="mt">{{ detail.title }}</div>
         <div class="md">{{ detail.sourceModule || '站内' }} · {{ timeLabel(detail.createdAt) }}</div>
         <p style="margin-top: 12px; font-size: 13px; line-height: 1.55">{{ detail.content || '无正文' }}</p>
-        <div v-if="sourcePath(detail)" style="margin-top: 16px">
-          <button class="btn btn-pri btn-sm" type="button" @click="openSource(detail)">查看来源</button>
+        <div v-if="messageSourcePath(detail)" style="margin-top: 16px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="topbar-msg-source" @click="openSource(detail)">查看来源</button>
         </div>
+        <p v-else class="hint" data-testid="topbar-msg-source-empty">没有可打开的来源</p>
       </div>
       <div v-else class="mg-list">
         <div v-if="loading" class="empty"><div class="et">加载中</div></div>
@@ -67,6 +68,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../api/http'
+import { messageSourcePath } from '../inbox/source'
 import { onInboxChanged, notifyInboxChanged } from '../inbox/sync'
 import Ico from './Ico.vue'
 
@@ -94,16 +96,6 @@ const badgeText = computed(() => (unreadCount.value > 99 ? '99+' : String(unread
 function timeLabel(value?: string) {
   if (!value) return '—'
   return value.slice(0, 16).replace('T', ' ')
-}
-
-function sourcePath(row: InboxMessage) {
-  const ref = row.refType || ''
-  const id = Number(row.refId || 0)
-  if (!ref || !id) return ''
-  if (ref === 'cert_remind' || ref === 'cert_expire') return '/ims/corp/resource/certificate'
-  if (ref === 'acct_recharge_verify' || ref === 'acct_transfer') return '/ims/corp/account/douyin'
-  if (ref === 'live_report_overdue' || ref === 'live_session' || ref === 'live_alarm') return '/ims/live/sessions'
-  return ''
 }
 
 async function refreshCount() {
@@ -167,7 +159,7 @@ async function syncInbox() {
 }
 
 function openSource(row: InboxMessage) {
-  const path = sourcePath(row)
+  const path = messageSourcePath(row)
   if (!path) return
   closeDrawer()
   router.push(path)

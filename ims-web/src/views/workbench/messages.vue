@@ -101,6 +101,16 @@
         </div>
       </div>
       <template #foot>
+        <button
+          v-if="detail && messageSourcePath(detail)"
+          class="btn btn-pri"
+          type="button"
+          data-testid="msg-source-link"
+          @click="openSource"
+        >
+          查看来源
+        </button>
+        <span v-else-if="detail" class="hint" data-testid="msg-source-empty">没有可打开的来源</span>
         <button v-if="detail && !detail.read" class="btn btn-pri" type="button" @click="readOne(detail.id)">标已读</button>
         <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
       </template>
@@ -110,10 +120,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { notifyInboxChanged } from '../../inbox/sync'
+import { messageSourcePath } from '../../inbox/source'
 
 type Row = {
   id: number
@@ -121,11 +132,14 @@ type Row = {
   content?: string
   channel?: string
   sourceModule?: string
+  refType?: string
+  refId?: number
   read: boolean
   createdAt?: string
 }
 
 const route = useRoute()
+const router = useRouter()
 const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -195,6 +209,14 @@ function search() {
 function openDetail(row: Row) {
   detail.value = row
   detailOpen.value = true
+}
+
+function openSource() {
+  if (!detail.value) return
+  const path = messageSourcePath(detail.value)
+  if (!path) return
+  detailOpen.value = false
+  router.push(path)
 }
 
 async function readOne(id: number) {
