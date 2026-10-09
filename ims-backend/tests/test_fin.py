@@ -130,6 +130,8 @@ def test_fin_profit_list_and_detail():
     assert listed.json()["data"]["total"] >= 1
     row = listed.json()["data"]["list"][0]
     assert row["calcStatus"] == "CALCULATED"
+    assert row["calculatedAt"]
+    assert len(row["calculatedAt"]) >= 16
     assert row["netProfit"] == 81400.0
 
     detail = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth)

@@ -59,11 +59,12 @@
       <input v-model="query.platform" placeholder="平台" style="width: 100px" />
       <input v-model="query.dateFrom" type="date" data-testid="fin-profit-date-from" aria-label="开始日期" />
       <input v-model="query.dateTo" type="date" data-testid="fin-profit-date-to" aria-label="结束日期" />
-      <select v-model="query.calcStatus" style="width: 120px">
+      <select v-model="query.calcStatus" aria-label="计算状态" style="width: 120px">
         <option value="">全部状态</option>
+        <option value="PENDING">待计算</option>
         <option value="CALCULATED">已计算</option>
         <option value="RECALCULATED">已重算</option>
-        <option value="PENDING">待计算</option>
+        <option value="ABNORMAL">异常待核</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="button" @click="reload">查询</button>
@@ -117,15 +118,17 @@
               <th>净利率</th>
               <th>结算</th>
               <th>版本</th>
+              <th data-testid="fin-profit-col-calc-status">计算状态</th>
+              <th data-testid="fin-profit-col-calculated-at">计算时间</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="13"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="11"><div class="empty"><div class="et">暂无利润数据（需先核准成本）</div></div></td>
+              <td colspan="13"><div class="empty"><div class="et">暂无利润数据（需先核准成本）</div></div></td>
             </tr>
             <tr
               v-for="row in rows"
@@ -144,6 +147,14 @@
               <td class="num">{{ row.netProfitRate }}%</td>
               <td>{{ settlementLabel(String(row.settlementStatus || '')) }}</td>
               <td class="mono" data-testid="fin-profit-calc-version">V{{ row.calcVersion }}</td>
+              <td>
+                <span
+                  class="tag"
+                  data-testid="fin-profit-calc-status"
+                  :style="calcStatusStyle(row.calcStatus)"
+                ><span class="dot"></span>{{ calcStatusLabel(row.calcStatus) }}</span>
+              </td>
+              <td class="mono" data-testid="fin-profit-calculated-at">{{ formatCalculatedAt(row.calculatedAt) }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(String(row.sessionCode))">详情</button>
               </td>
@@ -274,7 +285,11 @@
               </table>
             </div>
           </section>
-          <p class="hint">当前版本 V{{ detail.calcVersion }} · 计算时间 {{ detail.calculatedAt || '—' }} · 状态 {{ detail.calcStatus }}</p>
+          <p class="hint">当前版本 V{{ detail.calcVersion }} · 计算时间 {{ formatCalculatedAt(detail.calculatedAt) }} · 状态 {{ detail.calcStatus }}</p>
+          <p class="hint">
+            计算状态
+            <span class="tag" :style="calcStatusStyle(detail.calcStatus)">{{ calcStatusLabel(detail.calcStatus) }}</span>
+          </p>
 
           <h3 class="hist-title">重算版本历史</h3>
           <p v-if="historyError" class="hint" style="color: var(--red)">{{ historyError }}</p>
@@ -531,14 +546,38 @@ function triggerLabel(t: string) {
   return map[t] || t || '—'
 }
 
-function statusLabel(s: string) {
+function textOf(value: unknown) {
+  return value == null ? '' : String(value)
+}
+
+function statusLabel(value: unknown) {
   const map: Record<string, string> = {
     PENDING: '待计算',
     CALCULATED: '已计算',
     RECALCULATED: '已重算',
     ABNORMAL: '异常待核',
   }
-  return map[s] || s
+  const key = textOf(value)
+  return map[key] || key
+}
+
+function calcStatusLabel(value: unknown) {
+  const label = statusLabel(value)
+  return label || '—'
+}
+
+function calcStatusStyle(value: unknown) {
+  const key = textOf(value)
+  if (key === 'CALCULATED') return { background: 'rgba(52,199,89,.12)', color: '#248a3d' }
+  if (key === 'RECALCULATED') return { background: 'rgba(90,200,250,.18)', color: '#0e7fb8' }
+  if (key === 'ABNORMAL') return { background: 'rgba(255,149,0,.14)', color: '#c46a00' }
+  return { background: 'rgba(142,142,147,.14)', color: '#6d6d72' }
+}
+
+function formatCalculatedAt(value: unknown) {
+  const matched = textOf(value).trim().match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+  if (!matched) return '—'
+  return `${matched[1]} ${matched[2]}`
 }
 
 function closeDrawer() {
