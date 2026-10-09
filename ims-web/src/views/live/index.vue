@@ -6,6 +6,7 @@
         <div class="sub">场次中心：列表→详情 Tab（数据/风控/下播） · 10 LIVE</div>
       </div>
       <div class="acts">
+        <router-link class="btn btn-sec" to="/ims/live/alarm" data-testid="live-alarm-link">风险告警</router-link>
         <button class="btn btn-pri" type="button" @click="openRegister">新建场次登记</button>
         <button class="btn btn-sec" type="button" data-testid="live-supplement-open" @click="openSupplement">历史补录</button>
         <button class="btn btn-sec" type="button" data-testid="live-ledger-export" :disabled="exporting" @click="exportLedger">导出</button>
@@ -321,7 +322,7 @@
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
           <tbody>
             <tr v-for="a in alarms" :key="a.id">
-              <td>{{ a.ruleName }}</td><td>{{ a.alarmLevel }}</td><td>{{ a.alarmContent }}</td><td>{{ a.handleStatus }}</td>
+              <td>{{ a.ruleName }}</td><td>{{ a.alarmLevel }}</td><td>{{ a.alarmContent }}<template v-if="a.mergeCount > 1"> ×{{ a.mergeCount }}</template></td><td>{{ a.handleStatus }}</td>
             </tr>
           </tbody>
         </table>

@@ -323,6 +323,15 @@
       "page": "直播管理",
       "desc": "场次中心：列表→详情 Tab（数据/风控/下播）"
     },
+    "liveAlarm": {
+      "no": "10",
+      "name": "直播风险告警",
+      "code": "LIVE",
+      "icon": "bell",
+      "page": "直播风险告警",
+      "parent": "直播管理",
+      "desc": "LIVE-003 · 规则命中、处置与只读统计（站内，不外发）"
+    },
     "content": {
       "no": "15",
       "name": "内容生产",
@@ -1145,6 +1154,7 @@
       [
         "ipg",
         "live",
+        "liveAlarm",
         {
           "type": "sub",
           "id": "content",

@@ -2050,37 +2050,6 @@ def ledger_detail(
     return sessions_detail(request, session_code, db, ops, actor)
 
 
-@router.get("/alarm/records")
-def alarm_records(
-    request: Request,
-    pageNo: int = 1,
-    pageSize: int = 20,
-    sessionCode: str = "",
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
-    page_no, size = page_args(pageNo, pageSize)
-    stmt = select(LiveAlarmRecord).where(
-        LiveAlarmRecord.deleted == 0,
-        LiveAlarmRecord.tenant_id == tenant_of(actor),
-    )
-    if sessionCode:
-        stmt = stmt.where(LiveAlarmRecord.session_code == sessionCode)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.scalars(stmt.order_by(LiveAlarmRecord.id.desc()).offset((page_no - 1) * size).limit(size)).all()
-    items = [
-        {
-            "id": row.id,
-            "ruleId": row.rule_id,
-            "ruleName": row.rule_name,
-            "sessionCode": row.session_code,
-            "alarmLevel": row.alarm_level,
-            "alarmContent": row.alarm_content,
-            "occurAt": row.occur_at,
-            "handleStatus": row.handle_status,
-            "handlerUserId": row.handler_user_id,
-            "handleRemark": row.handle_remark,
-        }
-        for row in rows
-    ]
-    return ok({"list": items, "total": total, "pageNo": page_no, "pageSize": size})
+from app.live_alarm import router as live_alarm_router
+
+router.include_router(live_alarm_router)
