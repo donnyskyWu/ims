@@ -36,6 +36,7 @@ def ops_engine():
 
         OpsBase.metadata.create_all(engine)
         _ensure_credential_ref(engine)
+        _ensure_keyword_collect_enabled(engine)
         _schema_ready.add(name)
     return engine
 
@@ -53,6 +54,22 @@ def _ensure_credential_ref(engine) -> None:
     with engine.begin() as conn:
         conn.execute(
             text("ALTER TABLE oa_platform_account ADD COLUMN credential_ref VARCHAR(128) NOT NULL DEFAULT ''")
+        )
+
+
+def _ensure_keyword_collect_enabled(engine) -> None:
+    """旧库补关键词是否采集。create_all 不会给已有表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "oa_collect_keyword" not in insp.get_table_names():
+        return
+    cols = {col["name"] for col in insp.get_columns("oa_collect_keyword")}
+    if "collect_enabled" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE oa_collect_keyword ADD COLUMN collect_enabled TINYINT NOT NULL DEFAULT 1")
         )
 
 

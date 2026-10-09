@@ -88,6 +88,15 @@
                 <button class="btn-txt btn" type="button" @click="runTask(row)">立即执行</button>
                 <button class="btn-txt btn" type="button" @click="goLogs(row)">日志</button>
                 <button
+                  v-if="row.isExternalUnified"
+                  class="btn-txt btn"
+                  type="button"
+                  data-testid="collect-external-members"
+                  @click="openExternalMembers(row)"
+                >
+                  外部成员
+                </button>
+                <button
                   v-if="!row.isUnified && !row.isExternalUnified"
                   class="btn-txt btn"
                   type="button"
@@ -111,7 +120,41 @@
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
 
-    <ProtoDrawer v-model="drawerOpen" :title="editingId ? '编辑任务' : '新增单账号任务'" width="480px">
+    <ProtoDrawer
+      :open="membersOpen"
+      :title="membersTitle"
+      width="520px"
+      @close="membersOpen = false"
+    >
+      <p class="hint" style="margin-bottom: 10px">
+        只列出状态启用且打开「是否采集」的竞品关键词与外部账号。
+      </p>
+      <div v-if="membersLoading" class="empty"><div class="et">加载中</div></div>
+      <div v-else-if="!members.length" class="empty" data-testid="collect-members-empty">
+        <div class="et">{{ membersHint || '暂无开启采集的外部账号或关键词' }}</div>
+        <div class="es">到竞品关键字配置打开「是否采集」后，再回到这里查看</div>
+      </div>
+      <table v-else data-testid="collect-members-table">
+        <thead>
+          <tr>
+            <th>成员</th>
+            <th>平台</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in members" :key="item.memberKind + '-' + item.refId">
+            <td>{{ item.memberName }}</td>
+            <td><span class="chip">{{ item.platformType }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="drawer-actions">
+        <button class="btn btn-sec btn-sm" type="button" @click="membersOpen = false">关闭</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="goKeywords">竞品关键字配置</button>
+      </div>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑任务' : '新增单账号任务'" width="480px" @close="drawerOpen = false">
       <form class="drawer-form" @submit.prevent="saveTask">
         <label>任务名<input v-model="form.taskName" required /></label>
         <label>
@@ -166,6 +209,11 @@ const error = ref('')
 const drawerOpen = ref(false)
 const editingId = ref('')
 const saveWarning = ref('')
+const membersOpen = ref(false)
+const membersTitle = ref('外部成员')
+const members = ref<Array<{ memberKind: string; memberName: string; platformType: string; refId: string }>>([])
+const membersHint = ref('')
+const membersLoading = ref(false)
 
 const filters = reactive({
   taskName: '',
@@ -282,6 +330,30 @@ function goKuaishou() {
 }
 function goWechatChannels() {
   router.push('/ims/collect/wechat-channels')
+}
+function goKeywords() {
+  membersOpen.value = false
+  router.push('/ims/collect/external/keyword')
+}
+
+async function openExternalMembers(row: { id: string; taskName: string }) {
+  membersTitle.value = `外部统一任务成员 · ${row.taskName}`
+  membersOpen.value = true
+  membersLoading.value = true
+  membersHint.value = ''
+  members.value = []
+  try {
+    const res = await http.get(`/collect/task/${row.id}/members`)
+    if (res.data?.code !== 0) {
+      membersHint.value = res.data?.msg || '加载失败'
+      return
+    }
+    members.value = res.data?.data?.list || []
+  } catch (e: unknown) {
+    membersHint.value = errorMessage(e)
+  } finally {
+    membersLoading.value = false
+  }
 }
 
 async function removeTask(row: any) {

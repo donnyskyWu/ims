@@ -256,6 +256,7 @@ class CollectKeyword(OpsBase):
     platform_type: Mapped[str] = mapped_column(String(32), default="", index=True)
     keyword: Mapped[str] = mapped_column(String(128), default="")
     match_type: Mapped[str] = mapped_column(String(32), default="CONTAINS")
+    collect_enabled: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(16), default="ENABLED")
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)

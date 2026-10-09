@@ -6,10 +6,17 @@
         <div class="sub">UX-M10 P-M10-003 · typeResults 详情 · 16 COLLECT</div>
       </div>
       <div class="acts">
-        <span v-if="successRate24h != null" class="chip">近 24h 成功率 {{ successRate24h }}%</span>
-        <span v-if="failureAccountCount > 0" class="chip" style="border-color: var(--red); color: var(--red)">
+        <span v-if="successRate24h != null" class="chip" data-testid="collect-health-rate">近 24h 成功率 {{ successRate24h }}%</span>
+        <span v-else class="chip" data-testid="collect-health-empty">近 24h 暂无采集</span>
+        <span
+          v-if="failureAccountCount > 0"
+          class="chip"
+          style="border-color: var(--red); color: var(--red)"
+          data-testid="collect-failure-accounts"
+        >
           连续失败账号 {{ failureAccountCount }}
         </span>
+        <span v-else class="chip" data-testid="collect-failure-empty">连续失败账号 暂无</span>
         <button class="btn btn-sec btn-sm" type="button" @click="openManualFill">手工补录</button>
       </div>
     </div>
@@ -57,7 +64,7 @@
               <td class="num" style="font-size: 12px">{{ row.startedAt }}</td>
               <td class="num">{{ (row.durationMs / 1000).toFixed(1) }}s</td>
               <td class="num">{{ row.recordCount }}</td>
-              <td class="num">{{ row.retryCount }}</td>
+              <td class="num" data-testid="collect-log-retry">{{ row.retryHint || '—' }}</td>
               <td>
                 <span v-if="row.errorSummary" class="btn-txt btn btn-danger-txt">{{ row.errorSummary }}</span>
                 <span v-else style="color: var(--green)">—</span>
@@ -90,6 +97,7 @@
     <ProtoDrawer v-model="detailOpen" title="日志详情" width="520px">
       <div v-if="detail">
         <p><b>状态</b> {{ detail.statusLabel || detail.status }} · {{ detail.startedAt }}</p>
+        <p data-testid="collect-log-retry-detail"><b>重试</b> {{ detail.retryHint || '—' }}</p>
         <p v-if="detail.errorSummary" class="hint" style="color: var(--red)">{{ detail.errorSummary }}</p>
         <div class="csub" style="margin: 12px 0 8px">typeResults</div>
         <details v-for="(tr, idx) in detail.typeResults" :key="idx" style="margin-bottom: 8px">
