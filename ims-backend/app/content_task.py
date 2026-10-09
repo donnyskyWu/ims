@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.content import iso, tenant
+from app.content_file import normalize_user_attachments, public_attachment
 from app.corp import ops_db, page_args, paged
 from app.models import (
     ContentProject,
@@ -34,7 +35,7 @@ ACTIVE_TASK_STATUSES = frozenset({"PENDING", "IN_PROGRESS", "PENDING_REVIEW"})
 class ExecuteSaveBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     deliverables: str | None = None
-    userAttachments: list[dict] = Field(default_factory=list)
+    userAttachments: list[dict] | None = None
 
 
 class CompleteBody(BaseModel):
@@ -291,7 +292,9 @@ def task_execute(
             "workTaskRemark": work_task_remark(assignment),
             "executionInstruction": instruction,
             "attachments": attachments,
-            "userAttachments": list(task.user_attachments or []),
+            "userAttachments": [
+                public_attachment(item) for item in (task.user_attachments or []) if isinstance(item, dict)
+            ],
             "deliverables": task.deliverables or "",
             "status": task.task_status,
             "linkedContent": linked_content_vo(project),
@@ -312,11 +315,17 @@ def task_execute_save(
         return fail(1504, "资源不可用")
     if task.assignee_user_id != actor.id:
         return fail(1504, "资源不可用")
+    normalized = None
+    if body.userAttachments is not None:
+        normalized, err = normalize_user_attachments(body.userAttachments, tenant(actor))
+        if err:
+            return fail(1500, err)
     if body.deliverables is not None:
         task.deliverables = body.deliverables[:4000]
-    if body.userAttachments is not None:
-        task.user_attachments = body.userAttachments
-    return ok(None)
+    if normalized is not None:
+        task.user_attachments = normalized
+    saved = [public_attachment(item) for item in (task.user_attachments or []) if isinstance(item, dict)]
+    return ok({"userAttachments": saved})
 
 
 @router.post("/{task_id}/execute/complete")

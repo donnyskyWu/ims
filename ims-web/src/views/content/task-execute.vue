@@ -25,6 +25,39 @@
         <div class="dsec">执行说明</div>
         <p style="font-size: 13px; margin: 0">{{ vo.executionInstruction || '—' }}</p>
       </div>
+      <div class="card" style="padding: 12px 16px; margin-bottom: 12px">
+        <div class="dsec">节点参考附件</div>
+        <ul data-testid="task-ref-attachments" style="margin: 0; padding-left: 18px; font-size: 13px">
+          <li v-for="(item, index) in refAttachments" :key="index">{{ refLabel(item) }}</li>
+        </ul>
+        <p v-if="!refAttachments.length" class="hint">无参考附件</p>
+        <div class="dsec">执行人上传附件</div>
+        <ul data-testid="task-user-attachments" style="margin: 0; padding-left: 18px; font-size: 13px">
+          <li v-for="(item, index) in userAttachments" :key="item.fileKey" style="margin-bottom: 6px">
+            <span>{{ item.fileName }}</span>
+            <button class="btn btn-sec btn-sm" type="button" style="margin-left: 8px" @click="downloadAttachment(item)">
+              下载
+            </button>
+            <button class="btn btn-sec btn-sm" type="button" style="margin-left: 6px" @click="removeAttachment(index)">
+              删除
+            </button>
+          </li>
+        </ul>
+        <p v-if="!userAttachments.length" class="hint">暂无上传附件</p>
+        <label class="hint" style="display: block; margin-top: 8px">
+          上传附件
+          <input
+            data-testid="task-attachment-file"
+            type="file"
+            :accept="acceptAttr"
+            :disabled="uploading"
+            style="margin-left: 8px"
+            @change="onPickFile"
+          />
+        </label>
+        <p class="hint">选择文件后点保存，附件才会写入任务。</p>
+        <p v-if="uploadError" class="hint bad" data-testid="task-attachment-error">{{ uploadError }}</p>
+      </div>
       <div v-if="vo.nodeType === 'CONTENT_GENERATION'" class="card" style="padding: 12px 16px; margin-bottom: 12px">
         <div class="dsec">关联内容</div>
         <p v-if="!vo.linkedContent">请先保存内容（工作任务确认后通常已有 DRAFT）</p>
@@ -50,8 +83,9 @@
         <textarea v-model="deliverables" style="width: 100%; min-height: 90px" placeholder="完成必填（ADR-079）" />
       </div>
       <div class="acts" style="margin-top: 12px">
-        <button class="btn btn-sec" type="button" @click="saveExecute">保存</button>
-        <button class="btn btn-pri" type="button" :disabled="!canComplete" @click="completeTask">完成</button>
+        <button class="btn btn-sec" type="button" :disabled="uploading" @click="saveExecute">保存</button>
+        <button class="btn btn-pri" type="button" :disabled="!canComplete || uploading" @click="completeTask">完成</button>
+        <span v-if="savedHint" class="hint" data-testid="task-save-hint" style="margin-left: 8px">{{ savedHint }}</span>
       </div>
     </template>
 
@@ -95,7 +129,17 @@ const vo = ref<any>({})
 const loading = ref(true)
 const error = ref('')
 const deliverables = ref('')
+const userAttachments = ref<UserAttachment[]>([])
+const uploading = ref(false)
+const uploadError = ref('')
+const savedHint = ref('')
 const editOpen = ref(false)
+
+type UserAttachment = { fileKey: string; fileName: string; fileUrl?: string }
+
+const MAX_BYTES = 20 * 1024 * 1024
+const ACCEPT_EXT = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'txt', 'doc', 'docx', 'xls', 'xlsx', 'csv']
+const acceptAttr = ACCEPT_EXT.map((ext) => `.${ext}`).join(',')
 const editForm = ref({
   title: '',
   matchType: 1,
@@ -116,6 +160,8 @@ const canSubmitReview = computed(() => {
   return st === 'DRAFT' || st === 'REJECTED'
 })
 
+const refAttachments = computed(() => (Array.isArray(vo.value.attachments) ? vo.value.attachments : []))
+
 const canComplete = computed(() => {
   if (vo.value.nodeType === 'CONTENT_GENERATION') {
     const lc = vo.value.linkedContent
@@ -132,6 +178,7 @@ async function loadExecute() {
     const { data } = await http.get(`/content/task/${taskId.value}/execute`)
     vo.value = data.data || {}
     deliverables.value = vo.value.deliverables || ''
+    userAttachments.value = Array.isArray(vo.value.userAttachments) ? vo.value.userAttachments.map(asAttachment) : []
   } catch (e) {
     error.value = errorMessage(e)
   } finally {
@@ -139,11 +186,37 @@ async function loadExecute() {
   }
 }
 
+function asAttachment(item: UserAttachment): UserAttachment {
+  return { fileKey: item.fileKey, fileName: item.fileName, fileUrl: item.fileUrl }
+}
+
+function refLabel(item: unknown): string {
+  if (typeof item === 'string') return item || '附件'
+  if (item && typeof item === 'object') {
+    const row = item as Record<string, unknown>
+    return String(row.fileName || row.name || row.url || row.fileUrl || '附件')
+  }
+  return '附件'
+}
+
+function attachmentPayload() {
+  return userAttachments.value.map((item) => ({ fileKey: item.fileKey, fileName: item.fileName }))
+}
+
+async function persistExecute() {
+  const { data } = await http.post(`/content/task/${taskId.value}/execute/save`, {
+    deliverables: deliverables.value,
+    userAttachments: attachmentPayload(),
+  })
+  const saved = data.data?.userAttachments
+  if (Array.isArray(saved)) userAttachments.value = saved.map(asAttachment)
+}
+
 async function saveExecute() {
+  savedHint.value = ''
   try {
-    await http.post(`/content/task/${taskId.value}/execute/save`, {
-      deliverables: deliverables.value,
-    })
+    await persistExecute()
+    savedHint.value = '已保存'
   } catch (e) {
     window.alert(errorMessage(e))
   }
@@ -151,10 +224,72 @@ async function saveExecute() {
 
 async function completeTask() {
   try {
+    await persistExecute()
     await http.post(`/content/task/${taskId.value}/execute/complete`, {
       deliverables: deliverables.value || undefined,
     })
     router.push('/ims/content/task')
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
+function removeAttachment(index: number) {
+  userAttachments.value = userAttachments.value.filter((_, i) => i !== index)
+  savedHint.value = ''
+}
+
+async function onPickFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files && input.files[0] ? input.files[0] : null
+  input.value = ''
+  uploadError.value = ''
+  savedHint.value = ''
+  if (!file) return
+  const ext = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : ''
+  if (!ACCEPT_EXT.includes(ext)) {
+    uploadError.value = '不支持的文件类型'
+    return
+  }
+  if (file.size <= 0) {
+    uploadError.value = '文件为空'
+    return
+  }
+  if (file.size > MAX_BYTES) {
+    uploadError.value = '文件超过大小限制'
+    return
+  }
+  uploading.value = true
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    body.append('scene', 'task_execute_attachment')
+    const { data } = await http.post('/content/file/upload', body)
+    const row = data.data || {}
+    if (!row.fileKey) {
+      uploadError.value = '文件上传失败，请重试'
+      return
+    }
+    userAttachments.value = [
+      ...userAttachments.value.filter((item) => item.fileKey !== row.fileKey),
+      { fileKey: row.fileKey, fileName: row.fileName || file.name, fileUrl: row.fileUrl },
+    ]
+  } catch (e) {
+    uploadError.value = errorMessage(e)
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function downloadAttachment(item: UserAttachment) {
+  try {
+    const res = await http.get(`/file/${item.fileKey}`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = item.fileName || 'attachment'
+    link.click()
+    URL.revokeObjectURL(url)
   } catch (e) {
     window.alert(errorMessage(e))
   }
