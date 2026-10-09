@@ -103,7 +103,7 @@ test.describe('corp asset purchase import closure', () => {
 
     await keyword.fill(bad)
     await page.locator('form.qbar').getByRole('button', { name: '查询' }).click()
-    await expect(page.locator('.tbl-wrap').first()).toContainText('没有办公设备')
+    await expect(page.locator('.tbl-wrap').first()).toContainText('没有符合筛选的记录')
     await expect(page.locator('.tbl-wrap').first()).not.toContainText(bad)
     await page.screenshot({ path: `${shotDir}/05-bad-row-not-in-ledger.png`, fullPage: true })
     expect(pageErrors).toEqual([])
