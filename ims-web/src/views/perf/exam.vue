@@ -17,7 +17,7 @@
 
     <template v-if="tab === 'bank'">
       <form class="qbar" @submit.prevent="loadList">
-        <input v-model="filters.questionNo" placeholder="题目编号" style="width: 110px" />
+        <input v-model="filters.questionNo" data-testid="exam-bank-no" placeholder="题目编号" style="width: 110px" />
         <input v-model="filters.stemKeyword" placeholder="题干关键词" style="width: 150px" />
         <select v-model="filters.knowledgeDomain" style="width: 110px">
           <option value="">全部知识域</option>
@@ -50,7 +50,9 @@
                 <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!rows.length">
-                <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无题目' }}</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="exam-bank-empty"><div class="et">{{ bankEmpty }}</div></div>
+                </td>
               </tr>
               <tr v-for="row in rows" v-else :key="row.id">
                 <td class="mono num" style="color: var(--blue)">{{ row.questionNo }}</td>
@@ -80,7 +82,7 @@
 
     <template v-else-if="tab === 'paper'">
       <form class="qbar" @submit.prevent="loadPapers">
-        <input v-model="paperName" placeholder="试卷名称" style="width: 180px" />
+        <input v-model="paperName" data-testid="exam-paper-name" placeholder="试卷名称" style="width: 180px" />
         <button class="btn btn-pri btn-sm" type="submit">查询</button>
       </form>
       <p v-if="assignNotice" class="hint" data-testid="exam-assign-notice">{{ assignNotice }}</p>
@@ -104,7 +106,9 @@
                 <td colspan="8">加载中</td>
               </tr>
               <tr v-else-if="!papers.length">
-                <td colspan="8">{{ paperError || '暂无试卷' }}</td>
+                <td colspan="8">
+                  <div class="empty" data-testid="exam-paper-empty"><div class="et">{{ paperEmpty }}</div></div>
+                </td>
               </tr>
               <tr v-for="row in papers" v-else :key="row.id">
                 <td class="mono num" style="color: var(--blue)">{{ row.paperNo }}</td>
@@ -175,15 +179,19 @@
                 <th>总分</th>
                 <th>切屏</th>
                 <th>状态</th>
+                <th>开始</th>
+                <th>交卷</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="scoreLoading">
-                <td colspan="6">加载中</td>
+                <td colspan="8">加载中</td>
               </tr>
               <tr v-else-if="!scores.length">
-                <td colspan="6">{{ scoreError || '暂无成绩' }}</td>
+                <td colspan="8">
+                  <div class="empty" data-testid="exam-score-empty"><div class="et">{{ scoreEmpty }}</div></div>
+                </td>
               </tr>
               <tr v-for="row in scores" v-else :key="row.id" data-testid="exam-score-row">
                 <td>
@@ -215,6 +223,8 @@
                     超时待阅
                   </span>
                 </td>
+                <td class="num" data-testid="exam-score-start">{{ timeText(row.startAt) }}</td>
+                <td class="num" data-testid="exam-score-submit">{{ timeText(row.submitAt) }}</td>
                 <td>
                   <button
                     v-if="row.canGrade"
@@ -482,6 +492,8 @@ type ScoreRow = {
   isMakeup: boolean
   gradeOverdue?: boolean
   canGrade?: boolean
+  startAt?: string
+  submitAt?: string
   subjectiveItems?: SubjectiveItem[]
 }
 
@@ -552,6 +564,30 @@ const pendingObjective = ref<number | null>(null)
 
 function isEssay(q: QuestionSnap) {
   return q.questionType === 'ESSAY' || q.questionType === 'SHORT_ANSWER'
+}
+
+const bankFiltered = computed(
+  () => !!(filters.questionNo.trim() || filters.stemKeyword.trim() || filters.knowledgeDomain || filters.questionType),
+)
+const bankEmpty = computed(() => {
+  if (error.value) return error.value
+  return bankFiltered.value ? '当前筛选下暂无题目' : '暂无题目'
+})
+const paperEmpty = computed(() => {
+  if (paperError.value) return paperError.value
+  return paperName.value.trim() ? '当前筛选下暂无试卷' : '暂无试卷'
+})
+const scoreFiltered = computed(
+  () => !!(scoreFilter.paperId || scoreFilter.examStatus || scoreFilter.userKeyword.trim()),
+)
+const scoreEmpty = computed(() => {
+  if (scoreError.value) return scoreError.value
+  return scoreFiltered.value ? '当前筛选下暂无成绩' : '暂无成绩'
+})
+
+function timeText(value?: string) {
+  if (!value) return '—'
+  return value.replace('T', ' ').replace(/Z$/, '').slice(0, 16)
 }
 
 function scoreText(row: ScoreRow) {
@@ -654,7 +690,9 @@ const resultText = computed(() => {
     : `得分 ${resultScore.value}，及格 ${taking.value.passScore}，未通过`
 })
 
+let bankSeq = 0
 async function loadList() {
+  const seq = ++bankSeq
   loading.value = true
   error.value = ''
   try {
@@ -664,14 +702,16 @@ async function loadList() {
     if (filters.knowledgeDomain) params.knowledgeDomain = filters.knowledgeDomain
     if (filters.questionType) params.questionType = filters.questionType
     const res = await http.get('/perf/exam/questions', { params })
+    if (seq !== bankSeq) return
     rows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } catch (e: unknown) {
+    if (seq !== bankSeq) return
     error.value = errorMessage(e)
     rows.value = []
     total.value = 0
   } finally {
-    loading.value = false
+    if (seq === bankSeq) loading.value = false
   }
 }
 
@@ -758,19 +798,23 @@ async function savePaper() {
   }
 }
 
+let paperSeq = 0
 async function loadPapers() {
+  const seq = ++paperSeq
   paperLoading.value = true
   paperError.value = ''
   try {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 50 }
     if (paperName.value.trim()) params.paperName = paperName.value.trim()
     const res = await http.get('/perf/exam/paper', { params })
+    if (seq !== paperSeq) return
     papers.value = res.data.data.list || []
   } catch (e: unknown) {
+    if (seq !== paperSeq) return
     paperError.value = errorMessage(e)
     papers.value = []
   } finally {
-    paperLoading.value = false
+    if (seq === paperSeq) paperLoading.value = false
   }
 }
 
@@ -934,22 +978,27 @@ function finishTake() {
   showScores()
 }
 
+let scoreSeq = 0
 async function loadScores() {
+  const seq = ++scoreSeq
   scoreLoading.value = true
   scoreError.value = ''
   try {
     if (!papers.value.length) await loadPapers()
+    if (seq !== scoreSeq) return
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 50 }
     if (scoreFilter.paperId) params.paperId = Number(scoreFilter.paperId)
     if (scoreFilter.userKeyword.trim()) params.userKeyword = scoreFilter.userKeyword.trim()
     if (scoreFilter.examStatus) params.examStatus = scoreFilter.examStatus
     const res = await http.get('/perf/exam/record/scores', { params })
+    if (seq !== scoreSeq) return
     scores.value = res.data.data.list || []
   } catch (e: unknown) {
+    if (seq !== scoreSeq) return
     scoreError.value = errorMessage(e)
     scores.value = []
   } finally {
-    scoreLoading.value = false
+    if (seq === scoreSeq) scoreLoading.value = false
   }
 }
 

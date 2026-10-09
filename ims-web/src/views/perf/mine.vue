@@ -18,6 +18,9 @@
     <template v-else-if="mine">
       <p class="hint">{{ mine.periodMonth }} · {{ mine.deptName }}</p>
       <p data-testid="perf-mine-score" style="font-size: 32px; font-weight: 600">{{ scoreText(mine.totalScore) }}</p>
+      <p v-if="lowScore" class="hint" data-testid="perf-mine-low" style="color: #c46a00">
+        本期得分低于 60，已通知您与直属上级
+      </p>
       <p>
         <span class="tag" data-testid="perf-mine-grade">{{ gradeText(mine.gradeLevel) }}</span>
         <span data-testid="perf-mine-rank"> 部门排名 第 {{ mine.rankInDept || rank?.rankNo || '—' }} / {{ rank?.deptTotalCount || '—' }}</span>
@@ -44,7 +47,7 @@
             <td class="num">{{ scoreText(item.metricScore) }}</td>
             <td class="num">{{ item.weight }}%</td>
             <td class="num">{{ scoreText(item.contribution) }}</td>
-            <td>{{ item.dataStatus }}</td>
+            <td>{{ dataStatusText(item.dataStatus) }}</td>
           </tr>
         </tbody>
       </table>
@@ -54,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Detail = {
@@ -86,6 +89,10 @@ const period = ref(previousMonth())
 const mine = ref<Mine | null>(null)
 const rank = ref<Rank | null>(null)
 const empty = ref('')
+const lowScore = computed(() => {
+  const score = mine.value?.totalScore
+  return score != null && Number(score) < 60
+})
 
 function previousMonth() {
   const now = new Date()
@@ -105,6 +112,13 @@ function gradeText(level: string) {
   return '—'
 }
 
+function dataStatusText(status: string) {
+  if (status === 'AUTO') return '系统自动'
+  if (status === 'MANUAL') return '手工录入'
+  if (status === 'MISSING') return '缺项'
+  return status || '—'
+}
+
 async function load() {
   empty.value = ''
   mine.value = null
@@ -112,7 +126,7 @@ async function load() {
   try {
     const res = await http.get(`/perf/calc/${period.value}/mine`)
     if (!res.data.data) {
-      empty.value = '本期无绩效记录（入职当月按在职天数折算）'
+      empty.value = '本期无绩效记录（入职/离职当月按在职天数折算，PER-C-R2）'
       return
     }
     mine.value = res.data.data

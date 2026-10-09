@@ -13,7 +13,7 @@
       主路径：考核方案 → 执行考核 → 考核结果（对齐 OPS M3 · 指标权重合计 100%）
     </p>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.templateName" placeholder="方案名称" style="width: 160px" />
+      <input v-model="filters.templateName" data-testid="perf-scheme-name" placeholder="方案名称" style="width: 160px" />
       <select v-model="filters.positionCode" style="width: 130px">
         <option value="">全部岗位</option>
         <option value="R5">直播运营 R5</option>
@@ -38,7 +38,9 @@
 
     <div v-if="loading" class="empty" style="margin-top: 24px"><div class="et">加载中</div></div>
     <div v-else-if="error" class="empty" style="margin-top: 24px"><div class="et">{{ error }}</div></div>
-    <div v-else-if="!rows.length" class="empty" style="margin-top: 24px"><div class="et">暂无考核方案</div></div>
+    <div v-else-if="!rows.length" class="empty" data-testid="perf-scheme-empty" style="margin-top: 24px">
+      <div class="et">{{ schemeEmpty }}</div>
+    </div>
     <div v-else class="scheme-grid">
       <div v-for="row in rows" :key="row.id" class="card hov scheme-card">
         <div class="rowline" style="justify-content: space-between; margin-bottom: 8px">
@@ -117,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -141,6 +143,12 @@ const error = ref('')
 const showForm = ref(false)
 const formError = ref('')
 const filters = reactive({ templateName: '', positionCode: '', periodType: '', status: '' })
+const schemeFiltered = computed(
+  () => !!(filters.templateName.trim() || filters.positionCode || filters.periodType || filters.status),
+)
+const schemeEmpty = computed(() =>
+  schemeFiltered.value ? '当前筛选下暂无考核方案' : '暂无考核方案',
+)
 const form = reactive({
   templateName: '',
   positionCode: 'R5',
@@ -169,7 +177,9 @@ function periodStyle(period: string) {
   return { background: 'rgba(0,113,227,.12)', color: '#0071e3' }
 }
 
+let schemeSeq = 0
 async function loadList() {
+  const seq = ++schemeSeq
   loading.value = true
   error.value = ''
   try {
@@ -179,6 +189,7 @@ async function loadList() {
     if (filters.periodType) params.periodType = filters.periodType
     if (filters.status) params.status = filters.status
     const res = await http.get('/perf/scheme/list', { params })
+    if (seq !== schemeSeq) return
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
@@ -186,10 +197,11 @@ async function loadList() {
     }
     rows.value = res.data.data.list || []
   } catch {
+    if (seq !== schemeSeq) return
     error.value = '网络错误'
     rows.value = []
   } finally {
-    loading.value = false
+    if (seq === schemeSeq) loading.value = false
   }
 }
 

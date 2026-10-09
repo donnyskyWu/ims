@@ -15,7 +15,7 @@
       竞品分析提交率（COMPETE_SUBMIT_RATE）在 V2 锁定禁用。岗位指标集保存时服务端校验权重合计。
     </p>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.metricName" placeholder="指标名称" style="width: 160px" />
+      <input v-model="filters.metricName" data-testid="perf-metric-name" placeholder="指标名称" style="width: 160px" />
       <select v-model="filters.dataSource" style="width: 120px">
         <option value="">全部来源</option>
         <option value="AUTO">系统自动</option>
@@ -53,7 +53,9 @@
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无指标' }}</div></div></td>
+              <td colspan="9">
+                <div class="empty" data-testid="perf-metric-empty"><div class="et">{{ metricEmpty }}</div></div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono num" style="color: var(--blue)">{{ row.metricCode }}</td>
@@ -301,6 +303,13 @@ const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const filters = reactive({ metricName: '', dataSource: '', status: '' })
+const metricFiltered = computed(
+  () => !!(filters.metricName.trim() || filters.dataSource || filters.status),
+)
+const metricEmpty = computed(() => {
+  if (error.value) return error.value
+  return metricFiltered.value ? '当前筛选下暂无指标' : '暂无指标'
+})
 
 const createOpen = ref(false)
 const formError = ref('')
@@ -383,7 +392,9 @@ function rejectText(err: unknown) {
   return errorMessage(err)
 }
 
+let metricSeq = 0
 async function loadList() {
+  const seq = ++metricSeq
   loading.value = true
   error.value = ''
   try {
@@ -392,14 +403,16 @@ async function loadList() {
     if (filters.dataSource) params.dataSource = filters.dataSource
     if (filters.status) params.status = filters.status
     const res = await http.get('/perf/metric/list', { params })
+    if (seq !== metricSeq) return
     rows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } catch (err) {
+    if (seq !== metricSeq) return
     error.value = rejectText(err)
     rows.value = []
     total.value = 0
   } finally {
-    loading.value = false
+    if (seq === metricSeq) loading.value = false
   }
 }
 
