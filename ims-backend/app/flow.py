@@ -40,6 +40,33 @@ FIRST_NODE_BY_CODE = {
     "FL-CONTENT": "内容初审",
     "FL-LIVE": "直属领导审批",
 }
+# 本地预览桩：不落设计器，按种子模板给出串行节点与处理人预览文案。
+PREVIEW_NODES: dict[str, list[tuple[int, str, str, str]]] = {
+    "FL-LEAVE": [
+        (1, "发起申请", "TASK", "发起人"),
+        (2, "部门负责人审批", "APPROVE", "岗位·部门负责人"),
+        (3, "人事备案", "CC", "抄送·人事"),
+        (4, "归档", "TIMER", "定时·归档"),
+    ],
+    "FL-REIMB": [
+        (1, "发起报销", "TASK", "发起人"),
+        (2, "部门负责人审批", "APPROVE", "岗位·部门负责人"),
+        (3, "财务复核", "APPROVE", "岗位·财务"),
+        (4, "出纳付款", "TASK", "岗位·出纳"),
+        (5, "归档", "TIMER", "定时·归档"),
+    ],
+    "FL-CONTENT": [
+        (1, "提交内容", "TASK", "发起人"),
+        (2, "内容初审", "APPROVE", "岗位·内容审核"),
+        (3, "发布确认", "APPROVE", "岗位·内容负责人"),
+    ],
+    "FL-LIVE": [
+        (1, "发起开播", "TASK", "发起人"),
+        (2, "直属领导审批", "APPROVE", "发起人直属上级（运行时按组织解析）"),
+    ],
+}
+DINGTALK_TIMEOUT_MARK = "__DINGTALK_TIMEOUT__"
+WARN_SLA_RATIO = 0.8
 
 
 class FlowInstanceStartBody(BaseModel):
@@ -148,7 +175,28 @@ def instance_start_vo(row: FlowInstance, tpl: FlowTemplate, actor: User, names: 
     }
 
 
-def task_vo(task: FlowTask, inst: FlowInstance, names: dict[int, str]) -> dict:
+def sla_view(task: FlowTask, *, now: datetime | None = None) -> dict:
+    """待办 SLA：80% 时限临期、超过截止为超时。时点与超时清单同一套 naive UTC。"""
+    ref = _naive_dt(now or utcnow())
+    started = _task_effective_start(task)
+    deadline = started + timedelta(hours=DEFAULT_SLA_HOURS)
+    elapsed = (ref - started).total_seconds()
+    sla_seconds = DEFAULT_SLA_HOURS * 3600
+    is_timeout = ref >= deadline
+    if is_timeout:
+        tone = "timeout"
+    elif sla_seconds > 0 and elapsed >= sla_seconds * WARN_SLA_RATIO:
+        tone = "warn"
+    else:
+        tone = "normal"
+    return {
+        "slaDeadline": iso(deadline),
+        "isTimeout": is_timeout,
+        "slaTone": tone,
+    }
+
+
+def task_vo(task: FlowTask, inst: FlowInstance, names: dict[int, str], *, now: datetime | None = None) -> dict:
     return {
         "id": task.id,
         "instanceNo": inst.instance_no,
@@ -163,10 +211,10 @@ def task_vo(task: FlowTask, inst: FlowInstance, names: dict[int, str]) -> dict:
         "initiatorUserId": inst.initiator_user_id,
         "initiatorName": names.get(inst.initiator_user_id, ""),
         "formData": inst.form_data or {},
-        "isTimeout": False,
         "handledAt": iso(task.handled_at),
         "comment": task.comment or "",
         "startedAt": iso(task.started_at),
+        **sla_view(task, now=now),
     }
 
 
@@ -185,7 +233,7 @@ def timeout_task_vo(
     deadline = started + timedelta(hours=sla_hours)
     timeout_minutes = max(0, int((ref - deadline).total_seconds() // 60))
     is_escalated = timeout_minutes >= ESCALATION_HOURS * 60
-    base = task_vo(task, inst, names)
+    base = task_vo(task, inst, names, now=ref)
     base.update(
         {
             "slaHours": sla_hours,
@@ -400,6 +448,40 @@ def _backdate_demo_timeout_task(db: Session, tenant_id: int) -> None:
     db.flush()
 
 
+def _mark_demo_warn_task(db: Session, tenant_id: int) -> None:
+    """种子实例里未超时的那条拨到 SLA 80% 之后，待办可看到临期黄标。不改账号流转单。"""
+    warn_at = utcnow() - timedelta(hours=int(DEFAULT_SLA_HOURS * WARN_SLA_RATIO) + 1)
+    timeout_line = utcnow() - timedelta(hours=DEFAULT_SLA_HOURS)
+    for title in ("差旅报销 · 上海出差", "张三 · 年假 3 天"):
+        row = db.execute(
+            select(FlowTask, FlowInstance)
+            .join(FlowInstance, FlowInstance.id == FlowTask.instance_id)
+            .where(
+                FlowTask.deleted == 0,
+                FlowTask.tenant_id == tenant_id,
+                FlowTask.task_status == "PENDING",
+                FlowInstance.deleted == 0,
+                FlowInstance.instance_status == "RUNNING",
+                FlowInstance.title == title,
+            )
+            .limit(1)
+        ).first()
+        if row is None:
+            continue
+        task, inst = row
+        started = _naive_dt(task.started_at or utcnow())
+        if started <= timeout_line:
+            continue
+        if started <= _naive_dt(warn_at):
+            return
+        task.started_at = warn_at
+        task.updated_at = utcnow()
+        inst.started_at = warn_at
+        inst.updated_at = utcnow()
+        db.flush()
+        return
+
+
 def instance_vo(row: FlowInstance, names: dict[int, str]) -> dict:
     return {
         "id": row.id,
@@ -516,6 +598,7 @@ def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
         db.flush()
     sync_seed_tasks(db, tenant_id, creator_id)
     _backdate_demo_timeout_task(db, tenant_id)
+    _mark_demo_warn_task(db, tenant_id)
 
 
 @router.get("/template/list")
@@ -544,6 +627,64 @@ def flow_template_list(
     rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
     names = user_names(db, [r.creator_id for r in rows])
     return paged([template_vo(r, names) for r in rows], total, page_no, size)
+
+
+def preview_nodes_for(tpl: FlowTemplate) -> list[tuple[int, str, str, str]]:
+    preset = PREVIEW_NODES.get(tpl.template_code)
+    if preset:
+        return preset
+    count = max(int(tpl.node_count or 1), 1)
+    first = FIRST_NODE_BY_CODE.get(tpl.template_code, "审批节点")
+    nodes: list[tuple[int, str, str, str]] = []
+    for order in range(1, count + 1):
+        if order == 1 and count > 1:
+            nodes.append((order, "发起", "TASK", "发起人"))
+        elif order == count:
+            nodes.append((order, first, "APPROVE", "本地桩·处理人"))
+        else:
+            nodes.append((order, f"节点{order}", "APPROVE", "本地桩·处理人"))
+    return nodes
+
+
+def template_preview_vo(tpl: FlowTemplate) -> dict:
+    nodes = preview_nodes_for(tpl)
+    return {
+        "templateId": tpl.id,
+        "templateCode": tpl.template_code,
+        "templateName": tpl.template_name,
+        "status": tpl.status,
+        "statusLabel": STATUS_LABELS.get(tpl.status, tpl.status),
+        "canStart": tpl.status == "PUBLISHED",
+        "graphType": "SERIAL",
+        "nodes": [
+            {
+                "nodeOrder": order,
+                "nodeName": name,
+                "nodeType": node_type,
+                "assigneePreview": assignee,
+            }
+            for order, name, node_type, assignee in nodes
+        ],
+        "edges": [
+            {"fromNodeOrder": nodes[i][0], "toNodeOrder": nodes[i + 1][0]}
+            for i in range(len(nodes) - 1)
+        ],
+    }
+
+
+@router.get("/template/{template_id}/preview")
+def flow_template_preview(
+    template_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """流程图预览桩：草稿与已发布都可看，不启动设计器。"""
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = db.get(FlowTemplate, template_id)
+    if tpl is None or tpl.deleted or tpl.tenant_id != tenant_id:
+        return fail(1001, "模板不存在")
+    return ok(template_preview_vo(tpl))
 
 
 @router.get("/instance/list")
@@ -701,6 +842,21 @@ def flow_task_handle(
     if inst.instance_status != "RUNNING":
         return fail(1001, "实例已终态，不可处理")
 
+    tpl = db.get(FlowTemplate, inst.template_id)
+    max_order = 1
+    if tpl is not None and not tpl.deleted:
+        orders = [order for order, *_rest in preview_nodes_for(tpl)]
+        if orders:
+            max_order = max(orders)
+    reject_order: int | None = None
+    if action == "REJECT":
+        if body.rejectToNodeOrder is None:
+            reject_order = 1
+        elif body.rejectToNodeOrder < 1 or body.rejectToNodeOrder > max_order:
+            return fail(1001, "退回目标节点无效")
+        else:
+            reject_order = body.rejectToNodeOrder
+
     if body.formDataPatch:
         merged = dict(inst.form_data or {})
         merged.update(body.formDataPatch)
@@ -732,6 +888,7 @@ def flow_task_handle(
         next_nodes = []
 
     db.flush()
+    comment_hint = "退回建议填写意见" if action == "REJECT" and not comment else ""
     return ok(
         {
             "taskId": task.id,
@@ -739,6 +896,8 @@ def flow_task_handle(
             "newStatus": new_status,
             "nextNodes": next_nodes,
             "isInstanceFinished": is_finished,
+            "rejectToNodeOrder": reject_order,
+            "commentHint": comment_hint,
         }
     )
 
@@ -959,7 +1118,18 @@ def flow_timeout_urge(
     raw = body.urgeMessage or ""
     if len(raw) > 256:
         return fail(1001, "督办说明不能超过 256 字")
+    message = raw.strip()
     task.remind_count = (task.remind_count or 0) + 1
     task.updated_at = now
     db.flush()
-    return ok(None)
+    timed_out = message == DINGTALK_TIMEOUT_MARK
+    payload = {
+        "remindCount": task.remind_count,
+        "notifyChannel": "DINGTALK_STUB",
+        "delivery": "QUEUED" if timed_out else "STUB_OK",
+        "queued": timed_out,
+        "urgeMessage": message,
+    }
+    if timed_out:
+        return fail(5003, "钉钉推送失败已入补发队列", payload)
+    return ok(payload)
