@@ -417,10 +417,32 @@ def ip_group_names(ops: Session, ids: list[int]) -> tuple[list[str], list[dict]]
     return names, groups
 
 
+def plan_task_progress(db: Session, row: ContentPlan) -> dict:
+    """同名计划下未删除任务的完成率。草稿尚无任务时进度为空。"""
+    name = (row.plan_name or "").strip()
+    if not name:
+        return {"taskTotal": 0, "taskDone": 0, "progressPercent": None}
+    conds = (
+        ContentTask.plan_name == name,
+        ContentTask.tenant_id == (row.tenant_id or 0),
+        ContentTask.deleted == 0,
+    )
+    total = int(db.scalar(select(func.count()).select_from(ContentTask).where(*conds)) or 0)
+    done = int(
+        db.scalar(
+            select(func.count()).select_from(ContentTask).where(*conds, ContentTask.task_status == "DONE")
+        )
+        or 0
+    )
+    percent = int(round(100 * done / total)) if total else None
+    return {"taskTotal": total, "taskDone": done, "progressPercent": percent}
+
+
 def plan_vo(db: Session, ops: Session, row: ContentPlan) -> dict:
     sop = db.get(ContentSop, row.sop_id)
     ids = list(row.ip_group_ids or [])
     names, groups = ip_group_names(ops, ids)
+    progress = plan_task_progress(db, row)
     return {
         "id": row.id,
         "planName": row.plan_name,
@@ -436,6 +458,9 @@ def plan_vo(db: Session, ops: Session, row: ContentPlan) -> dict:
         "ipGroupIds": ids,
         "ipGroupNames": names,
         "ipGroups": groups,
+        "taskTotal": progress["taskTotal"],
+        "taskDone": progress["taskDone"],
+        "progressPercent": progress["progressPercent"],
         "createdAt": iso(row.created_at),
     }
 

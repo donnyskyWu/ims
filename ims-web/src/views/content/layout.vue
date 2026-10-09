@@ -10,16 +10,23 @@
         <router-link class="btn btn-sec btn-sm" to="/ims/content/list">内容管理</router-link>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.templateName" placeholder="模板名称" style="width: 140px" />
-      <select v-model="filters.status" style="width: 110px">
+    <form class="qbar" data-testid="layout-filters" @submit.prevent="loadList">
+      <input v-model="filters.templateName" data-testid="layout-filter-name" placeholder="模板名称" style="width: 140px" />
+      <select v-model="filters.status" data-testid="layout-filter-status" style="width: 110px">
         <option value="">全部状态</option>
         <option value="DRAFT">DRAFT</option>
         <option value="ENABLED">ENABLED</option>
         <option value="DISABLED">DISABLED</option>
       </select>
+      <select v-model="filters.source" data-testid="layout-filter-source" style="width: 110px">
+        <option value="">全部来源</option>
+        <option value="CUSTOM">CUSTOM</option>
+        <option value="IMPORT">IMPORT</option>
+        <option value="PRESET">PRESET</option>
+      </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="layout-filter-reset" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -39,7 +46,12 @@
               <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无模板' }}</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="layout-list-empty">
+                  <div class="et">{{ error || layoutEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ layoutEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.templateNo }}</td>
@@ -102,7 +114,10 @@
           title="模板预览"
           style="width: 100%; height: 220px; border: 1px solid var(--line, #ddd); background: #fff"
         />
-        <p v-else class="hint">暂无预览</p>
+        <div v-else class="empty" data-testid="layout-preview-empty">
+          <div class="et">这条模板还没有预览 HTML</div>
+          <div class="es">编辑并保存预览 HTML 后，可在这里看版式</div>
+        </div>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showPreview = false">关闭</button>
         </div>
@@ -142,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Row = {
@@ -166,7 +181,12 @@ const editError = ref('')
 const previewTitle = ref('')
 const previewHtml = ref('')
 const editingId = ref<number | null>(null)
-const filters = reactive({ templateName: '', status: '' })
+const filters = reactive({ templateName: '', status: '', source: '' })
+const filtering = computed(() => !!(filters.templateName.trim() || filters.status || filters.source))
+const layoutEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的模板' : '暂无公推模板'))
+const layoutEmptyHint = computed(() =>
+  filtering.value ? '换名称、状态或来源，或重置筛选' : '点「新建模板」。预览 HTML 留空时，预览窗会说明版式还没写',
+)
 const form = reactive({ templateName: '', previewHtml: '' })
 const editForm = reactive({ templateName: '', previewHtml: '' })
 
@@ -178,8 +198,9 @@ async function loadList() {
       params: {
         pageNo: 1,
         pageSize: 50,
-        templateName: filters.templateName || undefined,
+        templateName: filters.templateName.trim() || undefined,
         status: filters.status || undefined,
+        source: filters.source || undefined,
       },
     })
     if (res.data.code !== 0) {
@@ -194,6 +215,13 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.templateName = ''
+  filters.status = ''
+  filters.source = ''
+  void loadList()
 }
 
 function openCreate() {
@@ -260,6 +288,7 @@ async function publish(id: number) {
 }
 
 async function setEnabled(id: number, enabled: boolean) {
+  if (!enabled && !window.confirm('停用后新内容不可套用该模板，已使用内容不受影响')) return
   await http.put(`/content/layout-template/${id}/enable`, null, { params: { enabled } })
   await loadList()
 }
