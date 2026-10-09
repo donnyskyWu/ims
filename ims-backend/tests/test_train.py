@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import TrainMaterial, TrainTask, TrainTaskRecord, UserRole
+from app.models import TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserRole
 
 client = TestClient(app)
 
@@ -255,6 +255,59 @@ def test_train_task_1102_deadline_past():
         },
     )
     assert bad.json()["code"] == 1102
+    assert bad.json()["msg"] == "截止时间早于当前时间"
+
+    malformed = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "坏截止时间",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "昨天",
+            "confirmType": "DURATION",
+        },
+    )
+    assert malformed.json()["code"] == 1001
+    assert malformed.json()["msg"] == "deadline 无效"
+
+
+def test_train_material_requires_position_when_category_has_none():
+    auth = headers()
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
+        assert admin is not None
+        cate = TrainMaterialCate(
+            cate_name=f"无岗位 {uuid.uuid4().hex[:6]}",
+            parent_id=None,
+            position_code="",
+            sort_order=99,
+            tenant_id=admin.tenant_id or 0,
+            deleted=0,
+        )
+        db.add(cate)
+        db.commit()
+        cate_id = cate.id
+    finally:
+        db.close()
+
+    created = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "无岗位资料",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/no-position.pdf",
+            "positionCodes": [],
+            "publish": True,
+        },
+    )
+    body = created.json()
+    assert body["code"] == 1001, body
+    assert body["msg"] == "岗位必填"
 
 
 def test_train_task_progress_confirm_and_records():
@@ -451,6 +504,10 @@ def test_train_quiz_compose_rejects_bad_paper():
         (
             {"quiz": [{"question": "只有一项", "options": ["甲"], "answerIndex": 0}], "passScore": 1},
             "每题选项至少 2 项",
+        ),
+        (
+            {"quiz": [{"question": "空选项", "options": ["甲", "  "], "answerIndex": 0}], "passScore": 1},
+            "选项内容不能为空",
         ),
         (
             {"quiz": [{"question": "下标越界", "options": ["甲", "乙"], "answerIndex": 2}], "passScore": 1},
