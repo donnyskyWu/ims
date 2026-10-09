@@ -214,6 +214,8 @@ def task_vo(
         bind_target = row.account_id
 
     warning = bind_warning(ops, bind_target or row.account_id)
+    from app.internal_collect import schedule_label
+
     return {
         "id": str(row.id),
         "taskName": row.task_name,
@@ -234,6 +236,7 @@ def task_vo(
         "memberCount": mc if (row.is_unified or row.is_external_unified) else None,
         "bindWarning": warning,
         "healthLabel": account_health_label(ops, row.account_id),
+        "scheduleLabel": schedule_label(row),
         "statusLabel": TASK_STATUS_LABEL.get(row.status, row.status),
     }
 

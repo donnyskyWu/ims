@@ -124,6 +124,24 @@ def keyword_collect_flag(enabled: bool | None, *, default: bool = True) -> int:
     return 1 if enabled else 0
 
 
+def keyword_taken(
+    ops: Session,
+    tenant_id: int,
+    platform_type: str,
+    keyword: str,
+    exclude_id: int | None = None,
+) -> bool:
+    stmt = select(CollectKeyword).where(
+        CollectKeyword.deleted == 0,
+        CollectKeyword.tenant_id == tenant_id,
+        CollectKeyword.platform_type == platform_type,
+        CollectKeyword.keyword == keyword,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(CollectKeyword.id != exclude_id)
+    return ops.scalar(stmt) is not None
+
+
 def keyword_vo(row: CollectKeyword) -> dict:
     return {
         "id": str(row.id),
@@ -375,6 +393,8 @@ def external_keyword_create(
         return err
     if err := check_enum(ims, "dict_collect_status", body.status, True):
         return err
+    if keyword_taken(ops, tenant_of(actor), body.platformType, body.keyword.strip()):
+        return fail(1001, "同平台关键词已存在")
     row = CollectKeyword(
         platform_type=body.platformType,
         keyword=body.keyword.strip(),
@@ -405,6 +425,8 @@ def external_keyword_update(
         return err
     if err := check_enum(ims, "dict_collect_status", body.status, True):
         return err
+    if keyword_taken(ops, tenant_of(actor), body.platformType, body.keyword.strip(), exclude_id=row.id):
+        return fail(1001, "同平台关键词已存在")
     row.platform_type = body.platformType
     row.keyword = body.keyword.strip()
     row.match_type = body.matchType

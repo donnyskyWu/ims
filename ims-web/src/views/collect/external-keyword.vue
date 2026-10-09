@@ -49,8 +49,8 @@
             <tr v-else-if="!rows.length">
               <td colspan="8">
                 <div class="empty" data-testid="kw-empty">
-                  <div class="et">{{ error || '暂无关键词' }}</div>
-                  <div class="es">新增一条并打开「是否采集」，外部统一任务才会带上它</div>
+                  <div class="et">{{ error || keywordEmptyTitle }}</div>
+                  <div class="es">{{ keywordEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -129,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
@@ -163,6 +163,13 @@ const editingId = ref('')
 const formMsg = ref('')
 const togglingId = ref('')
 const filters = reactive({ keyword: '', platformType: '', status: '' })
+const keywordFiltered = computed(() => Boolean(filters.keyword || filters.platformType || filters.status))
+const keywordEmptyTitle = computed(() => (keywordFiltered.value ? '没有符合筛选的关键词' : '暂无关键词'))
+const keywordEmptyHint = computed(() =>
+  keywordFiltered.value
+    ? '暂无关键词。换个关键词、平台或状态后再查'
+    : '新增一条并打开「是否采集」，外部统一任务才会带上它',
+)
 const form = reactive({
   platformType: 'DOUYIN',
   keyword: '',

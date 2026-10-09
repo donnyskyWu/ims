@@ -297,8 +297,39 @@ def follower_public(ops: Session, account: PlatformAccount) -> dict:
     }
 
 
+# 抖音 / 快手 / 视频号探活空态：未绑定或凭证清空时本地返回说明，不调用 Collector。
+_PROBE_EMPTY_KEYS = frozenset({"douyin", "kuaishou", "wechat-channels"})
+
+
+def schedule_label(task: CollectTask | None) -> str:
+    """下次执行空态文案。有排期时返回时间，停止后与尚未建任务分开写。"""
+    if task is None:
+        return "尚未排期"
+    if (task.next_run_at or "").strip():
+        return task.next_run_at
+    if task.status == "DISABLED":
+        return "已停止，暂无下次执行"
+    return "尚未排期"
+
+
+def account_task(ops: Session, row: PlatformAccount) -> CollectTask | None:
+    profile = profile_of(row.platform_type or "")
+    if profile is None:
+        return None
+    return ops.scalar(
+        select(CollectTask).where(
+            CollectTask.account_id == row.id,
+            CollectTask.deleted == 0,
+            CollectTask.platform_type == profile.platform_type,
+            CollectTask.method == "INTERNAL",
+            CollectTask.source == profile.source,
+        )
+    )
+
+
 def account_public(ops: Session, row: PlatformAccount) -> dict:
     bind = _bind_of(ops, row.id)
+    task = account_task(ops, row)
     data = {
         "id": row.id,
         "accountNo": row.account_no or str(row.id),
@@ -316,6 +347,8 @@ def account_public(ops: Session, row: PlatformAccount) -> dict:
         "connStatus": bind.conn_status if bind else "",
         "bindStatus": bind.bind_status if bind else "UNBOUND",
         "lastProbeAt": (bind.last_probe_at or "") if bind else "",
+        "nextRunAt": (task.next_run_at or None) if task else None,
+        "scheduleLabel": schedule_label(task),
     }
     data.update(follower_public(ops, row))
     data.update(video_snapshot_public(ops, row))
@@ -333,6 +366,7 @@ def task_public(row: CollectTask | None) -> dict | None:
         "status": row.status,
         "nextRunAt": row.next_run_at or None,
         "lastRunAt": row.last_run_at or None,
+        "scheduleLabel": schedule_label(row),
     }
 
 
@@ -900,15 +934,25 @@ def import_bind(profile: PlatformProfile, ops: Session, row: PlatformAccount, ac
     return ok(data)
 
 
+def _reset_probe(ops: Session, row: PlatformAccount) -> None:
+    """凭证变更后健康回到未探活。不调用 Collector。"""
+    bind = _bind_of(ops, row.id)
+    if bind is None:
+        return
+    bind.conn_status = ""
+    bind.last_probe_at = ""
+    bind.updated_at = utcnow()
+
+
 def probe_account(profile: PlatformProfile, ops: Session, row: PlatformAccount):
     bind = _bind_of(ops, row.id)
-    if profile.key == "douyin":
+    if profile.key in _PROBE_EMPTY_KEYS:
         unbound = bind is None or bind.bind_status != "BOUND"
         if unbound or not (row.cookie_enc or "").strip():
             data = account_public(ops, row)
             data["notice"] = "未绑定 Collector，请先导入" if unbound else "凭证未配置，请先保存凭证再测试连接"
             return ok(data)
-    elif bind is None or bind.bind_status != "BOUND":
+    if bind is None or bind.bind_status != "BOUND":
         return fail(1001, "未绑定 Collector")
     call = account_health(bind.collector_account_id)
     if call.kind == "cookie":
@@ -1076,7 +1120,7 @@ def build_router(profile: PlatformProfile) -> APIRouter:
             if err := check_ip_group(ops, actor, body.ipGroupId, True):
                 return err
             row.ip_group_id = body.ipGroupId
-        if profile.key == "douyin" and body.clearCredential and not (body.cookie or "").strip():
+        if profile.key in _PROBE_EMPTY_KEYS and body.clearCredential and not (body.cookie or "").strip():
             row.cookie_enc = ""
             _reset_probe(ops, row)
         elif body.cookie:
@@ -1086,7 +1130,7 @@ def build_router(profile: PlatformProfile) -> APIRouter:
                 old_token = ""
             auth_token = body.authToken if body.authToken is not None else old_token
             _apply_secret(profile, row, body.cookie.strip(), (auth_token or "").strip())
-            if profile.key == "douyin":
+            if profile.key in _PROBE_EMPTY_KEYS:
                 _reset_probe(ops, row)
         row.updated_at = utcnow()
         task = ensure_task(profile, ops, row, frequency=body.frequency, cron=body.cron)

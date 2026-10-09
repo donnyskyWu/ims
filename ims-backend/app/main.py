@@ -169,12 +169,14 @@ def seed() -> None:
         from app.asset_reverse_e2e_seed import refresh_asset_reverse_e2e_session
         from app.douyin_collect_seed import refresh_douyin_collect_seed
         from app.kuaishou_collect_seed import refresh_kuaishou_collect_seed
+        from app.wechat_channels_collect_seed import refresh_wechat_channels_collect_seed
 
         ensure_air_mcp_audit_fixture(db)
         if admin is not None:
             refresh_asset_reverse_e2e_session(db, admin)
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
+        refresh_wechat_channels_collect_seed()
         db.commit()
     finally:
         db.close()

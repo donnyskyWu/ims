@@ -44,6 +44,26 @@ def test_external_account_keyword_and_threshold():
         json={"platformType": "DOUYIN", "keyword": "神鱼", "matchType": "CONTAINS", "status": "ENABLED"},
     )
     assert kw.json()["code"] == 0
+    same = client.post(
+        "/admin-api/ims/collect/external/keyword",
+        headers=auth,
+        json={"platformType": "DOUYIN", "keyword": "神鱼", "matchType": "CONTAINS", "status": "ENABLED"},
+    )
+    assert same.json()["code"] == 1001
+    assert "已存在" in same.json()["msg"]
+    other_platform = client.post(
+        "/admin-api/ims/collect/external/keyword",
+        headers=auth,
+        json={"platformType": "KUAISHOU", "keyword": "神鱼", "matchType": "CONTAINS", "status": "ENABLED"},
+    )
+    assert other_platform.json()["code"] == 0
+    missed = client.get(
+        "/admin-api/ims/collect/external/keyword/page",
+        headers=auth,
+        params={"keyword": "不存在的竞品词", "status": "DISABLED"},
+    )
+    assert missed.json()["code"] == 0
+    assert missed.json()["data"]["total"] == 0
 
     missing_cat = client.get("/admin-api/ims/collect/threshold/list", headers=auth)
     assert missing_cat.json()["code"] == 1001
