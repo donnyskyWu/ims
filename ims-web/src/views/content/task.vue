@@ -51,7 +51,11 @@
               <td>{{ row.competitionName || '—' }}</td>
               <td>{{ row.assigneeName }}</td>
               <td>{{ row.status }}</td>
-              <td>{{ row.linkedContent?.status || '—' }}</td>
+              <td>
+                {{ row.linkedContent?.status || '—' }}
+                <span v-if="row.linkedContent?.aiGenerateStatus"> · 文案{{ row.linkedContent.aiGenerateStatus }}</span>
+                <span v-if="row.linkedContent?.videoJobStatus"> · 视频{{ row.linkedContent.videoJobStatus }}</span>
+              </td>
               <td>
                 <button class="btn btn-pri btn-sm" type="button" @click="goExecute(row.id)">执行</button>
                 <button

@@ -60,7 +60,7 @@ def apply_match_fields(project: ContentProject, body: ContentSaveBody) -> None:
 
 
 def project_vo(row: ContentProject) -> dict:
-    return {
+    data = {
         "id": row.id,
         "title": row.title,
         "contentType": row.content_type,
@@ -85,6 +85,10 @@ def project_vo(row: ContentProject) -> dict:
         "lastFbSyncAt": row.last_fb_sync_at,
         "createdAt": iso(row.created_at),
     }
+    from app.content_ai import media_fields
+
+    data.update(media_fields(row))
+    return data
 
 
 def load_project(db: Session, content_id: int, actor: User) -> ContentProject | None:
@@ -256,9 +260,6 @@ def content_submit_review(content_id: int, db: Session = Depends(db_session), ac
 
 @router.post("/{content_id}/retry-ai-generate")
 def content_retry_ai(content_id: int, db: Session = Depends(db_session), actor: User = Depends(current_user)):
-    row = load_project(db, content_id, actor)
-    if row is None:
-        return fail(1504, "资源不可用")
-    row.ai_generate_status = "QUEUED"
-    row.ai_generate_error = None
-    return ok({"aiGenerateStatus": row.ai_generate_status})
+    from app.content_ai import retry_copy
+
+    return retry_copy(content_id, db, actor)

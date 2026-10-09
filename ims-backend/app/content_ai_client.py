@@ -1,0 +1,287 @@
+"""内容文案第三方 HTTP 客户端（对齐 Collector：地址 + Token，桩可切换）。
+
+预留路径（真实服务按此实现，IMS 不写死密钥）：
+
+- `POST /v1/copy/jobs` 提交
+- `GET  /v1/copy/jobs/{id}` 查询
+
+鉴权 `Authorization: Bearer <token>`。地址 `content.ai.baseUrl` / `IMS_CONTENT_AI_BASE_URL`，
+Token `content.ai.tokenSecret` / `IMS_CONTENT_AI_TOKEN`（系统参数掩码，响应不回显）。
+
+桩：`IMS_CONTENT_AI_STUB=1`（成功）/`fail` / `timeout`，或统一 `IMS_CONTENT_GEN_STUB`。
+桩优先于真实地址，返回稳定假文案。
+"""
+
+from __future__ import annotations
+
+import os
+import threading
+from dataclasses import dataclass, field
+
+import httpx
+
+from app.settings_runtime import get_param
+
+SUBMIT_PATH = "/v1/copy/jobs"
+STATUS_PATH = "/v1/copy/jobs/{job_id}"
+
+STUB_COPY_V1 = (
+    "【桩】口播稿 v1\n"
+    "开场：今晚这场，先看节奏再看细节。\n"
+    "中段：主队控球占优，客队反击看边路。\n"
+    "结尾：理性看球，理性互动。"
+)
+STUB_COPY_V2 = (
+    "【桩】口播稿 v2\n"
+    "开场：三分钟讲清这场怎么看。\n"
+    "中段：关键球员状态与历史交锋。\n"
+    "结尾：评论区见。"
+)
+STUB_COPY_V3 = (
+    "【桩】口播稿 v3\n"
+    "开场：只讲一个看点。\n"
+    "中段：定位球与临场调整。\n"
+    "结尾：下期再见。"
+)
+STUB_COPIES = (STUB_COPY_V1, STUB_COPY_V2, STUB_COPY_V3)
+
+MSG_TIMEOUT = "AI 文案生成超时，可重新发起"
+MSG_UNCONFIGURED = "未配置 AI 文案地址（content.ai.baseUrl / IMS_CONTENT_AI_BASE_URL）"
+MSG_UNREACHABLE = "无法连接文案服务，可重新发起"
+MSG_DENIED = "文案服务拒绝访问，请管理员核对 Token 配置"
+MSG_FAIL = "文案生成失败，可重新发起"
+
+_lock = threading.Lock()
+_seq = 0
+_jobs: dict[str, dict] = {}
+
+
+@dataclass
+class CopyJob:
+    ok: bool
+    code: int | None
+    message: str
+    upstream_id: str = ""
+    status: str = ""
+    copies: list[str] = field(default_factory=list)
+    retryable: bool = False
+    http_status: int = 0
+
+
+def _flag(name: str) -> str | None:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    return str(raw).strip().lower()
+
+
+def stub_mode() -> str:
+    """off | success | fail | timeout。具体开关优先于 IMS_CONTENT_GEN_STUB。"""
+    specific = _flag("IMS_CONTENT_AI_STUB")
+    unified = _flag("IMS_CONTENT_GEN_STUB")
+    chosen = specific if specific is not None else unified
+    if chosen is None or chosen in ("0", "false", "no", "off"):
+        return "off"
+    if chosen in ("fail", "timeout"):
+        return chosen
+    if chosen in ("1", "true", "yes", "on", "success"):
+        return "success"
+    return "off"
+
+
+def base_url() -> str:
+    return get_param("content.ai.baseUrl").strip().rstrip("/")
+
+
+def token() -> str:
+    return get_param("content.ai.tokenSecret").strip()
+
+
+def timeout_sec() -> float:
+    raw = (os.environ.get("IMS_CONTENT_AI_TIMEOUT") or "").strip()
+    try:
+        value = float(raw) if raw else 20.0
+    except ValueError:
+        value = 20.0
+    return value if value > 0 else 20.0
+
+
+def _headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    secret = token()
+    if secret:
+        headers["Authorization"] = f"Bearer {secret}"
+    return headers
+
+
+def _read_body(response: httpx.Response) -> dict:
+    try:
+        data = response.json()
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _copies_for(count: int) -> list[str]:
+    n = 2 if count < 2 else 3 if count > 3 else count
+    return list(STUB_COPIES[:n])
+
+
+def _map_http(response: httpx.Response, body: dict) -> CopyJob | None:
+    message = str(body.get("message") or body.get("msg") or body.get("error") or "")
+    code = body.get("code")
+    code_int = code if isinstance(code, int) else None
+    text = message.lower()
+    if response.status_code in (401, 403) or code_int in (401, 403):
+        return CopyJob(False, 1001, MSG_DENIED, status="FAILED", retryable=True, http_status=response.status_code)
+    if code_int == 1056 or "超时" in message or "timeout" in text:
+        return CopyJob(False, 1056, MSG_TIMEOUT, status="FAILED", retryable=True, http_status=response.status_code)
+    if response.status_code in (429, 503) or code_int == 5004 or "queue" in text or "gpu" in text or "队列" in message:
+        return CopyJob(
+            False,
+            5004,
+            "文案服务繁忙，可重新发起",
+            status="FAILED",
+            retryable=True,
+            http_status=response.status_code,
+        )
+    if response.status_code >= 400 or (code_int not in (None, 0)):
+        msg = message or f"文案生成失败（HTTP {response.status_code}），可重新发起"
+        ims = 1001 if response.status_code < 500 and code_int not in (1056, 5004) else (code_int or 1001)
+        if ims not in (1001, 1056, 5004):
+            ims = 1001
+        return CopyJob(False, ims, msg[:200], status="FAILED", retryable=True, http_status=response.status_code)
+    return None
+
+
+def _payload_data(body: dict) -> dict:
+    data = body.get("data")
+    if isinstance(data, dict):
+        return data
+    return body
+
+
+def _status_of(data: dict) -> str:
+    raw = str(data.get("status") or data.get("queueStatus") or "").upper()
+    if raw in ("WAITING", "QUEUED", "PENDING"):
+        return "WAITING"
+    if raw in ("GENERATING", "RUNNING"):
+        return "GENERATING"
+    if raw in ("SUCCESS", "SUCCEEDED", "DONE"):
+        return "SUCCESS"
+    if raw in ("FAILED", "ERROR", "TIMEOUT"):
+        return "FAILED"
+    return raw or "WAITING"
+
+
+def _copies_of(data: dict) -> list[str]:
+    raw = data.get("copies") or data.get("candidates") or data.get("texts")
+    if isinstance(raw, list):
+        return [str(item) for item in raw if str(item).strip()]
+    text = data.get("content") or data.get("text")
+    if isinstance(text, str) and text.strip():
+        return [text]
+    return []
+
+
+def _stub_submit(candidate_count: int) -> CopyJob:
+    mode = stub_mode()
+    global _seq
+    with _lock:
+        _seq += 1
+        upstream_id = f"stub-copy-{_seq:04d}"
+        if mode == "fail":
+            _jobs[upstream_id] = {"status": "FAILED", "copies": [], "count": candidate_count}
+            return CopyJob(False, 1001, MSG_FAIL, upstream_id, "FAILED", retryable=True)
+        if mode == "timeout":
+            _jobs[upstream_id] = {"status": "FAILED", "copies": [], "count": candidate_count}
+            return CopyJob(False, 1056, MSG_TIMEOUT, upstream_id, "FAILED", retryable=True)
+        _jobs[upstream_id] = {"status": "WAITING", "copies": _copies_for(candidate_count), "count": candidate_count}
+    return CopyJob(True, None, "ok", upstream_id, "WAITING", retryable=False)
+
+
+def _stub_status(upstream_id: str) -> CopyJob:
+    with _lock:
+        row = _jobs.get(upstream_id)
+        if row is None:
+            return CopyJob(False, 1001, "文案任务不存在", upstream_id, "FAILED", retryable=False)
+        status = row["status"]
+        if status == "WAITING":
+            row["status"] = "GENERATING"
+            return CopyJob(True, None, "ok", upstream_id, "GENERATING")
+        if status == "GENERATING":
+            row["status"] = "SUCCESS"
+            return CopyJob(True, None, "ok", upstream_id, "SUCCESS", copies=list(row["copies"]))
+        if status == "SUCCESS":
+            return CopyJob(True, None, "ok", upstream_id, "SUCCESS", copies=list(row["copies"]))
+        message = MSG_TIMEOUT if stub_mode() == "timeout" else MSG_FAIL
+        code = 1056 if stub_mode() == "timeout" else 1001
+        return CopyJob(False, code, message, upstream_id, "FAILED", retryable=True)
+
+
+def submit_copy(*, requirement: str, script_type: str, candidate_count: int) -> CopyJob:
+    mode = stub_mode()
+    if mode != "off":
+        return _stub_submit(candidate_count)
+    root = base_url()
+    if not root:
+        return CopyJob(False, 1001, MSG_UNCONFIGURED, status="FAILED", retryable=False)
+    url = f"{root}{SUBMIT_PATH}"
+    body = {
+        "requirement": requirement,
+        "scriptType": script_type,
+        "candidateCount": candidate_count,
+    }
+    try:
+        with httpx.Client(timeout=timeout_sec()) as client:
+            response = client.post(url, headers=_headers(), json=body)
+    except httpx.TimeoutException:
+        return CopyJob(False, 1056, MSG_TIMEOUT, status="FAILED", retryable=True)
+    except httpx.HTTPError:
+        return CopyJob(False, 1001, MSG_UNREACHABLE, status="FAILED", retryable=True)
+    payload = _read_body(response)
+    mapped = _map_http(response, payload)
+    if mapped is not None:
+        return mapped
+    data = _payload_data(payload)
+    upstream_id = str(data.get("id") or data.get("jobId") or "")
+    status = _status_of(data)
+    copies = _copies_of(data)
+    return CopyJob(True, None, "ok", upstream_id, status, copies, http_status=response.status_code)
+
+
+def copy_status(upstream_id: str) -> CopyJob:
+    mode = stub_mode()
+    if mode != "off":
+        return _stub_status(upstream_id)
+    root = base_url()
+    if not root:
+        return CopyJob(False, 1001, MSG_UNCONFIGURED, upstream_id, "FAILED", retryable=False)
+    path = STATUS_PATH.format(job_id=upstream_id)
+    try:
+        with httpx.Client(timeout=timeout_sec()) as client:
+            response = client.get(f"{root}{path}", headers=_headers())
+    except httpx.TimeoutException:
+        return CopyJob(False, 1056, MSG_TIMEOUT, upstream_id, "FAILED", retryable=True)
+    except httpx.HTTPError:
+        return CopyJob(False, 1001, MSG_UNREACHABLE, upstream_id, "FAILED", retryable=True)
+    payload = _read_body(response)
+    mapped = _map_http(response, payload)
+    if mapped is not None:
+        mapped.upstream_id = upstream_id
+        return mapped
+    data = _payload_data(payload)
+    status = _status_of(data)
+    copies = _copies_of(data)
+    ok = status != "FAILED"
+    code = None if ok else 1001
+    message = "ok" if ok else MSG_FAIL
+    return CopyJob(ok, code, message, upstream_id, status, copies, retryable=not ok, http_status=response.status_code)
+
+
+def reset_stub() -> None:
+    """测试隔离桩内存。"""
+    global _seq
+    with _lock:
+        _seq = 0
+        _jobs.clear()

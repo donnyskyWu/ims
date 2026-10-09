@@ -36,7 +36,7 @@ def _release_ddl_lock() -> None:
 
 
 def _run_ddl() -> None:
-    from app import ops_models  # noqa: F401
+    from app import content_ai_models, ops_models  # noqa: F401
 
     stop = threading.Event()
 

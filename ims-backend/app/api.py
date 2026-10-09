@@ -322,6 +322,7 @@ from app.perf import router as perf_router
 from app.perf_calc import router as perf_calc_router
 from app.alert import router as alert_router
 from app.content_layout import router as content_layout_router
+from app.content_ai import router as content_ai_router
 from app.eff import router as eff_router
 from app.bi_report import router as bi_report_router
 from app.bi_metric import router as bi_metric_router
@@ -389,6 +390,7 @@ router.include_router(perf_router)
 router.include_router(perf_calc_router)
 router.include_router(alert_router)
 router.include_router(content_layout_router)
+router.include_router(content_ai_router)
 router.include_router(eff_router)
 router.include_router(bi_report_router)
 router.include_router(bi_metric_router)

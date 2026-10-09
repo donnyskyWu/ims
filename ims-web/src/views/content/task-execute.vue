@@ -31,9 +31,23 @@
         <template v-else>
           <p>
             <b>{{ vo.linkedContent.title }}</b> · {{ vo.linkedContent.status }}
-            <span v-if="vo.linkedContent.aiGenerateStatus"> · AI {{ vo.linkedContent.aiGenerateStatus }}</span>
+            <span v-if="vo.linkedContent.aiGenerateStatus"> · 文案 {{ vo.linkedContent.aiGenerateStatus }}</span>
+            <span v-if="vo.linkedContent.videoJobStatus"> · 视频 {{ vo.linkedContent.videoJobStatus }}</span>
+            <span v-if="vo.linkedContent.aiGenerateStatus === 'FAILED' && vo.linkedContent.aiGenerateError">
+              · {{ vo.linkedContent.aiGenerateError }}
+            </span>
           </p>
+          <p class="hint" data-testid="gpu-hint">无本机 GPU。密钥仅在系统参数中配置，任务页不展示。</p>
           <button class="btn btn-pri btn-sm" type="button" @click="openContentEdit">进入内容创作</button>
+          <button
+            v-if="vo.linkedContent.aiGenerateStatus === 'FAILED'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            style="margin-left: 8px"
+            @click="retryCopy"
+          >
+            重新发起文案
+          </button>
           <button
             v-if="canSubmitReview"
             class="btn btn-sec btn-sm"
@@ -74,6 +88,7 @@
           <textarea v-model="editForm.body" rows="4" />
         </div>
       </div>
+      <ContentAiPanel v-if="editContent" :content="editContent" @refresh="refreshEditContent" />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="editOpen = false">取消</button>
         <button class="btn btn-pri" type="button" @click="saveContent">保存内容</button>
@@ -87,6 +102,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import ContentAiPanel from './ContentAiPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -102,6 +118,7 @@ const editForm = ref({
   matchSchemeJson: '[]',
   body: '',
 })
+const editContent = ref<any>(null)
 
 const approvedStatuses = new Set(['PENDING_PUBLISH', 'PUBLISHED_DRAFT', 'FORMALLY_PUBLISHED', 'PUBLISHED', 'UNPUBLISHED'])
 
@@ -160,13 +177,44 @@ async function completeTask() {
   }
 }
 
-function openContentEdit() {
-  const lc = vo.value.linkedContent
-  editForm.value.title = lc?.title || ''
-  editForm.value.body = ''
-  editForm.value.matchType = 1
-  editForm.value.matchSchemeJson = '[]'
-  editOpen.value = true
+async function loadEditContent(id: number) {
+  const { data } = await http.get(`/content/${id}`)
+  editContent.value = data.data || null
+  const row = editContent.value
+  if (!row) return
+  editForm.value.title = row.title || ''
+  editForm.value.body = row.body || ''
+  editForm.value.matchType = row.matchType || 1
+  editForm.value.matchSchemeJson = JSON.stringify(row.matchScheme || [], null, 2)
+}
+
+async function openContentEdit() {
+  const cid = vo.value.linkedContent?.id
+  if (!cid) return
+  try {
+    await loadEditContent(cid)
+    editOpen.value = true
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
+async function refreshEditContent() {
+  const cid = vo.value.linkedContent?.id
+  if (!cid) return
+  await loadEditContent(cid)
+  await loadExecute()
+}
+
+async function retryCopy() {
+  const cid = vo.value.linkedContent?.id
+  if (!cid) return
+  try {
+    await http.post(`/content/${cid}/retry-ai-generate`)
+    await loadExecute()
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
 }
 
 async function saveContent() {
@@ -187,6 +235,7 @@ async function saveContent() {
       body: editForm.value.body,
     })
     editOpen.value = false
+    editContent.value = null
     await loadExecute()
   } catch (e) {
     window.alert(errorMessage(e))
