@@ -6,10 +6,10 @@ import json
 import re
 import secrets
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
@@ -294,13 +294,67 @@ def list_apply(
     return paged([apply_vo(r, names.get(r.applicant_user_id, "")) for r in page], len(rows), page_no, size)
 
 
+TIMELINE_EVENT_TYPES = (
+    "REGISTER",
+    "APPLY",
+    "TRANSFER",
+    "RETURN",
+    "RECHARGE",
+    "FREEZE",
+    "UNFREEZE",
+    "CANCEL",
+    "RECYCLE",
+)
+
+
+def _parse_timeline_dt(value: str) -> datetime | None:
+    text = (value or "").strip().replace("T", " ")
+    if not text:
+        return None
+    try:
+        if len(text) <= 10:
+            return datetime.strptime(text[:10], "%Y-%m-%d")
+        return datetime.strptime(text[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 @router.get("/account/timeline/{account_id}")
-def timeline(account_id: int, actor: User = Depends(current_user), db: Session = Depends(db_session)):
-    rows = db.scalars(
-        select(AccountTimelineEvent)
-        .where(AccountTimelineEvent.account_id == account_id)
-        .order_by(AccountTimelineEvent.event_time.desc())
-    ).all()
+def timeline(
+    account_id: int,
+    eventTypes: list[str] = Query(default=[]),
+    timeRange: list[str] = Query(default=[]),
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """单账号时间线。eventTypes / timeRange 缺省时返回全部事件。"""
+    selected: list[str] = []
+    for raw in eventTypes:
+        code = (raw or "").strip().upper()
+        if not code:
+            continue
+        if code not in TIMELINE_EVENT_TYPES:
+            return fail(1001, "事件类型不合法")
+        if code not in selected:
+            selected.append(code)
+    start = end = None
+    if any((item or "").strip() for item in timeRange):
+        if len(timeRange) < 2 or not (timeRange[0] or "").strip() or not (timeRange[1] or "").strip():
+            return fail(1001, "时间范围不合法")
+        start = _parse_timeline_dt(timeRange[0])
+        end = _parse_timeline_dt(timeRange[1])
+        if start is None or end is None:
+            return fail(1001, "时间范围不合法")
+        if len((timeRange[1] or "").strip()) <= 10:
+            end = end.replace(hour=23, minute=59, second=59)
+        if end < start:
+            return fail(1001, "时间范围不合法")
+    stmt = select(AccountTimelineEvent).where(AccountTimelineEvent.account_id == account_id)
+    if selected:
+        stmt = stmt.where(AccountTimelineEvent.event_type.in_(selected))
+    if start is not None and end is not None:
+        stmt = stmt.where(AccountTimelineEvent.event_time >= start, AccountTimelineEvent.event_time <= end)
+    rows = db.scalars(stmt.order_by(AccountTimelineEvent.event_time.desc())).all()
     return ok(
         {
             "list": [
