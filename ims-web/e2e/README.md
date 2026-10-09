@@ -126,7 +126,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1
 3. `npx playwright test --reporter=list,html` → `playwright-report/index.html`。worker 默认 **2**，失败自动重试 **1** 次（`playwright.config.ts`）。`IMS_E2E_WORKERS=1` 退回单 worker，`IMS_E2E_RETRIES=0` 关掉重试。
 4. 摘要写入 **`e2e_result.txt`**（末行 `N passed`）。
 
-服务已就绪时：`.\scripts\run_e2e.ps1 -SkipServe`
+API **18080**、Vite **6173**、seed 已就绪时优先复用，避免冷启动：`.\scripts\run_e2e.ps1 -SkipServe`。全量失败时同一命令再跑 1 次，不改断言；仍失败再排查。开发中途只跑定向 pytest 与相关 closure，全量留到推 main 前。
 
 仅 Playwright（无 preflight，跨平台 CI 子步骤）：`npm run test:e2e:ci:playwright-only`
 

@@ -1,7 +1,7 @@
 # IMS Agent 交付循环（人类 SSOT）
 
 > **用途**：PO 与 Agent 共认的单切片/回归交付方法论；与 Cursor 规则 [`.cursor/rules/ims-delivery.mdc`](../../.cursor/rules/ims-delivery.mdc) 一致（Agent 侧为精简版，本文档为完整说明）。  
-> **最后更新**：2026-10-08
+> **最后更新**：2026-10-09
 
 ## SSOT 链
 
@@ -20,13 +20,13 @@
 
 ```mermaid
 flowchart LR
-  A[PRD/原型 SSOT] --> B[规格与切片]
+  A[PRD/原型 SSOT] --> B[同模块攒 2-3 个小需求]
   B --> C[开发 backend+web]
-  C --> D[pytest 域内/定向]
-  D --> E["npm run test:e2e:ci"]
+  C --> D[定向 pytest + 相关 closure]
+  D --> E["推 main 前全量 E2E"]
   E --> F{失败?}
-  F -->|是| C
-  F -->|否| G[更新计划表/对照表/Checklist]
+  F -->|同一命令再跑 1 次仍失败| C
+  F -->|PASS| G[窗口内推 main]
   G --> H[PO UAT]
   H --> I[已验收]
 ```
@@ -34,16 +34,81 @@ flowchart LR
 1. **PRD → 原型**：变更先落 PRD/走查 SSOT，再动代码。  
 2. **规范 → 开发**：API 以 `doc/产品规格/**` 为准；后端 Python + 本地 MySQL（ADR-IMS-009）。  
 3. **pytest**：新增/变更接口补域内用例；**全量 144 条** 由 PO 在外置单进程环境签收（`ims-backend/scripts/run_pytest_external.bat`），**不在 Cursor 集成终端跑全量并代替 PO 签收**（易被杀、MySQL 1684 并发 DDL）。Agent 可：`collect-only`、单测文件、`_run_targeted_smoke.py` 等。  
-4. **E2E**：Agent/CI 跑 `ims-web/scripts/run_e2e.ps1` 或 `npm run test:e2e:ci`（默认 18080 + 6173，`--workers=1`）。  
-5. **fix → regress**：失败修复后重跑相关 pytest + **全量 E2E**（或至少受影响 closure + smoke）。  
-6. **文档收尾**：计划表 **#**、执行进度、对照表（含 UAT 建议）、Checklist 版本。  
-7. **UAT 门禁**：PO 按矩阵 **UAT 建议** 验收，填写 **UAT 状态**；通过后该行才可标 **已验收**。
+4. **开发中途测试**：只跑定向 pytest 与本需求相关的 closure。全量 E2E 留到推 main 之前。  
+5. **推 main 前 E2E**：在最新 `origin/main` 上跑 `ims-web/scripts/run_e2e.ps1` 或 `npm run test:e2e:ci`（默认 18080 + 6173，`--workers=2`）。必须全量 PASS。失败时同一命令自动重试 1 次，不改断言；仍失败再排查。不稳定则 `E2E_WORKERS=1` 并在报告说明。见下节「合入节奏」。  
+6. **fix → regress**：开发中途的修复只回归定向 pytest 与相关 closure。已经进入推 main 的全量失败，修复后重新跑全量（仍先允许同一命令重试 1 次）。  
+7. **文档收尾**：计划表 **#**、执行进度、对照表（含 UAT 建议）、Checklist 版本。已合入但计划表未写的进度行，补记仍按 PO 手动触发，不要在无关切片里假装补齐。  
+8. **UAT 门禁**：PO 按矩阵 **UAT 建议** 验收，填写 **UAT 状态**；通过后该行才可标 **已验收**。
+
+## 合入节奏
+
+PO（zhang wu）**2026-10-09** 定下。云端 Agent 与本地 Cursor 同一套。
+
+### 推 main 窗口
+
+每天北京时间 **09:00、18:00、24:00** 共 3 次合入窗口（24:00 即当日结束、次日 00:00）。
+
+- 窗口之间继续开发、攒片。
+- **只有窗口内才** `push origin HEAD:main`。
+- 窗口内可把已测通的多片 rebase 后一次推，或分批推。
+- **每一次 push 前**都必须在当时最新的 `origin/main` 上全量 E2E 通过。
+- 禁止 force push。
+
+### 同模块合入粒度
+
+同一模块继续把 **2–3** 个相关小需求合并开发、一起测通后再合入。不要把每个小需求单独推 main。窗口之间攒这几条；到窗口再 rebase，一次或分批推。
+
+### 开发中途与推 main 前
+
+- 开发中途只跑定向 pytest 与相关 closure。
+- 全量 E2E 只在推 main 之前跑，质量门槛不变：必须全量 PASS。
+
+### 全量失败重试
+
+全量 E2E 失败时，用**同一命令**自动重试 **1** 次。两次之间不改断言、不改用例。第二次仍失败，再排查（登录、种子、workers 回退、断言本身）。
+
+### E2E 环境预热
+
+尽量预热并复用，避免每次冷启动。API **18080**、Vite **6173**、seed 已就绪时，用已有进程，并加 `-SkipServe`：
+
+```powershell
+cd d:\self\sy\IMS系统产品\ims-web
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1 -SkipServe
+```
+
+端口或 seed 不在时，仍可由脚本拉起 18080 与 6173。不要为了每条小需求重启一遍 API / Vite。
+
+### E2E workers
+
+全量 Playwright 默认 **`--workers=2`**（`ims-web/playwright.config.ts`、`ims-web/scripts/run_e2e.ps1`；环境变量 `E2E_WORKERS` 可覆盖）。质量门槛不变：推 main 前必须全量 PASS。
+
+若出现不稳定失败（含 admin 登录锁定），退回 **`--workers=1`**，并在 `e2e_result.txt` 写明原因。回退发生在「同一命令重试 1 次仍失败」之后，不要把 workers=1 当作长期默认。
+
+```powershell
+# 回退示例（ims-web）
+$env:E2E_WORKERS = "1"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1 -SkipServe
+```
+
+### 并行片数
+
+继续保持约 **2** 片并行，且仅解耦模块可并行（不同模块/文件、不共享 DB 迁移顺序、不抢同一计划表 **#**）。同模块内的 2–3 个小需求是攒批合入，不是再加并行片数。
+
+### 合入方式
+
+测通后直推 main，不开 PR：先 rebase 到最新 `origin/main`，再 fast-forward（`git push origin HEAD:main`）。禁止 force push。
+
+进度 SSOT（计划表、对照表、执行进度、Checklist、本节之外的进度流水账、`e2e_result.txt`）里，**进度补记仍按 PO 手动触发**。方法论段落可以随本规则更新；不要假装补齐尚未由 PO 触发的进度行。
+
+### 本地 Cursor
+
+本地同样遵守上述窗口、workers、同模块 2–3 个小需求再合入、开发中途只跑定向测试、全量失败同一命令重试 1 次，以及环境预热复用。文档与脚本路径用仓库相对路径即可。Windows 本机命令示例仍可用 `d:\self\sy\IMS系统产品\...`（见文末「相关命令速查」）。
 
 ## 角色分工
 
 | 角色 | 职责 |
 |------|------|
-| **Agent** | 实现、域内/定向 pytest、跑全量 E2E 并留 `e2e_result.txt` + HTML 报告；更新 SSOT；填对照表 **UAT 建议**（可 UAT / 待补数据 / 仅 API / 阻塞） |
+| **Agent** | 实现；开发中途定向 pytest + 相关 closure；推 main 前全量 E2E（同一命令可重试 1 次）并留 `e2e_result.txt` + HTML 报告；更新 SSOT；填对照表 **UAT 建议**（可 UAT / 待补数据 / 仅 API / 阻塞） |
 | **PO** | 审 closure 与报告、外置 pytest 全量签收、手工 **UAT**、填 **UAT 状态**（未测 / 通过 / 阻塞）；决定是否提供真实钉钉/Football/生产库等 |
 | **开发（同 Agent 或人）** | 新闭环补 Checklist ID，优先扩 `closure-*` |
 
@@ -79,6 +144,7 @@ flowchart LR
 
 ## 并行 Subagent
 
+- **片数**：约 **2** 片，且仅解耦模块可并行。见「合入节奏」。  
 - **允许**：不同模块、无共享 DB compat 顺序、不抢同一计划表 **#** 的独立任务。  
 - **禁止**：同一切片「开发未完成就并行写 E2E + 改 compat」；多 Agent 同时外置全量 pytest（1684 风险）。
 
@@ -134,11 +200,16 @@ powershell -NoProfile -File .\scripts\init_ims_db.ps1
 # API
 powershell -NoProfile -File .\scripts\start_api.ps1 -KillPort
 
-# E2E（推荐）
+# E2E（推 main 前全量；默认 --workers=2。本地同样只在 09:00 / 18:00 / 24:00 北京时间推 main）
 cd d:\self\sy\IMS系统产品\ims-web
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1
+# 18080 + 6173 + seed 已就绪时复用，避免冷启动
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1 -SkipServe
+# 或冷启动：powershell ... .\scripts\run_e2e.ps1
 # 或
 npm run test:e2e:ci
+# 全量失败：同一命令再跑 1 次，不改断言；仍失败再排查
+# 不稳定时回退 workers=1，并在 e2e_result.txt 写明原因
+# $env:E2E_WORKERS = "1"
 
 # L3 钉钉组织（需 ims-backend/.env + IMS_DINGTALK_L3=1，不计入 21 spec）
 cd d:\self\sy\IMS系统产品\ims-backend
@@ -148,7 +219,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_dingtalk_l3.ps
 
 ## Agent 自动链（PO 闸口）
 
-- 默认：Agent 按 [计划表](../开发方案/IMS-任务进度计划表.md) **#** 序推进高价值 closure 切片，每切片走完「开发 → pytest 定向 → 全量 E2E → SSOT 收尾」。
+- 默认：Agent 按 [计划表](../开发方案/IMS-任务进度计划表.md) **#** 序推进高价值 closure。开发中途走「定向 pytest → 相关 closure」；**推 main 前**才全量 E2E。同模块先合并 2–3 个相关小需求再合入。见「合入节奏」。
 - **2026-10-08**：PO（zhang wu）授权 **#53**；#53 收口后曾暂停。**同日续**：**#54+ 自动链已重新启用**（PO 闸口：遇阻塞再问 PO；否则按计划表 **#** 序推进 closure 切片直至 PO 叫停）。
 - **2026-10-08（PO）**：**#55 收口后曾暂停自动链**（当时写「不自动链 #56、#57」）。#56 已随同批提交交付。
 - **2026-10-08（PO · zhang wu）**：**#57 起自动链恢复**。上述暂停已解除。**#57**（S3 分成审批 → **PAID_OFF** + 台账对账）已合入 main。遇阻塞仍先问 PO。
@@ -168,6 +239,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_dingtalk_l3.ps
 - **2026-10-08（#70）**：本切片交付 **S4 冲话费成本汇总**（E2E-S4-10 · 账号 / 部门 / 平台 × 月份）。计划表 **开发完成/待UAT**（PO UAT 未填，不得标已验收）。rebase 到 main `ab529a1`（含 **#69**）。`test_acct_recharge_summary.py` **2 passed** · `test_acct_checkout.py` **6 passed** · collect **187** · Checklist **v2.6.80** · E2E **65/65 PASS**（`e2e_result.txt`）。本片不改 cert / `resource.vue` / live-session，也不做 sysTenant。已合入 main `5d4d505`。**#59–#70** 保持开发完成/待UAT。
 - **2026-10-08（#71）**：本切片交付 **LIVE 锁定证件拦截开播**（E2E-S2-04 · 业务码 **1045**）。过期/锁定/未生效证件挡住登记、风控和确认开播；换证后恢复。计划表 **开发完成/待UAT**（PO UAT 未填，不得标已验收）。rebase 到 main `5d4d505`（含 **#70**）。`test_live_cert_lock.py` **1 passed** · collect **188** · Checklist **v2.6.81** · 全量 E2E **66/66 PASS**（`e2e_result.txt`）。本片不改 `acct_flow` / `account.vue`，也不改 `asset_ledger` / `device.vue`，也不做 sysTenant。**#59–#70** 保持开发完成/待UAT。已合入 main `1cd5403`。
 - **2026-10-08（#72）**：实物盘点不在 V1 契约，本切片改做 **S5 账号/场次反查**（E2E-S5-05 · 入口不存在 **1500**）。计划表 **开发完成/待UAT**（PO UAT 未填，不得标已验收）。rebase 到 main `1cd5403`（含 **#71**）。`test_asset_reverse_entry.py` **1 passed** · collect **189** · Checklist **v2.6.82** · 全量 E2E **67/67 PASS**（`e2e_result.txt`）。本片不改 live-session / cert / `resource.vue` / `acct_flow` / `account.vue`，也不做 sysTenant。**#59–#71** 保持开发完成/待UAT。父代理继续后续 `#`，除非 PO 再暂停。
+- **2026-10-09（#99 · PO zhang wu · 仅文档）**：每天北京时间 **09:00 / 18:00 / 24:00** 才 `push origin HEAD:main`（每次推前在最新 origin/main 上全量 E2E PASS；禁止 force push）。同模块先合并 **2–3** 个相关小需求再合入。开发中途只跑定向 pytest 与相关 closure。全量失败允许同一命令重试 1 次（不改断言），仍失败再排查。18080 / 6173 / seed 就绪时用 `-SkipServe` 或已有进程。全量默认 `--workers=2`，不稳回退 `E2E_WORKERS=1` 并写入报告。并行约 **2** 片，仅解耦模块。直推 main（rebase + fast-forward，不开 PR）。进度补记仍由 PO 手动触发；本条不补 #73–#98。
 
 ## 维护
 
