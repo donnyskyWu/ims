@@ -106,6 +106,16 @@ class ImportAccountBody(BaseModel):
     rows: list[ImportAccountRow] = Field(default_factory=list)
 
 
+def parse_collect_enabled(raw: str) -> int | None:
+    """列表筛选：空表示不限；1/0 对应是否采集。未知值不当作筛选。"""
+    text = (raw or "").strip().lower()
+    if text in {"1", "true", "yes"}:
+        return 1
+    if text in {"0", "false", "no"}:
+        return 0
+    return None
+
+
 def external_account_vo(row: CollectConfig) -> dict:
     return {
         "id": str(row.id),
@@ -243,6 +253,7 @@ def external_account_page(
     configName: str = "",
     platformType: str = "",
     status: str = "",
+    collectEnabled: str = "",
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
@@ -259,6 +270,9 @@ def external_account_page(
         stmt = stmt.where(CollectConfig.platform_type == platformType)
     if status:
         stmt = stmt.where(CollectConfig.status == status)
+    flag = parse_collect_enabled(collectEnabled)
+    if flag is not None:
+        stmt = stmt.where(CollectConfig.collect_enabled == flag)
     total = count_of(ops, stmt)
     rows = ops.scalars(stmt.order_by(CollectConfig.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     return paged([external_account_vo(row) for row in rows], total, page_no, size)
@@ -363,6 +377,7 @@ def external_keyword_page(
     keyword: str = "",
     platformType: str = "",
     status: str = "",
+    collectEnabled: str = "",
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
@@ -375,6 +390,9 @@ def external_keyword_page(
         stmt = stmt.where(CollectKeyword.platform_type == platformType)
     if status:
         stmt = stmt.where(CollectKeyword.status == status)
+    flag = parse_collect_enabled(collectEnabled)
+    if flag is not None:
+        stmt = stmt.where(CollectKeyword.collect_enabled == flag)
     total = count_of(ops, stmt)
     rows = ops.scalars(stmt.order_by(CollectKeyword.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     return paged([keyword_vo(row) for row in rows], total, page_no, size)

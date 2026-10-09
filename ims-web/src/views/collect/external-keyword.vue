@@ -23,6 +23,11 @@
         <option value="ENABLED">启用</option>
         <option value="DISABLED">停用</option>
       </select>
+      <select v-model="filters.collectEnabled" data-testid="kw-collect-filter" style="width: 120px">
+        <option value="">是否采集</option>
+        <option value="1">只看采集</option>
+        <option value="0">只看不采集</option>
+      </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="kw-query">查询</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="kw-reset" @click="resetFilters">重置</button>
@@ -50,7 +55,7 @@
               <td colspan="8">
                 <div class="empty" data-testid="kw-empty">
                   <div class="et">{{ error || keywordEmptyTitle }}</div>
-                  <div class="es">{{ keywordEmptyHint }}</div>
+                  <div class="es" data-testid="kw-empty-hint">{{ keywordEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -162,14 +167,21 @@ const drawerOpen = ref(false)
 const editingId = ref('')
 const formMsg = ref('')
 const togglingId = ref('')
-const filters = reactive({ keyword: '', platformType: '', status: '' })
-const keywordFiltered = computed(() => Boolean(filters.keyword || filters.platformType || filters.status))
+const filters = reactive({ keyword: '', platformType: '', status: '', collectEnabled: '' })
+const keywordFiltered = computed(() => Boolean(filters.keyword.trim() || filters.platformType || filters.status || filters.collectEnabled))
 const keywordEmptyTitle = computed(() => (keywordFiltered.value ? '没有符合筛选的关键词' : '暂无关键词'))
-const keywordEmptyHint = computed(() =>
-  keywordFiltered.value
-    ? '暂无关键词。换个关键词、平台或状态后再查'
-    : '新增一条并打开「是否采集」，外部统一任务才会带上它',
-)
+const keywordEmptyHint = computed(() => {
+  if (filters.collectEnabled === '1') {
+    return '暂无关键词。当前只看已打开采集的关键词。停用或未打开的不会进入外部统一任务，本地桩不需要平台 Cookie。'
+  }
+  if (filters.collectEnabled === '0') {
+    return '暂无关键词。当前只看未打开采集的关键词。它们不会进入外部统一任务。'
+  }
+  if (filters.keyword.trim() || filters.platformType || filters.status) {
+    return '暂无关键词。换个关键词、平台或状态后再查。重置后可看全部。'
+  }
+  return '新增一条并打开「是否采集」，外部统一任务才会带上它'
+})
 const form = reactive({
   platformType: 'DOUYIN',
   keyword: '',
@@ -190,9 +202,10 @@ async function loadList() {
   error.value = ''
   try {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
-    if (filters.keyword) params.keyword = filters.keyword
+    if (filters.keyword.trim()) params.keyword = filters.keyword.trim()
     if (filters.platformType) params.platformType = filters.platformType
     if (filters.status) params.status = filters.status
+    if (filters.collectEnabled) params.collectEnabled = filters.collectEnabled
     const res = await http.get('/collect/external/keyword/page', { params })
     if (res.data?.code !== 0) {
       error.value = res.data?.msg || '加载失败'
@@ -213,6 +226,7 @@ function resetFilters() {
   filters.keyword = ''
   filters.platformType = ''
   filters.status = ''
+  filters.collectEnabled = ''
   loadList()
 }
 

@@ -18,31 +18,32 @@
       Channel-A 默认租户级统一采集（02:00）；Channel-D 外部竞品统一任务（22:00）。启动后按「下次执行」由本地定时器触发，停止后不再调度。编辑抽屉<strong>无 Cookie</strong>，凭证见公司资产账号 · 采集 Tab（ADR-047）。失败日志在采集日志页重试，不依赖真实快手引擎。
     </p>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.taskName" placeholder="任务名" style="width: 140px" />
-      <select v-model="filters.platformType" style="width: 110px">
+      <input v-model="filters.taskName" data-testid="task-name" placeholder="任务名" style="width: 140px" />
+      <select v-model="filters.platformType" data-testid="task-platform" style="width: 120px">
         <option value="">全部平台</option>
-        <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
+        <option v-for="p in platforms" :key="p" :value="p">{{ platformLabel(p) }}</option>
+        <option value="MULTI">多平台</option>
       </select>
-      <select v-model="filters.method" style="width: 110px">
+      <select v-model="filters.method" data-testid="task-method" style="width: 110px">
         <option value="">全部方式</option>
-        <option value="INTERNAL">INTERNAL</option>
-        <option value="EXTERNAL">EXTERNAL</option>
+        <option value="INTERNAL">内部</option>
+        <option value="EXTERNAL">外部</option>
       </select>
-      <select v-model="filters.frequency" style="width: 100px">
+      <select v-model="filters.frequency" data-testid="task-frequency" style="width: 110px">
         <option value="">全部频率</option>
-        <option value="HOURLY">HOURLY</option>
-        <option value="DAILY">DAILY</option>
-        <option value="WEEKLY">WEEKLY</option>
+        <option value="HOURLY">每小时</option>
+        <option value="DAILY">每天</option>
+        <option value="WEEKLY">每周</option>
       </select>
-      <select v-model="filters.status" style="width: 100px">
+      <select v-model="filters.status" data-testid="task-status-filter" style="width: 110px">
         <option value="">全部状态</option>
-        <option value="ENABLED">ENABLED</option>
-        <option value="DISABLED">DISABLED</option>
-        <option value="RUNNING">RUNNING</option>
+        <option value="ENABLED">启用</option>
+        <option value="DISABLED">停用</option>
+        <option value="RUNNING">运行中</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
-      <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="task-query">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="task-reset" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -69,8 +70,8 @@
             <tr v-else-if="!rows.length">
               <td colspan="11">
                 <div class="empty" data-testid="task-empty">
-                  <div class="et">{{ error || (filtersActive ? '没有符合筛选的采集任务' : '暂无采集任务') }}</div>
-                  <div class="es">{{ filtersActive ? '换个条件，或重置筛选后再看排期' : '新增单账号任务或确保统一任务后，这里显示下次执行' }}</div>
+                  <div class="et">{{ taskEmptyTitle }}</div>
+                  <div class="es" data-testid="task-empty-hint">{{ taskEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -82,8 +83,8 @@
                 <div v-if="row.bindWarning" class="hint" style="color: var(--orange)">{{ row.bindWarning }}</div>
               </td>
               <td style="font-size: 12px">{{ row.platformAccountLabel || '—' }}</td>
-              <td><span class="chip">{{ row.method }}</span></td>
-              <td class="num">{{ row.frequency }}</td>
+              <td><span class="chip">{{ methodLabel(row.method) }}</span></td>
+              <td class="num">{{ frequencyLabel(row.frequency) }}</td>
               <td class="mono" style="font-size: 11px">{{ row.cron }}</td>
               <td class="num" style="font-size: 11px">{{ row.lastRunAt || '—' }}</td>
               <td class="num" style="font-size: 11px" data-testid="task-next-run">{{ row.scheduleLabel || row.nextRunAt || '尚未排期' }}</td>
@@ -270,10 +271,45 @@ const monitor = reactive({
   failCount: 0,
   healthLabel: '',
 })
+const PLATFORM_LABEL: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  WECHAT_OFFICIAL: '公众号',
+  XIAOHONGSHU: '小红书',
+  MULTI: '多平台',
+}
+const METHOD_LABEL: Record<string, string> = { INTERNAL: '内部', EXTERNAL: '外部' }
+const FREQUENCY_LABEL: Record<string, string> = { HOURLY: '每小时', DAILY: '每天', WEEKLY: '每周' }
+
+function platformLabel(code: string) {
+  return PLATFORM_LABEL[code] || code
+}
+function methodLabel(code: string) {
+  return METHOD_LABEL[code] || code || '—'
+}
+function frequencyLabel(code: string) {
+  return FREQUENCY_LABEL[code] || code || '—'
+}
+
 const filtersActive = computed(
   () =>
-    Boolean(filters.taskName || filters.platformType || filters.method || filters.frequency || filters.status),
+    Boolean(filters.taskName.trim() || filters.platformType || filters.method || filters.frequency || filters.status),
 )
+const taskEmptyTitle = computed(() => {
+  if (error.value) return error.value
+  if (filters.status === 'RUNNING') return '本地调度没有「运行中」任务'
+  if (filtersActive.value) return '没有符合筛选的采集任务'
+  return '暂无采集任务'
+})
+const taskEmptyHint = computed(() => {
+  if (filters.status === 'RUNNING') {
+    return '启停只在启用和停用之间切换。停止后下次执行为空，执行过程中也不会标成运行中。本地桩不改这个状态。'
+  }
+  if (filters.platformType === 'MULTI') return '多平台只对应外部统一任务。还没有时，先点「确保外部统一任务」。'
+  if (filtersActive.value) return '换个条件，或重置筛选后再看排期。外部统一任务在「多平台」里。'
+  return '新增单账号任务或确保统一任务后，这里显示下次执行。'
+})
 
 async function loadList() {
   loading.value = true
@@ -430,7 +466,8 @@ async function removeTask(row: any) {
 }
 
 async function ensureUnified() {
-  await http.post('/collect/task/ensure-unified', { platformType: filters.platformType || 'DOUYIN' })
+  const platform = filters.platformType && filters.platformType !== 'MULTI' ? filters.platformType : 'DOUYIN'
+  await http.post('/collect/task/ensure-unified', { platformType: platform })
   loadList()
 }
 
