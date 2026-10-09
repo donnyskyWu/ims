@@ -9,7 +9,7 @@
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；资料按分类维护，支持发布/下架。</p>
+    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；列表可按标题、类型、状态、岗位和分类筛选。</p>
     <div class="g2" style="margin-bottom: 12px; align-items: flex-start">
       <div class="card" style="padding: 12px; max-height: 280px; overflow: auto">
         <div style="font-weight: 600; margin-bottom: 8px">分类树</div>
@@ -18,7 +18,13 @@
             <span>{{ root.cateName }} <small>({{ root.positionCode }})</small></span>
             <ul>
               <li v-for="child in root.children" :key="child.id">
-                <button type="button" class="linkish" @click="pickCate(child)">
+                <button
+                  type="button"
+                  class="linkish"
+                  :class="{ on: filters.cateId === child.id }"
+                  data-testid="train-cate-node"
+                  @click="pickCate(child)"
+                >
                   {{ child.cateName }} · {{ child.materialCount }}
                 </button>
               </li>
@@ -28,23 +34,34 @@
         <div v-else class="empty"><div class="et">加载分类…</div></div>
       </div>
       <div style="flex: 1">
-        <form class="qbar" @submit.prevent="loadList">
-          <input v-model="filters.title" placeholder="标题" style="width: 140px" />
-          <select v-model="filters.materialType" style="width: 100px">
+        <form class="qbar" data-testid="train-material-filters" @submit.prevent="loadList">
+          <input v-model="filters.title" placeholder="标题" style="width: 140px" data-testid="train-filter-title" />
+          <select v-model="filters.materialType" style="width: 100px" data-testid="train-filter-type">
             <option value="">全部类型</option>
             <option value="DOC">文档</option>
             <option value="VIDEO">视频</option>
-            <option value="LINK">链接</option>
+            <option value="LINK">外链</option>
           </select>
-          <select v-model="filters.status" style="width: 100px">
+          <select v-model="filters.status" style="width: 100px" data-testid="train-filter-status">
             <option value="">全部状态</option>
             <option value="DRAFT">草稿</option>
             <option value="PUBLISHED">已发布</option>
             <option value="OFFLINE">已下架</option>
           </select>
+          <select v-model="filters.positionCode" style="width: 150px" data-testid="train-filter-position">
+            <option value="">全部岗位</option>
+            <option v-for="item in positionOptions" :key="item.code" :value="item.code">{{ item.label }}</option>
+          </select>
           <span class="sp"></span>
           <button class="btn btn-pri btn-sm" type="submit">查询</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="train-filter-reset" @click="resetFilters">
+            重置
+          </button>
         </form>
+        <p v-if="hasActiveFilters" class="filter-note" data-testid="train-filter-summary">
+          当前筛选：{{ filterSummary }}
+          <button type="button" class="linkish" @click="resetFilters">清除筛选</button>
+        </p>
         <div class="tbl-block">
           <div class="tbl-wrap">
             <table>
@@ -53,6 +70,7 @@
                   <th>编号</th>
                   <th>标题</th>
                   <th>类型</th>
+                  <th>岗位</th>
                   <th>状态</th>
                   <th>上传人</th>
                   <th>操作</th>
@@ -60,16 +78,48 @@
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+                  <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
                 </tr>
                 <tr v-else-if="!rows.length">
-                  <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无资料' }}</div></div></td>
+                  <td colspan="7">
+                    <div class="empty" data-testid="train-material-empty">
+                      <div class="et">{{ error || (hasActiveFilters ? '没有符合筛选的资料' : '暂无资料') }}</div>
+                      <div v-if="!error && hasActiveFilters" class="es">调整标题、类型、状态、岗位或分类后再查询</div>
+                      <button
+                        v-if="!error && hasActiveFilters"
+                        class="btn btn-sec btn-sm"
+                        type="button"
+                        data-testid="train-filter-clear-empty"
+                        @click="resetFilters"
+                      >
+                        清除筛选
+                      </button>
+                    </div>
+                  </td>
                 </tr>
                 <tr v-for="row in rows" v-else :key="row.id">
                   <td class="mono">{{ row.materialNo }}</td>
                   <td style="font-weight: 500">{{ row.title }}</td>
-                  <td>{{ row.materialType }}</td>
-                  <td>{{ row.status }}</td>
+                  <td>{{ typeLabel(row.materialType) }}</td>
+                  <td>
+                    <template v-if="row.positionCodes.length">
+                      <span
+                        v-for="code in row.positionCodes.slice(0, 3)"
+                        :key="code"
+                        class="tag pos-tag"
+                        data-testid="train-material-position"
+                      >
+                        {{ code }}
+                      </span>
+                      <span v-if="row.positionCodes.length > 3" class="hint">+{{ row.positionCodes.length - 3 }}</span>
+                    </template>
+                    <span v-else class="hint">—</span>
+                  </td>
+                  <td>
+                    <span class="tag" :style="statusStyle(row.status)" data-testid="train-material-status">
+                      <span class="dot"></span>{{ statusLabel(row.status) }}
+                    </span>
+                  </td>
                   <td>{{ row.uploaderName }}</td>
                   <td>
                     <button
@@ -85,6 +135,9 @@
               </tbody>
             </table>
           </div>
+          <div v-if="!loading" class="pager">
+            <span class="pg-total" data-testid="train-material-total">共 {{ total }} 条</span>
+          </div>
         </div>
       </div>
     </div>
@@ -97,13 +150,19 @@
         <label class="fld">标题</label>
         <input v-model="form.title" class="fld-in" />
         <label class="fld">类型</label>
-        <select v-model="form.materialType" class="fld-in">
-          <option value="DOC">DOC</option>
-          <option value="VIDEO">VIDEO</option>
-          <option value="LINK">LINK</option>
+        <select v-model="form.materialType" class="fld-in" data-testid="train-form-type">
+          <option value="DOC">文档</option>
+          <option value="VIDEO">视频</option>
+          <option value="LINK">外链</option>
         </select>
         <label v-if="form.materialType === 'LINK'" class="fld">外链</label>
-        <input v-if="form.materialType === 'LINK'" v-model="form.linkUrl" class="fld-in" />
+        <input
+          v-if="form.materialType === 'LINK'"
+          v-model="form.linkUrl"
+          class="fld-in"
+          data-testid="train-form-link"
+          placeholder="https://"
+        />
         <template v-else>
           <label class="fld">fileKey</label>
           <input v-model="form.fileKey" class="fld-in" placeholder="直传回执 key" />
@@ -120,7 +179,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Cate = {
@@ -136,17 +195,19 @@ type Row = {
   materialNo: string
   title: string
   materialType: string
+  positionCodes: string[]
   status: string
   uploaderName: string
 }
 
 const cates = ref<Cate[]>([])
 const rows = ref<Row[]>([])
+const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
 const formError = ref('')
-const filters = reactive({ title: '', materialType: '', status: '', cateId: 0 })
+const filters = reactive({ title: '', materialType: '', status: '', positionCode: '', cateId: 0 })
 const form = reactive({
   cateId: 0,
   title: '',
@@ -154,6 +215,68 @@ const form = reactive({
   fileKey: 'demo/file.pdf',
   linkUrl: '',
 })
+
+const positionOptions = computed(() => {
+  const seen = new Map<string, string>()
+  for (const root of cates.value) {
+    const code = (root.positionCode || '').trim()
+    if (!code || seen.has(code)) continue
+    seen.set(code, root.cateName ? `${root.cateName} · ${code}` : code)
+  }
+  return [...seen.entries()].map(([code, label]) => ({ code, label }))
+})
+
+const selectedCateName = computed(() => {
+  if (!filters.cateId) return ''
+  for (const root of cates.value) {
+    if (root.id === filters.cateId) return root.cateName
+    for (const child of root.children || []) {
+      if (child.id === filters.cateId) return child.cateName
+    }
+  }
+  return ''
+})
+
+const hasActiveFilters = computed(
+  () =>
+    Boolean(
+      filters.title.trim() ||
+        filters.materialType ||
+        filters.status ||
+        filters.positionCode ||
+        filters.cateId,
+    ),
+)
+
+const filterSummary = computed(() => {
+  const parts: string[] = []
+  if (filters.title.trim()) parts.push(`标题「${filters.title.trim()}」`)
+  if (filters.materialType) parts.push(typeLabel(filters.materialType))
+  if (filters.status) parts.push(statusLabel(filters.status))
+  if (filters.positionCode) parts.push(`岗位 ${filters.positionCode}`)
+  if (selectedCateName.value) parts.push(`分类 ${selectedCateName.value}`)
+  return parts.join(' · ')
+})
+
+function typeLabel(value: string) {
+  if (value === 'DOC') return '文档'
+  if (value === 'VIDEO') return '视频'
+  if (value === 'LINK') return '外链'
+  return value || '—'
+}
+
+function statusLabel(value: string) {
+  if (value === 'DRAFT') return '草稿'
+  if (value === 'PUBLISHED') return '已发布'
+  if (value === 'OFFLINE') return '已下架'
+  return value || '—'
+}
+
+function statusStyle(value: string) {
+  if (value === 'PUBLISHED') return 'background: rgba(52,199,89,.15); color: #248a3d'
+  if (value === 'OFFLINE') return 'background: rgba(255,59,48,.12); color: #d70015'
+  return 'background: rgba(142,142,147,.12); color: #6d6d72'
+}
 
 async function loadCates() {
   const res = await http.get('/train/material/cates')
@@ -170,24 +293,40 @@ async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const params: Record<string, string | number> = { pageNo: 1, pageSize: 30 }
-    if (filters.title) params.title = filters.title
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
+    if (filters.title.trim()) params.title = filters.title.trim()
     if (filters.materialType) params.materialType = filters.materialType
     if (filters.status) params.status = filters.status
+    if (filters.positionCode) params.positionCode = filters.positionCode
     if (filters.cateId) params.cateId = filters.cateId
     const res = await http.get('/train/material/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
+      total.value = 0
       return
     }
-    rows.value = res.data.data.list || []
+    rows.value = (res.data.data.list || []).map((row: Row) => ({
+      ...row,
+      positionCodes: Array.isArray(row.positionCodes) ? row.positionCodes : [],
+    }))
+    total.value = res.data.data.total || 0
   } catch {
     error.value = '网络错误'
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.title = ''
+  filters.materialType = ''
+  filters.status = ''
+  filters.positionCode = ''
+  filters.cateId = 0
+  loadList()
 }
 
 function openCreate() {
@@ -264,6 +403,23 @@ onMounted(async () => {
   cursor: pointer;
   padding: 0;
   font-size: 13px;
+}
+.linkish.on {
+  font-weight: 650;
+  text-decoration: underline;
+}
+.filter-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 12px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.pos-tag {
+  margin-right: 4px;
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--blue);
 }
 .fld {
   display: block;

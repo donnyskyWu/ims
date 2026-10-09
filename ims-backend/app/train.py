@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
@@ -236,16 +237,20 @@ def material_list(
     )
     if cateId:
         stmt = stmt.where(TrainMaterial.cate_id == cateId)
-    if title:
+    if title and title.strip():
         stmt = stmt.where(TrainMaterial.title.contains(title.strip()))
     if materialType:
+        if materialType not in MATERIAL_TYPES:
+            return fail(1001, "materialType 无效")
         stmt = stmt.where(TrainMaterial.material_type == materialType)
     if status:
         if status not in MATERIAL_STATUSES:
             return fail(1001, "status 无效")
         stmt = stmt.where(TrainMaterial.status == status)
-    if positionCode:
+    if positionCode and positionCode.strip():
         code = positionCode.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", code):
+            return fail(1001, "positionCode 无效")
         stmt = stmt.where(func.json_contains(TrainMaterial.position_codes, f'"{code}"'))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
