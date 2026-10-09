@@ -60,7 +60,8 @@
               <td data-testid="row-video-status">{{ videoLabel(row.videoJobStatus) }}</td>
               <td>{{ row.fbSyncStatusLabel || row.fbSyncStatus || '—' }}</td>
               <td>
-                <button class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="content-view" @click="openView(row)">查看</button>
+                <button class="btn btn-sec btn-sm" type="button" style="margin-left: 6px" @click="openEdit(row)">编辑</button>
                 <button
                   v-if="row.contentStatus === 'DRAFT' || row.contentStatus === 'REJECTED'"
                   class="btn btn-txt btn-sm"
@@ -147,6 +148,15 @@
             <div v-if="!previewImages.length" class="hint">{{ previewHint }}</div>
           </div>
         </div>
+        <div class="fld">
+          <label>版式 HTML</label>
+          <textarea
+            v-model="editLayoutHtml"
+            rows="4"
+            data-testid="content-layout-html-input"
+            placeholder="查看与审核按此 HTML 只读渲染；留空则显示正文"
+          />
+        </div>
       </div>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
       <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
@@ -155,12 +165,27 @@
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
       </template>
     </ProtoDrawer>
+
+    <ProtoDrawer :open="viewOpen" title="查看内容" width="720px" @close="viewOpen = false">
+      <p><b data-testid="content-view-title">{{ viewRow?.title }}</b></p>
+      <p class="hint">
+        状态 {{ viewRow?.contentStatus || '—' }} · 文档类型 {{ viewRow?.documentType || '—' }} · 内容类型
+        {{ viewRow?.contentType || '—' }}
+      </p>
+      <p v-if="viewRow?.matchSummary" class="hint">赛事摘要 {{ viewRow.matchSummary }}</p>
+      <div class="dsec">正文</div>
+      <ContentLayoutPreview :layout-html="viewRow?.layoutHtml || ''" :body="viewRow?.body || ''" />
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="viewOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
+import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import ContentAiPanel from './ContentAiPanel.vue'
 import MatchSchemeEditor, { type MatchSchemeItem } from './MatchSchemeEditor.vue'
@@ -172,6 +197,8 @@ const error = ref('')
 const titleKw = ref('')
 const statusKw = ref('')
 const drawerOpen = ref(false)
+const viewOpen = ref(false)
+const viewRow = ref<any>(null)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const editingRow = ref<any>(null)
@@ -340,6 +367,17 @@ function openEdit(row: any) {
   uploadError.value = ''
   drawerOpen.value = true
   void refreshPreview()
+}
+
+async function openView(row: any) {
+  viewRow.value = row
+  viewOpen.value = true
+  try {
+    const { data } = await http.get(`/content/${row.id}`)
+    viewRow.value = data.data
+  } catch {
+    viewRow.value = row
+  }
 }
 
 async function saveContent() {

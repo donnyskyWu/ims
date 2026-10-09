@@ -83,11 +83,13 @@ _ATTR_ORDER = (
     "colspan",
     "rowspan",
     "data-w",
+    "data-file-key",
     "class",
     "style",
 )
 _STYLE_DECL = re.compile(r"(width|max-width|height)\s*:\s*(\d+(?:\.\d+)?)(px|%)", re.I)
 _CLASS = re.compile(r"^[A-Za-z0-9 _-]+$")
+_FILE_KEY = re.compile(r"^[A-Za-z0-9_./-]{1,256}$")
 _DIGITS = re.compile(r"^\d{1,4}$")
 _SPAN = re.compile(r"^\d{1,3}$")
 
@@ -160,6 +162,9 @@ def _clean_attrs(tag: str, attrs: list[tuple[str, str | None]]) -> list[tuple[st
         data_w = raw.get("data-w", "").strip()
         if _DIGITS.fullmatch(data_w):
             cleaned["data-w"] = data_w
+        file_key = raw.get("data-file-key", "").strip()
+        if file_key and ".." not in file_key and _FILE_KEY.fullmatch(file_key):
+            cleaned["data-file-key"] = file_key
         style = _safe_style(raw.get("style", ""))
         if "data-w" in cleaned and "width:" not in style:
             width = f"width:{cleaned['data-w']}px"

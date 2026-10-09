@@ -57,6 +57,7 @@
       <p class="hint">提交人：{{ active?.submitterName }} · 轮次 {{ active?.reviewRound }}</p>
       <div class="dsec">正文</div>
       <LayoutViewer :html="active?.layoutHtml" :plain="active?.body" :loading="layoutLoading" />
+      <ContentLayoutPreview :layout-html="previewLayout" :body="previewBody" />
       <div class="dsec">质量清单</div>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
@@ -74,6 +75,7 @@
 import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import LayoutViewer from '../../components/LayoutViewer.vue'
+import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const rows = ref<any[]>([])
@@ -88,6 +90,8 @@ const active = ref<any>(null)
 const checklist = ref<any[]>([])
 const checklistModel = ref<Record<string, boolean>>({})
 const submitting = ref(false)
+const previewLayout = ref('')
+const previewBody = ref('')
 
 const filteredRows = computed(() => {
   let list = rows.value.filter((r) => (stage.value === 1 ? r.reviewRound <= 1 : r.reviewRound >= 2))
@@ -122,10 +126,26 @@ async function loadQueue() {
   }
 }
 
+async function loadPreview(contentId: number | null | undefined) {
+  previewLayout.value = ''
+  previewBody.value = ''
+  if (!contentId) return
+  try {
+    const { data } = await http.get(`/content/${contentId}`)
+    previewLayout.value = data.data?.layoutHtml || ''
+    previewBody.value = data.data?.body || ''
+  } catch {
+    previewLayout.value = ''
+    previewBody.value = ''
+  }
+}
+
 async function openReview(row: any) {
   active.value = { ...row, layoutHtml: '', body: '' }
   layoutLoading.value = true
   drawerOpen.value = true
+  previewLayout.value = ''
+  previewBody.value = ''
   try {
     const { data } = await http.get(`/content/review/${row.reviewNo}`)
     active.value = { ...row, ...data.data }
@@ -135,6 +155,7 @@ async function openReview(row: any) {
       model[item.itemCode] = Boolean(item.passed)
     }
     checklistModel.value = model
+    await loadPreview(data.data?.contentProjectId || row.contentProjectId)
   } catch (e) {
     alert(errorMessage(e))
   } finally {

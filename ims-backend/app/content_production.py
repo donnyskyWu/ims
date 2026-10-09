@@ -81,7 +81,7 @@ def project_vo(row: ContentProject) -> dict:
         "taskId": row.task_id,
         "ipGroupId": row.ip_group_id,
         "body": row.body,
-        "layoutHtml": row.layout_html,
+        "layoutHtml": sanitize_layout_html(row.layout_html),
         "matchType": row.match_type,
         "matchScheme": row.match_scheme or [],
         "matchSummary": row.match_summary or row.competition_name,
