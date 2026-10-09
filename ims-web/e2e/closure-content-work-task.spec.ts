@@ -31,7 +31,7 @@ test.describe('content work task CONTENT_GENERATION closure', () => {
 
     await loginAdmin(page)
 
-    await createWorkTaskSopViaUi(page, {
+    const { sopId } = await createWorkTaskSopViaUi(page, {
       sopName: `E2E 公推 SOP ${label}`,
       nodeName,
       marketingPlan: 'LIVE_PUBLIC',
@@ -45,6 +45,7 @@ test.describe('content work task CONTENT_GENERATION closure', () => {
       competitionId,
       competitionName,
       groupNameHint: groupName,
+      sopId,
     })
 
     await page.goto('/ims/content/task')

@@ -388,6 +388,10 @@ export async function registerWorkTaskRowViaUi(
     competitionId: string
     competitionName: string
     groupNameHint?: string
+    /** 本用例刚建的启用 SOP。多条公推模板并存时必须指定，避免 workers 抢最新一条。 */
+    sopId?: number
+    /** false：只保存登记行，不出任务（矩阵 Tab 再确认） */
+    confirm?: boolean
   },
 ) {
   await bindOpsAuthorToIpGroup(page, opts.ipGroupId, opts.authorId, opts.groupNameHint)
@@ -438,6 +442,11 @@ export async function registerWorkTaskRowViaUi(
   await targetRow.locator('input[type="number"]').fill(String(opts.authorId))
   await targetRow.locator('input[placeholder="赛事 id"]').fill(opts.competitionId)
   await targetRow.locator('input[placeholder="名称"]').fill(opts.competitionName)
+  if (opts.sopId) {
+    const sopSelect = targetRow.getByTestId('wt-sop')
+    await expect(sopSelect.locator(`option[value="${opts.sopId}"]`)).toHaveCount(1, { timeout: 15_000 })
+    await sopSelect.selectOption(String(opts.sopId))
+  }
 
   const saveResp = page.waitForResponse(
     (r) => r.url().includes('/work-task/sheet') && r.request().method() === 'POST' && r.status() === 200,
@@ -447,6 +456,7 @@ export async function registerWorkTaskRowViaUi(
   expect(saveBody.code).toBe(0)
   const assignmentId = saveBody.data?.assignments?.[0]?.id
   expect(assignmentId).toBeTruthy()
+  if (opts.confirm === false) return
 
   await targetRow.locator('input[type="checkbox"]').check()
   const confirmResp = page.waitForResponse(

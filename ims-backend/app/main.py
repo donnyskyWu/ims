@@ -309,10 +309,27 @@ def ensure_content_sop_dag_columns() -> None:
                 conn.execute(text(f"ALTER TABLE ims_content_sop_node {clause}"))
 
 
+def ensure_work_task_sop_column() -> None:
+    """已有库补登记行绑定的 SOP。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_work_task_assignment" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_work_task_assignment")}
+    if "sop_id" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE ims_content_work_task_assignment ADD COLUMN sop_id BIGINT NOT NULL DEFAULT 0")
+        )
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
     ensure_content_sop_dag_columns()
+    ensure_work_task_sop_column()
     ensure_bi_br212_columns()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()

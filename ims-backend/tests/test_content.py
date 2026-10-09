@@ -565,6 +565,99 @@ def test_work_task_confirm_and_withdraw():
     assert withdraw.json()["data"]["assignments"][0]["generatedTaskIds"] == []
 
 
+def _post_public_sop(auth: dict, name: str, node_name: str) -> int:
+    sop = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={
+            "sopName": name,
+            "contentType": "SHORT_VIDEO",
+            "marketingPlan": "LIVE_PUBLIC",
+            "nodes": [
+                {
+                    "nodeOrder": 1,
+                    "nodeName": node_name,
+                    "nodeType": "CONTENT_GENERATION",
+                    "documentType": "COPY",
+                    "ownerRole": "R6",
+                }
+            ],
+        },
+    )
+    assert sop.json()["code"] == 0
+    return int(sop.json()["data"]["id"])
+
+
+def test_work_task_confirm_pins_sop_when_several_public_enabled():
+    """多条启用公推 SOP 时，未指定不抢最新一条；指定 sopId 只出该模板的节点。"""
+    auth = headers()
+    ip_group_id, author_id = seed_work_task_context()
+    older_id = _post_public_sop(auth, "公推甲", "节点甲")
+    newer_id = _post_public_sop(auth, "公推乙", "节点乙")
+    assert newer_id > older_id
+
+    sheet = client.get(
+        "/admin-api/ims/content/work-task/sheet",
+        headers=auth,
+        params={"ipGroupId": ip_group_id, "workDate": "2026-10-09"},
+    )
+    assert sheet.json()["code"] == 0
+    sheet_id = sheet.json()["data"]["id"]
+    payload = {
+        "ipGroupId": ip_group_id,
+        "workDate": "2026-10-09",
+        "assignments": [
+            {
+                "rowNo": 1,
+                "authorId": author_id,
+                "workDate": "2026-10-09",
+                "marketingPlan": "LIVE_PUBLIC",
+                "competitions": [{"competitionId": "M-PIN", "competitionName": "隔离赛"}],
+            }
+        ],
+    }
+    saved = client.post("/admin-api/ims/content/work-task/sheet", headers=auth, json=payload)
+    assert saved.json()["code"] == 0
+    assignment_id = saved.json()["data"]["assignments"][0]["id"]
+    ambiguous = client.post(
+        f"/admin-api/ims/content/work-task/{sheet_id}/confirm",
+        headers=auth,
+        json={"assignmentIds": [assignment_id]},
+    )
+    assert ambiguous.json()["code"] == 1502
+
+    payload["assignments"][0]["sopId"] = older_id
+    pinned = client.post("/admin-api/ims/content/work-task/sheet", headers=auth, json=payload)
+    assert pinned.json()["code"] == 0
+    assert pinned.json()["data"]["assignments"][0]["sopId"] == older_id
+    confirm = client.post(
+        f"/admin-api/ims/content/work-task/{sheet_id}/confirm",
+        headers=auth,
+        json={"assignmentIds": [assignment_id]},
+    )
+    assert confirm.json()["code"] == 0
+    assert confirm.json()["data"]["generatedTaskCount"] == 1
+    assert confirm.json()["data"]["sheetId"] == sheet_id
+    assert confirm.json()["data"]["confirmedAt"]
+
+    tasks = client.get(
+        "/admin-api/ims/content/task/page",
+        headers=auth,
+        params={"onlyMine": False, "ipGroupId": ip_group_id, "workDate": "2026-10-09", "pageSize": 20},
+    )
+    names = [row["nodeName"] for row in tasks.json()["data"]["list"]]
+    assert names == ["节点甲"]
+
+    withdraw = client.post(
+        f"/admin-api/ims/content/work-task/{sheet_id}/withdraw",
+        headers=auth,
+        json={"assignmentIds": [assignment_id]},
+    )
+    assert withdraw.json()["code"] == 0
+    assert withdraw.json()["data"]["assignments"][0]["rowStatus"] == "DRAFT"
+    assert withdraw.json()["data"]["assignments"][0]["generatedTaskIds"] == []
+
+
 def test_task_execute_content_gate_and_crud():
     """#35 · 工作任务确认 → CONTENT_GENERATION 执行/提审/审过 → 任务 DONE"""
     auth = headers()

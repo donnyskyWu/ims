@@ -668,6 +668,7 @@ class ContentWorkTaskAssignment(Base):
     sales_platform: Mapped[str] = mapped_column(String(32), default="NONE")
     win_prediction: Mapped[str] = mapped_column(String(16), default="UNKNOWN")
     competitions: Mapped[list] = mapped_column(JSON, default=list)
+    sop_id: Mapped[int] = mapped_column(BigInteger, default=0)
     row_status: Mapped[str] = mapped_column(String(16), default="DRAFT")
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)

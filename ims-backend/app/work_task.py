@@ -52,6 +52,7 @@ class AssignmentSaveItem(BaseModel):
     liveTime: str = ""
     salesPlatform: str = "NONE"
     winPrediction: str = "UNKNOWN"
+    sopId: int | None = None
     competitions: list[CompetitionItem] = Field(default_factory=list)
 
 
@@ -112,6 +113,7 @@ def assignment_vo(db: Session, ops: Session, row: ContentWorkTaskAssignment) -> 
         "liveTime": row.live_time,
         "salesPlatform": row.sales_platform,
         "winPrediction": row.win_prediction,
+        "sopId": int(row.sop_id or 0),
         "competitions": row.competitions or [],
         "rowStatus": row.row_status,
         "generatedTaskIds": list(task_ids),
@@ -168,7 +170,7 @@ def load_sheet(db: Session, sheet_id: int, actor: User) -> ContentWorkTaskSheet 
     return row
 
 
-def find_enabled_sop(db: Session, marketing_plan: str, tenant_id: int) -> ContentSop | None:
+def enabled_sops_for_plan(db: Session, marketing_plan: str, tenant_id: int) -> list[ContentSop]:
     stmt = (
         select(ContentSop)
         .where(
@@ -179,7 +181,31 @@ def find_enabled_sop(db: Session, marketing_plan: str, tenant_id: int) -> Conten
         )
         .order_by(ContentSop.version.desc(), ContentSop.id.desc())
     )
-    return db.scalars(stmt).first()
+    return list(db.scalars(stmt).all())
+
+
+def resolve_confirm_sop(
+    db: Session, marketing_plan: str, tenant_id: int, sop_id: int | None
+) -> ContentSop | None:
+    """出任务模板。指定 sopId 时只用该启用 SOP，避免并行用例抢同一条公推模板。
+
+    未指定且同营销计划启用 SOP 不止一条时返回 None（1502），不按最新 id 抢绑。
+    """
+    if sop_id:
+        sop = db.get(ContentSop, int(sop_id))
+        if (
+            sop is None
+            or sop.deleted
+            or (sop.tenant_id or 0) != tenant_id
+            or sop.status != "ENABLED"
+            or (sop.marketing_plan or "") != (marketing_plan or "")
+        ):
+            return None
+        return sop
+    matches = enabled_sops_for_plan(db, marketing_plan, tenant_id)
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def validate_assignment(
@@ -333,6 +359,7 @@ def sheet_save(
         row.live_time = (item.liveTime or "")[:8]
         row.sales_platform = item.salesPlatform
         row.win_prediction = (item.winPrediction or "UNKNOWN")[:16]
+        row.sop_id = int(item.sopId or 0)
         row.competitions = [c.model_dump() for c in item.competitions]
         touched.add(item.rowNo)
     for row_no, row in existing.items():
@@ -391,7 +418,7 @@ def sheet_confirm(
             if err == "duplicateCompetition":
                 return fail(1502, "业务规则冲突")
             return fail(1500, "参数校验失败")
-        sop = find_enabled_sop(db, row.marketing_plan, tid)
+        sop = resolve_confirm_sop(db, row.marketing_plan, tid, row.sop_id or None)
         if sop is None:
             return fail(1502, "业务规则冲突")
         nodes = db.scalars(
