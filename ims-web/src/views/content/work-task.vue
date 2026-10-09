@@ -714,5 +714,8 @@ loadSheet()
   text-orientation: mixed;
   letter-spacing: 2px;
   text-align: center;
+  min-width: 36px;
+  min-height: 88px;
+  padding: 8px 6px;
 }
 </style>

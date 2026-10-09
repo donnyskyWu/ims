@@ -66,17 +66,23 @@ test.describe('content S2 author match matrix closure', () => {
     const confirmResp = page.waitForResponse(
       (r) => r.url().includes('/work-task/') && r.url().includes('/confirm') && r.request().method() === 'POST',
     )
+    const sheetAfterConfirm = page.waitForResponse(
+      (r) => r.url().includes('/work-task/sheet') && r.request().method() === 'GET' && r.status() === 200,
+    )
     await page.getByTestId('wt-matrix-confirm').click()
     const saveBody = (await (await saveResp).json()) as { code: number }
     expect(saveBody.code).toBe(0)
     const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { generatedTaskCount?: number } }
     expect(confirmBody.code).toBe(0)
     expect((confirmBody.data?.generatedTaskCount ?? 0) >= 1).toBeTruthy()
+    await sheetAfterConfirm
 
     const summary = page.locator('.wt-matrix-summary')
+    await expect(summary).toContainText(/总任务 [1-9]/)
     await expect(summary).toContainText('赛事行 1')
     await expect(summary).toContainText('直播公推 1')
     await expect(summary).toContainText('红 1')
+    await expect(matrix.locator('.wt-matrix-date')).toContainText(workDate)
     await expect(matrix.locator('td', { hasText: '直播公推' })).toBeVisible()
     await expect(matrix.locator('td', { hasText: '红' })).toBeVisible()
     await page.screenshot({ path: `${SHOTS}/03-matrix-confirmed.png` })
