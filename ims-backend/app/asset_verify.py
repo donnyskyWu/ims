@@ -562,7 +562,10 @@ def _dept_leader(db: Session, batch: AssetVerifyBatch) -> User | None:
 
 
 def escalate_overdue(db: Session, now: datetime | None = None) -> int:
-    """VERIFY-R2。未闭环且已过 3 个工作日限期的批次，待办和站内信交给部门负责人。不重复升级。"""
+    """VERIFY-R2。未闭环且已过 3 个工作日限期的批次，待办和站内信交给部门负责人。
+
+    同时记一条钉钉通道消息作为本地桩，不调用钉钉开放平台。不重复升级。
+    """
     clock = now or utcnow()
     rows = list(
         db.scalars(
@@ -582,6 +585,7 @@ def escalate_overdue(db: Session, now: datetime | None = None) -> int:
             continue
         title = f"资产校验逾期：{row.batch_no}"[:128]
         content = f"关联校验超过 3 个工作日未闭环，已升级部门负责人。批次 {row.batch_no}"[:512]
+        stub = f"{content} 钉钉未外发。"[:512]
         db.add(
             Todo(
                 assignee_user_id=leader.id,
@@ -601,6 +605,19 @@ def escalate_overdue(db: Session, now: datetime | None = None) -> int:
                 title=title,
                 content=content,
                 channel="IN_APP",
+                read_flag=0,
+                source_module="ASSET",
+                ref_type="asset_verify",
+                ref_id=row.id,
+                tenant_id=row.tenant_id or 0,
+            )
+        )
+        db.add(
+            WorkMessage(
+                user_id=leader.id,
+                title=title,
+                content=stub,
+                channel="DINGTALK",
                 read_flag=0,
                 source_module="ASSET",
                 ref_type="asset_verify",

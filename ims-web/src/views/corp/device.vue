@@ -244,11 +244,13 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="returnOpen" title="归还" width="480px" @close="returnOpen = false">
+      <p v-if="returnBlocked" class="hint bad" data-testid="corp-asset-return-blocked">尚未登记使用，不能归还。请先登记使用。</p>
+      <p v-else class="hint" data-testid="corp-asset-return-ready">已登记使用，可以归还入库。</p>
       <div class="formrow one"><div class="fld"><label>说明</label><input v-model="assetForm.remark" data-testid="corp-asset-return-remark" /></div></div>
       <div v-if="formError" class="hint bad">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="returnOpen = false">取消</button>
-        <button class="btn btn-pri" type="button" data-testid="corp-asset-return-save" :disabled="saving" @click="submitReturn">确认归还</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-asset-return-save" :disabled="saving || returnBlocked" @click="submitReturn">确认归还</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="scrapOpen" title="报废" width="480px" @close="scrapOpen = false">
@@ -306,6 +308,11 @@
           {{ item.sessionCode }} · {{ sessionStatusLabel(String(item.status || '')) }}
         </p>
       </div>
+      <p v-if="forwardLayerError" class="hint bad" data-testid="asset-forward-session-error">
+        {{ forwardLayerError }}
+        <button class="btn btn-txt" type="button" data-testid="asset-forward-session-retry" @click="retryForwardLayers">重试</button>
+      </p>
+      <p v-else-if="forwardSessionEmpty" class="hint" data-testid="asset-forward-session-empty">该资产没有关联场次</p>
       <p v-if="forwardFinance && forwardAssetId" class="hint" data-testid="asset-forward-finance">
         成本层 · 成本 <span data-testid="asset-forward-cost">{{ forwardFinance.costMasked ? '***' : money(forwardFinance.totalCost) }}</span>
         · 收入 <span data-testid="asset-forward-revenue">{{ money(forwardFinance.totalRevenue) }}</span>
@@ -391,6 +398,7 @@
     <ProtoDrawer v-if="kind === 'office'" :open="verifyOpen" title="登记关联校验" width="720px" @close="verifyOpen = false">
       <p class="hint">检查台账里的实名人、账号、场次是否存在、归属是否一致、状态是否允许。</p>
       <p class="hint" data-testid="asset-verify-schedule">定时校验：每周一凌晨全量，其余每日增量。打开本抽屉会补跑当日尚未执行的一次。</p>
+      <p class="hint" data-testid="asset-verify-dingtalk">逾期未闭环会升级部门负责人。钉钉通知为本地桩，未外发。</p>
       <p data-testid="asset-verify-metrics">
         <span data-testid="asset-verify-complete" :class="metricClass(verifyMetrics?.relationCompleteRate)">完整率 {{ rateText(verifyMetrics?.relationCompleteRate) }}（目标 98%）</span>
         ·
@@ -443,6 +451,7 @@
               {{ deadlineText(item.deadlineAt) }}
               <span v-if="item.overdue" class="hint bad" data-testid="asset-verify-overdue">逾期</span>
               <span v-if="item.escalateUserName" data-testid="asset-verify-escalated">已升级：{{ item.escalateUserName }}</span>
+              <span v-if="item.escalateUserName" class="hint" data-testid="asset-verify-dingtalk-stub">钉钉未外发</span>
             </td>
             <td>
               <button v-if="item.taskStatus === 'PENDING_DISPATCH'" class="btn btn-sec btn-sm" type="button" data-testid="asset-verify-dispatch" @click="dispatchBatch(item)">派发</button>
@@ -451,6 +460,7 @@
           </tr>
         </tbody>
       </table>
+      <p v-if="verifyBoardLoaded && !verifyBatches.length && !verifyError" class="hint" data-testid="asset-verify-empty">暂无校验数据，请先触发一次校验</p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="verifyOpen = false">关闭</button>
       </template>
@@ -518,8 +528,11 @@ const entryError = ref('')
 const entrySummary = ref('')
 const forwardAssetId = ref(0)
 const forwardSessions = ref<Row[]>([])
+const forwardSessionsLoaded = ref(false)
+const forwardLayerError = ref('')
 const forwardFinance = ref<Row | null>(null)
 const verifyOpen = ref(false)
+const verifyBoardLoaded = ref(false)
 const verifyRunning = ref(false)
 const verifyError = ref('')
 const verifySummary = ref('')
@@ -533,6 +546,15 @@ const exporting = ref(false)
 const exportNote = ref('')
 const persons = ref<PersonOpt[]>([])
 const activeAsset = ref<Row | null>(null)
+const returnBlocked = computed(() => !activeAsset.value?.used)
+const forwardSessionEmpty = computed(
+  () =>
+    Boolean(forwardAssetId.value) &&
+    forwardSessionsLoaded.value &&
+    !forwardSessions.value.length &&
+    !forwardLayerError.value &&
+    !forwardError.value,
+)
 const assetDetail = ref<Row | null>(null)
 const timeline = ref<Row[]>([])
 const form = reactive({
@@ -1057,6 +1079,8 @@ async function loadTrace(url: string, params?: Record<string, unknown>) {
 function clearForwardLayers() {
   forwardSessions.value = []
   forwardFinance.value = null
+  forwardSessionsLoaded.value = false
+  forwardLayerError.value = ''
 }
 
 function openForwardPerson() {
@@ -1095,9 +1119,14 @@ async function loadForwardLayers(assetId: number) {
     const data = (res.data?.data || {}) as { liveSessions?: Row[]; financeSummary?: Row }
     forwardSessions.value = data.liveSessions || []
     forwardFinance.value = data.financeSummary || null
-  } catch {
-    clearForwardLayers()
+    forwardSessionsLoaded.value = true
+  } catch (e: unknown) {
+    forwardLayerError.value = bizError(e) || '场次层加载失败'
   }
+}
+
+function retryForwardLayers() {
+  if (forwardAssetId.value) void loadForwardLayers(forwardAssetId.value)
 }
 
 async function openForwardAsset(row: Row) {
@@ -1122,6 +1151,7 @@ function openVerify() {
   verifyErrors.value = []
   verifyAssetCode.value = ''
   verifyCloseRemark.value = ''
+  verifyBoardLoaded.value = false
   const admin = users.value.find((user) => (user.nickname || user.username) === '管理员')
   verifyOwnerId.value = String((admin || users.value[0])?.id || '')
   void loadVerifyBoard().catch((error: unknown) => {
@@ -1134,6 +1164,7 @@ async function loadVerifyBoard() {
   const metrics = await http.get('/asset/verify/metrics')
   verifyBatches.value = ((batches.data?.data?.list || []) as Row[])
   verifyMetrics.value = (metrics.data?.data || null) as Row | null
+  verifyBoardLoaded.value = true
 }
 
 async function dispatchBatch(row: Row) {
@@ -1402,6 +1433,7 @@ function submitUse() {
 }
 
 function submitReturn() {
+  if (returnBlocked.value) return
   postAction('/return', { remark: assetForm.remark }, () => {
     returnOpen.value = false
   })

@@ -74,7 +74,15 @@ def test_asset_status_full_flow_checkout_use_return_scrap():
     )
     assert checked.json()["code"] == 0, checked.json()
     assert checked.json()["data"]["status"] == "IN_USE"
+    assert checked.json()["data"]["used"] is False
     assert checked.json()["data"]["ownerUserId"] == admin_id
+    listed = client.get(
+        "/admin-api/ims/corp/device/office/page",
+        headers=auth,
+        params={"keyword": "AS-PY-63"},
+    ).json()
+    assert listed["code"] == 0
+    assert listed["data"]["list"][0]["used"] is False
 
     again = client.post(
         f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
