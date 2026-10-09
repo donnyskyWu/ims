@@ -303,8 +303,8 @@
         <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
         <div class="fld"><label>采购批次</label><div data-testid="corp-asset-detail-batch">{{ assetDetail.purchaseBatchNo || '—' }}</div></div>
       </div>
-      <p v-if="assetDetail.status === 'SCRAPPED'" class="hint" data-testid="corp-asset-terminal">已报废为终态，不能再领用。</p>
-      <p v-else-if="assetDetail.status === 'RETURNED'" class="hint" data-testid="corp-asset-terminal">已归还，不能再领用，只能报废。</p>
+      <p v-if="assetDetail?.status === 'SCRAPPED'" class="hint" data-testid="corp-asset-terminal">已报废为终态，不能再领用。</p>
+      <p v-else-if="assetDetail?.status === 'RETURNED'" class="hint" data-testid="corp-asset-terminal">已归还，不能再领用，只能报废。</p>
       <table data-testid="corp-asset-timeline">
         <thead><tr><th>事件</th><th>状态</th><th>说明</th></tr></thead>
         <tbody>
