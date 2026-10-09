@@ -128,7 +128,14 @@ def push_channels(row: AlertRecord) -> list[dict]:
     at = iso(row.occurred_at) if row.occurred_at else None
     status = row.push_status
 
-    def channel(code: str, label: str, success: bool, stub: bool, empty: bool = False) -> dict:
+    def channel(
+        code: str,
+        label: str,
+        success: bool,
+        stub: bool,
+        empty: bool = False,
+        status_note: str = "",
+    ) -> dict:
         item = {
             "channel": code,
             "label": label,
@@ -136,6 +143,7 @@ def push_channels(row: AlertRecord) -> list[dict]:
             "outbound": False,
             "stub": stub,
             "empty": empty,
+            "statusNote": status_note,
         }
         if success and at:
             item["receiptAt"] = at
@@ -145,20 +153,20 @@ def push_channels(row: AlertRecord) -> list[dict]:
         return []
     if status == 2:
         return [
-            channel("WORKBENCH", "工作台", True, False),
-            channel("DINGTALK", "钉钉", False, True),
-            channel("SMS", "短信", True, True),
+            channel("WORKBENCH", "工作台", True, False, status_note="已落库"),
+            channel("DINGTALK", "钉钉", False, True, status_note="失败，已改记短信兜底"),
+            channel("SMS", "短信", True, True, status_note="兜底已记账，不外发"),
         ]
     if status == 3:
         return [
-            channel("WORKBENCH", "工作台", False, False),
-            channel("DINGTALK", "钉钉", False, True),
-            channel("SMS", "短信", False, True),
+            channel("WORKBENCH", "工作台", False, False, status_note="补发后仍失败"),
+            channel("DINGTALK", "钉钉", False, True, status_note="补发后仍失败"),
+            channel("SMS", "短信", False, True, status_note="补发后仍失败"),
         ]
     return [
-        channel("WORKBENCH", "工作台", True, False),
-        channel("DINGTALK", "钉钉", True, True),
-        channel("SMS", "短信", False, True, empty=True),
+        channel("WORKBENCH", "工作台", True, False, status_note="已落库"),
+        channel("DINGTALK", "钉钉", True, True, status_note="本地桩已记账，不外发"),
+        channel("SMS", "短信", False, True, empty=True, status_note="未触发，不外发"),
     ]
 
 
@@ -671,7 +679,12 @@ def check_detail(
     data["pushChannels"] = channels
     data["receiptEmpty"] = not channels
     data["priorityNote"] = PRIORITY_NOTE if row.level == 3 else ""
-    data["retryNote"] = "已自动补发 1 次（ALR-P-R2）" if row.push_status == 3 else ""
+    if row.push_status == 2:
+        data["retryNote"] = "钉钉未送达，已改记短信兜底 1 次（不外发）"
+    elif row.push_status == 3:
+        data["retryNote"] = "已自动补发 1 次（ALR-P-R2）"
+    else:
+        data["retryNote"] = ""
     data["sourceJumpUrl"] = source_jump(row)
     data["escalationTimeline"] = []
     data["retryCount"] = 1 if row.push_status in (2, 3) else 0

@@ -26,7 +26,7 @@
       <button class="btn btn-sec btn-sm" type="button" @click="clearRange">全部</button>
     </form>
 
-    <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
+    <p v-if="error" data-testid="alert-stats-error" class="hint" style="color: var(--red)">{{ error }}</p>
 
     <div v-if="overview && overview.totalAlertCount === 0" class="card" style="margin-top: 12px" data-testid="alert-stats-range-empty">
       <div class="empty"><div class="et">当前筛选范围内暂无预警</div></div>
@@ -453,7 +453,13 @@ function rateColor(value: number, target: number) {
 }
 
 function dateParams(): Record<string, string> | null {
-  if (start.value && end.value) return { dateRange: `${start.value},${end.value}` }
+  if (start.value && end.value) {
+    if (start.value > end.value) {
+      error.value = '起始日期不能晚于结束日期'
+      return null
+    }
+    return { dateRange: `${start.value},${end.value}` }
+  }
   if (start.value || end.value) {
     error.value = '请同时填写起止日期'
     return null
@@ -473,7 +479,12 @@ async function load() {
   rankError.value = ''
   mergeError.value = ''
   const params = dateParams()
-  if (!params) return
+  if (!params) {
+    overview.value = null
+    ranks.value = []
+    merges.value = []
+    return
+  }
   try {
     const [overviewRes, rankRes, mergeRes] = await Promise.all([
       http.get('/alert/stats/overview', { params }),

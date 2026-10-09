@@ -239,7 +239,10 @@
           <tbody>
             <tr v-for="ch in detail.pushChannels" :key="ch.channel" data-testid="alert-receipt-row" :data-channel="ch.channel">
               <td>{{ ch.label || channelName(ch.channel) }}</td>
-              <td>{{ ch.empty ? '未触发 ✗' : ch.success ? '✓' : '✗' }}</td>
+              <td>
+                {{ ch.empty ? '未触发 ✗' : ch.success ? '✓' : '✗' }}
+                <div v-if="ch.statusNote" class="hint" data-testid="alert-receipt-note">{{ ch.statusNote }}</div>
+              </td>
               <td class="mono">{{ ch.receiptAt || '—' }}</td>
               <td>不外发</td>
             </tr>
@@ -284,6 +287,7 @@ type Channel = {
   success: boolean
   empty?: boolean
   receiptAt?: string
+  statusNote?: string
 }
 
 type Row = {
@@ -375,13 +379,21 @@ function channelName(channel: string) {
 
 function channelBrief(row: Row) {
   return (row.pushChannels || [])
-    .map((ch) => `${channelName(ch.channel)}${ch.success ? '✓' : '✗'}`)
+    .map((ch) => {
+      const name = channelName(ch.channel)
+      if (ch.empty) return `${name}未触发`
+      return `${name}${ch.success ? '✓' : '✗'}`
+    })
     .join(' ')
 }
 
 function channelTitle(row: Row) {
   return (row.pushChannels || [])
-    .map((ch) => `${channelName(ch.channel)} ${ch.success ? '✓' : '✗'} ${ch.receiptAt || ''}`)
+    .map((ch) => {
+      const mark = ch.empty ? '未触发' : ch.success ? '✓' : '✗'
+      const note = ch.statusNote ? ` ${ch.statusNote}` : ''
+      return `${channelName(ch.channel)} ${mark}${note} ${ch.receiptAt || ''}`.trim()
+    })
     .join('\n')
 }
 

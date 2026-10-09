@@ -79,7 +79,7 @@
           <span class="sp"></span>
           <button class="btn btn-sec btn-sm" type="button" @click="showHits = false">关闭</button>
         </form>
-        <p v-if="hitError" class="hint" style="color: var(--red)">{{ hitError }}</p>
+        <p v-if="hitError" data-testid="alert-hit-error" class="hint" style="color: var(--red)">{{ hitError }}</p>
         <div class="tbl-wrap" style="margin-top: 10px">
           <table>
             <thead>
@@ -131,7 +131,8 @@
         <input v-model="form.ruleCode" class="fld-in" placeholder="live.data.delay" :readonly="editingId !== null" />
         <p v-if="codeError" data-testid="alert-rule-code-error" class="hint" style="color: var(--red)">{{ codeError }}</p>
         <label class="fld">规则名称</label>
-        <input v-model="form.ruleName" class="fld-in" />
+        <input v-model="form.ruleName" data-testid="alert-rule-name" class="fld-in" />
+        <p v-if="nameError" data-testid="alert-rule-name-error" class="hint" style="color: var(--red)">{{ nameError }}</p>
         <label class="fld">级别</label>
         <select v-model.number="form.level" data-testid="alert-rule-level" class="fld-in">
           <option :value="1">L1 提示</option>
@@ -139,7 +140,10 @@
           <option :value="3">L3 严重</option>
         </select>
         <label class="fld">阈值表达式</label>
-        <input v-model="form.thresholdExpr" class="fld-in" placeholder="delayMinutes>30" />
+        <input v-model="form.thresholdExpr" data-testid="alert-rule-threshold" class="fld-in" placeholder="delayMinutes>30" />
+        <p v-if="thresholdError" data-testid="alert-rule-threshold-error" class="hint" style="color: var(--red)">
+          {{ thresholdError }}
+        </p>
         <label class="fld">触发条件 DSL</label>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
           <input v-model="form.dslSource" data-testid="alert-dsl-source" class="fld-in" placeholder="ims_fin_cost" />
@@ -182,6 +186,8 @@ const showForm = ref(false)
 const editingId = ref<number | null>(null)
 const formError = ref('')
 const codeError = ref('')
+const nameError = ref('')
+const thresholdError = ref('')
 const dslError = ref('')
 const filters = reactive({ ruleName: '', enabled: '' })
 const form = reactive({
@@ -220,6 +226,10 @@ function bjDate(offsetDays = 0) {
     day: '2-digit',
   }).format(now)
 }
+
+const DSL_OPS = new Set(['GT', 'GTE', 'LT', 'LTE', 'EQ', 'NEQ'])
+const IDENT_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+const EXPR_RE = /^[A-Za-z][A-Za-z0-9_]*\s*(>=|<=|==|!=|>|<)\s*-?\d+(\.\d+)?$/
 
 const dslTouched = computed(
   () => !!(form.dslSource.trim() || form.dslField.trim() || form.dslOp.trim() || form.dslValue.trim()),
@@ -279,7 +289,56 @@ function resetForm() {
   form.enabled = false
   formError.value = ''
   codeError.value = ''
+  nameError.value = ''
+  thresholdError.value = ''
   dslError.value = ''
+}
+
+function validateForm() {
+  nameError.value = ''
+  thresholdError.value = ''
+  formError.value = ''
+  codeError.value = ''
+  dslError.value = ''
+  const code = form.ruleCode.trim()
+  const name = form.ruleName.trim()
+  if (editingId.value) {
+    if (!name) {
+      nameError.value = '规则名称不能为空'
+      return false
+    }
+  } else if (!code && !name) {
+    formError.value = '规则编码或名称至少填一项'
+    return false
+  }
+  const expr = form.thresholdExpr.trim()
+  if (expr && !dslTouched.value && !EXPR_RE.test(expr)) {
+    thresholdError.value = '阈值表达式须为字段、比较符和数字，例如 delayMinutes>30'
+    return false
+  }
+  if (!dslTouched.value) return true
+  const source = form.dslSource.trim()
+  const field = form.dslField.trim()
+  const op = form.dslOp.trim().toUpperCase()
+  const raw = form.dslValue.trim()
+  if (!source || !field || !form.dslOp.trim() || raw === '') {
+    dslError.value = '触发条件未填完整（1009）'
+    return false
+  }
+  if (!IDENT_RE.test(source) || !IDENT_RE.test(field)) {
+    dslError.value = '数据源或字段名非法（1009）'
+    return false
+  }
+  if (!DSL_OPS.has(op)) {
+    dslError.value = '操作符非法（1009），允许 GT、GTE、LT、LTE、EQ、NEQ'
+    return false
+  }
+  if (!/^-?\d+(\.\d+)?$/.test(raw)) {
+    dslError.value = '条件值须为数字（1009）'
+    return false
+  }
+  form.dslOp = op
+  return true
 }
 
 function openCreate() {
@@ -300,9 +359,7 @@ function openEdit(row: Row) {
 }
 
 async function submitCreate() {
-  formError.value = ''
-  codeError.value = ''
-  dslError.value = ''
+  if (!validateForm()) return
   const payload: Record<string, unknown> = {
     ruleName: form.ruleName,
     level: form.level,
@@ -327,8 +384,11 @@ async function submitCreate() {
   } catch (error) {
     const body = error as { code?: number; msg?: string }
     const msg = body?.msg || errorMessage(error)
-    if (body?.code === 1009) dslError.value = msg
+    if (body?.code === 1009 && msg.includes('thresholdExpr')) {
+      thresholdError.value = '阈值表达式须为字段、比较符和数字，例如 delayMinutes>30'
+    } else if (body?.code === 1009) dslError.value = msg
     else if (body?.code === 1165) codeError.value = msg
+    else if (body?.code === 1001 && msg.includes('ruleName')) nameError.value = '规则名称不能为空'
     else formError.value = msg
   }
 }
@@ -367,6 +427,11 @@ async function loadHits() {
   if (hitStart.value || hitEnd.value) {
     if (!hitStart.value || !hitEnd.value) {
       hitError.value = '请同时填写起止日期'
+      hitRows.value = []
+      return
+    }
+    if (hitStart.value > hitEnd.value) {
+      hitError.value = '起始日期不能晚于结束日期'
       hitRows.value = []
       return
     }

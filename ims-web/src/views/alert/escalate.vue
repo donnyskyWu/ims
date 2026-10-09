@@ -290,9 +290,21 @@ function receiverText(people: Person[]) {
   return people.map((item) => `${item.userName}（${item.roleLabel}）`).join('、')
 }
 
+function minuteProblem(label: string, value: number | string) {
+  if (value === '' || value === null || value === undefined || Number.isNaN(Number(value))) {
+    return `${label}升级时限须为 0～10080 的整数`
+  }
+  const minutes = Number(value)
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > 10080) {
+    return `${label}升级时限须在 0～10080 分钟`
+  }
+  return ''
+}
+
 async function saveConfig() {
   savedHint.value = ''
-  formError.value = ''
+  formError.value = minuteProblem('一级', form.level1TimeoutMinutes) || minuteProblem('二级', form.level2TimeoutMinutes)
+  if (formError.value) return
   try {
     await http.put('/alert/escalate/config', {
       level1TimeoutMinutes: form.level1TimeoutMinutes,
