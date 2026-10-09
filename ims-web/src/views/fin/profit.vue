@@ -181,10 +181,13 @@
       <p class="hint" style="margin: 8px 0">同类为同平台已核算场次。净利率偏离同行均值达到 2 倍标准差时列入本表。</p>
       <form class="qbar" @submit.prevent="loadAbnormal">
         <input v-model="abnormalPlatform" placeholder="平台" style="width: 120px" data-testid="fin-profit-abnormal-platform" />
+        <input v-model="abnormalFrom" placeholder="开始日" style="width: 130px" data-testid="fin-profit-abnormal-from" />
+        <input v-model="abnormalTo" placeholder="结束日" style="width: 130px" data-testid="fin-profit-abnormal-to" />
         <span class="sp"></span>
-        <button class="btn btn-pri btn-sm" type="button" @click="loadAbnormal">查询</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-profit-abnormal-query" @click="loadAbnormal">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="fin-profit-abnormal-reset" @click="resetAbnormal">重置</button>
       </form>
-      <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+      <div v-if="error" class="hint" data-testid="fin-profit-abnormal-error" style="color: var(--red); margin: 8px 0">{{ error }}</div>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table data-testid="fin-profit-abnormal-table">
@@ -204,7 +207,11 @@
                 <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!abnormalRows.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无偏离 2σ 的场次</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="fin-profit-abnormal-empty">
+                    <div class="et">{{ abnormalEmptyText }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in abnormalRows" v-else :key="row.sessionCode" :data-testid="'fin-profit-abnormal-row-' + row.sessionCode">
                 <td class="mono">{{ row.sessionCode }}</td>
@@ -471,6 +478,12 @@ const tab = ref<'list' | 'abnormal'>('list')
 const abnormalLoading = ref(false)
 const abnormalRows = ref<Record<string, unknown>[]>([])
 const abnormalPlatform = ref('')
+const abnormalFrom = ref('')
+const abnormalTo = ref('')
+const abnormalFiltered = ref(false)
+const abnormalEmptyText = computed(() =>
+  abnormalFiltered.value ? '当前筛选下暂无偏离 2σ 的场次' : '暂无偏离 2σ 的场次',
+)
 const history = ref<HistoryItem[]>([])
 const historyError = ref('')
 const recalcOpen = ref(false)
@@ -731,25 +744,39 @@ async function switchMetric(kind: ProfitMetric) {
 }
 
 async function loadAbnormal() {
+  const platform = abnormalPlatform.value.trim()
+  const from = abnormalFrom.value.trim()
+  const to = abnormalTo.value.trim()
+  if ((from && !to) || (!from && to)) {
+    error.value = '请同时填写开始日与结束日'
+    return
+  }
   abnormalLoading.value = true
   error.value = ''
+  abnormalFiltered.value = Boolean(platform || from || to)
   try {
     const res = await http.get('/fin/profit/abnormal', {
       params: {
         pageNo: 1,
         pageSize: 50,
-        platform: abnormalPlatform.value || undefined,
+        platform: platform || undefined,
+        dateRange: from && to ? `${from},${to}` : undefined,
       },
     })
-    if (res.data?.code !== 0) {
-      error.value = res.data?.msg || '加载失败'
-      abnormalRows.value = []
-      return
-    }
     abnormalRows.value = res.data.data?.list || []
+  } catch (err) {
+    abnormalRows.value = []
+    error.value = errorMessage(err)
   } finally {
     abnormalLoading.value = false
   }
+}
+
+function resetAbnormal() {
+  abnormalPlatform.value = ''
+  abnormalFrom.value = ''
+  abnormalTo.value = ''
+  return loadAbnormal()
 }
 
 function openAbnormal() {
