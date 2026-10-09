@@ -131,6 +131,21 @@ function copyAttrs(source: Element, target: HTMLElement) {
     if (name === 'style') {
       const style = safeStyle(attr.value)
       if (style) target.setAttribute('style', style)
+      continue
+    }
+    if (name === 'data-preset' && /^(clean-read|marketing|decision-scan|analysis-report)$/.test(attr.value.trim())) {
+      target.setAttribute(name, attr.value.trim())
+      continue
+    }
+    if (name === 'data-zone' && /^(paid|body_paid|free|free_body)$/.test(attr.value.trim().toLowerCase())) {
+      target.setAttribute(name, attr.value.trim().toLowerCase())
+      continue
+    }
+    if (
+      name === 'data-paywall' &&
+      /^(1|true|yes|paid|0|false|no|free)$/.test(attr.value.trim().toLowerCase())
+    ) {
+      target.setAttribute(name, attr.value.trim().toLowerCase())
     }
   }
 }

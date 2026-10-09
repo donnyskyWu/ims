@@ -126,7 +126,7 @@
       </div>
     </template>
 
-    <ProtoDrawer :open="editOpen" title="内容编辑（玩法区）" width="720px" @close="editOpen = false">
+    <ProtoDrawer :open="editOpen" title="内容编辑（玩法区）" width="880px" @close="editOpen = false">
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
@@ -144,6 +144,13 @@
           <label>正文</label>
           <textarea v-model="editBody" rows="4" placeholder="正文" />
         </div>
+        <ContentLayoutPanel
+          :content-id="vo.linkedContent?.id || null"
+          :body="editBody"
+          :body-format="editBodyFormat"
+          :layout-html="editLayoutHtml"
+          @applied="onLayoutApplied"
+        />
       </div>
       <ContentAiPanel v-if="editContent" :content="editContent" @refresh="refreshEditContent" />
       <template #footer>
@@ -158,6 +165,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
+import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import ContentAiPanel from './ContentAiPanel.vue'
 import MatchSchemeEditor, { type MatchSchemeItem } from './MatchSchemeEditor.vue'
@@ -188,6 +196,10 @@ const editDocType = ref('COPY')
 const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
 const editBody = ref('')
+const editLayoutHtml = ref('')
+const editLayoutJson = ref('')
+const editBodyFormat = ref('PLAIN')
+const editLayoutTemplateId = ref<number | null>(null)
 
 const executeSubtitle = computed(() => {
   if (loading.value) return '加载中…'
@@ -363,13 +375,36 @@ async function openContentEdit() {
       editMatchType.value = detail.matchType || 1
       editScheme.value = Array.isArray(detail.matchScheme) ? detail.matchScheme : []
       editBody.value = detail.body || ''
+      editLayoutHtml.value = detail.layoutHtml || ''
+      editLayoutJson.value = typeof detail.layoutJson === 'string' ? detail.layoutJson : JSON.stringify(detail.layoutJson || '')
+      editBodyFormat.value = detail.bodyFormat || 'PLAIN'
+      editLayoutTemplateId.value = detail.layoutTemplateId ?? null
     } catch (e) {
       window.alert(errorMessage(e))
       return
     }
+  } else {
+    editLayoutHtml.value = ''
+    editLayoutJson.value = ''
+    editBodyFormat.value = 'PLAIN'
+    editLayoutTemplateId.value = null
   }
   editorSeed.value += 1
   editOpen.value = true
+}
+
+function onLayoutApplied(payload: {
+  layoutHtml: string
+  layoutJson: string
+  bodyFormat: string
+  layoutTemplateId: number | null
+  body: string
+}) {
+  editLayoutHtml.value = payload.layoutHtml
+  editLayoutJson.value = payload.layoutJson
+  editBodyFormat.value = payload.bodyFormat
+  editLayoutTemplateId.value = payload.layoutTemplateId
+  editBody.value = payload.body
 }
 
 async function refreshEditContent() {
@@ -393,6 +428,10 @@ async function saveContent() {
     matchType: editMatchType.value,
     matchScheme: editScheme.value,
     body: editBody.value,
+    layoutHtml: editLayoutHtml.value,
+    layoutJson: editLayoutJson.value,
+    bodyFormat: editBodyFormat.value,
+    layoutTemplateId: editLayoutTemplateId.value,
     taskId: vo.value.id,
     ipGroupId: vo.value.ipGroupId,
   }

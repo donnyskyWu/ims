@@ -1,9 +1,9 @@
 <template>
-  <div class="layout-viewer" data-testid="content-layout-preview" @click="keepReadOnly">
+  <div class="layout-viewer" :data-testid="testId" @click="keepReadOnly">
     <div
       v-if="html"
       class="layout-viewer-html"
-      data-testid="content-layout-html"
+      :data-testid="testId === 'content-layout-preview' ? 'content-layout-html' : undefined"
       v-html="html"
     />
     <pre v-else class="layout-viewer-body" data-testid="content-layout-body">{{ plain }}</pre>
@@ -14,7 +14,10 @@
 import { computed } from 'vue'
 import { sanitizeLayoutHtml } from '../content/layoutHtml'
 
-const props = defineProps<{ layoutHtml?: string; body?: string }>()
+const props = withDefaults(
+  defineProps<{ layoutHtml?: string; body?: string; testId?: string }>(),
+  { testId: 'content-layout-preview' },
+)
 
 const html = computed(() => sanitizeLayoutHtml(props.layoutHtml))
 const plain = computed(() => {
@@ -46,6 +49,28 @@ function keepReadOnly(event: MouseEvent) {
 .layout-viewer-html :deep(img) {
   max-width: 100%;
   height: auto;
+}
+.layout-viewer-html :deep(.ims-layout) {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.layout-viewer-html :deep(.ims-layout p) {
+  margin: 0 0 8px;
+}
+.layout-viewer-html :deep(.ims-lead) {
+  font-weight: 600;
+  border-left: 3px solid #c2410c;
+  padding-left: 8px;
+}
+.layout-viewer-html :deep(.ims-scan-line) {
+  padding: 4px 0;
+  border-bottom: 1px dashed #d0d0d0;
+}
+.layout-viewer-html :deep(.ims-analysis) {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  background: #f4f7fb;
+  border-radius: 6px;
 }
 .layout-viewer-body {
   margin: 0;

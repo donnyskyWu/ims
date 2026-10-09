@@ -136,6 +136,9 @@ def seed() -> None:
         ensure_acct_schema()
         admin = db.query(User).filter(User.username == "admin", User.deleted == 0).first()
         if admin is not None:
+            from app.content_typeset import ensure_layout_presets
+
+            ensure_layout_presets(db, int(admin.tenant_id or 0), admin.id)
             refresh_workbench_e2e_seed(db, admin)
             ensure_acct_e2e_pool_account(db, admin)
             refresh_acct_e2e_pool(db, admin)
@@ -150,6 +153,36 @@ def seed() -> None:
         db.commit()
     finally:
         db.close()
+
+
+def ensure_content_typeset_columns() -> None:
+    """已有库补排版列。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "ims_content_project" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_content_project")}
+        alters: list[str] = []
+        if "body_format" not in cols:
+            alters.append("ADD COLUMN body_format VARCHAR(20) NOT NULL DEFAULT 'PLAIN'")
+        if "layout_json" not in cols:
+            alters.append("ADD COLUMN layout_json TEXT NULL")
+        if "layout_template_id" not in cols:
+            alters.append("ADD COLUMN layout_template_id BIGINT NULL")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_content_project {', '.join(alters)}"))
+    if "ims_content_layout_template" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_content_layout_template")}
+        alters = []
+        if "preset_code" not in cols:
+            alters.append("ADD COLUMN preset_code VARCHAR(32) NOT NULL DEFAULT ''")
+        if "layout_json" not in cols:
+            alters.append("ADD COLUMN layout_json TEXT NULL")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_content_layout_template {', '.join(alters)}"))
 
 
 def ensure_bi_br212_columns() -> None:
@@ -355,6 +388,7 @@ def init_db() -> None:
     from app.ops_db import ensure_ops
 
     ensure_ops()
+    ensure_content_typeset_columns()
     seed()
 
 

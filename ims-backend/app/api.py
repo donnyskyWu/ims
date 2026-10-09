@@ -325,6 +325,7 @@ from app.perf_calc import router as perf_calc_router
 from app.alert import router as alert_router
 from app.content_layout import router as content_layout_router
 from app.content_ai import router as content_ai_router
+from app.content_typeset import router as content_typeset_router
 from app.eff import router as eff_router
 from app.bi_report import router as bi_report_router
 from app.bi_metric import router as bi_metric_router
@@ -372,6 +373,7 @@ router.include_router(content_fb_router)
 router.include_router(upload_router)
 router.include_router(download_router)
 router.include_router(content_production_router)
+router.include_router(content_typeset_router)
 router.include_router(content_task_router)
 router.include_router(work_task_router)
 router.include_router(cost_router, prefix="/cost")

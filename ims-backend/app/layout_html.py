@@ -86,6 +86,7 @@ _ATTR_ORDER = (
     "data-file-key",
     "data-zone",
     "data-paywall",
+    "data-preset",
     "class",
     "style",
 )
@@ -191,6 +192,9 @@ def _clean_attrs(tag: str, attrs: list[tuple[str, str | None]]) -> list[tuple[st
     paywall = raw.get("data-paywall", "").strip().lower()
     if paywall in ("1", "true", "yes", "paid", "0", "false", "no", "free"):
         cleaned["data-paywall"] = paywall
+    preset = raw.get("data-preset", "").strip().lower()
+    if preset in ("clean-read", "marketing", "decision-scan", "analysis-report"):
+        cleaned["data-preset"] = preset
     if tag != "img":
         style = _safe_style(raw.get("style", ""))
         if style and tag in ("p", "div", "span", "figure", "section", "td", "th"):

@@ -84,7 +84,7 @@ test.describe('content review layout viewer closure', () => {
 
     const layoutDrawer = await openReview(layoutTitle)
     await expect(layoutDrawer.locator('[data-layout-mode="html"]')).toBeVisible()
-    await expect(layoutDrawer).not.toContainText(hiddenBody)
+    await expect(layoutDrawer.locator('[data-layout-viewer]')).not.toContainText(hiddenBody)
     const img = layoutDrawer.locator(`[data-layout-viewer] img[alt="${pngName}"]`)
     await expect(img).toBeVisible()
     await expect

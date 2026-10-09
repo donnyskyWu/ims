@@ -97,7 +97,7 @@
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
 
-    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑内容' : '新增内容'" width="780px" @close="drawerOpen = false">
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑内容' : '新增内容'" width="880px" @close="drawerOpen = false">
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
@@ -157,6 +157,13 @@
             placeholder="查看与审核按此 HTML 只读渲染；留空则显示正文"
           />
         </div>
+        <ContentLayoutPanel
+          :content-id="editingId"
+          :body="editBody"
+          :body-format="editBodyFormat"
+          :layout-html="editLayoutHtml"
+          @applied="onLayoutApplied"
+        />
       </div>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
       <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
@@ -185,6 +192,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
+import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import ContentAiPanel from './ContentAiPanel.vue'
@@ -210,6 +218,9 @@ const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
 const editBody = ref('')
 const editLayoutHtml = ref('')
+const editLayoutJson = ref('')
+const editBodyFormat = ref('PLAIN')
+const editLayoutTemplateId = ref<number | null>(null)
 const uploading = ref(false)
 const uploadError = ref('')
 const previewHint = ref('插入图片后在此预览')
@@ -340,6 +351,9 @@ function resetForm() {
   editScheme.value = []
   editBody.value = ''
   editLayoutHtml.value = ''
+  editLayoutJson.value = ''
+  editBodyFormat.value = 'PLAIN'
+  editLayoutTemplateId.value = null
 }
 
 function openCreate() {
@@ -363,6 +377,9 @@ function openEdit(row: any) {
   editScheme.value = Array.isArray(row.matchScheme) ? row.matchScheme : []
   editBody.value = row.body || ''
   editLayoutHtml.value = row.layoutHtml || ''
+  editLayoutJson.value = typeof row.layoutJson === 'string' ? row.layoutJson : JSON.stringify(row.layoutJson || '')
+  editBodyFormat.value = row.bodyFormat || 'PLAIN'
+  editLayoutTemplateId.value = row.layoutTemplateId ?? null
   editorSeed.value += 1
   uploadError.value = ''
   drawerOpen.value = true
@@ -380,6 +397,20 @@ async function openView(row: any) {
   }
 }
 
+function onLayoutApplied(payload: {
+  layoutHtml: string
+  layoutJson: string
+  bodyFormat: string
+  layoutTemplateId: number | null
+  body: string
+}) {
+  editLayoutHtml.value = payload.layoutHtml
+  editLayoutJson.value = payload.layoutJson
+  editBodyFormat.value = payload.bodyFormat
+  editLayoutTemplateId.value = payload.layoutTemplateId
+  editBody.value = payload.body
+}
+
 async function saveContent() {
   if (!editTitle.value.trim()) {
     window.alert('请填写标题')
@@ -395,6 +426,9 @@ async function saveContent() {
       matchScheme: editScheme.value,
       body: editBody.value,
       layoutHtml: editLayoutHtml.value,
+      layoutJson: editLayoutJson.value,
+      bodyFormat: editBodyFormat.value,
+      layoutTemplateId: editLayoutTemplateId.value,
     }
     if (editingId.value) {
       await http.put(`/content/${editingId.value}`, payload)

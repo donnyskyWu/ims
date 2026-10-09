@@ -60,6 +60,8 @@ def layout_vo(row: ContentLayoutTemplate) -> dict:
         "source": row.source,
         "status": row.status,
         "previewHtml": row.preview_html or "",
+        "layoutJson": row.layout_json or "",
+        "presetCode": row.preset_code or "",
         "usageCount": row.usage_count,
         "createdAt": iso(row.created_at),
     }

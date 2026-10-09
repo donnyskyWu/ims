@@ -969,9 +969,13 @@ def review_detail(
     if project is None:
         data["layoutHtml"] = ""
         data["body"] = ""
+        data["bodyFormat"] = "PLAIN"
+        data["layoutJson"] = ""
     else:
         data["layoutHtml"] = sanitize_layout_html(project.layout_html or "")
         data["body"] = project.body or ""
+        data["bodyFormat"] = project.body_format or "PLAIN"
+        data["layoutJson"] = project.layout_json or ""
     data["preview"] = review_preview(ops, project, data["submitterName"])
     data["reviewSteps"] = build_review_steps(db, ops, project, history)
     data["contentPreview"] = build_content_preview(project)
