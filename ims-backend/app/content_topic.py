@@ -1,14 +1,16 @@
-"""选题立项（CONTENT-002 · TOP-R1）。
+"""选题立项与排期甘特（CONTENT-002）。
 
-立项必须同时给出计划发布日与启用中的 SOP，否则 1052。
+TOP-R1：立项必须同时给出计划发布日与启用中的 SOP，否则 1052。
+TOP-R3：排期甘特按计划发布日排布；同账号同日超量只提示，不阻断。
 立项通过后创建内容项目并允许出任务；落选与待评审不可出任务。
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -16,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.content import iso, next_seq, tenant
 from app.corp import page_args, paged
-from app.models import ContentProject, ContentSop, ContentTopic, ContentTopicSeq, User
+from app.models import ContentProject, ContentPublish, ContentSop, ContentTopic, ContentTopicSeq, User
 
 router = APIRouter(prefix="/content", tags=["content-topic"])
 
@@ -167,6 +169,86 @@ def topic_list(
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = db.scalars(stmt.order_by(ContentTopic.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     return paged(hydrate(db, list(rows)), total, page_no, size)
+
+
+def day_text(value: str) -> str | None:
+    text = (value or "").strip()
+    if len(text) >= 10:
+        text = text[:10]
+    if not valid_date(text):
+        return None
+    return text
+
+
+def publish_accounts(db: Session, actor: User, project_ids: set[int]) -> dict[int, set[int]]:
+    if not project_ids:
+        return {}
+    rows = db.scalars(
+        select(ContentPublish).where(
+            ContentPublish.deleted == 0,
+            ContentPublish.tenant_id == tenant(actor),
+            ContentPublish.content_project_id.in_(project_ids),
+        )
+    ).all()
+    grouped: dict[int, set[int]] = {}
+    for row in rows:
+        grouped.setdefault(row.content_project_id, set()).add(row.account_id)
+    return grouped
+
+
+@router.get("/topic/gantt")
+def topic_gantt(
+    timeRange: list[str] = Query(default=[]),
+    accountId: int | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """排期甘特（CONTENT-002 · TOP-R3）。同账号同日多于 1 条时 conflictHint，不阻断。"""
+    if len(timeRange) < 2:
+        return fail(1500, "参数校验失败")
+    start = day_text(timeRange[0])
+    end = day_text(timeRange[1])
+    if start is None or end is None or start > end:
+        return fail(1500, "参数校验失败")
+    rows = db.scalars(
+        select(ContentTopic)
+        .where(
+            ContentTopic.deleted == 0,
+            ContentTopic.tenant_id == tenant(actor),
+            ContentTopic.plan_publish_date >= start,
+            ContentTopic.plan_publish_date <= end,
+            ContentTopic.plan_publish_date != "",
+        )
+        .order_by(ContentTopic.plan_publish_date.asc(), ContentTopic.id.asc())
+    ).all()
+    hydrated = hydrate(db, list(rows))
+    project_ids = {row.content_project_id for row in rows if row.content_project_id}
+    accounts_by_project = publish_accounts(db, actor, project_ids)
+    packed: list[tuple[dict, set[int]]] = []
+    counter: Counter[tuple[int, str]] = Counter()
+    for row, vo in zip(rows, hydrated, strict=True):
+        accounts = accounts_by_project.get(row.content_project_id, set()) if row.content_project_id else set()
+        packed.append((vo, accounts))
+        for account in accounts:
+            counter[(account, vo["planPublishDate"])] += 1
+    items = []
+    for vo, accounts in packed:
+        if accountId is not None and accountId not in accounts:
+            continue
+        keys = [accountId] if accountId is not None else sorted(accounts)
+        overflow = any(counter[(account, vo["planPublishDate"])] > 1 for account in keys)
+        sop_name = vo["sopName"] or None
+        items.append(
+            {
+                "topicNo": vo["topicNo"],
+                "title": vo["title"],
+                "planPublishDate": vo["planPublishDate"],
+                "topicStatus": vo["topicStatus"],
+                "sopName": sop_name,
+                "conflictHint": "同账号同日超量" if overflow else None,
+            }
+        )
+    return ok({"items": items})
 
 
 @router.put("/topic/{topic_id}/review")

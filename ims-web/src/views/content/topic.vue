@@ -3,13 +3,22 @@
     <div class="pg-h">
       <div>
         <h1>选题计划</h1>
-        <div class="sub">选题提报与立项（CONTENT-002 · TOP-R1）</div>
+        <div class="sub">选题提报、立项与排期甘特（CONTENT-002 · TOP-R1 / TOP-R3）</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" data-testid="topic-create-open" @click="openCreate">提报选题</button>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
+    <div class="tabs" data-testid="topic-view-switch">
+      <button type="button" class="tab" :class="{ on: view === 'list' }" data-testid="topic-view-list" @click="view = 'list'">
+        列表
+      </button>
+      <button type="button" class="tab" :class="{ on: view === 'gantt' }" data-testid="topic-view-gantt" @click="view = 'gantt'">
+        排期甘特
+      </button>
+    </div>
+    <TopicGantt v-if="view === 'gantt'" />
+    <form v-if="view === 'list'" class="qbar" @submit.prevent="loadList">
       <input v-model="keyword" placeholder="标题关键词" style="width: 180px" />
       <select v-model="statusFilter" style="width: 140px">
         <option value="">全部状态</option>
@@ -21,7 +30,7 @@
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
     </form>
-    <div class="tbl-block">
+    <div v-if="view === 'list'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -139,6 +148,7 @@
 import { onMounted, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import TopicGantt from './topic-gantt.vue'
 
 type TopicRow = {
   id: number
@@ -167,6 +177,7 @@ const SOURCE_LABEL: Record<string, string> = {
   ORIGINAL: '自主',
 }
 
+const view = ref<'list' | 'gantt'>('list')
 const rows = ref<TopicRow[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -282,3 +293,13 @@ async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
 
 onMounted(loadList)
 </script>
+
+<style scoped>
+.tabs button.tab {
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+</style>
