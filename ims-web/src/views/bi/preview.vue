@@ -9,6 +9,7 @@
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-drill-reset" @click="resetDrill">重置路径</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-xlsx" @click="exportDrill('XLSX')">导出 XLSX</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-csv" @click="exportDrill('CSV')">导出 CSV</button>
+        <router-link class="btn btn-sec btn-sm" data-testid="bi-open-perf" to="/ims/bi/query/perf">查询性能</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/list">← 返回列表</router-link>
       </div>
     </div>
@@ -17,17 +18,18 @@
       <b>{{ preview?.reportTitle || '运营日报' }}</b>
       <span class="chip">预览模式</span>
       <span class="sp"></span>
-      <input v-model="filters.dateFrom" type="date" />
+      <input v-model="filters.dateFrom" data-testid="bi-filter-from" type="date" />
       <span class="csub">至</span>
-      <input v-model="filters.dateTo" type="date" />
-      <select v-model="filters.platform" style="width: 110px">
+      <input v-model="filters.dateTo" data-testid="bi-filter-to" type="date" />
+      <select v-model="filters.platform" data-testid="bi-filter-platform" style="width: 110px">
         <option value="">全部平台</option>
         <option value="抖音">抖音</option>
         <option value="视频号">视频号</option>
         <option value="斗鱼">斗鱼</option>
         <option value="快手">快手</option>
       </select>
-      <button class="btn btn-pri btn-sm" type="button" @click="runPreview">查询</button>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="bi-filter-run" @click="runPreview">查询</button>
+      <span class="csub">超过 180 天转异步，超过 366 天终止</span>
     </div>
 
     <p v-if="preview" class="csub" style="margin-top: 8px">
@@ -51,6 +53,10 @@
         <span> → </span>
       </template>
       <b data-testid="bi-drill-dimension" :data-dimension="currentKey">{{ currentLabel }}</b>
+    </div>
+    <div v-if="asyncCard" class="card" data-testid="bi-async-card" style="margin-top: 10px; padding: 12px">
+      <b>异步任务 {{ asyncCard.taskId }}</b>
+      <div class="csub">{{ asyncCard.message }}</div>
     </div>
     <p v-if="drillToast" class="hint bad" data-testid="bi-drill-toast">{{ drillToast }}</p>
     <p v-if="exportNote" class="hint" data-testid="bi-export-note">{{ exportNote }}</p>
@@ -119,6 +125,7 @@ const drillPath = ref<string[]>(['PLATFORM'])
 const filterContext = ref<Record<string, string>>({})
 const tableRows = ref<DrillRow[]>([])
 const drillToast = ref('')
+const asyncCard = ref<{ taskId: string; message: string } | null>(null)
 const exportNote = ref('')
 const drillMeta = ref('')
 const jump = ref<Jump | null>(null)
@@ -154,20 +161,49 @@ async function loadTree() {
   }
 }
 
+function queryFilter(): Record<string, string> {
+  const ctx: Record<string, string> = {}
+  if (filters.platform) ctx.PLATFORM = filters.platform
+  if (filters.dateFrom) ctx.dateFrom = filters.dateFrom
+  if (filters.dateTo) ctx.dateTo = filters.dateTo
+  return ctx
+}
+
 async function runPreview() {
   crumbs.value = []
   jump.value = null
   drillToast.value = ''
-  const res = await http.post('/bi/report/preview/run', {
-    reportId: filters.reportId,
-    dateFrom: filters.dateFrom,
-    dateTo: filters.dateTo,
-    platform: filters.platform,
-    timeGrain: 'DAY',
-  })
-  if (res.data.code === 0) preview.value = res.data.data
+  asyncCard.value = null
+  exportNote.value = ''
+  try {
+    const res = await http.post('/bi/report/preview/run', {
+      reportId: filters.reportId,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      platform: filters.platform,
+      timeGrain: 'DAY',
+    })
+    const data = res.data.data
+    if (data?.queryMode === 'ASYNC') {
+      preview.value = null
+      tableRows.value = []
+      drillMeta.value = ''
+      asyncCard.value = { taskId: String(data.taskId || ''), message: String(data.message || '') }
+      filterContext.value = queryFilter()
+      return
+    }
+    preview.value = data
+  } catch (error: unknown) {
+    const body = rejected(error)
+    preview.value = null
+    tableRows.value = []
+    drillMeta.value = ''
+    drillToast.value = body ? `${body.code} ${body.msg}` : errorMessage(error)
+    filterContext.value = queryFilter()
+    return
+  }
   const root = chain.value[0]?.dimensionKey || 'PLATFORM'
-  await loadLevel([root], {}, 'DOWN')
+  await loadLevel([root], queryFilter(), 'DOWN')
 }
 
 async function loadLevel(path: string[], filter: Record<string, string>, direction: 'DOWN' | 'UP') {
@@ -180,6 +216,15 @@ async function loadLevel(path: string[], filter: Record<string, string>, directi
       filterContext: filter,
     })
     const data = res.data.data
+    if (data?.queryMode === 'ASYNC') {
+      tableRows.value = []
+      drillMeta.value = ''
+      asyncCard.value = { taskId: String(data.taskId || ''), message: String(data.message || '') }
+      filterContext.value = filter
+      drillPath.value = path
+      return true
+    }
+    asyncCard.value = null
     tableRows.value = data.rows || []
     currentKey.value = data.dimensionKey || path[path.length - 1]
     currentLabel.value = data.dimensionLabel || currentLabel.value
@@ -208,14 +253,14 @@ async function drillDown(row: DrillRow) {
   const fromKey = currentKey.value
   const fromLabel = currentLabel.value
   const next = chain.value[idx + 1]
-  const filter = { ...filterContext.value, [fromKey]: value }
+  const filter = { ...queryFilter(), ...filterContext.value, [fromKey]: value }
   const ok = await loadLevel([...drillPath.value, next.dimensionKey], filter, 'DOWN')
   if (ok) crumbs.value = [...crumbs.value, { key: fromKey, label: fromLabel, value }]
 }
 
 async function rollUp(index: number) {
   const path = chain.value.slice(0, index + 1).map((item) => item.dimensionKey)
-  const filter: Record<string, string> = {}
+  const filter: Record<string, string> = { ...queryFilter() }
   crumbs.value.slice(0, index).forEach((item) => {
     filter[item.key] = item.value
   })
@@ -259,6 +304,11 @@ async function exportDrill(format: 'XLSX' | 'CSV') {
       },
     })
     const data = res.data.data || {}
+    if (data.queryMode === 'ASYNC') {
+      asyncCard.value = { taskId: String(data.taskId || ''), message: String(data.message || '') }
+      exportNote.value = String(data.message || '已转异步')
+      return
+    }
     const downloadUrl = String(data.downloadUrl || '')
     const fileName = String(data.fileName || `bi_drill.${format === 'CSV' ? 'csv' : 'xlsx'}`)
     if (!downloadUrl) return

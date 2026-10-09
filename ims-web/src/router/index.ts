@@ -45,6 +45,7 @@ const router = createRouter({
         { path: 'collect/external/keyword', component: () => import('../views/collect/external-keyword.vue') },
         { path: 'collect/metadata', component: () => import('../views/collect/metadata.vue') },
         { path: 'collect/threshold', component: () => import('../views/collect/threshold.vue') },
+        { path: 'bi/query/perf', component: () => import('../views/bi/query-perf.vue') },
         { path: 'bi/query', component: () => import('../views/bi/query.vue') },
         { path: 'bi/report/list', component: () => import('../views/bi/report-list.vue') },
         { path: 'bi/report/designer', component: () => import('../views/bi/designer.vue') },

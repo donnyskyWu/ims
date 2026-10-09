@@ -1662,6 +1662,22 @@ class BiSubscription(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class BiQueryLog(Base):
+    """报表查询审计（BR-204 / V3-B6 · ims_bi_query_log）。"""
+
+    __tablename__ = "ims_bi_query_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    report_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    report_name: Mapped[str] = mapped_column(String(128), default="")
+    query_kind: Mapped[str] = mapped_column(String(16), default="DRILL")
+    query_mode: Mapped[str] = mapped_column(String(16), default="SYNC")
+    cost_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    result_rows: Mapped[int] = mapped_column(Integer, default=0)
+    query_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class BiShareLink(Base):
     __tablename__ = "ims_bi_share_link"
     __table_args__ = (UniqueConstraint("tenant_id", "link_token", name="uk_bi_share_token"),)
