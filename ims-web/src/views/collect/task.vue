@@ -15,7 +15,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      Channel-A 默认租户级统一采集（02:00）；Channel-D 外部竞品统一任务（22:00）。编辑抽屉<strong>无 Cookie</strong>，凭证见公司资产账号 · 采集 Tab（ADR-047）。
+      Channel-A 默认租户级统一采集（02:00）；Channel-D 外部竞品统一任务（22:00）。启动后按「下次执行」由本地定时器触发，停止后不再调度。编辑抽屉<strong>无 Cookie</strong>，凭证见公司资产账号 · 采集 Tab（ADR-047）。失败日志在采集日志页重试，不依赖真实快手引擎。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.taskName" placeholder="任务名" style="width: 140px" />
@@ -55,6 +55,8 @@
               <th>频率</th>
               <th>Cron</th>
               <th>最近执行</th>
+              <th>下次执行</th>
+              <th>健康</th>
               <th>成功/失败</th>
               <th>状态</th>
               <th>操作</th>
@@ -62,10 +64,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无采集任务' }}</div></div></td>
+              <td colspan="11"><div class="empty"><div class="et">{{ error || '暂无采集任务' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td>
@@ -79,13 +81,33 @@
               <td class="num">{{ row.frequency }}</td>
               <td class="mono" style="font-size: 11px">{{ row.cron }}</td>
               <td class="num" style="font-size: 11px">{{ row.lastRunAt || '—' }}</td>
+              <td class="num" style="font-size: 11px" data-testid="task-next-run">{{ row.nextRunAt || '—' }}</td>
+              <td data-testid="task-health">{{ row.healthLabel || '—' }}</td>
               <td class="num">
                 <span style="color: var(--green)">{{ row.successCount }}</span> /
                 <span style="color: var(--red)">{{ row.failCount }}</span>
               </td>
-              <td>{{ row.status }}</td>
+              <td data-testid="task-status">{{ row.statusLabel || row.status }}</td>
               <td>
-                <button class="btn-txt btn" type="button" @click="runTask(row)">立即执行</button>
+                <button
+                  v-if="row.status === 'DISABLED'"
+                  class="btn-txt btn"
+                  type="button"
+                  data-testid="task-start"
+                  @click="startTask(row)"
+                >
+                  启动
+                </button>
+                <button
+                  v-else
+                  class="btn-txt btn"
+                  type="button"
+                  data-testid="task-stop"
+                  @click="stopTask(row)"
+                >
+                  停止
+                </button>
+                <button class="btn-txt btn" type="button" data-testid="task-run" @click="runTask(row)">立即执行</button>
                 <button class="btn-txt btn" type="button" @click="goLogs(row)">日志</button>
                 <button
                   v-if="!row.isUnified && !row.isExternalUnified"
@@ -111,7 +133,7 @@
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
 
-    <ProtoDrawer v-model="drawerOpen" :title="editingId ? '编辑任务' : '新增单账号任务'" width="480px">
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑任务' : '新增单账号任务'" width="480px" @close="drawerOpen = false">
       <form class="drawer-form" @submit.prevent="saveTask">
         <label>任务名<input v-model="form.taskName" required /></label>
         <label>
@@ -133,6 +155,10 @@
           </select>
         </label>
         <label>Cron<input v-model="form.cron" required placeholder="0 2 * * *" /></label>
+        <p v-if="editingId" class="hint" data-testid="task-monitor">
+          最近 {{ monitor.lastRunAt || '—' }} · 下次 {{ monitor.nextRunAt || '—' }} · 成功
+          {{ monitor.successCount }} / 失败 {{ monitor.failCount }} · 健康 {{ monitor.healthLabel || '—' }}
+        </p>
         <label>
           状态
           <select v-model="form.status">
@@ -182,6 +208,13 @@ const form = reactive({
   frequency: 'DAILY',
   cron: '0 2 * * *',
   status: 'ENABLED',
+})
+const monitor = reactive({
+  lastRunAt: '',
+  nextRunAt: '',
+  successCount: 0,
+  failCount: 0,
+  healthLabel: '',
 })
 
 async function loadList() {
@@ -234,8 +267,31 @@ function openEdit(row: any) {
   form.accountId = row.accountId ? Number(row.accountId) : undefined
   form.frequency = row.frequency
   form.cron = row.cron
-  form.status = row.status
+  form.status = row.status === 'DISABLED' ? 'DISABLED' : 'ENABLED'
+  monitor.lastRunAt = row.lastRunAt || ''
+  monitor.nextRunAt = row.nextRunAt || ''
+  monitor.successCount = row.successCount || 0
+  monitor.failCount = row.failCount || 0
+  monitor.healthLabel = row.healthLabel || ''
   drawerOpen.value = true
+}
+
+async function startTask(row: any) {
+  try {
+    await http.post(`/collect/task/${row.id}/start`)
+    await loadList()
+  } catch (e: unknown) {
+    error.value = errorMessage(e)
+  }
+}
+
+async function stopTask(row: any) {
+  try {
+    await http.post(`/collect/task/${row.id}/stop`)
+    await loadList()
+  } catch (e: unknown) {
+    error.value = errorMessage(e)
+  }
 }
 
 async function saveTask() {

@@ -57,13 +57,22 @@
               <td class="num" style="font-size: 12px">{{ row.startedAt }}</td>
               <td class="num">{{ (row.durationMs / 1000).toFixed(1) }}s</td>
               <td class="num">{{ row.recordCount }}</td>
-              <td class="num">{{ row.retryCount }}</td>
+              <td class="num" data-testid="log-retry-count">{{ row.retryCount }}</td>
               <td>
                 <span v-if="row.errorSummary" class="btn-txt btn btn-danger-txt">{{ row.errorSummary }}</span>
                 <span v-else style="color: var(--green)">—</span>
               </td>
               <td>
                 <button class="btn-txt btn" type="button" @click="openDetail(row)">详情</button>
+                <button
+                  v-if="row.retryable"
+                  class="btn-txt btn"
+                  type="button"
+                  data-testid="log-retry"
+                  @click="retryLog(row)"
+                >
+                  重试
+                </button>
                 <button v-if="row.repairAccountId" class="btn-txt btn" type="button" @click="repairBind(row)">
                   修复绑定
                 </button>
@@ -75,7 +84,7 @@
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
 
-    <ProtoDrawer v-model="manualOpen" title="手工补录" width="420px">
+    <ProtoDrawer :open="manualOpen" title="手工补录" width="420px" @close="manualOpen = false">
       <form class="qbar" style="flex-direction: column; align-items: stretch; gap: 10px" @submit.prevent="submitManualFill">
         <label>任务 id<input v-model.number="manual.taskId" type="number" required style="width: 100%" /></label>
         <label>账号 id（可选）<input v-model.number="manual.accountId" type="number" style="width: 100%" /></label>
@@ -87,10 +96,20 @@
       </form>
     </ProtoDrawer>
 
-    <ProtoDrawer v-model="detailOpen" title="日志详情" width="520px">
+    <ProtoDrawer :open="detailOpen" title="日志详情" width="520px" @close="detailOpen = false">
       <div v-if="detail">
         <p><b>状态</b> {{ detail.statusLabel || detail.status }} · {{ detail.startedAt }}</p>
         <p v-if="detail.errorSummary" class="hint" style="color: var(--red)">{{ detail.errorSummary }}</p>
+        <p class="hint">重试次数 {{ detail.retryCount ?? 0 }}</p>
+        <button
+          v-if="detail.retryable"
+          class="btn btn-sec btn-sm"
+          type="button"
+          data-testid="log-retry-detail"
+          @click="retryLog(detail)"
+        >
+          重试本次失败
+        </button>
         <div class="csub" style="margin: 12px 0 8px">typeResults</div>
         <details v-for="(tr, idx) in detail.typeResults" :key="idx" style="margin-bottom: 8px">
           <summary>{{ tr.dataType }} · {{ tr.status }} · {{ tr.recordCount ?? 0 }} 条</summary>
@@ -223,6 +242,23 @@ function resetFilters() {
   filters.status = ''
   filters.dateFrom = ''
   loadList()
+}
+
+async function retryLog(row: any) {
+  if (!row?.taskId) return
+  error.value = ''
+  try {
+    const res = await http.post(`/collect/task/${row.taskId}/run`)
+    if (res.data?.code !== 0) {
+      error.value = res.data?.msg || '重试失败'
+      return
+    }
+    detailOpen.value = false
+    await loadList()
+    await loadQuality()
+  } catch (e: unknown) {
+    error.value = errorMessage(e)
+  }
 }
 
 async function openDetail(row: any) {

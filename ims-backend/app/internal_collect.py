@@ -578,6 +578,19 @@ def _touch_bind(ops: Session, account: PlatformAccount, status: str) -> None:
     bind.updated_at = utcnow()
 
 
+def retry_count_for_run(ops: Session, task_id: int) -> int:
+    """失败或未完成的上一条日志再跑一次时累加重试。成功之后从 0 重新计。"""
+    last = ops.scalar(
+        select(CollectLog)
+        .where(CollectLog.task_id == task_id, CollectLog.deleted == 0)
+        .order_by(CollectLog.id.desc())
+        .limit(1)
+    )
+    if last is None or last.status == "SUCCESS":
+        return 0
+    return int(last.retry_count or 0) + 1
+
+
 def _write_log(
     profile: PlatformProfile,
     ops: Session,
@@ -610,7 +623,7 @@ def _write_log(
         started_at=started_at,
         duration_ms=max(duration_ms, 0),
         record_count=record_count,
-        retry_count=0,
+        retry_count=retry_count_for_run(ops, task.id),
         error_summary=error_summary[:500],
         type_results_json=json.dumps(type_results, ensure_ascii=False),
         tenant_id=task.tenant_id or 0,
@@ -738,6 +751,7 @@ def run_one(profile: PlatformProfile, ops: Session, task: CollectTask, account: 
         "recordCount": record_count,
         "durationMs": duration_ms,
         "errorSummary": error or None,
+        "retryCount": log.retry_count,
     }
 
 
@@ -945,6 +959,12 @@ def start_scheduler() -> None:
                     tick_platform(profile)
                 except Exception:
                     pass
+            try:
+                from app.collect import tick_local_tasks
+
+                tick_local_tasks()
+            except Exception:
+                pass
             time.sleep(interval)
 
     threading.Thread(target=loop, name="ims-internal-collect", daemon=True).start()
