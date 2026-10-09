@@ -572,7 +572,12 @@ def dashboard_freshness(db: Session = Depends(db_session), actor: User = Depends
     business_delay = dws["delayMinutes"] if dws else max((item["delayMinutes"] for item in tasks), default=0)
     alarm = business_delay > FRESH_TARGET or any(item["status"] != "SUCCESS" for item in tasks)
     stamps = [item["_last"] for item in tasks if item["status"] != "FAILED"]
-    data_as_of = iso_utc(min(stamps) if stamps else now)
+    if stamps:
+        data_as_of = iso_utc(min(stamps))
+    else:
+        # 全部 FAILED 时不能把「现在」当成新鲜快照；退回最早一次失败运行时间。
+        failed_runs = [item["_last"] for item in tasks]
+        data_as_of = iso_utc(min(failed_runs)) if failed_runs else ""
     public = [
         {
             "taskName": item["taskName"],

@@ -16,8 +16,18 @@
         周期
         <input v-model="period" data-testid="dc-dash-period" type="month" @change="load" />
       </label>
-      <span data-testid="dc-dash-as-of" class="hint">数据截至 {{ overview?.dataAsOf || '—' }}</span>
-      <span data-testid="dc-dash-asof" class="hint">数据截至 {{ freshness?.dataAsOf || overview?.dataAsOf || '—' }}</span>
+      <span
+        data-testid="dc-dash-as-of"
+        class="hint"
+        :data-alarm="freshness?.isAlarm ? '1' : '0'"
+        :style="freshness?.isAlarm ? { color: 'var(--red)', fontWeight: '600' } : undefined"
+      >数据截至 {{ overview?.dataAsOf || '—' }}</span>
+      <span
+        data-testid="dc-dash-asof"
+        class="hint"
+        :data-alarm="freshness?.isAlarm ? '1' : '0'"
+        :style="freshness?.isAlarm ? { color: 'var(--red)', fontWeight: '600' } : undefined"
+      >数据截至 {{ freshness?.dataAsOf || overview?.dataAsOf || '—' }}</span>
       <select v-model="selectedId" data-testid="dc-dash-select" style="width: 180px" @change="onSelect">
         <option value="">未选看板</option>
         <option v-for="row in dashboards" :key="row.id" :value="String(row.id)">{{ row.dashboardName }}</option>
@@ -27,6 +37,18 @@
     </form>
 
     <p v-if="error" class="hint" data-testid="dc-dash-error" style="color: var(--red)">{{ error }}</p>
+    <p v-if="ready && !hasEnabled" class="hint" data-testid="dc-dash-empty-board">
+      暂无启用看板，请联系管理员配置（R1/R4）
+    </p>
+    <p
+      v-if="freshness?.isAlarm"
+      class="hint"
+      data-testid="dc-dash-fresh-alert"
+      style="color: var(--red); font-weight: 600"
+    >
+      <template v-if="syncFailed">同步失败，断点续传中（V3-A2）；当前展示最后成功快照 {{ freshness?.dataAsOf }}</template>
+      <template v-else>数据新鲜度超过 1 小时（BR-210），延迟 {{ freshness?.businessToDwsDelayMinutes }} 分钟</template>
+    </p>
     <p
       v-if="health?.isAlarm"
       class="hint"
@@ -172,7 +194,10 @@
                   <router-link
                     class="btn btn-sec btn-sm"
                     data-testid="dc-dash-session-link"
-                    :to="{ path: '/ims/dc/trace', query: { entryType: 'SESSION', keyword: child.dimensionValue } }"
+                    :to="{
+                      path: '/ims/dc/trace',
+                      query: { entryType: 'SESSION', keyword: child.dimensionValue, openDetail: '1' },
+                    }"
                   >
                     {{ child.dimensionValue }}
                   </router-link>
@@ -180,10 +205,18 @@
                 <td class="num">{{ money(child.gmv) }}</td>
                 <td class="num" :style="neg(child.netProfit)">{{ money(child.netProfit) }}</td>
                 <td class="num">{{ child.sessionCount }}</td>
-                <td>场次明细</td>
+                <td>
+                  <router-link
+                    class="btn btn-sec btn-sm"
+                    data-testid="dc-dash-profit-link"
+                    :to="{ path: '/ims/fin/profit-trace', query: { sessionCode: child.dimensionValue } }"
+                  >
+                    反查
+                  </router-link>
+                </td>
               </tr>
             </template>
-            <tr v-if="!rows.length">
+            <tr v-if="!rows.length" data-testid="dc-dash-dim-empty">
               <td colspan="5">该周期暂无已核算场次</td>
             </tr>
           </tbody>
@@ -204,6 +237,7 @@
           {{ widgetLabel(widget.widgetType) }}
         </div>
       </div>
+      <p v-else class="hint" data-testid="dc-dash-layout-empty">该看板尚未配置组件</p>
     </div>
 
     <div class="card" style="margin-top: 12px">
@@ -222,8 +256,11 @@
             >
               <td>{{ task.taskName }}</td>
               <td class="mono">{{ task.lastRunAt }}</td>
-              <td>{{ task.status }}</td>
+              <td :style="statusStyle(task.status)">{{ task.status }}</td>
               <td class="num">{{ task.delayMinutes }}</td>
+            </tr>
+            <tr v-if="ready && !(freshness?.syncTaskStatus || []).length" data-testid="dc-dash-sync-empty">
+              <td colspan="4">暂无同步任务</td>
             </tr>
           </tbody>
         </table>
@@ -321,6 +358,8 @@ type Dashboard = {
 }
 type Freshness = {
   dataAsOf: string
+  isAlarm?: boolean
+  businessToDwsDelayMinutes?: number
   syncTaskStatus: Array<{ taskName: string; lastRunAt: string; status: string; delayMinutes: number }>
 }
 type Child = { dimensionValue: string; gmv: number | null; netProfit: number | null; sessionCount: number }
@@ -347,6 +386,7 @@ const overview = ref<Overview | null>(null)
 const health = ref<Health | null>(null)
 const rows = ref<DimRow[]>([])
 const error = ref('')
+const ready = ref(false)
 const open = reactive<Record<string, boolean>>({})
 let dimensionSeq = 0
 const widgetTypes: Array<{ type: WidgetType; label: string }> = [
@@ -364,6 +404,8 @@ const selectedWidget = ref(-1)
 const saveNote = ref('')
 const form = ref({ name: '', cron: '0 * * * *', layout: [] as Widget[] })
 const selected = computed(() => dashboards.value.find((row) => String(row.id) === selectedId.value) || null)
+const hasEnabled = computed(() => dashboards.value.some((row) => row.status === 'ENABLED'))
+const syncFailed = computed(() => (freshness.value?.syncTaskStatus || []).some((task) => task.status === 'FAILED'))
 const activeWidget = computed(() => form.value.layout[selectedWidget.value] || null)
 
 function currentPeriod() {
@@ -389,6 +431,13 @@ function money(value: number | null | undefined) {
 
 function neg(value: number | null | undefined) {
   return value != null && value < 0 ? { color: 'var(--red)' } : undefined
+}
+
+function statusStyle(status: string) {
+  if (status === 'FAILED') return { color: 'var(--red)', fontWeight: '600' }
+  if (status === 'DELAYED') return { color: 'var(--orange)', fontWeight: '600' }
+  if (status === 'SUCCESS') return { color: 'var(--green)' }
+  return undefined
 }
 
 function toggle(value: string) {
@@ -477,6 +526,8 @@ async function load() {
     await loadDimension()
   } catch (err) {
     error.value = errorMessage(err)
+  } finally {
+    ready.value = true
   }
 }
 

@@ -37,7 +37,7 @@
 
     <template v-if="tab === 'list'">
       <form class="qbar" @submit.prevent="loadList">
-        <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 180px" />
+        <input v-model="query.sessionCode" data-testid="fin-trace-session" placeholder="场次 ID" style="width: 180px" />
         <input v-model="query.platform" placeholder="平台" style="width: 100px" />
         <select v-model="query.calcStatus" style="width: 120px">
           <option value="">全部状态</option>
@@ -266,7 +266,10 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
+
+const route = useRoute()
 
 const loading = ref(false)
 const error = ref('')
@@ -406,5 +409,9 @@ function closeDrawer() {
   highlightCost.value = ''
 }
 
-onMounted(loadList)
+onMounted(() => {
+  const code = route.query.sessionCode
+  if (typeof code === 'string' && code.trim()) query.sessionCode = code.trim()
+  loadList()
+})
 </script>
