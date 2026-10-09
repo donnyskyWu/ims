@@ -11,19 +11,20 @@
     </div>
 
     <form class="qbar" @submit.prevent="loadList">
-      <select v-model="query.shareTarget" style="width: 140px">
+      <select v-model="query.shareTarget" data-testid="fin-share-rule-filter-target" style="width: 140px">
         <option value="">全部对象</option>
         <option value="DAREN">达人</option>
         <option value="REALNAME">实名人</option>
         <option value="TEAM">团队</option>
       </select>
-      <select v-model="query.status" style="width: 120px">
+      <select v-model="query.status" data-testid="fin-share-rule-filter-status" style="width: 120px">
         <option value="">全部状态</option>
         <option value="ENABLED">启用</option>
         <option value="DISABLED">停用</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="button" @click="loadList">查询</button>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-query" @click="loadList">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-reset" @click="resetQuery">重置</button>
     </form>
 
     <p class="hint" data-testid="fin-share-rule-sum" style="margin: 8px 0">同范围启用比例合计 {{ sumText }}</p>
@@ -55,14 +56,14 @@
             </tr>
             <tr v-for="row in rows" v-else :key="row.id" :data-testid="'fin-share-rule-row-' + row.id">
               <td>{{ row.ruleName }}</td>
-              <td>{{ targetLabel(row.shareTarget) }}</td>
+              <td><span class="tag" :style="targetStyle(row.shareTarget)">{{ targetLabel(row.shareTarget) }}</span></td>
               <td>{{ baseLabel(row.baseType) }}</td>
-              <td>{{ rateSummary(row) }}</td>
-              <td>{{ scopeSummary(row.scope) }}</td>
+              <td data-testid="fin-share-rule-rate" :title="rateTitle(row)">{{ rateSummary(row) }}</td>
+              <td data-testid="fin-share-rule-scope" :title="scopeTitle(row.scope)">{{ scopeSummary(row.scope) }}</td>
               <td class="num">{{ row.priority }}</td>
               <td>V{{ row.version }}</td>
               <td>
-                <span class="tag">{{ row.status === 'ENABLED' ? '启用' : '停用' }}</span>
+                <span class="tag" :style="row.status === 'ENABLED' ? 'color: var(--green)' : 'color: var(--gray)'">{{ row.status === 'ENABLED' ? '启用' : '停用' }}</span>
               </td>
               <td>{{ row.effectiveRange?.from }} ~ {{ row.effectiveRange?.to || '长期' }}</td>
               <td>
@@ -139,10 +140,20 @@
               <span>比例（%）</span>
               <input v-model="ladder.rate" data-testid="fin-share-rule-ladder-rate" />
             </label>
+            <button
+              v-if="form.ladders.length > 1"
+              class="btn btn-sec btn-sm"
+              type="button"
+              data-testid="fin-share-rule-ladder-remove"
+              @click="form.ladders.splice(index, 1)"
+            >
+              删除
+            </button>
           </div>
-          <button class="btn btn-sec btn-sm" type="button" @click="form.ladders.push({ min: '', max: '', rate: '' })">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-ladder-add" @click="form.ladders.push({ min: '', max: '', rate: '' })">
             添加档
           </button>
+          <p v-if="ladderOverlap" class="hint" data-testid="fin-share-rule-ladder-error" style="color: var(--red)">1146 阶梯区间重叠</p>
         </div>
         <label class="fld">
           <span>平台（逗号分隔，可空）</span>
@@ -151,6 +162,10 @@
         <label class="fld">
           <span>账号 ID（逗号分隔，可空）</span>
           <input v-model="form.accountIds" data-testid="fin-share-rule-accounts" />
+        </label>
+        <label class="fld">
+          <span>IP 组 ID（逗号分隔，可空，与平台、账号同时生效）</span>
+          <input v-model="form.ipGroups" data-testid="fin-share-rule-groups" placeholder="88001,88002" />
         </label>
         <label class="fld">
           <span>优先级</span>
@@ -286,6 +301,7 @@ const form = reactive({
   fixedPercent: '',
   platforms: '',
   accountIds: '',
+  ipGroups: '',
   priority: '10',
   effectiveFrom: '2026-10-08',
   effectiveTo: '',
@@ -311,7 +327,14 @@ const sumText = computed(() => {
     const basis = [...bucket.values()].reduce((acc, row) => acc + Math.round(Number(row.fixedRate) * 10000), 0)
     const parsed = JSON.parse(key) as Scope
     const account = parsed.accountIds?.[0]
-    const label = account ? `账号#${account}` : parsed.platforms?.length ? parsed.platforms.join('+') : '全范围'
+    const group = parsed.ipGroupIds?.[0]
+    const label = account
+      ? `账号#${account}`
+      : group
+        ? `IP组#${group}`
+        : parsed.platforms?.length
+          ? parsed.platforms.join('+')
+          : '全范围'
     parts.push(`${label} ${(basis / 10000).toFixed(4)}`)
   }
   return parts.join('；')
@@ -342,6 +365,15 @@ function rateSummary(row: RuleRow) {
   return `阶梯 ${row.ladderConfig?.length || 0} 档`
 }
 
+function rateTitle(row: RuleRow) {
+  if (row.rateType !== 'LADDER') return rateSummary(row)
+  const lines = (row.ladderConfig || []).map((item) => {
+    const upper = item.max == null ? '∞' : item.max
+    return `${item.min}~${upper} ${(Number(item.rate) * 100).toFixed(2)}%`
+  })
+  return lines.length ? lines.join('；') : '阶梯'
+}
+
 function scopeSummary(scope: Scope | undefined) {
   const platforms = scope?.platforms?.length || 0
   const accounts = scope?.accountIds?.length || 0
@@ -349,6 +381,36 @@ function scopeSummary(scope: Scope | undefined) {
   if (!platforms && !accounts && !groups) return '全部'
   return `平台×${platforms}+账号×${accounts}+IP组×${groups}`
 }
+
+function scopeTitle(scope: Scope | undefined) {
+  const platforms = scope?.platforms?.length ? scope.platforms.join(',') : '—'
+  const accounts = scope?.accountIds?.length ? scope.accountIds.join(',') : '—'
+  const groups = scope?.ipGroupIds?.length ? scope.ipGroupIds.join(',') : '—'
+  return `平台 ${platforms}；账号 ${accounts}；IP组 ${groups}`
+}
+
+function targetStyle(value: string) {
+  if (value === 'DAREN') return 'color:#722ed1'
+  if (value === 'REALNAME') return 'color:#13c2c2'
+  if (value === 'TEAM') return 'color:#1677ff'
+  return ''
+}
+
+const ladderOverlap = computed(() => {
+  if (form.rateType !== 'LADDER') return false
+  const rows = form.ladders
+    .map((row) => ({
+      min: Number(row.min),
+      max: row.max === '' ? null : Number(row.max),
+    }))
+    .filter((row) => Number.isFinite(row.min))
+    .sort((a, b) => a.min - b.min)
+  for (let index = 0; index < rows.length - 1; index += 1) {
+    const upper = rows[index].max
+    if (upper == null || rows[index + 1].min < upper) return true
+  }
+  return false
+})
 
 function resetForm() {
   form.ruleName = ''
@@ -358,6 +420,7 @@ function resetForm() {
   form.fixedPercent = ''
   form.platforms = ''
   form.accountIds = ''
+  form.ipGroups = ''
   form.priority = '10'
   form.effectiveFrom = '2026-10-08'
   form.effectiveTo = ''
@@ -374,7 +437,22 @@ function splitIds(raw: string) {
     .filter(Boolean)
 }
 
+function parseIdList(raw: string) {
+  const ids: number[] = []
+  for (const token of splitIds(raw)) {
+    if (!/^[1-9]\d*$/.test(token)) return null
+    ids.push(Number(token))
+  }
+  return ids
+}
+
 function buildPayload(confirmConflict: boolean) {
+  const accountIds = parseIdList(form.accountIds)
+  const ipGroupIds = parseIdList(form.ipGroups)
+  if (!accountIds || !ipGroupIds) {
+    formError.value = '1001 适用范围编号非法'
+    return null
+  }
   const payload: Record<string, unknown> = {
     ruleName: form.ruleName.trim(),
     shareTarget: form.shareTarget,
@@ -382,8 +460,8 @@ function buildPayload(confirmConflict: boolean) {
     rateType: form.rateType,
     scope: {
       platforms: splitIds(form.platforms),
-      accountIds: splitIds(form.accountIds).map(Number),
-      ipGroupIds: [],
+      accountIds,
+      ipGroupIds,
     },
     priority: Number(form.priority),
     effectiveRange: { from: form.effectiveFrom, to: form.effectiveTo || undefined },
@@ -406,6 +484,12 @@ function errText(err: unknown) {
   const body = err as ApiErr
   if (body?.code) return `${body.code} ${body.msg || ''}`.trim()
   return '请求失败'
+}
+
+function resetQuery() {
+  query.shareTarget = ''
+  query.status = ''
+  loadList()
 }
 
 async function loadList() {
@@ -449,6 +533,7 @@ function openEdit(row: RuleRow) {
   form.fixedPercent = row.fixedRate == null ? '' : (Number(row.fixedRate) * 100).toFixed(2)
   form.platforms = (row.scope?.platforms || []).join(',')
   form.accountIds = (row.scope?.accountIds || []).join(',')
+  form.ipGroups = (row.scope?.ipGroupIds || []).join(',')
   form.priority = String(row.priority)
   form.effectiveFrom = row.effectiveRange?.from || ''
   form.effectiveTo = row.effectiveRange?.to || ''
@@ -470,6 +555,7 @@ async function save(confirmConflict: boolean) {
   formError.value = ''
   try {
     const payload = buildPayload(confirmConflict)
+    if (!payload) return
     if (editingId.value) await http.put(`/fin/share/rule/${editingId.value}`, payload)
     else await http.post('/fin/share/rule', payload)
     conflictOpen.value = false
@@ -506,7 +592,14 @@ async function runSimulate() {
   try {
     const payload: Record<string, unknown> = { simulateBase: Number(simBase.value) }
     if (simRuleId.value) payload.ruleId = simRuleId.value
-    else payload.draftRule = buildPayload(false)
+    else {
+      const draft = buildPayload(false)
+      if (!draft) {
+        simError.value = formError.value || '1001 适用范围编号非法'
+        return
+      }
+      payload.draftRule = draft
+    }
     const res = await http.post('/fin/share/simulate', payload)
     simResult.value = res.data?.data || null
   } catch (err) {

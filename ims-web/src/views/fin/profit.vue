@@ -180,10 +180,13 @@
       <p class="hint" style="margin: 8px 0">同类为同平台已核算场次。净利率偏离同行均值达到 2 倍标准差时列入本表。</p>
       <form class="qbar" @submit.prevent="loadAbnormal">
         <input v-model="abnormalPlatform" placeholder="平台" style="width: 120px" data-testid="fin-profit-abnormal-platform" />
+        <input v-model="abnormalDateFrom" type="date" data-testid="fin-profit-abnormal-from" aria-label="异常开始" />
+        <input v-model="abnormalDateTo" type="date" data-testid="fin-profit-abnormal-to" aria-label="异常结束" />
         <span class="sp"></span>
-        <button class="btn btn-pri btn-sm" type="button" @click="loadAbnormal">查询</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-profit-abnormal-query" @click="loadAbnormal">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="fin-profit-abnormal-reset" @click="resetAbnormal">重置</button>
       </form>
-      <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+      <div v-if="abnormalError" class="hint" data-testid="fin-profit-abnormal-error" style="color: var(--red); margin: 8px 0">{{ abnormalError }}</div>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table data-testid="fin-profit-abnormal-table">
@@ -469,6 +472,9 @@ const tab = ref<'list' | 'abnormal'>('list')
 const abnormalLoading = ref(false)
 const abnormalRows = ref<Record<string, unknown>[]>([])
 const abnormalPlatform = ref('')
+const abnormalDateFrom = ref('')
+const abnormalDateTo = ref('')
+const abnormalError = ref('')
 const history = ref<HistoryItem[]>([])
 const historyError = ref('')
 const recalcOpen = ref(false)
@@ -706,26 +712,53 @@ async function switchMetric(kind: ProfitMetric) {
   await reload()
 }
 
+function abnormalRange(): { range?: string; error?: string } {
+  const from = abnormalDateFrom.value
+  const to = abnormalDateTo.value
+  if (!from && !to) return { range: '' }
+  if (!from || !to || from > to) return { error: 'dateRange 须为开始日,结束日' }
+  return { range: `${from},${to}` }
+}
+
 async function loadAbnormal() {
   abnormalLoading.value = true
-  error.value = ''
+  abnormalError.value = ''
+  const range = abnormalRange()
+  if (range.error) {
+    abnormalError.value = range.error
+    abnormalRows.value = []
+    abnormalLoading.value = false
+    return
+  }
   try {
     const res = await http.get('/fin/profit/abnormal', {
       params: {
         pageNo: 1,
         pageSize: 50,
         platform: abnormalPlatform.value || undefined,
+        dateRange: range.range || undefined,
       },
     })
     if (res.data?.code !== 0) {
-      error.value = res.data?.msg || '加载失败'
+      abnormalError.value = res.data?.msg || '加载失败'
       abnormalRows.value = []
       return
     }
     abnormalRows.value = res.data.data?.list || []
+  } catch (err) {
+    const body = err as { msg?: string }
+    abnormalError.value = body?.msg || '加载失败'
+    abnormalRows.value = []
   } finally {
     abnormalLoading.value = false
   }
+}
+
+function resetAbnormal() {
+  abnormalPlatform.value = ''
+  abnormalDateFrom.value = ''
+  abnormalDateTo.value = ''
+  loadAbnormal()
 }
 
 function openAbnormal() {
