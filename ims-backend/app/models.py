@@ -774,6 +774,35 @@ class ContentSopSeq(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
+class ContentTopic(Base):
+    __tablename__ = "ims_content_topic"
+    __table_args__ = (UniqueConstraint("topic_no", name="uk_content_topic_no"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    topic_no: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str] = mapped_column(Text, default="")
+    source_type: Mapped[str] = mapped_column(String(16), default="ORIGINAL")
+    submitter_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    plan_publish_date: Mapped[str] = mapped_column(String(10), default="")
+    topic_status: Mapped[str] = mapped_column(String(32), default="PENDING_REVIEW")
+    sop_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    review_opinion: Mapped[str] = mapped_column(String(512), default="")
+    content_project_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ContentTopicSeq(Base):
+    __tablename__ = "ims_content_topic_seq"
+    __table_args__ = (UniqueConstraint("tenant_id", "biz_date", name="uk_topic_seq_day"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    biz_date: Mapped[str] = mapped_column(String(8))
+    seq_val: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
 class MetadataEntity(Base):
     __tablename__ = "ims_metadata_entity"
     __table_args__ = (UniqueConstraint("tenant_id", "entity_code", name="uk_metadata_entity_code"),)

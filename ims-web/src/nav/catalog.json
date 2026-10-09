@@ -341,6 +341,15 @@
       "parent": "内容生产",
       "desc": "SOP 模板列表与 DAG 编排（CONTENT-100/001 · UX P-M2-001/002）"
     },
+    "contentTopic": {
+      "no": "15",
+      "name": "选题计划",
+      "code": "CONTENT",
+      "icon": "doc",
+      "page": "选题计划",
+      "parent": "内容生产",
+      "desc": "选题提报与立项（CONTENT-002 · TOP-R1）"
+    },
     "contentPlan": {
       "no": "15",
       "name": "计划管理",
@@ -1142,6 +1151,7 @@
           "label": "内容生产",
           "children": [
             "contentSop",
+            "contentTopic",
             "contentPlan",
             "contentWork",
             "contentTask",
