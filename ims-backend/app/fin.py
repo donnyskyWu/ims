@@ -474,11 +474,13 @@ def profit_vo(
         "settlementStatus": settlement_status(profit.calc_status or "PENDING"),
     }
     if include_session:
+        _month, finance_status = period_of_session(db, int(profit.tenant_id or 0), session)
         vo.update(
             {
                 "platform": session.platform,
                 "sessionTitle": session.topic or session.session_code,
                 "gmv": money(profit.revenue),
+                "financeStatus": finance_status,
             }
         )
     return vo
