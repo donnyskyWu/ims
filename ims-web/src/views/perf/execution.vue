@@ -54,7 +54,9 @@
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无考核单' }}</div></div></td>
+              <td colspan="9">
+                <div class="empty" data-testid="perf-exec-empty"><div class="et">{{ emptyText }}</div></div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono num" style="color: var(--blue); font-size: 11px">{{ row.recordNo }}</td>
@@ -138,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -173,6 +175,16 @@ const form = reactive({
   periodType: 'QUARTERLY',
   periodStart: '2026-07-01',
   periodEnd: '2026-09-30',
+})
+
+const emptyText = computed(() => {
+  if (error.value) return error.value
+  const named = filters.evaluateeName.trim()
+  const narrowed = !!(named || filters.status || filters.periodType)
+  if (!narrowed) return '暂无考核单'
+  if (filters.status === 'ISSUED' && !named) return '暂无已下发考核'
+  if (filters.status === 'CONFIRMED' && !named) return '暂无已确认考核'
+  return '没有符合筛选条件的考核单'
 })
 
 function statusLabel(status: string) {
