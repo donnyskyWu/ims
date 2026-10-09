@@ -32,13 +32,14 @@
               <th>状态</th>
               <th>推送结果</th>
               <th>上次推送</th>
+              <th>下次推送</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading"><td colspan="8"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-if="loading"><td colspan="9"><div class="empty"><div class="et">加载中</div></div></td></tr>
             <tr v-else-if="!subs.length">
-              <td colspan="8"><div class="empty" data-testid="bi-sub-empty"><div class="et">暂无订阅</div></div></td>
+              <td colspan="9"><div class="empty" data-testid="bi-sub-empty"><div class="et">暂无订阅</div></div></td>
             </tr>
             <tr v-for="row in subs" v-else :key="row.id">
               <td>{{ row.subName }}</td>
@@ -55,10 +56,12 @@
                 <span class="tag" :style="pushStatusStyle(row.lastPushStatus)">{{ pushStatusLabel(row.lastPushStatus) }}</span>
               </td>
               <td>{{ row.lastPushAt }}</td>
+              <td data-testid="bi-sub-next">{{ row.nextPushAt || '—' }}</td>
               <td>
                 <span class="btn-txt btn" @click="toggleSub(row)">{{ row.status === 'ACTIVE' ? '暂停' : '恢复' }}</span>
                 <span v-if="row.status === 'ACTIVE'" class="btn-txt btn" @click="askPush(row)">立即推送</span>
-                <span class="btn-txt btn" @click="viewSnapshot(row)">查看快照</span>
+                <span class="btn-txt btn" data-testid="bi-sub-snapshot-open" @click="viewSnapshot(row)">查看快照</span>
+                <span class="btn-txt btn" data-testid="bi-sub-cancel" @click="cancelSub(row)">取消</span>
               </td>
             </tr>
           </tbody>
@@ -189,9 +192,12 @@
       </div>
     </div>
 
-    <div v-if="snapshot" class="card" style="margin-top: 12px; padding: 14px">
+    <div v-if="snapshot" class="card" data-testid="bi-sub-snapshot" style="margin-top: 12px; padding: 14px">
       <b>快照 · {{ snapshot.subName }}</b>
-      <p class="csub">{{ snapshot.snapshotAt }} · GMV {{ snapshot.summary?.gmv }}</p>
+      <div v-if="snapshot.empty" class="empty" data-testid="bi-sub-snapshot-empty">
+        <div class="et">{{ snapshot.emptyReason || '尚未推送，暂无快照' }}</div>
+      </div>
+      <p v-else class="csub">{{ snapshot.snapshotAt }} · GMV {{ snapshot.summary?.gmv }}</p>
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
@@ -273,7 +279,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type SubRow = {
   id: number
@@ -286,6 +292,7 @@ type SubRow = {
   status: string
   lastPushStatus: string
   lastPushAt: string
+  nextPushAt: string
 }
 
 const tabDefs = [
@@ -313,7 +320,13 @@ const shares = ref<ShareRow[]>([])
 const shareLoading = ref(false)
 const shareKeyword = ref('')
 const published = ref<Record<string, unknown>[]>([])
-const snapshot = ref<{ subName: string; snapshotAt: string; summary: { gmv: number } } | null>(null)
+const snapshot = ref<{
+  subName: string
+  snapshotAt: string
+  summary?: { gmv: number } | null
+  empty?: boolean
+  emptyReason?: string
+} | null>(null)
 const showForm = ref(false)
 const showShareForm = ref(false)
 const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
@@ -465,8 +478,24 @@ async function toggleSub(row: SubRow) {
 }
 
 async function viewSnapshot(row: SubRow) {
-  const res = await http.get(`/bi/subscribe/snapshot/${row.id}`)
-  if (res.data.code === 0) snapshot.value = res.data.data
+  try {
+    const res = await http.get(`/bi/subscribe/snapshot/${row.id}`)
+    if (res.data.code === 0) snapshot.value = res.data.data
+  } catch (error: unknown) {
+    alert(errorMessage(error))
+  }
+}
+
+async function cancelSub(row: SubRow) {
+  if (!window.confirm(`取消订阅「${row.subName}」？取消后不再推送`)) return
+  try {
+    await http.delete(`/bi/subscribe/${row.id}`)
+  } catch (error: unknown) {
+    alert(errorMessage(error))
+    return
+  }
+  if (snapshot.value?.subName === row.subName) snapshot.value = null
+  await loadSubs()
 }
 
 function askPush(row: SubRow) {

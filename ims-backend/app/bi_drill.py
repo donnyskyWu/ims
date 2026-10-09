@@ -172,6 +172,7 @@ def drill_payload(path: list[str], direction: str, filter_context: dict, page_no
         {"dimensionKey": key, "dimensionValue": value, "gmv": gmv, "orders": orders}
         for value, gmv, orders in page
     ]
+    empty = len(samples) == 0
     return {
         "queryMode": "SYNC",
         "costMs": 12,
@@ -190,6 +191,8 @@ def drill_payload(path: list[str], direction: str, filter_context: dict, page_no
         "dimensionKey": key,
         "dimensionLabel": label,
         "dataset": "METRIC_LIB",
+        "empty": empty,
+        "emptyReason": "当前筛选下该层暂无数据" if empty else "",
     }
 
 
