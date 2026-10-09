@@ -27,16 +27,18 @@ test.describe('flow start todo approve closure', () => {
     await expect(page.locator('h1')).toContainText('流程管理')
 
     await page.getByRole('button', { name: '发起流程' }).click()
-    const modal = page.locator('.modal-card')
-    await expect(modal.locator('h3')).toContainText('发起流程')
-    await modal.locator('select').selectOption({ index: 0 })
-    await modal.locator('input[placeholder="formData.title"]').fill(title)
-    await modal.locator('input[style*="width: 100%"]').nth(1).fill(uniq)
+    const drawer = page.locator('aside.drawer.on')
+    await expect(drawer.locator('.drawer-h b')).toHaveText('发起流程')
+    await expect(drawer.getByTestId('flow-start-empty')).toHaveCount(0)
+    await expect(drawer.getByTestId('flow-start-template')).toBeVisible()
+    await drawer.getByTestId('flow-start-template').selectOption({ index: 0 })
+    await drawer.getByTestId('flow-start-title').fill(title)
+    await drawer.getByTestId('flow-start-key').fill(uniq)
 
     const startResp = page.waitForResponse(
       (r) => r.url().includes('/flow/instance') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await modal.getByRole('button', { name: '提交发起' }).click()
+    await drawer.getByTestId('flow-start-submit').click()
     const resp =     await startResp
     const startBody = (await resp.json()) as { code: number; data?: { instanceNo?: string } }
     expect(startBody.code).toBe(0)

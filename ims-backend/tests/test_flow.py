@@ -165,6 +165,99 @@ def test_flow_timeout_list_and_urge():
     assert refreshed["remindCount"] == before + 1
 
 
+def test_flow_timeout_urge_edges():
+    """未超时、已处理、超长说明不递增 remindCount；空白说明仍允许（契约可选）。"""
+    auth = headers()
+    missing = client.put(
+        "/admin-api/ims/flow/timeout/99999999/urge",
+        headers=auth,
+        json={"urgeMessage": "不存在"},
+    )
+    assert missing.json()["code"] == 1001
+    assert "不存在" in missing.json()["msg"]
+
+    published = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "status": "PUBLISHED"},
+    ).json()
+    leave = next(r for r in published["data"]["list"] if r["templateCode"] == "FL-LEAVE")
+    started = client.post(
+        "/admin-api/ims/flow/instance",
+        headers=auth,
+        json={
+            "templateId": leave["id"],
+            "formData": {"title": "pytest · 未超时不可督办"},
+            "businessKey": "pytest-flow-urge-early",
+        },
+    )
+    assert started.json()["code"] == 0
+    instance_no = started.json()["data"]["instanceNo"]
+    todos = client.get(
+        "/admin-api/ims/flow/task/my-todo",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50},
+    ).json()
+    early_task = next(r for r in todos["data"]["list"] if r["instanceNo"] == instance_no)
+    early = client.put(
+        f"/admin-api/ims/flow/timeout/{early_task['id']}/urge",
+        headers=auth,
+        json={"urgeMessage": "太早"},
+    )
+    assert early.json()["code"] == 1001
+    assert "未超时" in early.json()["msg"]
+
+    handled = client.put(
+        f"/admin-api/ims/flow/task/{early_task['id']}/handle",
+        headers=auth,
+        json={"action": "APPROVE", "comment": "pytest"},
+    )
+    assert handled.json()["code"] == 0
+    late = client.put(
+        f"/admin-api/ims/flow/timeout/{early_task['id']}/urge",
+        headers=auth,
+        json={"urgeMessage": "已处理"},
+    )
+    assert late.json()["code"] == 1001
+    assert "已处理" in late.json()["msg"]
+
+    listed = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 10},
+    ).json()
+    row = listed["data"]["list"][0]
+    before = row["remindCount"]
+    over = client.put(
+        f"/admin-api/ims/flow/timeout/{row['id']}/urge",
+        headers=auth,
+        json={"urgeMessage": "督" * 257},
+    )
+    assert over.json()["code"] == 1001
+    assert "256" in over.json()["msg"]
+    mid = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 10},
+    ).json()
+    refreshed = next(r for r in mid["data"]["list"] if r["id"] == row["id"])
+    assert refreshed["remindCount"] == before
+
+    blank = client.put(
+        f"/admin-api/ims/flow/timeout/{row['id']}/urge",
+        headers=auth,
+        json={"urgeMessage": "   "},
+    )
+    assert blank.json()["code"] == 0
+    after = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 10},
+    ).json()
+    refreshed = next(r for r in after["data"]["list"] if r["id"] == row["id"])
+    assert refreshed["remindCount"] == before + 1
+
+
 def test_flow_timeout_rate_br115_stub():
     auth = headers()
     rated = client.get("/admin-api/ims/flow/timeout/rate", headers=auth)
