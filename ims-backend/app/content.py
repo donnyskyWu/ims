@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of
+from app.layout_html import sanitize_layout_html
 from app.models import (
     ContentPlan,
     ContentProject,
@@ -771,6 +772,13 @@ def review_detail(review_no: str, db: Session = Depends(db_session), actor: User
             passed = bool(row.checklist_result[item["itemCode"]])
         checklist.append({**item, "passed": passed})
     data["checklist"] = checklist
+    project = db.get(ContentProject, row.content_project_id)
+    if project is None or project.deleted or (project.tenant_id or 0) != tenant(actor):
+        data["layoutHtml"] = ""
+        data["body"] = ""
+    else:
+        data["layoutHtml"] = sanitize_layout_html(project.layout_html or "")
+        data["body"] = project.body or ""
     return ok(data)
 
 
