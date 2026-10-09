@@ -37,6 +37,7 @@ TASK_STATUS_LABEL = {
     "RUNNING": "运行中",
 }
 RETRYABLE_LOG_STATUS = {"FAILED", "PARTIAL", "COOKIE_EXPIRED", "ENGINE_UNAVAILABLE"}
+FAILURE_STREAK_STATUS = {"FAILED", "COOKIE_EXPIRED", "ENGINE_UNAVAILABLE"}
 
 
 class TaskBody(BaseModel):
@@ -238,6 +239,62 @@ def task_vo(
     }
 
 
+def log_local_note(status: str, error_summary: str | None) -> str | None:
+    """Cookie / 引擎 / 未绑定的本地说明。不连真实平台，也不启动浏览器。"""
+    text = error_summary or ""
+    if status == "COOKIE_EXPIRED" or "Cookie" in text or "凭据无效" in text:
+        return "本地 Collector 桩记为 Cookie 已失效，未连接真实平台。请到账号采集 Tab 更新凭证后再重试。"
+    if status == "ENGINE_UNAVAILABLE" or "浏览器引擎" in text:
+        return "本地 Collector 桩记为浏览器引擎不可用，未启动真实浏览器。重试仍走本地调度。"
+    if "未绑定" in text:
+        return "账号未绑定 Collector。绑定与 Cookie 在账号采集 Tab，不在本页填写。"
+    return None
+
+
+def log_needs_repair(status: str, error_summary: str | None) -> bool:
+    text = error_summary or ""
+    return status in {"COOKIE_EXPIRED", "ENGINE_UNAVAILABLE"} or "未绑定" in text or "凭据无效" in text or "Cookie" in text
+
+
+def log_empty_copy(
+    *,
+    status: str = "",
+    task_id: int | None = None,
+    account_id: int | None = None,
+    date_from: str = "",
+    date_to: str = "",
+) -> tuple[str, str]:
+    """日志列表空态。Cookie / 引擎筛选与日期颠倒分开写。"""
+    status = (status or "").strip()
+    date_from = (date_from or "").strip()
+    date_to = (date_to or "").strip()
+    if date_from and date_to and date_from > date_to:
+        return (
+            "没有符合筛选的日志",
+            "开始日期晚于结束日期。本地日志按开始时间筛选，请调整日期范围。",
+        )
+    if status == "COOKIE_EXPIRED":
+        return (
+            "没有 Cookie 已失效的日志",
+            "该状态由本地 Collector 桩写入，不代表已连上抖音或快手。凭证在账号采集 Tab，不在本页填写。",
+        )
+    if status == "ENGINE_UNAVAILABLE":
+        return (
+            "没有浏览器引擎不可用的日志",
+            "本地桩不启动真实浏览器。引擎不可用只记在日志里，重试仍走本地调度。",
+        )
+    filtered = bool(task_id or account_id or status or date_from or date_to)
+    if filtered:
+        return (
+            "没有符合筛选的日志",
+            "换状态、任务或日期后再查。手工补录只在本地写成功日志，不调用 Collector。",
+        )
+    return (
+        "暂无日志",
+        "本地定时器尚未写入采集记录。Cookie 与浏览器引擎不在任务页维护。",
+    )
+
+
 def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None = None) -> dict:
     task = tasks.get(row.task_id) if tasks else ops.get(CollectTask, row.task_id)
     task_name = task.task_name if task else f"task#{row.task_id}"
@@ -246,9 +303,7 @@ def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None =
     except json.JSONDecodeError:
         type_results = []
     repair_account_id = None
-    if row.account_id and (
-        (row.error_summary and "未绑定" in row.error_summary) or row.status == "COOKIE_EXPIRED"
-    ):
+    if row.account_id and log_needs_repair(row.status, row.error_summary):
         repair_account_id = str(row.account_id)
     return {
         "id": str(row.id),
@@ -263,6 +318,7 @@ def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None =
         "retryable": row.status in RETRYABLE_LOG_STATUS,
         "retryHint": retry_hint(row.status, row.retry_count or 0),
         "errorSummary": row.error_summary or None,
+        "localNote": log_local_note(row.status, row.error_summary),
         "repairAccountId": repair_account_id,
         "statusLabel": {
             "SUCCESS": "成功",
@@ -327,7 +383,7 @@ def consecutive_failure_top(ops: Session, tenant_id: int, *, limit: int = 5) -> 
         streak = 0
         last_error = ""
         for status, err in status_rows:
-            if status == "FAILED":
+            if status in FAILURE_STREAK_STATUS:
                 streak += 1
                 if not last_error and err:
                     last_error = err
@@ -929,11 +985,18 @@ def quality_summary(
 ):
     tenant_id = tenant_of(actor)
     top = consecutive_failure_top(ops, tenant_id)
+    rate = calc_success_rate_24h(ops, tenant_id)
     return ok(
         {
-            "successRate24h": calc_success_rate_24h(ops, tenant_id),
+            "successRate24h": rate,
             "consecutiveFailureAccountCount": len(top),
             "consecutiveFailureTop": top,
+            "healthEmptyNote": None
+            if rate is not None
+            else "近 24 小时本地调度尚未写入日志。Cookie 与浏览器引擎不在本页维护。",
+            "failureEmptyNote": None
+            if top
+            else "连续失败含失败、Cookie 失效与浏览器引擎不可用；当前没有这样的账号。",
         }
     )
 
@@ -980,7 +1043,14 @@ def manual_fill(
     row.success_count += 1
     row.updated_at = utcnow()
     ops.flush()
-    return ok({"logId": str(log.id), "taskId": str(row.id), "status": "SUCCESS"})
+    return ok(
+        {
+            "logId": str(log.id),
+            "taskId": str(row.id),
+            "status": "SUCCESS",
+            "localNote": "已在本地写入成功日志，未调用 Collector，也不校验 Cookie 或浏览器引擎。",
+        }
+    )
 
 
 @router.get("/log/page")
@@ -1016,8 +1086,17 @@ def log_page(
         for task in ops.scalars(select(CollectTask).where(CollectTask.id.in_(task_ids))).all():
             tasks[task.id] = task
     rate_24h = calc_success_rate_24h(ops, tenant_id)
+    empty_title, empty_hint = log_empty_copy(
+        status=status,
+        task_id=taskId,
+        account_id=accountId,
+        date_from=dateFrom,
+        date_to=dateTo,
+    )
     resp = paged([log_vo(ops, row, tasks) for row in rows], total, page_no, size)
     resp["data"]["successRate24h"] = rate_24h
+    resp["data"]["emptyTitle"] = empty_title
+    resp["data"]["emptyHint"] = empty_hint
     return resp
 
 
