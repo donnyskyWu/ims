@@ -574,3 +574,129 @@ def test_fin_period_close_locks_writes_then_r4_red_correction():
         json=_cost_body(),
     )
     assert still.json()["code"] == 0, still.json()
+
+
+def _profit_on_day(auth: dict, deps: tuple[int, int, int, int], day: str, gmv: float, cost: dict) -> str:
+    account_id, person_id, phone_id, _room_id = deps
+    payload = register_payload(account_id, person_id, phone_id, None)
+    payload["topic"] = f"pytest metric {uuid.uuid4().hex[:6]}"
+    reg = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=payload,
+    )
+    assert reg.json()["code"] == 0, reg.json()
+    code = reg.json()["data"]["sessionCode"]
+    detail = client.get(f"/admin-api/ims/live/register/{code}", headers=auth).json()["data"]
+    if detail.get("sessionStatus") == "PENDING_RISK_CHECK":
+        client.put(
+            f"/admin-api/ims/live/register/{code}/approve",
+            headers=auth,
+            json={"approve": True},
+        )
+    report = client.post(
+        f"/admin-api/ims/live/report/{code}",
+        headers=auth,
+        json={
+            "actualStart": f"{day}T20:00:00+08:00",
+            "actualEnd": f"{day}T22:00:00+08:00",
+            "gmv": gmv,
+            "refundAmount": 0,
+            "orderCount": 10,
+            "viewerCount": 100,
+            "peakOnline": 20,
+            "newFans": 1,
+            "adCost": cost.get("adCost", 0),
+        },
+    )
+    assert report.json()["code"] == 0, report.json()
+    confirm = client.put(f"/admin-api/ims/live/report/{code}/confirm", headers=auth)
+    assert confirm.json()["code"] == 0, confirm.json()
+    created = client.post(
+        f"/admin-api/ims/fin/cost/{code}",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=_cost_body(**cost),
+    )
+    assert created.json()["code"] == 0, created.json()
+    confirmed = client.put(f"/admin-api/ims/fin/cost/{code}/confirm", headers=auth)
+    assert confirmed.json()["code"] == 0, confirmed.json()
+    return code
+
+
+def test_fin_profit_list_sorts_by_metric_and_summarizes():
+    """#111 · 毛利 / 经营利润 / 净利润切换排序，汇总跟随口径；负数净利润可落库。"""
+    auth = headers()
+    deps = seed_live_deps()
+    stamp = uuid.uuid4().int
+    day = f"{2060 + stamp % 25:04d}-{1 + (stamp // 25) % 12:02d}-{1 + (stamp // 400) % 27:02d}"
+    high_gross = _profit_on_day(
+        auth,
+        deps,
+        day,
+        100000,
+        {"adCost": 120000, "rechargeCost": 0, "fixedCost": 0, "sampleCost": 0, "shareDaren": 0, "shareRealname": 0},
+    )
+    high_net = _profit_on_day(
+        auth,
+        deps,
+        day,
+        30000,
+        {"adCost": 0, "rechargeCost": 0, "fixedCost": 0, "sampleCost": 0, "shareDaren": 0, "shareRealname": 0},
+    )
+
+    def listed(kind: str):
+        res = client.get(
+            "/admin-api/ims/fin/profit/list",
+            headers=auth,
+            params={"dateFrom": day, "dateTo": day, "profitType": kind, "pageNo": 1, "pageSize": 20},
+        )
+        body = res.json()
+        assert body["code"] == 0, body
+        assert body["data"]["profitType"] == kind
+        assert body["data"]["total"] == 2
+        return body["data"]["list"]
+
+    net_rows = listed("NET")
+    assert [row["sessionCode"] for row in net_rows] == [high_net, high_gross]
+    assert net_rows[0]["netProfit"] == 28500.0
+    assert net_rows[0]["grossProfit"] == 28500.0
+    assert net_rows[1]["netProfit"] == -25000.0
+    assert net_rows[1]["grossProfit"] == 95000.0
+    assert net_rows[1]["operatingProfit"] == -25000.0
+
+    gross_rows = listed("GROSS")
+    assert [row["sessionCode"] for row in gross_rows] == [high_gross, high_net]
+
+    operating_rows = listed("OPERATING")
+    assert [row["sessionCode"] for row in operating_rows] == [high_net, high_gross]
+
+    default_rows = client.get(
+        "/admin-api/ims/fin/profit/list",
+        headers=auth,
+        params={"dateFrom": day, "dateTo": day, "pageSize": 20},
+    ).json()
+    assert default_rows["data"]["profitType"] == "NET"
+    assert [row["sessionCode"] for row in default_rows["data"]["list"]] == [high_net, high_gross]
+
+    bad = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"profitType": "GMV"})
+    assert bad.json()["code"] == 1001
+
+    summary = client.get(
+        "/admin-api/ims/fin/profit/summary",
+        headers=auth,
+        params={"dateFrom": day, "dateTo": day, "profitType": "GROSS"},
+    ).json()
+    assert summary["code"] == 0, summary
+    assert summary["data"]["profitType"] == "GROSS"
+    assert summary["data"]["shownProfit"] == 123500.0
+    assert summary["data"]["totalNetProfit"] == 3500.0
+    assert summary["data"]["totalOperatingProfit"] == 3500.0
+    assert summary["data"]["sessionCount"] == 2
+
+    net_summary = client.get(
+        "/admin-api/ims/fin/profit/summary",
+        headers=auth,
+        params={"dateFrom": day, "dateTo": day, "profitType": "net"},
+    ).json()
+    assert net_summary["data"]["profitType"] == "NET"
+    assert net_summary["data"]["shownProfit"] == 3500.0
