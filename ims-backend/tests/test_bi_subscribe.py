@@ -76,10 +76,11 @@ def test_bi_subscribe_list_and_share_link():
     rejected = client.put(
         f"/admin-api/ims/bi/subscribe/share-approval/{lid2}",
         headers=auth,
-        json={"approvalStatus": "REJECTED"},
+        json={"approvalStatus": "REJECTED", "note": "成本口径未确认"},
     )
     assert rejected.json()["code"] == 0
     assert rejected.json()["data"]["approvalStatus"] == "REJECTED"
+    assert rejected.json()["data"]["approvalNote"] == "成本口径未确认"
 
     expired = client.put(
         f"/admin-api/ims/bi/subscribe/share-approval/{lid}",

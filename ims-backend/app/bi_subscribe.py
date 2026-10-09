@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -42,6 +43,22 @@ PERIOD_CANON = {
 PERIOD_CODE = {"DAY": "DAILY", "WEEK": "WEEKLY", "MONTH": "MONTHLY"}
 SUB_STATUSES = frozenset({"ACTIVE", "PAUSED"})
 APPROVAL_STATUSES = frozenset({"NOT_REQUIRED", "PENDING", "APPROVED", "REJECTED", "EXPIRED"})
+_CLOCK = re.compile(r"^(\d{1,2}):(\d{2})$")
+
+
+def push_clock_ok(raw: str) -> bool:
+    """空白沿用默认 09:00。非空须含一段合法时刻，允许「周一 09:00」。"""
+    text = (raw or "").strip()
+    if not text:
+        return True
+    for token in text.replace("：", ":").split():
+        matched = _CLOCK.match(token)
+        if matched is None:
+            continue
+        hour, minute = int(matched.group(1)), int(matched.group(2))
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return True
+    return False
 
 
 class SubscribeBody(BaseModel):
@@ -66,7 +83,7 @@ class ShareLinkBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     reportId: int
     sensitive: bool = False
-    expireDays: int = 7
+    expireDays: int | float = 7
 
 
 class ShareApprovalBody(BaseModel):
@@ -216,6 +233,7 @@ def share_vo(row: BiShareLink, names: dict[int, str]) -> dict:
         "targetId": row.target_id,
         "targetName": row.target_name,
         "approvalStatus": row.approval_status,
+        "approvalNote": row.approval_note or "",
         "expireAt": row.expire_at,
         "creatorName": names.get(row.creator_user_id, ""),
         "createdAt": iso(row.created_at),
@@ -369,6 +387,8 @@ def subscribe_create(
     period = canon_period(body.period)
     if period is None:
         return fail(1001, "周期无效")
+    if not push_clock_ok(body.pushTime):
+        return fail(1001, "推送时刻应为 HH:mm")
     now = utcnow()
     row = BiSubscription(
         sub_name=name,
@@ -410,7 +430,9 @@ def subscribe_update(
             return fail(1001, "周期无效")
         row.period = p
     if body.pushTime is not None:
-        row.push_time = body.pushTime.strip()
+        if not push_clock_ok(body.pushTime):
+            return fail(1001, "推送时刻应为 HH:mm")
+        row.push_time = body.pushTime.strip() or "09:00"
     if body.channels is not None:
         row.channels = body.channels.strip()
     if body.status is not None:
@@ -468,8 +490,11 @@ def share_link_create(
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
-    if body.expireDays < 7 or body.expireDays > 30:
+    days = body.expireDays
+    whole = isinstance(days, int) or (isinstance(days, float) and days.is_integer())
+    if isinstance(days, bool) or not whole or days < 7 or days > 30:
         return fail(1197, "分享有效期须为 7~30 天")
+    days = int(days)
     report = get_report(db, tenant_id, body.reportId, actor, request.state.scope)
     if report is None:
         row = db.get(BiReportDef, body.reportId)
@@ -484,7 +509,7 @@ def share_link_create(
         target_id=report.id,
         target_name=report.report_name,
         approval_status=approval,
-        expire_at=expire_str(body.expireDays),
+        expire_at=expire_str(days),
         creator_user_id=actor.id,
         dept_id=report.dept_id or primary_dept_id(db, actor.id, tenant_id),
         tenant_id=tenant_id,
@@ -548,7 +573,12 @@ def share_link_approval(
     st = body.approvalStatus.strip().upper()
     if st not in {"APPROVED", "REJECTED", "EXPIRED"}:
         return fail(1001, "审批状态无效")
+    note = (body.note or "").strip()
+    if st == "REJECTED" and not note:
+        return fail(1001, "驳回说明必填")
     row.approval_status = st
+    if st == "REJECTED":
+        row.approval_note = note[:256]
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_user_id])
     return ok(share_vo(row, names))

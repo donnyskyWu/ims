@@ -212,6 +212,22 @@ def ensure_content_typeset_columns() -> None:
                 conn.execute(text(f"ALTER TABLE ims_content_layout_template {', '.join(alters)}"))
 
 
+def ensure_bi_share_note_column() -> None:
+    """已有库补分享驳回说明。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_bi_share_link" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_bi_share_link")}
+    if "approval_note" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE ims_bi_share_link ADD COLUMN approval_note VARCHAR(256) NOT NULL DEFAULT ''")
+        )
+
+
 def ensure_bi_br212_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -470,6 +486,7 @@ def init_db() -> None:
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()
     ensure_bi_br212_columns()
+    ensure_bi_share_note_column()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()
     ensure_exam_question_answer_columns()

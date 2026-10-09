@@ -22,7 +22,12 @@ router = APIRouter(prefix="/bi/query", tags=["bi-query"])
 router.include_router(bi_drill_router)
 
 _IDENT = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_LIMIT = 1000
+
+
+def limit_ok(limit: int) -> bool:
+    return 1 <= limit <= _MAX_LIMIT
 
 
 class QueryCondition(BaseModel):
@@ -135,11 +140,16 @@ def build_preview_sql(
         if op == "LIKE":
             sql += f" AND `{col}` LIKE :{key}"
             params[key] = f"%{cond.value}%"
-        elif op == "RANGE" and "," in cond.value:
-            lo, hi = cond.value.split(",", 1)
+        elif op == "RANGE":
+            parts = cond.value.split(",", 1)
+            if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+                return None, fail(1001, "请同时填写开始和结束日期")
+            lo, hi = parts[0].strip(), parts[1].strip()
+            if _DATE.match(lo) and _DATE.match(hi) and lo > hi:
+                return None, fail(1001, "开始日期不能晚于结束日期")
             sql += f" AND `{col}` BETWEEN :{key}_lo AND :{key}_hi"
-            params[f"{key}_lo"] = lo.strip()
-            params[f"{key}_hi"] = hi.strip()
+            params[f"{key}_lo"] = lo
+            params[f"{key}_hi"] = hi
         else:
             sql += f" AND `{col}` = :{key}"
             params[key] = cond.value
@@ -155,8 +165,9 @@ def build_preview_sql(
             direction = "DESC" if item.startswith("-") else "ASC"
             order_parts.append(f"`{mf.column_name}` {direction}")
         sql += " ORDER BY " + ", ".join(order_parts)
-    limit = max(1, min(config.limit or 100, _MAX_LIMIT))
-    sql += f" LIMIT {limit}"
+    if not limit_ok(config.limit):
+        return None, fail(1001, "行数上限须为 1~1000")
+    sql += f" LIMIT {config.limit}"
     return sql, params
 
 
@@ -173,11 +184,14 @@ def execute_query(
     rows = ops.execute(text(sql), params).mappings().all()
     columns = config.selectFields or [f.field_code for f in fields]
     data_rows = [{c: row.get(c) for c in columns} for row in rows]
+    empty = len(data_rows) == 0
     return {
         "sql": sql,
         "columns": columns,
         "rows": data_rows,
         "total": len(data_rows),
+        "empty": empty,
+        "emptyReason": "当前条件下暂无数据" if empty else "",
     }, None
 
 
@@ -229,6 +243,8 @@ def query_create(
 ):
     if not body.queryName.strip() or not body.entityCode.strip():
         return fail(1001, "必填项缺失")
+    if not limit_ok(body.config.limit):
+        return fail(1001, "行数上限须为 1~1000")
     entity, fields, err = load_entity_bundle(ims, actor, body.entityCode)
     if err:
         return err

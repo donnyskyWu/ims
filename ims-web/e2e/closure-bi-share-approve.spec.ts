@@ -107,16 +107,23 @@ test.describe('bi share approval closure S12', () => {
     const pendingRow = page.locator('.tbl-wrap tbody tr', { hasText: reportName })
     await expect(pendingRow).toBeVisible({ timeout: 15_000 })
 
+    await pendingRow.getByText('驳回', { exact: true }).click()
+    const rejectModal = page.getByTestId('bi-share-reject-confirm')
+    await expect(rejectModal).toBeVisible()
+    await rejectModal.getByTestId('bi-share-reject-ok').click()
+    await expect(rejectModal.getByTestId('bi-share-reject-error')).toContainText('驳回说明必填')
+    await rejectModal.getByTestId('bi-share-reject-note-input').fill('成本口径未确认')
     const rejectResp = page.waitForResponse(
       (r) => r.url().includes('/share-approval/') && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await pendingRow.getByText('驳回', { exact: true }).click()
+    await rejectModal.getByTestId('bi-share-reject-ok').click()
     const rejectBody = (await (await rejectResp).json()) as {
       code: number
-      data?: { approvalStatus?: string }
+      data?: { approvalStatus?: string; approvalNote?: string }
     }
     expect(rejectBody.code).toBe(0)
     expect(rejectBody.data?.approvalStatus).toBe('REJECTED')
+    expect(rejectBody.data?.approvalNote).toBe('成本口径未确认')
 
     await page.locator('.tab', { hasText: '分享链接' }).click()
     const rejectedRow = page.locator('.tbl-wrap tbody tr', { hasText: reportName })
