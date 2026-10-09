@@ -152,14 +152,14 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary
+      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">冲话费记录</h2>
-          <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 月度差异率 ≥ 2% 返回 1026</div>
+          <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
         </div>
       </div>
       <div class="recharge-table">
@@ -172,13 +172,14 @@
               <th>充值日期</th>
               <th>凭证</th>
               <th>核对</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!rechargeRows.length">
-              <td colspan="6">暂无冲话费记录</td>
+              <td colspan="7">暂无冲话费记录</td>
             </tr>
-            <tr v-for="item in rechargeRows" :key="String(item.id)">
+            <tr v-for="item in rechargeRows" :key="String(item.id)" data-testid="acct-recharge-row">
               <td class="mono">{{ item.accountNo }}</td>
               <td class="num">¥{{ moneyText(item.amount) }}</td>
               <td>{{ channelLabel(String(item.channel || '')) }}</td>
@@ -192,6 +193,26 @@
                 {{ verifyLabel(String(item.verifyStatus || '')) }}
                 <span v-if="item.verifyDiff != null"> ¥{{ moneyText(item.verifyDiff) }}</span>
               </td>
+              <td>
+                <button
+                  v-if="!item.verifyStatus || item.verifyStatus === 'UNVERIFIED'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-recharge-edit"
+                  @click="openRechargeEdit(item)"
+                >
+                  编辑
+                </button>
+                <button
+                  v-else
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-recharge-unlock"
+                  @click="openUnlock(item)"
+                >
+                  解锁
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -202,7 +223,7 @@
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">成本汇总报表</h2>
-          <div class="sub">GET /account/recharge/summary · 期间按月过滤 · 维度：账号 / 部门 / 平台 · 合计与当月冲话费记录一致</div>
+          <div class="sub">GET /account/recharge/summary · 期间按月过滤 · 维度：账号 / 部门 / 平台 · 合计与当月冲话费记录一致 · 可导出 xlsx / csv</div>
         </div>
       </div>
       <form class="qbar" data-testid="acct-summary-filters" @submit.prevent="loadSummary">
@@ -217,8 +238,15 @@
           </select>
         </label>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="acct-summary-query" :disabled="summaryBusy">汇总</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="acct-summary-export-xlsx" :disabled="exportBusy" @click="exportSummary('XLSX')">
+          导出 XLSX
+        </button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="acct-summary-export-csv" :disabled="exportBusy" @click="exportSummary('CSV')">
+          导出 CSV
+        </button>
       </form>
       <p v-if="summaryMsg" class="hint" data-testid="acct-summary-msg">{{ summaryMsg }}</p>
+      <p v-if="exportNote" class="hint" data-testid="acct-summary-export-note">{{ exportNote }}</p>
       <div class="recharge-table">
         <table data-testid="acct-summary-table">
           <thead>
@@ -662,7 +690,7 @@
       </template>
     </ProtoDrawer>
 
-    <ProtoDrawer :open="rechargeOpen" title="登记冲话费" width="560px" @close="closeRecharge">
+    <ProtoDrawer :open="rechargeOpen" :title="rechargeEditId ? '编辑冲话费' : '登记冲话费'" width="560px" @close="closeRecharge">
       <div v-if="rechargeAccount" data-testid="acct-recharge-drawer" class="formrow one">
         <div class="fld">
           <label>账号</label>
@@ -692,7 +720,39 @@
       <template #foot>
         <button class="btn btn-sec" type="button" @click="closeRecharge">取消</button>
         <button class="btn btn-pri" type="button" data-testid="acct-recharge-submit" :disabled="rechargeBusy" @click="submitRecharge">
-          提交登记
+          {{ rechargeEditId ? '保存更正' : '提交登记' }}
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="unlockOpen" title="解锁已核对记录" width="520px" @close="closeUnlock">
+      <div v-if="unlockRow" data-testid="acct-unlock-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ unlockRow.accountNo }}</div>
+        </div>
+        <div class="fld">
+          <label>金额 / 日期</label>
+          <div>¥{{ moneyText(unlockRow.amount) }} · {{ unlockRow.rechargeDate }}</div>
+        </div>
+        <div class="fld">
+          <label>核对状态</label>
+          <div data-testid="acct-unlock-status">{{ verifyLabel(String(unlockRow.verifyStatus || '')) }}</div>
+        </div>
+        <p class="hint">已核对记录不能直接改。管理员解锁后回到未核对，才能再编辑。差异记录须已生成财务核查工单。</p>
+        <p v-if="unlockMsg" class="hint" data-testid="acct-unlock-msg">{{ unlockMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeUnlock">关闭</button>
+        <button
+          v-if="unlockRow && unlockRow.verifyStatus !== 'UNVERIFIED'"
+          class="btn btn-pri"
+          type="button"
+          data-testid="acct-unlock-submit"
+          :disabled="unlockBusy"
+          @click="submitUnlock"
+        >
+          确认解锁
         </button>
       </template>
     </ProtoDrawer>
@@ -861,10 +921,17 @@ const summaryRows = ref<SummaryRow[]>([])
 const summaryTotals = ref({ totalAmount: 0, recordCount: 0, diffAmount: 0 })
 const summaryBusy = ref(false)
 const summaryMsg = ref('')
+const exportBusy = ref(false)
+const exportNote = ref('')
 const rechargeOpen = ref(false)
+const rechargeEditId = ref<number | null>(null)
 const rechargeAccount = ref<Record<string, unknown> | null>(null)
 const rechargeBusy = ref(false)
 const rechargeMsg = ref('')
+const unlockOpen = ref(false)
+const unlockRow = ref<Record<string, unknown> | null>(null)
+const unlockBusy = ref(false)
+const unlockMsg = ref('')
 const rechargeForm = reactive({
   amount: '',
   channel: 'ALIPAY',
@@ -1527,6 +1594,7 @@ async function testConnection() {
 }
 
 function openRecharge(row: Record<string, unknown>) {
+  rechargeEditId.value = null
   rechargeAccount.value = row
   rechargeForm.amount = ''
   rechargeForm.channel = 'ALIPAY'
@@ -1536,9 +1604,92 @@ function openRecharge(row: Record<string, unknown>) {
   rechargeOpen.value = true
 }
 
+function openRechargeEdit(item: Record<string, unknown>) {
+  rechargeEditId.value = Number(item.id)
+  rechargeAccount.value = {
+    id: item.accountId,
+    accountNo: item.accountNo,
+    nickname: item.accountNo,
+  }
+  rechargeForm.amount = item.amount == null ? '' : String(item.amount)
+  rechargeForm.channel = String(item.channel || 'ALIPAY')
+  rechargeForm.rechargeDate = String(item.rechargeDate || '')
+  rechargeForm.voucherUrl = String(item.voucherUrl || '')
+  rechargeMsg.value = ''
+  rechargeOpen.value = true
+}
+
 function closeRecharge() {
   rechargeOpen.value = false
   rechargeAccount.value = null
+  rechargeEditId.value = null
+}
+
+function closeUnlock() {
+  unlockOpen.value = false
+  unlockRow.value = null
+}
+
+function openUnlock(item: Record<string, unknown>) {
+  unlockRow.value = item
+  unlockMsg.value = ''
+  unlockOpen.value = true
+}
+
+async function submitUnlock() {
+  if (!unlockRow.value) return
+  unlockBusy.value = true
+  unlockMsg.value = ''
+  try {
+    const res = await http.post(`/account/recharge/${unlockRow.value.id}/unlock`, {})
+    const data = res.data?.data as { message?: string; verifyStatus?: string }
+    unlockMsg.value = data?.message || '已解锁，可再次编辑'
+    if (unlockRow.value) unlockRow.value = { ...unlockRow.value, verifyStatus: 'UNVERIFIED', verifyDiff: null }
+    await loadRecharges()
+  } catch (e: unknown) {
+    unlockMsg.value = bizMessage(e)
+  } finally {
+    unlockBusy.value = false
+  }
+}
+
+async function exportSummary(format: 'XLSX' | 'CSV') {
+  exportBusy.value = true
+  exportNote.value = ''
+  try {
+    if (!summaryForm.month) summaryForm.month = todayUtc().slice(0, 7)
+    const res = await http.get('/account/recharge/summary/export', {
+      params: { month: summaryForm.month, groupBy: summaryForm.groupBy, format },
+    })
+    const data = (res.data?.data || {}) as { downloadUrl?: string; fileName?: string }
+    const downloadUrl = String(data.downloadUrl || '')
+    const fileName = String(data.fileName || `recharge_summary.${format === 'CSV' ? 'csv' : 'xlsx'}`)
+    if (!downloadUrl) {
+      exportNote.value = '导出失败'
+      return
+    }
+    const token = localStorage.getItem('ims_access')
+    const fileRes = await fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!fileRes.ok) {
+      exportNote.value = `导出失败（${fileRes.status}）`
+      return
+    }
+    const blob = await fileRes.blob()
+    const anchor = document.createElement('a')
+    anchor.href = URL.createObjectURL(blob)
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(anchor.href)
+    exportNote.value = `已导出 ${fileName} · ${summaryForm.month} · ${summaryForm.groupBy} · 合计 ¥${moneyText(summaryTotals.value.totalAmount)}`
+  } catch (e: unknown) {
+    exportNote.value = bizMessage(e)
+  } finally {
+    exportBusy.value = false
+  }
 }
 
 function closeVerify() {
@@ -1598,18 +1749,22 @@ async function submitRecharge() {
       rechargeMsg.value = '1001 金额格式不合法'
       return
     }
-    await http.post(
-      '/account/recharge',
-      {
-        accountId: rechargeAccount.value.id,
-        amount,
-        channel: rechargeForm.channel,
-        rechargeDate: rechargeForm.rechargeDate,
-        voucherUrl: rechargeForm.voucherUrl.trim() || undefined,
-      },
-      { headers: { clientToken: crypto.randomUUID().replace(/-/g, '') } },
-    )
-    rechargeMsg.value = '冲话费已登记'
+    const payload = {
+      accountId: rechargeAccount.value.id,
+      amount,
+      channel: rechargeForm.channel,
+      rechargeDate: rechargeForm.rechargeDate,
+      voucherUrl: rechargeForm.voucherUrl.trim() || undefined,
+    }
+    if (rechargeEditId.value) {
+      await http.put(`/account/recharge/${rechargeEditId.value}`, payload)
+      rechargeMsg.value = '冲话费已更正'
+    } else {
+      await http.post('/account/recharge', payload, {
+        headers: { clientToken: crypto.randomUUID().replace(/-/g, '') },
+      })
+      rechargeMsg.value = '冲话费已登记'
+    }
     rechargeOpen.value = false
     await loadRecharges()
     await loadSummary()

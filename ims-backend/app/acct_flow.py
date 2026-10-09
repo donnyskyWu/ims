@@ -1,11 +1,16 @@
 """ACCT-001 账号领用 / 归还、ACCT-002 流转 / 收回 / 解冻回池、ACCT-004 冲话费登记、账实核对与成本汇总（CORP 账号页）。"""
 
+import csv
+import io
 import json
 import re
+import secrets
+import time
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, Header
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -752,6 +757,49 @@ class RechargeCreateBody(BaseModel):
     remark: str | None = None
 
 
+def _recharge_fields(body: RechargeCreateBody) -> tuple[dict | None, object | None]:
+    amount = _money(body.amount)
+    if amount is None:
+        return None, fail(1001, "金额格式不合法")
+    channel = (body.channel or "").strip()
+    if not channel or len(channel) > 64:
+        return None, fail(1001, "充值渠道必填")
+    voucher = (body.voucher_url or "").strip()
+    if len(voucher) > 512:
+        return None, fail(1001, "凭证地址过长")
+    remark = (body.remark or "").strip()
+    if len(remark) > 256:
+        return None, fail(1001, "备注过长")
+    if not DATE_RE.match(body.recharge_date or ""):
+        return None, fail(1001, "充值日期格式不合法")
+    try:
+        date.fromisoformat(body.recharge_date)
+    except ValueError:
+        return None, fail(1001, "充值日期格式不合法")
+    if date.fromisoformat(body.recharge_date) > utcnow().date():
+        return None, fail(1001, "充值日期不得晚于今日")
+    if amount > VOUCHER_LIMIT and not voucher:
+        return None, fail(1025, "冲话费凭证必填（金额 > 5000 元）")
+    return {
+        "amount": amount,
+        "channel": channel,
+        "voucher": voucher,
+        "remark": remark,
+        "recharge_date": body.recharge_date,
+    }, None
+
+
+def _load_recharge(db: Session, actor: User, recharge_id: int) -> AccountRecharge | None:
+    row = db.get(AccountRecharge, recharge_id)
+    if row is None or row.tenant_id != tenant_of(actor):
+        return None
+    return row
+
+
+def _can_edit_recharge(db: Session, actor: User) -> bool:
+    return _is_admin(db, actor) or _is_finance(db, actor)
+
+
 @router.post("/account/recharge")
 def create_recharge(
     body: RechargeCreateBody,
@@ -771,28 +819,13 @@ def create_recharge(
             name = (owner.nickname or owner.username) if owner is not None else ""
         return ok(recharge_vo(existing, name, reveal_voucher=reveal))
 
-    amount = _money(body.amount)
-    if amount is None:
-        return fail(1001, "金额格式不合法")
-    channel = (body.channel or "").strip()
-    if not channel or len(channel) > 64:
-        return fail(1001, "充值渠道必填")
-    voucher = (body.voucher_url or "").strip()
-    if len(voucher) > 512:
-        return fail(1001, "凭证地址过长")
-    remark = (body.remark or "").strip()
-    if len(remark) > 256:
-        return fail(1001, "备注过长")
-    if not DATE_RE.match(body.recharge_date or ""):
-        return fail(1001, "充值日期格式不合法")
-    try:
-        recharge_day = date.fromisoformat(body.recharge_date)
-    except ValueError:
-        return fail(1001, "充值日期格式不合法")
-    if recharge_day > utcnow().date():
-        return fail(1001, "充值日期不得晚于今日")
-    if amount > VOUCHER_LIMIT and not voucher:
-        return fail(1025, "冲话费凭证必填（金额 > 5000 元）")
+    parsed, err = _recharge_fields(body)
+    if err is not None:
+        return err
+    amount = parsed["amount"]
+    channel = parsed["channel"]
+    voucher = parsed["voucher"]
+    remark = parsed["remark"]
 
     ops = ops_session()
     try:
@@ -1103,21 +1136,18 @@ def _summary_accounts(account_ids: set[int]) -> dict[int, PlatformAccount]:
         ops.close()
 
 
-@router.get("/account/recharge/summary")
-def recharge_summary(
-    month: str = "",
-    groupBy: str = "",
-    actor: User = Depends(current_user),
-    db: Session = Depends(db_session),
-):
-    """成本汇总。期间为 month（yyyy-MM）；维度 ACCOUNT / DEPT / PLATFORM（契约 2.4.5）。"""
+def _summary_query(month: str, group_by: str) -> tuple[str, str] | object:
     period = (month or "").strip()
     if not MONTH_RE.match(period):
         return fail(1001, "汇总月份格式不合法")
-    group_by = (groupBy or "").strip().upper()
-    if group_by not in SUMMARY_GROUPS:
+    grouped = (group_by or "").strip().upper()
+    if grouped not in SUMMARY_GROUPS:
         return fail(1001, "汇总维度不合法")
+    return period, grouped
 
+
+def _summary_payload(db: Session, actor: User, period: str, group_by: str) -> dict:
+    """成本汇总。期间为 month（yyyy-MM）；维度 ACCOUNT / DEPT / PLATFORM（契约 2.4.5）。"""
     tenant = tenant_of(actor)
     rows = list(
         db.scalars(
@@ -1173,15 +1203,246 @@ def recharge_summary(
         }
         for item in ordered
     ]
+    return {
+        "groupBy": group_by,
+        "month": period,
+        "rows": payload_rows,
+        "totals": {
+            "totalAmount": _money_out(total_amount),
+            "recordCount": len(rows),
+            "diffAmount": _money_out(total_diff),
+        },
+    }
+
+
+@router.get("/account/recharge/summary")
+def recharge_summary(
+    month: str = "",
+    groupBy: str = "",
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    parsed = _summary_query(month, groupBy)
+    if not isinstance(parsed, tuple):
+        return parsed
+    period, group_by = parsed
+    return ok(_summary_payload(db, actor, period, group_by))
+
+
+def _summary_matrix(payload: dict) -> list[list[str]]:
+    header = ["维度键", "维度", "金额", "笔数", "差异金额"]
+    body = [header]
+    for row in payload["rows"]:
+        body.append(
+            [
+                str(row["dimKey"]),
+                str(row["dimLabel"]),
+                f"{float(row['totalAmount']):.2f}",
+                str(row["recordCount"]),
+                f"{float(row['diffAmount']):.2f}",
+            ]
+        )
+    totals = payload["totals"]
+    body.append(
+        [
+            "合计",
+            str(payload["groupBy"]),
+            f"{float(totals['totalAmount']):.2f}",
+            str(totals["recordCount"]),
+            f"{float(totals['diffAmount']):.2f}",
+        ]
+    )
+    return body
+
+
+def _build_csv(rows: list[list[str]]) -> bytes:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerows(rows)
+    return buf.getvalue().encode("utf-8-sig")
+
+
+EXPORT_TTL_SEC = 600
+CSV_MEDIA = "text/csv; charset=utf-8"
+XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_EXPORTS: dict[str, tuple] = {}
+
+
+def _purge_exports(now: float) -> None:
+    dead = [key for key, item in _EXPORTS.items() if item[0] < now]
+    for key in dead:
+        _EXPORTS.pop(key, None)
+
+
+@router.get("/account/recharge/summary/export")
+def recharge_summary_export(
+    month: str = "",
+    groupBy: str = "",
+    format: str = "XLSX",
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """成本汇总导出。复用汇总查询，格式 XLSX / CSV。"""
+    parsed = _summary_query(month, groupBy)
+    if not isinstance(parsed, tuple):
+        return parsed
+    period, group_by = parsed
+    fmt = (format or "").strip().upper()
+    if fmt not in {"XLSX", "CSV"}:
+        return fail(1001, "format 仅支持 XLSX 或 CSV")
+    payload = _summary_payload(db, actor, period, group_by)
+    matrix = _summary_matrix(payload)
+    if fmt == "CSV":
+        body = _build_csv(matrix)
+        media = CSV_MEDIA
+        suffix = "csv"
+    else:
+        from app.dc_trace import build_xlsx
+
+        body = build_xlsx(matrix)
+        media = XLSX_MEDIA
+        suffix = "xlsx"
+    now = time.time()
+    _purge_exports(now)
+    token = secrets.token_urlsafe(24)
+    filename = f"recharge_summary_{period}_{group_by}.{suffix}"
+    _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, media, filename, actor.id)
     return ok(
         {
-            "groupBy": group_by,
+            "downloadUrl": f"/admin-api/ims/account/recharge/summary/export/file?token={token}",
+            "expiresIn": EXPORT_TTL_SEC,
+            "fileName": filename,
             "month": period,
-            "rows": payload_rows,
-            "totals": {
-                "totalAmount": _money_out(total_amount),
-                "recordCount": len(rows),
-                "diffAmount": _money_out(total_diff),
-            },
+            "groupBy": group_by,
+            "format": fmt,
+        }
+    )
+
+
+@router.get("/account/recharge/summary/export/file")
+def recharge_summary_export_file(token: str, actor: User = Depends(current_user)):
+    now = time.time()
+    _purge_exports(now)
+    item = _EXPORTS.get(token)
+    if item is None or item[0] < now:
+        return fail(1002, "下载链接已过期")
+    if item[4] != actor.id:
+        return fail(1008, "无数据权限")
+    _expires, body, media, filename, _user_id = item
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.put("/account/recharge/{recharge_id}")
+def update_recharge(
+    recharge_id: int,
+    body: RechargeCreateBody,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """编辑冲话费。契约 2.4.3：仅未核对可改；已核对须先由管理员解锁。"""
+    if not _can_edit_recharge(db, actor):
+        return fail(1008, "仅财务或管理员可编辑冲话费")
+    row = _load_recharge(db, actor, recharge_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.verify_status != "UNVERIFIED":
+        return fail(1001, "已核对记录不可直接编辑，请先解锁")
+    if body.account_id != row.account_id:
+        return fail(1001, "不可变更账号")
+    parsed, err = _recharge_fields(body)
+    if err is not None:
+        return err
+    ops = ops_session()
+    try:
+        account = _load_account(ops, row.account_id)
+        if account is None:
+            return fail(1504, "资源不可用")
+        if account.status == "CANCELLED":
+            return fail(1001, "已注销账号不可冲话费")
+    finally:
+        ops.close()
+    row.amount = float(parsed["amount"])
+    row.channel = parsed["channel"]
+    row.voucher_url = parsed["voucher"]
+    row.recharge_date = parsed["recharge_date"]
+    row.remark = parsed["remark"]
+    row.updated_at = utcnow()
+    _append_timeline(
+        db,
+        account_id=row.account_id,
+        event_type="RECHARGE",
+        ref_no=f"RC{row.id}",
+        ref_id=row.id,
+        operator=actor,
+        summary=f"冲话费更正 · ¥{parsed['amount']} · {parsed['channel']}",
+        tenant_id=tenant_of(actor),
+    )
+    return ok(None)
+
+
+def _diff_ticket_ready(db: Session, actor: User, row: AccountRecharge) -> bool:
+    month = (row.recharge_date or "")[:7]
+    if not MONTH_RE.match(month):
+        return False
+    ticket = db.scalar(
+        select(AccountRechargeVerify.id).where(
+            AccountRechargeVerify.tenant_id == tenant_of(actor),
+            AccountRechargeVerify.month == month,
+            AccountRechargeVerify.status == "DIFF",
+            AccountRechargeVerify.work_order_id > 0,
+            or_(
+                AccountRechargeVerify.account_id == row.account_id,
+                AccountRechargeVerify.account_id == 0,
+            ),
+        )
+    )
+    return ticket is not None
+
+
+@router.post("/account/recharge/{recharge_id}/unlock")
+def unlock_recharge(
+    recharge_id: int,
+    actor: User = Depends(current_user),
+    db: Session = Depends(db_session),
+):
+    """已核对记录解锁。管理员（R1）把 MATCHED / DIFF 退回未核对后再编辑。
+
+    一致记录直接解锁。差异记录须已生成财务核查工单（1026）。财务角色不能解锁。
+    """
+    if not _is_admin(db, actor):
+        return fail(1008, "仅管理员可解锁已核对记录")
+    row = _load_recharge(db, actor, recharge_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.verify_status == "UNVERIFIED":
+        return fail(1001, "未核对记录无需解锁")
+    if row.verify_status not in {"MATCHED", "DIFF"}:
+        return fail(1001, "核对状态不可解锁")
+    if row.verify_status == "DIFF" and not _diff_ticket_ready(db, actor, row):
+        return fail(1001, "差异记录须先生成财务核查工单")
+    previous = row.verify_status
+    row.verify_status = "UNVERIFIED"
+    row.verify_diff = None
+    row.updated_at = utcnow()
+    _append_timeline(
+        db,
+        account_id=row.account_id,
+        event_type="RECHARGE",
+        ref_no=f"RC{row.id}",
+        ref_id=row.id,
+        operator=actor,
+        summary=f"解锁已核对记录 · 原状态 {previous}",
+        tenant_id=tenant_of(actor),
+    )
+    return ok(
+        {
+            "id": row.id,
+            "verifyStatus": "UNVERIFIED",
+            "previousStatus": previous,
+            "message": "已解锁，可再次编辑",
         }
     )
