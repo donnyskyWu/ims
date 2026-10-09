@@ -28,8 +28,10 @@ from app.models import (
     LiveSession,
     LiveSessionSeq,
     LiveSessionToken,
+    Role,
     Todo,
     User,
+    UserRole,
     WorkMessage,
 )
 from app.ops_models import LiveRoom, Phone, PlatformAccount, Realname, SimCard
@@ -294,6 +296,137 @@ def run_risk_checks(
     return score, level, results
 
 
+YELLOW_TASK = "live_yellow_approve"
+YELLOW_REF = "live_session"
+YELLOW_REJECT = "live_yellow_reject"
+
+
+def yellow_assignees(db: Session, session: LiveSession) -> list[int]:
+    """黄级审批待办给运营总监。没有 R4 时记在责任人身上，方便本地看到。"""
+    tenant_id = session.tenant_id or 0
+    roles = db.scalars(
+        select(Role).where(
+            Role.deleted == 0,
+            Role.status == "ENABLED",
+            Role.tenant_id.in_((0, tenant_id)),
+        )
+    ).all()
+    role_ids = [
+        role.id
+        for role in roles
+        if (role.role_key or "").strip().lower() in {"r4"}
+        or (role.role_key or "").strip().lower().endswith(":r4")
+        or "运营总监" in (role.role_name or "")
+    ]
+    user_ids: list[int] = []
+    if role_ids:
+        linked = list(db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all())
+        if linked:
+            users = db.scalars(
+                select(User).where(User.id.in_(linked), User.deleted == 0, User.tenant_id == tenant_id)
+            ).all()
+            user_ids = [user.id for user in users]
+    if not user_ids and session.responsible_user_id:
+        user_ids = [session.responsible_user_id]
+    return user_ids
+
+
+def close_yellow_todos(db: Session, session: LiveSession) -> None:
+    rows = db.scalars(
+        select(Todo).where(
+            Todo.task_type == YELLOW_TASK,
+            Todo.ref_type == YELLOW_REF,
+            Todo.ref_id == session.id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for row in rows:
+        row.status = "DONE"
+
+
+def _yellow_message(db: Session, user_id: int, session: LiveSession, title: str, content: str, ref_type: str) -> None:
+    """站内一条，钉钉渠道再记一条。不调用外发。"""
+    tenant_id = session.tenant_id or 0
+    for channel in ("IN_APP", "DINGTALK"):
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title=title,
+                content=content,
+                channel=channel,
+                read_flag=0,
+                source_module="LIVE",
+                ref_type=ref_type,
+                ref_id=session.id,
+                tenant_id=tenant_id,
+            )
+        )
+
+
+def ensure_yellow_notice(db: Session, session: LiveSession) -> None:
+    title = f"黄级待审批 {session.session_code}（钉钉未外发）"[:128]
+    content = "1044 黄色风险需审批放行。钉钉未外发，短信未外发。"[:512]
+    tenant_id = session.tenant_id or 0
+    for user_id in yellow_assignees(db, session):
+        existing = db.scalar(
+            select(Todo).where(
+                Todo.assignee_user_id == user_id,
+                Todo.task_type == YELLOW_TASK,
+                Todo.ref_type == YELLOW_REF,
+                Todo.ref_id == session.id,
+                Todo.status == "PENDING",
+            )
+        )
+        if existing is None:
+            db.add(
+                Todo(
+                    assignee_user_id=user_id,
+                    task_type=YELLOW_TASK,
+                    ref_type=YELLOW_REF,
+                    ref_id=session.id,
+                    title=title,
+                    content=content,
+                    status="PENDING",
+                    tenant_id=tenant_id,
+                )
+            )
+        sent = db.scalar(
+            select(WorkMessage).where(
+                WorkMessage.user_id == user_id,
+                WorkMessage.source_module == "LIVE",
+                WorkMessage.ref_type == YELLOW_TASK,
+                WorkMessage.ref_id == session.id,
+            )
+        )
+        if sent is None:
+            _yellow_message(db, user_id, session, title, content, YELLOW_TASK)
+
+
+def notify_yellow_reject(db: Session, session: LiveSession, comment: str) -> None:
+    user_id = session.responsible_user_id
+    if not user_id:
+        return
+    title = f"黄级整改 {session.session_code}（钉钉未外发）"[:128]
+    content = f"黄级审批已拒绝。{comment}。钉钉未外发，短信未外发。"[:512]
+    _yellow_message(db, user_id, session, title, content, YELLOW_REJECT)
+
+
+def yellow_notice_text(db: Session, row: LiveSession) -> str | None:
+    if row.risk_level != "YELLOW" or row.session_status != "PENDING_RISK_CHECK":
+        return None
+    found = db.scalar(
+        select(Todo).where(
+            Todo.task_type == YELLOW_TASK,
+            Todo.ref_type == YELLOW_REF,
+            Todo.ref_id == row.id,
+            Todo.status == "PENDING",
+        )
+    )
+    if found is None:
+        return None
+    return "已写入待办，钉钉未外发，短信未外发"
+
+
 def apply_risk(
     db: Session,
     session: LiveSession,
@@ -312,12 +445,15 @@ def apply_risk(
         db.add(row)
     session.risk_score = score
     session.risk_level = level
-    if not release:
-        return
-    if level == "GREEN":
-        session.session_status = "APPROVED"
+    if release:
+        if level == "GREEN":
+            session.session_status = "APPROVED"
+        else:
+            session.session_status = "PENDING_RISK_CHECK"
+    if level == "YELLOW" and release:
+        ensure_yellow_notice(db, session)
     else:
-        session.session_status = "PENDING_RISK_CHECK"
+        close_yellow_todos(db, session)
 
 
 def supplement_pending(row: LiveSession) -> bool:
@@ -434,6 +570,8 @@ def session_vo(
         "approverUserId": row.approver_user_id,
         "approverName": names.get(row.approver_user_id or 0),
         "approveComment": row.approve_comment or None,
+        "cancelReason": row.cancel_reason or None,
+        "yellowNotice": yellow_notice_text(db, row),
         "footballRoomId": row.football_room_id,
         "footballSyncStatus": row.football_sync_status,
         "lastFootballSyncAt": row.last_football_sync_at,
@@ -1458,9 +1596,11 @@ def register_approve(
     if body.approve:
         row.session_status = "APPROVED"
         row.approver_user_id = actor.id
+        close_yellow_todos(db, row)
     else:
         row.session_status = "PENDING_RISK_CHECK"
         row.approver_user_id = None
+        notify_yellow_reject(db, row, comment or "")
     return ok(None)
 
 
@@ -1475,10 +1615,16 @@ def register_cancel(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
-    if not body.cancelReason:
+    reason = (body.cancelReason or "").strip()
+    if not reason:
         return fail(1001, "取消原因必填")
+    if len(reason) > 256:
+        return fail(1001, "取消原因过长")
+    if row.session_status not in ("PENDING_RISK_CHECK", "APPROVED"):
+        return fail(1042, "当前状态不可取消")
     row.session_status = "CANCELLED"
-    row.cancel_reason = body.cancelReason
+    row.cancel_reason = reason
+    close_yellow_todos(db, row)
     return ok(None)
 
 
@@ -1508,6 +1654,7 @@ def register_start(
     if blocked is not None:
         return blocked
     row.session_status = "LIVE"
+    close_yellow_todos(db, row)
     return ok(None)
 
 

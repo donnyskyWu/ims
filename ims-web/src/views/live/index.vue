@@ -65,10 +65,23 @@
               <td>{{ row.topic }}</td>
               <td>{{ row.platform }}</td>
               <td class="num" style="font-size: 12px">{{ row.planStartTime }}</td>
-              <td>{{ row.riskLevel || '—' }}</td>
+              <td>
+                <span data-testid="live-risk-level" :data-level="row.riskLevel || ''" :style="{ color: riskColor(row.riskLevel), fontWeight: 600 }">{{ row.riskLevel || '—' }}</span>
+              </td>
               <td>{{ row.sessionStatus }}</td>
               <td>{{ syncLabel(row.footballSyncStatus) }}</td>
-              <td><button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button></td>
+              <td>
+                <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
+                <button
+                  v-if="row.sessionStatus === 'APPROVED'"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="live-row-start"
+                  @click="startFromRow(row)"
+                >
+                  确认开播
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -119,8 +132,12 @@
       </div>
     </div>
 
-    <ProtoDrawer :open="registerOpen" title="开播登记" width="720px" @close="registerOpen = false">
+    <ProtoDrawer :open="registerOpen" :title="registerTitle" width="720px" :z-index="130" @close="closeRegister">
       <div class="formrow one">
+        <div v-if="editingCode" class="fld">
+          <label>场次 ID（不可变更）</label>
+          <input :value="editingCode" readonly data-testid="live-session-code-lock" />
+        </div>
         <div class="fld">
           <label>平台账号 id *</label>
           <input v-model.number="reg.accountId" type="number" />
@@ -148,8 +165,9 @@
       </div>
       <div v-if="registerError" class="hint bad" data-testid="live-register-error">{{ registerError }}</div>
       <template #footer>
-        <button class="btn btn-sec" type="button" @click="registerOpen = false">取消</button>
-        <button class="btn btn-pri" type="button" @click="submitRegister">提交登记</button>
+        <button class="btn btn-sec" type="button" @click="closeRegister">取消</button>
+        <button v-if="!editingCode" class="btn btn-pri" type="button" @click="submitRegister">提交登记</button>
+        <button v-else class="btn btn-pri" type="button" data-testid="live-reregister-save" @click="submitRegister">保存整改</button>
       </template>
     </ProtoDrawer>
 
@@ -225,11 +243,27 @@
         <div class="acts" style="margin-bottom: 8px">
           <button class="btn btn-pri btn-sm" type="button" @click="doRisk">执行风控</button>
           <button class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
+          <button v-if="showReregister" class="btn btn-sec btn-sm" type="button" data-testid="live-reregister-open" @click="openEdit">重新登记整改</button>
+          <button v-if="showEdit" class="btn btn-sec btn-sm" type="button" data-testid="live-edit-open" @click="openEdit">编辑</button>
+          <button v-if="showCancel" class="btn btn-sec btn-sm" type="button" data-testid="live-cancel-open" @click="cancelForm = true">取消场次</button>
+        </div>
+        <div v-if="showCancel && cancelForm" class="formrow one" style="margin-bottom: 8px">
+          <div class="fld">
+            <label>取消原因 *</label>
+            <input v-model="cancelReason" data-testid="live-cancel-reason" maxlength="256" />
+          </div>
+          <div class="acts">
+            <button class="btn btn-pri btn-sm" type="button" data-testid="live-cancel-confirm" @click="doCancel">确认取消</button>
+          </div>
         </div>
         <p v-if="actionError" class="hint bad" data-testid="live-action-error">{{ actionError }}</p>
         <p data-testid="live-session-status">风险分 {{ detail.riskScore ?? '—' }} · {{ detail.riskLevel || '—' }} · 状态 {{ detail.sessionStatus }}</p>
-        <p v-if="riskConclusion" data-testid="live-risk-conclusion">{{ riskConclusion }}</p>
+        <p v-if="riskConclusion" data-testid="live-risk-conclusion" :style="{ color: riskColor(detail.riskLevel), fontWeight: 600 }">{{ riskConclusion }}</p>
+        <p v-if="startBlockedHint" class="hint bad" data-testid="live-start-blocked">{{ startBlockedHint }}</p>
+        <p v-if="detail.yellowNotice" data-testid="live-yellow-notice">{{ detail.yellowNotice }}</p>
         <p v-if="detail.approverName" data-testid="live-approver">审批人 {{ detail.approverName }}</p>
+        <p v-if="detail.approveComment" data-testid="live-approve-comment-text">审批意见：{{ detail.approveComment }}</p>
+        <p v-if="detail.cancelReason" data-testid="live-cancel-reason-text">取消原因：{{ detail.cancelReason }}</p>
         <div v-if="showYellowApprove" class="formrow one" style="margin-top: 8px">
           <div class="fld">
             <label>审批意见</label>
@@ -254,8 +288,10 @@
         <table v-if="detail.riskCheckResults?.length">
           <thead><tr><th>检查项</th><th>结果</th><th>权重分</th></tr></thead>
           <tbody>
-            <tr v-for="c in detail.riskCheckResults" :key="c.id">
-              <td>{{ c.checkItem }}</td><td>{{ c.checkResult }}</td><td>{{ c.scoreWeight }}</td>
+            <tr v-for="c in detail.riskCheckResults" :key="c.checkItem" data-testid="live-risk-check" :data-result="c.checkResult">
+              <td>{{ checkItemLabel(c.checkItem) }}</td>
+              <td :style="{ color: checkColor(c.checkResult), fontWeight: 600 }">{{ checkResultLabel(c.checkResult) }}</td>
+              <td>{{ c.scoreWeight }}</td>
             </tr>
           </tbody>
         </table>
@@ -379,8 +415,11 @@ const statusOptions = [
 
 const registerOpen = ref(false)
 const registerError = ref('')
+const editingCode = ref('')
 const actionError = ref('')
 const approveComment = ref('')
+const cancelForm = ref(false)
+const cancelReason = ref('')
 const supplementOpen = ref(false)
 const supplementError = ref('')
 const supplementComment = ref('')
@@ -609,8 +648,66 @@ async function exportLedger() {
   }
 }
 
+const registerTitle = computed(() => (editingCode.value ? '重新登记' : '开播登记'))
+
+function riskColor(level: string | undefined) {
+  if (level === 'RED') return 'var(--red)'
+  if (level === 'YELLOW') return '#b8860b'
+  if (level === 'GREEN') return 'var(--green)'
+  return ''
+}
+
+function checkColor(result: string) {
+  if (result === 'FAIL') return 'var(--red)'
+  if (result === 'WARN') return '#b8860b'
+  return 'var(--green)'
+}
+
+function checkItemLabel(item: string) {
+  const labels: Record<string, string> = {
+    CERT_VALID: '证件有效性',
+    ACCOUNT_STATUS: '账号状态',
+    BALANCE: '话费余额',
+    BLACKLIST: '黑名单词',
+    DEVICE_OWNER: '设备归属',
+  }
+  return labels[item] || item
+}
+
+function checkResultLabel(result: string) {
+  if (result === 'FAIL') return '不通过'
+  if (result === 'WARN') return '预警'
+  if (result === 'PASS') return '通过'
+  return result
+}
+
 function openRegister() {
+  editingCode.value = ''
   clientToken = crypto.randomUUID()
+  registerError.value = ''
+  registerOpen.value = true
+}
+
+function closeRegister() {
+  const code = editingCode.value
+  registerOpen.value = false
+  editingCode.value = ''
+  if (code) {
+    openDetail({ sessionCode: code })
+    tab.value = '风控登记'
+  }
+}
+
+function openEdit() {
+  if (!detail.value) return
+  const current = detail.value
+  editingCode.value = current.sessionCode
+  reg.accountId = current.accountId
+  reg.realnamePersonId = current.realnamePersonId
+  reg.deviceId = current.deviceAssetIds?.[0] || 0
+  reg.footballRoomId = current.footballRoomId || ''
+  reg.topic = current.topic || ''
+  reg.planStartTime = current.planStartTime || ''
   registerError.value = ''
   registerOpen.value = true
 }
@@ -622,13 +719,24 @@ async function submitRegister() {
     const body = {
       accountId: reg.accountId,
       realnamePersonId: reg.realnamePersonId,
-      responsibleUserId: 1,
+      responsibleUserId: editingCode.value ? detail.value?.responsibleUserId || 1 : 1,
       deviceAssetIds: [reg.deviceId],
-      platform: 'DOUYIN',
+      platform: editingCode.value ? detail.value?.platform || 'DOUYIN' : 'DOUYIN',
       topic: reg.topic,
       planStartTime: reg.planStartTime,
       planEndTime: '',
       footballRoomId: reg.footballRoomId || undefined,
+    }
+    if (editingCode.value) {
+      const code = editingCode.value
+      await apiPut(`/live/register/${code}`, body)
+      registerOpen.value = false
+      editingCode.value = ''
+      hint.value = `已按原场次整改 ${code}`
+      await loadList()
+      await openDetail({ sessionCode: code })
+      tab.value = '风控登记'
+      return
     }
     const data = await apiPost('/live/register', body, { headers: { clientToken } })
     registerOpen.value = false
@@ -652,6 +760,7 @@ const basicLines = computed(() => {
     { k: '责任人', v: d.responsibleUserName },
     { k: '主题', v: d.topic },
     { k: '状态', v: d.sessionStatus },
+    { k: '取消原因', v: d.cancelReason || '—' },
     { k: '补录', v: d.isSupplement ? d.supplementReason || '待审批' : '否' },
     { k: 'Football room', v: d.footballRoomId || '—' },
   ]
@@ -659,10 +768,28 @@ const basicLines = computed(() => {
 
 const riskConclusion = computed(() => {
   const level = detail.value?.riskLevel as string | undefined
-  if (level === 'GREEN') return '绿色自动放行'
-  if (level === 'YELLOW') return '黄色待审批'
-  if (level === 'RED') return '红色禁止开播'
+  const status = detail.value?.sessionStatus as string | undefined
+  if (level === 'GREEN') return '绿色自动放行，可直接确认开播'
+  if (level === 'YELLOW' && status === 'APPROVED') return '黄色待审批，已放行，可直接确认开播'
+  if (level === 'YELLOW') return '黄色待审批，等待审批'
+  if (level === 'RED') return '红色禁止开播，请整改后重新登记'
   return ''
+})
+
+const beforeLive = computed(() => {
+  const status = detail.value?.sessionStatus
+  return status === 'PENDING_RISK_CHECK' || status === 'APPROVED'
+})
+
+const showReregister = computed(() => beforeLive.value && detail.value?.riskLevel === 'RED')
+const showEdit = computed(() => beforeLive.value && detail.value?.riskLevel !== 'RED')
+const showCancel = computed(() => beforeLive.value)
+
+const startBlockedHint = computed(() => {
+  const status = detail.value?.sessionStatus as string | undefined
+  if (!status || status === 'APPROVED' || status === 'LIVE' || status === 'ENDED') return ''
+  if (status === 'CANCELLED') return '已取消不可开播'
+  return '未放行不可开播'
 })
 
 const showYellowApprove = computed(
@@ -676,6 +803,8 @@ const showSupplementApprove = computed(
 async function openDetail(row: any) {
   detailOpen.value = true
   tab.value = '基本信息'
+  cancelForm.value = false
+  actionError.value = ''
   reportError.value = ''
   reportMissing.value = []
   correcting.value = false
@@ -757,6 +886,32 @@ async function doRisk() {
   await refreshDetail()
 }
 
+async function startFromRow(row: any) {
+  await openDetail(row)
+  tab.value = '风控登记'
+  await doStart()
+}
+
+async function doCancel() {
+  if (!detail.value) return
+  actionError.value = ''
+  if (!cancelReason.value.trim()) {
+    actionError.value = '取消原因必填'
+    return
+  }
+  try {
+    await apiPut(`/live/register/${detail.value.sessionCode}/cancel`, { cancelReason: cancelReason.value.trim() })
+    hint.value = '场次已取消'
+    cancelReason.value = ''
+    cancelForm.value = false
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+  }
+  await refreshDetail()
+  await loadList()
+}
+
 async function doStart() {
   if (!detail.value) return
   actionError.value = ''
@@ -773,7 +928,7 @@ async function doStart() {
 async function doApprove(pass: boolean) {
   if (!detail.value) return
   actionError.value = ''
-  if (pass && !approveComment.value.trim()) {
+  if (!approveComment.value.trim()) {
     actionError.value = '审批意见必填'
     return
   }
