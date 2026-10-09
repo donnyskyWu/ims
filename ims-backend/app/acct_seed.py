@@ -51,6 +51,8 @@ E2E_XTODO_ACCOUNT_NO = "AC-E2E-XTODO"
 E2E_XTODO_NICK = "E2E流转待办抖音"
 E2E_ASSETX_ACCOUNT_NO = "AC-E2E-ASSETX"
 E2E_ASSETX_NICK = "E2E资产转移抖音"
+E2E_RECYCLE_ACCOUNT_NO = "AC-E2E-RECYCLE"
+E2E_RECYCLE_NICK = "E2E回收抖音"
 E2E_SUM_DEPT_USER = "e2e_acct_sum"
 E2E_SUM_DEPT_NICK = "汇总部门"
 E2E_SUM_DEPT_ID = 70070
@@ -110,6 +112,7 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
         _ensure_named_account(ops, admin, E2E_TAIL_ACCOUNT_NO, E2E_TAIL_NICK)
         _ensure_named_account(ops, admin, E2E_XTODO_ACCOUNT_NO, E2E_XTODO_NICK)
         _ensure_named_account(ops, admin, E2E_ASSETX_ACCOUNT_NO, E2E_ASSETX_NICK)
+        _ensure_named_account(ops, admin, E2E_RECYCLE_ACCOUNT_NO, E2E_RECYCLE_NICK)
         ops.commit()
     finally:
         ops.close()
@@ -262,6 +265,7 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
             E2E_TAIL_ACCOUNT_NO,
             E2E_XTODO_ACCOUNT_NO,
             E2E_ASSETX_ACCOUNT_NO,
+            E2E_RECYCLE_ACCOUNT_NO,
         ):
             row = _account_row(ops, account_no)
             if row is None:

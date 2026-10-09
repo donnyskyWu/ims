@@ -636,3 +636,8 @@ def expire_stats(db: Session = Depends(db_session), actor: User = Depends(curren
             ],
         }
     )
+
+
+from app.cert_original import router as cert_original_router  # noqa: E402
+
+router.include_router(cert_original_router)

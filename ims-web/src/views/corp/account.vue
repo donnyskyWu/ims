@@ -24,6 +24,20 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
     </form>
+    <p class="hint" data-testid="acct-pool-status">
+      池状态 · 可领用 {{ poolCounts.IN_POOL }} · 在用 {{ poolCounts.IN_USE }} · 冻结 {{ poolCounts.FROZEN }} · 已归还
+      {{ poolCounts.RETURNED }} · 已注销 {{ poolCounts.CANCELLED }}
+    </p>
+    <div data-testid="acct-pool-events">
+      <p v-if="!poolEvents.length" class="hint">最近池动态：暂无</p>
+      <ul v-else class="pool-event-list">
+        <li v-for="ev in poolEvents" :key="ev.id" data-testid="acct-pool-event">
+          <span class="mono">{{ ev.eventTime }}</span>
+          <strong>{{ ev.eventLabel || eventLabel(ev.eventType) }}</strong>
+          {{ ev.snapshotSummary }}
+        </li>
+      </ul>
+    </div>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -74,9 +88,19 @@
                   v-if="row.status === 'IN_USE'"
                   class="btn btn-sec btn-sm"
                   type="button"
+                  data-testid="acct-return-open"
                   @click="openReturn(row)"
                 >
                   归还
+                </button>
+                <button
+                  v-if="row.status === 'RETURNED'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-recycle-open"
+                  @click="openRecycle(row)"
+                >
+                  回收回池
                 </button>
                 <button
                   v-if="row.status === 'IN_USE'"
@@ -152,7 +176,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 账号已绑定资产时提交或确认后提示同步办理资产转移（不阻断）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export
+      GET /corp/account/page?platformType={{ meta.platform }} · 池状态 GET /corp/account/status/summary · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 账号已绑定资产时提交或确认后提示同步办理资产转移（不阻断）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 回收回池 → POST /account/{id}/recycle（RETURNED → IN_POOL）· 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export · 交接凭证 → GET /account/timeline/{id}/export
     </p>
 
     <div data-testid="acct-recharge-list" class="recharge-list">
@@ -552,6 +576,18 @@
         <p v-if="collectMsg" class="hint">{{ collectMsg }}</p>
       </div>
       <div v-if="detail && activeTab === 'timeline'">
+        <div class="acts" style="margin-bottom: 8px">
+          <button
+            class="btn btn-sec btn-sm"
+            type="button"
+            data-testid="acct-timeline-export"
+            :disabled="timelineExportBusy"
+            @click="exportTimeline"
+          >
+            导出交接凭证
+          </button>
+        </div>
+        <p v-if="timelineExportNote" class="hint" data-testid="acct-timeline-export-note">{{ timelineExportNote }}</p>
         <p v-if="timelineLoading" class="hint">加载时间线…</p>
         <p v-else-if="timelineError" class="hint">{{ timelineError }}</p>
         <ul v-else-if="timelineEvents.length" class="timeline-list">
@@ -811,6 +847,37 @@
       </template>
     </ProtoDrawer>
 
+    <ProtoDrawer :open="recycleOpen" title="回收回账号池" width="520px" @close="closeRecycle">
+      <div v-if="recycleAccount" data-testid="acct-recycle-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ recycleAccount.accountNo }} · {{ recycleAccount.nickname }}</div>
+        </div>
+        <div class="fld">
+          <label>回收说明<i class="req">*</i></label>
+          <input v-model="recycleRemark" data-testid="acct-recycle-remark" placeholder="回收原因" />
+        </div>
+        <p class="hint">仅已归还账号。回收后回到可领用池并清空责任人。冻结账号请走解冻。</p>
+        <p v-if="recycleResult" class="hint" data-testid="acct-recycle-status">
+          已回收回池 · 状态 {{ recycleResult.status }}
+        </p>
+        <p v-if="recycleMsg" class="hint" data-testid="acct-recycle-msg">{{ recycleMsg }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeRecycle">关闭</button>
+        <button
+          v-if="!recycleResult"
+          class="btn btn-pri"
+          type="button"
+          data-testid="acct-recycle-submit"
+          :disabled="recycleBusy"
+          @click="submitRecycle"
+        >
+          确认回收
+        </button>
+      </template>
+    </ProtoDrawer>
+
     <ProtoDrawer :open="rechargeOpen" :title="rechargeEditId ? '编辑冲话费' : '登记冲话费'" width="560px" @close="closeRecharge">
       <div v-if="rechargeAccount" data-testid="acct-recharge-drawer" class="formrow one">
         <div class="fld">
@@ -983,6 +1050,7 @@ const statusOptions = [
   { value: 'IN_POOL', label: '池可领用' },
   { value: 'FROZEN', label: '冻结' },
   { value: 'RETURNED', label: '已归还' },
+  { value: 'CANCELLED', label: '已注销' },
 ]
 
 const tabs = [
@@ -1187,6 +1255,24 @@ const unfreezeBusy = ref(false)
 const unfreezeMsg = ref('')
 const unfreezeRemark = ref('E2E 管理员解冻回池')
 const unfreezeResult = ref<{ status: string } | null>(null)
+const recycleOpen = ref(false)
+const recycleAccount = ref<Record<string, unknown> | null>(null)
+const recycleBusy = ref(false)
+const recycleMsg = ref('')
+const recycleRemark = ref('E2E 管理员回收回池')
+const recycleResult = ref<{ status: string } | null>(null)
+const poolCounts = reactive({
+  IN_POOL: 0,
+  IN_USE: 0,
+  FROZEN: 0,
+  RETURNED: 0,
+  CANCELLED: 0,
+})
+const poolEvents = ref<
+  Array<{ id: number; eventType: string; eventLabel?: string; eventTime: string; snapshotSummary: string }>
+>([])
+const timelineExportBusy = ref(false)
+const timelineExportNote = ref('')
 
 const rechargeNeedsVoucher = computed(() => {
   const amount = Number(rechargeForm.amount)
@@ -1237,6 +1323,21 @@ function followerText(row: Record<string, unknown> | null) {
 function statusLabel(code: string) {
   const hit = statusOptions.find((o) => o.value === code)
   return hit ? hit.label : code
+}
+
+function eventLabel(code: string) {
+  const labels: Record<string, string> = {
+    REGISTER: '登记',
+    APPLY: '领用',
+    TRANSFER: '流转',
+    RETURN: '归还',
+    RECHARGE: '冲话费',
+    FREEZE: '冻结',
+    UNFREEZE: '解冻',
+    CANCEL: '注销',
+    RECYCLE: '回收回池',
+  }
+  return labels[code] || code
 }
 
 function channelLabel(code: string) {
@@ -1331,6 +1432,25 @@ async function load() {
     await loadRecharges()
     await loadSummary()
     await loadTransfers()
+    await loadPoolTail()
+  }
+}
+
+async function loadPoolTail() {
+  try {
+    const [statusRes, eventRes] = await Promise.all([
+      http.get('/corp/account/status/summary', { params: { platformType: meta.value.platform } }),
+      http.get('/account/timeline/events', { params: { pageNo: 1, pageSize: 5 } }),
+    ])
+    const counts = (statusRes.data?.data?.counts || {}) as Record<string, number>
+    poolCounts.IN_POOL = Number(counts.IN_POOL || 0)
+    poolCounts.IN_USE = Number(counts.IN_USE || 0)
+    poolCounts.FROZEN = Number(counts.FROZEN || 0)
+    poolCounts.RETURNED = Number(counts.RETURNED || 0)
+    poolCounts.CANCELLED = Number(counts.CANCELLED || 0)
+    poolEvents.value = eventRes.data?.data?.list || []
+  } catch {
+    /* 池状态保持上次数字 */
   }
 }
 
@@ -1684,6 +1804,80 @@ async function submitRecall() {
     recallMsg.value = bizMessage(e)
   } finally {
     recallBusy.value = false
+  }
+}
+
+function closeRecycle() {
+  recycleOpen.value = false
+  recycleAccount.value = null
+  recycleResult.value = null
+}
+
+function openRecycle(row: Record<string, unknown>) {
+  recycleAccount.value = row
+  recycleRemark.value = 'E2E 管理员回收回池'
+  recycleMsg.value = ''
+  recycleResult.value = null
+  recycleOpen.value = true
+}
+
+async function submitRecycle() {
+  if (!recycleAccount.value) return
+  recycleBusy.value = true
+  recycleMsg.value = ''
+  try {
+    if (!recycleRemark.value.trim()) {
+      recycleMsg.value = '1001 回收说明必填'
+      return
+    }
+    const res = await http.post(`/account/${recycleAccount.value.id}/recycle`, {
+      remark: recycleRemark.value.trim(),
+    })
+    const vo = res.data?.data as { status: string }
+    recycleResult.value = vo
+    recycleMsg.value = '已回收回池 · 状态 IN_POOL'
+    await load()
+  } catch (e: unknown) {
+    recycleMsg.value = bizMessage(e)
+  } finally {
+    recycleBusy.value = false
+  }
+}
+
+async function exportTimeline() {
+  if (!detail.value?.id) return
+  timelineExportBusy.value = true
+  timelineExportNote.value = ''
+  try {
+    const res = await http.get(`/account/timeline/${detail.value.id}/export`)
+    const data = (res.data?.data || {}) as { downloadUrl?: string; fileName?: string; message?: string }
+    const downloadUrl = String(data.downloadUrl || '')
+    const fileName = String(data.fileName || 'handover.pdf')
+    if (!downloadUrl) {
+      timelineExportNote.value = '导出失败'
+      return
+    }
+    const token = localStorage.getItem('ims_access')
+    const fileRes = await fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!fileRes.ok) {
+      timelineExportNote.value = `导出失败（${fileRes.status}）`
+      return
+    }
+    const blob = await fileRes.blob()
+    const anchor = document.createElement('a')
+    anchor.href = URL.createObjectURL(blob)
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(anchor.href)
+    timelineExportNote.value = `${data.message || '交接凭证已生成'} · ${fileName}`
+  } catch (e: unknown) {
+    timelineExportNote.value = bizMessage(e)
+  } finally {
+    timelineExportBusy.value = false
   }
 }
 
@@ -2087,12 +2281,14 @@ watch(activeTab, (tab) => {
   flex-wrap: wrap;
   gap: 6px;
 }
-.timeline-list {
+.timeline-list,
+.pool-event-list {
   list-style: none;
   padding: 0;
   margin: 0;
 }
-.timeline-list li {
+.timeline-list li,
+.pool-event-list li {
   padding: 8px 0;
   border-bottom: 1px solid var(--border, #eee);
 }
