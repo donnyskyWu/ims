@@ -19,10 +19,23 @@
       :class="{ bad: digitalShort }"
       data-testid="corp-cert-digital-banner"
     >
-      数字化率 {{ digitalPercent }}（目标&gt;95%，BR-005）
-      · 应数字化 {{ digital.totalExpected }} · 已数字化 {{ digital.digitalizedCount }}
-      · {{ digitalShort ? '未达标' : '达标' }}
+      <template v-if="digitalEmpty">
+        数字化率暂无应数字化档案（目标&gt;95%，BR-005） · 应数字化 0 · 已数字化 0
+      </template>
+      <template v-else>
+        数字化率 {{ digitalPercent }}（目标&gt;95%，BR-005）
+        · 应数字化 {{ digital.totalExpected }} · 已数字化 {{ digital.digitalizedCount }}
+        · {{ digitalShort ? '未达标' : '达标' }}
+      </template>
       <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-digital-open" @click="digitalOpen = true">查看统计</button>
+    </div>
+    <div
+      v-else-if="kind === 'certificate' && digitalError"
+      class="hint bad"
+      data-testid="corp-cert-digital-banner"
+    >
+      数字化率暂不可用。{{ digitalError }}
+      <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-digital-retry" @click="loadDigital">重试</button>
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
@@ -85,9 +98,9 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
-                <div class="empty">
-                  <div class="et">{{ error || emptyTitle }}</div>
-                  <div class="es">{{ error ? meta.emptyHint : emptyHintText }}</div>
+                <div class="empty" :data-testid="kind === 'certificate' ? 'corp-cert-list-empty' : undefined">
+                  <div class="et">{{ error || (kind === 'certificate' ? listEmptyTitle : emptyTitle) }}</div>
+                  <div class="es">{{ error ? meta.emptyHint : kind === 'certificate' ? listEmptyHint : emptyHintText }}</div>
                 </div>
               </td>
             </tr>
@@ -275,7 +288,19 @@
         </select>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-l3-save">保存白名单</button>
       </form>
+      <div data-testid="corp-cert-l3-list">
+        <p v-if="!levelWhitelist.length" class="hint" data-testid="corp-cert-l3-empty">白名单为空</p>
+        <p v-for="id in levelWhitelist" v-else :key="id" class="hint" data-testid="corp-cert-l3-item">
+          {{ userLabel(id) }}
+          <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-l3-remove" @click="removeWhitelist(id)">移除</button>
+        </p>
+      </div>
       <p v-if="levelMessage" class="hint" data-testid="corp-cert-level-message">{{ levelMessage }}</p>
+    </div>
+    <div v-if="kind === 'certificate' && !levelReady && levelError" class="empty" data-testid="corp-cert-level-unavailable">
+      <div class="et">级别配置暂不可用</div>
+      <div class="es">{{ levelError }}</div>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="corp-cert-level-retry" @click="loadLevelConfig">重试</button>
     </div>
     <div v-if="kind === 'certificate'" data-testid="corp-cert-audit-panel">
       <div class="sec">查看审计</div>
@@ -298,7 +323,7 @@
         <button class="btn btn-sec btn-sm" type="button" @click="resetAudit">重置</button>
       </form>
       <p class="hint" data-testid="corp-cert-audit-total">共 {{ auditTotal }} 条</p>
-      <p v-if="auditError" class="hint bad">{{ auditError }}</p>
+      <p v-if="auditError" class="hint bad" data-testid="corp-cert-audit-error">{{ auditError }}</p>
       <div class="tbl-block">
         <div class="expire-wrap">
           <table data-testid="corp-cert-audit-table">
@@ -345,7 +370,11 @@
       </div>
       <div class="sec">异常访问</div>
       <div data-testid="corp-cert-risk-report">
-        <p class="hint">近 1 小时成功查看超过 10 次。异常次数 {{ riskTotal }}。单证第 11 次会被 1035 拦住，不写入本表。</p>
+        <p class="hint">
+          近 1 小时成功查看超过 10 次。异常次数 {{ riskTotal }}。单证第 11 次会被 1035 拦住，不写入本表。
+          <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-risk-export" @click="openRiskExport">导出报告</button>
+        </p>
+        <p v-if="riskExportNote" class="hint" data-testid="corp-cert-risk-export-result">{{ riskExportNote }}</p>
         <div class="tbl-block">
           <div class="expire-wrap">
             <table data-testid="corp-cert-risk-table">
@@ -396,6 +425,15 @@
       >
         水印：{{ detail.watermarkText || '当前查看没有水印文本' }}。本接口不返回原图。
       </div>
+      <div v-if="kind === 'certificate'" data-testid="corp-cert-detail-audit">
+        <div class="sec">最近查看</div>
+        <p v-if="detailAuditLoading" class="hint">加载最近查看</p>
+        <p v-else-if="detailAuditError" class="hint">{{ detailAuditError }}</p>
+        <p v-else-if="!detailAudits.length" class="hint" data-testid="corp-cert-detail-audit-empty">暂无查看记录</p>
+        <p v-for="row in detailAudits" v-else :key="String(row.id)" class="hint" data-testid="corp-cert-detail-audit-row">
+          {{ show(row, 'viewerName') }} · {{ viewLevelLabel(row.viewLevel) }} · {{ durationLabel(row.viewDuration) }} · {{ show(row, 'createdAt') }}
+        </p>
+      </div>
       <div v-if="kind === 'realname'" class="hint">中介人与关联账号暂无。契约没有实名人写入接口。</div>
       <div v-if="kind === 'sim-card' && detail" class="hint">关联账号 {{ linkedCount }} 个。平台账号在下一片接入前这里是空列表。</div>
       <template #foot>
@@ -407,7 +445,9 @@
         <div class="formrow one"><div class="fld"><label>应数字化</label><div data-testid="corp-cert-digital-expected">{{ digital.totalExpected }}</div></div></div>
         <div class="formrow one"><div class="fld"><label>已数字化</label><div data-testid="corp-cert-digital-count">{{ digital.digitalizedCount }}</div></div></div>
         <div class="formrow one"><div class="fld"><label>数字化率</label><div data-testid="corp-cert-digital-rate">{{ digitalPercent }}</div></div></div>
-        <p class="hint">目标线 95%。未回收档案计入应数字化；已审核且有扫描件计入已数字化。{{ digitalShort ? '未达标' : '达标' }}。</p>
+        <p v-if="digitalEmpty" class="hint" data-testid="corp-cert-digital-empty">暂无应数字化档案。</p>
+        <p v-else class="hint">目标线 95%。未回收档案计入应数字化；已审核且有扫描件计入已数字化。{{ digitalShort ? '未达标' : '达标' }}。</p>
+        <p class="hint" data-testid="corp-cert-digital-type-empty">按证件类型的缺口暂无分项，仅展示合计。</p>
       </div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="digitalOpen = false">关闭</button>
@@ -578,6 +618,19 @@
         <button class="btn btn-pri" type="button" data-testid="corp-cert-remind-confirm" :disabled="remindSaving" @click="confirmRemind">{{ remindSaving ? '提交中…' : '确认催办' }}</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="riskExportOpen" title="导出异常访问报告" width="420px" @close="riskExportOpen = false">
+      <p class="hint" data-testid="corp-cert-risk-export-modal">
+        {{
+          riskUsers.length
+            ? `将导出 ${riskUsers.length} 名高频查看人。仅生成本地说明，不外发。`
+            : '当前没有可导出的异常访问。确认后仍只生成本地说明，不外发。'
+        }}
+      </p>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="riskExportOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-cert-risk-export-confirm" @click="confirmRiskExport">确认导出</button>
+      </template>
+    </ProtoDrawer>
     <ProtoDrawer :open="scanOpen" title="扫描到期" width="420px" @close="scanOpen = false">
       <div class="hint">按今日扫描已生效证件：剩余 30 天黄色、7 天红色、当天锁定，并写入工作台提醒。同一级别不重复推送。</div>
       <template #foot>
@@ -643,9 +696,13 @@ const error = ref('')
 const detailOpen = ref(false)
 const detail = ref<Row | null>(null)
 const viewError = ref('')
+const detailAudits = ref<Row[]>([])
+const detailAuditError = ref('')
+const detailAuditLoading = ref(false)
 const digitalOpen = ref(false)
 const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
 const digitalReady = ref(false)
+const digitalError = ref('')
 const fileOpen = ref(false)
 const fileError = ref('')
 const filePreview = ref('')
@@ -655,6 +712,7 @@ const fileResult = ref<{
   watermark?: { text?: string; opacity?: number; position?: string }
 } | null>(null)
 const levelReady = ref(false)
+const levelError = ref('')
 const levelRole = ref('')
 const levelValue = ref('2')
 const levelWhitelist = ref<number[]>([])
@@ -663,7 +721,17 @@ const levelPosition = ref('bottom-right')
 const levelMessage = ref('')
 const l3UserId = ref('')
 const digitalPercent = computed(() => `${(Number(digital.digitalizedRate || 0) * 100).toFixed(2)}%`)
-const digitalShort = computed(() => Number(digital.digitalizedRate) < 0.95)
+const digitalEmpty = computed(() => digitalReady.value && digital.totalExpected === 0)
+const digitalShort = computed(() => digitalReady.value && !digitalEmpty.value && Number(digital.digitalizedRate) < 0.95)
+const listFiltered = computed(() => !!(keyword.value.trim() || status.value))
+const listEmptyTitle = computed(() => {
+  if (kind.value === 'certificate' && listFiltered.value) return '当前筛选下没有证件'
+  return meta.value.empty
+})
+const listEmptyHint = computed(() => {
+  if (kind.value === 'certificate' && listFiltered.value) return '换一个持有人或状态，或重置筛选。'
+  return meta.value.emptyHint
+})
 const certFormOpen = ref(false)
 const certSaving = ref(false)
 const certFormError = ref('')
@@ -750,6 +818,8 @@ const l3Label = computed(() => {
 })
 const riskUsers = ref<{ userId: number; name: string; viewsInLastHour: number }[]>([])
 const riskTotal = ref(0)
+const riskExportOpen = ref(false)
+const riskExportNote = ref('')
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
@@ -1187,6 +1257,29 @@ async function loadRisk() {
   riskTotal.value = Number(data.abnormalTotal || 0)
 }
 
+function userLabel(id: number) {
+  const user = users.value.find((item) => Number(item.id) === id)
+  return user?.nickname || user?.username || String(id)
+}
+
+function levelRules() {
+  const role = levelRole.value.trim()
+  return role ? [{ target: 'ROLE', targetCode: role, viewLevel: 2 }] : []
+}
+
+function openRiskExport() {
+  riskExportOpen.value = true
+}
+
+function confirmRiskExport() {
+  const count = riskUsers.value.length
+  const names = riskUsers.value.map((item) => item.name || '未命名').join('、')
+  riskExportNote.value = count
+    ? `已生成异常访问报告（本地桩，未外发）。共 ${count} 人：${names}`
+    : '已生成异常访问报告（本地桩，未外发）。共 0 人。'
+  riskExportOpen.value = false
+}
+
 async function loadAudit() {
   auditLoading.value = true
   auditError.value = ''
@@ -1195,6 +1288,12 @@ async function loadAudit() {
       auditRows.value = []
       auditTotal.value = 0
       auditError.value = '请同时填写开始和结束日期'
+      return
+    }
+    if (auditFrom.value && auditTo.value && auditFrom.value > auditTo.value) {
+      auditRows.value = []
+      auditTotal.value = 0
+      auditError.value = '开始日期不能晚于结束日期'
       return
     }
     const params: Record<string, unknown> = { pageNo: auditPageNo.value, pageSize: auditPageSize }
@@ -1506,14 +1605,16 @@ function changeSize(event: Event) {
 }
 
 async function loadDigital() {
+  digitalError.value = ''
   try {
     const res = await http.get('/cert/archive/digital-metrics')
     const data = res.data?.data || {}
     digital.totalExpected = Number(data.totalExpected || 0)
     digital.digitalizedCount = Number(data.digitalizedCount || 0)
     digital.digitalizedRate = Number(data.digitalizedRate ?? 1)
-  } catch {
-    /* 横幅保持上次数字 */
+    digitalReady.value = true
+  } catch (e: unknown) {
+    if (!digitalReady.value) digitalError.value = errorMessage(e)
   } finally {
     digitalReady.value = true
   }
@@ -1537,8 +1638,10 @@ async function loadLevelConfig() {
     const res = await http.get('/cert/security/level-config')
     applyLevel((res.data?.data || {}) as Record<string, unknown>)
     levelReady.value = true
-  } catch {
+    levelError.value = ''
+  } catch (e: unknown) {
     levelReady.value = false
+    levelError.value = errorMessage(e)
   }
 }
 
@@ -1597,11 +1700,25 @@ async function saveWhitelist() {
     levelMessage.value = '请选择白名单用户'
     return
   }
-  const rules = levelRole.value.trim()
-    ? [{ target: 'ROLE', targetCode: levelRole.value.trim(), viewLevel: 2 }]
-    : []
+  if (levelWhitelist.value.includes(userId)) {
+    levelMessage.value = '该用户已在白名单'
+    return
+  }
   try {
-    await putLevel(rules, [userId])
+    await putLevel(levelRules(), [...levelWhitelist.value, userId])
+  } catch (e: unknown) {
+    levelMessage.value = errorMessage(e)
+  }
+}
+
+async function removeWhitelist(userId: number) {
+  levelMessage.value = ''
+  try {
+    await putLevel(
+      levelRules(),
+      levelWhitelist.value.filter((id) => id !== userId),
+    )
+    levelMessage.value = '已移出白名单，下次查看即按新级别'
   } catch (e: unknown) {
     levelMessage.value = errorMessage(e)
   }
@@ -1629,9 +1746,28 @@ async function openFileUrl(row: Row) {
   }
 }
 
+async function loadDetailAudit(certId: number) {
+  detailAudits.value = []
+  detailAuditError.value = ''
+  detailAuditLoading.value = true
+  try {
+    const res = await http.get('/cert/security/view-logs', {
+      params: { certId, pageNo: 1, pageSize: 5 },
+    })
+    detailAudits.value = asList(res.data?.data).slice(0, 5)
+  } catch (e: unknown) {
+    const msg = bizError(e)
+    detailAuditError.value = msg.includes('1008') ? '仅系统管理员可查看审计摘要' : msg
+  } finally {
+    detailAuditLoading.value = false
+  }
+}
+
 async function openDetail(row: Row) {
   detail.value = null
   viewError.value = ''
+  detailAudits.value = []
+  detailAuditError.value = ''
   detailOpen.value = true
   const id = row.id
   const url = kind.value === 'certificate' ? `/corp/resource/certificate/${id}/view` : `/corp/resource/${kind.value}/${id}`
@@ -1646,6 +1782,10 @@ async function openDetail(row: Row) {
     } else {
       detail.value = { status: errorMessage(e) }
     }
+  }
+  if (kind.value === 'certificate') {
+    const certId = Number(id)
+    if (Number.isFinite(certId)) await loadDetailAudit(certId)
   }
 }
 
@@ -1767,6 +1907,7 @@ watch(kind, async () => {
   remindOpen.value = false
   fileOpen.value = false
   digitalOpen.value = false
+  riskExportOpen.value = false
   if (kind.value === 'company') await prepareCompany()
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
