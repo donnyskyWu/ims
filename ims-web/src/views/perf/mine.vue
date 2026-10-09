@@ -16,6 +16,9 @@
     </div>
 
     <template v-else-if="mine">
+      <p v-if="lowScore" data-testid="perf-mine-alert" class="mine-alert">
+        本期得分低于 60，已通知您与直属上级
+      </p>
       <p class="hint">{{ mine.periodMonth }} · {{ mine.deptName }}</p>
       <p data-testid="perf-mine-score" style="font-size: 32px; font-weight: 600">{{ scoreText(mine.totalScore) }}</p>
       <p>
@@ -44,7 +47,7 @@
             <td class="num">{{ scoreText(item.metricScore) }}</td>
             <td class="num">{{ item.weight }}%</td>
             <td class="num">{{ scoreText(item.contribution) }}</td>
-            <td>{{ item.dataStatus }}</td>
+            <td>{{ dataStatusText(item.dataStatus) }}</td>
           </tr>
         </tbody>
       </table>
@@ -54,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Detail = {
@@ -78,6 +81,7 @@ type Mine = {
 type Rank = {
   rankNo: number
   gradeLevel: string
+  alertStatus?: string
   deptTotalCount: number
   scoreDistribution: { excellent: number; qualified: number; improve: number }
 }
@@ -86,6 +90,12 @@ const period = ref(previousMonth())
 const mine = ref<Mine | null>(null)
 const rank = ref<Rank | null>(null)
 const empty = ref('')
+const lowScore = computed(() => {
+  if (!mine.value) return false
+  if (rank.value?.alertStatus === 'ALERTED') return true
+  if (mine.value.gradeLevel === 'IMPROVE') return true
+  return mine.value.totalScore != null && Number(mine.value.totalScore) < 60
+})
 
 function previousMonth() {
   const now = new Date()
@@ -96,6 +106,14 @@ function previousMonth() {
 function scoreText(value: number | null | undefined) {
   if (value === null || value === undefined) return '—'
   return Number(value).toFixed(2)
+}
+
+function dataStatusText(status: string) {
+  if (status === 'AUTO') return '自动取数'
+  if (status === 'MANUAL') return '人工补充'
+  if (status === 'MISSING') return '缺项'
+  if (status === 'EXAM') return '考试取数'
+  return status || '—'
 }
 
 function gradeText(level: string) {
@@ -112,7 +130,7 @@ async function load() {
   try {
     const res = await http.get(`/perf/calc/${period.value}/mine`)
     if (!res.data.data) {
-      empty.value = '本期无绩效记录（入职当月按在职天数折算）'
+      empty.value = '本期无绩效记录（入职/离职当月按在职天数折算，PER-C-R2）'
       return
     }
     mine.value = res.data.data
@@ -135,3 +153,13 @@ async function load() {
 
 void load()
 </script>
+
+<style scoped>
+.mine-alert {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: rgba(255, 149, 0, 0.16);
+  color: #c46a00;
+  border-radius: 8px;
+}
+</style>

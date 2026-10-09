@@ -18,7 +18,12 @@
     <template v-if="tab === 'bank'">
       <form class="qbar" @submit.prevent="loadList">
         <input v-model="filters.questionNo" placeholder="题目编号" style="width: 110px" />
-        <input v-model="filters.stemKeyword" placeholder="题干关键词" style="width: 150px" />
+        <input
+          v-model="filters.stemKeyword"
+          data-testid="exam-question-keyword"
+          placeholder="题干关键词"
+          style="width: 150px"
+        />
         <select v-model="filters.knowledgeDomain" style="width: 110px">
           <option value="">全部知识域</option>
           <option v-for="d in domains" :key="d.value" :value="d.value">{{ d.label }}</option>
@@ -50,7 +55,9 @@
                 <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!rows.length">
-                <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无题目' }}</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="exam-bank-empty"><div class="et">{{ bankEmptyText }}</div></div>
+                </td>
               </tr>
               <tr v-for="row in rows" v-else :key="row.id">
                 <td class="mono num" style="color: var(--blue)">{{ row.questionNo }}</td>
@@ -80,7 +87,7 @@
 
     <template v-else-if="tab === 'paper'">
       <form class="qbar" @submit.prevent="loadPapers">
-        <input v-model="paperName" placeholder="试卷名称" style="width: 180px" />
+        <input v-model="paperName" data-testid="exam-paper-name" placeholder="试卷名称" style="width: 180px" />
         <button class="btn btn-pri btn-sm" type="submit">查询</button>
       </form>
       <p v-if="assignNotice" class="hint" data-testid="exam-assign-notice">{{ assignNotice }}</p>
@@ -104,7 +111,9 @@
                 <td colspan="8">加载中</td>
               </tr>
               <tr v-else-if="!papers.length">
-                <td colspan="8">{{ paperError || '暂无试卷' }}</td>
+                <td colspan="8">
+                  <div class="empty" data-testid="exam-paper-empty"><div class="et">{{ paperEmptyText }}</div></div>
+                </td>
               </tr>
               <tr v-for="row in papers" v-else :key="row.id">
                 <td class="mono num" style="color: var(--blue)">{{ row.paperNo }}</td>
@@ -183,7 +192,9 @@
                 <td colspan="6">加载中</td>
               </tr>
               <tr v-else-if="!scores.length">
-                <td colspan="6">{{ scoreError || '暂无成绩' }}</td>
+                <td colspan="6">
+                  <div class="empty" data-testid="exam-score-empty"><div class="et">{{ scoreEmptyText }}</div></div>
+                </td>
               </tr>
               <tr v-for="row in scores" v-else :key="row.id" data-testid="exam-score-row">
                 <td>
@@ -318,7 +329,7 @@
         <input v-model="assignForm.from" class="fld-in" type="datetime-local" />
         <label class="fld">窗口结束</label>
         <input v-model="assignForm.to" class="fld-in" type="datetime-local" />
-        <p v-if="assignError" class="hint stock-err">{{ assignError }}</p>
+        <p v-if="assignError" class="hint stock-err" data-testid="exam-assign-error">{{ assignError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="assignTarget = null">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitAssign">确认指派</button>
@@ -360,7 +371,7 @@
           </div>
         </template>
         <template v-else-if="takePhase === 'confirm'">
-          <p>确认交卷后将按已答题目判分。</p>
+          <p data-testid="exam-submit-confirm">{{ submitConfirmText }}</p>
           <div class="acts" style="justify-content: flex-end">
             <button class="btn btn-sec btn-sm" type="button" @click="takePhase = 'answer'">继续作答</button>
             <button class="btn btn-pri btn-sm" type="button" @click="submitPaper">确认交卷</button>
@@ -412,6 +423,18 @@
             @click="submitGrade"
           >
             提交阅卷
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="windowDialog" class="modal-mask" data-testid="exam-window-dialog">
+      <div class="card" style="width: 440px; padding: 20px">
+        <h3 style="margin: 0 0 8px">无法开考</h3>
+        <p>{{ windowDialog }}</p>
+        <div class="acts" style="justify-content: flex-end">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="exam-window-ok" @click="windowDialog = ''">
+            知道了
           </button>
         </div>
       </div>
@@ -547,6 +570,8 @@ const answers = reactive<Record<number, number>>({})
 const essayAnswers = reactive<Record<number, string>>({})
 const takePhase = ref<'answer' | 'confirm' | 'result' | 'makeup'>('answer')
 const takeError = ref('')
+const windowDialog = ref('')
+const unansweredCount = ref(0)
 const resultScore = ref<number | null>(null)
 const pendingObjective = ref<number | null>(null)
 
@@ -644,6 +669,29 @@ const canMakeup = computed(() => {
   if (!taking.value || resultScore.value == null) return false
   return taking.value.examStatus === 'GRADED' && resultScore.value < taking.value.passScore
 })
+
+const bankNarrowed = computed(
+  () =>
+    Boolean(filters.questionNo.trim() || filters.stemKeyword.trim() || filters.knowledgeDomain || filters.questionType),
+)
+const bankEmptyText = computed(() => {
+  if (error.value) return error.value
+  return bankNarrowed.value ? '没有符合筛选条件的题目' : '暂无题目'
+})
+const paperEmptyText = computed(() => {
+  if (paperError.value) return paperError.value
+  return paperName.value.trim() ? '没有符合筛选条件的试卷' : '暂无试卷'
+})
+const scoreNarrowed = computed(
+  () => Boolean(scoreFilter.paperId || scoreFilter.examStatus || scoreFilter.userKeyword.trim()),
+)
+const scoreEmptyText = computed(() => {
+  if (scoreError.value) return scoreError.value
+  return scoreNarrowed.value ? '暂无成绩（当前筛选无匹配）' : '暂无成绩'
+})
+const submitConfirmText = computed(() =>
+  unansweredCount.value > 0 ? `未答 ${unansweredCount.value} 题，确认交卷？` : '确认交卷后将按已答题目判分。',
+)
 
 const resultText = computed(() => {
   if (!taking.value || resultScore.value == null) return ''
@@ -812,6 +860,16 @@ function openAssign(row: Paper) {
 async function submitAssign() {
   if (!assignTarget.value) return
   assignError.value = ''
+  const from = new Date(assignForm.from)
+  const to = new Date(assignForm.to)
+  if (!assignForm.from || !assignForm.to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    assignError.value = '考试窗口时间无效'
+    return
+  }
+  if (from >= to) {
+    assignError.value = '考试窗口开始时间须早于结束时间'
+    return
+  }
   const userIds = assignForm.userIdsText
     .split(/[,，\s]+/)
     .map((item) => Number(item))
@@ -854,6 +912,11 @@ async function startTake(row: Paper) {
     takePhase.value = 'answer'
   } catch (e: unknown) {
     const body = e as { code?: number; data?: { id?: number; questions?: QuestionSnap[]; examStatus?: string; paperName?: string } }
+    if (body?.code === 1161) {
+      const msg = errorMessage(e)
+      windowDialog.value = msg.includes('不在考试窗口内') ? msg : `不在考试窗口内（${msg}）`
+      return
+    }
     if (body?.code === 1162 && body.data?.questions) {
       taking.value = {
         recordId: Number(body.data.id),
@@ -872,14 +935,10 @@ async function startTake(row: Paper) {
 
 function askSubmit() {
   if (!taking.value) return
-  const missing = taking.value.questions.some((q) => {
+  unansweredCount.value = taking.value.questions.filter((q) => {
     if (isEssay(q)) return !(essayAnswers[q.questionId] || '').trim()
     return answers[q.questionId] === undefined
-  })
-  if (missing) {
-    takeError.value = '请答完所有题目'
-    return
-  }
+  }).length
   takeError.value = ''
   takePhase.value = 'confirm'
 }
