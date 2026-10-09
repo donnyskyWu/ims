@@ -8,8 +8,12 @@ os.environ.pop("IMS_USE_CLOUD_DB", None)
 os.environ["IMS_MYSQL_HOST"] = "127.0.0.1"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.core import SessionLocal
 from app.main import app
+from app.models import User
+from app.security import hash_password
 
 client = TestClient(app)
 
@@ -160,3 +164,118 @@ def test_asset_status_full_flow_checkout_use_return_scrap():
 
     missing = client.get("/admin-api/ims/asset/ledger/999999", headers=auth)
     assert missing.json()["code"] == 1011
+
+
+def test_terminal_edges_block_checkout_use_return_and_blank_scrap():
+    auth = headers()
+    admin_id = _admin_id(auth)
+    created = client.post(
+        "/admin-api/ims/asset/ledger",
+        headers=auth,
+        json={"assetCode": "AS-PY-200", "assetName": "终态显示器", "assetType": "OFFICE"},
+    ).json()
+    assert created["code"] == 0, created
+    asset_id = created["data"]["id"]
+
+    early_use = client.post(f"/admin-api/ims/asset/ledger/{asset_id}/use", headers=auth, json={"remark": "过早"}).json()
+    assert early_use["code"] == 1015
+    assert "尚未领用" in early_use["msg"]
+    early_return = client.post(f"/admin-api/ims/asset/ledger/{asset_id}/return", headers=auth, json={}).json()
+    assert early_return["code"] == 1015
+    assert "尚未领用" in early_return["msg"]
+    early_scrap = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/scrap",
+        headers=auth,
+        json={"remark": "未归还"},
+    ).json()
+    assert early_scrap["code"] == 1015
+    assert "须先归还" in early_scrap["msg"]
+
+    blank_owner = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
+        headers=auth,
+        json={"ownerUserId": 0, "purpose": "无责任人"},
+    ).json()
+    assert blank_owner["code"] == 1001
+    assert "责任人" in blank_owner["msg"]
+
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.username == "asset_edge_off", User.deleted == 0))
+        if user is None:
+            user = User(
+                username="asset_edge_off",
+                nickname="停用责任人",
+                mobile="13900000200",
+                password_hash=hash_password("Admin@123"),
+                status="DISABLED",
+                tenant_id=0,
+                deleted=0,
+            )
+            db.add(user)
+            db.flush()
+        else:
+            user.status = "DISABLED"
+        db.commit()
+        disabled_id = int(user.id)
+    finally:
+        db.close()
+
+    denied = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
+        headers=auth,
+        json={"ownerUserId": disabled_id, "purpose": "停用"},
+    ).json()
+    assert denied["code"] == 1501
+    assert "停用" in denied["msg"]
+
+    checked = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
+        headers=auth,
+        json={"ownerUserId": admin_id, "purpose": "办公领用"},
+    ).json()
+    assert checked["code"] == 0, checked
+    client.post(f"/admin-api/ims/asset/ledger/{asset_id}/use", headers=auth, json={"remark": "现场使用"})
+    returned = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/return",
+        headers=auth,
+        json={"remark": "归还入库"},
+    ).json()
+    assert returned["code"] == 0, returned
+
+    again = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
+        headers=auth,
+        json={"ownerUserId": admin_id, "purpose": "再领"},
+    ).json()
+    assert again["code"] == 1015
+    assert "已归还，不能再领用" in again["msg"]
+    used = client.post(f"/admin-api/ims/asset/ledger/{asset_id}/use", headers=auth, json={}).json()
+    assert used["code"] == 1015
+    assert "已归还，不能再使用" in used["msg"]
+    returned_again = client.post(f"/admin-api/ims/asset/ledger/{asset_id}/return", headers=auth, json={}).json()
+    assert returned_again["code"] == 1015
+    assert "不能再次归还" in returned_again["msg"]
+    blank_scrap = client.post(f"/admin-api/ims/asset/ledger/{asset_id}/scrap", headers=auth, json={"remark": " "}).json()
+    assert blank_scrap["code"] == 1001
+
+    scrapped = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/scrap",
+        headers=auth,
+        json={"remark": "无法修复"},
+    ).json()
+    assert scrapped["code"] == 0, scrapped
+    blocked = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
+        headers=auth,
+        json={"ownerUserId": admin_id},
+    ).json()
+    assert blocked["code"] == 1015
+    assert "已报废，不能再领用" in blocked["msg"]
+    assert client.post(f"/admin-api/ims/asset/ledger/{asset_id}/use", headers=auth, json={}).json()["msg"].find("已报废") >= 0
+    assert "已报废" in client.post(f"/admin-api/ims/asset/ledger/{asset_id}/return", headers=auth, json={}).json()["msg"]
+    assert "再次报废" in client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/scrap",
+        headers=auth,
+        json={"remark": "再报"},
+    ).json()["msg"]
