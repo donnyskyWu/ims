@@ -502,21 +502,6 @@ def resolve_task_status(task: TrainTask) -> str:
     return "IN_PROGRESS"
 
 
-def parse_date_range(raw: str | None) -> tuple[datetime | None, datetime | None]:
-    if not raw:
-        return None, None
-    parts = [p.strip() for p in raw.split(",") if p.strip()]
-    if len(parts) != 2:
-        return None, None
-    try:
-        start = datetime.strptime(parts[0], "%Y-%m-%d")
-        end = datetime.strptime(parts[1], "%Y-%m-%d")
-    except ValueError:
-        return None, None
-    end = end.replace(hour=23, minute=59, second=59)
-    return start, end
-
-
 def rate_pct(finished: int, assigned: int) -> float:
     if assigned <= 0:
         return 0.0
@@ -908,13 +893,19 @@ def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
     if pass_score < 1 or pass_score > len(quiz):
         return fail(1001, "及格分须在 1 到题目数之间")
     normalized: list[dict] = []
+    seen_questions: set[str] = set()
     for item in quiz:
         question = (item.question or "").strip()
         if not question or len(question) > 256:
             return fail(1001, "题目必填且不超过 256 字")
+        if question in seen_questions:
+            return fail(1001, "题目不能重复")
+        seen_questions.add(question)
         options = [opt.strip() for opt in item.options]
         if len(options) < 2 or any(not opt for opt in options):
             return fail(1001, "每题选项至少 2 项")
+        if len(options) != len(set(options)):
+            return fail(1001, "选项内容不能重复")
         if item.answerIndex < 0 or item.answerIndex >= len(options):
             return fail(1001, "答案下标超出选项")
         normalized.append(
@@ -927,22 +918,25 @@ def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
     return normalized, int(pass_score)
 
 
-def parse_quiz_answers(quiz: list, answers: list) -> dict[int, int] | None:
+def parse_quiz_answers(quiz: list, answers: list) -> tuple[dict[int, int] | None, str]:
+    """返回 (作答, 错误文案)。缺题与越界选项分开说明。"""
     found: dict[int, int] = {}
     for raw in answers:
         if not isinstance(raw, dict) or "questionIndex" not in raw or "answerIndex" not in raw:
-            return None
+            return None, "问卷未答完"
         try:
             found[int(raw["questionIndex"])] = int(raw["answerIndex"])
         except (TypeError, ValueError):
-            return None
+            return None, "问卷未答完"
     for idx, item in enumerate(quiz):
         options = item.get("options") if isinstance(item, dict) else None
         option_count = len(options) if isinstance(options, list) else 0
         given = found.get(idx)
-        if given is None or given < 0 or given >= option_count:
-            return None
-    return found
+        if given is None:
+            return None, "问卷未答完"
+        if given < 0 or given >= option_count:
+            return None, "选项无效，请重新选择"
+    return found, ""
 
 
 def score_quiz(quiz: list, chosen: dict[int, int]) -> int:
@@ -1180,7 +1174,9 @@ def stat_finish_rate(
 ):
     """TRAIN-003 · BR-102 完成率（分母含未确认指派记录）。"""
     tenant_id = tenant_of(actor)
-    start, end = parse_date_range(dateRange)
+    start, end, error = parse_bounded_range(dateRange)
+    if error:
+        return fail(1001, error)
     rows = stat_pairs(db, tenant_id, start, end, scoped_user_id(actor))
 
     total_assigned = len(rows)
@@ -1392,12 +1388,14 @@ def task_list(
     tenant_id = tenant_of(actor)
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(TrainTask).where(TrainTask.deleted == 0, TrainTask.tenant_id == tenant_id)
-    if taskName:
-        stmt = stmt.where(TrainTask.task_name.contains(taskName.strip()))
-    if confirmType:
-        if confirmType not in CONFIRM_TYPES:
+    name = (taskName or "").strip()
+    if name:
+        stmt = stmt.where(TrainTask.task_name.contains(name))
+    kind = (confirmType or "").strip()
+    if kind:
+        if kind not in CONFIRM_TYPES:
             return fail(1001, "confirmType 无效")
-        stmt = stmt.where(TrainTask.confirm_type == confirmType)
+        stmt = stmt.where(TrainTask.confirm_type == kind)
     if status:
         if status not in TASK_STATUSES:
             return fail(1001, "status 无效")
@@ -1578,9 +1576,9 @@ def confirm_task(
         quiz = task.quiz if isinstance(task.quiz, list) else []
         if not quiz:
             return fail(1104, "问卷未配置")
-        chosen = parse_quiz_answers(quiz, (body.answers if body else None) or [])
+        chosen, answer_error = parse_quiz_answers(quiz, (body.answers if body else None) or [])
         if chosen is None:
-            return fail(1001, "问卷未答完")
+            return fail(1001, answer_error or "问卷未答完")
         score = score_quiz(quiz, chosen)
         pass_line = int(task.pass_score or len(quiz))
         now = utcnow()
@@ -1653,15 +1651,18 @@ def task_records(
     names = user_names(db, {rec.user_id for rec, _ in rows})
     items = []
     now = utcnow()
+    dept_cache: dict[int, int] = {}
     for record, task in rows:
         vo = progress_vo(db, task, record)
         vo["taskNo"] = task.task_no
         vo["taskName"] = task.task_name
         vo["userName"] = names.get(record.user_id, "")
-        vo["deptName"] = ""
+        dept_id = dept_of(db, dept_cache, record.user_id, tenant_id)
+        vo["deptName"] = dept_label(dept_id)
         deadline = task.deadline
         vo["isOverdue"] = bool(
             record.confirm_status == 0 and deadline and deadline < now.replace(tzinfo=None)
         )
+        vo["overdueDays"] = overdue_day_count(deadline, now) if vo["isOverdue"] and deadline else 0
         items.append(vo)
     return paged(items, total, page_no, size)

@@ -15,6 +15,9 @@
       <div class="card head">
         <div style="font-weight: 600; font-size: 16px">{{ task.taskName }}</div>
         <div class="meta">编号 {{ task.taskNo }} · 截止 {{ task.deadline }} · {{ confirmTypeLabel }}</div>
+        <p v-if="overdueDays > 0" class="hint overdue-banner" data-testid="train-study-overdue">
+          本任务已逾期 {{ overdueDays }} 天，补学仍计入完成率统计
+        </p>
         <div class="meta">
           总进度 <strong>{{ progressPct }}%</strong>
           · 确认状态
@@ -51,7 +54,14 @@
         <div v-if="task.confirmType === 'QUIZ' && confirmStatus !== 'CONFIRMED'" class="quiz-paper">
           <div class="quiz-head">自测问卷 · 及格 {{ task.passScore }} 分 · 共 {{ quiz.length }} 题</div>
           <p class="hint">全部题目必答。提交后将判分，未及格可重答，成绩保留最新一次。</p>
-          <div v-if="!quiz.length" class="hint" style="color: var(--red)">问卷未配置</div>
+          <p v-if="mustAllCorrect" class="hint" data-testid="train-study-quiz-all-correct">须全部答对才能通过</p>
+          <div v-if="!quiz.length" class="empty" data-testid="train-quiz-empty">
+            <div class="et">问卷未配置，无法交卷</div>
+            <div class="es">请联系培训负责人补全题目后再学习</div>
+          </div>
+          <p v-else-if="unansweredCount > 0" class="hint" data-testid="train-quiz-unanswered">
+            还有 {{ unansweredCount }} 题未作答
+          </p>
           <div v-for="(q, qi) in quiz" :key="qi" class="quiz-q">
             <div class="q-title">{{ qi + 1 }}. {{ q.question }}</div>
             <label v-for="(opt, oi) in q.options" :key="oi" class="opt">
@@ -74,7 +84,8 @@
           >
             提交问卷
           </button>
-          <p v-if="gradeText" class="hint grade-banner">{{ gradeText }}</p>
+          <p v-if="gradeText" class="hint grade-banner" data-testid="train-quiz-grade">{{ gradeText }}</p>
+          <p v-if="gradeText" class="hint">请修改答案后再次交卷，成绩保留最新一次。</p>
         </div>
 
         <p v-if="actionError" class="hint" style="color: var(--red); margin-top: 8px">{{ actionError }}</p>
@@ -149,6 +160,34 @@ const quiz = computed(() => task.value?.quiz ?? [])
 const quizReady = computed(
   () => quiz.value.length > 0 && quiz.value.every((_, index) => typeof answers[index] === 'number'),
 )
+
+const unansweredCount = computed(
+  () => quiz.value.filter((_, index) => typeof answers[index] !== 'number').length,
+)
+
+const mustAllCorrect = computed(() => {
+  const paper = quiz.value
+  const line = task.value?.passScore ?? 0
+  return paper.length > 0 && line === paper.length
+})
+
+const overdueDays = computed(() => {
+  if (!task.value || confirmStatus.value === 'CONFIRMED') return 0
+  const deadline = new Date(task.value.deadline)
+  if (Number.isNaN(deadline.getTime()) || Date.now() <= deadline.getTime()) return 0
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  const today = fmt.format(new Date())
+  const due = fmt.format(deadline)
+  const [ty, tm, td] = today.split('-').map(Number)
+  const [dy, dm, dd] = due.split('-').map(Number)
+  const days = Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86400000)
+  return days >= 1 ? days : 1
+})
 
 const allMaterialsDone = computed(() => {
   if (!task.value?.materialIds?.length) return false
@@ -349,6 +388,11 @@ onMounted(loadTaskAndProgress)
 }
 .grade-banner {
   margin-top: 12px;
+  color: var(--red);
+  font-weight: 600;
+}
+.overdue-banner {
+  margin-top: 8px;
   color: var(--red);
   font-weight: 600;
 }

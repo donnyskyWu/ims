@@ -779,3 +779,150 @@ def test_train_task_edit_before_deadline_keeps_progress():
     )
     assert locked.json()["code"] == 1102
     assert locked.json()["msg"] == "已过截止时间，不能编辑"
+
+
+def test_train_task_filter_blank_confirm_and_record_overdue_edges():
+    auth = headers()
+    material = _publish_material(auth, f"筛选资料 {uuid.uuid4().hex[:6]}")
+    quiz_name = f"问卷筛选 {uuid.uuid4().hex[:6]}"
+    duration_name = f"学时筛选 {uuid.uuid4().hex[:6]}"
+    quiz = _quiz_task(auth, material["id"], quiz_name, SAMPLE_QUIZ, 1)
+    assert quiz.json()["code"] == 0, quiz.json()
+    duration = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": duration_name,
+            "materialIds": [material["id"]],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert duration.json()["code"] == 0, duration.json()
+    task_id = duration.json()["data"]["id"]
+
+    blank = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": "   ", "pageNo": 1, "pageSize": 10},
+    )
+    assert blank.json()["code"] == 0
+    assert blank.json()["data"]["total"] >= 2
+
+    only_quiz = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": "筛选", "confirmType": "QUIZ", "pageNo": 1, "pageSize": 20},
+    )
+    quiz_names = [row["taskName"] for row in only_quiz.json()["data"]["list"]]
+    assert quiz_name in quiz_names
+    assert duration_name not in quiz_names
+
+    missing = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": f"不存在{uuid.uuid4().hex}", "pageNo": 1, "pageSize": 10},
+    )
+    assert missing.json()["data"]["total"] == 0
+    assert missing.json()["data"]["list"] == []
+
+    db = SessionLocal()
+    try:
+        row = db.get(TrainTask, task_id)
+        assert row is not None
+        row.deadline = utcnow() - timedelta(days=2)
+        db.commit()
+    finally:
+        db.close()
+
+    overdue = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "overdue": True, "pageNo": 1, "pageSize": 10},
+    )
+    overdue_body = overdue.json()
+    assert overdue_body["code"] == 0, overdue_body
+    assert overdue_body["data"]["total"] == 1
+    rec = overdue_body["data"]["list"][0]
+    assert rec["isOverdue"] is True
+    assert rec["overdueDays"] >= 1
+    assert rec["deptName"]
+    assert rec["confirmStatus"] == "NOT_CONFIRMED"
+
+    confirmed = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "confirmStatus": "CONFIRMED", "pageNo": 1, "pageSize": 10},
+    )
+    assert confirmed.json()["data"]["total"] == 0
+
+
+def test_train_quiz_duplicate_and_invalid_option_copy():
+    auth = headers()
+    material_id = _published_material(auth, "问卷边界资料")
+    dup_opt = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "重复选项",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "QUIZ",
+            "passScore": 1,
+            "quiz": [{"question": "唯一题", "options": ["相同", "相同"], "answerIndex": 0}],
+        },
+    )
+    assert dup_opt.json()["code"] == 1001
+    assert dup_opt.json()["msg"] == "选项内容不能重复"
+
+    dup_q = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "重复题目",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "QUIZ",
+            "passScore": 1,
+            "quiz": [
+                {"question": "同一题", "options": ["甲", "乙"], "answerIndex": 0},
+                {"question": "同一题", "options": ["丙", "丁"], "answerIndex": 1},
+            ],
+        },
+    )
+    assert dup_q.json()["code"] == 1001
+    assert dup_q.json()["msg"] == "题目不能重复"
+
+    created = _quiz_task(auth, material_id, f"越界作答 {uuid.uuid4().hex[:6]}", SAMPLE_QUIZ, 1)
+    task_id = created.json()["data"]["id"]
+    bad = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 9}, {"questionIndex": 1, "answerIndex": 0}]},
+    )
+    assert bad.json()["code"] == 1001
+    assert bad.json()["msg"] == "选项无效，请重新选择"
+
+
+def test_train_finish_rate_rejects_inverted_range():
+    auth = headers()
+    bad = client.get(
+        "/admin-api/ims/train/stat/finish-rate",
+        headers=auth,
+        params={"dateRange": "2026-12-31,2026-01-01"},
+    )
+    assert bad.json()["code"] == 1001
+    assert bad.json()["msg"] == "日期范围起大于止"
+    malformed = client.get(
+        "/admin-api/ims/train/stat/finish-rate",
+        headers=auth,
+        params={"dateRange": "not-a-range"},
+    )
+    assert malformed.json()["code"] == 1001
+    assert malformed.json()["msg"] == "日期范围无效"
