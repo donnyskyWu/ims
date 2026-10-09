@@ -63,28 +63,64 @@
       <button class="btn btn-sec btn-sm" type="button" @click="resetTodo">重置</button>
     </form>
 
-    <div
-      v-if="tab === 'timeout' && timeoutStats"
-      class="hint"
-      style="margin-bottom: 8px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center"
-    >
-      <span>
-        月度超时率
-        <strong :style="{ color: timeoutStats.monthlyTimeoutRate <= timeoutStats.targetRate ? '#1e8e3e' : '#c93400' }">
-          {{ (timeoutStats.monthlyTimeoutRate * 100).toFixed(1) }}%
-        </strong>
-        （BR-115 目标 &lt;{{ (timeoutStats.targetRate * 100).toFixed(0) }}%）
-      </span>
-      <span>超时节点 <strong>{{ timeoutStats.timeoutCount }}</strong> / {{ timeoutStats.totalExecuted }}</span>
-      <span>督办累计 <strong>{{ timeoutStats.urgeCount }}</strong></span>
-      <span class="csub">{{ timeoutStats.statMonth }}</span>
-      <span v-if="timeoutDist?.durationBuckets?.length" class="csub">
-        时长分布：
-        <template v-for="(b, i) in timeoutDist.durationBuckets" :key="b.bucketKey">
-          {{ b.bucketLabel }} <strong>{{ b.count }}</strong
-          ><span v-if="i < timeoutDist.durationBuckets.length - 1"> · </span>
+    <form v-else-if="tab === 'timeout'" class="qbar" data-testid="flow-timeout-qbar" @submit.prevent="loadTimeouts">
+      <select v-model="timeoutFilters.businessDomain" data-testid="flow-timeout-domain" style="width: 110px">
+        <option value="">全部域</option>
+        <option value="ADMIN">行政域</option>
+        <option value="FINANCE">财务域</option>
+        <option value="BUSINESS">业务域</option>
+        <option value="COMMON">通用</option>
+      </select>
+      <input
+        v-model="timeoutFilters.assigneeName"
+        data-testid="flow-timeout-assignee"
+        placeholder="处理人"
+        style="width: 120px"
+      />
+      <span class="sp"></span>
+      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetTimeout">重置</button>
+    </form>
+
+    <div v-if="tab === 'timeout'" style="margin-bottom: 8px">
+      <div class="hint" style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center">
+        <label class="csub" for="flow-stat-month">统计月</label>
+        <input
+          id="flow-stat-month"
+          v-model="statMonthInput"
+          data-testid="flow-stat-month"
+          placeholder="YYYY-MM"
+          style="width: 110px"
+          @change="applyStatMonth"
+        />
+        <button class="btn btn-sec btn-sm" type="button" data-testid="flow-stat-month-apply" @click="applyStatMonth">
+          查询统计
+        </button>
+        <span v-if="statMonthMsg" class="hint bad" data-testid="flow-stat-month-msg">{{ statMonthMsg }}</span>
+        <template v-else-if="timeoutStats && !statMonthEmpty">
+          <span>
+            月度超时率
+            <strong :style="{ color: timeoutStats.monthlyTimeoutRate <= timeoutStats.targetRate ? '#1e8e3e' : '#c93400' }">
+              {{ (timeoutStats.monthlyTimeoutRate * 100).toFixed(1) }}%
+            </strong>
+            （BR-115 目标 &lt;{{ (timeoutStats.targetRate * 100).toFixed(0) }}%）
+          </span>
+          <span>超时节点 <strong>{{ timeoutStats.timeoutCount }}</strong> / {{ timeoutStats.totalExecuted }}</span>
+          <span>督办累计 <strong>{{ timeoutStats.urgeCount }}</strong></span>
+          <span class="csub">{{ timeoutStats.statMonth }}</span>
+          <span v-if="timeoutDist?.durationBuckets?.length" class="csub">
+            时长分布：
+            <template v-for="(b, i) in timeoutDist.durationBuckets" :key="b.bucketKey">
+              {{ b.bucketLabel }} <strong>{{ b.count }}</strong
+              ><span v-if="i < timeoutDist.durationBuckets.length - 1"> · </span>
+            </template>
+          </span>
         </template>
-      </span>
+      </div>
+      <div v-if="!statMonthMsg && statMonthEmpty" class="empty" data-testid="flow-stat-month-empty">
+        <div class="et">该统计月暂无执行记录</div>
+        <div class="es">超时率按当月已执行节点计算；换一个月或回到本月</div>
+      </div>
     </div>
     <p v-if="tab === 'timeout' && urgeDone" class="hint" data-testid="flow-urge-done">{{ urgeDone }}</p>
 
@@ -109,8 +145,8 @@
             <tr v-else-if="!timeoutRows.length">
               <td colspan="7">
                 <div class="empty" data-testid="flow-timeout-empty">
-                  <div class="et">{{ error || '暂无超时待办' }}</div>
-                  <div v-if="!error" class="es">未超过 SLA 的待办不会出现在督办清单</div>
+                  <div class="et">{{ error || timeoutEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ timeoutEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -375,8 +411,25 @@ const timeoutDist = ref<{
   durationBuckets: { bucketKey: string; bucketLabel: string; count: number }[]
 } | null>(null)
 const tplRows = ref<Record<string, unknown>[]>([])
+const STAT_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+function beijingStatMonth(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(date)
+  const year = parts.find((part) => part.type === 'year')?.value ?? '1970'
+  const month = parts.find((part) => part.type === 'month')?.value ?? '01'
+  return `${year}-${month}`
+}
+
 const instFilters = ref({ keyword: '', instanceStatus: '' })
 const todoFilters = ref({ businessDomain: '' })
+const timeoutFilters = ref({ businessDomain: '', assigneeName: '' })
+const statMonthInput = ref(beijingStatMonth())
+const appliedStatMonth = ref(beijingStatMonth())
+const statMonthMsg = ref('')
 const tplFilters = ref({ templateName: '', businessDomain: '', status: '' })
 const startOpen = ref(false)
 const startLoading = ref(false)
@@ -402,6 +455,26 @@ const instFiltered = computed(() => !!(instFilters.value.keyword.trim() || instF
 const instEmptyTitle = computed(() => (instFiltered.value ? '没有符合条件的流程实例' : '暂无实例'))
 const instEmptyHint = computed(() =>
   instFiltered.value ? '调整标题、单号或状态后再查询' : '点右上角「发起流程」创建第一条实例',
+)
+const timeoutAssignee = computed(() => timeoutFilters.value.assigneeName.trim())
+const timeoutEmptyTitle = computed(() => {
+  const domain = timeoutFilters.value.businessDomain
+  const name = timeoutAssignee.value
+  if (domain && name) return '没有符合条件的超时待办'
+  if (domain) return '该业务域暂无超时待办'
+  if (name) return '该处理人暂无超时待办'
+  return '暂无超时待办'
+})
+const timeoutEmptyHint = computed(() => {
+  const domain = timeoutFilters.value.businessDomain
+  const name = timeoutAssignee.value
+  if (domain && name) return '调整业务域或处理人后再查询'
+  if (domain) return '换一个业务域，或清空筛选后再查'
+  if (name) return '核对处理人姓名后再查询'
+  return '未超过 SLA 的待办不会出现在督办清单'
+})
+const statMonthEmpty = computed(
+  () => !statMonthMsg.value && !!timeoutStats.value && timeoutStats.value.totalExecuted === 0,
 )
 
 async function loadInstances() {
@@ -429,7 +502,9 @@ async function loadInstances() {
 
 async function loadTimeoutRate() {
   try {
-    const res = await http.get('/flow/timeout/rate')
+    const params: Record<string, string> = {}
+    if (appliedStatMonth.value) params.statMonth = appliedStatMonth.value
+    const res = await http.get('/flow/timeout/rate', { params })
     if (res.data.code === 0) {
       const d = res.data.data
       timeoutStats.value = {
@@ -446,9 +521,23 @@ async function loadTimeoutRate() {
   }
 }
 
+async function applyStatMonth() {
+  const raw = statMonthInput.value.trim()
+  if (raw && !STAT_MONTH_RE.test(raw)) {
+    statMonthMsg.value = '统计月请填写 YYYY-MM'
+    return
+  }
+  statMonthMsg.value = ''
+  appliedStatMonth.value = raw || beijingStatMonth()
+  statMonthInput.value = appliedStatMonth.value
+  await Promise.all([loadTimeoutRate(), loadTimeoutDistribution()])
+}
+
 async function loadTimeoutDistribution() {
   try {
-    const res = await http.get('/flow/timeout/distribution')
+    const params: Record<string, string> = {}
+    if (appliedStatMonth.value) params.statMonth = appliedStatMonth.value
+    const res = await http.get('/flow/timeout/distribution', { params })
     if (res.data.code === 0) {
       timeoutDist.value = {
         durationBuckets: res.data.data.durationBuckets ?? [],
@@ -465,7 +554,10 @@ async function loadTimeouts() {
   try {
     await loadTimeoutRate()
     await loadTimeoutDistribution()
-    const res = await http.get('/flow/timeout/list', { params: { pageNo: 1, pageSize: 20 } })
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
+    if (timeoutFilters.value.businessDomain) params.businessDomain = timeoutFilters.value.businessDomain
+    if (timeoutAssignee.value) params.assigneeName = timeoutAssignee.value
+    const res = await http.get('/flow/timeout/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       timeoutRows.value = []
@@ -604,6 +696,11 @@ function resetTpl() {
 function resetTodo() {
   todoFilters.value = { businessDomain: '' }
   loadTodos()
+}
+
+function resetTimeout() {
+  timeoutFilters.value = { businessDomain: '', assigneeName: '' }
+  loadTimeouts()
 }
 
 async function openStart() {
