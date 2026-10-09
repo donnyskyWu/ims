@@ -106,6 +106,7 @@
                 <span
                   v-if="row.approvalStatus === 'APPROVED' || row.approvalStatus === 'NOT_REQUIRED'"
                   class="btn-txt btn"
+                  data-testid="bi-share-copy"
                   @click="copyLink(row)"
                 >复制链接</span>
                 <span
@@ -122,6 +123,7 @@
           </tbody>
         </table>
       </div>
+      <p v-if="copyNote" class="hint" data-testid="bi-share-copy-note">{{ copyNote }}</p>
     </div>
 
     <div v-else-if="tab === 'approve'" class="tbl-block">
@@ -189,6 +191,8 @@
       </div>
     </div>
 
+    <p v-if="createdHint" class="hint" data-testid="bi-sub-created">{{ createdHint }}</p>
+
     <div v-if="snapshot" class="card" style="margin-top: 12px; padding: 14px">
       <b>快照 · {{ snapshot.subName }}</b>
       <p class="csub">{{ snapshot.snapshotAt }} · GMV {{ snapshot.summary?.gmv }}</p>
@@ -198,9 +202,9 @@
       <div class="card" style="width: 400px; padding: 18px">
         <h3 style="margin: 0 0 10px">新建订阅</h3>
         <label class="fld">名称</label>
-        <input v-model="form.subName" class="fld-in" />
+        <input v-model="form.subName" class="fld-in" data-testid="bi-sub-name" />
         <label class="fld">报表 ID</label>
-        <input v-model.number="form.reportId" class="fld-in" type="number" />
+        <input v-model.number="form.reportId" class="fld-in" data-testid="bi-sub-report" type="number" />
         <label class="fld">周期</label>
         <select v-model="form.period" class="fld-in" data-testid="bi-sub-period">
           <option value="DAILY">每日</option>
@@ -210,9 +214,10 @@
         <label class="fld">推送时刻</label>
         <input v-model="form.pushTime" class="fld-in" data-testid="bi-sub-push-time" placeholder="09:00" />
         <p class="csub" style="margin: 8px 0 0">下次推送按本地时刻估算，不触发外部定时任务。</p>
+        <p v-if="formError" class="hint" data-testid="bi-sub-form-error" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submitSub">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-sub-save" @click="submitSub">保存</button>
         </div>
       </div>
     </div>
@@ -273,7 +278,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type SubRow = {
   id: number
@@ -319,6 +324,9 @@ const showShareForm = ref(false)
 const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
 const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
 const shareExpireError = ref('')
+const formError = ref('')
+const createdHint = ref('')
+const copyNote = ref('')
 const pushTarget = ref<SubRow | null>(null)
 const revokeTarget = ref<ShareRow | null>(null)
 
@@ -447,14 +455,33 @@ function loadTab() {
 }
 
 function openCreate() {
+  formError.value = ''
   showForm.value = true
 }
 
 async function submitSub() {
-  const res = await http.post('/bi/subscribe', form)
-  if (res.data.code === 0) {
-    showForm.value = false
-    await loadSubs()
+  formError.value = ''
+  if (!form.subName.trim()) {
+    formError.value = '订阅名称必填'
+    return
+  }
+  if (!Number(form.reportId)) {
+    formError.value = '请填写报表 ID'
+    return
+  }
+  try {
+    const res = await http.post('/bi/subscribe', {
+      ...form,
+      subName: form.subName.trim(),
+    })
+    if (res.data.code === 0) {
+      const next = String(res.data.data?.nextPushAt || '').trim()
+      createdHint.value = `订阅成功，下次推送 ${next || '不调度'}`
+      showForm.value = false
+      await loadSubs()
+    }
+  } catch (error: unknown) {
+    formError.value = errorMessage(error)
   }
 }
 
@@ -525,7 +552,18 @@ async function submitShare() {
 }
 
 async function copyLink(row: { shareUrl?: string }) {
-  if (row.shareUrl) await navigator.clipboard.writeText(window.location.origin + row.shareUrl)
+  copyNote.value = ''
+  if (!row.shareUrl) {
+    copyNote.value = '链接为空，无法复制'
+    return
+  }
+  const text = window.location.origin + row.shareUrl
+  try {
+    await navigator.clipboard.writeText(text)
+    copyNote.value = '已复制链接'
+  } catch {
+    copyNote.value = '复制失败，请手动复制'
+  }
 }
 
 async function approveShare(row: ShareRow) {

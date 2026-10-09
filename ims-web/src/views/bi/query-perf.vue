@@ -20,7 +20,10 @@
     <p v-if="alertText" class="hint" data-testid="bi-perf-alert" style="color: var(--red); font-weight: 600">
       {{ alertText }}
     </p>
-    <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
+    <p v-if="error" class="hint" data-testid="bi-perf-error" style="color: var(--red)">{{ error }}</p>
+    <div v-if="stats && stats.totalQueries === 0" class="empty" data-testid="bi-perf-empty" style="margin-top: 12px">
+      <div class="et">所选日期内暂无查询</div>
+    </div>
 
     <div v-if="stats" class="perf-grid">
       <div class="card stat">
@@ -137,9 +140,19 @@ function openReport(row: SlowReport) {
 
 async function load() {
   error.value = ''
+  const from = start.value
+  const to = end.value
+  if ((from && !to) || (!from && to)) {
+    error.value = '请同时填写开始和结束日期'
+    return
+  }
+  if (from && to && from > to) {
+    error.value = '开始日期不能晚于结束日期'
+    return
+  }
   try {
     const params: Record<string, string> = {}
-    if (start.value && end.value) params.dateRange = `${start.value},${end.value}`
+    if (from && to) params.dateRange = `${from},${to}`
     const res = await http.get('/bi/query/perf-stats', { params })
     stats.value = res.data.data
   } catch (err) {

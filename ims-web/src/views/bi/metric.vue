@@ -11,7 +11,7 @@
     </div>
 
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.keyword" placeholder="指标名称/编码" style="width: 160px" />
+      <input v-model="filters.keyword" data-testid="bi-metric-keyword" placeholder="指标名称/编码" style="width: 160px" />
       <select v-model="filters.metricType" style="width: 130px">
         <option value="">全部类型</option>
         <option value="BASIC">基础指标</option>
@@ -30,7 +30,7 @@
         <option value="DISABLED">停用</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="bi-metric-search">查询</button>
     </form>
 
     <div class="tbl-block">
@@ -50,7 +50,9 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="8"><div class="empty"><div class="et">加载中</div></div></td></tr>
-            <tr v-else-if="!rows.length"><td colspan="8"><div class="empty"><div class="et">暂无指标</div></div></td></tr>
+            <tr v-else-if="!rows.length">
+              <td colspan="8"><div class="empty" data-testid="bi-metric-empty"><div class="et">{{ emptyText }}</div></div></td>
+            </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.metricCode }}</td>
               <td style="font-weight: 500">{{ row.metricName }}</td>
@@ -104,7 +106,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Row = {
@@ -124,6 +126,8 @@ const showForm = ref(false)
 const formError = ref('')
 const previewResult = ref<{ metricName: string; value: number; unit: string; note: string } | null>(null)
 const filters = reactive({ keyword: '', metricType: '', category: '', status: '' })
+const listFiltered = ref(false)
+const emptyText = computed(() => (listFiltered.value ? '当前筛选下暂无指标' : '暂无指标'))
 const form = reactive({ metricName: '', metricType: 'BASIC', category: '内容表现', formula: '' })
 
 async function loadList() {
@@ -139,7 +143,12 @@ async function loadList() {
         pageSize: 50,
       },
     })
-    if (res.data.code === 0) rows.value = res.data.data.list || []
+    if (res.data.code === 0) {
+      rows.value = res.data.data.list || []
+      listFiltered.value = Boolean(
+        filters.keyword.trim() || filters.metricType || filters.category || filters.status,
+      )
+    }
   } finally {
     loading.value = false
   }

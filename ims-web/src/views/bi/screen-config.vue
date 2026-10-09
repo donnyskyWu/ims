@@ -16,14 +16,14 @@
       <code>/admin-api/ims/bi/screen/*</code>（只读）。
     </p>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.keyword" placeholder="名称/编号" style="width: 140px" />
+      <input v-model="filters.keyword" data-testid="bi-screen-keyword" placeholder="名称/编号" style="width: 140px" />
       <select v-model="filters.status" style="width: 110px">
         <option value="">全部状态</option>
         <option value="PUBLISHED">已发布</option>
         <option value="DRAFT">草稿</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="bi-screen-search">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
     </form>
 
@@ -44,7 +44,9 @@
                 <td colspan="4"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!rows.length">
-                <td colspan="4"><div class="empty"><div class="et">{{ error || '暂无大屏' }}</div></div></td>
+                <td colspan="4">
+                  <div class="empty" data-testid="bi-screen-empty"><div class="et">{{ emptyText }}</div></div>
+                </td>
               </tr>
               <tr
                 v-for="row in rows"
@@ -69,7 +71,10 @@
           <b>{{ detail.reportName }}</b>
           <span class="tag tag-info">{{ detail.theme === 'dark' ? '暗色主题' : '浅色' }}</span>
         </div>
-        <div class="screen-widgets">
+        <div v-if="!detail.widgets?.length" class="empty" data-testid="bi-screen-widget-empty">
+          <div class="et">{{ detail.emptyReason || '暂无组件' }}</div>
+        </div>
+        <div v-else class="screen-widgets">
           <div v-for="(w, i) in detail.widgets" :key="i" class="widget" :class="w.type">
             <div class="k">{{ w.title }}</div>
             <div v-if="w.type === 'KPI'" class="v">{{ w.value }}<small>{{ w.unit }}</small></div>
@@ -87,11 +92,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Row = { id: number; reportNo: string; reportName: string; status: string }
-type Detail = { reportName: string; theme: string; widgets: Record<string, unknown>[] }
+type Detail = { reportName: string; theme: string; widgets: Record<string, unknown>[]; emptyReason?: string }
 
 const rows = ref<Row[]>([])
 const detail = ref<Detail | null>(null)
@@ -99,6 +104,8 @@ const selectedId = ref<number | null>(null)
 const loading = ref(false)
 const error = ref('')
 const filters = ref({ keyword: '', status: '' })
+const listFiltered = ref(false)
+const emptyText = computed(() => error.value || (listFiltered.value ? '当前筛选下暂无大屏' : '暂无大屏'))
 
 async function loadList() {
   loading.value = true
@@ -114,6 +121,11 @@ async function loadList() {
       return
     }
     rows.value = res.data.data.list || []
+    listFiltered.value = Boolean(filters.value.keyword.trim() || filters.value.status)
+    if (!rows.value.some((row) => row.id === selectedId.value)) {
+      selectedId.value = null
+      detail.value = null
+    }
     if (rows.value.length && !selectedId.value) selectRow(rows.value[0].id)
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '网络错误'
@@ -146,6 +158,9 @@ onMounted(loadList)
   padding: 16px;
   min-height: 280px;
   background: #1c1c1e;
+  color: #f5f5f7;
+}
+.screen-panel :deep(.et) {
   color: #f5f5f7;
 }
 .screen-widgets {

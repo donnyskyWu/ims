@@ -6,6 +6,10 @@
       <router-link class="btn btn-sec btn-sm" to="/ims/bi/screen-config">退出全屏</router-link>
     </div>
     <div v-if="loading" class="empty"><div class="et">加载中</div></div>
+    <div v-else-if="gate" class="empty" data-testid="bi-screen-gate"><div class="et">{{ gate }}</div></div>
+    <div v-else-if="!widgets.length" class="empty" data-testid="bi-screen-view-empty">
+      <div class="et">{{ emptyReason }}</div>
+    </div>
     <div v-else class="grid">
       <div v-for="(w, i) in widgets" :key="i" class="tile" :class="w.type">
         <div class="k">{{ w.title }}</div>
@@ -19,13 +23,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 const route = useRoute()
 const loading = ref(true)
 const title = ref('数据大屏')
 const refreshedAt = ref('')
 const widgets = ref<Record<string, unknown>[]>([])
+const gate = ref('')
+const emptyReason = ref('暂无组件')
 
 onMounted(async () => {
   const id = route.params.id
@@ -35,7 +41,11 @@ onMounted(async () => {
       title.value = res.data.data.reportName
       refreshedAt.value = res.data.data.refreshedAt
       widgets.value = res.data.data.widgets || []
+      emptyReason.value = String(res.data.data.emptyReason || '暂无组件')
     }
+  } catch (error: unknown) {
+    const msg = errorMessage(error)
+    gate.value = msg === '您无权查看该报表' ? '您无权查看该报表' : msg || '大屏不存在'
   } finally {
     loading.value = false
   }
@@ -59,6 +69,9 @@ onMounted(async () => {
   font-size: 12px;
   opacity: 0.6;
   flex: 1;
+}
+.empty .et {
+  color: #f5f5f7;
 }
 .grid {
   display: grid;
