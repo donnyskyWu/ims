@@ -170,7 +170,11 @@
                   <span data-testid="corp-cert-level" :style="levelStyle(String(row.level || ''))">{{ levelLabel(String(row.level || '')) }}</span>
                 </td>
                 <td data-testid="corp-cert-notify">{{ notifyText(row) }}</td>
-                <td>{{ expireStatusLabel(String(row.status || '')) }}</td>
+                <td>
+                  <span class="tag" data-testid="corp-cert-status" :style="expireStatusStyle(String(row.status || ''))">
+                    <span class="dot"></span>{{ expireStatusLabel(String(row.status || '')) }}
+                  </span>
+                </td>
                 <td>
                   <template v-if="row.status === 'WARNING' || row.status === 'EXPIRED_LOCKED'">
                     <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-renew-btn" @click="openRenew(row)">换证</button>
@@ -781,6 +785,13 @@ function expireStatusLabel(value: string) {
   if (value === 'EXPIRED_LOCKED') return '已锁定'
   if (value === 'RENEW_RESOLVED') return '已换证'
   return value || '—'
+}
+
+function expireStatusStyle(value: string) {
+  if (value === 'WARNING') return 'background:rgba(255,149,0,.16);color:#c46a00'
+  if (value === 'EXPIRED_LOCKED') return 'background:rgba(255,59,48,.12);color:#c62828'
+  if (value === 'RENEW_RESOLVED') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  return 'background:rgba(142,142,147,.16);color:#6d6d72'
 }
 
 function openCertCreate() {

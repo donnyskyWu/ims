@@ -294,13 +294,39 @@ def list_apply(
     return paged([apply_vo(r, names.get(r.applicant_user_id, "")) for r in page], len(rows), page_no, size)
 
 
+TIMELINE_EVENT_LABEL = {
+    "REGISTER": "登记",
+    "APPLY": "领用",
+    "TRANSFER": "流转",
+    "RETURN": "归还",
+    "RECHARGE": "冲话费",
+    "FREEZE": "冻结",
+    "UNFREEZE": "解冻",
+    "CANCEL": "注销",
+    "RECYCLE": "回收回池",
+}
+
+
+def _timeline_operator_names(db: Session, rows: list[AccountTimelineEvent]) -> dict[int, str]:
+    ids = {row.operator_user_id for row in rows if row.operator_user_id}
+    if not ids:
+        return {}
+    names: dict[int, str] = {}
+    for user in db.scalars(select(User).where(User.id.in_(ids))).all():
+        names[int(user.id)] = user.nickname or user.username or ""
+    return names
+
+
 @router.get("/account/timeline/{account_id}")
 def timeline(account_id: int, actor: User = Depends(current_user), db: Session = Depends(db_session)):
-    rows = db.scalars(
-        select(AccountTimelineEvent)
-        .where(AccountTimelineEvent.account_id == account_id)
-        .order_by(AccountTimelineEvent.event_time.desc())
-    ).all()
+    rows = list(
+        db.scalars(
+            select(AccountTimelineEvent)
+            .where(AccountTimelineEvent.account_id == account_id)
+            .order_by(AccountTimelineEvent.event_time.desc())
+        ).all()
+    )
+    names = _timeline_operator_names(db, rows)
     return ok(
         {
             "list": [
@@ -308,9 +334,11 @@ def timeline(account_id: int, actor: User = Depends(current_user), db: Session =
                     "id": r.id,
                     "accountId": r.account_id,
                     "eventType": r.event_type,
+                    "eventLabel": TIMELINE_EVENT_LABEL.get(r.event_type, r.event_type),
                     "refNo": r.ref_no,
                     "refId": r.ref_id,
                     "operatorUserId": r.operator_user_id,
+                    "operatorName": names.get(int(r.operator_user_id or 0), ""),
                     "snapshotSummary": r.snapshot_summary,
                     "remark": r.remark,
                     "eventTime": r.event_time.strftime("%Y-%m-%dT%H:%M:%S") if r.event_time else "",

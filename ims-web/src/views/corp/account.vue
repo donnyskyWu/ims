@@ -37,8 +37,10 @@
       <ul v-else class="pool-event-list">
         <li v-for="ev in poolEvents" :key="ev.id" data-testid="acct-pool-event">
           <span class="mono">{{ ev.eventTime }}</span>
-          <strong>{{ ev.eventLabel || eventLabel(ev.eventType) }}</strong>
+          <span class="tag" :style="eventStyle(ev.eventType)">{{ ev.eventLabel || eventLabel(ev.eventType) }}</span>
+          <strong>{{ ev.eventType }}</strong>
           {{ ev.snapshotSummary }}
+          <span v-if="ev.operatorName" class="hint" data-testid="acct-pool-operator"> · {{ ev.operatorName }}</span>
         </li>
       </ul>
     </div>
@@ -75,7 +77,16 @@
               <td style="font-weight: 500">{{ row.nickname }}</td>
               <td>{{ row.holderUserName || '—' }}</td>
               <td>{{ row.realNameMasked || '—' }}</td>
-              <td>{{ statusLabel(String(row.status)) }}</td>
+              <td>
+                <span
+                  class="tag"
+                  data-testid="acct-status-tag"
+                  :style="statusStyle(String(row.status))"
+                  :title="row.status === 'FROZEN' ? '离职归还未闭环' : undefined"
+                >
+                  <span class="dot"></span>{{ statusLabel(String(row.status)) }}
+                </span>
+              </td>
               <td>{{ row.collectBindSummary }}</td>
               <td class="acts-cell">
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
@@ -183,6 +194,13 @@
       GET /corp/account/page?platformType={{ meta.platform }} · 池状态 GET /corp/account/status/summary · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 账号已绑定资产时提交或确认后提示同步办理资产转移（不阻断）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 回收回池 → POST /account/{id}/recycle（RETURNED → IN_POOL）· 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export · 交接凭证 → GET /account/timeline/{id}/export
     </p>
 
+    <p
+      class="hint"
+      data-testid="acct-reconcile-window"
+      :class="{ 'verify-over': reconcileDue }"
+    >
+      {{ reconcileWindowText }}
+    </p>
     <div data-testid="acct-recharge-list" class="recharge-list">
       <div class="pg-h" style="margin-top: 8px">
         <div>
@@ -254,7 +272,9 @@
                 <span v-else>—</span>
               </td>
               <td>
-                {{ verifyLabel(String(item.verifyStatus || '')) }}
+                <span class="tag" data-testid="acct-verify-tag" :style="verifyStyle(String(item.verifyStatus || ''))">
+                  <span class="dot"></span>{{ verifyLabel(String(item.verifyStatus || '')) }}
+                </span>
                 <span v-if="item.verifyDiff != null"> ¥{{ moneyText(item.verifyDiff) }}</span>
               </td>
               <td>
@@ -353,6 +373,19 @@
         </button>
       </div>
       <div v-if="detail && activeTab === 'basic'" class="formrow one">
+        <div class="fld">
+          <label>状态</label>
+          <div>
+            <span
+              class="tag"
+              data-testid="acct-detail-status"
+              :style="statusStyle(String(detail.status || ''))"
+              :title="detail.status === 'FROZEN' ? '离职归还未闭环' : undefined"
+            >
+              <span class="dot"></span>{{ statusLabel(String(detail.status || '')) }}
+            </span>
+          </div>
+        </div>
         <div v-for="item in basicLines" :key="item.label" class="fld">
           <label>{{ item.label }}</label>
           <div>{{ item.value }}</div>
@@ -631,16 +664,48 @@
         <p v-if="timelineLoading" class="hint">加载时间线…</p>
         <p v-else-if="timelineError" class="hint">{{ timelineError }}</p>
         <ul v-else-if="timelineEvents.length" class="timeline-list">
-          <li v-for="ev in timelineEvents" :key="ev.id">
+          <li v-for="ev in timelineEvents" :key="ev.id" data-testid="acct-timeline-event">
+            <span class="tag" data-testid="acct-timeline-label" :style="eventStyle(ev.eventType)">{{ ev.eventLabel || eventLabel(ev.eventType) }}</span>
             <span class="mono">{{ ev.eventTime }}</span>
             <strong>{{ ev.eventType }}</strong>
             {{ ev.snapshotSummary }}
+            <span v-if="ev.operatorName" class="hint" data-testid="acct-timeline-operator"> · {{ ev.operatorName }}</span>
             <span v-if="ev.refNo" class="hint">（{{ ev.refNo }}）</span>
           </li>
         </ul>
         <p v-else class="hint">暂无领用/归还事件</p>
       </div>
-      <div v-if="detail && activeTab === 'asset'" class="hint">关联资产需 ASSET 反向穿透接口，契约未在本片实现。</div>
+      <div v-if="detail && activeTab === 'asset'" data-testid="acct-asset-tab">
+        <p v-if="assetLoading" class="hint">加载关联资产…</p>
+        <p v-else-if="assetError" class="hint bad" data-testid="acct-asset-error">{{ assetError }}</p>
+        <div v-else-if="!boundAssets.length" class="empty" data-testid="acct-asset-empty">
+          <div class="et">该账号暂无关联资产</div>
+          <div class="es">绑定办公设备后，可从反向穿透查看。</div>
+        </div>
+        <table v-else data-testid="acct-asset-table">
+          <thead>
+            <tr>
+              <th>资产编号</th>
+              <th>名称</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in boundAssets" :key="item.assetId" data-testid="acct-asset-row">
+              <td class="mono">{{ item.assetCode }}</td>
+              <td>{{ item.assetName }}</td>
+              <td>
+                <span class="tag" data-testid="acct-asset-status" :style="assetStatusStyle(item.status)">
+                  {{ assetStatusLabel(item.status) }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint">
+          <router-link to="/ims/corp/device/office" data-testid="acct-asset-reverse">去办公设备反向穿透</router-link>
+        </p>
+      </div>
       <template #foot>
         <button
           v-if="detail && detail.status === 'IN_POOL'"
@@ -965,9 +1030,13 @@
         </div>
         <div class="fld">
           <label>核对状态</label>
-          <div data-testid="acct-unlock-status">{{ verifyLabel(String(unlockRow.verifyStatus || '')) }}</div>
+          <div data-testid="acct-unlock-status">
+            <span class="tag" :style="verifyStyle(String(unlockRow.verifyStatus || ''))">
+              <span class="dot"></span>{{ verifyLabel(String(unlockRow.verifyStatus || '')) }}
+            </span>
+          </div>
         </div>
-        <p class="hint">已核对记录不能直接改。管理员解锁后回到未核对，才能再编辑。差异记录须已生成财务核查工单。</p>
+        <p class="hint" data-testid="acct-unlock-edge">{{ unlockEdgeText }}</p>
         <p v-if="unlockMsg" class="hint" data-testid="acct-unlock-msg">{{ unlockMsg }}</p>
       </div>
       <template #foot>
@@ -1011,7 +1080,12 @@
           <div>
             冲话费 ¥{{ moneyText(verifyResult.totalRecharge) }} · 平台消费 ¥{{ moneyText(verifyResult.platformConsumed) }} · 差异 ¥{{ moneyText(verifyResult.diffAmount) }}
           </div>
-          <div>核对状态：{{ verifyLabel(verifyResult.verifyStatus) }}</div>
+          <div>
+            核对状态：
+            <span class="tag" data-testid="acct-verify-result-tag" :style="verifyStyle(verifyResult.verifyStatus)">
+              <span class="dot"></span>{{ verifyLabel(verifyResult.verifyStatus) }}
+            </span>
+          </div>
           <div v-if="verifyResult.workOrderId" data-testid="acct-verify-ticket">已生成财务核查工单 #{{ verifyResult.workOrderId }}</div>
         </div>
       </div>
@@ -1147,7 +1221,15 @@ const dyLogs = ref<Array<Record<string, unknown>>>([])
 const wxLogs = ref<Array<Record<string, unknown>>>([])
 
 const timelineEvents = ref<
-  { id: number; eventType: string; refNo: string; snapshotSummary: string; eventTime: string }[]
+  {
+    id: number
+    eventType: string
+    eventLabel?: string
+    refNo: string
+    snapshotSummary: string
+    eventTime: string
+    operatorName?: string
+  }[]
 >([])
 const timelineLoading = ref(false)
 const timelineError = ref('')
@@ -1217,6 +1299,13 @@ const unlockOpen = ref(false)
 const unlockRow = ref<Record<string, unknown> | null>(null)
 const unlockBusy = ref(false)
 const unlockMsg = ref('')
+const unlockEdgeText = computed(() => {
+  const status = String(unlockRow.value?.verifyStatus || '')
+  if (status === 'DIFF') return '差异记录须已生成财务核查工单，管理员才能解锁。财务角色不能解锁。'
+  if (status === 'MATCHED') return '一致记录由管理员解锁后回到未核对，才能再编辑。财务角色不能解锁。'
+  if (status === 'UNVERIFIED') return '未核对记录无需解锁，可以直接编辑。'
+  return '已核对记录不能直接改。管理员解锁后回到未核对，才能再编辑。'
+})
 const rechargeForm = reactive({
   amount: '',
   channel: 'ALIPAY',
@@ -1342,10 +1431,21 @@ const poolCounts = reactive({
   CANCELLED: 0,
 })
 const poolEvents = ref<
-  Array<{ id: number; eventType: string; eventLabel?: string; eventTime: string; snapshotSummary: string }>
+  Array<{
+    id: number
+    eventType: string
+    eventLabel?: string
+    eventTime: string
+    snapshotSummary: string
+    operatorName?: string
+  }>
 >([])
 const timelineExportBusy = ref(false)
 const timelineExportNote = ref('')
+type BoundAssetRow = { assetId: number; assetCode: string; assetName: string; status: string }
+const boundAssets = ref<BoundAssetRow[]>([])
+const assetLoading = ref(false)
+const assetError = ref('')
 
 const rechargeNeedsVoucher = computed(() => {
   const amount = Number(rechargeForm.amount)
@@ -1398,6 +1498,46 @@ function statusLabel(code: string) {
   return hit ? hit.label : code
 }
 
+function statusStyle(code: string) {
+  if (code === 'IN_USE') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  if (code === 'IN_POOL') return 'background:rgba(0,113,227,.12);color:#0071e3'
+  if (code === 'FROZEN') return 'background:rgba(255,149,0,.16);color:#c46a00'
+  if (code === 'RETURNED') return 'background:rgba(90,200,250,.2);color:#0b6e99'
+  return 'background:rgba(142,142,147,.16);color:#6d6d72'
+}
+
+function verifyStyle(code: string) {
+  if (code === 'MATCHED') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  if (code === 'DIFF') return 'background:rgba(255,59,48,.12);color:#c62828'
+  return 'background:rgba(142,142,147,.16);color:#6d6d72'
+}
+
+function eventStyle(code: string) {
+  if (code === 'FREEZE' || code === 'CANCEL') return 'background:rgba(255,149,0,.16);color:#c46a00'
+  if (code === 'RETURN' || code === 'RECYCLE' || code === 'UNFREEZE') return 'background:rgba(90,200,250,.2);color:#0b6e99'
+  if (code === 'APPLY' || code === 'REGISTER') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  return 'background:rgba(0,113,227,.12);color:#0071e3'
+}
+
+const assetStatusLabels: Record<string, string> = {
+  PENDING_REVIEW: '待审核',
+  IN_USE: '在用',
+  RETURNED: '已归还',
+  SCRAPPED: '已报废',
+}
+
+function assetStatusLabel(code: string) {
+  return assetStatusLabels[code] || code || '—'
+}
+
+function assetStatusStyle(code: string) {
+  if (code === 'IN_USE') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  if (code === 'PENDING_REVIEW') return 'background:rgba(255,149,0,.16);color:#c46a00'
+  if (code === 'SCRAPPED') return 'background:rgba(142,142,147,.16);color:#6d6d72'
+  if (code === 'RETURNED') return 'background:rgba(90,200,250,.2);color:#0b6e99'
+  return 'background:rgba(0,113,227,.12);color:#0071e3'
+}
+
 function eventLabel(code: string) {
   const labels: Record<string, string> = {
     REGISTER: '登记',
@@ -1424,6 +1564,20 @@ function verifyLabel(code: string) {
   if (code === 'UNVERIFIED' || !code) return '未核对'
   return code
 }
+
+function shanghaiDay() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', day: 'numeric' }).formatToParts(new Date())
+  return Number(parts.find((part) => part.type === 'day')?.value || '0')
+}
+
+const reconcileDue = computed(() => {
+  const day = shanghaiDay()
+  return day >= 1 && day <= 5
+})
+const reconcileWindowText = computed(() => {
+  if (reconcileDue.value) return '请于 5 日前完成上月核对'
+  return '账实核对窗口为每月 1–5 日。当前不在窗口内，仍可按月触发核对。'
+})
 
 function previousMonthUtc() {
   const prev = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1))
@@ -1470,7 +1624,6 @@ const basicLines = computed(() => {
     { label: '公司', value: d.companyName || d.companyId },
     { label: '实名人', value: d.realNameMasked || '—' },
     { label: '责任人', value: d.holderUserName || d.holderUserId },
-    { label: '状态', value: statusLabel(String(d.status || '')) },
     { label: '采集摘要', value: d.collectBindSummary },
   ]
 })
@@ -1704,9 +1857,24 @@ async function loadTimeline(accountId: unknown) {
     const data = res.data?.data as { list: typeof timelineEvents.value }
     timelineEvents.value = data?.list || []
   } catch (e: unknown) {
-    timelineError.value = e instanceof Error ? e.message : '时间线加载失败'
+    timelineError.value = bizMessage(e)
   } finally {
     timelineLoading.value = false
+  }
+}
+
+async function loadBoundAssets(accountId: unknown) {
+  assetLoading.value = true
+  assetError.value = ''
+  boundAssets.value = []
+  try {
+    const res = await http.get(`/asset/reverse/by-account/${accountId}`)
+    const data = res.data?.data as { list?: BoundAssetRow[] }
+    boundAssets.value = data?.list || []
+  } catch (e: unknown) {
+    assetError.value = bizMessage(e)
+  } finally {
+    assetLoading.value = false
   }
 }
 
@@ -1760,6 +1928,12 @@ async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   }
   if (tab === 'timeline') {
     await loadTimeline(row.id)
+  }
+  if (tab === 'asset') {
+    await loadBoundAssets(row.id)
+  } else {
+    boundAssets.value = []
+    assetError.value = ''
   }
   detailOpen.value = true
 }
@@ -2013,7 +2187,8 @@ async function exportTimeline() {
     URL.revokeObjectURL(anchor.href)
     timelineExportNote.value = `${data.message || '交接凭证已生成'} · ${fileName}`
   } catch (e: unknown) {
-    timelineExportNote.value = bizMessage(e)
+    const message = bizMessage(e)
+    timelineExportNote.value = message.includes('5005') ? '交接凭证生成失败，请稍后重试（5005）' : message
   } finally {
     timelineExportBusy.value = false
   }
@@ -2410,6 +2585,9 @@ watch(
 watch(activeTab, (tab) => {
   if (tab === 'timeline' && detail.value?.id) {
     loadTimeline(detail.value.id)
+  }
+  if (tab === 'asset' && detail.value?.id) {
+    loadBoundAssets(detail.value.id)
   }
   if (tab === 'collect' && detail.value?.id) {
     loadDyLogs(detail.value.id)

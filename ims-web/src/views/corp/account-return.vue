@@ -18,7 +18,7 @@
         <option value="EXCEPTION_SUSPENDED">异常挂起</option>
         <option value="CLOSED">已闭环</option>
       </select>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="return-filter-search">查询</button>
     </form>
     <p v-if="listError" class="hint bad" data-testid="return-list-error">{{ listError }}</p>
     <div class="tbl-block">
@@ -37,14 +37,23 @@
           </thead>
           <tbody>
             <tr v-if="!orders.length">
-              <td colspan="7">暂无离职归还单。漏单时使用手动补建。</td>
+              <td colspan="7" style="white-space: normal">
+                <div class="empty" data-testid="return-list-empty">
+                  <div class="et">{{ returnEmptyTitle }}</div>
+                  <div class="es">{{ returnEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in orders" :key="String(row.id)" data-testid="return-order-row">
               <td class="mono" data-testid="return-order-no">{{ row.returnNo }}</td>
               <td>{{ row.userName || row.userNickname }}</td>
               <td>{{ row.resignDate }}</td>
               <td data-testid="return-order-progress">{{ progressText(row) }}</td>
-              <td data-testid="return-order-status">{{ statusText(String(row.status || '')) }}</td>
+              <td data-testid="return-order-status">
+                <span class="tag" :style="statusStyle(String(row.status || ''))">
+                  <span class="dot"></span>{{ statusText(String(row.status || '')) }}
+                </span>
+              </td>
               <td data-testid="return-order-overdue">{{ row.overdue ? '逾期' : '—' }}</td>
               <td><button class="btn btn-txt" type="button" data-testid="return-order-open" @click="openOrder(row)">处理</button></td>
             </tr>
@@ -98,7 +107,9 @@
             <tr v-for="item in items" :key="String(item.id)" data-testid="return-item-row">
               <td>{{ typeText(String(item.itemType || '')) }}</td>
               <td data-testid="return-item-label">{{ item.itemLabel || item.itemSnapshot }}</td>
-              <td data-testid="return-item-status">{{ itemText(String(item.itemStatus || '')) }}</td>
+              <td data-testid="return-item-status">
+                <span class="tag" :style="itemStyle(String(item.itemStatus || ''))">{{ itemText(String(item.itemStatus || '')) }}</span>
+              </td>
               <td>
                 <button class="btn btn-txt" type="button" data-testid="return-item-returned" :disabled="detail.status === 'CLOSED' || item.itemStatus === 'RETURNED'" @click="markReturned(item)">确认归还</button>
               </td>
@@ -138,6 +149,13 @@ const detailError = ref('')
 const busy = ref(false)
 
 const items = computed(() => ((detail.value?.items as Row[]) || []))
+const returnFiltered = computed(() => !!(returnNo.value.trim() || status.value))
+const returnEmptyTitle = computed(() => (returnFiltered.value ? '没有符合筛选的离职归还单' : '暂无离职归还单'))
+const returnEmptyHint = computed(() =>
+  returnFiltered.value
+    ? '换一个单号或状态，或清空筛选。'
+    : '离职归还单由钉钉离职事件自动生成，异常缺单时使用手动补建。',
+)
 
 function statusText(value: string) {
   const labels: Record<string, string> = {
@@ -146,6 +164,20 @@ function statusText(value: string) {
     CLOSED: '已闭环',
   }
   return labels[value] || value || '—'
+}
+
+function statusStyle(value: string) {
+  if (value === 'IN_PROGRESS') return 'background:rgba(0,113,227,.12);color:#0071e3'
+  if (value === 'CLOSED') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  if (value === 'EXCEPTION_SUSPENDED') return 'background:rgba(255,59,48,.12);color:#c62828'
+  return 'background:rgba(142,142,147,.16);color:#6d6d72'
+}
+
+function itemStyle(value: string) {
+  if (value === 'RETURNED') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  if (value === 'DISPUTED') return 'background:rgba(255,59,48,.12);color:#c62828'
+  if (value === 'TRANSFERRED') return 'background:rgba(0,113,227,.12);color:#0071e3'
+  return 'background:rgba(255,149,0,.16);color:#c46a00'
 }
 
 function itemText(value: string) {
