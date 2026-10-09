@@ -26,6 +26,7 @@ router = APIRouter()
 CORP_PLATFORMS = frozenset(
     {"WECHAT_OFFICIAL", "WECHAT_CHANNELS", "DOUYIN", "KUAISHOU", "XIAOHONGSHU"}
 )
+ACCOUNT_STATUSES = frozenset({"IN_USE", "IN_POOL", "FROZEN", "RETURNED", "CANCELLED"})
 COLLECT_PLATFORMS = frozenset({"DOUYIN", "KUAISHOU", "WECHAT_OFFICIAL", "WECHAT_CHANNELS", "XIAOHONGSHU"})
 
 
@@ -191,6 +192,23 @@ def check_platform(platform_type: str | None):
     return None
 
 
+def check_list_status(status: str):
+    if status and status not in ACCOUNT_STATUSES:
+        return fail(1001, "状态无效")
+    return None
+
+
+def check_list_holder(db: Session, actor: User, holder_user_id: int | None):
+    if holder_user_id is None:
+        return None
+    if holder_user_id <= 0:
+        return fail(1001, "责任人不存在")
+    user = db.get(User, holder_user_id)
+    if user is None or user.deleted or (user.tenant_id or 0) != tenant_of(actor):
+        return fail(1001, "责任人不存在")
+    return None
+
+
 def check_company(ops: Session, actor: User, company_id: int | None, required: bool):
     if not company_id:
         if required:
@@ -353,6 +371,7 @@ def account_page(
     ipGroupId: int | None = None,
     companyId: int | None = None,
     status: str = "",
+    holderUserId: int | None = None,
     db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
@@ -361,6 +380,12 @@ def account_page(
     platform_error = check_platform(platformType)
     if platform_error:
         return platform_error
+    status_error = check_list_status(status)
+    if status_error:
+        return status_error
+    holder_error = check_list_holder(db, actor, holderUserId)
+    if holder_error:
+        return holder_error
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(PlatformAccount).where(
         PlatformAccount.deleted == 0,
@@ -381,6 +406,8 @@ def account_page(
         stmt = stmt.where(PlatformAccount.company_id == companyId)
     if status:
         stmt = stmt.where(PlatformAccount.status == status)
+    if holderUserId:
+        stmt = stmt.where(PlatformAccount.holder_user_id == holderUserId)
     total = count_of(ops, stmt)
     rows = ops.scalars(stmt.order_by(PlatformAccount.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     bind_map = binds_map(ops, [row.id for row in rows])
