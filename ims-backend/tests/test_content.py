@@ -711,3 +711,151 @@ def test_task_execute_content_gate_and_crud():
     listing = client.get("/admin-api/ims/content", headers=auth, params={"pageSize": 5})
     assert listing.json()["code"] == 0
     assert listing.json()["data"]["total"] >= 1
+
+
+def _sop_nodes(name_a: str = "脚本", name_b: str = "发布", preds_b: list[int] | None = None, preds_a: list[int] | None = None):
+    return [
+        {
+            "nodeOrder": 1,
+            "nodeName": name_a,
+            "standardDesc": "脚本标准",
+            "ownerRole": "R6",
+            "slaHours": 24,
+            "nodeType": "NORMAL",
+            "predecessors": preds_a or [],
+        },
+        {
+            "nodeOrder": 2,
+            "nodeName": name_b,
+            "standardDesc": "发布标准",
+            "ownerRole": "R8",
+            "slaHours": 8,
+            "nodeType": "CONTENT_PUBLISH",
+            "predecessors": [1] if preds_b is None else preds_b,
+            "parallelGroup": "PUSH",
+        },
+    ]
+
+
+def test_sop_version_delete_and_dag():
+    """#101 · SOP 新版本 / 逻辑删除 / DAG 环与执行岗位"""
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={
+            "sopName": "DAG 标准 SOP",
+            "contentType": "SHORT_VIDEO",
+            "sopLevel": "STANDARD",
+            "nodes": _sop_nodes(),
+        },
+    )
+    assert created.json()["code"] == 0
+    sop_id = created.json()["data"]["id"]
+    assert created.json()["data"]["version"] == 1
+    assert created.json()["data"]["status"] == "ENABLED"
+    assert created.json()["data"]["nodeCount"] == 2
+
+    nodes = client.get(f"/admin-api/ims/content/sop/{sop_id}/nodes", headers=auth)
+    assert nodes.json()["code"] == 0
+    body = nodes.json()["data"]
+    assert body[1]["predecessors"] == [1]
+    assert body[1]["parallelGroup"] == "PUSH"
+    assert body[1]["nodeType"] == "CONTENT_PUBLISH"
+
+    cycle = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={
+            "sopName": "成环 SOP",
+            "contentType": "SHORT_VIDEO",
+            "sopLevel": "STANDARD",
+            "nodes": _sop_nodes(preds_a=[2], preds_b=[1]),
+        },
+    )
+    assert cycle.json()["code"] == 1500
+    assert "环" in cycle.json()["msg"]
+
+    missing_role = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={
+            "sopName": "缺岗位 SOP",
+            "contentType": "SHORT_VIDEO",
+            "sopLevel": "STANDARD",
+            "nodes": [
+                {
+                    "nodeOrder": 1,
+                    "nodeName": "脚本",
+                    "ownerRole": "",
+                    "nodeType": "NORMAL",
+                    "slaHours": 24,
+                }
+            ],
+        },
+    )
+    assert missing_role.json()["code"] == 1500
+    assert "执行岗位" in missing_role.json()["msg"]
+
+    missing_doc = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={
+            "sopName": "缺文档类型 SOP",
+            "contentType": "SHORT_VIDEO",
+            "sopLevel": "STANDARD",
+            "nodes": [
+                {
+                    "nodeOrder": 1,
+                    "nodeName": "成稿",
+                    "ownerRole": "R6",
+                    "nodeType": "CONTENT_GENERATION",
+                    "documentType": "",
+                    "slaHours": 24,
+                }
+            ],
+        },
+    )
+    assert missing_doc.json()["code"] == 1500
+
+    updated = client.put(
+        f"/admin-api/ims/content/sop/{sop_id}",
+        headers=auth,
+        json={
+            "sopName": "DAG 标准 SOP",
+            "contentType": "SHORT_VIDEO",
+            "sopLevel": "STANDARD",
+            "nodes": _sop_nodes(name_b="发布v2"),
+        },
+    )
+    assert updated.json()["code"] == 0
+    new_id = updated.json()["data"]["id"]
+    assert new_id != sop_id
+    assert updated.json()["data"]["version"] == 2
+    assert updated.json()["data"]["status"] == "ENABLED"
+
+    listed = client.get("/admin-api/ims/content/sop/list", headers=auth, params={"keyword": "DAG 标准 SOP"})
+    assert listed.json()["code"] == 0
+    by_id = {row["id"]: row for row in listed.json()["data"]["list"]}
+    assert by_id[sop_id]["status"] == "DISABLED"
+    assert by_id[sop_id]["version"] == 1
+    assert by_id[new_id]["version"] == 2
+
+    new_nodes = client.get(f"/admin-api/ims/content/sop/{new_id}/nodes", headers=auth)
+    assert new_nodes.json()["data"][1]["nodeName"] == "发布v2"
+    old_nodes = client.get(f"/admin-api/ims/content/sop/{sop_id}/nodes", headers=auth)
+    assert old_nodes.json()["data"][1]["nodeName"] == "发布"
+
+    no_confirm = client.delete(f"/admin-api/ims/content/sop/{new_id}", headers=auth)
+    assert no_confirm.json()["code"] == 1500
+    removed = client.delete(
+        f"/admin-api/ims/content/sop/{new_id}",
+        headers=auth,
+        params={"confirmText": "DELETE"},
+    )
+    assert removed.json()["code"] == 0
+    gone = client.get(f"/admin-api/ims/content/sop/{new_id}/nodes", headers=auth)
+    assert gone.json()["code"] == 1504
+    still = client.get(f"/admin-api/ims/content/sop/{sop_id}/nodes", headers=auth)
+    assert still.json()["code"] == 0
+    assert len(still.json()["data"]) == 2
