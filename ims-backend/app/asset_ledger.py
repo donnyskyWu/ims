@@ -47,6 +47,25 @@ def _missing(db: Session, actor: User, asset_id: int):
     return row, None
 
 
+_BLOCKED = {
+    ("SCRAPPED", "checkout"): "已报废，不能再领用",
+    ("SCRAPPED", "use"): "已报废，不能再使用",
+    ("SCRAPPED", "return"): "已报废，不能归还",
+    ("SCRAPPED", "scrap"): "已报废，不能再次报废",
+    ("RETURNED", "checkout"): "已归还，不能再领用",
+    ("RETURNED", "use"): "已归还，不能再使用",
+    ("RETURNED", "return"): "已归还，不能再次归还",
+    ("PENDING_REVIEW", "use"): "尚未领用，不能使用",
+    ("PENDING_REVIEW", "return"): "尚未领用，不能归还",
+    ("PENDING_REVIEW", "scrap"): "须先归还再报废",
+    ("IN_USE", "scrap"): "须先归还再报废",
+}
+
+
+def _blocked(status: str, action: str):
+    return fail(1015, _BLOCKED.get((status, action), "资产状态流转非法"))
+
+
 def _check_owner(db: Session, actor: User, owner_id: int | None):
     if not owner_id:
         return fail(1001, "责任人必填")
@@ -582,7 +601,7 @@ def ledger_checkout(
     if row.status == "IN_USE":
         return fail(1012, "资产已在用")
     if row.status != "PENDING_REVIEW":
-        return fail(1015, "资产状态流转非法")
+        return _blocked(row.status, "checkout")
     owner_error = _check_owner(db, actor, body.ownerUserId)
     if owner_error:
         return owner_error
@@ -607,7 +626,7 @@ def ledger_use(
     if error:
         return error
     if row.status != "IN_USE":
-        return fail(1015, "资产状态流转非法")
+        return _blocked(row.status, "use")
     now = utcnow()
     if row.used_at is None:
         row.used_at = now
@@ -629,7 +648,7 @@ def ledger_return(
     if error:
         return error
     if row.status != "IN_USE":
-        return fail(1015, "资产状态流转非法")
+        return _blocked(row.status, "return")
     if row.used_at is None:
         return fail(1015, "尚未登记使用，不能归还")
     previous_owner = row.owner_user_id
@@ -656,7 +675,7 @@ def ledger_scrap(
     if not reason:
         return fail(1001, "报废原因必填")
     if row.status != "RETURNED":
-        return fail(1015, "须先归还再报废")
+        return _blocked(row.status, "scrap")
     row.status = "SCRAPPED"
     row.owner_user_id = None
     row.updater = actor.id

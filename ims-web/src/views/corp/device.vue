@@ -263,7 +263,7 @@
         </div>
       </div>
       <div class="formrow one"><div class="fld"><label>用途</label><input v-model="assetForm.purpose" data-testid="corp-asset-purpose" /></div></div>
-      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <div v-if="formError" class="hint bad" data-testid="corp-asset-checkout-error">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="checkoutOpen = false">取消</button>
         <button class="btn btn-pri" type="button" data-testid="corp-asset-checkout-save" :disabled="saving" @click="submitCheckout">确认领用</button>
@@ -288,7 +288,7 @@
     </ProtoDrawer>
     <ProtoDrawer :open="scrapOpen" title="报废" width="480px" @close="scrapOpen = false">
       <div class="formrow one"><div class="fld"><label>报废原因<i class="req">*</i></label><input v-model="assetForm.remark" data-testid="corp-asset-scrap-reason" /></div></div>
-      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <div v-if="formError" class="hint bad" data-testid="corp-asset-scrap-error">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="scrapOpen = false">取消</button>
         <button class="btn btn-pri" type="button" data-testid="corp-asset-scrap-save" :disabled="saving" @click="submitScrap">确认报废</button>
@@ -303,9 +303,14 @@
         <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
         <div class="fld"><label>采购批次</label><div data-testid="corp-asset-detail-batch">{{ assetDetail.purchaseBatchNo || '—' }}</div></div>
       </div>
+      <p v-if="assetDetail.status === 'SCRAPPED'" class="hint" data-testid="corp-asset-terminal">已报废为终态，不能再领用。</p>
+      <p v-else-if="assetDetail.status === 'RETURNED'" class="hint" data-testid="corp-asset-terminal">已归还，不能再领用，只能报废。</p>
       <table data-testid="corp-asset-timeline">
         <thead><tr><th>事件</th><th>状态</th><th>说明</th></tr></thead>
         <tbody>
+          <tr v-if="!timeline.length">
+            <td colspan="3" data-testid="corp-asset-timeline-empty">暂无流转记录</td>
+          </tr>
           <tr v-for="event in timeline" :key="String(event.id)">
             <td>{{ eventLabel(String(event.eventType || '')) }}</td>
             <td>{{ statusLabel(String(event.toStatus || '')) }}</td>
@@ -426,21 +431,34 @@
     <ProtoDrawer v-if="kind === 'office'" :open="verifyOpen" title="登记关联校验" width="720px" @close="verifyOpen = false">
       <p class="hint">检查台账里的实名人、账号、场次是否存在、归属是否一致、状态是否允许。</p>
       <p class="hint" data-testid="asset-verify-schedule">定时校验：每周一凌晨全量，其余每日增量。打开本抽屉会补跑当日尚未执行的一次。</p>
+      <p v-if="verifySchedule?.ran" class="hint" data-testid="asset-verify-schedule-today">
+        今日已补跑（{{ verifySchedule.scope === 'INCREMENT' ? '增量' : '全量' }}）。
+        <template v-if="verifySchedule.emptyScan">没有变更资产，记为空批次。</template>
+      </p>
       <p data-testid="asset-verify-metrics">
         <span data-testid="asset-verify-complete" :class="metricClass(verifyMetrics?.relationCompleteRate)">完整率 {{ rateText(verifyMetrics?.relationCompleteRate) }}（目标 98%）</span>
         ·
         <span data-testid="asset-verify-consistency" :class="metricClass(verifyMetrics?.consistencyRate)">一致率 {{ rateText(verifyMetrics?.consistencyRate) }}（目标 98%）</span>
       </p>
-      <div class="formrow one">
+      <p class="hint" data-testid="asset-verify-counts">
+        待处理异常工单 {{ Number(verifyMetrics?.pendingTaskCount || 0) }} · 本周批次 {{ Number(verifyMetrics?.weekBatchCount || 0) }}
+      </p>
+      <div class="formrow">
         <div class="fld">
           <label>只看资产编号</label>
           <input v-model="verifyAssetCode" data-testid="asset-verify-asset-code" placeholder="可空，填写后只看这台设备" />
         </div>
+        <div class="fld">
+          <label>批次号</label>
+          <input v-model="verifyBatchNo" data-testid="asset-verify-batch-filter" placeholder="精确批次号" />
+        </div>
       </div>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="asset-verify-batch-query" @click="searchVerifyBatches">查批次</button>
       <button class="btn btn-pri btn-sm" type="button" data-testid="asset-verify-run" :disabled="verifyRunning" @click="runVerify">{{ verifyRunning ? '校验中…' : '开始校验' }}</button>
       <p v-if="verifyError" class="hint bad" data-testid="asset-verify-error">{{ verifyError }}</p>
       <p v-else-if="verifySummary" class="hint" data-testid="asset-verify-summary">{{ verifySummary }}</p>
       <p v-if="verifySummary && verifyAssetCode.trim() && !verifyErrors.length && !verifyError" class="hint" data-testid="asset-verify-clean">该资产没有关联异常</p>
+      <p v-else-if="verifySummary && !verifyErrors.length && !verifyError" class="hint" data-testid="asset-verify-run-empty">本次校验没有异常明细</p>
       <table v-if="verifyErrors.length" data-testid="asset-verify-errors">
         <thead><tr><th>资产编号</th><th>类型</th><th>说明</th></tr></thead>
         <tbody>
@@ -476,7 +494,7 @@
             <td data-testid="asset-verify-batch-status">{{ verifyTaskLabel(String(item.taskStatus || '')) }}</td>
             <td>
               {{ deadlineText(item.deadlineAt) }}
-              <span v-if="item.overdue" class="hint bad" data-testid="asset-verify-overdue">逾期</span>
+              <span v-if="item.overdue" class="hint bad" data-testid="asset-verify-overdue">逾期 {{ item.overdueDays || 1 }} 天</span>
               <span v-if="item.escalateUserName" data-testid="asset-verify-escalated">已升级：{{ item.escalateUserName }}</span>
             </td>
             <td>
@@ -486,6 +504,11 @@
           </tr>
         </tbody>
       </table>
+      <p v-if="verifyBoardLoaded && verifyBatchFiltered && !verifyBatches.length && !verifyError" class="hint" data-testid="asset-verify-filter-empty">没有符合条件的校验批次</p>
+      <p v-else-if="verifyBoardLoaded && !verifyBatchFiltered && !verifyBatches.length && !verifyError" class="hint" data-testid="asset-verify-empty">
+        暂无校验数据，请先触发一次校验
+        <button class="btn btn-txt" type="button" data-testid="asset-verify-empty-run" @click="runVerify">触发一次校验</button>
+      </p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="verifyOpen = false">关闭</button>
       </template>
@@ -560,11 +583,15 @@ const forwardAssetId = ref(0)
 const forwardSessions = ref<Row[]>([])
 const forwardFinance = ref<Row | null>(null)
 const verifyOpen = ref(false)
+const verifyBoardLoaded = ref(false)
+const verifyBatchFiltered = ref(false)
+const verifySchedule = ref<Row | null>(null)
 const verifyRunning = ref(false)
 const verifyError = ref('')
 const verifySummary = ref('')
 const verifyErrors = ref<Row[]>([])
 const verifyAssetCode = ref('')
+const verifyBatchNo = ref('')
 const verifyMetrics = ref<Row | null>(null)
 const verifyBatches = ref<Row[]>([])
 const verifyOwnerId = ref('')
@@ -1237,6 +1264,10 @@ function openVerify() {
   verifySummary.value = ''
   verifyErrors.value = []
   verifyAssetCode.value = ''
+  verifyBatchNo.value = ''
+  verifyBatchFiltered.value = false
+  verifyBoardLoaded.value = false
+  verifySchedule.value = null
   verifyCloseRemark.value = ''
   const admin = users.value.find((user) => (user.nickname || user.username) === '管理员')
   verifyOwnerId.value = String((admin || users.value[0])?.id || '')
@@ -1246,10 +1277,24 @@ function openVerify() {
 }
 
 async function loadVerifyBoard() {
-  const batches = await http.get('/asset/verify/batches', { params: { pageNo: 1, pageSize: 8 } })
+  const params: Record<string, string | number> = { pageNo: 1, pageSize: 8 }
+  const batchNo = verifyBatchNo.value.trim()
+  if (batchNo) params.batchNo = batchNo
+  const batches = await http.get('/asset/verify/batches', { params })
   const metrics = await http.get('/asset/verify/metrics')
-  verifyBatches.value = ((batches.data?.data?.list || []) as Row[])
+  const data = (batches.data?.data || {}) as { list?: Row[]; schedule?: Row }
+  verifyBatches.value = (data.list || []) as Row[]
+  verifySchedule.value = (data.schedule || null) as Row | null
   verifyMetrics.value = (metrics.data?.data || null) as Row | null
+  verifyBatchFiltered.value = Boolean(batchNo)
+  verifyBoardLoaded.value = true
+}
+
+function searchVerifyBatches() {
+  verifyError.value = ''
+  void loadVerifyBoard().catch((error: unknown) => {
+    verifyError.value = bizError(error)
+  })
 }
 
 async function dispatchBatch(row: Row) {
@@ -1506,6 +1551,10 @@ async function postAction(path: string, payload: Record<string, unknown>, close:
 }
 
 function submitCheckout() {
+  if (!assetForm.ownerUserId) {
+    formError.value = '责任人必填'
+    return
+  }
   postAction('/checkout', { ownerUserId: Number(assetForm.ownerUserId), purpose: assetForm.purpose }, () => {
     checkoutOpen.value = false
   })
@@ -1524,6 +1573,10 @@ function submitReturn() {
 }
 
 function submitScrap() {
+  if (!assetForm.remark.trim()) {
+    formError.value = '报废原因必填'
+    return
+  }
   postAction('/scrap', { remark: assetForm.remark }, () => {
     scrapOpen.value = false
   })

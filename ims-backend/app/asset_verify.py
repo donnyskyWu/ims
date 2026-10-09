@@ -112,6 +112,28 @@ def scheduled_scope(value: datetime) -> str:
     return "FULL" if shanghai_wall(value).weekday() == 0 else "INCREMENT"
 
 
+def overdue_days(deadline: datetime | None, status: str, now: datetime | None = None) -> int:
+    """逾期按上海日期计。同一天已过限期记 1 天。已闭环不算逾期。"""
+    clock = now or utcnow()
+    if status == "CLOSED" or deadline is None or deadline >= clock:
+        return 0
+    span = (shanghai_wall(clock).date() - shanghai_wall(deadline).date()).days
+    return span if span > 0 else 1
+
+
+def week_start_utc(now: datetime | None = None) -> datetime:
+    wall = shanghai_wall(now or utcnow())
+    monday = wall.date() - timedelta(days=wall.weekday())
+    return datetime(monday.year, monday.month, monday.day) - timedelta(hours=8)
+
+
+def schedule_board(rows: list[AssetVerifyBatch], scope: str, day: str) -> dict:
+    """今日定时补跑摘要。没有变更资产时记空批次，供校验抽屉空态。"""
+    ran = bool(rows)
+    empty_scan = ran and all(int(row.total_count or 0) == 0 for row in rows)
+    return {"scheduleDate": day, "scope": scope, "ran": ran, "emptyScan": empty_scan}
+
+
 def add_business_days(start: datetime, days: int) -> datetime:
     """从上海日期起跳过周六日，限期落在第 N 个工作日 23:59:59（再折回 UTC）。"""
     cursor = shanghai_wall(start).date()
@@ -313,6 +335,7 @@ def _batch_vo(row: AssetVerifyBatch, names: dict[int, str]) -> dict:
         "remark": row.remark or "",
         "deadlineAt": _clock(row.deadline_at),
         "overdue": overdue,
+        "overdueDays": overdue_days(row.deadline_at, row.task_status or ""),
         "escalatedAt": _clock(row.escalated_at),
         "escalateUserId": row.escalate_user_id,
         "escalateUserName": names.get(row.escalate_user_id or 0, "") if row.escalate_user_id else "",
@@ -637,6 +660,17 @@ def verify_batches(
 ):
     run_scheduled_verify(db)
     escalate_overdue(db)
+    clock = utcnow()
+    day = schedule_date(clock)
+    scope = scheduled_scope(clock)
+    today = list(
+        db.scalars(
+            _batch_stmt(db, actor).where(
+                AssetVerifyBatch.trigger_mode == "SCHEDULE",
+                AssetVerifyBatch.schedule_date == day,
+            )
+        ).all()
+    )
     number, size = page_args(pageNo, pageSize)
     stmt = _batch_stmt(db, actor)
     text = (batchNo or "").strip()
@@ -652,7 +686,15 @@ def verify_batches(
         stmt = stmt.where(AssetVerifyBatch.created_at <= timeTo.strip() + " 23:59:59")
     total = count_of(db, stmt)
     rows = list(db.scalars(stmt.order_by(AssetVerifyBatch.id.desc()).offset((number - 1) * size).limit(size)).all())
-    return ok({"list": [_batch_vo(row, _names(db, rows)) for row in rows], "total": total, "pageNo": number, "pageSize": size})
+    return ok(
+        {
+            "list": [_batch_vo(row, _names(db, rows)) for row in rows],
+            "total": total,
+            "pageNo": number,
+            "pageSize": size,
+            "schedule": schedule_board(today, scope, day),
+        }
+    )
 
 
 @router.get("/asset/verify/errors")
@@ -756,12 +798,17 @@ def verify_metrics(
         }
         for day, row in sorted(by_day.items())[-30:]
     ]
-    pending = sum(1 for row in batches if row.task_status == "PENDING_DISPATCH")
+    stmt = _batch_stmt(db, actor)
+    total_batches = count_of(db, stmt)
+    pending = count_of(db, stmt.where(AssetVerifyBatch.task_status == "PENDING_DISPATCH"))
+    week = count_of(db, stmt.where(AssetVerifyBatch.created_at >= week_start_utc()))
     return ok(
         {
             "relationCompleteRate": complete,
             "consistencyRate": latest,
             "pendingTaskCount": pending,
+            "weekBatchCount": week,
+            "empty": total_batches == 0,
             "trend": trend,
         }
     )

@@ -13,7 +13,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
 
 from app.main import app
-from app.asset_verify import add_business_days, escalate_overdue, run_scheduled_verify, scheduled_scope
+from app.asset_verify import (
+    add_business_days,
+    escalate_overdue,
+    overdue_days,
+    run_scheduled_verify,
+    schedule_board,
+    scheduled_scope,
+)
 from app.core import SessionLocal, utcnow
 from app.models import AssetLedger, AssetVerifyBatch, AssetVerifyError, Todo, User, UserDept, WorkMessage
 from app.ops_db import ops_session
@@ -228,5 +235,41 @@ def test_overdue_verify_escalates_to_dept_leader_once_and_skips_closed():
     assert listed["code"] == 0, listed
     found = listed["data"]["list"][0]
     assert found["overdue"] is True
+    assert found["overdueDays"] >= 1
     assert found["escalateUserName"] == "校验负责人"
     assert "已升级" not in (found.get("remark") or "")
+
+    metrics = client.get("/admin-api/ims/asset/verify/metrics", headers=auth).json()
+    assert metrics["code"] == 0, metrics
+    assert metrics["data"]["empty"] is False
+    assert metrics["data"]["weekBatchCount"] >= 1
+    assert isinstance(metrics["data"]["pendingTaskCount"], int)
+    listed_all = client.get("/admin-api/ims/asset/verify/batches", headers=auth, params={"pageNo": 1, "pageSize": 5}).json()
+    assert listed_all["data"]["schedule"]["ran"] is True
+    assert listed_all["data"]["schedule"]["scope"] in {"FULL", "INCREMENT"}
+    assert listed_all["data"]["schedule"]["emptyScan"] is False
+    missing = client.get(
+        "/admin-api/ims/asset/verify/batches",
+        headers=auth,
+        params={"batchNo": "AV-NO-SUCH-200"},
+    ).json()
+    assert missing["data"]["list"] == []
+    assert missing["data"]["schedule"]["scheduleDate"]
+
+
+def test_overdue_days_and_empty_schedule_board():
+    past = datetime(2026, 10, 1, 0, 0, 0)
+    later = datetime(2026, 10, 4, 2, 0, 0)
+    assert overdue_days(past, "PENDING_DISPATCH", later) >= 1
+    assert overdue_days(later, "PENDING_DISPATCH", later) == 0
+    assert overdue_days(past, "CLOSED", later) == 0
+    assert overdue_days(later - timedelta(hours=1), "REPAIRING", later) == 1
+    quiet = schedule_board([], "INCREMENT", "2026-10-13")
+    assert quiet == {"scheduleDate": "2026-10-13", "scope": "INCREMENT", "ran": False, "emptyScan": False}
+
+    class Row:
+        total_count = 0
+
+    empty = schedule_board([Row(), Row()], "INCREMENT", "2026-10-13")
+    assert empty["ran"] is True
+    assert empty["emptyScan"] is True
