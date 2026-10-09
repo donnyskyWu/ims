@@ -63,11 +63,18 @@ test.describe('fin profit metric sort closure', () => {
 
     await page.goto('/ims/fin/profit')
     await expect(page.locator('h1')).toHaveText('利润核算', { timeout: 15_000 })
+    await page.waitForResponse(
+      (r) => r.url().includes('/fin/profit/list') && r.request().method() === 'GET' && r.status() === 200,
+    )
     await page.getByTestId('fin-profit-date-from').fill(day)
     await page.getByTestId('fin-profit-date-to').fill(day)
 
     const netResp = page.waitForResponse(
-      (r) => r.url().includes('/fin/profit/list') && r.url().includes('profitType=NET') && r.status() === 200,
+      (r) =>
+        r.url().includes('/fin/profit/list') &&
+        r.url().includes('profitType=NET') &&
+        r.url().includes(`dateFrom=${day}`) &&
+        r.status() === 200,
     )
     await page.getByRole('button', { name: '查询' }).click()
     const netBody = (await (await netResp).json()) as {
