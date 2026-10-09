@@ -186,6 +186,7 @@
           <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
         </div>
       </div>
+      <p v-if="rcR1Due" class="hint" data-testid="acct-rc-r1">请于 5 日前完成上月核对</p>
       <div class="recharge-table">
         <table>
           <thead>
@@ -196,12 +197,18 @@
               <th>充值日期</th>
               <th>凭证</th>
               <th>核对</th>
+              <th>备注</th>
+              <th>操作人</th>
+              <th>登记时间</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!rechargeRows.length">
-              <td colspan="7">暂无冲话费记录</td>
+            <tr v-if="rechargeListError">
+              <td colspan="10" data-testid="acct-recharge-empty">{{ rechargeListError }}</td>
+            </tr>
+            <tr v-else-if="!rechargeRows.length">
+              <td colspan="10" data-testid="acct-recharge-empty">暂无冲话费记录</td>
             </tr>
             <tr v-for="item in rechargeRows" :key="String(item.id)" data-testid="acct-recharge-row">
               <td class="mono">{{ item.accountNo }}</td>
@@ -217,7 +224,10 @@
                 {{ verifyLabel(String(item.verifyStatus || '')) }}
                 <span v-if="item.verifyDiff != null"> ¥{{ moneyText(item.verifyDiff) }}</span>
               </td>
-              <td>
+              <td>{{ item.remark || '—' }}</td>
+              <td>{{ item.operatorName || '—' }}</td>
+              <td>{{ rechargeTimeText(item.createdAt) }}</td>
+              <td class="acts-cell">
                 <button
                   v-if="!item.verifyStatus || item.verifyStatus === 'UNVERIFIED'"
                   class="btn btn-sec btn-sm"
@@ -236,10 +246,43 @@
                 >
                   解锁
                 </button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="acct-recharge-detail" @click="openRechargeDetail(item)">
+                  核对详情
+                </button>
+                <button
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="acct-recharge-voucher-view"
+                  @click="openRechargeDetail(item, 'voucher')"
+                >
+                  查看凭证
+                </button>
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+      <div class="pager" data-testid="acct-recharge-pager">
+        <span class="pg-total" data-testid="acct-recharge-total">共 {{ rechargeTotal }} 条</span>
+        <button
+          class="btn btn-sec btn-sm"
+          type="button"
+          data-testid="acct-recharge-prev"
+          :disabled="rechargePage <= 1 || rechargeListBusy"
+          @click="gotoRechargePage(rechargePage - 1)"
+        >
+          上一页
+        </button>
+        <span>{{ rechargePage }} / {{ rechargePageCount }}</span>
+        <button
+          class="btn btn-sec btn-sm"
+          type="button"
+          data-testid="acct-recharge-next"
+          :disabled="rechargePage >= rechargePageCount || rechargeListBusy"
+          @click="gotoRechargePage(rechargePage + 1)"
+        >
+          下一页
+        </button>
       </div>
     </div>
 
@@ -282,8 +325,11 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!summaryRows.length">
-              <td colspan="4">该月无冲话费记录</td>
+            <tr v-if="summaryFailed">
+              <td colspan="4" data-testid="acct-summary-empty">成本汇总加载失败</td>
+            </tr>
+            <tr v-else-if="!summaryRows.length">
+              <td colspan="4" data-testid="acct-summary-empty">该月无冲话费记录</td>
             </tr>
             <tr v-for="item in summaryRows" :key="item.dimKey" data-testid="acct-summary-row">
               <td>{{ item.dimLabel }}</td>
@@ -896,11 +942,15 @@
         </div>
         <div class="fld">
           <label>充值日期<i class="req">*</i></label>
-          <input v-model="rechargeForm.rechargeDate" data-testid="acct-recharge-date" type="date" />
+          <input v-model="rechargeForm.rechargeDate" data-testid="acct-recharge-date" type="date" :max="todayUtc()" />
         </div>
         <div class="fld">
           <label>凭证</label>
           <input v-model="rechargeForm.voucherUrl" data-testid="acct-recharge-voucher" placeholder="凭证号或 fileKey（金额大于 5000 必填）" />
+        </div>
+        <div class="fld">
+          <label>备注</label>
+          <input v-model="rechargeForm.remark" data-testid="acct-recharge-remark" placeholder="选填，最多 256 字" />
         </div>
         <p v-if="rechargeNeedsVoucher" class="hint">金额超过 5000 元，未填凭证将返回 1025</p>
         <p v-if="rechargeMsg" class="hint" data-testid="acct-recharge-msg">{{ rechargeMsg }}</p>
@@ -910,6 +960,45 @@
         <button class="btn btn-pri" type="button" data-testid="acct-recharge-submit" :disabled="rechargeBusy" @click="submitRecharge">
           {{ rechargeEditId ? '保存更正' : '提交登记' }}
         </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="rechargeDetail != null" title="核对详情" width="480px" @close="closeRechargeDetail">
+      <div v-if="rechargeDetail" data-testid="acct-recharge-detail-drawer" class="formrow one">
+        <div class="fld">
+          <label>账号</label>
+          <div>{{ rechargeDetail.accountNo }}</div>
+        </div>
+        <div class="fld">
+          <label>充值额</label>
+          <div>¥{{ moneyText(rechargeDetail.amount) }}</div>
+        </div>
+        <div class="fld">
+          <label>核对状态</label>
+          <div>{{ verifyLabel(String(rechargeDetail.verifyStatus || '')) }}</div>
+        </div>
+        <div class="fld">
+          <label>差异金额</label>
+          <div>{{ rechargeDetail.verifyDiff == null ? '—' : `¥${moneyText(rechargeDetail.verifyDiff)}` }}</div>
+        </div>
+        <p class="hint" data-testid="acct-recharge-platform-stub">平台消费额未在列表返回，请在月度账实核对中查看</p>
+        <div class="fld" data-testid="acct-recharge-voucher-preview" :data-focus="rechargeDetailFocus">
+          <label>凭证</label>
+          <div v-if="rechargeDetail.voucherUrl">{{ rechargeDetail.voucherUrl }}</div>
+          <div v-else-if="rechargeDetail.voucherAttached">仅财务可见</div>
+          <div v-else>无凭证</div>
+        </div>
+        <div class="fld">
+          <label>备注</label>
+          <div>{{ rechargeDetail.remark || '—' }}</div>
+        </div>
+        <div class="fld">
+          <label>操作人 / 登记时间</label>
+          <div>{{ rechargeDetail.operatorName || '—' }} · {{ rechargeTimeText(rechargeDetail.createdAt) }}</div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="closeRechargeDetail">关闭</button>
       </template>
     </ProtoDrawer>
 
@@ -1113,6 +1202,13 @@ const rechargeChannels = [
   { value: 'BANK', label: '银行卡' },
 ]
 const rechargeRows = ref<Record<string, unknown>[]>([])
+const rechargePage = ref(1)
+const rechargePageSize = 20
+const rechargeTotal = ref(0)
+const rechargeListBusy = ref(false)
+const rechargeListError = ref('')
+const rechargeDetail = ref<Record<string, unknown> | null>(null)
+const rechargeDetailFocus = ref<'all' | 'voucher'>('all')
 const summaryGroups = [
   { value: 'ACCOUNT', label: '账号' },
   { value: 'DEPT', label: '部门' },
@@ -1132,6 +1228,7 @@ const summaryForm = reactive({
 const summaryRows = ref<SummaryRow[]>([])
 const summaryTotals = ref({ totalAmount: 0, recordCount: 0, diffAmount: 0 })
 const summaryBusy = ref(false)
+const summaryFailed = ref(false)
 const summaryMsg = ref('')
 const exportBusy = ref(false)
 const exportNote = ref('')
@@ -1149,6 +1246,7 @@ const rechargeForm = reactive({
   channel: 'ALIPAY',
   rechargeDate: '',
   voucherUrl: '',
+  remark: '',
 })
 
 type VerifyResult = {
@@ -1367,6 +1465,28 @@ function todayUtc() {
   return new Date().toISOString().slice(0, 10)
 }
 
+const rcR1Due = computed(() => {
+  const day = Number(todayUtc().slice(8, 10))
+  return day >= 1 && day <= 5
+})
+
+const rechargePageCount = computed(() => Math.max(1, Math.ceil(rechargeTotal.value / rechargePageSize)))
+
+function rechargeTimeText(value: unknown) {
+  const text = String(value || '')
+  if (!text) return '—'
+  return text.replace('T', ' ').slice(0, 16)
+}
+
+function rechargeAmountIssue(raw: string) {
+  const text = raw.trim()
+  if (/^\d+\.\d{3,}$/.test(text)) return '1001 金额最多两位小数'
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) return '1001 金额格式不合法'
+  const amount = Number(text)
+  if (!Number.isFinite(amount) || amount <= 0) return '1001 金额格式不合法'
+  return ''
+}
+
 function bizMessage(error: unknown) {
   if (error && typeof error === 'object' && 'code' in error) {
     const body = error as { code?: number; msg?: string }
@@ -1504,18 +1624,35 @@ async function openTransferFromQuery() {
 }
 
 async function loadRecharges() {
+  rechargeListBusy.value = true
+  rechargeListError.value = ''
   try {
-    const res = await http.get('/account/recharge/list', { params: { pageNo: 1, pageSize: 20 } })
-    const data = res.data?.data as { list: Record<string, unknown>[] }
+    const res = await http.get('/account/recharge/list', {
+      params: { pageNo: rechargePage.value, pageSize: rechargePageSize },
+    })
+    const data = res.data?.data as { list?: Record<string, unknown>[]; total?: number }
     rechargeRows.value = data?.list || []
+    rechargeTotal.value = Number(data?.total || 0)
   } catch {
     rechargeRows.value = []
+    rechargeTotal.value = 0
+    rechargeListError.value = '冲话费列表加载失败'
+  } finally {
+    rechargeListBusy.value = false
   }
+}
+
+function gotoRechargePage(page: number) {
+  const next = Math.min(Math.max(1, page), rechargePageCount.value)
+  if (next === rechargePage.value) return
+  rechargePage.value = next
+  return loadRecharges()
 }
 
 async function loadSummary() {
   if (!summaryForm.month) summaryForm.month = todayUtc().slice(0, 7)
   summaryBusy.value = true
+  summaryFailed.value = false
   summaryMsg.value = ''
   try {
     const res = await http.get('/account/recharge/summary', {
@@ -1527,6 +1664,7 @@ async function loadSummary() {
   } catch (e: unknown) {
     summaryRows.value = []
     summaryTotals.value = { totalAmount: 0, recordCount: 0, diffAmount: 0 }
+    summaryFailed.value = true
     summaryMsg.value = bizMessage(e)
   } finally {
     summaryBusy.value = false
@@ -2018,6 +2156,7 @@ function openRecharge(row: Record<string, unknown>) {
   rechargeForm.channel = 'ALIPAY'
   rechargeForm.rechargeDate = todayUtc()
   rechargeForm.voucherUrl = ''
+  rechargeForm.remark = ''
   rechargeMsg.value = ''
   rechargeOpen.value = true
 }
@@ -2033,8 +2172,19 @@ function openRechargeEdit(item: Record<string, unknown>) {
   rechargeForm.channel = String(item.channel || 'ALIPAY')
   rechargeForm.rechargeDate = String(item.rechargeDate || '')
   rechargeForm.voucherUrl = String(item.voucherUrl || '')
+  rechargeForm.remark = String(item.remark || '')
   rechargeMsg.value = ''
   rechargeOpen.value = true
+}
+
+function openRechargeDetail(item: Record<string, unknown>, focus: 'all' | 'voucher' = 'all') {
+  rechargeDetail.value = item
+  rechargeDetailFocus.value = focus
+}
+
+function closeRechargeDetail() {
+  rechargeDetail.value = null
+  rechargeDetailFocus.value = 'all'
 }
 
 function closeRecharge() {
@@ -2162,9 +2312,23 @@ async function submitRecharge() {
   rechargeBusy.value = true
   rechargeMsg.value = ''
   try {
-    const amount = Number(rechargeForm.amount)
-    if (!Number.isFinite(amount) || amount <= 0) {
-      rechargeMsg.value = '1001 金额格式不合法'
+    const amountIssue = rechargeAmountIssue(rechargeForm.amount)
+    if (amountIssue) {
+      rechargeMsg.value = amountIssue
+      return
+    }
+    const amount = Number(rechargeForm.amount.trim())
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rechargeForm.rechargeDate)) {
+      rechargeMsg.value = '1001 充值日期格式不合法'
+      return
+    }
+    if (rechargeForm.rechargeDate > todayUtc()) {
+      rechargeMsg.value = '1001 充值日期不得晚于今日'
+      return
+    }
+    const remark = rechargeForm.remark.trim()
+    if (remark.length > 256) {
+      rechargeMsg.value = '1001 备注过长'
       return
     }
     const payload = {
@@ -2173,6 +2337,7 @@ async function submitRecharge() {
       channel: rechargeForm.channel,
       rechargeDate: rechargeForm.rechargeDate,
       voucherUrl: rechargeForm.voucherUrl.trim() || undefined,
+      remark: remark || undefined,
     }
     if (rechargeEditId.value) {
       await http.put(`/account/recharge/${rechargeEditId.value}`, payload)
@@ -2184,6 +2349,7 @@ async function submitRecharge() {
       rechargeMsg.value = '冲话费已登记'
     }
     rechargeOpen.value = false
+    rechargePage.value = 1
     await loadRecharges()
     await loadSummary()
   } catch (e: unknown) {
