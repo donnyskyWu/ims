@@ -179,3 +179,199 @@ def test_topic_reject_blocks_task():
     assert row["canCreateTask"] is False
     assert row["reviewOpinion"] == "与内容要求不符"
     assert row["contentProjectId"] is None
+    assert row["contentProjectStatus"] == ""
+    assert row["contentStatusChain"] == []
+
+
+def test_topic_filter_edit_revive_and_cancel():
+    auth = headers()
+    hotspot = create_topic(auth, "热点口播甲")
+    talent = client.post(
+        "/admin-api/ims/content/topic",
+        headers=auth,
+        json={"title": "达人探店乙", "description": "内容要求：探店", "sourceType": "TALENT"},
+    ).json()["data"]
+
+    by_source = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"sourceType": "TALENT", "keyword": "探店"},
+    )
+    assert by_source.json()["data"]["total"] == 1
+    assert by_source.json()["data"]["list"][0]["id"] == talent["id"]
+
+    by_no = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": hotspot["topicNo"]},
+    )
+    assert by_no.json()["data"]["total"] == 1
+    assert by_no.json()["data"]["list"][0]["title"] == "热点口播甲"
+
+    by_owner = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"submitterUserId": hotspot["submitterUserId"]},
+    )
+    assert by_owner.json()["data"]["total"] == 2
+    other = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"submitterUserId": 999999},
+    )
+    assert other.json()["data"]["total"] == 0
+
+    locked_edit = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}",
+        headers=auth,
+        json={"title": "", "description": "要求", "sourceType": "HOTSPOT"},
+    )
+    assert locked_edit.json()["code"] == 1500
+
+    edited = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}",
+        headers=auth,
+        json={
+            "title": "热点口播甲-改",
+            "description": "内容要求：改后口播",
+            "sourceType": "BRAND",
+            "planPublishDate": "2026-12-20",
+        },
+    )
+    assert edited.json()["code"] == 0
+    assert edited.json()["data"] is None
+    changed = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": hotspot["topicNo"]},
+    ).json()["data"]["list"][0]
+    assert changed["title"] == "热点口播甲-改"
+    assert changed["sourceType"] == "BRAND"
+    assert changed["description"] == "内容要求：改后口播"
+    assert changed["planPublishDate"] == "2026-12-20"
+    assert changed["topicStatus"] == "PENDING_REVIEW"
+    assert changed["topicNo"] == hotspot["topicNo"]
+
+    bad_sop = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}",
+        headers=auth,
+        json={"title": "不应写入", "description": "内容要求", "sourceType": "HOTSPOT", "sopId": 999999},
+    )
+    assert bad_sop.json()["code"] == 1051
+    still = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": hotspot["topicNo"]},
+    ).json()["data"]["list"][0]
+    assert still["title"] == "热点口播甲-改"
+
+    rejected = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}/review",
+        headers=auth,
+        json={"action": "REJECT", "reviewOpinion": "先归档"},
+    )
+    assert rejected.json()["code"] == 0
+    edit_rejected = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}",
+        headers=auth,
+        json={"title": "落选不可改", "description": "内容要求", "sourceType": "TALENT"},
+    )
+    assert edit_rejected.json()["code"] == 1504
+
+    revive_pending = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}/review",
+        headers=auth,
+        json={"action": "REVIVE"},
+    )
+    assert revive_pending.json()["code"] == 1504
+
+    revived = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}/review",
+        headers=auth,
+        json={"action": "REVIVE"},
+    )
+    assert revived.json()["code"] == 0
+    back = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": talent["topicNo"]},
+    ).json()["data"]["list"][0]
+    assert back["topicStatus"] == "PENDING_REVIEW"
+    assert back["reviewOpinion"] == "先归档"
+    assert back["canCreateTask"] is False
+    assert back["contentProjectId"] is None
+
+    again = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}",
+        headers=auth,
+        json={"title": "达人探店乙-复活后", "description": "内容要求：再评", "sourceType": "TALENT"},
+    )
+    assert again.json()["code"] == 0
+
+    empty_cancel = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}/review",
+        headers=auth,
+        json={"action": "CANCEL"},
+    )
+    assert empty_cancel.json()["code"] == 1500
+    cancelled = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}/review",
+        headers=auth,
+        json={"action": "CANCEL", "reviewOpinion": "本期不做"},
+    )
+    assert cancelled.json()["code"] == 0
+    cancelled_row = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicStatus": "CANCELLED", "topicNo": hotspot["topicNo"]},
+    ).json()["data"]["list"][0]
+    assert cancelled_row["topicStatus"] == "CANCELLED"
+    assert cancelled_row["reviewOpinion"] == "本期不做"
+    assert cancelled_row["canCreateTask"] is False
+    revive_cancelled = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}/review",
+        headers=auth,
+        json={"action": "REVIVE"},
+    )
+    assert revive_cancelled.json()["code"] == 1504
+    edit_cancelled = client.put(
+        f"/admin-api/ims/content/topic/{hotspot['id']}",
+        headers=auth,
+        json={"title": "取消不可改", "description": "内容要求", "sourceType": "BRAND"},
+    )
+    assert edit_cancelled.json()["code"] == 1504
+
+    sop_id = create_sop(auth, "详情 SOP")
+    approved = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}/review",
+        headers=auth,
+        json={
+            "action": "APPROVE_PROJECT",
+            "planPublishDate": "2026-12-02",
+            "sopId": sop_id,
+            "reviewOpinion": "复活后立项",
+        },
+    )
+    assert approved.json()["code"] == 0
+    project_row = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": talent["topicNo"]},
+    ).json()["data"]["list"][0]
+    assert project_row["topicStatus"] == "APPROVED_PROJECT"
+    assert project_row["contentProjectStatus"] == "DRAFT"
+    assert project_row["contentStatusChain"][0]["status"] == "DRAFT"
+    assert project_row["contentStatusChain"][0]["current"] is True
+    assert project_row["contentStatusChain"][0]["label"] == "草稿"
+    cancel_approved = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}/review",
+        headers=auth,
+        json={"action": "CANCEL", "reviewOpinion": "已立项不可取消"},
+    )
+    assert cancel_approved.json()["code"] == 1504
+    edit_approved = client.put(
+        f"/admin-api/ims/content/topic/{talent['id']}",
+        headers=auth,
+        json={"title": "已立项不可改", "description": "内容要求", "sourceType": "TALENT"},
+    )
+    assert edit_approved.json()["code"] == 1504

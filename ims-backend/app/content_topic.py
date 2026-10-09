@@ -1,7 +1,9 @@
-"""选题立项（CONTENT-002 · TOP-R1）。
+"""选题库（CONTENT-002）。
 
-立项必须同时给出计划发布日与启用中的 SOP，否则 1052。
-立项通过后创建内容项目并允许出任务；落选与待评审不可出任务。
+TOP-R1：立项必须同时给出计划发布日与启用中的 SOP，否则 1052。
+TOP-R2：落选归档保留，评审动作 REVIVE 回到待评审（契约 2.2.4，无独立路径）。
+待评审可编辑（契约 2.2.3）；已评审锁定。待评审可取消为 CANCELLED。
+立项通过后创建内容项目并允许出任务；其余状态不可出任务。
 """
 
 from __future__ import annotations
@@ -22,6 +24,15 @@ router = APIRouter(prefix="/content", tags=["content-topic"])
 
 SOURCE_TYPES = {"HOTSPOT", "TALENT", "BRAND", "ORIGINAL"}
 TOPIC_STATUSES = {"PENDING_REVIEW", "APPROVED_PROJECT", "REJECTED", "CANCELLED"}
+REVIEW_ACTIONS = {"APPROVE_PROJECT", "REJECT", "REVIVE", "CANCEL"}
+CONTENT_CHAIN = (
+    ("DRAFT", "草稿"),
+    ("IN_PROGRESS", "制作中"),
+    ("PENDING_REVIEW", "待审核"),
+    ("APPROVED", "已通过"),
+    ("PUBLISHED", "已发布"),
+    ("ARCHIVED", "已归档"),
+)
 
 
 class TopicCreateBody(BaseModel):
@@ -65,7 +76,21 @@ def enabled_sop(db: Session, sop_id: int, actor: User) -> ContentSop | None:
     return sop
 
 
-def topic_vo(row: ContentTopic, submitter: User | None, sop: ContentSop | None) -> dict:
+def content_chain(status: str) -> list[dict]:
+    known = {code for code, _label in CONTENT_CHAIN}
+    steps = [{"status": code, "label": label, "current": code == status} for code, label in CONTENT_CHAIN]
+    if status and status not in known:
+        steps.append({"status": status, "label": status, "current": True})
+    return steps
+
+
+def topic_vo(
+    row: ContentTopic,
+    submitter: User | None,
+    sop: ContentSop | None,
+    project: ContentProject | None = None,
+) -> dict:
+    status = project.content_status if project else ""
     return {
         "id": row.id,
         "topicNo": row.topic_no,
@@ -80,6 +105,8 @@ def topic_vo(row: ContentTopic, submitter: User | None, sop: ContentSop | None) 
         "sopName": sop.sop_name if sop else "",
         "reviewOpinion": row.review_opinion or "",
         "contentProjectId": row.content_project_id,
+        "contentProjectStatus": status,
+        "contentStatusChain": content_chain(status) if project else [],
         "canCreateTask": row.topic_status == "APPROVED_PROJECT",
         "createdAt": iso(row.created_at),
     }
@@ -90,6 +117,7 @@ def hydrate(db: Session, rows: list[ContentTopic]) -> list[dict]:
         return []
     user_ids = {row.submitter_user_id for row in rows}
     sop_ids = {row.sop_id for row in rows if row.sop_id}
+    project_ids = {row.content_project_id for row in rows if row.content_project_id}
     users = {
         user.id: user
         for user in db.scalars(select(User).where(User.id.in_(user_ids))).all()
@@ -98,40 +126,89 @@ def hydrate(db: Session, rows: list[ContentTopic]) -> list[dict]:
         sop.id: sop
         for sop in db.scalars(select(ContentSop).where(ContentSop.id.in_(sop_ids))).all()
     } if sop_ids else {}
-    return [topic_vo(row, users.get(row.submitter_user_id), sops.get(row.sop_id) if row.sop_id else None) for row in rows]
+    projects = {
+        project.id: project
+        for project in db.scalars(select(ContentProject).where(ContentProject.id.in_(project_ids))).all()
+    } if project_ids else {}
+    return [
+        topic_vo(
+            row,
+            users.get(row.submitter_user_id),
+            sops.get(row.sop_id) if row.sop_id else None,
+            projects.get(row.content_project_id) if row.content_project_id else None,
+        )
+        for row in rows
+    ]
 
 
-@router.post("/topic")
-def topic_create(body: TopicCreateBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+def topic_fields(body: TopicCreateBody, db: Session, actor: User):
     title = (body.title or "").strip()
     description = (body.description or "").strip()
     source = (body.sourceType or "").strip()
     if not title or len(title) > 256 or not description or len(description) > 2000 or source not in SOURCE_TYPES:
-        return fail(1500, "参数校验失败")
+        return None, fail(1500, "参数校验失败")
     plan_date = (body.planPublishDate or "").strip()
     if plan_date and not valid_date(plan_date):
-        return fail(1500, "参数校验失败")
+        return None, fail(1500, "参数校验失败")
     sop_id = body.sopId or None
-    if sop_id is not None and enabled_sop(db, sop_id, actor) is None:
-        return fail(1051, "SOP 不存在或未启用")
+    sop = None
+    if sop_id is not None:
+        sop = enabled_sop(db, sop_id, actor)
+        if sop is None:
+            return None, fail(1051, "SOP 不存在或未启用")
+    return {
+        "title": title,
+        "description": description,
+        "source": source,
+        "plan_date": plan_date,
+        "sop_id": sop_id,
+        "sop": sop,
+    }, None
+
+
+@router.post("/topic")
+def topic_create(body: TopicCreateBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    fields, error = topic_fields(body, db, actor)
+    if error is not None:
+        return error
     tid = tenant(actor)
     row = ContentTopic(
         topic_no=next_seq(db, ContentTopicSeq, tid, "TP"),
-        title=title,
-        description=description,
-        source_type=source,
+        title=fields["title"],
+        description=fields["description"],
+        source_type=fields["source"],
         submitter_user_id=actor.id,
-        plan_publish_date=plan_date,
+        plan_publish_date=fields["plan_date"],
         topic_status="PENDING_REVIEW",
-        sop_id=sop_id,
+        sop_id=fields["sop_id"],
         creator=actor.id,
         tenant_id=tid,
     )
     db.add(row)
     db.flush()
     submitter = db.get(User, actor.id)
-    sop = db.get(ContentSop, sop_id) if sop_id else None
-    return ok(topic_vo(row, submitter, sop))
+    return ok(topic_vo(row, submitter, fields["sop"]))
+
+
+@router.put("/topic/{topic_id}")
+def topic_update(
+    topic_id: int,
+    body: TopicCreateBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = load_topic(db, topic_id, actor)
+    if row is None or row.topic_status != "PENDING_REVIEW":
+        return fail(1504, "选题不可编辑")
+    fields, error = topic_fields(body, db, actor)
+    if error is not None:
+        return error
+    row.title = fields["title"]
+    row.description = fields["description"]
+    row.source_type = fields["source"]
+    row.plan_publish_date = fields["plan_date"]
+    row.sop_id = fields["sop_id"]
+    return ok(None)
 
 
 @router.get("/topic/list")
@@ -177,9 +254,27 @@ def topic_review(
     actor: User = Depends(current_user),
 ):
     row = load_topic(db, topic_id, actor)
-    if row is None or row.topic_status != "PENDING_REVIEW":
+    if row is None:
         return fail(1504, "选题不可评审")
     action = (body.action or "").strip()
+    if action not in REVIEW_ACTIONS:
+        return fail(1500, "参数校验失败")
+    if action == "REVIVE":
+        if row.topic_status != "REJECTED":
+            return fail(1504, "选题不可复活")
+        row.topic_status = "PENDING_REVIEW"
+        return ok(None)
+    if action == "CANCEL":
+        if row.topic_status != "PENDING_REVIEW":
+            return fail(1504, "选题不可取消")
+        opinion = (body.reviewOpinion or "").strip()
+        if not opinion or len(opinion) > 512:
+            return fail(1500, "参数校验失败")
+        row.topic_status = "CANCELLED"
+        row.review_opinion = opinion
+        return ok(None)
+    if row.topic_status != "PENDING_REVIEW":
+        return fail(1504, "选题不可评审")
     if action == "REJECT":
         opinion = (body.reviewOpinion or "").strip()
         if not opinion or len(opinion) > 512:
