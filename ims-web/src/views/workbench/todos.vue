@@ -42,7 +42,16 @@
               <td>{{ row.status }}</td>
               <td>
                 <button
-                  v-if="row.status === 'PENDING'"
+                  v-if="row.status === 'PENDING' && transferTodoPath(row)"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="wb-center-acct-transfer-go"
+                  @click="router.push(transferTodoPath(row))"
+                >
+                  去处理
+                </button>
+                <button
+                  v-else-if="row.status === 'PENDING'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   @click="done(row.id)"
@@ -60,9 +69,38 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
-type Row = { id: number; title: string; taskType: string; deadline?: string; status: string; overdue?: boolean }
+type Row = {
+  id: number
+  title: string
+  taskType: string
+  refId?: number
+  content?: string
+  deadline?: string
+  status: string
+  overdue?: boolean
+}
+
+const router = useRouter()
+
+function platformSlug(platform: string) {
+  const map: Record<string, string> = {
+    DOUYIN: 'douyin',
+    KUAISHOU: 'kuaishou',
+    XIAOHONGSHU: 'xiaohongshu',
+    WECHAT_OFFICIAL: 'wechat-official',
+    WECHAT_CHANNELS: 'wechat-channels',
+  }
+  return map[platform.trim().toUpperCase()] || 'douyin'
+}
+
+function transferTodoPath(row: Row) {
+  if (row.taskType !== 'acct_transfer' || !row.refId) return ''
+  const platform = String(row.content || '').split('|')[0] || 'DOUYIN'
+  return `/ims/corp/account/${platformSlug(platform)}?transferId=${row.refId}`
+}
 
 const rows = ref<Row[]>([])
 const loading = ref(false)

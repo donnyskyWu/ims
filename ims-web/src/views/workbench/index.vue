@@ -44,10 +44,29 @@
                 <div class="empty"><div class="et">{{ flowError || '暂无流程待办' }}</div></div>
               </td>
             </tr>
-            <tr v-for="row in flowTodos" v-else :key="row.id">
+            <tr
+              v-for="row in flowTodos"
+              v-else
+              :key="row.id"
+              :data-testid="flowAccountNo(row) ? 'wb-acct-transfer-flow' : undefined"
+            >
               <td class="mono">{{ row.instanceNo }}</td>
-              <td>{{ row.templateName }}</td>
-              <td>{{ row.nodeName }}</td>
+              <td>
+                {{ row.templateName }}
+                <span v-if="flowAccountNo(row)">{{ flowAccountNo(row) }}</span>
+              </td>
+              <td>
+                {{ row.nodeName }}
+                <button
+                  v-if="transferFlowPath(row)"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="wb-acct-transfer-flow-go"
+                  @click="router.push(transferFlowPath(row))"
+                >
+                  去处理
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -74,13 +93,28 @@
                 <div class="empty"><div class="et">{{ todoError || '没有待办' }}</div></div>
               </td>
             </tr>
-            <tr v-for="(row, index) in todos" v-else :key="String(row.id ?? index)" :style="row.overdue ? 'background:#fff4f2' : ''">
+            <tr
+              v-for="(row, index) in todos"
+              v-else
+              :key="String(row.id ?? index)"
+              :style="row.overdue ? 'background:#fff4f2' : ''"
+              :data-testid="String(row.taskType || '') === 'acct_transfer' ? 'wb-acct-transfer-todo' : undefined"
+            >
               <td>{{ cell(row, ['title']) }}</td>
               <td>{{ cell(row, ['status']) }}</td>
               <td>{{ overdueLabel(row) }}</td>
               <td>
                 <button
-                  v-if="String(row.status) === 'PENDING' && row.id != null"
+                  v-if="transferTodoPath(row)"
+                  class="btn btn-txt"
+                  type="button"
+                  data-testid="wb-acct-transfer-go"
+                  @click="router.push(transferTodoPath(row))"
+                >
+                  去处理
+                </button>
+                <button
+                  v-else-if="String(row.status) === 'PENDING' && row.id != null"
                   class="btn btn-txt"
                   type="button"
                   @click="closeTodo(row)"
@@ -132,11 +166,48 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import { asList, cell, readData } from '../../api/read'
 import { useUserStore } from '../../stores/user'
 
+const router = useRouter()
 const user = useUserStore()
+
+function platformSlug(platform: string) {
+  const map: Record<string, string> = {
+    DOUYIN: 'douyin',
+    KUAISHOU: 'kuaishou',
+    XIAOHONGSHU: 'xiaohongshu',
+    WECHAT_OFFICIAL: 'wechat-official',
+    WECHAT_CHANNELS: 'wechat-channels',
+  }
+  return map[platform.trim().toUpperCase()] || 'douyin'
+}
+
+function transferTodoPath(row: Record<string, unknown>) {
+  if (String(row.taskType || '') !== 'acct_transfer') return ''
+  const refId = Number(row.refId || 0)
+  if (!refId) return ''
+  const platform = String(row.content || '').split('|')[0] || 'DOUYIN'
+  return `/ims/corp/account/${platformSlug(platform)}?transferId=${refId}`
+}
+
+function flowForm(row: Record<string, unknown>) {
+  const form = row.formData
+  if (!form || typeof form !== 'object') return null
+  return form as { transferId?: number; platform?: string; accountNo?: string }
+}
+
+function flowAccountNo(row: Record<string, unknown>) {
+  return String(flowForm(row)?.accountNo || '')
+}
+
+function transferFlowPath(row: Record<string, unknown>) {
+  const form = flowForm(row)
+  if (!form?.transferId) return ''
+  return `/ims/corp/account/${platformSlug(String(form.platform || 'DOUYIN'))}?transferId=${form.transferId}`
+}
 const dash = reactive<{ todoCount?: number; flowTodoCount?: number; unreadMessageCount?: number }>({})
 const flowTodos = ref<Record<string, unknown>[]>([])
 const flowReady = ref(false)

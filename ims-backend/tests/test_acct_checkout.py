@@ -797,3 +797,122 @@ def test_acct_reconcile_variance_boundary_1026():
         assert untouched.verify_status == "MATCHED"
     finally:
         db.close()
+
+
+def _refresh_pool() -> None:
+    from app.core import SessionLocal
+
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
+        refresh_acct_e2e_pool(db, admin)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _transfer_todos(auth: dict, transfer_id: int) -> list[dict]:
+    res = client.get(
+        "/admin-api/ims/auth/workbench/todos",
+        headers=auth,
+        params={"status": "PENDING", "taskType": "acct_transfer", "pageNo": 1, "pageSize": 50},
+    )
+    assert res.json()["code"] == 0, res.json()
+    return [row for row in res.json()["data"]["list"] if row["refId"] == transfer_id]
+
+
+def _transfer_flows(auth: dict, transfer_id: int) -> list[dict]:
+    res = client.get(
+        "/admin-api/ims/flow/task/my-todo",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50},
+    )
+    assert res.json()["code"] == 0, res.json()
+    return [
+        row
+        for row in res.json()["data"]["list"]
+        if int((row.get("formData") or {}).get("transferId") or 0) == transfer_id
+    ]
+
+
+def test_acct_transfer_workbench_and_flow_todo():
+    """#122：流转产生工作台待办和流程待办；撤销/确认后从待办消失。确认仍走既有 PUT …/confirm。"""
+    _refresh_pool()
+    auth = headers()
+    peer_auth = headers(E2E_ACCT_PEER_USER)
+    account_id = account_id_of(E2E_XFER_ACCOUNT_NO)
+    peer_id = user_id_of(E2E_ACCT_PEER_USER)
+    checkout_in_use(auth, account_id)
+
+    created = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "TRANSFER",
+            "toUserId": peer_id,
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "pytest 流转待办",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    transfer_id = created.json()["data"]["id"]
+    assert created.json()["data"]["status"] == "PENDING_CONFIRM"
+
+    todos = _transfer_todos(peer_auth, transfer_id)
+    assert len(todos) == 1
+    assert todos[0]["taskType"] == "acct_transfer"
+    assert todos[0]["refType"] == "acct_transfer"
+    assert E2E_XFER_ACCOUNT_NO in todos[0]["title"]
+    assert todos[0]["content"].startswith("DOUYIN|")
+    assert _transfer_todos(auth, transfer_id) == []
+
+    flows = _transfer_flows(peer_auth, transfer_id)
+    assert len(flows) == 1
+    assert flows[0]["templateName"] == "账号流转确认"
+    assert flows[0]["nodeName"] == "新责任人确认"
+    assert flows[0]["formData"]["accountNo"] == E2E_XFER_ACCOUNT_NO
+    assert _transfer_flows(auth, transfer_id) == []
+
+    revoked = client.put(
+        f"/admin-api/ims/account/transfer/{transfer_id}/revoke",
+        headers=auth,
+        json={"remark": "pytest 撤销待办"},
+    )
+    assert revoked.json()["code"] == 0, revoked.json()
+    assert _transfer_todos(peer_auth, transfer_id) == []
+    assert _transfer_flows(peer_auth, transfer_id) == []
+
+    again = client.post(
+        "/admin-api/ims/account/transfer",
+        headers=auth,
+        json={
+            "accountId": account_id,
+            "transferType": "TRANSFER",
+            "toUserId": peer_id,
+            "reasonType": "BUSINESS_ADJUST",
+            "remark": "pytest 再次流转待办",
+        },
+    )
+    assert again.json()["code"] == 0, again.json()
+    transfer_id = again.json()["data"]["id"]
+    assert _transfer_todos(peer_auth, transfer_id)
+    assert _transfer_flows(peer_auth, transfer_id)
+
+    confirmed = client.put(
+        f"/admin-api/ims/account/transfer/{transfer_id}/confirm",
+        headers=peer_auth,
+        json={"accept": True},
+    )
+    assert confirmed.json()["code"] == 0, confirmed.json()
+    assert _transfer_todos(peer_auth, transfer_id) == []
+    assert _transfer_flows(peer_auth, transfer_id) == []
+
+    ops = ops_session()
+    try:
+        row = ops.get(PlatformAccount, account_id)
+        assert row.status == "IN_USE"
+        assert row.holder_user_id == peer_id
+    finally:
+        ops.close()
+    _refresh_pool()

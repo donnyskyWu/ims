@@ -6,7 +6,7 @@ import json
 import re
 import secrets
 import time
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, Header
@@ -19,6 +19,7 @@ from app.acct_seed import FINANCE_ROLE_KEY
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
+from app.flow import ensure_pending_task, next_instance_no
 from app.ops_db import ops_session
 from app.models import (
     AccountApply,
@@ -26,6 +27,9 @@ from app.models import (
     AccountRechargeVerify,
     AccountTimelineEvent,
     AccountTransfer,
+    FlowInstance,
+    FlowTask,
+    FlowTemplate,
     Role,
     Todo,
     User,
@@ -414,6 +418,134 @@ class TransferRevokeBody(BaseModel):
     remark: str
 
 
+TRANSFER_FLOW_CODE = "FL-ACCT-TRF"
+TRANSFER_FLOW_NODE = "新责任人确认"
+
+
+def _transfer_flow_key(transfer_id: int) -> str:
+    return f"ACCT-TRF-{transfer_id}"
+
+
+def _ensure_transfer_flow_template(db: Session, tenant_id: int, creator_id: int) -> FlowTemplate:
+    row = db.scalar(
+        select(FlowTemplate).where(
+            FlowTemplate.deleted == 0,
+            FlowTemplate.tenant_id == tenant_id,
+            FlowTemplate.template_code == TRANSFER_FLOW_CODE,
+        )
+    )
+    if row is not None:
+        return row
+    now = utcnow()
+    row = FlowTemplate(
+        template_code=TRANSFER_FLOW_CODE,
+        template_name="账号流转确认",
+        business_domain="BUSINESS",
+        status="PUBLISHED",
+        version_label="v1.0",
+        node_count=1,
+        creator_id=creator_id,
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _open_transfer_followups(
+    db: Session,
+    actor: User,
+    row: AccountTransfer,
+    account: PlatformAccount,
+    target: User,
+) -> None:
+    """流转待确认：新责任人工作台待办 + 流程待办。确认仍走既有 PUT …/confirm。"""
+    tenant_id = tenant_of(actor)
+    platform = (account.platform_type or "DOUYIN").upper()
+    title = f"账号流转待确认 {row.account_no}"[:128]
+    content = f"{platform}|{row.account_no}|{row.transfer_no}|确认接收后责任人变更"[:512]
+    db.add(
+        Todo(
+            assignee_user_id=target.id,
+            task_type="acct_transfer",
+            ref_type="acct_transfer",
+            ref_id=row.id,
+            title=title,
+            content=content,
+            status="PENDING",
+            deadline=utcnow() + timedelta(days=1),
+            tenant_id=tenant_id,
+        )
+    )
+    tpl = _ensure_transfer_flow_template(db, tenant_id, actor.id)
+    now = utcnow()
+    inst = FlowInstance(
+        instance_no=next_instance_no(db, tenant_id),
+        template_id=tpl.id,
+        template_name=tpl.template_name,
+        title=f"账号流转 {row.account_no}"[:256],
+        business_key=_transfer_flow_key(row.id),
+        form_data={
+            "title": f"账号流转 {row.account_no}",
+            "transferId": row.id,
+            "accountId": row.account_id,
+            "accountNo": row.account_no,
+            "platform": platform,
+        },
+        instance_status="RUNNING",
+        current_node_name=TRANSFER_FLOW_NODE,
+        initiator_user_id=actor.id,
+        tenant_id=tenant_id,
+        started_at=now,
+        finished_at=None,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(inst)
+    db.flush()
+    ensure_pending_task(db, inst, tenant_id, target.id, TRANSFER_FLOW_NODE)
+
+
+def _close_transfer_followups(db: Session, row: AccountTransfer, *, accepted: bool) -> None:
+    now = utcnow()
+    todos = db.scalars(
+        select(Todo).where(
+            Todo.ref_type == "acct_transfer",
+            Todo.ref_id == row.id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for todo in todos:
+        todo.status = "DONE"
+    inst = db.scalar(
+        select(FlowInstance).where(
+            FlowInstance.deleted == 0,
+            FlowInstance.tenant_id == (row.tenant_id or 0),
+            FlowInstance.business_key == _transfer_flow_key(row.id),
+        )
+    )
+    if inst is None or inst.instance_status != "RUNNING":
+        return
+    inst.instance_status = "APPROVED" if accepted else "CANCELLED"
+    inst.current_node_name = "—"
+    inst.finished_at = now
+    inst.updated_at = now
+    tasks = db.scalars(
+        select(FlowTask).where(
+            FlowTask.deleted == 0,
+            FlowTask.instance_id == inst.id,
+            FlowTask.task_status == "PENDING",
+        )
+    ).all()
+    for task in tasks:
+        task.task_status = "APPROVED" if accepted else "REJECTED"
+        task.comment = "确认接收" if accepted else "流转未生效"
+        task.handled_at = now
+        task.updated_at = now
+
+
 def _create_recall(body: TransferCreateBody, remark: str, actor: User, db: Session):
     """收回单：管理员发起后直接生效，账号 IN_USE → FROZEN（TRF-R2）。"""
     if body.to_user_id is not None:
@@ -528,6 +660,7 @@ def create_transfer(
         )
         db.add(row)
         db.flush()
+        _open_transfer_followups(db, actor, row, account, target)
         names = {
             row.from_user_id: _display_name(db, row.from_user_id),
             row.to_user_id: target.nickname or target.username,
@@ -589,6 +722,7 @@ def confirm_transfer(
     if not body.accept:
         row.status = "REVOKED"
         row.updated_at = utcnow()
+        _close_transfer_followups(db, row, accepted=False)
         return ok(None)
     ops = ops_session()
     try:
@@ -621,6 +755,7 @@ def confirm_transfer(
             summary=f"流转生效 · 责任人 {from_name} → {to_name}",
             tenant_id=tenant_of(actor),
         )
+        _close_transfer_followups(db, row, accepted=True)
         return ok(None)
     finally:
         ops.close()
@@ -647,6 +782,7 @@ def revoke_transfer(
     row.updated_at = utcnow()
     note = f"{row.remark}；撤销：{remark}" if row.remark else f"撤销：{remark}"
     row.remark = note[:512]
+    _close_transfer_followups(db, row, accepted=False)
     return ok(None)
 
 
