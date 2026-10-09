@@ -13,6 +13,10 @@
       </div>
     </div>
     <p v-if="exportNote" class="hint" data-testid="live-export-note">{{ exportNote }}</p>
+    <p v-if="exportReceipt" class="hint" data-testid="live-export-receipt">
+      任务 {{ exportReceipt.exportTaskId }}
+      <button class="btn btn-sec btn-sm" type="button" data-testid="live-export-claim" :disabled="exporting" @click="claimExport">领取文件</button>
+    </p>
     <p v-if="exportError" class="hint bad" data-testid="live-export-error">{{ exportError }}</p>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
     <div class="tabs">
@@ -25,6 +29,26 @@
         <option value="">全部状态</option>
         <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
       </select>
+      <select v-model="query.platform" data-testid="live-filter-platform" style="width: 110px">
+        <option value="">全部平台</option>
+        <option value="DOUYIN">抖音</option>
+        <option value="KUAISHOU">快手</option>
+        <option value="WECHAT_CHANNELS">视频号</option>
+        <option value="OTHER">其他</option>
+      </select>
+      <select v-model="query.riskLevel" data-testid="live-filter-risk" style="width: 100px">
+        <option value="">全部风险</option>
+        <option value="GREEN">绿色</option>
+        <option value="YELLOW">黄色</option>
+        <option value="RED">红色</option>
+      </select>
+      <select v-model="query.isSupplement" data-testid="live-filter-supplement" style="width: 100px">
+        <option value="">全部场次</option>
+        <option value="false">正常</option>
+        <option value="true">补录</option>
+      </select>
+      <input v-model="query.timeFrom" type="date" data-testid="live-filter-from" aria-label="开播起" />
+      <input v-model="query.timeTo" type="date" data-testid="live-filter-to" aria-label="开播止" />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetQuery">重置</button>
@@ -80,6 +104,26 @@
     </div>
     <div v-else class="tbl-block" data-testid="live-pending-panel">
       <p v-if="pendingHint" class="hint bad" data-testid="live-overdue-hint">{{ pendingHint }}</p>
+      <div data-testid="live-overdue-cards" style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px">
+        <div v-if="!overdueCards.length" class="card" data-testid="live-overdue-card-empty" style="padding: 14px 16px">
+          <div class="et">暂无超时督办</div>
+          <div class="csub">超过 24 小时未录入的场次会在这里成卡。</div>
+        </div>
+        <div
+          v-for="row in overdueCards"
+          :key="row.sessionCode"
+          class="card"
+          data-testid="live-overdue-card"
+          style="padding: 14px 16px; min-width: 240px"
+        >
+          <h3 class="mono" style="font-size: 14px">{{ row.sessionCode }}</h3>
+          <div class="csub">{{ row.topic || '—' }} · 已超时 {{ row.overdueHours }} 小时</div>
+          <p v-if="row.superviseChannel === 'IN_APP'" data-testid="live-overdue-stub" style="margin: 8px 0; color: var(--red)">
+            外部钉钉未接通，已记入站内督办
+          </p>
+          <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">去录入</button>
+        </div>
+      </div>
       <form class="qbar" @submit.prevent="loadPending">
         <label class="hint">
           <input v-model="overdueOnly" type="checkbox" data-testid="live-overdue-only" />
@@ -300,6 +344,17 @@
         <p v-if="correctionTrace" class="hint" data-testid="live-correction-trace">
           更正单 {{ correctionTrace.correctionId }} · GMV {{ correctionTrace.before?.gmv }} → {{ correctionTrace.after?.gmv }}
         </p>
+        <div data-testid="live-correction-slips" style="margin-top: 8px">
+          <div v-if="!correctionSlips.length" class="empty" data-testid="live-correction-empty">
+            <div class="et">暂无更正单</div>
+            <div class="es">已提交或已核准的场次，修改请走更正单留痕。</div>
+          </div>
+          <ul v-else>
+            <li v-for="slip in correctionSlips" :key="slip.id" data-testid="live-correction-slip">
+              更正单 {{ slip.id }} · {{ slip.correctionReason || '—' }}
+            </li>
+          </ul>
+        </div>
         <div v-if="!financeView" class="acts" style="margin-top: 8px">
           <button v-if="!reportLocked" class="btn btn-pri btn-sm" type="button" data-testid="live-report-submit" @click="submitReport">提交下播</button>
           <button
@@ -360,6 +415,7 @@ const hint = ref('')
 const exporting = ref(false)
 const exportNote = ref('')
 const exportError = ref('')
+const exportReceipt = ref<{ exportTaskId: string; downloadUrl: string; fileName: string } | null>(null)
 const rows = ref<any[]>([])
 const total = ref(0)
 const view = ref<'sessions' | 'pending'>('sessions')
@@ -371,7 +427,16 @@ const reportMissing = ref<string[]>([])
 const correcting = ref(false)
 const correctionReason = ref('')
 const correctionTrace = ref<any>(null)
-const query = reactive({ sessionCode: '', sessionStatus: '' })
+const correctionSlips = ref<any[]>([])
+const query = reactive({
+  sessionCode: '',
+  sessionStatus: '',
+  platform: '',
+  riskLevel: '',
+  isSupplement: '',
+  timeFrom: '',
+  timeTo: '',
+})
 const statusOptions = [
   { value: 'PENDING_RISK_CHECK', label: '待风控' },
   { value: 'APPROVED', label: '已放行' },
@@ -520,6 +585,30 @@ function fieldMissing(key: string) {
 }
 
 const detailTitle = computed(() => (detail.value ? `场次 ${detail.value.sessionCode}` : '场次详情'))
+const overdueCards = computed(() => pendingRows.value.filter((row) => row.overdue))
+
+function ledgerQueryParams(withPage: boolean) {
+  const params = new URLSearchParams()
+  if (withPage) {
+    params.set('pageNo', '1')
+    params.set('pageSize', '20')
+  }
+  const sessionCode = query.sessionCode.trim()
+  if (sessionCode) params.set('sessionCode', sessionCode)
+  if (query.sessionStatus) params.set('sessionStatus', query.sessionStatus)
+  if (query.platform) params.set('platform', query.platform)
+  if (query.riskLevel) params.set('riskLevel', query.riskLevel)
+  if (query.isSupplement === 'true' || query.isSupplement === 'false') params.set('isSupplement', query.isSupplement)
+  if (query.timeFrom && query.timeTo) {
+    params.append('timeRange', query.timeFrom)
+    params.append('timeRange', query.timeTo)
+  }
+  return params
+}
+
+function bindCorrections(source: any) {
+  correctionSlips.value = Array.isArray(source?.corrections) ? source.corrections : []
+}
 
 function syncLabel(v: string | undefined) {
   const map: Record<string, string> = {
@@ -535,10 +624,7 @@ async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
-    if (query.sessionCode) params.sessionCode = query.sessionCode
-    if (query.sessionStatus) params.sessionStatus = query.sessionStatus
-    const res = await apiGet('/live/sessions/list', params)
+    const res = await apiGet(`/live/sessions/list?${ledgerQueryParams(true).toString()}`)
     rows.value = res.list || []
     total.value = res.total || 0
   } catch (e: unknown) {
@@ -551,7 +637,36 @@ async function loadList() {
 function resetQuery() {
   query.sessionCode = ''
   query.sessionStatus = ''
+  query.platform = ''
+  query.riskLevel = ''
+  query.isSupplement = ''
+  query.timeFrom = ''
+  query.timeTo = ''
   loadList()
+}
+
+async function saveLedgerFile(downloadUrl: string, fileName: string) {
+  const token = localStorage.getItem('ims_access')
+  const fileRes = await fetch(downloadUrl, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!fileRes.ok) {
+    let body: unknown = {}
+    try {
+      body = await fileRes.json()
+    } catch {
+      body = {}
+    }
+    throw body
+  }
+  const blob = await fileRes.blob()
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = fileName || 'live_ledger.xlsx'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(a.href)
 }
 
 function unwrapError(error: unknown) {
@@ -574,38 +689,35 @@ async function exportLedger() {
   exporting.value = true
   exportNote.value = ''
   exportError.value = ''
+  exportReceipt.value = null
   try {
-    const params: Record<string, string> = {}
-    if (query.sessionCode) params.sessionCode = query.sessionCode
-    if (query.sessionStatus) params.sessionStatus = query.sessionStatus
-    const res = await http.get('/live/ledger/export', { params })
+    const res = await http.get(`/live/ledger/export?${ledgerQueryParams(false).toString()}`)
     const data = res.data.data || {}
     exportNote.value = data.message || '导出任务已提交'
     const downloadUrl = String(data.downloadUrl || '')
-    if (!downloadUrl) return
-    const token = localStorage.getItem('ims_access')
-    const fileRes = await fetch(downloadUrl, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!fileRes.ok) {
-      let body: unknown = {}
-      try {
-        body = await fileRes.json()
-      } catch {
-        body = {}
-      }
-      throw body
-    }
-    const blob = await fileRes.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = String(data.fileName || 'live_ledger.xlsx')
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(a.href)
+    exportReceipt.value = downloadUrl
+      ? {
+          exportTaskId: String(data.exportTaskId || ''),
+          downloadUrl,
+          fileName: String(data.fileName || 'live_ledger.xlsx'),
+        }
+      : null
+    if (exportReceipt.value) await saveLedgerFile(exportReceipt.value.downloadUrl, exportReceipt.value.fileName)
   } catch (e: unknown) {
     exportNote.value = ''
+    exportError.value = bizError(e)
+  } finally {
+    exporting.value = false
+  }
+}
+
+async function claimExport() {
+  if (!exportReceipt.value) return
+  exporting.value = true
+  exportError.value = ''
+  try {
+    await saveLedgerFile(exportReceipt.value.downloadUrl, exportReceipt.value.fileName)
+  } catch (e: unknown) {
     exportError.value = bizError(e)
   } finally {
     exporting.value = false
@@ -689,6 +801,7 @@ async function openDetail(row: any) {
   metrics.value = detail.value.metricsSnapshot || (await apiGet(`/live/sessions/${code}/metrics`))
   report.value = detail.value.report || (await apiGet(`/live/report/${code}`))
   applyReport(report.value)
+  bindCorrections(Array.isArray(detail.value?.corrections) ? detail.value : report.value)
   const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
   alarms.value = alarmRes.list || []
 }
@@ -730,6 +843,8 @@ async function switchTab(name: string) {
   }
   if (name === '下播与 GMV' && !report.value) {
     report.value = await apiGet(`/live/report/${code}`)
+    applyReport(report.value)
+    bindCorrections(report.value?.corrections ? report.value : detail.value)
   }
   if (name === '关联') {
     const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
@@ -901,6 +1016,10 @@ function openCorrection() {
 async function submitCorrection() {
   if (!detail.value) return
   reportError.value = ''
+  if (!correctionReason.value.trim()) {
+    reportError.value = '更正原因必填'
+    return
+  }
   try {
     const data = await apiPost(`/live/report/${detail.value.sessionCode}/correction`, {
       ...reportPayload(),
@@ -910,6 +1029,7 @@ async function submitCorrection() {
     correcting.value = false
     report.value = await apiGet(`/live/report/${detail.value.sessionCode}`)
     applyReport(report.value)
+    bindCorrections(report.value)
     hint.value = `更正单 ${data.correctionId} 已留痕`
   } catch (e: unknown) {
     reportError.value = bizError(e)

@@ -37,6 +37,7 @@ from app.ops_models import LiveRoom, Phone, PlatformAccount, Realname, SimCard
 router = APIRouter(prefix="/live", tags=["live"])
 
 SESSION_CODE_RE = re.compile(r"^IMS\d{8}[A-Z]{3}\d{4}$")
+DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PLATFORM_CODES = {
     "DOUYIN": "DYS",
     "KUAISHOU": "KS",
@@ -1089,6 +1090,19 @@ class SupplementBody(BaseModel):
     supplementReason: str = ""
 
 
+def inclusive_time_range(time_range: list[str] | None) -> tuple[str, str] | None:
+    """日期选择器只传 YYYY-MM-DD。结束日扩到当天最后一刻，避免 T 时分把当日场次挤出区间。"""
+    if not time_range or len(time_range) < 2:
+        return None
+    start = (time_range[0] or "").strip()
+    end = (time_range[1] or "").strip()
+    if not start or not end:
+        return None
+    if DATE_ONLY_RE.match(end):
+        end = f"{end}T23:59:59.999999+08:00"
+    return start, end
+
+
 def filter_sessions(
     db: Session,
     actor: User,
@@ -1118,10 +1132,12 @@ def filter_sessions(
         stmt = stmt.where(LiveSession.platform == platform)
     if is_supplement is not None:
         stmt = stmt.where(LiveSession.is_supplement == (1 if is_supplement else 0))
-    if time_range and len(time_range) >= 2 and time_range[0] and time_range[1]:
+    bounds = inclusive_time_range(time_range)
+    if bounds is not None:
+        start, end = bounds
         stmt = stmt.where(
-            LiveSession.plan_start_time >= time_range[0],
-            LiveSession.plan_start_time <= time_range[1],
+            LiveSession.plan_start_time >= start,
+            LiveSession.plan_start_time <= end,
         )
     return stmt.order_by(LiveSession.id.desc())
 
@@ -1198,6 +1214,9 @@ def sessions_detail(
     else:
         data["report"] = None
         data["costSummary"] = None
+    data["corrections"] = [
+        shape_correction(correction_vo(item), view) for item in correction_rows(db, session_code)
+    ]
     return ok(data)
 
 
@@ -1598,6 +1617,7 @@ def report_pending(
                 "submitted": bool(report and report.entry_status == "SUBMITTED"),
                 "overdueHours": hours,
                 "overdue": overdue,
+                "superviseChannel": "IN_APP" if overdue else "",
             }
         )
     pending.sort(key=lambda item: (-int(item["overdueHours"]), str(item["sessionCode"])))
