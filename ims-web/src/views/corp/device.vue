@@ -17,7 +17,12 @@
       </div>
     </div>
     <form class="qbar" @submit.prevent="search">
-      <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
+      <input
+        v-model="keyword"
+        :placeholder="meta.placeholder"
+        style="width: 180px"
+        :data-testid="kind === 'phone' ? undefined : 'corp-asset-keyword'"
+      />
       <input
         v-if="kind === 'phone'"
         v-model="phoneModel"
@@ -85,9 +90,9 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
-                <div class="empty">
+                <div class="empty" :data-testid="kind === 'phone' ? undefined : 'corp-asset-list-empty'">
                   <div class="et">{{ error || emptyTitle }}</div>
-                  <div class="es">{{ error || !phoneFiltering ? meta.emptyHint : '换个编号、型号或状态，或点重置。' }}</div>
+                  <div class="es" :data-testid="kind === 'phone' ? undefined : 'corp-asset-list-empty-hint'">{{ emptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -357,7 +362,14 @@
         <button class="btn btn-txt" type="button" data-testid="asset-forward-session-retry" @click="retryForwardLayers">重试</button>
       </p>
       <p v-else-if="forwardSessionEmpty" class="hint" data-testid="asset-forward-session-empty">该资产没有关联场次</p>
-      <p v-if="forwardFinance && forwardAssetId" class="hint" data-testid="asset-forward-finance">
+      <p
+        v-if="forwardSessionEmpty && forwardFinance && !forwardFinance.costMasked"
+        class="hint"
+        data-testid="asset-forward-cost-empty"
+      >
+        没有关联场次，成本与收入记为 0
+      </p>
+      <p v-else-if="forwardFinance && forwardAssetId" class="hint" data-testid="asset-forward-finance">
         成本层 · 成本 <span data-testid="asset-forward-cost">{{ forwardFinance.costMasked ? '***' : money(forwardFinance.totalCost) }}</span>
         · 收入 <span data-testid="asset-forward-revenue">{{ money(forwardFinance.totalRevenue) }}</span>
       </p>
@@ -705,7 +717,20 @@ const meta = computed(() => specs[kind.value] || specs.office)
 const phoneFiltering = computed(
   () => kind.value === 'phone' && Boolean(keyword.value.trim() || phoneModel.value.trim() || status.value),
 )
-const emptyTitle = computed(() => (phoneFiltering.value ? '没有符合筛选的记录' : meta.value.empty))
+const assetFiltering = computed(
+  () =>
+    kind.value !== 'phone' &&
+    Boolean(keyword.value.trim() || status.value || ownerFilter.value || assetTypeFilter.value || linkGapOnly.value),
+)
+const emptyTitle = computed(() => (phoneFiltering.value || assetFiltering.value ? '没有符合筛选的记录' : meta.value.empty))
+const emptyHint = computed(() => {
+  if (error.value) return meta.value.emptyHint
+  if (phoneFiltering.value) return '换个编号、型号或状态，或点重置。'
+  if (!assetFiltering.value) return meta.value.emptyHint
+  return kind.value === 'live'
+    ? '换个编号、类型、责任人、状态或待补关联，或点重置。'
+    : '换个编号、责任人、状态或待补关联，或点重置。'
+})
 const assetStatusOptions = computed(() => (assetStatuses.value.length ? assetStatuses.value : fallbackStatus))
 const importErrors = computed(() => (importResult.value?.errors as Row[] | undefined) || [])
 const importOk = computed(() => (importResult.value?.imported as Row[] | undefined) || [])
@@ -909,7 +934,13 @@ async function exportLedger() {
   ledgerExportNote.value = ''
   try {
     const res = await http.get('/asset/ledger/export', { params: { ...ledgerQuery(true), format: 'XLSX' } })
-    const data = (res.data?.data || {}) as { downloadUrl?: string; fileName?: string; message?: string; exported?: number }
+    const data = (res.data?.data || {}) as {
+      downloadUrl?: string
+      fileName?: string
+      message?: string
+      exported?: number
+      empty?: boolean
+    }
     const downloadUrl = String(data.downloadUrl || '')
     const fileName = String(data.fileName || 'asset_ledger.xlsx')
     if (!downloadUrl) {
@@ -936,7 +967,11 @@ async function exportLedger() {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(anchor.href)
-    ledgerExportNote.value = `${data.message || '台账已按当前筛选导出'} · ${fileName} · ${data.exported ?? 0} 条`
+    const exportedCount = Number(data.exported ?? 0)
+    const emptyLedger = Boolean(data.empty) || exportedCount === 0
+    ledgerExportNote.value = emptyLedger
+      ? `${data.message || '已导出空台账（当前筛选命中 0 条）'} · ${fileName}`
+      : `${data.message || '台账已按当前筛选导出'} · ${fileName} · ${exportedCount} 条`
   } catch (e: unknown) {
     ledgerExportNote.value = bizError(e)
   } finally {
@@ -1511,6 +1546,7 @@ async function downloadExport(
     const empty = Boolean((res.data?.data as { empty?: boolean } | undefined)?.empty)
     if (empty && target === 'forward') exportNote.value = '已导出穿透报告 PDF（暂无资产层级）'
     else if (empty) exportNote.value = '已导出空表（命中 0 条）'
+    else if (target === 'forward' && forwardSessionEmpty.value) exportNote.value = '已导出穿透报告 PDF（该资产没有关联场次）'
     else exportNote.value = note
   } catch (e: unknown) {
     exportNote.value = ''

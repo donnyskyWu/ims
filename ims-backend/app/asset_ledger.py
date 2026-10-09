@@ -381,6 +381,9 @@ def ledger_page(
 
 def ledger_matrix(items: list[dict]) -> list[list[str]]:
     rows = [["资产编号", "名称", "类型", "规格", "状态", "责任人", "绑定账号数", "待补关联", "采购日期"]]
+    if not items:
+        rows.append(["暂无资产记录", "", "", "", "", "", "", "", ""])
+        return rows
     for item in items:
         rows.append(
             [
@@ -467,14 +470,16 @@ def ledger_export(
             file_kind = "xlsx"
     except Exception:
         return fail(5005, "报告生成失败，请稍后重试或联系管理员")
-    message = "台账已按当前筛选导出"
-    if total > len(items):
+    empty = total == 0
+    message = "已导出空台账（当前筛选命中 0 条）" if empty else "台账已按当前筛选导出"
+    if not empty and total > len(items):
         message = f"台账已按当前筛选导出前 {len(items)} 条，共 {total} 条"
     payload = issue_export(actor.id, body, media, filename, file_kind, route="ledger", message=message)
     if payload is None:
         return fail(5005, "报告生成失败，请稍后重试或联系管理员")
     payload["total"] = total
     payload["exported"] = len(items)
+    payload["empty"] = empty
     return ok(payload)
 
 

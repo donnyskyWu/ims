@@ -212,3 +212,37 @@ def test_ledger_export_follows_current_filters():
     assert live_page["code"] == 0, live_page
     live_codes = {item["assetCode"] for item in live_page["data"]["list"]}
     assert live_codes == {f"{prefix}L"}
+
+
+def test_ledger_export_empty_filter_says_zero_hits():
+    """#220 · 筛选无命中时导出台账标明空表，xlsx/csv 只留表头和空行说明。"""
+    auth = headers()
+    keyword = f"AS220NONE{uuid.uuid4().hex[:8]}"
+    exported = client.get(
+        "/admin-api/ims/asset/ledger/export",
+        headers=auth,
+        params={"keyword": keyword, "assetType": "OFFICE", "status": "SCRAPPED", "linkGap": 1, "format": "XLSX"},
+    ).json()
+    assert exported["code"] == 0, exported
+    assert exported["data"]["empty"] is True
+    assert exported["data"]["exported"] == 0
+    assert exported["data"]["total"] == 0
+    assert exported["data"]["message"] == "已导出空台账（当前筛选命中 0 条）"
+    file_res = client.get(exported["data"]["downloadUrl"], headers=auth)
+    assert file_res.status_code == 200
+    assert file_res.content[:2] == b"PK"
+    sheet = zipfile.ZipFile(BytesIO(file_res.content)).read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert "暂无资产记录" in sheet
+    assert keyword not in sheet
+
+    csv_export = client.get(
+        "/admin-api/ims/asset/ledger/export",
+        headers=auth,
+        params={"keyword": keyword, "assetType": "LIVE,SHOOT", "unassigned": 1, "format": "CSV"},
+    ).json()
+    assert csv_export["code"] == 0, csv_export
+    assert csv_export["data"]["empty"] is True
+    assert csv_export["data"]["message"] == "已导出空台账（当前筛选命中 0 条）"
+    text = client.get(csv_export["data"]["downloadUrl"], headers=auth).content.decode("utf-8-sig")
+    assert "暂无资产记录" in text
+    assert keyword not in text
