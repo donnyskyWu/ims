@@ -59,6 +59,8 @@
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
 | **E2E-S7-切片 · 任务** | `closure-content-task-execute.spec.ts` | UI 启动计划 → 执行页工作说明 → DONE |
 | **E2E-S7-切片 · 工作任务 (#35)** | `closure-content-work-task.spec.ts` | 工作任务登记确认 → CONTENT_GENERATION 执行/提审 → e2e_author 审过 → DONE |
+| **E2E-S7-切片 · AI 文案 (#124)** | `closure-content-ai-copy.spec.ts` | 列表编辑打开 AI 文案 → 生成预览 → 采纳后正文可见标记 |
+| **E2E-S7-切片 · 确认草稿 (#128)** | `closure-content-ai-draft.spec.ts` | 打开自动文案 → 确认出任务失败可重试 → 执行页见草稿 → AI 润色与人工修订，不自动提审 |
 | **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
 | **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
 | **E2E-S5-01 (#68)** | `closure-asset-purchase-import.spec.ts` | 纯 UI 文件选择器上传 CSV · 部分成功 2 条待审核 · 第 3 行 `assetName` · 坏编号不在台账 · 时间线「采购入台账」 |

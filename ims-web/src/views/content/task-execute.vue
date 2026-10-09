@@ -31,8 +31,15 @@
         <template v-else>
           <p>
             <b>{{ vo.linkedContent.title }}</b> · {{ vo.linkedContent.status }}
-            <span v-if="vo.linkedContent.aiGenerateStatus"> · AI {{ vo.linkedContent.aiGenerateStatus }}</span>
+            <span v-if="aiStatusLabel" class="ai-draft-status" :data-ai-status="vo.linkedContent.aiGenerateStatus">
+              · AI {{ aiStatusLabel }}
+            </span>
           </p>
+          <p v-if="vo.linkedContent.aiGenerateStatus === 'FAILED'" class="hint">
+            {{ vo.linkedContent.aiGenerateError || 'AI 文案生成失败' }}
+            <button class="btn btn-sec btn-sm" type="button" style="margin-left: 8px" @click="retryAi">重试</button>
+          </p>
+          <pre v-if="vo.linkedContent.body" class="ai-draft-body">{{ vo.linkedContent.body }}</pre>
           <button class="btn btn-pri btn-sm" type="button" @click="openContentEdit">进入内容创作</button>
           <button
             v-if="canSubmitReview"
@@ -70,10 +77,19 @@
           <textarea v-model="editForm.matchSchemeJson" rows="6" placeholder='[{"matchId":"1","homeName":"主","awayName":"客","matchPlays":[]}]' />
         </div>
         <div class="fld">
-          <label>正文</label>
-          <textarea v-model="editForm.body" rows="4" />
+          <div class="rowline" style="justify-content: space-between; margin-bottom: 6px">
+            <label style="margin: 0">正文</label>
+            <button class="btn btn-sec btn-sm" type="button" @click="aiOpen = true">AI 文案</button>
+          </div>
+          <textarea v-model="editForm.body" rows="6" />
         </div>
       </div>
+      <AiCopyDrawer
+        :open="aiOpen"
+        :content-id="vo.linkedContent?.id"
+        @close="aiOpen = false"
+        @adopt="adoptAi"
+      />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="editOpen = false">取消</button>
         <button class="btn btn-pri" type="button" @click="saveContent">保存内容</button>
@@ -87,6 +103,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import AiCopyDrawer from '../../components/AiCopyDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,6 +113,7 @@ const loading = ref(true)
 const error = ref('')
 const deliverables = ref('')
 const editOpen = ref(false)
+const aiOpen = ref(false)
 const editForm = ref({
   title: '',
   matchType: 1,
@@ -109,6 +127,14 @@ const executeSubtitle = computed(() => {
   if (loading.value) return '加载中…'
   const head = vo.value.planName || '工作任务'
   return `${head} · ${vo.value.nodeName || '—'}`
+})
+
+const aiStatusLabel = computed(() => {
+  const status = vo.value.linkedContent?.aiGenerateStatus
+  if (status === 'QUEUED' || status === 'GENERATING') return '生成中'
+  if (status === 'GENERATED') return '已生成'
+  if (status === 'FAILED') return '失败'
+  return ''
 })
 
 const canSubmitReview = computed(() => {
@@ -160,13 +186,57 @@ async function completeTask() {
   }
 }
 
-function openContentEdit() {
+function adoptAi(payload: { markdown: string; targetField: string }) {
+  const key = payload.targetField
+  if ((key === 'paidBody' || key === 'freeBody') && key in editForm.value) {
+    ;(editForm.value as Record<string, string>)[key] = payload.markdown
+  } else {
+    editForm.value.body = payload.markdown
+  }
+  aiOpen.value = false
+}
+
+async function retryAi() {
+  const cid = vo.value.linkedContent?.id
+  if (!cid) return
+  try {
+    await http.post(`/content/${cid}/retry-ai-generate`)
+    await loadExecute()
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
+async function openContentEdit() {
   const lc = vo.value.linkedContent
-  editForm.value.title = lc?.title || ''
-  editForm.value.body = ''
+  const cid = lc?.id
+  const seedTitle = lc?.title || ''
+  const seedBody = lc?.body || ''
+  editForm.value.title = seedTitle
+  editForm.value.body = seedBody
   editForm.value.matchType = 1
   editForm.value.matchSchemeJson = '[]'
+  aiOpen.value = false
   editOpen.value = true
+  if (!cid) return
+  try {
+    const { data } = await http.get(`/content/${cid}`)
+    if (!editOpen.value || vo.value.linkedContent?.id !== cid) return
+    const row = data.data || {}
+    // 详情返回前用户可能已经改标题或正文，不能用服务端值盖掉。
+    if (editForm.value.title === seedTitle) {
+      editForm.value.title = row.title || seedTitle
+    }
+    if (editForm.value.body === seedBody) {
+      editForm.value.body = row.body || ''
+    }
+    if (editForm.value.matchSchemeJson === '[]') {
+      editForm.value.matchType = row.matchType || 1
+      editForm.value.matchSchemeJson = JSON.stringify(row.matchScheme || [], null, 2)
+    }
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
 }
 
 async function saveContent() {
@@ -206,3 +276,19 @@ async function submitReview() {
 
 watch(taskId, loadExecute, { immediate: true })
 </script>
+
+<style scoped>
+.ai-draft-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 8px 0 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: #f6f8fa;
+  border: 1px solid var(--line);
+  border-radius: var(--r-s);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+</style>

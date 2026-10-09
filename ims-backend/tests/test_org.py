@@ -49,6 +49,14 @@ def hire(event_id="evt-hire-1", ding="dt-100", mobile="13700001111", dept=3) -> 
     }
 
 
+def seeded_mapping_count() -> int:
+    db = SessionLocal()
+    try:
+        return int(db.scalar(select(func.count()).select_from(UserMapping)) or 0)
+    finally:
+        db.close()
+
+
 def consume(now=None) -> None:
     db = SessionLocal()
     try:
@@ -59,6 +67,7 @@ def consume(now=None) -> None:
 
 
 def test_event_is_signed_then_queued_without_writing_user():
+    baseline = seeded_mapping_count()
     res = post_event(hire())
     assert res.json()["code"] == 0
     assert res.json()["data"] is None
@@ -66,7 +75,7 @@ def test_event_is_signed_then_queued_without_writing_user():
     try:
         assert db.scalar(select(func.count()).select_from(OrgEvent)) == 1
         assert db.scalar(select(User).where(User.dingtalk_user_id == "dt-100")) is None
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 0
+        assert db.scalar(select(func.count()).select_from(UserMapping)) == baseline
     finally:
         db.close()
 
@@ -84,6 +93,7 @@ def test_bad_signature_does_not_enqueue():
 
 
 def test_idempotent_key_writes_one_local_user():
+    baseline = seeded_mapping_count()
     assert post_event(hire()).json()["code"] == 0
     assert post_event(hire()).json()["code"] == 0
     other = hire()
@@ -95,7 +105,7 @@ def test_idempotent_key_writes_one_local_user():
         assert db.scalar(select(func.count()).select_from(OrgEvent)) == 2
         process_due(db)
         db.commit()
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 1
+        assert db.scalar(select(func.count()).select_from(UserMapping)) == baseline + 1
         user = db.scalar(select(User).where(User.dingtalk_user_id == "dt-100", User.deleted == 0))
         assert user is not None
         assert user.nickname == "新人"
@@ -113,6 +123,7 @@ def test_idempotent_key_writes_one_local_user():
 
 
 def test_retry_sixteen_times_then_dead_letter():
+    baseline = seeded_mapping_count()
     payload = {"eventType": "hire", "dingtalkEventId": "evt-bad", "unionId": "", "payloadJson": {}}
     assert post_event(payload).json()["code"] == 0
     db = SessionLocal()
@@ -138,7 +149,7 @@ def test_retry_sixteen_times_then_dead_letter():
         db.refresh(event)
         assert event.retry_count == 16
         assert event.dead_letter == 1
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 0
+        assert db.scalar(select(func.count()).select_from(UserMapping)) == baseline
     finally:
         db.close()
 
@@ -251,6 +262,7 @@ def test_transfer_records_buffer_and_resign_freezes_local_user():
 
 
 def test_callback_ack_stays_under_half_second():
+    baseline = seeded_mapping_count()
     durations = []
     for index in range(30):
         payload = hire(event_id=f"evt-fast-{index}", ding=f"dt-fast-{index}", mobile=f"136{index:08d}")
@@ -263,6 +275,6 @@ def test_callback_ack_stays_under_half_second():
     assert p95 < 0.5
     db = SessionLocal()
     try:
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 0
+        assert db.scalar(select(func.count()).select_from(UserMapping)) == baseline
     finally:
         db.close()

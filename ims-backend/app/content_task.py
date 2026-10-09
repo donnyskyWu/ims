@@ -82,6 +82,7 @@ def linked_content_vo(project: ContentProject | None) -> dict | None:
         "documentType": project.document_type or "",
         "aiGenerateStatus": project.ai_generate_status,
         "aiGenerateError": project.ai_generate_error,
+        "body": project.body or "",
     }
 
 

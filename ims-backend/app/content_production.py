@@ -190,11 +190,12 @@ def content_update(
         row.content_type = body.contentType[:32]
     if body.platformType is not None:
         row.platform_type = body.platformType[:32]
-    if body.documentType is not None:
+    if "documentType" in body.model_fields_set and body.documentType is not None:
         row.document_type = body.documentType[:32]
-    if body.body is not None:
+    # 未显式提交 body / layoutHtml 时保留已有正文与版式。文案采纳只写 body，不顺带清空排版。
+    if "body" in body.model_fields_set and body.body is not None:
         row.body = body.body
-    if body.layoutHtml is not None:
+    if "layoutHtml" in body.model_fields_set:
         row.layout_html = body.layoutHtml
     if body.ipGroupId is not None:
         row.ip_group_id = body.ipGroupId
@@ -259,6 +260,16 @@ def content_retry_ai(content_id: int, db: Session = Depends(db_session), actor: 
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
-    row.ai_generate_status = "QUEUED"
-    row.ai_generate_error = None
-    return ok({"aiGenerateStatus": row.ai_generate_status})
+    status = row.ai_generate_status
+    if status in ("GENERATED", "GENERATING"):
+        return ok({"aiGenerateStatus": status, "aiGenerateError": row.ai_generate_error})
+    if status not in ("FAILED", "QUEUED"):
+        return fail(1502, "业务规则冲突")
+    from app.content_ai_draft import retry_project_draft
+
+    try:
+        retry_project_draft(db, row)
+    except Exception:
+        row.ai_generate_status = "FAILED"
+        row.ai_generate_error = "AI 文案生成失败"
+    return ok({"aiGenerateStatus": row.ai_generate_status, "aiGenerateError": row.ai_generate_error})

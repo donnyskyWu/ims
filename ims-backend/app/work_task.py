@@ -431,18 +431,26 @@ def sheet_confirm(
             )
             generated += 1
             if (node.node_type or "NORMAL") == "CONTENT_GENERATION":
-                ai_status = "QUEUED" if auto_ai else None
                 project = ContentProject(
                     title=f"{row.marketing_plan}-{row.work_date}",
                     content_status="DRAFT",
                     document_type=node.document_type or "COPY",
                     task_id=task.id,
-                    ai_generate_status=ai_status,
+                    ai_generate_status=None,
                     submitter_user_id=assignee,
                     creator=actor.id,
                     tenant_id=tid,
                 )
                 db.add(project)
+                db.flush()
+                if auto_ai:
+                    from app.content_ai_draft import generate_draft_for_project
+
+                    try:
+                        generate_draft_for_project(db, project, task, node, row, retry=False)
+                    except Exception:
+                        project.ai_generate_status = "FAILED"
+                        project.ai_generate_error = "AI 文案生成失败"
         row.row_status = "CONFIRMED"
     sheet.status = "CONFIRMED"
     sheet.confirmed_at = iso(datetime.now(BJ))

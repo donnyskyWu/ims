@@ -24,20 +24,23 @@ def headers() -> dict:
 
 def test_company_and_realname_are_query_only_and_masked():
     auth = headers()
-    empty = client.get("/admin-api/ims/corp/resource/company/page", headers=auth)
-    assert empty.json()["code"] == 0
-    assert empty.json()["data"]["total"] == 0
-    assert empty.json()["data"]["list"] == []
+    before = client.get("/admin-api/ims/corp/resource/company/page", headers=auth)
+    assert before.json()["code"] == 0
+    assert all(row["companyName"] != "甲公司" for row in before.json()["data"]["list"])
     missing = client.get("/admin-api/ims/corp/resource/company/999", headers=auth)
     assert missing.json()["code"] == 1504
     assert missing.json()["msg"] == "资源不可用"
     blocked = client.post("/admin-api/ims/corp/resource/company", headers=auth, json={"companyName": "甲"})
     assert blocked.status_code == 404
+    realname_before = client.get("/admin-api/ims/corp/resource/realname/page", headers=auth, params={"pageNo": 1, "pageSize": 1})
+    assert realname_before.json()["code"] == 0
+    realname_base = int(realname_before.json()["data"]["total"])
 
     ops = ops_session()
     try:
         ops.add(Company(company_name="甲公司", credit_code="91330100MA0000001X", legal_name="李四", status="ENABLED", tenant_id=0))
-        ops.add(Company(company_name="乙公司", credit_code="91330100MA0000002X", status="ENABLED", tenant_id=9))
+        foreign_company = Company(company_name="乙公司", credit_code="91330100MA0000002X", status="ENABLED", tenant_id=9)
+        ops.add(foreign_company)
         for index in range(11):
             number = f"1380000{index:04d}"
             card = f"33010119900101{index:04d}"
@@ -52,6 +55,8 @@ def test_company_and_realname_are_query_only_and_masked():
                     tenant_id=0,
                 )
             )
+        ops.flush()
+        foreign_company_id = foreign_company.id
         ops.commit()
     finally:
         ops.close()
@@ -61,14 +66,14 @@ def test_company_and_realname_are_query_only_and_masked():
     assert listed.json()["data"]["list"][0]["companyName"] == "甲公司"
     foreign = client.get("/admin-api/ims/corp/resource/company/page", headers=auth, params={"companyName": "乙"})
     assert foreign.json()["data"]["total"] == 0
-    other = client.get("/admin-api/ims/corp/resource/company/2", headers=auth)
+    other = client.get(f"/admin-api/ims/corp/resource/company/{foreign_company_id}", headers=auth)
     assert other.json()["code"] == 1504
 
-    page = client.get("/admin-api/ims/corp/resource/realname/page", headers=auth, params={"pageNo": 2, "pageSize": 10})
+    page = client.get("/admin-api/ims/corp/resource/realname/page", headers=auth, params={"pageNo": 1, "pageSize": 50})
     body = page.json()["data"]
-    assert body["total"] == 11
-    assert len(body["list"]) == 1
-    row = body["list"][0]
+    assert body["total"] == realname_base + 11
+    assert len(body["list"]) == body["total"]
+    row = next(item for item in body["list"] if str(item.get("idCardMasked", "")).startswith("330101"))
     assert "idCard" not in row
     assert "phone" not in row
     assert row["idCardMasked"].startswith("330101")
@@ -170,14 +175,14 @@ def test_sim_write_rules_and_certificate_view():
             )
         )
         db.commit()
-        cert_id = db.query(CertArchive).filter(CertArchive.tenant_id == 0).one().id
+        cert_id = db.query(CertArchive).filter(CertArchive.cert_no_hash == sha256_hex(plain), CertArchive.tenant_id == 0).one().id
         foreign_id = db.query(CertArchive).filter(CertArchive.tenant_id == 9).one().id
     finally:
         db.close()
 
-    certs = client.get("/admin-api/ims/corp/resource/certificate/page", headers=auth)
-    assert certs.json()["data"]["total"] == 1
-    item = certs.json()["data"]["list"][0]
+    certs = client.get("/admin-api/ims/corp/resource/certificate/page", headers=auth, params={"holderName": "管理员"})
+    assert certs.json()["data"]["total"] >= 1
+    item = next(row for row in certs.json()["data"]["list"] if row["id"] == cert_id)
     assert item["certNoMasked"].startswith("110")
     assert plain not in certs.text
     view = client.get(f"/admin-api/ims/corp/resource/certificate/{cert_id}/view", headers=auth)
