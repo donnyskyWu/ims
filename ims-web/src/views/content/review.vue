@@ -52,9 +52,11 @@
       <div class="pager"><span class="pg-total">共 {{ filteredRows.length }} 条</span></div>
     </div>
 
-    <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="640px" @close="drawerOpen = false">
+    <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="720px" @close="drawerOpen = false">
       <p><b>{{ active?.contentTitle }}</b></p>
       <p class="hint">提交人：{{ active?.submitterName }} · 轮次 {{ active?.reviewRound }}</p>
+      <div class="dsec">正文</div>
+      <ContentLayoutPreview :layout-html="previewLayout" :body="previewBody" />
       <div class="dsec">质量清单</div>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
@@ -71,6 +73,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
+import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const rows = ref<any[]>([])
@@ -84,6 +87,8 @@ const active = ref<any>(null)
 const checklist = ref<any[]>([])
 const checklistModel = ref<Record<string, boolean>>({})
 const submitting = ref(false)
+const previewLayout = ref('')
+const previewBody = ref('')
 
 const filteredRows = computed(() => {
   let list = rows.value.filter((r) => (stage.value === 1 ? r.reviewRound <= 1 : r.reviewRound >= 2))
@@ -118,9 +123,25 @@ async function loadQueue() {
   }
 }
 
+async function loadPreview(contentId: number | null | undefined) {
+  previewLayout.value = ''
+  previewBody.value = ''
+  if (!contentId) return
+  try {
+    const { data } = await http.get(`/content/${contentId}`)
+    previewLayout.value = data.data?.layoutHtml || ''
+    previewBody.value = data.data?.body || ''
+  } catch {
+    previewLayout.value = ''
+    previewBody.value = ''
+  }
+}
+
 async function openReview(row: any) {
   active.value = row
   drawerOpen.value = true
+  previewLayout.value = ''
+  previewBody.value = ''
   try {
     const { data } = await http.get(`/content/review/${row.reviewNo}`)
     checklist.value = data.data.checklist || []
@@ -129,6 +150,7 @@ async function openReview(row: any) {
       model[item.itemCode] = Boolean(item.passed)
     }
     checklistModel.value = model
+    await loadPreview(data.data?.contentProjectId || row.contentProjectId)
   } catch (e) {
     alert(errorMessage(e))
   }

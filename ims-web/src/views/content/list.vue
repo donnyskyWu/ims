@@ -49,7 +49,8 @@
               <td>{{ row.documentType || '—' }}</td>
               <td>{{ row.fbSyncStatusLabel || row.fbSyncStatus || '—' }}</td>
               <td>
-                <button class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="content-view" @click="openView(row)">查看</button>
+                <button class="btn btn-sec btn-sm" type="button" style="margin-left: 6px" @click="openEdit(row)">编辑</button>
                 <button
                   v-if="row.fbSyncStatus === 'COMPENSATING' || row.fbSyncStatus === 'FAILED'"
                   class="btn btn-sec btn-sm"
@@ -98,10 +99,33 @@
           <label>正文</label>
           <textarea v-model="form.body" rows="4" />
         </div>
+        <div class="fld">
+          <label>版式 HTML</label>
+          <textarea
+            v-model="form.layoutHtml"
+            rows="4"
+            data-testid="content-layout-html-input"
+            placeholder="查看与审核按此 HTML 只读渲染；留空则显示正文"
+          />
+        </div>
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="viewOpen" title="查看内容" width="720px" @close="viewOpen = false">
+      <p><b data-testid="content-view-title">{{ viewRow?.title }}</b></p>
+      <p class="hint">
+        状态 {{ viewRow?.contentStatus || '—' }} · 文档类型 {{ viewRow?.documentType || '—' }} · 内容类型
+        {{ viewRow?.contentType || '—' }}
+      </p>
+      <p v-if="viewRow?.matchSummary" class="hint">赛事摘要 {{ viewRow.matchSummary }}</p>
+      <div class="dsec">正文</div>
+      <ContentLayoutPreview :layout-html="viewRow?.layoutHtml || ''" :body="viewRow?.body || ''" />
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="viewOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
   </div>
@@ -110,6 +134,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
+import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const rows = ref<any[]>([])
@@ -119,15 +144,19 @@ const error = ref('')
 const titleKw = ref('')
 const statusKw = ref('')
 const drawerOpen = ref(false)
+const viewOpen = ref(false)
+const viewRow = ref<any>(null)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
-const form = ref({
+const emptyForm = () => ({
   title: '',
   contentType: 'SHORT_VIDEO',
   matchType: 1,
   matchSchemeJson: '[]',
   body: '',
+  layoutHtml: '',
 })
+const form = ref(emptyForm())
 
 async function loadList() {
   loading.value = true
@@ -149,7 +178,7 @@ async function loadList() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
+  form.value = emptyForm()
   drawerOpen.value = true
 }
 
@@ -161,8 +190,20 @@ function openEdit(row: any) {
     matchType: row.matchType || 1,
     matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
     body: row.body || '',
+    layoutHtml: row.layoutHtml || '',
   }
   drawerOpen.value = true
+}
+
+async function openView(row: any) {
+  viewRow.value = row
+  viewOpen.value = true
+  try {
+    const { data } = await http.get(`/content/${row.id}`)
+    viewRow.value = data.data
+  } catch {
+    viewRow.value = row
+  }
 }
 
 async function saveContent() {
@@ -185,6 +226,7 @@ async function saveContent() {
       matchType: form.value.matchType,
       matchScheme: scheme,
       body: form.value.body,
+      layoutHtml: form.value.layoutHtml,
     }
     if (editingId.value) {
       await http.put(`/content/${editingId.value}`, payload)

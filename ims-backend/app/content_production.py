@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.content import iso, next_seq, tenant
 from app.content_fb_sync import after_content_deleted, after_content_saved, fb_sync_vo
+from app.content_layout_html import sanitize_layout_html
 from app.content_task import APPROVED_CONTENT_STATUSES
 from app.corp import ops_db, page_args, paged
 from app.models import ContentProject, ContentReview, ContentReviewSeq, ContentTask, User
@@ -70,7 +71,7 @@ def project_vo(row: ContentProject) -> dict:
         "taskId": row.task_id,
         "ipGroupId": row.ip_group_id,
         "body": row.body,
-        "layoutHtml": row.layout_html,
+        "layoutHtml": sanitize_layout_html(row.layout_html),
         "matchType": row.match_type,
         "matchScheme": row.match_scheme or [],
         "matchSummary": row.match_summary or row.competition_name,
