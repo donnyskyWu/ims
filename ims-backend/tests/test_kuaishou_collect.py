@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.collector_stub import CollectorStub
+from app.collector_stub import KUAISHOU_FOLLOWER_COUNT, CollectorStub
 from app.crypto import decrypt_text
 from app.kuaishou_collect import tick_due
 from app.main import app
@@ -17,6 +17,7 @@ from app.ops_models import (
     CollectTask,
     Company,
     IpGroup,
+    KuaishouFollowerDaily,
     KuaishouVideo,
     KuaishouVideoSnapshot,
     PlatformAccount,
@@ -117,7 +118,7 @@ def test_collect_idempotent_and_scheduler():
     assert first.json()["code"] == 0
     assert first.json()["data"]["status"] == "SUCCESS"
     assert first.json()["data"]["statusLabel"] == "成功"
-    assert first.json()["data"]["recordCount"] == 2
+    assert first.json()["data"]["recordCount"] == 3
     assert first.json()["data"]["durationMs"] >= 0
     second = client.post(f"/admin-api/ims/collect/kuaishou/account/{account_id}/run", headers=auth)
     assert second.json()["data"]["status"] == "SUCCESS"
@@ -129,6 +130,9 @@ def test_collect_idempotent_and_scheduler():
         )
         assert videos == 2
         assert snaps == 2
+        daily = ops.scalars(select(KuaishouFollowerDaily).where(KuaishouFollowerDaily.account_id == account_id)).all()
+        assert len(daily) == 1
+        assert daily[0].follower_count == KUAISHOU_FOLLOWER_COUNT
         task = ops.scalar(select(CollectTask).where(CollectTask.account_id == account_id, CollectTask.deleted == 0))
         task.next_run_at = "2000-01-01 00:00:00"
         ops.commit()

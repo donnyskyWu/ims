@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.collector_client import kuaishou_internal_videos
+from app.collector_client import kuaishou_follower_stats, kuaishou_internal_videos
 from app.internal_collect import (
     PlatformProfile,
     build_router,
@@ -16,7 +16,7 @@ from app.internal_collect import (
     start_scheduler,
     tick_platform,
 )
-from app.ops_models import KuaishouVideo, KuaishouVideoSnapshot
+from app.ops_models import KuaishouFollowerDaily, KuaishouVideo, KuaishouVideoSnapshot
 
 PROFILE = PlatformProfile(
     key="kuaishou",
@@ -30,6 +30,8 @@ PROFILE = PlatformProfile(
     snapshot_model=KuaishouVideoSnapshot,
     fetch_videos=kuaishou_internal_videos,
     import_platform="kuaishou",
+    fetch_follower_stats=kuaishou_follower_stats,
+    follower_daily_model=KuaishouFollowerDaily,
 )
 register(PROFILE)
 router = build_router(PROFILE)

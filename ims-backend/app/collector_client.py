@@ -1,11 +1,14 @@
 """unify-collector HTTP 客户端。
 
-与本地桩、`scripts/collector_smoke_kuaishou.py`、`scripts/collector_smoke_douyin.py` 使用同一形状：
+与本地桩、`scripts/collector_smoke_kuaishou.py`、`scripts/collector_smoke_douyin.py` 使用同一路径：
 
 - `POST /api/v1/accounts/import`
 - `GET  /api/v1/accounts/health?account_id=`
-- `POST /api/v1/internal/kuaishou/videos`
-- `POST /api/v1/internal/douyin/videos`
+- `GET  /api/v1/internal/douyin/accounts/{account_id}/videos`
+- `GET  /api/v1/internal/douyin/accounts/{account_id}/followers`
+- `GET  /api/v1/internal/douyin/follower-stats?account_id=`
+- `GET  /api/v1/internal/kuaishou/video-list?account_id=`
+- `GET  /api/v1/internal/kuaishou/follower-stats?account_id=`
 
 鉴权头 `Authorization: Bearer <IMS_COLLECTOR_TOKEN>`，地址 `IMS_COLLECTOR_BASE_URL`。
 业务错误可以是 HTTP 200，正文 `message` 为「Cookie 已失效」或「浏览器引擎不可用」。
@@ -16,19 +19,26 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import httpx
 
 IMPORT_PATH = "/api/v1/accounts/import"
 HEALTH_PATH = "/api/v1/accounts/health"
-KUAISHOU_VIDEOS_PATH = "/api/v1/internal/kuaishou/videos"
-DOUYIN_VIDEOS_PATH = "/api/v1/internal/douyin/videos"
-INTERNAL_VIDEOS_PATH = KUAISHOU_VIDEOS_PATH
+DOUYIN_VIDEOS_PATH = "/api/v1/internal/douyin/accounts/{account_id}/videos"
+DOUYIN_FOLLOWERS_PATH = "/api/v1/internal/douyin/accounts/{account_id}/followers"
+DOUYIN_FOLLOWER_STATS_PATH = "/api/v1/internal/douyin/follower-stats"
+KUAISHOU_VIDEO_LIST_PATH = "/api/v1/internal/kuaishou/video-list"
+KUAISHOU_FOLLOWER_STATS_PATH = "/api/v1/internal/kuaishou/follower-stats"
+# 旧名保留给仍按常量引用视频列表的调用；值已是真实 GET 路径。
+KUAISHOU_VIDEOS_PATH = KUAISHOU_VIDEO_LIST_PATH
 
 MSG_COOKIE = "Cookie 已失效"
 MSG_ENGINE = "浏览器引擎不可用"
+MSG_FOLLOWER = "粉丝统计失败"
 CODE_COOKIE = 40101
 CODE_ENGINE = 50301
+CODE_FOLLOWER = 1002
 
 
 @dataclass
@@ -36,6 +46,11 @@ class CollectorCall:
     kind: str
     message: str
     videos: list[dict] = field(default_factory=list)
+    followers: list[dict] = field(default_factory=list)
+    follower_count: int | None = None
+    following_count: int | None = None
+    new_follower_count: int | None = None
+    stat_date: str = ""
     collector_account_id: str = ""
     http_status: int = 0
 
@@ -73,6 +88,31 @@ def _read_body(response: httpx.Response) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _optional_int(data: dict, *names: str) -> int | None:
+    for name in names:
+        if name in data and data[name] is not None:
+            try:
+                return int(data[name])
+            except (TypeError, ValueError):
+                return None
+    nested = data.get("stats")
+    if isinstance(nested, dict):
+        return _optional_int(nested, *names)
+    return None
+
+
+def _dict_list(data: dict, *names: str) -> list[dict]:
+    for name in names:
+        value = data.get(name)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _account_path(template: str, account_id: str) -> str:
+    return template.format(account_id=quote(account_id or "", safe=""))
+
+
 def _call(method: str, path: str, *, json_body: dict | None = None, params: dict | None = None) -> CollectorCall:
     root = base_url()
     if not root:
@@ -93,13 +133,18 @@ def _call(method: str, path: str, *, json_body: dict | None = None, params: dict
         kind = classify(message, code_int)
         if kind == "error" and not message:
             message = f"采集失败（HTTP {response.status_code}）"
-    videos = data.get("videos") if isinstance(data.get("videos"), list) else []
-    collector_id = str(data.get("collector_account_id") or data.get("collectorAccountId") or "")
+    if kind != "ok":
+        data = {}
     return CollectorCall(
         kind=kind if kind != "ok" or response.status_code < 400 else "error",
         message=message or ("ok" if kind == "ok" else "采集失败"),
-        videos=[item for item in videos if isinstance(item, dict)],
-        collector_account_id=collector_id,
+        videos=_dict_list(data, "videos"),
+        followers=_dict_list(data, "followers"),
+        follower_count=_optional_int(data, "follower_count", "followerCount", "fans_count", "fansCount"),
+        following_count=_optional_int(data, "following_count", "followingCount"),
+        new_follower_count=_optional_int(data, "new_follower_count", "newFollowerCount"),
+        stat_date=str(data.get("stat_date") or data.get("statDate") or "")[:10],
+        collector_account_id=str(data.get("collector_account_id") or data.get("collectorAccountId") or ""),
         http_status=response.status_code,
     )
 
@@ -129,16 +174,21 @@ def account_health(collector_account_id: str) -> CollectorCall:
     return _call("GET", HEALTH_PATH, params={"account_id": collector_account_id})
 
 
-def kuaishou_internal_videos(*, user_id: str, cookie: str, auth_token: str) -> CollectorCall:
-    return _call(
-        "POST",
-        KUAISHOU_VIDEOS_PATH,
-        json_body={"user_id": user_id, "cookie": cookie, "auth_token": auth_token},
-    )
+def kuaishou_internal_videos(*, account_id: str) -> CollectorCall:
+    return _call("GET", KUAISHOU_VIDEO_LIST_PATH, params={"account_id": account_id})
 
 
-def douyin_internal_videos(*, user_id: str, cookie: str, auth_token: str = "") -> CollectorCall:
-    body = {"user_id": user_id, "cookie": cookie}
-    if auth_token:
-        body["auth_token"] = auth_token
-    return _call("POST", DOUYIN_VIDEOS_PATH, json_body=body)
+def kuaishou_follower_stats(*, account_id: str) -> CollectorCall:
+    return _call("GET", KUAISHOU_FOLLOWER_STATS_PATH, params={"account_id": account_id})
+
+
+def douyin_internal_videos(*, account_id: str) -> CollectorCall:
+    return _call("GET", _account_path(DOUYIN_VIDEOS_PATH, account_id))
+
+
+def douyin_followers(*, account_id: str) -> CollectorCall:
+    return _call("GET", _account_path(DOUYIN_FOLLOWERS_PATH, account_id))
+
+
+def douyin_follower_stats(*, account_id: str) -> CollectorCall:
+    return _call("GET", DOUYIN_FOLLOWER_STATS_PATH, params={"account_id": account_id})

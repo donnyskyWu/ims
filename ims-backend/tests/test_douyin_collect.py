@@ -1,3 +1,4 @@
+import json
 import os
 
 os.environ["IMS_DB"] = "ims_test"
@@ -8,15 +9,18 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.collector_stub import CollectorStub
+from app.collector_stub import DOUYIN_FOLLOWER_COUNT, CollectorStub
 from app.crypto import decrypt_text, encrypt_text
 from app.douyin_collect import tick_due
 from app.main import app
 from app.ops_db import ops_session
 from app.ops_models import (
+    CollectLog,
     CollectTask,
     CollectorAccountBind,
     Company,
+    DouyinFollower,
+    DouyinFollowerDaily,
     DouyinVideo,
     DouyinVideoSnapshot,
     IpGroup,
@@ -119,7 +123,8 @@ def test_collect_idempotent_and_scheduler():
     assert first.json()["code"] == 0
     assert first.json()["data"]["status"] == "SUCCESS"
     assert first.json()["data"]["statusLabel"] == "成功"
-    assert first.json()["data"]["recordCount"] == 2
+    assert first.json()["data"]["recordCount"] == 5
+    assert first.json()["data"]["errorSummary"] in (None, "")
     second = client.post(f"/admin-api/ims/collect/douyin/account/{account_id}/run", headers=auth)
     assert second.json()["data"]["status"] == "SUCCESS"
     ops = ops_session()
@@ -130,6 +135,11 @@ def test_collect_idempotent_and_scheduler():
         )
         assert videos == 2
         assert snaps == 2
+        fans = ops.scalar(select(func.count()).select_from(DouyinFollower).where(DouyinFollower.account_id == account_id))
+        daily = ops.scalars(select(DouyinFollowerDaily).where(DouyinFollowerDaily.account_id == account_id)).all()
+        assert fans == 2
+        assert len(daily) == 1
+        assert daily[0].follower_count == DOUYIN_FOLLOWER_COUNT
         titles = ops.scalars(select(DouyinVideo.title).where(DouyinVideo.account_id == account_id)).all()
         assert "抖音内部作品甲" in titles
         task = ops.scalar(
@@ -148,7 +158,11 @@ def test_collect_idempotent_and_scheduler():
     ops = ops_session()
     try:
         videos = ops.scalar(select(func.count()).select_from(DouyinVideo).where(DouyinVideo.account_id == account_id))
+        daily = ops.scalar(
+            select(func.count()).select_from(DouyinFollowerDaily).where(DouyinFollowerDaily.account_id == account_id)
+        )
         assert videos == 2
+        assert daily == 1
         task = ops.get(CollectTask, task_id)
         assert task.next_run_at > "2000-01-01 00:00:00"
         assert task.success_count >= 3
@@ -171,6 +185,16 @@ def test_cookie_expired_and_engine_unavailable_are_not_http_500():
     assert cookie_run.json()["data"]["status"] == "COOKIE_EXPIRED"
     assert cookie_run.json()["data"]["statusLabel"] == "Cookie 已失效"
     assert cookie_run.json()["data"]["recordCount"] == 0
+    ops = ops_session()
+    try:
+        daily = ops.scalar(
+            select(func.count()).select_from(DouyinFollowerDaily).where(DouyinFollowerDaily.account_id == cookie_acc)
+        )
+        videos = ops.scalar(select(func.count()).select_from(DouyinVideo).where(DouyinVideo.account_id == cookie_acc))
+        assert daily == 0
+        assert videos == 0
+    finally:
+        ops.close()
     engine_run = client.post(f"/admin-api/ims/collect/douyin/account/{engine_acc}/run", headers=auth)
     assert engine_run.status_code == 200
     assert engine_run.json()["data"]["status"] == "ENGINE_UNAVAILABLE"
@@ -181,6 +205,71 @@ def test_cookie_expired_and_engine_unavailable_are_not_http_500():
     logs = client.get("/admin-api/ims/collect/douyin/log/page", headers=auth, params={"accountId": cookie_acc})
     labels = [item["statusLabel"] for item in logs.json()["data"]["list"]]
     assert labels == ["Cookie 已失效"]
+
+
+def test_follower_fail_keeps_videos_and_skips_daily():
+    auth = headers()
+    company_id, group_id = seed_master()
+    account_id = create_account(auth, company_id, group_id, "DY_FOLLOWER_FAIL", "粉丝失败号")["account"]["id"]
+    bound = client.post(f"/admin-api/ims/collect/douyin/account/{account_id}/bind", headers=auth)
+    assert bound.json()["code"] == 0
+    run = client.post(f"/admin-api/ims/collect/douyin/account/{account_id}/run", headers=auth)
+    assert run.status_code == 200
+    body = run.json()["data"]
+    assert body["status"] == "PARTIAL"
+    assert body["statusLabel"] == "部分成功"
+    assert body["recordCount"] == 2
+    assert "粉丝统计失败" in (body["errorSummary"] or "")
+    ops = ops_session()
+    try:
+        videos = ops.scalar(select(func.count()).select_from(DouyinVideo).where(DouyinVideo.account_id == account_id))
+        daily = ops.scalar(
+            select(func.count()).select_from(DouyinFollowerDaily).where(DouyinFollowerDaily.account_id == account_id)
+        )
+        fans = ops.scalar(select(func.count()).select_from(DouyinFollower).where(DouyinFollower.account_id == account_id))
+        assert videos == 2
+        assert daily == 0
+        assert fans == 0
+        log = ops.scalar(select(CollectLog).where(CollectLog.account_id == account_id))
+        types = {item["dataType"]: item["status"] for item in json.loads(log.type_results_json)}
+        assert types["FOLLOWER_STATS"] == "FAILED"
+        assert types["DOUYIN_FOLLOWER_LIST"] == "FAILED"
+        assert types["DOUYIN_VIDEO_LIST"] == "SUCCESS"
+    finally:
+        ops.close()
+    page = client.get("/admin-api/ims/collect/douyin/account/page", headers=auth)
+    row = next(item for item in page.json()["data"]["list"] if item["id"] == account_id)
+    assert row["followerCount"] is None
+
+
+def test_stub_serves_real_douyin_paths(collector_stub):
+    import httpx
+
+    account = "acc_douyin_DY_OK"
+    headers_ = {"Authorization": "Bearer pytest-collector-token"}
+    videos = httpx.get(
+        f"{collector_stub.base_url}/api/v1/internal/douyin/accounts/{account}/videos",
+        headers=headers_,
+    )
+    assert videos.status_code == 200
+    assert len(videos.json()["data"]["videos"]) == 2
+    fans = httpx.get(
+        f"{collector_stub.base_url}/api/v1/internal/douyin/accounts/{account}/followers",
+        headers=headers_,
+    )
+    assert len(fans.json()["data"]["followers"]) == 2
+    stats = httpx.get(
+        f"{collector_stub.base_url}/api/v1/internal/douyin/follower-stats",
+        headers=headers_,
+        params={"account_id": account},
+    )
+    assert stats.json()["data"]["follower_count"] == DOUYIN_FOLLOWER_COUNT
+    old = httpx.post(
+        f"{collector_stub.base_url}/api/v1/internal/douyin/videos",
+        headers=headers_,
+        json={"user_id": account, "cookie": "x"},
+    )
+    assert old.status_code == 404
 
 
 def test_legacy_douyin_task_run_stays_simulated():

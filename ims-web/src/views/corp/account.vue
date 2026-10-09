@@ -299,6 +299,30 @@
             <label>采集健康</label>
             <div data-testid="dy-tab-health">{{ detail.healthLabel || '—' }}</div>
           </div>
+          <div class="fld">
+            <label>最新粉丝</label>
+            <div data-testid="dy-tab-follower">{{ followerText(detail) }}</div>
+          </div>
+          <h3 style="margin: 8px 0; font-size: 14px">粉丝日快照</h3>
+          <table data-testid="dy-tab-follower-daily">
+            <thead>
+              <tr>
+                <th>统计日</th>
+                <th>粉丝数</th>
+                <th>新增</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!followerDailyOf(detail).length">
+                <td colspan="3">暂无粉丝日快照</td>
+              </tr>
+              <tr v-for="snap in followerDailyOf(detail)" :key="String(snap.statDate)">
+                <td>{{ snap.statDate }}</td>
+                <td data-testid="dy-tab-follower-count">{{ snap.followerCount }}</td>
+                <td>{{ snap.newFollowerCount }}</td>
+              </tr>
+            </tbody>
+          </table>
           <p class="hint">
             定时采集与立即采集见
             <router-link to="/ims/collect/douyin">抖音内部账号采集</router-link>
@@ -340,6 +364,30 @@
             <label>采集健康</label>
             <div data-testid="ks-tab-health">{{ detail.healthLabel || '—' }}</div>
           </div>
+          <div class="fld">
+            <label>最新粉丝</label>
+            <div data-testid="ks-tab-follower">{{ followerText(detail) }}</div>
+          </div>
+          <h3 style="margin: 8px 0; font-size: 14px">粉丝日快照</h3>
+          <table data-testid="ks-tab-follower-daily">
+            <thead>
+              <tr>
+                <th>统计日</th>
+                <th>粉丝数</th>
+                <th>新增</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!followerDailyOf(detail).length">
+                <td colspan="3">暂无粉丝日快照</td>
+              </tr>
+              <tr v-for="snap in followerDailyOf(detail)" :key="String(snap.statDate)">
+                <td>{{ snap.statDate }}</td>
+                <td data-testid="ks-tab-follower-count">{{ snap.followerCount }}</td>
+                <td>{{ snap.newFollowerCount }}</td>
+              </tr>
+            </tbody>
+          </table>
           <div class="fld">
             <label>更新凭证（不明文回显）</label>
             <input v-model="ksCredential" type="password" autocomplete="new-password" placeholder="留空则不修改" data-testid="ks-tab-credential" />
@@ -926,6 +974,16 @@ const checkoutStepLabel = computed(() => {
   if (checkoutStep.value === 'DONE') return '已领用'
   return checkoutStep.value
 })
+
+function followerDailyOf(row: Record<string, unknown> | null) {
+  const daily = row?.followerDaily
+  return Array.isArray(daily) ? (daily as Array<Record<string, unknown>>) : []
+}
+
+function followerText(row: Record<string, unknown> | null) {
+  if (!row || row.followerCount == null || row.followerCount === '') return '—'
+  return row.followerStatDate ? `${row.followerCount}（${row.followerStatDate}）` : String(row.followerCount)
+}
 
 function statusLabel(code: string) {
   const hit = statusOptions.find((o) => o.value === code)

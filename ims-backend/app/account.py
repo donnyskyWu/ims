@@ -335,7 +335,11 @@ def enrich_and_return(row: PlatformAccount, db: Session, ops: Session, bind: Col
     companies = company_names(ops, {row.company_id} if row.company_id else set())
     persons = realname_masked(ops, {row.realname_id} if row.realname_id else set())
     holders = user_names(db, {row.holder_user_id} if row.holder_user_id else set())
-    return detail_vo(row, groups, companies, persons, holders, bind)
+    data = detail_vo(row, groups, companies, persons, holders, bind)
+    from app.internal_collect import follower_public
+
+    data.update(follower_public(ops, row))
+    return data
 
 
 @router.get("/corp/account/page")

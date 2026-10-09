@@ -35,7 +35,7 @@ test.describe('抖音内部账号采集 C2', () => {
     await row.getByRole('button', { name: '立即采集' }).click()
     const latestLog = page.getByTestId('dy-log-table').locator('tbody tr').first()
     await expect(latestLog).toContainText('成功')
-    await expect(latestLog.getByTestId('dy-log-count')).toHaveText('2')
+    await expect(latestLog.getByTestId('dy-log-count')).toHaveText('5')
     await page.screenshot({ path: `${SHOTS}/02-collect-success.png`, fullPage: true })
 
     await page.goto('/ims/collect/douyin')
@@ -64,7 +64,7 @@ test.describe('抖音内部账号采集 C2', () => {
     await page.getByRole('button', { name: '采集' }).click()
     await expect(page.getByTestId('dy-tab-mask')).toContainText('****')
     await expect(page.getByTestId('dy-tab-logs')).toContainText('成功')
-    await expect(page.getByTestId('dy-tab-log-count').first()).toHaveText('2')
+    await expect(page.getByTestId('dy-tab-log-count').first()).toHaveText('5')
     await expect(page.locator('.drawer.on')).not.toContainText(SECRET)
     await page.screenshot({ path: `${SHOTS}/05-account-collect-tab.png`, fullPage: true })
   })

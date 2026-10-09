@@ -482,6 +482,58 @@ class DouyinVideoSnapshot(OpsBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class DouyinFollower(OpsBase):
+    """抖音粉丝列表。UK：租户 + 平台账号 + follower_id（重复采集更新同一行）。"""
+
+    __tablename__ = "oa_douyin_follower"
+    __table_args__ = (UniqueConstraint("tenant_id", "account_id", "follower_id", name="uk_dy_follower"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    follower_id: Mapped[str] = mapped_column(String(64), default="")
+    nickname: Mapped[str] = mapped_column(String(128), default="")
+    followed_at: Mapped[str] = mapped_column(String(32), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DouyinFollowerDaily(OpsBase):
+    """抖音粉丝日统计。同一天重复采集更新同一行。"""
+
+    __tablename__ = "oa_douyin_follower_daily"
+    __table_args__ = (UniqueConstraint("tenant_id", "account_id", "stat_date", name="uk_dy_follower_daily"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    stat_date: Mapped[str] = mapped_column(String(10), default="")
+    follower_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    following_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    new_follower_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    collected_at: Mapped[str] = mapped_column(String(32), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class KuaishouFollowerDaily(OpsBase):
+    """快手粉丝日统计。同一天重复采集更新同一行。"""
+
+    __tablename__ = "oa_kuaishou_follower_daily"
+    __table_args__ = (UniqueConstraint("tenant_id", "account_id", "stat_date", name="uk_ks_follower_daily"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    stat_date: Mapped[str] = mapped_column(String(10), default="")
+    follower_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    following_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    new_follower_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    collected_at: Mapped[str] = mapped_column(String(32), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class KuaishouVideoSnapshot(OpsBase):
     """快手作品日快照。同一天重复采集更新同一行。"""
 

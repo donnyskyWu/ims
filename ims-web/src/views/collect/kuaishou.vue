@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>快手内部账号采集</h1>
-        <div class="sub">C1 · 平台账号凭证与 Collector 绑定 · IMS 定时器调度作品采集</div>
+        <div class="sub">C1/C3 · 同一 IMS 定时器采集作品与粉丝日统计</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goTasks">采集任务</button>
@@ -11,8 +11,8 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      凭证加密入库，页面只显示掩码和凭证引用。作品写入 <code>oa_kuaishou_video</code> /
-      <code>oa_kuaishou_video_snapshot</code>，重复采集按作品 ID 幂等更新。Cookie 已失效与浏览器引擎不可用分开显示。
+      凭证加密入库，页面只显示掩码和凭证引用。作品写入 <code>oa_kuaishou_video</code>，粉丝日统计写入
+      <code>oa_kuaishou_follower_daily</code>。同一天重复采集按日更新。Cookie 已失效、浏览器引擎不可用与粉丝统计失败分开显示。
     </p>
 
     <form class="qbar" style="align-items: flex-end" @submit.prevent="saveAccount">
@@ -78,12 +78,13 @@
               <th>凭证引用</th>
               <th>绑定</th>
               <th>健康</th>
+              <th>最新粉丝</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!accounts.length">
-              <td colspan="7">暂无快手内部账号</td>
+              <td colspan="8">暂无快手内部账号</td>
             </tr>
             <tr v-for="row in accounts" :key="row.id" :data-testid="'ks-row-' + row.platformAccountId">
               <td>{{ row.accountName }}</td>
@@ -92,12 +93,40 @@
               <td class="mono">{{ row.credentialRef || '—' }}</td>
               <td>{{ row.collectBindSummary }}</td>
               <td data-testid="ks-health">{{ row.healthLabel }}</td>
+              <td class="num" data-testid="ks-follower-latest">{{ followerText(row) }}</td>
               <td>
                 <button class="btn-txt btn" type="button" @click="editRow(row)">编辑</button>
                 <button class="btn-txt btn" type="button" @click="bindRow(row)">导入 Collector</button>
                 <button class="btn-txt btn" type="button" @click="probeRow(row)">测试连接</button>
                 <button class="btn-txt btn" type="button" data-testid="ks-run" @click="runRow(row)">立即采集</button>
               </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2 style="margin: 16px 0 8px; font-size: 16px">粉丝日快照</h2>
+    <div class="tbl-block">
+      <div class="tbl-wrap">
+        <table data-testid="ks-follower-daily">
+          <thead>
+            <tr>
+              <th>账号</th>
+              <th>统计日</th>
+              <th>粉丝数</th>
+              <th>新增</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!followerRows.length">
+              <td colspan="4">暂无粉丝日快照</td>
+            </tr>
+            <tr v-for="snap in followerRows" :key="snap.key">
+              <td>{{ snap.accountName }}</td>
+              <td class="num" data-testid="ks-follower-date">{{ snap.statDate }}</td>
+              <td class="num" data-testid="ks-follower-count">{{ snap.followerCount }}</td>
+              <td class="num">{{ snap.newFollowerCount }}</td>
             </tr>
           </tbody>
         </table>
@@ -138,11 +167,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 
 type Opt = { id: number; companyName?: string; groupName?: string }
+type FollowerDaily = { statDate: string; followerCount: number; newFollowerCount: number }
 type AccountRow = {
   id: number
   accountName: string
@@ -151,6 +181,9 @@ type AccountRow = {
   credentialRef: string
   collectBindSummary: string
   healthLabel: string
+  followerCount?: number | null
+  followerStatDate?: string
+  followerDaily?: FollowerDaily[]
 }
 type LogRow = {
   id: string
@@ -180,6 +213,21 @@ const form = reactive({
   frequency: 'DAILY',
   cron: '0 2 * * *',
 })
+
+const followerRows = computed(() => {
+  const rows: Array<FollowerDaily & { accountName: string; key: string }> = []
+  for (const account of accounts.value) {
+    for (const snap of account.followerDaily || []) {
+      rows.push({ ...snap, accountName: account.accountName, key: `${account.id}-${snap.statDate}` })
+    }
+  }
+  return rows
+})
+
+function followerText(row: AccountRow) {
+  if (row.followerCount == null) return '—'
+  return row.followerStatDate ? `${row.followerCount}（${row.followerStatDate}）` : String(row.followerCount)
+}
 
 function goTasks() {
   router.push('/ims/collect/task')

@@ -35,7 +35,7 @@ test.describe('快手内部账号采集 C1', () => {
     await row.getByRole('button', { name: '立即采集' }).click()
     const latestLog = page.getByTestId('ks-log-table').locator('tbody tr').first()
     await expect(latestLog).toContainText('成功')
-    await expect(latestLog.getByTestId('ks-log-count')).toHaveText('2')
+    await expect(latestLog.getByTestId('ks-log-count')).toHaveText('3')
     await page.screenshot({ path: `${SHOTS}/02-collect-success.png`, fullPage: true })
 
     await page.goto('/ims/corp/account/kuaishou')

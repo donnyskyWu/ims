@@ -1,7 +1,9 @@
-"""本地 unify-collector 桩。响应形状与真实内部作品接口一致。
+"""本地 unify-collector 桩。路径与真实内部作品 / 粉丝接口一致。
 
-`user_id` / `platform_account_id` / `account_id` 含 `COOKIE_EXPIRED` → Cookie 已失效；
-含 `ENGINE_DOWN` → 浏览器引擎不可用；其余返回该平台两条作品。业务错误用 HTTP 200 + code/message。
+`account_id` 含 `COOKIE_EXPIRED` → Cookie 已失效；
+含 `ENGINE_DOWN` → 浏览器引擎不可用；
+含 `FOLLOWER_FAIL` 时作品仍成功，粉丝统计与粉丝列表返回「粉丝统计失败」。
+业务错误用 HTTP 200 + code/message。
 """
 
 from __future__ import annotations
@@ -11,17 +13,24 @@ import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, unquote, urlparse
 
 from app.collector_client import (
     CODE_COOKIE,
     CODE_ENGINE,
-    DOUYIN_VIDEOS_PATH,
+    CODE_FOLLOWER,
+    DOUYIN_FOLLOWER_STATS_PATH,
     HEALTH_PATH,
     IMPORT_PATH,
-    KUAISHOU_VIDEOS_PATH,
+    KUAISHOU_FOLLOWER_STATS_PATH,
+    KUAISHOU_VIDEO_LIST_PATH,
     MSG_COOKIE,
     MSG_ENGINE,
+    MSG_FOLLOWER,
 )
+
+DOUYIN_FOLLOWER_COUNT = 12880
+KUAISHOU_FOLLOWER_COUNT = 8600
 
 _DOUYIN_VIDEOS = [
     {
@@ -73,13 +82,23 @@ _SUCCESS_VIDEOS = [
     },
 ]
 
+_DOUYIN_FOLLOWERS = [
+    {"follower_id": "dyf-3001", "nickname": "抖音粉丝甲", "followed_at": "2026-10-01 08:00:00"},
+    {"follower_id": "dyf-3002", "nickname": "抖音粉丝乙", "followed_at": "2026-10-02 09:00:00"},
+]
 
-def scenario_of(*parts: str) -> str:
+_DY_VIDEO_RE = re.compile(r"^/api/v1/internal/douyin/accounts/([^/]+)/videos$")
+_DY_FOLLOWER_RE = re.compile(r"^/api/v1/internal/douyin/accounts/([^/]+)/followers$")
+
+
+def scenario_of(*parts: str, follower: bool = False) -> str:
     blob = " ".join(part for part in parts if part)
     if "COOKIE_EXPIRED" in blob:
         return "cookie"
     if "ENGINE_DOWN" in blob:
         return "engine"
+    if follower and "FOLLOWER_FAIL" in blob:
+        return "follower_fail"
     return "ok"
 
 
@@ -89,12 +108,30 @@ def collector_account_id(platform_account_id: str, platform: str = "kuaishou") -
     return f"acc_{slug}_{safe}"
 
 
-def _business(kind: str) -> tuple[int, str, dict | None]:
+def _business(kind: str) -> tuple[int, str]:
     if kind == "cookie":
-        return CODE_COOKIE, MSG_COOKIE, None
+        return CODE_COOKIE, MSG_COOKIE
     if kind == "engine":
-        return CODE_ENGINE, MSG_ENGINE, None
-    return 0, "ok", None
+        return CODE_ENGINE, MSG_ENGINE
+    if kind == "follower_fail":
+        return CODE_FOLLOWER, MSG_FOLLOWER
+    return 0, "ok"
+
+
+def _stats(account_id: str, platform: str) -> dict:
+    if platform == "douyin":
+        return {
+            "account_id": account_id,
+            "follower_count": DOUYIN_FOLLOWER_COUNT,
+            "following_count": 36,
+            "new_follower_count": 12,
+        }
+    return {
+        "account_id": account_id,
+        "follower_count": KUAISHOU_FOLLOWER_COUNT,
+        "following_count": 20,
+        "new_follower_count": 5,
+    }
 
 
 class CollectorStub:
@@ -166,8 +203,21 @@ def _handler_factory():
             self.end_headers()
             self.wfile.write(body)
 
+        def _query_account(self) -> str:
+            parsed = urlparse(self.path)
+            values = parse_qs(parsed.query).get("account_id") or []
+            return unquote(values[0]) if values else ""
+
+        def _fail_or_data(self, kind: str, data: dict | None) -> None:
+            code, message = _business(kind)
+            if kind == "ok":
+                self._send(200, {"code": 0, "message": "ok", "data": data})
+                return
+            self._send(200, {"code": code, "message": message, "data": None})
+
         def do_GET(self) -> None:  # noqa: N802
-            path = self.path.split("?", 1)[0]
+            parsed = urlparse(self.path)
+            path = unquote(parsed.path)
             if path == "/livez":
                 self._send(200, {"code": 0, "message": "ok", "data": {"status": "up"}})
                 return
@@ -175,13 +225,9 @@ def _handler_factory():
                 self._send(401, {"code": 401, "message": "unauthorized", "data": None})
                 return
             if path == HEALTH_PATH:
-                query = self.path.split("?", 1)[1] if "?" in self.path else ""
-                account_id = ""
-                for part in query.split("&"):
-                    if part.startswith("account_id="):
-                        account_id = part.split("=", 1)[1]
+                account_id = self._query_account()
                 kind = scenario_of(account_id)
-                code, message, _ = _business(kind)
+                code, message = _business(kind)
                 if kind == "ok":
                     data = {"conn_status": "CONNECTED", "collector_account_id": account_id}
                 elif kind == "cookie":
@@ -190,10 +236,43 @@ def _handler_factory():
                     data = {"conn_status": "ENGINE_UNAVAILABLE", "collector_account_id": account_id}
                 self._send(200, {"code": code, "message": message, "data": data})
                 return
+            video_match = _DY_VIDEO_RE.match(path)
+            follower_match = _DY_FOLLOWER_RE.match(path)
+            if video_match:
+                account_id = unquote(video_match.group(1))
+                kind = scenario_of(account_id)
+                if kind == "ok":
+                    self._fail_or_data("ok", {"videos": _DOUYIN_VIDEOS})
+                else:
+                    self._fail_or_data(kind, None)
+                return
+            if follower_match:
+                account_id = unquote(follower_match.group(1))
+                kind = scenario_of(account_id, follower=True)
+                if kind == "ok":
+                    self._fail_or_data("ok", {"followers": _DOUYIN_FOLLOWERS})
+                else:
+                    self._fail_or_data(kind, None)
+                return
+            if path == DOUYIN_FOLLOWER_STATS_PATH:
+                account_id = self._query_account()
+                kind = scenario_of(account_id, follower=True)
+                self._fail_or_data(kind, _stats(account_id, "douyin") if kind == "ok" else None)
+                return
+            if path == KUAISHOU_VIDEO_LIST_PATH:
+                account_id = self._query_account()
+                kind = scenario_of(account_id)
+                self._fail_or_data(kind, {"videos": _SUCCESS_VIDEOS} if kind == "ok" else None)
+                return
+            if path == KUAISHOU_FOLLOWER_STATS_PATH:
+                account_id = self._query_account()
+                kind = scenario_of(account_id, follower=True)
+                self._fail_or_data(kind, _stats(account_id, "kuaishou") if kind == "ok" else None)
+                return
             self._send(404, {"code": 404, "message": "not found", "data": None})
 
         def do_POST(self) -> None:  # noqa: N802
-            path = self.path.split("?", 1)[0]
+            path = unquote(urlparse(self.path).path)
             if not self._authorized():
                 self._send(401, {"code": 401, "message": "unauthorized", "data": None})
                 return
@@ -215,26 +294,13 @@ def _handler_factory():
                     },
                 )
                 return
-            if path in {KUAISHOU_VIDEOS_PATH, DOUYIN_VIDEOS_PATH}:
-                user_id = str(body.get("user_id") or "")
-                cookie = str(body.get("cookie") or "")
-                kind = scenario_of(user_id, cookie)
-                code, message, _ = _business(kind)
-                if kind == "ok":
-                    videos = _DOUYIN_VIDEOS if path == DOUYIN_VIDEOS_PATH else _SUCCESS_VIDEOS
-                    self._send(200, {"code": 0, "message": "ok", "data": {"videos": videos}})
-                    return
-                self._send(200, {"code": code, "message": message, "data": None})
-                return
             self._send(404, {"code": 404, "message": "not found", "data": None})
 
     return Handler
 
 
 def main() -> None:
-    import os as _os
-
-    port = int(_os.environ.get("IMS_COLLECTOR_STUB_PORT", "18991"))
+    port = int(os.environ.get("IMS_COLLECTOR_STUB_PORT", "18991"))
     handler = _handler_factory()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), handler)
     print(f"collector stub http://127.0.0.1:{port}", flush=True)

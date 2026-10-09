@@ -1,7 +1,8 @@
-"""内部账号作品采集公共层。
+"""内部账号作品与粉丝日统计公共层。
 
 快手与抖音共用：账号凭证掩码、Collector 绑定、IMS 定时器、幂等写入、采集记录和健康状态。
 平台差异只放在 PlatformProfile（接口、表、source / dataType）。
+同一条定时器先写 FOLLOWER_STATS（契约里有粉丝列表时再写列表），再写作品。
 """
 
 from __future__ import annotations
@@ -50,6 +51,11 @@ class PlatformProfile:
     snapshot_model: type
     fetch_videos: Callable[..., CollectorCall]
     import_platform: str
+    fetch_follower_stats: Callable[..., CollectorCall] | None = None
+    fetch_followers: Callable[..., CollectorCall] | None = None
+    follower_model: type | None = None
+    follower_daily_model: type | None = None
+    follower_list_data_type: str = ""
 
 
 class AccountBody(BaseModel):
@@ -71,6 +77,13 @@ def register(profile: PlatformProfile) -> None:
 
 def profiles() -> list[PlatformProfile]:
     return list(_PROFILES)
+
+
+def profile_of(platform_type: str) -> PlatformProfile | None:
+    for item in _PROFILES:
+        if item.platform_type == platform_type:
+            return item
+    return None
 
 
 def ops_db():
@@ -218,9 +231,42 @@ def _bind_of(ops: Session, account_id: int) -> CollectorAccountBind | None:
     )
 
 
+def follower_public(ops: Session, account: PlatformAccount) -> dict:
+    empty = {"followerCount": None, "followerStatDate": "", "followerDaily": []}
+    profile = profile_of(account.platform_type)
+    model = profile.follower_daily_model if profile else None
+    if model is None:
+        return empty
+    rows = ops.scalars(
+        select(model)
+        .where(
+            model.tenant_id == (account.tenant_id or 0),
+            model.account_id == account.id,
+            model.deleted == 0,
+        )
+        .order_by(model.stat_date.desc(), model.id.desc())
+        .limit(7)
+    ).all()
+    if not rows:
+        return empty
+    latest = rows[0]
+    return {
+        "followerCount": int(latest.follower_count or 0),
+        "followerStatDate": latest.stat_date or "",
+        "followerDaily": [
+            {
+                "statDate": row.stat_date,
+                "followerCount": int(row.follower_count or 0),
+                "newFollowerCount": int(row.new_follower_count or 0),
+            }
+            for row in rows
+        ],
+    }
+
+
 def account_public(ops: Session, row: PlatformAccount) -> dict:
     bind = _bind_of(ops, row.id)
-    return {
+    data = {
         "id": row.id,
         "accountNo": row.account_no or str(row.id),
         "accountName": row.account_name,
@@ -237,6 +283,8 @@ def account_public(ops: Session, row: PlatformAccount) -> dict:
         "connStatus": bind.conn_status if bind else "",
         "bindStatus": bind.bind_status if bind else "UNBOUND",
     }
+    data.update(follower_public(ops, row))
+    return data
 
 
 def task_public(row: CollectTask | None) -> dict | None:
@@ -398,6 +446,72 @@ def upsert_videos(profile: PlatformProfile, ops: Session, account: PlatformAccou
     return written
 
 
+def upsert_follower_daily(profile: PlatformProfile, ops: Session, account: PlatformAccount, call: CollectorCall) -> int:
+    model = profile.follower_daily_model
+    if model is None or call.follower_count is None:
+        return 0
+    stat_date = (call.stat_date or utcnow().strftime("%Y-%m-%d"))[:10]
+    collected_at = utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    tenant_id = account.tenant_id or 0
+    row = ops.scalar(
+        select(model).where(
+            model.tenant_id == tenant_id,
+            model.account_id == account.id,
+            model.stat_date == stat_date,
+            model.deleted == 0,
+        )
+    )
+    if row is None:
+        row = model(
+            tenant_id=tenant_id,
+            account_id=account.id,
+            stat_date=stat_date,
+            deleted=0,
+        )
+        ops.add(row)
+    row.follower_count = call.follower_count
+    row.following_count = call.following_count or 0
+    row.new_follower_count = call.new_follower_count or 0
+    row.collected_at = collected_at
+    row.updated_at = utcnow()
+    ops.flush()
+    return 1
+
+
+def upsert_followers(profile: PlatformProfile, ops: Session, account: PlatformAccount, followers: list[dict]) -> int:
+    model = profile.follower_model
+    if model is None:
+        return 0
+    written = 0
+    tenant_id = account.tenant_id or 0
+    for item in followers:
+        follower_id = str(item.get("follower_id") or item.get("followerId") or "").strip()
+        if not follower_id:
+            continue
+        row = ops.scalar(
+            select(model).where(
+                model.tenant_id == tenant_id,
+                model.account_id == account.id,
+                model.follower_id == follower_id,
+                model.deleted == 0,
+            )
+        )
+        if row is None:
+            row = model(
+                tenant_id=tenant_id,
+                account_id=account.id,
+                follower_id=follower_id,
+                deleted=0,
+            )
+            ops.add(row)
+        row.nickname = str(item.get("nickname") or item.get("nick_name") or "")[:128]
+        row.followed_at = str(item.get("followed_at") or item.get("followedAt") or "")[:32]
+        row.updated_at = utcnow()
+        written += 1
+        ops.flush()
+    return written
+
+
 def _map_kind(kind: str, message: str) -> tuple[str, str]:
     if kind == "ok":
         return "SUCCESS", ""
@@ -413,7 +527,7 @@ def _touch_bind(ops: Session, account: PlatformAccount, status: str) -> None:
     bind = _bind_of(ops, account.id)
     if bind is None:
         return
-    if status == "SUCCESS":
+    if status in {"SUCCESS", "PARTIAL"}:
         bind.conn_status = "SUCCESS"
     elif status == "COOKIE_EXPIRED":
         bind.conn_status = "COOKIE_EXPIRED"
@@ -438,16 +552,20 @@ def _write_log(
     duration_ms: int,
     record_count: int,
     error_summary: str,
+    steps: list[dict] | None = None,
 ) -> CollectLog:
-    type_results = [
-        {
-            "dataType": profile.data_type,
-            "status": status,
-            "statusLabel": status_label(status),
-            "recordCount": record_count,
-            "error": error_summary or None,
-        }
-    ]
+    if steps is None:
+        type_results = [
+            {
+                "dataType": profile.data_type,
+                "status": status,
+                "statusLabel": status_label(status),
+                "recordCount": record_count,
+                "error": error_summary or None,
+            }
+        ]
+    else:
+        type_results = steps
     log = CollectLog(
         task_id=task.id,
         account_id=account_id,
@@ -475,38 +593,91 @@ def _finish_task(task: CollectTask, status: str, started_at: str) -> None:
     task.updated_at = utcnow()
 
 
+def _aggregate(steps: list[dict]) -> tuple[str, str, int]:
+    statuses = [str(step.get("status") or "") for step in steps]
+    total = sum(int(step.get("recordCount") or 0) for step in steps)
+    errors: list[str] = []
+    for step in steps:
+        err = step.get("error")
+        if err and err not in errors:
+            errors.append(str(err))
+    error = "；".join(errors)[:500]
+    if statuses and all(item == "SUCCESS" for item in statuses):
+        return "SUCCESS", "", total
+    if "SUCCESS" in statuses:
+        return "PARTIAL", error, total
+    if statuses and all(item == "COOKIE_EXPIRED" for item in statuses):
+        return "COOKIE_EXPIRED", MSG_COOKIE, total
+    if statuses and all(item == "ENGINE_UNAVAILABLE" for item in statuses):
+        return "ENGINE_UNAVAILABLE", MSG_ENGINE, total
+    if len(set(statuses)) == 1:
+        return statuses[0], error or "采集失败", total
+    return "FAILED", error or "采集失败", total
+
+
+def _collect_steps(profile: PlatformProfile, ops: Session, account: PlatformAccount, collector_id: str) -> list[dict]:
+    steps: list[dict] = []
+    aborted = False
+
+    def one(data_type: str, call: CollectorCall, write: Callable[[], int]) -> None:
+        nonlocal aborted
+        status, error = _map_kind(call.kind, call.message)
+        count = write() if status == "SUCCESS" else 0
+        item = {
+            "dataType": data_type,
+            "status": status,
+            "statusLabel": status_label(status),
+            "recordCount": count,
+            "error": error or None,
+        }
+        if data_type == "FOLLOWER_STATS" and call.follower_count is not None and status == "SUCCESS":
+            item["followerCount"] = call.follower_count
+        steps.append(item)
+        if status in {"COOKIE_EXPIRED", "ENGINE_UNAVAILABLE"}:
+            aborted = True
+
+    if profile.fetch_follower_stats is not None and not aborted:
+        call = profile.fetch_follower_stats(account_id=collector_id)
+        one("FOLLOWER_STATS", call, lambda: upsert_follower_daily(profile, ops, account, call))
+    if profile.fetch_followers is not None and not aborted:
+        call = profile.fetch_followers(account_id=collector_id)
+        data_type = profile.follower_list_data_type or "DOUYIN_FOLLOWER_LIST"
+        one(data_type, call, lambda: upsert_followers(profile, ops, account, call.followers))
+    if not aborted:
+        call = profile.fetch_videos(account_id=collector_id)
+        one(profile.data_type, call, lambda: upsert_videos(profile, ops, account, call.videos))
+    return steps
+
+
 def run_one(profile: PlatformProfile, ops: Session, task: CollectTask, account: PlatformAccount) -> dict:
     started_clock = time.perf_counter()
     started_at = utcnow().strftime("%Y-%m-%d %H:%M:%S")
     status = "FAILED"
     error = ""
     record_count = 0
+    steps: list[dict] | None = None
     try:
         bind = _bind_of(ops, account.id)
         if bind is None or bind.bind_status != "BOUND":
             status, error = "FAILED", "未绑定 Collector（oa_collector_account_bind）"
         elif not account.platform_account_id:
             status, error = "FAILED", "平台账号 ID 未配置"
+        elif not bind.collector_account_id:
+            status, error = "FAILED", "未绑定 Collector（oa_collector_account_bind）"
         else:
             try:
-                cookie, auth_token = unpack_credential(account.cookie_enc)
+                cookie, _auth_token = unpack_credential(account.cookie_enc)
             except Exception:
-                cookie, auth_token = "", ""
+                cookie = ""
                 status, error = "FAILED", "凭证无法读取"
             if status != "FAILED" or not error:
                 if not cookie:
                     status, error = "FAILED", "凭证未配置"
                 else:
-                    call = profile.fetch_videos(
-                        user_id=account.platform_account_id,
-                        cookie=cookie,
-                        auth_token=auth_token,
-                    )
-                    status, error = _map_kind(call.kind, call.message)
-                    if status == "SUCCESS":
-                        record_count = upsert_videos(profile, ops, account, call.videos)
+                    steps = _collect_steps(profile, ops, account, bind.collector_account_id)
+                    status, error, record_count = _aggregate(steps)
     except Exception:
-        status, error, record_count = "FAILED", "采集失败", 0
+        status, error, record_count, steps = "FAILED", "采集失败", 0, None
     duration_ms = int((time.perf_counter() - started_clock) * 1000)
     _touch_bind(ops, account, status)
     log = _write_log(
@@ -519,6 +690,7 @@ def run_one(profile: PlatformProfile, ops: Session, task: CollectTask, account: 
         duration_ms=duration_ms,
         record_count=record_count,
         error_summary=error,
+        steps=steps,
     )
     return {
         "logId": str(log.id),

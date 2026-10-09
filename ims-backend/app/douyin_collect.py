@@ -1,8 +1,8 @@
-"""抖音内部账号作品采集。与快手共用 internal_collect，只换 Collector 接口和 oa_douyin_* 表。"""
+"""抖音内部账号采集。作品与粉丝日统计共用 internal_collect 的同一条定时器。"""
 
 from __future__ import annotations
 
-from app.collector_client import douyin_internal_videos
+from app.collector_client import douyin_follower_stats, douyin_followers, douyin_internal_videos
 from app.internal_collect import (
     PlatformProfile,
     build_router,
@@ -12,7 +12,7 @@ from app.internal_collect import (
     register,
     tick_platform,
 )
-from app.ops_models import DouyinVideo, DouyinVideoSnapshot
+from app.ops_models import DouyinFollower, DouyinFollowerDaily, DouyinVideo, DouyinVideoSnapshot
 
 PROFILE = PlatformProfile(
     key="douyin",
@@ -26,6 +26,11 @@ PROFILE = PlatformProfile(
     snapshot_model=DouyinVideoSnapshot,
     fetch_videos=douyin_internal_videos,
     import_platform="douyin",
+    fetch_follower_stats=douyin_follower_stats,
+    fetch_followers=douyin_followers,
+    follower_model=DouyinFollower,
+    follower_daily_model=DouyinFollowerDaily,
+    follower_list_data_type="DOUYIN_FOLLOWER_LIST",
 )
 register(PROFILE)
 router = build_router(PROFILE)
