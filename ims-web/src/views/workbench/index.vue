@@ -79,6 +79,13 @@
               <td>{{ cell(row, ['status']) }}</td>
               <td>{{ overdueLabel(row) }}</td>
               <td>
+                <router-link
+                  v-if="String(row.taskType) === 'exam'"
+                  class="btn btn-txt"
+                  to="/ims/perf/exam"
+                >
+                  去考试
+                </router-link>
                 <button
                   v-if="String(row.status) === 'PENDING' && row.id != null"
                   class="btn btn-txt"

@@ -83,6 +83,7 @@
         <input v-model="paperName" placeholder="试卷名称" style="width: 180px" />
         <button class="btn btn-pri btn-sm" type="submit">查询</button>
       </form>
+      <p v-if="assignNotice" class="hint" data-testid="exam-assign-notice">{{ assignNotice }}</p>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table>
@@ -148,6 +149,12 @@
           <option value="">全部试卷</option>
           <option v-for="p in papers" :key="p.id" :value="String(p.id)">{{ p.paperName }}</option>
         </select>
+        <input
+          v-model="scoreFilter.userKeyword"
+          placeholder="考生姓名/工号"
+          style="width: 140px"
+          data-testid="exam-score-user"
+        />
         <select v-model="scoreFilter.examStatus" style="width: 120px">
           <option value="">全部状态</option>
           <option value="NOT_STARTED">未开始</option>
@@ -168,7 +175,7 @@
                 <th>总分</th>
                 <th>切屏</th>
                 <th>状态</th>
-                <th>补考标记</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -178,16 +185,46 @@
               <tr v-else-if="!scores.length">
                 <td colspan="6">{{ scoreError || '暂无成绩' }}</td>
               </tr>
-              <tr v-for="row in scores" v-else :key="row.id">
-                <td>{{ row.userName }}</td>
-                <td>{{ row.paperName }}</td>
-                <td class="num">{{ row.score == null ? '—' : row.score }}</td>
-                <td class="num">{{ row.switchScreenCount }}</td>
-                <td>{{ statusLabel(row.examStatus) }}</td>
+              <tr v-for="row in scores" v-else :key="row.id" data-testid="exam-score-row">
                 <td>
-                  <span v-if="row.isMakeup" class="tag" style="background: rgba(255, 149, 0, 0.15); color: #c46a00">
+                  <span
+                    v-if="row.isMakeup"
+                    class="tag"
+                    style="background: rgba(255, 149, 0, 0.15); color: #c46a00; margin-right: 6px"
+                  >
                     补考
                   </span>
+                  {{ row.userName }}
+                </td>
+                <td>{{ row.paperName }}</td>
+                <td class="num" data-testid="exam-score-total">{{ scoreText(row) }}</td>
+                <td
+                  class="num"
+                  :class="{ 'switch-hot': row.switchScreenCount >= 3 }"
+                  :title="row.switchScreenCount >= 3 ? '切屏 ≥3 次强制交卷，按已答计分（PER-E-R1）' : ''"
+                >
+                  {{ row.switchScreenCount }}
+                </td>
+                <td>
+                  {{ statusLabel(row.examStatus) }}
+                  <span
+                    v-if="row.gradeOverdue"
+                    class="tag tag-overdue"
+                    data-testid="exam-grade-overdue"
+                  >
+                    超时待阅
+                  </span>
+                </td>
+                <td>
+                  <button
+                    v-if="row.canGrade"
+                    class="btn btn-pri btn-sm"
+                    type="button"
+                    data-testid="exam-grade-open"
+                    @click="openGrade(row)"
+                  >
+                    阅卷
+                  </button>
                   <span v-else>—</span>
                 </td>
               </tr>
@@ -296,15 +333,25 @@
         <template v-if="takePhase === 'answer'">
           <div v-for="q in taking.questions" :key="q.questionId" class="quiz-q">
             <div class="q-title">{{ q.content }} <small>{{ q.score }} 分</small></div>
-            <label v-for="(opt, oi) in q.options || []" :key="oi" class="opt">
-              <input
-                v-model.number="answers[q.questionId]"
-                type="radio"
-                :name="'q-' + q.questionId"
-                :value="oi"
-              />
-              {{ opt }}
-            </label>
+            <textarea
+              v-if="isEssay(q)"
+              v-model="essayAnswers[q.questionId]"
+              class="fld-in"
+              rows="3"
+              :aria-label="q.content"
+              placeholder="简答"
+            />
+            <template v-else>
+              <label v-for="(opt, oi) in q.options || []" :key="oi" class="opt">
+                <input
+                  v-model.number="answers[q.questionId]"
+                  type="radio"
+                  :name="'q-' + q.questionId"
+                  :value="oi"
+                />
+                {{ opt }}
+              </label>
+            </template>
           </div>
           <p v-if="takeError" class="hint stock-err">{{ takeError }}</p>
           <div class="acts" style="justify-content: flex-end">
@@ -320,6 +367,9 @@
           </div>
         </template>
         <template v-else>
+          <p v-if="taking.examStatus === 'SUBMITTED'" data-testid="exam-pending-grade">
+            客观 {{ pendingObjective ?? 0 }} · 待阅（48 小时内）
+          </p>
           <p v-if="resultText">{{ resultText }}</p>
           <p v-if="taking.examStatus === 'MAKEUP_EXAM'">补考成绩 {{ resultScore }}，已覆盖原成绩 · MAKEUP_EXAM</p>
           <div class="acts" style="justify-content: flex-end">
@@ -327,6 +377,43 @@
             <button class="btn btn-sec btn-sm" type="button" @click="finishTake">查看成绩</button>
           </div>
         </template>
+      </div>
+    </div>
+
+    <div v-if="grading" class="modal-mask" data-testid="exam-grade-drawer">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 88vh; overflow: auto">
+        <h3 style="margin: 0 0 8px">阅卷 · {{ grading.userName }}</h3>
+        <p class="hint">{{ grading.paperName }} · 客观得分 {{ grading.objectiveScore ?? 0 }}</p>
+        <p class="hint">阅卷成绩将自动计入「考试成绩」类绩效指标取数（PER-E-R4）。主观题须 48 小时内完成。</p>
+        <div v-for="item in grading.subjectiveItems || []" :key="item.questionId" class="quiz-q">
+          <div class="q-title">{{ item.content }} <small>满分 {{ item.maxScore }}</small></div>
+          <p>考生作答：{{ item.answer || '（未作答）' }}</p>
+          <p v-if="item.reference" class="hint">参考答案：{{ item.reference }}</p>
+          <label class="fld">评分</label>
+          <input
+            v-model.number="gradeScores[item.questionId]"
+            class="fld-in"
+            type="number"
+            min="0"
+            :max="item.maxScore"
+            :aria-label="`评分 ${item.content}`"
+          />
+          <label class="fld">评语</label>
+          <input v-model="gradeComments[item.questionId]" class="fld-in" placeholder="可选" />
+        </div>
+        <p v-if="gradeError" class="hint stock-err">{{ gradeError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="grading = null">取消</button>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="exam-grade-submit"
+            :disabled="gradeSaving"
+            @click="submitGrade"
+          >
+            提交阅卷
+          </button>
+        </div>
       </div>
     </div>
 
@@ -374,15 +461,28 @@ type Paper = {
   assignedCount: number
 }
 
+type SubjectiveItem = {
+  questionId: number
+  content: string
+  maxScore: number
+  answer: string
+  reference?: string
+}
+
 type ScoreRow = {
   id: number
   paperId: number
   paperName: string
   userName: string
   score: number | null
+  objectiveScore: number | null
+  subjectiveScore: number | null
   switchScreenCount: number
   examStatus: string
   isMakeup: boolean
+  gradeOverdue?: boolean
+  canGrade?: boolean
+  subjectiveItems?: SubjectiveItem[]
 }
 
 type QuestionSnap = { questionId: number; questionType: string; content: string; options?: string[]; score: number }
@@ -422,12 +522,18 @@ const saving = ref(false)
 const publishTarget = ref<Paper | null>(null)
 const assignTarget = ref<Paper | null>(null)
 const assignError = ref('')
+const assignNotice = ref('')
 const assignForm = reactive({ userIdsText: '', from: '', to: '' })
 
 const scores = ref<ScoreRow[]>([])
 const scoreLoading = ref(false)
 const scoreError = ref('')
-const scoreFilter = reactive({ paperId: '', examStatus: '' })
+const scoreFilter = reactive({ paperId: '', examStatus: '', userKeyword: '' })
+const grading = ref<ScoreRow | null>(null)
+const gradeScores = reactive<Record<number, number>>({})
+const gradeComments = reactive<Record<number, string>>({})
+const gradeError = ref('')
+const gradeSaving = ref(false)
 
 const taking = ref<{
   recordId: number
@@ -438,9 +544,22 @@ const taking = ref<{
   questions: QuestionSnap[]
 } | null>(null)
 const answers = reactive<Record<number, number>>({})
+const essayAnswers = reactive<Record<number, string>>({})
 const takePhase = ref<'answer' | 'confirm' | 'result' | 'makeup'>('answer')
 const takeError = ref('')
 const resultScore = ref<number | null>(null)
+const pendingObjective = ref<number | null>(null)
+
+function isEssay(q: QuestionSnap) {
+  return q.questionType === 'ESSAY' || q.questionType === 'SHORT_ANSWER'
+}
+
+function scoreText(row: ScoreRow) {
+  if (row.examStatus === 'SUBMITTED' && row.subjectiveScore == null) {
+    return `客观 ${row.objectiveScore ?? 0} · 待阅`
+  }
+  return row.score == null ? '—' : String(row.score)
+}
 
 function blankStrategy(): Strategy {
   return { knowledgeDomain: 'LIVE_RULE', questionType: 'SINGLE', count: 1, scorePerQuestion: 10 }
@@ -698,10 +817,12 @@ async function submitAssign() {
     .map((item) => Number(item))
     .filter((item) => item > 0)
   try {
-    await http.post(`/perf/exam/paper/${assignTarget.value.id}/assign`, {
+    const res = await http.post(`/perf/exam/paper/${assignTarget.value.id}/assign`, {
       userIds,
       examWindow: { from: new Date(assignForm.from).toISOString(), to: new Date(assignForm.to).toISOString() },
     })
+    const count = res.data.data?.assignedCount ?? userIds.length
+    assignNotice.value = `已指派 ${count} 人，考生工作台已收到考试待办`
     assignTarget.value = null
     await loadPapers()
   } catch (e: unknown) {
@@ -711,11 +832,13 @@ async function submitAssign() {
 
 function clearAnswers() {
   for (const key of Object.keys(answers)) delete answers[Number(key)]
+  for (const key of Object.keys(essayAnswers)) delete essayAnswers[Number(key)]
 }
 
 async function startTake(row: Paper) {
   takeError.value = ''
   resultScore.value = null
+  pendingObjective.value = null
   clearAnswers()
   try {
     const res = await http.post('/perf/exam/record/start', { paperId: row.id })
@@ -749,7 +872,10 @@ async function startTake(row: Paper) {
 
 function askSubmit() {
   if (!taking.value) return
-  const missing = taking.value.questions.some((q) => answers[q.questionId] === undefined)
+  const missing = taking.value.questions.some((q) => {
+    if (isEssay(q)) return !(essayAnswers[q.questionId] || '').trim()
+    return answers[q.questionId] === undefined
+  })
   if (missing) {
     takeError.value = '请答完所有题目'
     return
@@ -765,10 +891,14 @@ async function submitPaper() {
     const res = await http.post('/perf/exam/record/submit', {
       recordId: taking.value.recordId,
       switchScreenCount: 0,
-      answers: taking.value.questions.map((q) => ({ questionId: q.questionId, answer: answers[q.questionId] })),
+      answers: taking.value.questions.map((q) => ({
+        questionId: q.questionId,
+        answer: isEssay(q) ? (essayAnswers[q.questionId] || '').trim() : answers[q.questionId],
+      })),
     })
     const data = res.data.data
     resultScore.value = data.totalScore
+    pendingObjective.value = data.examStatus === 'SUBMITTED' ? data.objectiveScore : null
     taking.value.examStatus = data.examStatus
     takePhase.value = 'result'
   } catch (e: unknown) {
@@ -788,6 +918,7 @@ async function applyMakeup() {
     taking.value.examStatus = data.examStatus
     taking.value.questions = data.questions || []
     resultScore.value = null
+    pendingObjective.value = null
     takePhase.value = 'answer'
   } catch (e: unknown) {
     takeError.value = errorMessage(e)
@@ -810,6 +941,7 @@ async function loadScores() {
     if (!papers.value.length) await loadPapers()
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 50 }
     if (scoreFilter.paperId) params.paperId = Number(scoreFilter.paperId)
+    if (scoreFilter.userKeyword.trim()) params.userKeyword = scoreFilter.userKeyword.trim()
     if (scoreFilter.examStatus) params.examStatus = scoreFilter.examStatus
     const res = await http.get('/perf/exam/record/scores', { params })
     scores.value = res.data.data.list || []
@@ -829,6 +961,38 @@ function showScores() {
 function jumpScores(row: Paper) {
   scoreFilter.paperId = String(row.id)
   showScores()
+}
+
+function openGrade(row: ScoreRow) {
+  grading.value = row
+  gradeError.value = ''
+  for (const key of Object.keys(gradeScores)) delete gradeScores[Number(key)]
+  for (const key of Object.keys(gradeComments)) delete gradeComments[Number(key)]
+  for (const item of row.subjectiveItems || []) {
+    gradeScores[item.questionId] = 0
+    gradeComments[item.questionId] = ''
+  }
+}
+
+async function submitGrade() {
+  if (!grading.value) return
+  gradeError.value = ''
+  gradeSaving.value = true
+  try {
+    await http.put(`/perf/exam/record/${grading.value.id}/grade`, {
+      gradings: (grading.value.subjectiveItems || []).map((item) => ({
+        questionId: item.questionId,
+        score: Number(gradeScores[item.questionId]),
+        comment: (gradeComments[item.questionId] || '').trim() || undefined,
+      })),
+    })
+    grading.value = null
+    await loadScores()
+  } catch (e: unknown) {
+    gradeError.value = errorMessage(e)
+  } finally {
+    gradeSaving.value = false
+  }
 }
 
 onMounted(loadList)
@@ -910,5 +1074,14 @@ onMounted(loadList)
   gap: 8px;
   align-items: center;
   margin-top: 6px;
+}
+.switch-hot {
+  color: #d92d20;
+  font-weight: 700;
+}
+.tag-overdue {
+  margin-left: 6px;
+  background: rgba(255, 149, 0, 0.18);
+  color: #c46a00;
 }
 </style>
