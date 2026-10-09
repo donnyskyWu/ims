@@ -206,6 +206,14 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
     }
 
 
+def resolved_position_codes(body: MaterialBody, cate: TrainMaterialCate) -> list[str]:
+    codes = [str(item).strip() for item in (body.positionCodes or []) if str(item).strip()]
+    if codes:
+        return codes
+    fallback = (cate.position_code or "").strip()
+    return [fallback] if fallback else []
+
+
 def is_http_url(value: str) -> bool:
     text = value.strip()
     if not text or any(ch.isspace() for ch in text):
@@ -235,6 +243,8 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
             return fail(1001, "linkUrl 须为 http(s) 地址")
     elif not body.fileKey.strip():
         return fail(1001, "fileKey 必填")
+    if not resolved_position_codes(body, cate):
+        return fail(1001, "岗位必填")
     return cate
 
 
@@ -258,7 +268,7 @@ def archive_material(db: Session, row: TrainMaterial) -> None:
 
 
 def apply_material_fields(row: TrainMaterial, body: MaterialBody, cate: TrainMaterialCate, actor: User) -> None:
-    codes = body.positionCodes or ([cate.position_code] if cate.position_code else [])
+    codes = resolved_position_codes(body, cate)
     row.title = body.title.strip()
     row.cate_id = body.cateId
     row.material_type = body.materialType
@@ -315,7 +325,7 @@ def create_material(
         material_type=body.materialType,
         file_key=body.fileKey.strip(),
         link_url=body.linkUrl.strip(),
-        position_codes=body.positionCodes or ([cate.position_code] if cate.position_code else []),
+        position_codes=resolved_position_codes(body, cate),
         status="PUBLISHED" if body.publish else "DRAFT",
         uploader_user_id=actor.id,
         tenant_id=tenant_id,
@@ -928,8 +938,10 @@ def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
             return fail(1001, "题目不能重复")
         seen_questions.add(question)
         options = [opt.strip() for opt in item.options]
-        if len(options) < 2 or any(not opt for opt in options):
+        if len(options) < 2:
             return fail(1001, "每题选项至少 2 项")
+        if any(not opt for opt in options):
+            return fail(1001, "选项内容不能为空")
         if len(options) != len(set(options)):
             return fail(1001, "选项内容不能重复")
         if item.answerIndex < 0 or item.answerIndex >= len(options):

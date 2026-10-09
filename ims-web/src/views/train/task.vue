@@ -393,7 +393,8 @@ function quizError(): string {
     if (seen.has(title)) return '题目不能重复'
     seen.add(title)
     const options = question.options.map((opt) => opt.trim())
-    if (options.length < 2 || options.some((opt) => !opt)) return '每题选项至少 2 项'
+    if (options.length < 2) return '每题选项至少 2 项'
+    if (options.some((opt) => !opt)) return '选项内容不能为空'
     if (new Set(options).size !== options.length) return '选项内容不能重复'
     if (question.answerIndex < 0 || question.answerIndex >= options.length) return '请设定正确答案'
   }
@@ -491,6 +492,16 @@ function deadlineTone(row: Row): 'soon' | 'over' | '' {
   return ''
 }
 
+function deadlineFormatError(raw: string): string {
+  const text = raw.trim()
+  if (!text) return '截止时间必填'
+  const iso = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/
+  if (!iso.test(text)) return '截止时间格式无效'
+  const stamp = Date.parse(text.includes(' ') ? text.replace(' ', 'T') : text)
+  if (!Number.isFinite(stamp)) return '截止时间格式无效'
+  return ''
+}
+
 function parseIds(text: string): number[] {
   return text
     .split(/[,，\s]+/)
@@ -568,8 +579,25 @@ async function submit() {
   formError.value = ''
   const materialIds = [...form.materialIds]
   const userIds = parseIds(form.userIdsText)
-  if (!form.taskName.trim() || !materialIds.length || !userIds.length) {
-    formError.value = '名称、资料与用户必填'
+  if (!form.taskName.trim()) {
+    formError.value = '任务名称必填'
+    return
+  }
+  if (!materialIds.length) {
+    formError.value = '请选择已发布资料'
+    return
+  }
+  if (!form.userIdsText.trim()) {
+    formError.value = '请填写指派用户'
+    return
+  }
+  if (!userIds.length) {
+    formError.value = '指派用户 ID 无效'
+    return
+  }
+  const deadlineBad = deadlineFormatError(form.deadline)
+  if (deadlineBad) {
+    formError.value = deadlineBad
     return
   }
   if (form.taskName.trim().length > 128) {

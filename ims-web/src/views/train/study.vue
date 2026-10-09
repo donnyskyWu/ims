@@ -44,7 +44,16 @@
             <span class="mono">{{ materialPct(m.id) }}%</span>
           </li>
         </ul>
-        <div v-else class="empty"><div class="et">无关联资料</div></div>
+        <p v-if="materials.length && hiddenMaterialCount > 0" class="hint" data-testid="train-study-material-hidden">
+          有 {{ hiddenMaterialCount }} 份资料已下架或未发布，清单只显示仍可学习的资料
+        </p>
+        <div v-if="!materials.length" class="empty" data-testid="train-study-material-missing">
+          <template v-if="(task.materialIds || []).length">
+            <div class="et">关联资料已下架或未发布，暂不可学习</div>
+            <div class="es">请联系培训负责人恢复资料后再学习</div>
+          </template>
+          <div v-else class="et">无关联资料</div>
+        </div>
 
         <p
           v-if="materials.length && task.confirmType !== 'QUIZ' && confirmStatus !== 'CONFIRMED' && remainingMaterials > 0"
@@ -120,7 +129,14 @@
           <p v-if="gradeText" class="hint">请修改答案后再次交卷，成绩保留最新一次。</p>
         </div>
 
-        <p v-if="actionError" class="hint" style="color: var(--red); margin-top: 8px">{{ actionError }}</p>
+        <p v-if="actionError" class="hint" data-testid="train-study-action-error" style="color: var(--red); margin-top: 8px">
+          {{ actionError }}
+        </p>
+        <p v-if="notAssignee" style="margin-top: 8px">
+          <router-link class="btn btn-sec btn-sm" to="/ims/workbench" data-testid="train-study-back-workbench">
+            返回工作台
+          </router-link>
+        </p>
         <p v-if="confirmStatus === 'CONFIRMED'" class="hint ok-banner">
           学习已完成 · CONFIRMED<span v-if="passedScore != null"> · 得分 {{ passedScore }}</span>
         </p>
@@ -144,7 +160,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
 type QuizPublic = { question: string; options: string[] }
@@ -172,6 +188,7 @@ const progressPct = ref(0)
 const confirmStatus = ref<'NOT_CONFIRMED' | 'CONFIRMED'>('NOT_CONFIRMED')
 const loadError = ref('')
 const actionError = ref('')
+const notAssignee = ref(false)
 const gradeText = ref('')
 const latestScore = ref<number | null>(null)
 const passedScore = ref<number | null>(null)
@@ -229,10 +246,29 @@ const remainingMaterials = computed(() => {
   return ids.filter((id) => (materialProgress.value[id] ?? 0) < 100).length
 })
 
+const hiddenMaterialCount = computed(() => {
+  const ids = task.value?.materialIds || []
+  if (!ids.length) return 0
+  const visible = new Set(materials.value.map((item) => item.id))
+  return ids.filter((id) => !visible.has(id)).length
+})
+
 const allMaterialsDone = computed(() => {
   if (!task.value?.materialIds?.length) return false
   return remainingMaterials.value === 0
 })
+
+function noteActionFailure(err: unknown, fallback: string) {
+  const code =
+    err && typeof err === 'object' && 'code' in err ? Number((err as { code?: unknown }).code) : Number.NaN
+  if (code === 1105) {
+    notAssignee.value = true
+    actionError.value = '仅被指派人可学习本任务'
+    return
+  }
+  const msg = errorMessage(err)
+  actionError.value = msg === '加载失败' ? fallback : msg
+}
 
 function materialPct(id: number) {
   return materialProgress.value[id] ?? 0
@@ -272,13 +308,7 @@ async function loadTaskAndProgress() {
   activeMaterialId.value = found.materialIds[0] ?? 0
   answers.splice(0, answers.length, ...((found.quiz || []).map(() => null)))
 
-  const matRes = await http.get('/train/material/list', {
-    params: { status: 'PUBLISHED', pageNo: 1, pageSize: 100 },
-  })
-  if (matRes.data.code === 0) {
-    const ids = new Set(found.materialIds)
-    materials.value = (matRes.data.data.list || []).filter((m: MatRow) => ids.has(m.id))
-  }
+  materials.value = await loadVisibleMaterials(found.materialIds || [])
 
   const userStore = useUserStore()
   const uid = Number(userStore.profile?.userId || 0)
@@ -300,8 +330,32 @@ async function loadTaskAndProgress() {
   }
 }
 
+async function loadVisibleMaterials(ids: number[]) {
+  const wanted = new Set(ids)
+  if (!wanted.size) return [] as MatRow[]
+  const found: MatRow[] = []
+  let page = 1
+  let total = 0
+  let seen = 0
+  do {
+    const matRes = await http.get('/train/material/list', {
+      params: { status: 'PUBLISHED', pageNo: page, pageSize: 100 },
+    })
+    const list = (matRes.data.data?.list || []) as MatRow[]
+    total = Number(matRes.data.data?.total || 0)
+    for (const item of list) {
+      if (wanted.has(item.id)) found.push(item)
+    }
+    seen += list.length
+    page += 1
+    if (found.length >= wanted.size || !list.length) break
+  } while (seen < total && page <= 8)
+  return found
+}
+
 async function submitQuiz() {
   actionError.value = ''
+  notAssignee.value = false
   gradeText.value = ''
   busy.value = true
   try {
@@ -327,8 +381,8 @@ async function submitQuiz() {
     latestScore.value = data.confirmScore ?? null
     progressPct.value = 100
     gradeText.value = ''
-  } catch {
-    actionError.value = '网络错误'
+  } catch (err) {
+    noteActionFailure(err, '交卷失败')
   } finally {
     busy.value = false
     showQuizConfirm.value = false
@@ -338,6 +392,7 @@ async function submitQuiz() {
 async function markCurrentMaterialDone() {
   if (!task.value || !activeMaterialId.value) return
   actionError.value = ''
+  notAssignee.value = false
   busy.value = true
   try {
     const res = await http.put(`/train/task/${taskId.value}/progress`, {
@@ -354,8 +409,8 @@ async function markCurrentMaterialDone() {
     const data = res.data.data
     materialProgress.value = parseMatProgress(data.materialProgress)
     progressPct.value = data.progress ?? progressPct.value
-  } catch {
-    actionError.value = '网络错误'
+  } catch (err) {
+    noteActionFailure(err, '进度上报失败')
   } finally {
     busy.value = false
   }
@@ -363,6 +418,7 @@ async function markCurrentMaterialDone() {
 
 async function confirmComplete() {
   actionError.value = ''
+  notAssignee.value = false
   busy.value = true
   try {
     const res = await http.post(`/train/task/${taskId.value}/confirm`, {})
@@ -372,8 +428,8 @@ async function confirmComplete() {
     }
     confirmStatus.value = 'CONFIRMED'
     progressPct.value = 100
-  } catch {
-    actionError.value = '网络错误'
+  } catch (err) {
+    noteActionFailure(err, '确认失败')
   } finally {
     busy.value = false
   }

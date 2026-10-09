@@ -192,6 +192,10 @@
         <h3 style="margin: 0 0 12px">{{ editingId ? '更新资料' : '上传资料' }}</h3>
         <label class="fld">分类 ID</label>
         <input v-model.number="form.cateId" type="number" class="fld-in" />
+        <p v-if="formPositionCode" class="hint" data-testid="train-material-position-hint">
+          关联岗位 {{ formPositionCode }}，发布后该岗位学员可见；存草稿则学员不可见
+        </p>
+        <p v-else-if="Number(form.cateId) > 0" class="hint" data-testid="train-material-position-missing">该分类未关联岗位</p>
         <label class="fld">标题</label>
         <input v-model="form.title" class="fld-in" />
         <label class="fld">类型</label>
@@ -538,6 +542,19 @@ const previewKind = computed(() => {
   return item.fileKey?.trim() ? 'file' : 'empty'
 })
 
+function findCate(id: number): Cate | null {
+  if (!id) return null
+  for (const root of cates.value) {
+    if (root.id === id) return root
+    for (const child of root.children || []) {
+      if (child.id === id) return child
+    }
+  }
+  return null
+}
+
+const formPositionCode = computed(() => (findCate(form.cateId)?.positionCode || '').trim())
+
 function isHttpUrl(value: string) {
   const text = value.trim()
   if (!text || /\s/.test(text)) return false
@@ -685,7 +702,7 @@ function materialPayload(publish: boolean) {
     title: form.title.trim(),
     cateId: form.cateId,
     materialType: form.materialType,
-    positionCodes: [],
+    positionCodes: formPositionCode.value ? [formPositionCode.value] : [],
     publish,
   }
   if (form.materialType === 'LINK') body.linkUrl = form.linkUrl.trim()
@@ -697,6 +714,8 @@ function formInvalid() {
   const title = form.title.trim()
   if (!title || !form.cateId) return '标题与分类必填'
   if (title.length > 128) return '标题不超过 128 字'
+  const cate = findCate(form.cateId)
+  if (cate && !formPositionCode.value) return '请选择已关联岗位的分类'
   if (form.materialType === 'LINK' && !isHttpUrl(form.linkUrl)) return '外链须为 http(s) 地址'
   if (form.materialType !== 'LINK' && !form.fileKey.trim()) return 'fileKey 必填'
   return ''
