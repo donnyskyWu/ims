@@ -390,6 +390,12 @@
     </ProtoDrawer>
     <ProtoDrawer v-if="kind === 'office'" :open="verifyOpen" title="登记关联校验" width="720px" @close="verifyOpen = false">
       <p class="hint">检查台账里的实名人、账号、场次是否存在、归属是否一致、状态是否允许。</p>
+      <p class="hint" data-testid="asset-verify-schedule">定时校验：每周一凌晨全量，其余每日增量。打开本抽屉会补跑当日尚未执行的一次。</p>
+      <p data-testid="asset-verify-metrics">
+        <span data-testid="asset-verify-complete" :class="metricClass(verifyMetrics?.relationCompleteRate)">完整率 {{ rateText(verifyMetrics?.relationCompleteRate) }}（目标 98%）</span>
+        ·
+        <span data-testid="asset-verify-consistency" :class="metricClass(verifyMetrics?.consistencyRate)">一致率 {{ rateText(verifyMetrics?.consistencyRate) }}（目标 98%）</span>
+      </p>
       <div class="formrow one">
         <div class="fld">
           <label>只看资产编号</label>
@@ -407,6 +413,41 @@
             <td data-testid="asset-verify-code">{{ item.assetCode }}</td>
             <td>{{ verifyTypeLabel(String(item.recordType || '')) }}</td>
             <td>{{ item.description }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="formrow">
+        <div class="fld">
+          <label>修复责任人</label>
+          <select v-model="verifyOwnerId" data-testid="asset-verify-owner">
+            <option value="">请选择</option>
+            <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>复核说明</label>
+          <input v-model="verifyCloseRemark" data-testid="asset-verify-close-remark" maxlength="256" placeholder="闭环前填写" />
+        </div>
+      </div>
+      <table v-if="verifyBatches.length" data-testid="asset-verify-batches">
+        <thead><tr><th>批次</th><th>类型</th><th>范围</th><th>来源</th><th>异常</th><th>状态</th><th>限期</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="item in verifyBatches" :key="String(item.id)" data-testid="asset-verify-batch-row">
+            <td class="mono" data-testid="asset-verify-batch-no">{{ item.batchNo }}</td>
+            <td>{{ verifyTypeLabel(String(item.verifyType || '')) }}</td>
+            <td data-testid="asset-verify-batch-scope">{{ item.scope === 'INCREMENT' ? '增量' : '全量' }}</td>
+            <td data-testid="asset-verify-batch-trigger">{{ item.triggerMode === 'SCHEDULE' ? '定时' : '手动' }}</td>
+            <td>{{ item.errorCount }}</td>
+            <td data-testid="asset-verify-batch-status">{{ verifyTaskLabel(String(item.taskStatus || '')) }}</td>
+            <td>
+              {{ deadlineText(item.deadlineAt) }}
+              <span v-if="item.overdue" class="hint bad" data-testid="asset-verify-overdue">逾期</span>
+              <span v-if="item.escalateUserName" data-testid="asset-verify-escalated">已升级：{{ item.escalateUserName }}</span>
+            </td>
+            <td>
+              <button v-if="item.taskStatus === 'PENDING_DISPATCH'" class="btn btn-sec btn-sm" type="button" data-testid="asset-verify-dispatch" @click="dispatchBatch(item)">派发</button>
+              <button v-else-if="item.taskStatus === 'REPAIRING'" class="btn btn-pri btn-sm" type="button" data-testid="asset-verify-close" @click="closeBatch(item)">复核闭环</button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -484,6 +525,10 @@ const verifyError = ref('')
 const verifySummary = ref('')
 const verifyErrors = ref<Row[]>([])
 const verifyAssetCode = ref('')
+const verifyMetrics = ref<Row | null>(null)
+const verifyBatches = ref<Row[]>([])
+const verifyOwnerId = ref('')
+const verifyCloseRemark = ref('')
 const exporting = ref(false)
 const exportNote = ref('')
 const persons = ref<PersonOpt[]>([])
@@ -834,6 +879,41 @@ function verifyTypeLabel(kind: string) {
   return labels[kind] || kind
 }
 
+function verifyTaskLabel(status: string) {
+  const labels: Record<string, string> = {
+    PENDING_DISPATCH: '待派发',
+    REPAIRING: '修复中',
+    CLOSED: '已闭环',
+  }
+  return labels[status] || status || '—'
+}
+
+function rateText(value: unknown) {
+  if (value === undefined || value === null || value === '') return '—'
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  return `${(number * 100).toFixed(2)}%`
+}
+
+function metricClass(value: unknown) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 'hint'
+  return number < 0.98 ? 'hint bad' : 'hint'
+}
+
+function deadlineText(value: unknown) {
+  const text = String(value || '')
+  if (!text) return '—'
+  const parsed = new Date(`${text.replace(' ', 'T')}Z`)
+  if (Number.isNaN(parsed.getTime())) return text.slice(0, 10)
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(parsed)
+}
+
 function importSummary(result: Row) {
   const passed = Number(result.successCount || 0)
   const failed = Number(result.failCount || 0)
@@ -1041,6 +1121,55 @@ function openVerify() {
   verifySummary.value = ''
   verifyErrors.value = []
   verifyAssetCode.value = ''
+  verifyCloseRemark.value = ''
+  const admin = users.value.find((user) => (user.nickname || user.username) === '管理员')
+  verifyOwnerId.value = String((admin || users.value[0])?.id || '')
+  void loadVerifyBoard().catch((error: unknown) => {
+    verifyError.value = bizError(error)
+  })
+}
+
+async function loadVerifyBoard() {
+  const batches = await http.get('/asset/verify/batches', { params: { pageNo: 1, pageSize: 8 } })
+  const metrics = await http.get('/asset/verify/metrics')
+  verifyBatches.value = ((batches.data?.data?.list || []) as Row[])
+  verifyMetrics.value = (metrics.data?.data || null) as Row | null
+}
+
+async function dispatchBatch(row: Row) {
+  verifyError.value = ''
+  if (!verifyOwnerId.value) {
+    verifyError.value = '1001 修复责任人必填'
+    return
+  }
+  try {
+    await http.put(`/asset/verify/task/${row.id}`, {
+      taskStatus: 'REPAIRING',
+      ownerUserId: Number(verifyOwnerId.value),
+      remark: '派发修复',
+    })
+    await loadVerifyBoard()
+  } catch (e: unknown) {
+    verifyError.value = bizError(e)
+  }
+}
+
+async function closeBatch(row: Row) {
+  verifyError.value = ''
+  const remark = verifyCloseRemark.value.trim()
+  if (!remark) {
+    verifyError.value = '1001 复核说明必填'
+    return
+  }
+  try {
+    await http.put(`/asset/verify/task/${row.id}`, {
+      taskStatus: 'CLOSED',
+      remark,
+    })
+    await loadVerifyBoard()
+  } catch (e: unknown) {
+    verifyError.value = bizError(e)
+  }
 }
 
 async function runVerify() {
@@ -1065,6 +1194,7 @@ async function runVerify() {
       const listed = await http.get('/asset/verify/errors', { params })
       verifyErrors.value = ((listed.data?.data?.list || []) as Row[])
     }
+    await loadVerifyBoard()
   } catch (e: unknown) {
     verifyError.value = bizError(e)
   } finally {

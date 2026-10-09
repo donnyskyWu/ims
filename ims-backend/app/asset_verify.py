@@ -1,11 +1,16 @@
-"""ASSET-003 登记关联校验：实名人 / 账号 / 场次是否存在、归属是否一致、状态是否允许。"""
+"""ASSET-003 登记关联校验：实名人 / 账号 / 场次是否存在、归属是否一致、状态是否允许。
+
+VERIFY-R1：每周一（上海）全量，其余日期增量，同一天只跑一次。
+VERIFY-R2：有异常的批次限期 3 个工作日，逾期把待办和站内信交给部门负责人。
+"""
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -19,10 +24,15 @@ from app.models import (
     AssetVerifyBatch,
     AssetVerifyError,
     LiveSession,
+    Role,
+    Todo,
     User,
+    UserDept,
+    UserRole,
+    WorkMessage,
 )
 from app.ops_db import ops_session
-from app.ops_models import PlatformAccount, Realname
+from app.ops_models import IpGroup, PlatformAccount, Realname
 
 router = APIRouter()
 
@@ -87,10 +97,38 @@ def _persons(actor: User, ids: set[int]) -> dict[int, Realname]:
         ops.close()
 
 
-def _assets(db: Session, actor: User, scope: str) -> list[AssetLedger]:
+def shanghai_wall(value: datetime) -> datetime:
+    """库存时间是去掉时区的 UTC。业务日按上海墙钟计算。"""
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value + timedelta(hours=8)
+
+
+def schedule_date(value: datetime) -> str:
+    return shanghai_wall(value).strftime("%Y-%m-%d")
+
+
+def scheduled_scope(value: datetime) -> str:
+    return "FULL" if shanghai_wall(value).weekday() == 0 else "INCREMENT"
+
+
+def add_business_days(start: datetime, days: int) -> datetime:
+    """从上海日期起跳过周六日，限期落在第 N 个工作日 23:59:59（再折回 UTC）。"""
+    cursor = shanghai_wall(start).date()
+    left = days
+    while left > 0:
+        cursor += timedelta(days=1)
+        if cursor.weekday() < 5:
+            left -= 1
+    end_wall = datetime(cursor.year, cursor.month, cursor.day, 23, 59, 59)
+    return end_wall - timedelta(hours=8)
+
+
+def _assets(db: Session, actor: User, scope: str, now: datetime | None = None) -> list[AssetLedger]:
+    clock = now or utcnow()
     stmt = select(AssetLedger).where(AssetLedger.deleted == 0, AssetLedger.tenant_id == tenant_of(actor))
     if scope == "INCREMENT":
-        stmt = stmt.where(AssetLedger.updated_at >= utcnow() - timedelta(days=1))
+        stmt = stmt.where(AssetLedger.updated_at >= clock - timedelta(days=1))
     return list(db.scalars(stmt.order_by(AssetLedger.id)).all())
 
 
@@ -253,12 +291,19 @@ def _complete_rate(db: Session, actor: User, assets: list[AssetLedger]) -> float
 
 
 def _batch_vo(row: AssetVerifyBatch, names: dict[int, str]) -> dict:
+    overdue = bool(
+        row.task_status != "CLOSED"
+        and row.deadline_at is not None
+        and row.deadline_at < utcnow()
+    )
     return {
         "id": row.id,
         "batchNo": row.batch_no,
         "runNo": row.run_no,
         "verifyType": row.verify_type,
         "scope": row.scope,
+        "triggerMode": row.trigger_mode or "MANUAL",
+        "scheduleDate": row.schedule_date or "",
         "totalCount": row.total_count,
         "errorCount": row.error_count,
         "errorDetailSummary": row.error_detail or "",
@@ -266,40 +311,40 @@ def _batch_vo(row: AssetVerifyBatch, names: dict[int, str]) -> dict:
         "ownerUserId": row.owner_user_id,
         "ownerName": names.get(row.owner_user_id or 0, "") if row.owner_user_id else "",
         "remark": row.remark or "",
+        "deadlineAt": _clock(row.deadline_at),
+        "overdue": overdue,
+        "escalatedAt": _clock(row.escalated_at),
+        "escalateUserId": row.escalate_user_id,
+        "escalateUserName": names.get(row.escalate_user_id or 0, "") if row.escalate_user_id else "",
         "createdAt": _clock(row.created_at),
     }
 
 
 def _names(db: Session, rows: list[AssetVerifyBatch]) -> dict[int, str]:
     ids = {row.owner_user_id for row in rows if row.owner_user_id}
+    ids.update(row.escalate_user_id for row in rows if row.escalate_user_id)
     if not ids:
         return {}
     users = db.scalars(select(User).where(User.id.in_(ids))).all()
     return {int(user.id): user.nickname or user.username for user in users}
 
 
-@router.post("/asset/verify/run")
-def verify_run(
-    body: VerifyRunBody,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
-    kinds = []
-    for item in body.verifyTypes or []:
-        kind = (item or "").strip()
-        if kind and kind not in kinds:
-            kinds.append(kind)
-    if not kinds:
-        return fail(1001, "校验类型必填")
-    if any(kind not in VERIFY_TYPES for kind in kinds):
-        return fail(1001, "校验类型不正确")
-    scope = (body.scope or "FULL").strip().upper()
-    if scope not in SCOPES:
-        return fail(1001, "校验范围不正确")
-    assets = _assets(db, actor, scope)
+def execute_verify(
+    db: Session,
+    actor: User,
+    kinds: list[str],
+    scope: str,
+    *,
+    trigger_mode: str = "MANUAL",
+    schedule_date_value: str = "",
+    now: datetime | None = None,
+    run_no: str | None = None,
+) -> dict:
+    clock = now or utcnow()
+    assets = _assets(db, actor, scope, clock)
     complete = _complete_rate(db, actor, assets)
-    stamped = utcnow()
-    run_no = "AV" + stamped.strftime("%Y%m%d%H%M%S%f")
+    stamped = clock
+    run_no = run_no or ("AV" + stamped.strftime("%Y%m%d%H%M%S%f"))
     batches = []
     error_asset_ids: set[int] = set()
     pending_errors: list[tuple[AssetVerifyBatch, list[dict]]] = []
@@ -321,6 +366,9 @@ def verify_run(
             consistency_rate=1.0,
             error_detail=summary[:1000],
             task_status="PENDING_DISPATCH" if issues else "CLOSED",
+            deadline_at=add_business_days(stamped, 3) if issues else None,
+            trigger_mode=trigger_mode,
+            schedule_date=schedule_date_value,
             deleted=0,
             tenant_id=tenant_of(actor),
             created_at=stamped,
@@ -352,16 +400,220 @@ def verify_run(
             )
     db.flush()
     names = _names(db, batches)
-    return ok(
-        {
-            "batchNo": run_no,
-            "triggeredAt": _clock(stamped),
-            "errorCount": len(error_asset_ids),
-            "relationCompleteRate": complete,
-            "consistencyRate": consistency,
-            "batches": [_batch_vo(row, names) for row in batches],
-        }
+    return {
+        "batchNo": run_no,
+        "triggeredAt": _clock(stamped),
+        "errorCount": len(error_asset_ids),
+        "relationCompleteRate": complete,
+        "consistencyRate": consistency,
+        "batches": [_batch_vo(row, names) for row in batches],
+    }
+
+
+@router.post("/asset/verify/run")
+def verify_run(
+    body: VerifyRunBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    kinds = []
+    for item in body.verifyTypes or []:
+        kind = (item or "").strip()
+        if kind and kind not in kinds:
+            kinds.append(kind)
+    if not kinds:
+        return fail(1001, "校验类型必填")
+    if any(kind not in VERIFY_TYPES for kind in kinds):
+        return fail(1001, "校验类型不正确")
+    scope = (body.scope or "FULL").strip().upper()
+    if scope not in SCOPES:
+        return fail(1001, "校验范围不正确")
+    return ok(execute_verify(db, actor, kinds, scope, trigger_mode="MANUAL"))
+
+
+def _schedule_actor(db: Session, tenant_id: int) -> User | None:
+    admin = db.scalar(
+        select(User).where(
+            User.username == "admin",
+            User.deleted == 0,
+            User.status == "ENABLED",
+            User.tenant_id == tenant_id,
+        )
     )
+    if admin is not None:
+        return admin
+    return db.scalars(
+        select(User)
+        .where(User.deleted == 0, User.status == "ENABLED", User.tenant_id == tenant_id)
+        .order_by(User.id)
+        .limit(1)
+    ).first()
+
+
+def run_scheduled_verify(db: Session, now: datetime | None = None) -> list[str]:
+    """VERIFY-R1。周一上海全量，其余日期只扫近 24 小时有变更的台账。同一天不重复。"""
+    clock = now or utcnow()
+    day = schedule_date(clock)
+    scope = scheduled_scope(clock)
+    tenant_ids = {
+        int(item or 0)
+        for item in db.scalars(select(AssetLedger.tenant_id).where(AssetLedger.deleted == 0).distinct()).all()
+    }
+    created: list[str] = []
+    for tenant_id in sorted(tenant_ids):
+        existing = db.scalar(
+            select(AssetVerifyBatch.run_no).where(
+                AssetVerifyBatch.deleted == 0,
+                AssetVerifyBatch.tenant_id == tenant_id,
+                AssetVerifyBatch.trigger_mode == "SCHEDULE",
+                AssetVerifyBatch.schedule_date == day,
+            )
+        )
+        if existing:
+            created.append(str(existing))
+            continue
+        actor = _schedule_actor(db, tenant_id)
+        if actor is None:
+            continue
+        prefix = "F" if scope == "FULL" else "I"
+        run_no = f"AVS{day.replace('-', '')}{prefix}{tenant_id}"
+        try:
+            with db.begin_nested():
+                payload = execute_verify(
+                    db,
+                    actor,
+                    list(VERIFY_TYPES),
+                    scope,
+                    trigger_mode="SCHEDULE",
+                    schedule_date_value=day,
+                    now=clock,
+                    run_no=run_no,
+                )
+            created.append(str(payload["batchNo"]))
+        except IntegrityError:
+            created.append(run_no)
+    return created
+
+
+def _enabled_user(db: Session, user_id: int, tenant_id: int) -> User | None:
+    user = db.get(User, user_id)
+    if user is None or user.deleted or user.status != "ENABLED":
+        return None
+    if (user.tenant_id or 0) != tenant_id:
+        return None
+    return user
+
+
+def _dept_leader(db: Session, batch: AssetVerifyBatch) -> User | None:
+    tenant_id = int(batch.tenant_id or 0)
+    asset_ids = list(
+        db.scalars(
+            select(AssetVerifyError.record_id).where(
+                AssetVerifyError.deleted == 0,
+                AssetVerifyError.batch_id == batch.id,
+            )
+        ).all()
+    )
+    owner_ids = []
+    if asset_ids:
+        owner_ids = [
+            int(item)
+            for item in db.scalars(
+                select(AssetLedger.owner_user_id).where(
+                    AssetLedger.id.in_(asset_ids),
+                    AssetLedger.owner_user_id.is_not(None),
+                )
+            ).all()
+            if item
+        ]
+    dept_ids = []
+    if owner_ids:
+        dept_ids = [
+            int(item)
+            for item in db.scalars(select(UserDept.dept_id).where(UserDept.user_id.in_(owner_ids))).all()
+        ]
+    if dept_ids:
+        ops = ops_session()
+        try:
+            groups = ops.scalars(
+                select(IpGroup).where(
+                    IpGroup.deleted == 0,
+                    IpGroup.status == "ENABLED",
+                    IpGroup.ding_dept_id.in_(dept_ids),
+                    IpGroup.leader_user_id.is_not(None),
+                    IpGroup.tenant_id == tenant_id,
+                )
+            ).all()
+        finally:
+            ops.close()
+        for group in groups:
+            leader = _enabled_user(db, int(group.leader_user_id or 0), tenant_id)
+            if leader is not None:
+                return leader
+    roles = db.scalars(select(Role).where(Role.deleted == 0, Role.status == "ENABLED", Role.tenant_id == tenant_id)).all()
+    role_ids = [int(role.id) for role in roles if "行政" in (role.role_name or "") or role.role_key == "R2"]
+    if role_ids:
+        link = db.scalar(select(UserRole).where(UserRole.role_id.in_(role_ids), UserRole.tenant_id == tenant_id))
+        if link is not None:
+            affairs = _enabled_user(db, int(link.user_id), tenant_id)
+            if affairs is not None:
+                return affairs
+    return _schedule_actor(db, tenant_id)
+
+
+def escalate_overdue(db: Session, now: datetime | None = None) -> int:
+    """VERIFY-R2。未闭环且已过 3 个工作日限期的批次，待办和站内信交给部门负责人。不重复升级。"""
+    clock = now or utcnow()
+    rows = list(
+        db.scalars(
+            select(AssetVerifyBatch).where(
+                AssetVerifyBatch.deleted == 0,
+                AssetVerifyBatch.task_status != "CLOSED",
+                AssetVerifyBatch.escalated_at.is_(None),
+                AssetVerifyBatch.deadline_at.is_not(None),
+                AssetVerifyBatch.deadline_at < clock,
+            )
+        ).all()
+    )
+    sent = 0
+    for row in rows:
+        leader = _dept_leader(db, row)
+        if leader is None:
+            continue
+        title = f"资产校验逾期：{row.batch_no}"[:128]
+        content = f"关联校验超过 3 个工作日未闭环，已升级部门负责人。批次 {row.batch_no}"[:512]
+        db.add(
+            Todo(
+                assignee_user_id=leader.id,
+                task_type="asset_verify_overdue",
+                ref_type="asset_verify",
+                ref_id=row.id,
+                title=title,
+                content=content,
+                status="PENDING",
+                deadline=row.deadline_at,
+                tenant_id=row.tenant_id or 0,
+            )
+        )
+        db.add(
+            WorkMessage(
+                user_id=leader.id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="ASSET",
+                ref_type="asset_verify",
+                ref_id=row.id,
+                tenant_id=row.tenant_id or 0,
+            )
+        )
+        row.escalated_at = clock
+        row.escalate_user_id = leader.id
+        sent += 1
+    if sent:
+        db.flush()
+    return sent
 
 
 def _batch_stmt(db: Session, actor: User):
@@ -383,6 +635,8 @@ def verify_batches(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
+    run_scheduled_verify(db)
+    escalate_overdue(db)
     number, size = page_args(pageNo, pageSize)
     stmt = _batch_stmt(db, actor)
     text = (batchNo or "").strip()
