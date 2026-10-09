@@ -633,3 +633,38 @@ def test_topic_list_filter_miss_edges():
     assert keyword_hit.json()["code"] == 0
     assert keyword_hit.json()["data"]["total"] == 1
     assert keyword_hit.json()["data"]["list"][0]["title"] == "筛选边角口播"
+
+
+def test_topic_status_filter_empty_edges():
+    """状态看板空列与列表空态依赖：其他状态与未知关键词返回空页，非法状态 1500。"""
+    auth = headers()
+    created = create_topic(auth, "状态空态口播")
+
+    cancelled = client.get("/admin-api/ims/content/topic/list", headers=auth, params={"topicStatus": "CANCELLED"})
+    assert cancelled.json()["code"] == 0
+    assert cancelled.json()["data"]["total"] == 0
+    assert cancelled.json()["data"]["list"] == []
+
+    approved = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicStatus": "APPROVED_PROJECT", "keyword": "状态空态口播"},
+    )
+    assert approved.json()["code"] == 0
+    assert approved.json()["data"]["total"] == 0
+    assert approved.json()["data"]["list"] == []
+
+    pending = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicStatus": "PENDING_REVIEW", "keyword": "状态空态"},
+    )
+    assert pending.json()["data"]["total"] == 1
+    assert pending.json()["data"]["list"][0]["id"] == created["id"]
+
+    missing = client.get("/admin-api/ims/content/topic/list", headers=auth, params={"keyword": "不存在的选题标题"})
+    assert missing.json()["code"] == 0
+    assert missing.json()["data"]["total"] == 0
+
+    bad = client.get("/admin-api/ims/content/topic/list", headers=auth, params={"topicStatus": "ARCHIVED"})
+    assert bad.json()["code"] == 1500

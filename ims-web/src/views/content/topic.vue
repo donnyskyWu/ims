@@ -13,6 +13,9 @@
       <button type="button" class="tab" :class="{ on: view === 'list' }" data-testid="topic-view-list" @click="view = 'list'">
         列表
       </button>
+      <button type="button" class="tab" :class="{ on: view === 'board' }" data-testid="topic-view-board" @click="showBoard">
+        状态看板
+      </button>
       <button type="button" class="tab" :class="{ on: view === 'gantt' }" data-testid="topic-view-gantt" @click="view = 'gantt'">
         排期甘特
       </button>
@@ -60,7 +63,12 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="10">
-                <div class="empty" data-testid="topic-list-empty" :data-filtered="listFiltered ? '1' : '0'">
+                <div
+                  class="empty"
+                  data-testid="topic-list-empty"
+                  :data-filtered="listFiltered ? '1' : '0'"
+                  :data-status="statusFilter || 'ALL'"
+                >
                   <div class="et">{{ listEmptyTitle }}</div>
                   <div class="es">{{ listEmptyHint }}</div>
                   <button v-if="error" class="btn btn-sec btn-sm" type="button" data-testid="topic-list-retry" @click="loadList">重试</button>
@@ -123,6 +131,59 @@
         </table>
       </div>
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
+    </div>
+
+    <div v-else-if="view === 'board'" class="topic-board" data-testid="topic-status-board">
+      <section
+        v-for="item in statusOptions"
+        :key="item.value"
+        class="topic-col"
+        :data-testid="`topic-status-col-${item.value}`"
+      >
+        <header>
+          <b>{{ item.label }}</b>
+          <span class="count" :data-testid="`topic-status-count-${item.value}`">{{ boardCol(item.value).total }}</span>
+        </header>
+        <div v-if="boardCol(item.value).loading" class="empty"><div class="et">加载中</div></div>
+        <div
+          v-else-if="boardCol(item.value).error"
+          class="empty"
+          :data-testid="`topic-status-empty-${item.value}`"
+          :data-status="item.value"
+        >
+          <div class="et">{{ boardCol(item.value).error }}</div>
+          <div class="es">这一列加载失败，可重新打开状态看板</div>
+        </div>
+        <div
+          v-else-if="!boardCol(item.value).rows.length"
+          class="empty"
+          :data-testid="`topic-status-empty-${item.value}`"
+          :data-status="item.value"
+        >
+          <div class="et">暂无{{ item.label }}选题</div>
+          <div class="es">{{ statusEmptyHint[item.value] }}</div>
+        </div>
+        <article
+          v-for="row in boardCol(item.value).rows"
+          v-else
+          :key="row.id"
+          class="topic-card"
+          data-testid="topic-board-card"
+          :data-status="item.value"
+        >
+          <b>{{ row.title }}</b>
+          <div class="mono">{{ row.topicNo }}</div>
+          <div class="meta">{{ row.planPublishDate || '未排期' }}<span v-if="row.sopName"> · {{ row.sopName }}</span></div>
+          <button
+            v-if="row.topicStatus === 'PENDING_REVIEW'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            @click="openReview(row)"
+          >
+            评审
+          </button>
+        </article>
+      </section>
     </div>
 
     <ProtoDrawer :open="createOpen" :title="editorMode === 'edit' ? '编辑选题' : '提报选题'" width="600px" @close="createOpen = false">
@@ -376,8 +437,16 @@ const PROJECT_LABEL: Record<string, string> = {
 
 const statusOptions = Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label }))
 const sourceOptions = Object.entries(SOURCE_LABEL).map(([value, label]) => ({ value, label }))
+const statusEmptyHint: Record<string, string> = {
+  PENDING_REVIEW: '提报后会出现在这一列',
+  APPROVED_PROJECT: '评审立项并通过后会出现在这一列',
+  REJECTED: '落选归档后会出现在这一列',
+  CANCELLED: '取消后的选题会出现在这一列',
+}
 
-const view = ref<'list' | 'gantt'>('list')
+type BoardCol = { rows: TopicRow[]; total: number; loading: boolean; error: string }
+
+const view = ref<'list' | 'gantt' | 'board'>('list')
 const rows = ref<TopicRow[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -388,6 +457,7 @@ const sourceFilter = ref('')
 const statusFilter = ref('')
 const submitterFilter = ref('')
 const submitters = ref<{ id: string; label: string }[]>([])
+const board = ref<Record<string, BoardCol>>({})
 const createOpen = ref(false)
 const editorMode = ref<'create' | 'edit'>('create')
 const editingId = ref<number | null>(null)
@@ -575,6 +645,45 @@ function resetFilters() {
   loadList()
 }
 
+function boardCol(status: string): BoardCol {
+  return board.value[status] || { rows: [], total: 0, loading: true, error: '' }
+}
+
+async function loadBoard() {
+  const next: Record<string, BoardCol> = {}
+  for (const item of statusOptions) {
+    next[item.value] = { rows: [], total: 0, loading: true, error: '' }
+  }
+  board.value = next
+  await Promise.all(
+    statusOptions.map(async (item) => {
+      try {
+        const { data } = await http.get('/content/topic/list', {
+          params: { pageNo: 1, pageSize: 20, topicStatus: item.value },
+        })
+        board.value[item.value] = {
+          rows: data.data.list || [],
+          total: data.data.total || 0,
+          loading: false,
+          error: '',
+        }
+      } catch (e) {
+        board.value[item.value] = { rows: [], total: 0, loading: false, error: formatBiz(e) }
+      }
+    }),
+  )
+}
+
+function showBoard() {
+  view.value = 'board'
+  void loadBoard()
+}
+
+async function refreshTopics() {
+  if (view.value === 'board') await loadBoard()
+  else await loadList()
+}
+
 function openCreate() {
   editorMode.value = 'create'
   editingId.value = null
@@ -668,7 +777,7 @@ async function saveTopic() {
       })
     }
     createOpen.value = false
-    await loadList()
+    await refreshTopics()
   } catch (e) {
     createError.value = formatBiz(e)
   } finally {
@@ -719,7 +828,7 @@ async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
       reviewOpinion: reviewForm.value.reviewOpinion || undefined,
     })
     reviewOpen.value = false
-    await loadList()
+    await refreshTopics()
   } catch (e) {
     reviewError.value = formatBiz(e)
     if (reviewError.value.startsWith('1051')) sopFieldError.value = 'SOP 不存在或未启用'
@@ -745,7 +854,7 @@ async function confirmRevive() {
   try {
     await http.put(`/content/topic/${reviveRow.value.id}/review`, { action: 'REVIVE' })
     reviveRow.value = null
-    await loadList()
+    await refreshTopics()
   } catch (e) {
     reviveError.value = formatBiz(e)
   } finally {
@@ -773,7 +882,7 @@ async function confirmCancel() {
       reviewOpinion: cancelOpinion.value,
     })
     cancelRow.value = null
-    await loadList()
+    await refreshTopics()
   } catch (e) {
     cancelError.value = formatBiz(e)
   } finally {
@@ -840,4 +949,49 @@ onMounted(() => {
   margin-top: 4px;
 }
 .empty .btn { margin-top: 8px; }
+.topic-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.topic-col {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 220px;
+  padding: 10px 10px 12px;
+}
+.topic-col header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.topic-col .count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text2);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+.topic-col .empty { padding: 28px 8px; }
+.topic-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+.topic-card .meta {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--text2);
+}
+@media (max-width: 960px) {
+  .topic-board { grid-template-columns: 1fr 1fr; }
+}
 </style>
