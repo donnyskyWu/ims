@@ -147,6 +147,9 @@ def seed() -> None:
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
             refresh_perf_e2e_seed(db, admin)
+        from app.live_alarm import refresh_live_alarm_e2e
+
+        refresh_live_alarm_e2e(db)
         from app.air_audit_seed import ensure_air_mcp_audit_fixture
         from app.asset_reverse_e2e_seed import refresh_asset_reverse_e2e_session
         from app.douyin_collect_seed import refresh_douyin_collect_seed
@@ -420,17 +423,27 @@ def ensure_asset_verify_schedule_columns() -> None:
 
 
 def ensure_live_alarm_merge_column() -> None:
-    """已有库补告警合并计数。create_all 不会给旧表加列。"""
+    """已有库补告警合并计数与升级桩。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
 
     insp = inspect(engine)
     if "ims_live_alarm_record" not in insp.get_table_names():
         return
     cols = {c["name"] for c in insp.get_columns("ims_live_alarm_record")}
-    if "merge_count" in cols:
+    alters = []
+    if "merge_count" not in cols:
+        alters.append("ADD COLUMN merge_count INT NOT NULL DEFAULT 1")
+    if "escalated" not in cols:
+        alters.append("ADD COLUMN escalated INT NOT NULL DEFAULT 0")
+    if "escalated_at" not in cols:
+        alters.append("ADD COLUMN escalated_at VARCHAR(32) NOT NULL DEFAULT ''")
+    if "notify_channels" not in cols:
+        alters.append("ADD COLUMN notify_channels VARCHAR(128) NOT NULL DEFAULT ''")
+    if not alters:
         return
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE ims_live_alarm_record ADD COLUMN merge_count INT NOT NULL DEFAULT 1"))
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_live_alarm_record {clause}"))
 
 
 def init_db() -> None:

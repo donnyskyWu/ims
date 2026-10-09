@@ -1064,17 +1064,17 @@ def ensure_overdue_supervision(db: Session, actor: User, row: LiveSession, hours
         )
     )
     if alarm is None:
-        db.add(
-            LiveAlarmRecord(
-                rule_id=0,
-                rule_name=OVERDUE_RULE,
-                session_code=row.session_code,
-                alarm_level=2,
-                alarm_content=content,
-                occur_at=iso(datetime.now(BJ)) or "",
-                handle_status="UNHANDLED",
-                tenant_id=tenant_id,
-            )
+        from app.live_alarm import ingest_alarm
+
+        ingest_alarm(
+            db,
+            tenant_id=tenant_id,
+            rule_id=0,
+            rule_name=OVERDUE_RULE,
+            session_code=row.session_code,
+            alarm_level=2,
+            alarm_content=content,
+            occur_at=iso(datetime.now(BJ)) or "",
         )
 
 

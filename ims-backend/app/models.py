@@ -564,6 +564,9 @@ class LiveAlarmRecord(Base):
     handler_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     handle_remark: Mapped[str] = mapped_column(String(512), default="")
     merge_count: Mapped[int] = mapped_column(Integer, default=1)
+    escalated: Mapped[int] = mapped_column(Integer, default=0)
+    escalated_at: Mapped[str] = mapped_column(String(32), default="")
+    notify_channels: Mapped[str] = mapped_column(String(128), default="")
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
 

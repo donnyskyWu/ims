@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>直播风险告警</h1>
-        <div class="sub">LIVE-003 · 规则命中与处置 · 站内记录，不外发钉钉/短信，不做升级推送</div>
+        <div class="sub">LIVE-003 · 规则命中、处置与 30 分钟升级桩 · 钉钉/短信只记本地桩</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/live/sessions">返回场次</router-link>
@@ -16,6 +16,7 @@
       <div class="tab" :class="{ on: tab === 'stats' }" data-testid="live-alarm-tab-stats" @click="switchTab('stats')">统计看板</div>
     </div>
 
+    <p class="hint" data-testid="live-alarm-banner">钉钉/短信保持本地桩，未外发</p>
     <p v-if="error" class="hint bad" data-testid="live-alarm-error">{{ error }}</p>
 
     <template v-if="tab === 'records'">
@@ -63,6 +64,8 @@
                 <td>
                   {{ row.alarmContent }}
                   <span v-if="row.mergeCount > 1" data-testid="live-alarm-merge">×{{ row.mergeCount }}</span>
+                  <span v-if="row.escalated" data-testid="live-alarm-escalated">已升级</span>
+                  <span data-testid="live-alarm-stub">{{ stubText(row) }}</span>
                 </td>
                 <td data-testid="live-alarm-handle-state">{{ statusLabel(row.handleStatus) }}</td>
                 <td>
@@ -86,7 +89,9 @@
 
     <template v-else-if="tab === 'rules'">
       <div class="acts" style="margin: 12px 0">
-        <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-rule-open" @click="openRule()">新建规则</button>
+        <span data-testid="live-alarm-rule-create" @click="openRule()">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-rule-open" @click.stop="openRule()">新建规则</button>
+        </span>
       </div>
       <div class="tbl-block">
         <div class="tbl-wrap">
@@ -109,7 +114,7 @@
               <tr v-for="row in rules" v-else :key="row.id" data-testid="live-alarm-rule-row">
                 <td>{{ row.ruleName }}</td>
                 <td>{{ row.ruleType === 'EVENT' ? '事件' : '阈值' }}</td>
-                <td>{{ row.ruleExprSummary }}</td>
+                <td data-testid="live-alarm-rule-summary">{{ row.ruleExprSummary }}</td>
                 <td>L{{ row.level }}</td>
                 <td>{{ row.notifySummary }}</td>
                 <td>{{ row.status === 'ENABLED' ? '启用' : '停用' }}</td>
@@ -125,6 +130,7 @@
           </table>
         </div>
       </div>
+      <p class="hint" data-testid="live-alarm-rule-hint">ALM-R4 规则保存后下一次读取即新表达式</p>
     </template>
 
     <template v-else>
@@ -139,7 +145,7 @@
         </div>
         <div class="card stat">
           <span class="l">L3 严重</span>
-          <div class="n" data-testid="live-alarm-stats-l3">{{ stats.byLevel['3'] }}</div>
+          <div class="n" data-testid="live-alarm-stats-l3"><span data-testid="live-alarm-stats-severe">{{ stats.byLevel['3'] }}</span></div>
         </div>
         <div class="card stat">
           <span class="l">已处理</span>
@@ -281,7 +287,9 @@
         <p class="hint">输入 DELETE 确认删除「{{ deleting.ruleName }}」</p>
         <input v-model="deleteText" data-testid="live-alarm-delete-text" />
         <div class="drawer-f">
-          <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-delete-submit" @click="submitDelete">确认删除</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-delete-submit" @click="submitDelete">
+            <span data-testid="live-alarm-delete-confirm">确认删除</span>
+          </button>
         </div>
       </div>
     </div>
@@ -304,6 +312,8 @@ type AlarmRow = {
   handlerName: string | null
   handleRemark: string
   mergeCount: number
+  escalated?: boolean
+  notifyChannels?: string[]
 }
 
 type RuleRow = {
@@ -357,6 +367,18 @@ const handleForm = reactive({ handleStatus: 'HANDLED', handleRemark: '' })
 const deleteOpen = ref(false)
 const deleting = ref<RuleRow | null>(null)
 const deleteText = ref('')
+
+function stubText(row: AlarmRow) {
+  const channels = row.notifyChannels || []
+  if (channels.includes('DINGTALK_STUB') || channels.includes('SMS_STUB')) {
+    const parts = ['站内']
+    if (channels.includes('DINGTALK_STUB')) parts.push('钉钉桩')
+    if (channels.includes('SMS_STUB')) parts.push('短信桩')
+    parts.push('未外发')
+    return parts.join(' · ')
+  }
+  return '站内'
+}
 
 function statusLabel(value: string) {
   const map: Record<string, string> = {

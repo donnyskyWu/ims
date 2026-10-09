@@ -1,6 +1,8 @@
 """LIVE-003 事中告警：规则热更新、站内命中、10 分钟去重、处置与只读统计。
 
-不外发钉钉/短信，也不做 30 分钟升级推送。
+ALM-R1：L3 记钉钉/短信桩，不外呼。
+ALM-R3：未处理满 30 分钟升级运营总监，站内信桩。
+ALM-R4：规则保存后下一次读取即新表达式。
 """
 
 from __future__ import annotations
@@ -15,19 +17,36 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, tenant_of, user_names
-from app.models import LiveAlarmRecord, LiveAlarmRule, LiveDataSnapshot, LiveReport, LiveSession
+from app.models import (
+    LiveAlarmRecord,
+    LiveAlarmRule,
+    LiveDataSnapshot,
+    LiveReport,
+    LiveSession,
+    Role,
+    User,
+    UserRole,
+    WorkMessage,
+)
 
 router = APIRouter(prefix="/alarm", tags=["live-alarm"])
 
 BJ = timezone(timedelta(hours=8))
 DEDUP_MINUTES = 10
+ESCALATE_MINUTES = 30
+DIRECTOR_USERNAME = "live_director"
+AGED_SESSION = "IMS20261009ALM0030"
+FRESH_L3_SESSION = "IMS20261009ALM0003"
+FRESH_L2_SESSION = "IMS20261009ALM0005"
+STUB_NOTE = "站内桩，未调用钉钉，未调用短信"
 METRIC_LABELS = {
     "viewer_count": "场观",
+    "viewer_drop": "场观",
     "gmv": "GMV",
     "peak_online": "峰值在线",
     "blacklist": "违禁词",
 }
-THRESHOLD_METRICS = {"viewer_count", "gmv", "peak_online"}
+THRESHOLD_METRICS = {"viewer_count", "viewer_drop", "gmv", "peak_online"}
 THRESHOLD_OPS = {"GT", "LT", "PCT_DROP"}
 EVENT_METRICS = {"blacklist"}
 HANDLE_NEXT = {
@@ -188,22 +207,205 @@ def rule_vo(row: LiveAlarmRule, names: dict[int, str]) -> dict:
     }
 
 
+def clock(moment: datetime | None = None) -> datetime:
+    now = moment or datetime.now(BJ)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=BJ)
+    return now.astimezone(BJ).replace(microsecond=0)
+
+
+def stamp(moment: datetime | None = None) -> str:
+    return clock(moment).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def channel_set(raw: str | None) -> set[str]:
+    return {part for part in (raw or "").split(",") if part}
+
+
+def join_channels(parts: set[str]) -> str:
+    order = ["IN_APP", "DINGTALK_STUB", "SMS_STUB", "ESCALATE_STUB"]
+    ranked = [name for name in order if name in parts]
+    extra = sorted(parts - set(order))
+    return ",".join(ranked + extra)
+
+
+def director_ids(db: Session, tenant_id: int) -> list[int]:
+    roles = db.scalars(select(Role).where(Role.deleted == 0, Role.tenant_id == tenant_id)).all()
+    role_ids = []
+    for role in roles:
+        key = (role.role_key or "").strip().lower()
+        name = role.role_name or ""
+        if key == "r4" or key.endswith(":r4") or "运营总监" in name:
+            role_ids.append(role.id)
+    if not role_ids:
+        return []
+    found: list[int] = []
+    rows = db.scalars(
+        select(UserRole.user_id).where(UserRole.role_id.in_(role_ids), UserRole.tenant_id == tenant_id)
+    ).all()
+    for user_id in rows:
+        if user_id not in found:
+            found.append(int(user_id))
+    return found
+
+
+def ensure_message(
+    db: Session,
+    *,
+    user_id: int,
+    title: str,
+    content: str,
+    ref_type: str,
+    ref_id: int,
+    tenant_id: int,
+) -> None:
+    existing = db.scalar(
+        select(WorkMessage).where(
+            WorkMessage.user_id == user_id,
+            WorkMessage.source_module == "LIVE",
+            WorkMessage.ref_type == ref_type,
+            WorkMessage.ref_id == ref_id,
+        )
+    )
+    if existing is not None:
+        return
+    db.add(
+        WorkMessage(
+            user_id=user_id,
+            title=title[:128],
+            content=content[:512],
+            channel="IN_APP",
+            read_flag=0,
+            source_module="LIVE",
+            ref_type=ref_type,
+            ref_id=ref_id,
+            tenant_id=tenant_id,
+        )
+    )
+
+
+def apply_l3_stub(row: LiveAlarmRecord) -> None:
+    """L3 只写渠道名，不请求钉钉或短信。"""
+    channels = channel_set(row.notify_channels)
+    channels.add("IN_APP")
+    if row.alarm_level == 3:
+        channels.update({"DINGTALK_STUB", "SMS_STUB"})
+    row.notify_channels = join_channels(channels)
+
+
+def ingest_alarm(
+    db: Session,
+    *,
+    tenant_id: int,
+    rule_id: int,
+    rule_name: str,
+    session_code: str,
+    alarm_level: int,
+    alarm_content: str,
+    occur_at: str,
+) -> LiveAlarmRecord:
+    moment = parse_occur(occur_at) or clock()
+    cutoff = stamp(moment - timedelta(minutes=DEDUP_MINUTES))
+    existing = db.scalar(
+        select(LiveAlarmRecord).where(
+            LiveAlarmRecord.deleted == 0,
+            LiveAlarmRecord.tenant_id == tenant_id,
+            LiveAlarmRecord.session_code == session_code,
+            LiveAlarmRecord.rule_name == rule_name,
+            LiveAlarmRecord.handle_status == "UNHANDLED",
+            LiveAlarmRecord.occur_at >= cutoff,
+        )
+    )
+    if existing is not None:
+        existing.merge_count = (existing.merge_count or 1) + 1
+        apply_l3_stub(existing)
+        return existing
+    row = LiveAlarmRecord(
+        rule_id=rule_id,
+        rule_name=rule_name[:64],
+        session_code=session_code,
+        alarm_level=alarm_level,
+        alarm_content=alarm_content[:512],
+        occur_at=stamp(moment),
+        handle_status="UNHANDLED",
+        escalated=0,
+        escalated_at="",
+        merge_count=1,
+        notify_channels="",
+        tenant_id=tenant_id,
+    )
+    apply_l3_stub(row)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def sweep_alarms(db: Session, tenant_id: int, now: datetime | None = None) -> int:
+    """补 L3 触达桩，并把未处理满 30 分钟的告警升级给运营总监。"""
+    moment = clock(now)
+    rows = db.scalars(
+        select(LiveAlarmRecord).where(
+            LiveAlarmRecord.deleted == 0,
+            LiveAlarmRecord.tenant_id == tenant_id,
+            LiveAlarmRecord.handle_status == "UNHANDLED",
+        )
+    ).all()
+    escalated = 0
+    directors = director_ids(db, tenant_id)
+    for row in rows:
+        apply_l3_stub(row)
+        if row.escalated:
+            continue
+        occurred = parse_occur(row.occur_at)
+        if occurred is None:
+            continue
+        if moment - occurred < timedelta(minutes=ESCALATE_MINUTES):
+            continue
+        row.escalated = 1
+        row.escalated_at = stamp(moment)
+        channels = channel_set(row.notify_channels)
+        channels.add("ESCALATE_STUB")
+        row.notify_channels = join_channels(channels)
+        title = f"直播告警已升级：{row.session_code}"
+        content = f"ALM-R3 未处理满 30 分钟，已升级运营总监。{STUB_NOTE}。{row.alarm_content}"
+        for user_id in directors:
+            ensure_message(
+                db,
+                user_id=user_id,
+                title=title,
+                content=content,
+                ref_type="live_alarm_escalate",
+                ref_id=row.id,
+                tenant_id=tenant_id,
+            )
+        escalated += 1
+    return escalated
+
+
 def record_vo(row: LiveAlarmRecord, names: dict[int, str]) -> dict:
     handler = row.handler_user_id
+    count = row.merge_count or 1
+    content = row.alarm_content or ""
+    if count > 1 and "×" not in content:
+        content = f"{content} ×{count}"
+    channels = [part for part in (row.notify_channels or "").split(",") if part]
     return {
         "id": row.id,
         "ruleId": row.rule_id,
         "ruleName": row.rule_name,
         "sessionCode": row.session_code,
         "alarmLevel": row.alarm_level,
-        "alarmContent": row.alarm_content,
+        "alarmContent": content,
         "occurAt": row.occur_at,
         "handleStatus": row.handle_status,
         "handlerUserId": handler,
         "handlerName": names.get(handler) if handler else None,
         "handleRemark": row.handle_remark or "",
-        "mergeCount": row.merge_count or 1,
+        "mergeCount": count,
         "notifyChannel": "IN_APP",
+        "escalated": bool(row.escalated),
+        "escalatedAt": row.escalated_at or None,
+        "notifyChannels": channels or ["IN_APP"],
     }
 
 
@@ -217,7 +419,7 @@ def latest_snapshot(db: Session, session_code: str) -> LiveDataSnapshot | None:
 
 
 def metric_number(metric: str, report: LiveReport | None, snap: LiveDataSnapshot | None) -> float | None:
-    if metric == "viewer_count":
+    if metric in {"viewer_count", "viewer_drop"}:
         if report is not None:
             return float(report.viewer_count or 0)
         if snap is not None and snap.viewer_count is not None:
@@ -241,7 +443,7 @@ def metric_number(metric: str, report: LiveReport | None, snap: LiveDataSnapshot
 def drop_ratio(metric: str, report: LiveReport | None, snap: LiveDataSnapshot | None) -> float | None:
     if report is None or snap is None:
         return None
-    if metric == "viewer_count":
+    if metric in {"viewer_count", "viewer_drop"}:
         base = snap.viewer_count
         current = report.viewer_count
     elif metric == "gmv":
@@ -306,20 +508,24 @@ def upsert_hit(db: Session, tenant_id: int, rule: LiveAlarmRule, session: LiveSe
         latest.alarm_level = rule.level
         latest.occur_at = stamped
         latest.rule_name = rule.rule_name
+        apply_l3_stub(latest)
         return
-    db.add(
-        LiveAlarmRecord(
-            rule_id=rule.id,
-            rule_name=rule.rule_name,
-            session_code=session.session_code,
-            alarm_level=rule.level,
-            alarm_content=content,
-            occur_at=stamped,
-            handle_status="UNHANDLED",
-            merge_count=1,
-            tenant_id=tenant_id,
-        )
+    created = LiveAlarmRecord(
+        rule_id=rule.id,
+        rule_name=rule.rule_name,
+        session_code=session.session_code,
+        alarm_level=rule.level,
+        alarm_content=content,
+        occur_at=stamped,
+        handle_status="UNHANDLED",
+        merge_count=1,
+        escalated=0,
+        escalated_at="",
+        notify_channels="",
+        tenant_id=tenant_id,
     )
+    apply_l3_stub(created)
+    db.add(created)
 
 
 def scan_rules(db: Session, actor: User, session_code: str = "") -> None:
@@ -454,6 +660,8 @@ def alarm_records(
     actor: User = Depends(current_user),
 ):
     scan_rules(db, actor, sessionCode.strip())
+    sweep_alarms(db, tenant_of(actor))
+    db.flush()
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(LiveAlarmRecord).where(LiveAlarmRecord.deleted == 0, LiveAlarmRecord.tenant_id == tenant_of(actor))
     if sessionCode.strip():
@@ -546,3 +754,93 @@ def alarm_stats(db: Session = Depends(db_session), actor: User = Depends(current
             "byRule": [{"ruleName": name, "hitCount": count} for name, count in ranked],
         }
     )
+
+
+def _upsert_alarm(
+    db: Session,
+    *,
+    tenant_id: int,
+    session_code: str,
+    level: int,
+    content: str,
+    minutes_ago: int,
+) -> None:
+    row = db.scalar(
+        select(LiveAlarmRecord).where(
+            LiveAlarmRecord.deleted == 0,
+            LiveAlarmRecord.tenant_id == tenant_id,
+            LiveAlarmRecord.session_code == session_code,
+            LiveAlarmRecord.rule_name == "场观骤降",
+        )
+    )
+    occur = stamp(clock() - timedelta(minutes=minutes_ago))
+    if row is None:
+        db.add(
+            LiveAlarmRecord(
+                rule_id=0,
+                rule_name="场观骤降",
+                session_code=session_code,
+                alarm_level=level,
+                alarm_content=content,
+                occur_at=occur,
+                handle_status="UNHANDLED",
+                escalated=0,
+                escalated_at="",
+                merge_count=1,
+                notify_channels="",
+                tenant_id=tenant_id,
+            )
+        )
+        return
+    row.alarm_level = level
+    row.alarm_content = content
+    row.occur_at = occur
+    row.handle_status = "UNHANDLED"
+    row.handler_user_id = None
+    row.handle_remark = ""
+    row.escalated = 0
+    row.escalated_at = ""
+    row.merge_count = 1
+    row.notify_channels = ""
+    db.query(WorkMessage).filter(
+        WorkMessage.source_module == "LIVE",
+        WorkMessage.ref_type == "live_alarm_escalate",
+        WorkMessage.ref_id == row.id,
+    ).delete(synchronize_session=False)
+
+
+def refresh_live_alarm_e2e(db: Session) -> None:
+    """本地运营总监与三场告警。打开告警列表时才升级，不外呼钉钉/短信。"""
+    from app.scope import refresh_user_scope
+    from app.security import hash_password
+
+    role = db.scalar(select(Role).where(Role.role_key == "live:r4", Role.deleted == 0))
+    if role is None:
+        role = Role(
+            role_name="运营总监",
+            role_key="live:r4",
+            data_scope="ALL",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+    director = db.scalar(select(User).where(User.username == DIRECTOR_USERNAME, User.deleted == 0))
+    if director is None:
+        director = User(
+            username=DIRECTOR_USERNAME,
+            nickname="运营总监",
+            mobile="13900001420",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(director)
+        db.flush()
+    if not db.scalar(select(UserRole).where(UserRole.user_id == director.id, UserRole.role_id == role.id)):
+        db.add(UserRole(user_id=director.id, role_id=role.id, tenant_id=0))
+    refresh_user_scope(db, director.id)
+    _upsert_alarm(db, tenant_id=0, session_code=AGED_SESSION, level=3, content="场观 5 分钟内骤降 42%", minutes_ago=31)
+    _upsert_alarm(db, tenant_id=0, session_code=FRESH_L3_SESSION, level=3, content="场观 5 分钟内骤降 18%", minutes_ago=2)
+    _upsert_alarm(db, tenant_id=0, session_code=FRESH_L2_SESSION, level=2, content="话费余额低于阈值", minutes_ago=5)
