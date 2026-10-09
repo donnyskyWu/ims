@@ -205,8 +205,10 @@ def test_overdue_verify_escalates_to_dept_leader_once_and_skips_closed():
                 select(WorkMessage).where(WorkMessage.source_module == "ASSET", WorkMessage.ref_id == person["id"])
             ).all()
         )
-        assert len(messages) == 1
-        assert messages[0].user_id == leader_id
+        assert {item.channel for item in messages} == {"IN_APP", "DINGTALK"}
+        assert {item.user_id for item in messages} == {leader_id}
+        stub = next(item for item in messages if item.channel == "DINGTALK")
+        assert "钉钉未外发" in (stub.content or "")
         assert db.get(AssetVerifyBatch, person["id"]).escalate_user_id == leader_id
         assert db.get(AssetVerifyBatch, account["id"]).escalated_at is None
         assert db.get(AssetVerifyBatch, session["id"]).escalated_at is None
