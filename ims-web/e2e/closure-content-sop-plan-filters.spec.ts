@@ -28,6 +28,7 @@ test.describe('content sop plan layout filters', () => {
     const { sopId } = await createSopViaUi(page, { sopName, nodeName })
 
     await page.goto('/ims/content/sop')
+    await page.getByTestId('sop-filter-name').fill(sopName)
     await page.getByTestId('sop-filter-type').selectOption('ARTICLE')
     const missResp = page.waitForResponse(
       (r) => r.url().includes('/content/sop/list') && r.url().includes('contentType=ARTICLE') && r.status() === 200,
@@ -59,9 +60,13 @@ test.describe('content sop plan layout filters', () => {
     const { ipGroupId } = await prepareIpGroupWithAdminMember(page, label)
     await createDraftPlanViaUi(page, { planName, sopId, ipGroupId })
 
+    await page.getByTestId('plan-filter-name').fill(planName)
     await page.getByTestId('plan-filter-status').selectOption('TERMINATED')
     const planMiss = page.waitForResponse(
-      (r) => r.url().includes('/content/plan') && r.url().includes('status=TERMINATED') && r.request().method() === 'GET',
+      (r) =>
+        r.url().includes('/content/plan') &&
+        r.url().includes('status=TERMINATED') &&
+        r.request().method() === 'GET',
     )
     await page.getByTestId('plan-filters').getByRole('button', { name: '查询' }).click()
     await planMiss
