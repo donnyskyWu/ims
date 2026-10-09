@@ -2,7 +2,7 @@ import json
 import re
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -529,6 +529,30 @@ def cert_stmt(actor: User, request: Request):
     return stmt
 
 
+CERT_PAGE_TYPES = ("IDCARD", "PASSPORT", "OTHER")
+
+
+def expire_range_error(raw: list[str]) -> str | None:
+    values = [item.strip() for item in raw if item and item.strip()]
+    if not values:
+        return None
+    if len(values) != 2:
+        return "请同时填写开始和结束日期"
+    start, end = values[0][:10], values[1][:10]
+    if not DATE_RE.match(start) or not DATE_RE.match(end):
+        return "有效期范围不合法"
+    if start > end:
+        return "开始日期不能晚于结束日期"
+    return None
+
+
+def expire_range_bounds(raw: list[str]) -> tuple[str, str] | None:
+    values = [item.strip()[:10] for item in raw if item and item.strip()]
+    if len(values) != 2:
+        return None
+    return values[0], values[1]
+
+
 @router.get("/corp/resource/certificate/page")
 def certificate_page(
     request: Request,
@@ -537,12 +561,19 @@ def certificate_page(
     holderName: str = "",
     certType: str = "",
     status: str = "",
+    expireDateRange: list[str] | None = Query(default=None),
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
     from app.cert_e2e_seed import ensure_cert_e2e_seed
 
     ensure_cert_e2e_seed(db, actor)
+    if certType and certType not in CERT_PAGE_TYPES:
+        return fail(1001, "证件类型无效")
+    raw_range = expireDateRange or []
+    range_error = expire_range_error(raw_range)
+    if range_error:
+        return fail(1001, range_error)
     page_no, size = page_args(pageNo, pageSize)
     stmt = cert_stmt(actor, request)
     if holderName:
@@ -551,6 +582,9 @@ def certificate_page(
         stmt = stmt.where(CertArchive.cert_type == certType)
     if status:
         stmt = stmt.where(CertArchive.status == status)
+    bounds = expire_range_bounds(raw_range)
+    if bounds:
+        stmt = stmt.where(CertArchive.expire_date >= bounds[0], CertArchive.expire_date <= bounds[1])
     total = count_of(db, stmt)
     rows = db.scalars(stmt.order_by(CertArchive.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     return paged([cert_vo(row) for row in rows], total, page_no, size)
