@@ -2245,3 +2245,26 @@ class DcTraceLog(Base):
     cost_ms: Mapped[float] = mapped_column(Float, default=0.0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class CertOriginalFile(Base):
+    """证件原件版本。重传生成新 fileKey，不覆盖已落盘文件（V1-D2）。"""
+
+    __tablename__ = "ims_cert_original"
+    __table_args__ = (UniqueConstraint("file_key", name="uk_cert_original_key"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    cert_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    file_key: Mapped[str] = mapped_column(String(512), default="")
+    file_name: Mapped[str] = mapped_column(String(256), default="")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    content_type: Mapped[str] = mapped_column(String(128), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    ocr_status: Mapped[str] = mapped_column(String(32), default="FAILED")
+    ocr_fields: Mapped[str] = mapped_column(Text, default="{}")
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    updater: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

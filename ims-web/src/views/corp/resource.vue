@@ -23,6 +23,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
     </form>
+    <p v-if="kind === 'certificate' && originalNote" class="hint" data-testid="corp-cert-original-note">{{ originalNote }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -323,6 +324,17 @@
       <div class="formrow one"><div class="fld"><label>签发日期<i class="req">*</i></label><input v-model="certForm.issueDate" type="date" data-testid="corp-cert-issue" /></div></div>
       <div class="formrow one"><div class="fld"><label>有效期至<i class="req">*</i></label><input v-model="certForm.expireDate" type="date" data-testid="corp-cert-expire-date" /></div></div>
       <div class="formrow one"><div class="fld"><label>扫描件标识<i class="req">*</i></label><input v-model="certForm.fileKey" data-testid="corp-cert-file-key" /></div></div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>原件</label>
+          <input type="file" accept=".txt,.pdf,.png,.jpg,.jpeg" data-testid="corp-cert-original-file" @change="onOriginalFile" />
+        </div>
+      </div>
+      <p v-if="ocrNote" class="hint" data-testid="corp-cert-ocr">{{ ocrNote }}</p>
+      <div class="hint">原件落在服务端目录。再次上传生成新版本，不覆盖已归档文件。识别失败可手工填写。不选文件时仍可用扫描件标识。</div>
+      <div class="acts" style="margin-bottom: 8px">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="corp-cert-ocr-confirm" :disabled="ocrBusy" @click="confirmOriginal">确认识别</button>
+      </div>
       <div class="hint">提交后为待审。审核生效后才参与到期扫描。本期不返回原图。</div>
       <div v-if="certFormError" class="hint bad" data-testid="corp-cert-form-error">{{ certFormError }}</div>
       <template #foot>
@@ -436,6 +448,10 @@ const certForm = reactive({
   expireDate: '',
   fileKey: 'local/cert/upload',
 })
+const originalKey = ref('')
+const ocrNote = ref('')
+const ocrBusy = ref(false)
+const originalNote = ref('')
 const reviewOpen = ref(false)
 const reviewSaving = ref(false)
 const reviewError = ref('')
@@ -668,14 +684,84 @@ function openCertCreate() {
   certForm.expireDate = ''
   certForm.fileKey = 'local/cert/upload'
   certFormError.value = ''
+  originalKey.value = ''
+  ocrNote.value = ''
   certFormOpen.value = true
+}
+
+function applyOcrFields(fields: Record<string, string>) {
+  if (fields.holderName) certForm.holderName = fields.holderName
+  if (fields.certNo) certForm.certNoPlain = fields.certNo
+  if (fields.issueDate) certForm.issueDate = fields.issueDate
+  if (fields.expireDate) certForm.expireDate = fields.expireDate
+}
+
+async function onOriginalFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files && input.files[0] ? input.files[0] : null
+  if (!file) return
+  if (file.size > 20 * 1024 * 1024) {
+    certFormError.value = '原件不能超过 20MB'
+    return
+  }
+  ocrBusy.value = true
+  certFormError.value = ''
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await http.post('/cert/archive/original', body)
+    const data = (res.data?.data || {}) as {
+      fileKey?: string
+      ocrResult?: { recognizeStatus?: string; recognizedFields?: Record<string, string> }
+    }
+    originalKey.value = String(data.fileKey || '')
+    certForm.fileKey = originalKey.value || certForm.fileKey
+    const ocr = data.ocrResult || {}
+    const fields = ocr.recognizedFields || {}
+    applyOcrFields(fields)
+    if (ocr.recognizeStatus === 'PENDING_CONFIRM') {
+      ocrNote.value = `OCR 待确认 · ${fields.holderName || '未命名'}`
+    } else {
+      ocrNote.value = 'OCR 未识别，请手工填写'
+    }
+  } catch (e: unknown) {
+    ocrNote.value = ''
+    certFormError.value = errorMessage(e)
+  } finally {
+    ocrBusy.value = false
+  }
+}
+
+async function confirmOriginal() {
+  if (!originalKey.value) {
+    ocrNote.value = '请先上传原件'
+    return
+  }
+  ocrBusy.value = true
+  try {
+    await http.post('/cert/archive/original/confirm', {
+      fileKey: originalKey.value,
+      action: 'CONFIRM',
+      recognizedFields: {
+        holderName: certForm.holderName.trim(),
+        certNo: certForm.certNoPlain.trim(),
+        issueDate: certForm.issueDate,
+        expireDate: certForm.expireDate,
+      },
+    })
+    ocrNote.value = '已确认'
+  } catch (e: unknown) {
+    ocrNote.value = errorMessage(e)
+  } finally {
+    ocrBusy.value = false
+  }
 }
 
 async function saveCert() {
   certSaving.value = true
   certFormError.value = ''
   try {
-    await http.post('/cert/archive/upload', {
+    const res = await http.post('/cert/archive/upload', {
       holderName: certForm.holderName.trim(),
       certType: certForm.certType,
       certNoPlain: certForm.certNoPlain.trim(),
@@ -683,6 +769,15 @@ async function saveCert() {
       issueDate: certForm.issueDate,
       expireDate: certForm.expireDate,
     })
+    const id = Number(res.data?.data?.id || 0)
+    if (originalKey.value && id) {
+      const bound = await http.post('/cert/archive/original/bind', {
+        fileKey: originalKey.value,
+        certId: id,
+      })
+      const version = Number(bound.data?.data?.version || 0)
+      originalNote.value = `原件 v${version} 已归档，历史版本保留`
+    }
     certFormOpen.value = false
     await load()
   } catch (e: unknown) {
