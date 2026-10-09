@@ -577,3 +577,59 @@ def test_topic_gantt_single_day_pending_and_unknown_account():
     other_day = gantt(auth, "2026-11-19", "2026-11-19")
     assert other_day.json()["code"] == 0
     assert other_day.json()["data"]["items"] == []
+
+
+def test_topic_list_filter_miss_edges():
+    """编号需完整匹配；空白编号仍命中；来源非法 1500；关键词与来源同时无命中为空页。"""
+    auth = headers()
+    created = create_topic(auth, "筛选边角口播")
+
+    missing_no = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": "TP-NO-SUCH"},
+    )
+    assert missing_no.json()["code"] == 0
+    assert missing_no.json()["data"]["total"] == 0
+    assert missing_no.json()["data"]["list"] == []
+
+    padded = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": f"  {created['topicNo']}  "},
+    )
+    assert padded.json()["code"] == 0
+    assert padded.json()["data"]["total"] == 1
+    assert padded.json()["data"]["list"][0]["id"] == created["id"]
+
+    partial = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"topicNo": created["topicNo"][:-2]},
+    )
+    assert partial.json()["code"] == 0
+    assert partial.json()["data"]["total"] == 0
+
+    bad_source = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"sourceType": "UNKNOWN"},
+    )
+    assert bad_source.json()["code"] == 1500
+
+    missed = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"sourceType": "BRAND", "keyword": "不存在的筛选边角"},
+    )
+    assert missed.json()["code"] == 0
+    assert missed.json()["data"]["total"] == 0
+
+    keyword_hit = client.get(
+        "/admin-api/ims/content/topic/list",
+        headers=auth,
+        params={"keyword": "  筛选边角  "},
+    )
+    assert keyword_hit.json()["code"] == 0
+    assert keyword_hit.json()["data"]["total"] == 1
+    assert keyword_hit.json()["data"]["list"][0]["title"] == "筛选边角口播"

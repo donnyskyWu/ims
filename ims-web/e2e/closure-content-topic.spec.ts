@@ -99,7 +99,7 @@ test.describe('content topic project closure', () => {
     const rejectBody = (await (await rejectResp).json()) as { code: number }
     expect(rejectBody.code).toBe(0)
     await expect(rejectRow).toContainText('落选')
-    await expect(rejectRow).toContainText('未立项不可出任务')
+    await expect(rejectRow).toContainText('落选不可出任务')
     await page.screenshot({ path: `${SHOTS}/04-topic-rejected.png`, fullPage: true })
 
     expect(pageErrors).toEqual([])

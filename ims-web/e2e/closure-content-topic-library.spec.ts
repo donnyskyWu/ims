@@ -170,7 +170,7 @@ test.describe('content topic library closure', () => {
     const cancelBody = (await (await cancelResp).json()) as { code: number }
     expect(cancelBody.code).toBe(0)
     await expect(editedRow).toContainText('已取消', { timeout: 15_000 })
-    await expect(editedRow).toContainText('未立项不可出任务')
+    await expect(editedRow).toContainText('已取消不可出任务')
     await expect(editedRow).toContainText('本期选题不做')
     await expect(editedRow.getByTestId('topic-edit')).toHaveCount(0)
     await page.screenshot({ path: `${SHOTS}/07-cancelled.png`, fullPage: true })

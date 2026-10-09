@@ -60,7 +60,11 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="10">
-                <div class="empty"><div class="et">{{ error || '暂无选题' }}</div></div>
+                <div class="empty" data-testid="topic-list-empty" :data-filtered="listFiltered ? '1' : '0'">
+                  <div class="et">{{ listEmptyTitle }}</div>
+                  <div class="es">{{ listEmptyHint }}</div>
+                  <button v-if="error" class="btn btn-sec btn-sm" type="button" data-testid="topic-list-retry" @click="loadList">重试</button>
+                </div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
@@ -72,7 +76,7 @@
               <td>{{ row.sopName || '—' }}</td>
               <td data-testid="topic-status">{{ statusLabel(row.topicStatus) }}</td>
               <td data-testid="topic-opinion-cell">{{ row.reviewOpinion || '—' }}</td>
-              <td data-testid="topic-task-gate">{{ row.canCreateTask ? '可出任务' : '未立项不可出任务' }}</td>
+              <td data-testid="topic-task-gate">{{ taskGateLabel(row) }}</td>
               <td>
                 <div class="row-acts">
                   <button class="btn btn-sec btn-sm" type="button" data-testid="topic-detail" @click="openDetail(row)">详情</button>
@@ -287,7 +291,7 @@
 
 <script setup lang="ts">
 import axios from 'axios'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import TopicGantt from './topic-gantt.vue'
@@ -384,6 +388,56 @@ function sourceLabel(source: string) {
 function projectStatusLabel(status: string) {
   return PROJECT_LABEL[status] || status || '—'
 }
+
+function taskGateLabel(row: TopicRow) {
+  if (row.canCreateTask) return '可出任务'
+  if (row.topicStatus === 'REJECTED') return '落选不可出任务'
+  if (row.topicStatus === 'CANCELLED') return '已取消不可出任务'
+  return '未立项不可出任务'
+}
+
+const listFiltered = computed(() =>
+  Boolean(
+    topicNo.value.trim()
+    || keyword.value.trim()
+    || sourceFilter.value
+    || statusFilter.value
+    || submitterFilter.value,
+  ),
+)
+
+const listEmptyTitle = computed(() => {
+  if (error.value) return error.value
+  const active = [
+    topicNo.value.trim(),
+    keyword.value.trim(),
+    sourceFilter.value,
+    statusFilter.value,
+    submitterFilter.value,
+  ].filter(Boolean).length
+  if (active === 0) return '暂无选题'
+  if (active > 1) return '暂无符合当前筛选的选题'
+  if (topicNo.value.trim()) return '没有符合编号的选题'
+  if (keyword.value.trim()) return '没有符合关键词的选题'
+  if (sourceFilter.value) return `暂无${sourceLabel(sourceFilter.value)}来源的选题`
+  if (statusFilter.value) return `暂无${statusLabel(statusFilter.value)}选题`
+  return '该提报人暂无选题'
+})
+
+const listEmptyHint = computed(() => {
+  if (error.value) return '列表加载失败，可重试'
+  if (!listFiltered.value) return '点击「提报选题」后进入待评审'
+  const bits: string[] = []
+  if (topicNo.value.trim()) bits.push(`编号 ${topicNo.value.trim()}（需完整匹配）`)
+  if (keyword.value.trim()) bits.push(`关键词 ${keyword.value.trim()}`)
+  if (sourceFilter.value) bits.push(`来源 ${sourceLabel(sourceFilter.value)}`)
+  if (statusFilter.value) bits.push(`状态 ${statusLabel(statusFilter.value)}`)
+  if (submitterFilter.value) {
+    const user = submitters.value.find((item) => item.id === submitterFilter.value)
+    bits.push(`提报人 ${user?.label || '已选'}`)
+  }
+  return `当前筛选：${bits.join('、')}。可调整条件，或点重置查看全部`
+})
 
 function formatBiz(err: unknown) {
   if (axios.isAxiosError(err)) {
@@ -556,6 +610,10 @@ async function openReview(row: TopicRow) {
 
 async function submitReview(action: 'APPROVE_PROJECT' | 'REJECT') {
   if (!reviewRow.value) return
+  if (action === 'REJECT' && !reviewForm.value.reviewOpinion.trim()) {
+    reviewError.value = '请填写落选意见'
+    return
+  }
   reviewing.value = true
   reviewError.value = ''
   try {
@@ -607,6 +665,10 @@ function openCancel(row: TopicRow) {
 
 async function confirmCancel() {
   if (!cancelRow.value) return
+  if (!cancelOpinion.value.trim()) {
+    cancelError.value = '请填写取消原因'
+    return
+  }
   cancelling.value = true
   cancelError.value = ''
   try {
@@ -681,4 +743,5 @@ onMounted(() => {
 .hotspot-list li + li {
   margin-top: 4px;
 }
+.empty .btn { margin-top: 8px; }
 </style>
