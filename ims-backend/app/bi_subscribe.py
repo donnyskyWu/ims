@@ -99,6 +99,21 @@ def post_dingtalk_webhook(url: str, payload: dict) -> tuple[bool, dict]:
         return False, {"error": str(exc)[:200]}
 
 
+def next_push_at(row: BiSubscription) -> str:
+    """本地桩：不排真实调度，只按周期给出下次推送文案。"""
+    if (row.status or "").strip().upper() != "ACTIVE":
+        return "—"
+    clock = (row.push_time or "").strip() or "09:00"
+    period = (row.period or "").strip().upper()
+    if period == "DAY":
+        return f"明日 {clock}"
+    if period == "WEEK":
+        return clock if "周" in clock else f"下周一 {clock}"
+    if period == "MONTH":
+        return f"下月1日 {clock}"
+    return "—"
+
+
 def sub_vo(row: BiSubscription) -> dict:
     return {
         "id": row.id,
@@ -112,6 +127,7 @@ def sub_vo(row: BiSubscription) -> dict:
         "status": row.status,
         "lastPushStatus": row.last_push_status or "—",
         "lastPushAt": row.last_push_at or "—",
+        "nextPushAt": next_push_at(row),
     }
 
 
@@ -147,9 +163,7 @@ def get_report(
 
 def seed_subscriptions(db: Session, tenant_id: int, user_id: int) -> None:
     exists = db.scalar(
-        select(func.count()).select_from(BiSubscription).where(
-            BiSubscription.deleted == 0, BiSubscription.tenant_id == tenant_id
-        )
+        select(func.count()).select_from(BiSubscription).where(BiSubscription.tenant_id == tenant_id)
     )
     if exists:
         return
@@ -566,16 +580,32 @@ def subscribe_snapshot(
     row = db.get(BiSubscription, sub_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1001, "订阅不存在")
+    pushed = (row.last_push_at or "").strip() not in {"", "—"}
+    if not pushed:
+        return ok(
+            {
+                "subscriptionId": row.id,
+                "subName": row.sub_name,
+                "reportName": row.report_name,
+                "snapshotAt": "",
+                "summary": None,
+                "rows": [],
+                "empty": True,
+                "emptyReason": "尚未推送，暂无快照",
+            }
+        )
     return ok(
         {
             "subscriptionId": row.id,
             "subName": row.sub_name,
             "reportName": row.report_name,
-            "snapshotAt": iso(row.updated_at),
+            "snapshotAt": row.last_push_at,
             "summary": {"gmv": 4128000, "sessions": 14, "note": "推送快照摘要占位 · BIS-R1"},
             "rows": [
                 {"platform": "抖音", "gmv": 186400},
                 {"platform": "视频号", "gmv": 412800},
             ],
+            "empty": False,
+            "emptyReason": "",
         }
     )

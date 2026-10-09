@@ -87,8 +87,11 @@
       <div class="csub mono">{{ jump.jumpUrl }}</div>
     </div>
 
-    <div v-if="!tableRows.length && drillReady" class="empty" data-testid="bi-drill-empty" style="margin-top: 12px">
-      <div class="et">当前层暂无下钻数据</div>
+    <div v-if="deniedEmpty" class="empty" data-testid="bi-denied-empty" style="margin-top: 12px">
+      <div class="et">您无权查看该报表</div>
+    </div>
+    <div v-else-if="!tableRows.length && drillReady" class="empty" data-testid="bi-drill-empty" style="margin-top: 12px">
+      <div class="et">{{ drillEmptyReason }}</div>
     </div>
     <div v-else-if="tableRows.length" class="tbl-block" style="margin-top: 12px">
       <div class="tbl-wrap">
@@ -155,6 +158,8 @@ const jump = ref<Jump | null>(null)
 const filterRestored = ref(false)
 const filterError = ref('')
 const drillReady = ref(false)
+const deniedEmpty = ref(false)
+const drillEmptyReason = ref('当前层暂无下钻数据')
 const FILTER_KEY = 'ims.bi.preview.filters'
 const filters = reactive({
   dateFrom: '2026-09-01',
@@ -235,6 +240,7 @@ function queryFilter(): Record<string, string> {
 async function runPreview(options?: { user?: boolean }) {
   if (options?.user) filterRestored.value = false
   filterError.value = ''
+  deniedEmpty.value = false
   if (filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo) {
     filterError.value = '开始日期不能晚于结束日期'
     persistFilters()
@@ -269,10 +275,17 @@ async function runPreview(options?: { user?: boolean }) {
     preview.value = null
     tableRows.value = []
     drillMeta.value = ''
+    drillReady.value = false
+    filterContext.value = queryFilter()
+    if (body?.code === 1008) {
+      deniedEmpty.value = true
+      filterError.value = ''
+      drillToast.value = ''
+      return
+    }
     const text = body ? `${body.code} ${body.msg}` : errorMessage(error)
     filterError.value = text
     drillToast.value = text
-    filterContext.value = queryFilter()
     return
   }
   const root = chain.value[0]?.dimensionKey || 'PLATFORM'
@@ -300,6 +313,8 @@ async function loadLevel(path: string[], filter: Record<string, string>, directi
     asyncCard.value = null
     tableRows.value = data.rows || []
     drillReady.value = true
+    deniedEmpty.value = false
+    drillEmptyReason.value = String(data.emptyReason || '当前层暂无下钻数据')
     currentKey.value = data.dimensionKey || path[path.length - 1]
     currentLabel.value = data.dimensionLabel || currentLabel.value
     filterContext.value = filter
@@ -308,6 +323,13 @@ async function loadLevel(path: string[], filter: Record<string, string>, directi
     return true
   } catch (error: unknown) {
     const body = rejected(error)
+    if (body?.code === 1008) {
+      deniedEmpty.value = true
+      tableRows.value = []
+      drillReady.value = false
+      drillToast.value = ''
+      return false
+    }
     if (body?.code === 1195) {
       drillToast.value = `1195 ${body.msg || '已到达预定义层级末端或路径非法'}`
       return false

@@ -46,7 +46,9 @@ def test_bi_subscribe_list_and_share_link():
 
     snap = client.get(f"/admin-api/ims/bi/subscribe/snapshot/{sid}", headers=auth)
     assert snap.json()["code"] == 0
-    assert snap.json()["data"]["rows"]
+    assert snap.json()["data"]["empty"] is True
+    assert snap.json()["data"]["rows"] == []
+    assert snap.json()["data"]["emptyReason"] == "尚未推送，暂无快照"
 
     link = client.post(
         "/admin-api/ims/bi/subscribe/share-link",

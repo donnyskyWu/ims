@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def
-from app.bi_drill import record_bi_query, report_label, span_response
+from app.bi_drill import guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.models import BiReportDef, User
@@ -194,6 +194,19 @@ MOCK_ROWS = {
         {"ipGroupName": "电竞一组", "revenue": 520000, "cost": 310000, "roi": 1.68},
         {"ipGroupName": "体育二组", "revenue": 410000, "cost": 280000, "roi": 1.46},
     ],
+}
+# 标准报表本地样本窗（dataAsOf 落在 2026-09）。未传日期时不截断。
+REPORT_SAMPLE_FROM = "2026-09-01"
+REPORT_SAMPLE_TO = "2026-09-30"
+PLATFORM_LABEL = {
+    "DOUYIN": "抖音",
+    "抖音": "抖音",
+    "WECHAT_CHANNELS": "视频号",
+    "视频号": "视频号",
+    "KUAISHOU": "快手",
+    "快手": "快手",
+    "DOUYU": "斗鱼",
+    "斗鱼": "斗鱼",
 }
 
 
@@ -416,10 +429,11 @@ def report_preview_run(
     tenant_id = tenant_of(actor)
     title = "运营日报"
     if body.reportId:
+        blocked = guard_report(db, request, actor, body.reportId)
+        if blocked is not None:
+            return blocked
         row = db.get(BiReportDef, body.reportId)
-        if row and not row.deleted and row.tenant_id == tenant_id:
-            if not report_row_visible(db, row, actor, request.state.scope):
-                return fail(1008, "无权查看该报表")
+        if row is not None:
             title = row.report_name
     day_from = preview_day(body.dateFrom)
     day_to = preview_day(body.dateTo)
@@ -532,28 +546,75 @@ def report_preview_drill(body: PreviewDrillBody, _: User = Depends(current_user)
     )
 
 
+def standard_platform(raw: str | None) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    return PLATFORM_LABEL.get(text, text)
+
+
 @router.get("/{code}")
 def report_preview(
     code: str,
     ipGroupId: int | None = None,
     platform: str | None = None,
+    dateFrom: str = "",
+    dateTo: str = "",
     _: Session = Depends(db_session),
     __: User = Depends(current_user),
 ):
     meta = next((item for item in STANDARD_REPORTS if item["code"] == code), None)
     if meta is None:
         return fail(1001, "未知报表 code")
-    rows = MOCK_ROWS.get(code)
-    if rows is None:
-        rows = [{"metric": "sample", "value": 1, "note": f"占位数据 · {code}"}]
+    day_from = ""
+    day_to = ""
+    if (dateFrom or "").strip() or (dateTo or "").strip():
+        day_from = preview_day(dateFrom) or ""
+        day_to = preview_day(dateTo) or ""
+        if preview_day(dateFrom) is None or preview_day(dateTo) is None or not day_from or not day_to:
+            return fail(1001, "日期格式应为 yyyy-MM-dd")
+        if day_from > day_to:
+            return fail(1001, "开始日期不能晚于结束日期")
+    source = MOCK_ROWS.get(code)
+    placeholder = source is None
+    rows = [dict(item) for item in source] if source else [{"metric": "sample", "value": 1, "note": f"占位数据 · {code}"}]
+    label = standard_platform(platform)
+    outside = bool(day_from and day_to and (day_to < REPORT_SAMPLE_FROM or day_from > REPORT_SAMPLE_TO))
+    empty = False
+    empty_reason = ""
+    filter_note = ""
+    if outside:
+        rows = []
+        empty = True
+        empty_reason = "当前日期下暂无数据"
+    elif label and placeholder:
+        rows = []
+        empty = True
+        empty_reason = "当前平台下暂无数据"
+    elif label and any("platform" in item for item in rows):
+        rows = [item for item in rows if item.get("platform") == label]
+        if not rows:
+            empty = True
+            empty_reason = "当前平台下暂无数据"
+    elif label:
+        filter_note = "本报表不含平台列，筛选未改变结果"
+    columns = list(rows[0].keys()) if rows else (list(source[0].keys()) if source else ["metric", "value", "note"])
     return ok(
         {
             "code": code,
             "title": meta["title"],
-            "filters": {"ipGroupId": ipGroupId, "platform": platform or ""},
-            "columns": list(rows[0].keys()) if rows else [],
+            "filters": {
+                "ipGroupId": ipGroupId,
+                "platform": label,
+                "dateFrom": day_from,
+                "dateTo": day_to,
+            },
+            "columns": columns,
             "rows": rows,
             "total": len(rows),
             "dataAsOf": "2026-09-30T23:59:59+08:00",
+            "empty": empty,
+            "emptyReason": empty_reason,
+            "filterNote": filter_note,
         }
     )
