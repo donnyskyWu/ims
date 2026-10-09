@@ -56,7 +56,7 @@
 
     <form v-show="tab === 'list'" class="qbar" @submit.prevent="reload">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 180px" />
-      <input v-model="query.platform" placeholder="平台" style="width: 100px" />
+      <input v-model="query.platform" placeholder="平台" data-testid="fin-profit-filter-platform" style="width: 100px" />
       <input v-model="query.dateFrom" type="date" data-testid="fin-profit-date-from" aria-label="开始日期" />
       <input v-model="query.dateTo" type="date" data-testid="fin-profit-date-to" aria-label="结束日期" />
       <select v-model="query.calcStatus" aria-label="计算状态" style="width: 120px">

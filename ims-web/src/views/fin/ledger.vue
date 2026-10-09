@@ -96,6 +96,7 @@
 </template>
 
 <script setup lang="ts">
+import axios from 'axios'
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
@@ -140,11 +141,12 @@ function emptyCell(detail: string): BookCell {
 }
 
 function failOf(err: unknown): { code: number; msg: string } {
-  if (err && typeof err === 'object') {
-    const body = err as { code?: number; msg?: string }
-    return { code: Number(body.code || 0), msg: body.msg || '未就绪' }
-  }
-  return { code: 0, msg: '未就绪' }
+  const data = axios.isAxiosError(err)
+    ? (err.response?.data as { code?: number; msg?: string } | undefined)
+    : err && typeof err === 'object'
+      ? (err as { code?: number; msg?: string })
+      : undefined
+  return { code: Number(data?.code || 0), msg: data?.msg || '未就绪' }
 }
 
 async function readBook<T>(url: string, params?: Record<string, unknown>): Promise<BookHit<T>> {

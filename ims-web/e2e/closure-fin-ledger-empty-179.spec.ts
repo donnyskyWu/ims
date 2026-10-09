@@ -99,7 +99,7 @@ test.describe('fin ledger jump empty and filter tails', () => {
 
     await page.goto('/ims/fin/profit')
     await expect(page.locator('h1')).toHaveText('利润核算', { timeout: 15_000 })
-    await page.locator('input[placeholder="平台"]').fill('NO-SUCH-PLAT')
+    await page.getByTestId('fin-profit-filter-platform').fill('NO-SUCH-PLAT')
     const profitResp = page.waitForResponse(
       (r) => r.url().includes('/fin/profit/list') && r.request().method() === 'GET' && r.status() === 200,
     )
