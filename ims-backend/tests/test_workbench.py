@@ -150,3 +150,50 @@ def test_message_read_is_idempotent():
     assert listed["list"][0]["read"] is True
     board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=headers).json()["data"]
     assert board["unreadMessageCount"] == 0
+
+
+def test_message_read_all_clears_own_unread_only():
+    token = login()
+    headers = auth(token)
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").one()
+        db.add(WorkMessage(user_id=admin.id, title="待读甲", content="甲", channel="IN_APP", read_flag=0))
+        db.add(WorkMessage(user_id=admin.id, title="待读乙", content="乙", channel="IN_APP", read_flag=0))
+        db.add(WorkMessage(user_id=admin.id + 99, title="他人未读", content="不可见", channel="IN_APP", read_flag=0))
+        db.commit()
+    finally:
+        db.close()
+
+    done = client.put("/admin-api/ims/auth/workbench/messages/read-all", headers=headers)
+    assert done.status_code == 200
+    body = done.json()
+    assert body["code"] == 0
+    assert body["data"]["updated"] >= 2
+
+    unread = client.get(
+        "/admin-api/ims/auth/workbench/messages",
+        headers=headers,
+        params={"read": False, "pageSize": 50},
+    ).json()
+    assert unread["code"] == 0
+    titles = [row["title"] for row in unread["data"]["list"]]
+    assert "待读甲" not in titles
+    assert "待读乙" not in titles
+    assert unread["data"]["total"] == 0
+
+    again = client.put("/admin-api/ims/auth/workbench/messages/read-all", headers=headers)
+    assert again.json()["code"] == 0
+    assert again.json()["data"]["updated"] == 0
+
+    db = SessionLocal()
+    try:
+        other = db.query(WorkMessage).filter(WorkMessage.title == "他人未读").one()
+        assert other.read_flag == 0
+        mine = db.query(WorkMessage).filter(WorkMessage.title == "待读甲").one()
+        assert mine.read_flag == 1
+    finally:
+        db.close()
+
+    board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=headers).json()["data"]
+    assert board["unreadMessageCount"] == 0

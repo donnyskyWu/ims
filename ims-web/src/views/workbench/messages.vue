@@ -59,6 +59,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
+import { notifyInboxChanged } from '../../inbox/sync'
 
 type Row = { id: number; title: string; sourceModule?: string; read: boolean; createdAt?: string }
 
@@ -91,11 +92,13 @@ async function load() {
 
 async function readOne(id: number) {
   await http.put(`/auth/workbench/messages/${id}/read`)
+  notifyInboxChanged()
   await load()
 }
 
 async function readAll() {
   await http.put('/auth/workbench/messages/read-all')
+  notifyInboxChanged()
   await load()
 }
 
