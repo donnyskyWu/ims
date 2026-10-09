@@ -1773,6 +1773,9 @@ def report_pending(
                 "sessionCode": row.session_code,
                 "topic": row.topic,
                 "endedAt": row.actual_end or row.plan_end_time or "",
+                "actualStart": (report.actual_start if report and report.actual_start else row.actual_start) or "",
+                "actualEnd": (report.actual_end if report and report.actual_end else row.actual_end) or "",
+                "entryStatus": report.entry_status if report else "",
                 "responsibleUserName": names.get(row.responsible_user_id, ""),
                 "submitted": bool(report and report.entry_status == "SUBMITTED"),
                 "overdueHours": hours,
@@ -1922,6 +1925,8 @@ def report_confirm(
     if supplement_pending(row):
         return fail(1049, "补录未审批")
     report = db.scalar(select(LiveReport).where(LiveReport.session_code == session_code, LiveReport.deleted == 0))
+    if report is not None and report.entry_status == "CONFIRMED":
+        return fail(1042, "报告已核准，请刷新")
     if report is None or report.entry_status != "SUBMITTED":
         return fail(1042, "报告未提交")
     report.entry_status = "CONFIRMED"

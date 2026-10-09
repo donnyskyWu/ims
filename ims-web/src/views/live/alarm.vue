@@ -11,13 +11,20 @@
     </div>
 
     <div class="tabs">
-      <div class="tab" :class="{ on: tab === 'records' }" data-testid="live-alarm-tab-records" @click="switchTab('records')">告警记录</div>
+      <div class="tab" :class="{ on: tab === 'records' }" data-testid="live-alarm-tab-records" @click="switchTab('records')">
+        告警记录
+        <span v-if="unhandledCount" data-testid="live-alarm-unhandled-badge" style="color: var(--red)">({{ unhandledCount }})</span>
+      </div>
       <div class="tab" :class="{ on: tab === 'rules' }" data-testid="live-alarm-tab-rules" @click="switchTab('rules')">规则管理</div>
       <div class="tab" :class="{ on: tab === 'stats' }" data-testid="live-alarm-tab-stats" @click="switchTab('stats')">统计看板</div>
     </div>
 
     <p class="hint" data-testid="live-alarm-banner">钉钉/短信保持本地桩，未外发</p>
-    <p v-if="error" class="hint bad" data-testid="live-alarm-error">{{ error }}</p>
+    <p v-if="severeOpen" class="hint bad" data-testid="live-alarm-severe-banner">有严重告警尚未处置。超过 30 分钟未处理会标已升级。</p>
+    <p v-if="error" class="hint bad" data-testid="live-alarm-error">
+      {{ error }}
+      <button class="btn btn-sec btn-sm" type="button" data-testid="live-alarm-retry" @click="loadRecords">重试</button>
+    </p>
 
     <template v-if="tab === 'records'">
       <form class="qbar" @submit.prevent="loadRecords">
@@ -53,8 +60,21 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-if="!records.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无告警</div></div></td>
+              <tr v-if="error && !records.length">
+                <td colspan="7">
+                  <div class="empty" data-testid="live-alarm-error-empty">
+                    <div class="et">告警列表没有加载出来</div>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="live-alarm-retry-row" @click="loadRecords">重试</button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-else-if="!records.length">
+                <td colspan="7">
+                  <div class="empty" data-testid="live-alarm-empty">
+                    <div class="et">暂无告警</div>
+                    <div class="es">{{ alarmEmptyHint }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in records" v-else :key="row.id" data-testid="live-alarm-row">
                 <td class="mono">{{ row.id }}</td>
@@ -216,11 +236,11 @@
         </label>
         <label class="fld">
           <span>阈值</span>
-          <input v-model="ruleForm.threshold" type="number" min="0" step="0.01" data-testid="live-alarm-rule-threshold" />
+          <input v-model="ruleForm.threshold" type="number" min="0" step="0.01" data-testid="live-alarm-rule-threshold" :style="ruleThresholdBad ? 'border-color: var(--red)' : ''" />
         </label>
         <label class="fld">
           <span>窗口（分钟，可空）</span>
-          <input v-model="ruleForm.window" type="number" min="1" max="60" data-testid="live-alarm-rule-window" />
+          <input v-model="ruleForm.window" type="number" min="1" max="60" data-testid="live-alarm-rule-window" :style="ruleWindowBad ? 'border-color: var(--red)' : ''" />
         </label>
         <label class="fld">
           <span>级别</span>
@@ -253,8 +273,9 @@
           </select>
         </label>
         <label class="fld">
-          <span>说明</span>
+          <span>说明（建议必填）</span>
           <input v-model="handleForm.handleRemark" maxlength="512" data-testid="live-alarm-handle-remark" />
+          <p class="hint" data-testid="live-alarm-remark-hint">{{ remarkHint }}</p>
         </label>
         <p v-if="handleError" class="hint bad">{{ handleError }}</p>
         <div class="drawer-f">
@@ -297,7 +318,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
@@ -342,6 +363,20 @@ const records = ref<AlarmRow[]>([])
 const rules = ref<RuleRow[]>([])
 const stats = ref<Stats | null>(null)
 const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '' })
+const unhandledCount = computed(() => Number(stats.value?.byHandleStatus?.UNHANDLED || 0))
+const severeOpen = computed(() => records.value.some((row) => row.alarmLevel === 3 && row.handleStatus === 'UNHANDLED'))
+const alarmEmptyHint = computed(() =>
+  filters.sessionCode.trim() || filters.alarmLevel || filters.handleStatus
+    ? '没有符合当前场次、级别或处置状态的告警。'
+    : '规则命中后出现在这里。超过 30 分钟未处理会标已升级。',
+)
+const remarkHint = computed(() => {
+  if (handleForm.handleStatus === 'FALSE_ALARM') return '误报请写明依据。'
+  if (handleForm.handleStatus === 'HANDLED') return '已处理请附结果说明。'
+  return '已确认表示已知晓，说明可以后补。'
+})
+const ruleThresholdBad = computed(() => ruleError.value.includes('1009') && /threshold/.test(ruleError.value))
+const ruleWindowBad = computed(() => ruleError.value.includes('1009') && /window/.test(ruleError.value))
 
 const ruleOpen = ref(false)
 const editingId = ref<number | null>(null)
@@ -407,8 +442,9 @@ watch(
 function switchTab(name: 'records' | 'rules' | 'stats') {
   tab.value = name
   error.value = ''
-  if (name === 'rules') loadRules()
-  else if (name === 'stats') loadStats()
+  if (name === 'records') loadRecords()
+  else if (name === 'rules') loadRules()
+  else loadStats()
 }
 
 async function loadRecords() {
@@ -436,7 +472,6 @@ async function loadRules() {
 }
 
 async function loadStats() {
-  error.value = ''
   try {
     const res = await http.get('/live/alarm/stats')
     stats.value = res.data.data
@@ -570,5 +605,9 @@ async function submitHandle() {
   }
 }
 
-onMounted(loadRules)
+onMounted(async () => {
+  await loadRules()
+  await loadRecords()
+  await loadStats()
+})
 </script>
