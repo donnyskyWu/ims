@@ -58,7 +58,10 @@ test.describe('flow start todo approve closure', () => {
     await expect(todoTable).toBeVisible()
     const todoRow = todoTable.locator('tbody tr').filter({ hasText: instanceNo }).first()
     await expect(todoRow).toBeVisible({ timeout: 15_000 })
-    await todoRow.getByText('通过').click()
+    await todoRow.getByText('通过', { exact: true }).click()
+    const approve = page.locator('aside.drawer.on')
+    await expect(approve.getByTestId('flow-approve-copy')).toBeVisible()
+    await approve.getByTestId('flow-approve-confirm').click()
 
     await expect(todoTable.locator('tbody tr').filter({ hasText: instanceNo })).toHaveCount(0, { timeout: 15_000 })
 
