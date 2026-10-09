@@ -1544,6 +1544,7 @@ def recharge_summary_export(
     token = secrets.token_urlsafe(24)
     filename = f"recharge_summary_{period}_{group_by}.{suffix}"
     _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, media, filename, actor.id)
+    totals = payload["totals"]
     return ok(
         {
             "downloadUrl": f"/admin-api/ims/account/recharge/summary/export/file?token={token}",
@@ -1552,6 +1553,8 @@ def recharge_summary_export(
             "month": period,
             "groupBy": group_by,
             "format": fmt,
+            "recordCount": totals["recordCount"],
+            "totalAmount": totals["totalAmount"],
         }
     )
 
