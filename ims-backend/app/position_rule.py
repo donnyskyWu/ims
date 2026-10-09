@@ -53,15 +53,22 @@ def rule_vo(db: Session, rule: PositionRule) -> dict:
     }
 
 
-def validate_grant(db: Session, body: RuleBody) -> list[Role] | None:
+def validate_grant(db: Session, body: RuleBody) -> list[Role]:
     name = (body.ruleName or "").strip()
     position = (body.dingtalkPosition or "").strip()
-    if not name or len(name) > 64 or not position or len(position) > 64:
-        return None
-    if body.description and len(body.description) > 200:
-        return None
+    description = (body.description or "").strip()
+    if not name:
+        raise ValueError("规则名必填")
+    if len(name) > 64:
+        raise ValueError("规则名不能超过 64 字")
+    if not position:
+        raise ValueError("钉钉岗位必填")
+    if len(position) > 64:
+        raise ValueError("钉钉岗位不能超过 64 字")
+    if len(description) > 200:
+        raise ValueError("说明不能超过 200 字")
     if not body.grantRoleIds:
-        return None
+        raise ValueError("请选择授予角色")
     roles: list[Role] = []
     for role_id in body.grantRoleIds:
         role = db.get(Role, int(role_id))
@@ -130,10 +137,10 @@ def create_rule(body: RuleBody, db: Session = Depends(db_session), user: User = 
         roles = validate_grant(db, body)
     except LookupError:
         return fail(1504, "资源不可用")
-    except PermissionError:
-        return fail(1002, "待配置角色不可授予")
-    if roles is None:
-        return fail(1001, "供给规则字段不合法")
+    except PermissionError as exc:
+        return fail(1002, f"角色「{exc}」尚未配置权限，用户将无任何权限")
+    except ValueError as exc:
+        return fail(1001, str(exc))
     position = body.dingtalkPosition.strip()
     if enabled_conflict(db, position):
         return fail(1001, "该岗位已有启用版本")
@@ -166,10 +173,10 @@ def edit_rule(rule_id: int, body: RuleBody, db: Session = Depends(db_session), u
         roles = validate_grant(db, body)
     except LookupError:
         return fail(1504, "资源不可用")
-    except PermissionError:
-        return fail(1002, "待配置角色不可授予")
-    if roles is None:
-        return fail(1001, "供给规则字段不合法")
+    except PermissionError as exc:
+        return fail(1002, f"角色「{exc}」尚未配置权限，用户将无任何权限")
+    except ValueError as exc:
+        return fail(1001, str(exc))
     position = body.dingtalkPosition.strip()
     if enabled_conflict(db, position, ignore_id=current.id):
         return fail(1001, "该岗位已有启用版本")

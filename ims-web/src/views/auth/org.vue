@@ -203,8 +203,8 @@
           <div class="fld"><label>岗位</label><div data-testid="org-detail-position">{{ text(detail.positionName) }}</div></div>
           <div class="fld"><label>部门</label><div data-testid="org-detail-dept">{{ names(detail.deptNames) }}</div></div>
           <div class="fld"><label>账号状态</label><div data-testid="org-detail-status">{{ statusText(detail.status) }}</div></div>
-          <div class="fld"><label>授予角色</label><div data-testid="org-detail-roles">{{ names(detail.grantedRoleNames) }}</div></div>
-          <div class="fld"><label>权限码</label><div data-testid="org-detail-perms">{{ names(detail.grantedPermCodes) }}</div></div>
+          <div class="fld"><label>授予角色</label><div data-testid="org-detail-roles">{{ roleEdge(detail.grantedRoleNames) }}</div></div>
+          <div class="fld"><label>权限码</label><div data-testid="org-detail-perms">{{ permEdge(detail.grantedPermCodes) }}</div></div>
           <div class="fld"><label>权限缓冲至</label><div data-testid="org-detail-buffer">{{ text(detail.bufferUntil) }}</div></div>
         </div>
         <div v-if="diff" data-testid="org-user-diff" class="card" style="margin: 12px 0">
@@ -217,6 +217,7 @@
         </div>
         <div data-testid="org-user-holdings" class="card">
           <div style="font-weight: 600">名下终态</div>
+          <p v-if="holdingsEmpty" class="sub" data-testid="org-holdings-empty">名下没有在用账号、资产或待回收证件。</p>
           <div>账号在用 {{ holding.accountInUse }}</div>
           <div>资产在用 {{ holding.assetInUse }}</div>
           <div>证件生效或待回收 {{ holding.certActive }}</div>
@@ -309,6 +310,10 @@ const holding = computed(() => {
   }
 })
 
+const holdingsEmpty = computed(
+  () => !holding.value.accountInUse && !holding.value.assetInUse && !holding.value.certActive && !holding.value.certRecycled,
+)
+
 const delayStyle = computed(() => {
   if (!metricReady.value || metricError.value) return {}
   if (metrics.level === 'red') return { color: '#c62828' }
@@ -354,6 +359,16 @@ function text(value: unknown) {
 function names(value: unknown) {
   if (!Array.isArray(value) || !value.length) return '—'
   return value.map((item) => String(item)).join('、')
+}
+
+function roleEdge(value: unknown) {
+  const label = names(value)
+  return label === '—' ? '未授予角色' : label
+}
+
+function permEdge(value: unknown) {
+  const label = names(value)
+  return label === '—' ? '尚未配置权限，不放行任何功能' : label
 }
 
 function syncText(row: Record<string, unknown>) {

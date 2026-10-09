@@ -11,7 +11,8 @@
       </div>
     </div>
     <div class="hint" style="margin-bottom: 10px">本部门不含下级。待配置角色不放行任何权限。权限预览走角色接口。</div>
-    <p v-if="error" class="hint bad">{{ error }}</p>
+    <p v-if="edgeNote" class="hint" data-testid="role-edge-note">{{ edgeNote }}</p>
+    <p v-if="error" class="hint bad" data-testid="role-form-error">{{ error }}</p>
     <div class="g4">
       <div class="card stat"><span class="l">角色总数</span><div class="n">{{ ready && !error ? rows.length : '—' }}</div><div class="d">{{ error || 'GET /system/role/list' }}</div></div>
       <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">PENDING_CONFIG</div></div>
@@ -89,12 +90,13 @@
       </div>
       <div class="fld" style="margin-bottom: 12px">
         <label>数据范围（本部门不含下级）</label>
-        <select v-model="draft.scope">
+        <select v-model="draft.scope" data-testid="role-scope">
           <option value="ALL">全部</option>
           <option value="DEPT">本部门</option>
           <option value="IP_GROUP">IP 组</option>
           <option value="SELF">仅本人</option>
         </select>
+        <div v-if="draft.scope === 'DEPT'" class="sub" data-testid="role-dept-edge">本部门只含本级，不含下级。</div>
       </div>
       <div class="fld" style="margin-bottom: 12px">
         <label>钉钉岗位</label>
@@ -114,10 +116,10 @@
           <option value="RWD">RWD</option>
         </select>
       </div>
-      <p v-if="saveError" class="hint bad">{{ saveError }}</p>
+      <p v-if="saveError" class="hint bad" data-testid="role-save-error">{{ saveError }}</p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="drawer = false">取消</button>
-        <button class="btn btn-pri" type="button" @click="save">保存</button>
+        <button class="btn btn-pri" type="button" data-testid="role-save" @click="save">保存</button>
       </template>
     </ProtoDrawer>
   </div>
@@ -138,6 +140,7 @@ const error = ref('')
 const diff = ref('')
 const previewError = ref('')
 const positionName = ref('')
+const edgeNote = ref('')
 const statusFilter = ref('')
 const keyword = ref('')
 const drawer = ref(false)
@@ -212,13 +215,21 @@ async function loadMenus() {
 
 async function fromPosition() {
   error.value = ''
-  if (!positionName.value.trim()) {
+  edgeNote.value = ''
+  const position = positionName.value.trim()
+  if (!position) {
     error.value = '请填写钉钉岗位'
     return
   }
+  if ([...position].length > 64) {
+    error.value = '钉钉岗位不能超过 64 字'
+    return
+  }
   try {
-    await http.post('/system/role/from-position', { dingtalkPosition: positionName.value.trim() })
+    const res = await http.post('/system/role/from-position', { dingtalkPosition: position })
+    const created = Boolean((res.data?.data as { created?: boolean } | undefined)?.created)
     positionName.value = ''
+    edgeNote.value = created ? '已生成待配置角色，权限为空，配置前不放行' : '该岗位已有角色，未重复创建'
     await load()
   } catch (e: unknown) {
     error.value = errorMessage(e)
@@ -238,6 +249,19 @@ function openEdit(row: Record<string, unknown>) {
 
 async function save() {
   saveError.value = ''
+  edgeNote.value = ''
+  const position = draft.position.trim()
+  if ([...position].length > 64) {
+    saveError.value = '钉钉岗位不能超过 64 字'
+    return
+  }
+  const clash = rows.value.some(
+    (row) => String(row.id) !== String(editingId.value) && position && String(row.dingtalkPosition || '') === position,
+  )
+  if (clash) {
+    saveError.value = '钉钉岗位已绑定角色'
+    return
+  }
   const id = editingId.value
   const permDetail: Record<string, string> = {}
   for (const menu of flatMenus.value) {
@@ -252,8 +276,12 @@ async function save() {
     await http.put(`/system/role/${id}/menus`, { menuIds })
     await http.put(`/system/role/${id}/perm-detail`, { permDetail })
     await http.put(`/system/role/${id}/data-scope`, { dataScope: draft.scope })
-    await http.put(`/system/role/${id}/dingtalk-position`, { dingtalkPosition: draft.position })
+    await http.put(`/system/role/${id}/dingtalk-position`, { dingtalkPosition: position })
     drawer.value = false
+    const bits: string[] = []
+    if (!Object.keys(permDetail).length) bits.push('未勾选功能点，保存后不放行任何权限')
+    if (draft.scope === 'DEPT') bits.push('数据范围为本部门，不含下级')
+    edgeNote.value = bits.join('。')
     await load()
   } catch (e: unknown) {
     saveError.value = errorMessage(e)
