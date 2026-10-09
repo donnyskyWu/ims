@@ -35,12 +35,17 @@ test.describe('live local empty and edge copy', () => {
 
     await page.locator('input[placeholder="场次 ID"]').fill('IMS19990101DYS0000')
     const emptyList = page.waitForResponse(
-      (r) => r.url().includes('/live/sessions/list') && r.request().method() === 'GET' && r.status() === 200,
+      (r) =>
+        r.url().includes('/live/sessions/list') &&
+        r.url().includes('sessionCode=IMS19990101DYS0000') &&
+        r.request().method() === 'GET' &&
+        r.status() === 200,
     )
     await page.getByRole('button', { name: '查询' }).click()
     const emptyBody = (await (await emptyList).json()) as { code: number; data?: { total?: number } }
     expect(emptyBody.code).toBe(0)
     expect(emptyBody.data?.total).toBe(0)
+    await expect(page.locator('.pg-total')).toHaveText('共 0 条')
 
     const exportResp = page.waitForResponse(
       (r) => r.url().includes('/live/ledger/export') && !r.url().includes('/file') && r.request().method() === 'GET',
