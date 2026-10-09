@@ -23,6 +23,10 @@
       <button class="cattab" :class="{ on: statusFilter === 'PENDING_CONFIG' }" type="button" data-testid="role-status-pending" @click="statusFilter = 'PENDING_CONFIG'">待配置</button>
       <button class="cattab" :class="{ on: statusFilter === 'ENABLED' }" type="button" @click="statusFilter = 'ENABLED'">启用</button>
     </div>
+    <form class="qbar" style="margin-bottom: 10px" @submit.prevent>
+      <input v-model="keyword" data-testid="role-keyword" placeholder="角色编码 / 名称 / 岗位" style="width: 220px" />
+      <button class="btn btn-sec btn-sm" type="button" data-testid="role-reset" @click="keyword = ''">重置</button>
+    </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -44,10 +48,10 @@
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!filtered.length">
-              <td colspan="9">
+              <td colspan="9" style="white-space: normal">
                 <div class="empty" data-testid="role-list-empty">
-                  <div class="et">{{ error || (statusFilter ? '没有符合条件的角色' : '没有角色') }}</div>
-                  <div v-if="statusFilter === 'PENDING_CONFIG'" class="es">从钉钉岗位生成的角色会停在待配置，权限矩阵为空时不放行。</div>
+                  <div class="et">{{ roleEmptyTitle }}</div>
+                  <div v-if="roleEmptyHint" class="es">{{ roleEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -135,6 +139,7 @@ const diff = ref('')
 const previewError = ref('')
 const positionName = ref('')
 const statusFilter = ref('')
+const keyword = ref('')
 const drawer = ref(false)
 const saveError = ref('')
 const editingId = ref<number | string>('')
@@ -145,9 +150,30 @@ const user = useUserStore()
 const pending = computed(() => rows.value.filter((row) => row.status === 'PENDING_CONFIG').length)
 const autoCount = computed(() => rows.value.filter((row) => row.source === 'DINGTALK_AUTO').length)
 const enabled = computed(() => rows.value.filter((row) => row.status === 'ENABLED').length)
-const filtered = computed(() =>
-  statusFilter.value ? rows.value.filter((row) => row.status === statusFilter.value) : rows.value,
-)
+const filtered = computed(() => {
+  const byStatus = statusFilter.value
+    ? rows.value.filter((row) => row.status === statusFilter.value)
+    : rows.value
+  const query = keyword.value.trim().toLowerCase()
+  if (!query) return byStatus
+  return byStatus.filter((row) => {
+    const key = String(row.roleKey || '').toLowerCase()
+    const name = String(row.roleName || '').toLowerCase()
+    const position = String(row.dingtalkPosition || '').toLowerCase()
+    return key.includes(query) || name.includes(query) || position.includes(query)
+  })
+})
+const roleEmptyTitle = computed(() => {
+  if (error.value) return error.value
+  if (keyword.value.trim()) return '没有匹配的角色'
+  if (statusFilter.value) return '没有符合条件的角色'
+  return '没有角色'
+})
+const roleEmptyHint = computed(() => {
+  if (keyword.value.trim()) return '按角色编码、名称或钉钉岗位再筛。'
+  if (statusFilter.value === 'PENDING_CONFIG') return '从钉钉岗位生成的角色会停在待配置，权限矩阵为空时不放行。'
+  return ''
+})
 
 function menuCount(row: Record<string, unknown>) {
   return Array.isArray(row.menuIds) ? row.menuIds.length : 0

@@ -257,6 +257,111 @@ def test_transfer_records_buffer_and_resign_freezes_local_user():
         db.close()
 
 
+def _mapped_user(db, nickname: str, ding: str, mobile: str, sync_status: str) -> User:
+    user = User(
+        username=ding,
+        nickname=nickname,
+        mobile=mobile,
+        status="ENABLED",
+        dingtalk_user_id=ding,
+        tenant_id=0,
+    )
+    db.add(user)
+    db.flush()
+    db.add(
+        UserMapping(
+            user_id=user.id,
+            dingtalk_user_id=ding,
+            union_id=ding,
+            dept_ids=[],
+            sync_status=sync_status,
+            tenant_id=0,
+            deleted=0,
+        )
+    )
+    return user
+
+
+def test_org_lists_filter_sync_status_and_misses_stay_empty():
+    ok_hire = hire(event_id="evt-sync-ok", ding="dt-sync-ok", mobile="13700010001")
+    ok_hire["payloadJson"]["nickname"] = "四态成功"
+    assert post_event(ok_hire).json()["code"] == 0
+    consume()
+    db = SessionLocal()
+    try:
+        pending = _mapped_user(db, "四态待处理", "dt-sync-pending", "13700010002", "PENDING")
+        retry = _mapped_user(db, "四态重试", "dt-sync-retry", "13700010003", "FAILED")
+        dead = _mapped_user(db, "四态死信", "dt-sync-dead", "13700010004", "FAILED")
+        db.add(
+            OrgEvent(
+                dingtalk_event_id="evt-sync-retry",
+                event_type="hire",
+                idempotency_key="idem-sync-retry",
+                user_id=retry.id,
+                sync_status="FAILED_RETRY",
+                dead_letter=0,
+                tenant_id=0,
+            )
+        )
+        db.add(
+            OrgEvent(
+                dingtalk_event_id="evt-sync-dead",
+                event_type="transfer",
+                idempotency_key="idem-sync-dead",
+                user_id=dead.id,
+                sync_status="FAILED_RETRY",
+                dead_letter=1,
+                tenant_id=0,
+            )
+        )
+        db.commit()
+        assert pending.id
+    finally:
+        db.close()
+
+    token = login()
+    headers = auth(token)
+
+    def names(sync_status: str) -> set[str]:
+        page = client.get(
+            "/admin-api/ims/auth/org/users",
+            headers=headers,
+            params={"keyword": "四态", "syncStatus": sync_status, "pageSize": 20},
+        )
+        assert page.json()["code"] == 0
+        return {row["nickname"] for row in page.json()["data"]["list"]}
+
+    assert names("SUCCESS") == {"四态成功"}
+    assert names("PENDING") == {"四态待处理"}
+    assert names("FAILED_RETRY") == {"四态重试"}
+    assert names("DEAD_LETTER") == {"四态死信"}
+    missed = client.get(
+        "/admin-api/ims/auth/org/users",
+        headers=headers,
+        params={"keyword": "没有这个人", "pageSize": 20},
+    )
+    assert missed.json()["data"]["total"] == 0
+
+    dead_events = client.get(
+        "/admin-api/ims/auth/org/events",
+        headers=headers,
+        params={"syncStatus": "DEAD_LETTER", "pageSize": 20},
+    ).json()["data"]["list"]
+    assert {row["dingtalkEventId"] for row in dead_events} == {"evt-sync-dead"}
+    retry_events = client.get(
+        "/admin-api/ims/auth/org/events",
+        headers=headers,
+        params={"eventType": "hire", "syncStatus": "FAILED_RETRY", "pageSize": 20},
+    ).json()["data"]["list"]
+    assert {row["dingtalkEventId"] for row in retry_events} == {"evt-sync-retry"}
+    empty_events = client.get(
+        "/admin-api/ims/auth/org/events",
+        headers=headers,
+        params={"eventType": "resign", "syncStatus": "SUCCESS", "pageSize": 20},
+    )
+    assert empty_events.json()["data"]["total"] == 0
+
+
 def test_callback_ack_stays_under_half_second():
     durations = []
     for index in range(30):

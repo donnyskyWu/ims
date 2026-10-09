@@ -7,6 +7,10 @@
       </div>
     </div>
     <p v-if="error" class="hint bad">{{ error }}</p>
+    <form class="qbar" style="margin-bottom: 10px" @submit.prevent>
+      <input v-model="keyword" data-testid="param-keyword" placeholder="key / 说明" style="width: 220px" />
+      <button class="btn btn-sec btn-sm" type="button" data-testid="param-reset" @click="keyword = ''">重置</button>
+    </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -22,10 +26,15 @@
             <tr v-if="!ready">
               <td colspan="4"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!rows.length">
-              <td colspan="4"><div class="empty"><div class="et">没有参数</div></div></td>
+            <tr v-else-if="!visible.length">
+              <td colspan="4" style="white-space: normal">
+                <div class="empty" data-testid="param-empty">
+                  <div class="et">{{ error || (keyword.trim() ? '没有匹配的参数' : '没有参数') }}</div>
+                  <div v-if="keyword.trim()" class="es">按 key 或说明再筛，未知 key 不能新建。</div>
+                </div>
+              </td>
             </tr>
-            <tr v-for="row in rows" v-else :key="String(row.paramKey)">
+            <tr v-for="row in visible" v-else :key="String(row.paramKey)" data-testid="param-row">
               <td class="mono">{{ row.paramKey }}</td>
               <td>{{ row.remark }}</td>
               <td class="mono">{{ displayValue(row) }}</td>
@@ -59,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 import { asList, readData } from '../../api/read'
@@ -72,6 +81,17 @@ const saveError = ref('')
 const editingKey = ref('')
 const editingValue = ref('')
 const editingSecret = ref(false)
+const keyword = ref('')
+
+const visible = computed(() => {
+  const query = keyword.value.trim().toLowerCase()
+  if (!query) return rows.value
+  return rows.value.filter((row) => {
+    const key = String(row.paramKey || '').toLowerCase()
+    const remark = String(row.remark || '').toLowerCase()
+    return key.includes(query) || remark.includes(query)
+  })
+})
 
 function displayValue(row: Record<string, unknown>) {
   const v = String(row.paramValue ?? '')
