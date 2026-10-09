@@ -78,6 +78,7 @@
 | **E2E-S5-05 (#72)** | `closure-asset-reverse-entry.spec.ts` | 纯 UI 绑定 `AC-E2E-FIN` / `IMS20261008DYE0072` · 不存在入口 **1500** · 领用后账号反查「在用」· 场次反查不含只绑账号的那台 |
 | **E2E-S1-01/03/04 与 S1-05～11 子集 (#73)** | `closure-s1-lifecycle.spec.ts` | 事件由 `s1_lifecycle_seed` 在浏览器外入队 · 之后纯 UI：在职/工作台、领用 `AC-E2E-S1`、调岗 diff、冻结与 **1006**、归还和换证后名下在用为 0 |
 | **E2E-S10 问卷组卷/判分/重答 (#79)** | `closure-train-quiz-retake.spec.ts` | 纯 UI · 手工组卷及格分超题数拦截 · 交卷判分 · 不及格重答覆盖为最新成绩 · 及格后 **CONFIRMED** |
+| **E2E-S10 成绩空态/重答入口 (#164)** | `closure-train-quiz-score-empty.spec.ts` | 纯 UI · 未作答「暂无成绩」· 不及格刷新后仍见最新分与「重新作答」· 学习记录「去重答」后再交卷覆盖为 **2** |
 | **E2E-S10 资料版本/周更/任务编辑 (#126)** | `closure-train-material-version.spec.ts` | 纯 UI · 更新资料 V2 且详情留 V1 · 新资料不在未更新清单 · 截止前改任务名学习记录仍在 · 过去截止 **1102** |
 | **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |

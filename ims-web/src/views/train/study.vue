@@ -51,6 +51,8 @@
         <div v-if="task.confirmType === 'QUIZ' && confirmStatus !== 'CONFIRMED'" class="quiz-paper">
           <div class="quiz-head">自测问卷 · 及格 {{ task.passScore }} 分 · 共 {{ quiz.length }} 题</div>
           <p class="hint">全部题目必答。提交后将判分，未及格可重答，成绩保留最新一次。</p>
+          <p v-if="latestScore == null" class="hint score-empty" data-testid="train-quiz-score-empty">暂无成绩</p>
+          <p v-else class="hint grade-banner" data-testid="train-quiz-score-latest">{{ gradeText }}</p>
           <div v-if="!quiz.length" class="hint" style="color: var(--red)">问卷未配置</div>
           <div v-for="(q, qi) in quiz" :key="qi" class="quiz-q">
             <div class="q-title">{{ qi + 1 }}. {{ q.question }}</div>
@@ -65,16 +67,27 @@
               {{ opt }}
             </label>
           </div>
-          <button
-            class="btn btn-pri btn-sm"
-            type="button"
-            :disabled="busy || !quizReady"
-            :title="quizReady ? '' : '请答完全部题目'"
-            @click="showQuizConfirm = true"
-          >
-            提交问卷
-          </button>
-          <p v-if="gradeText" class="hint grade-banner">{{ gradeText }}</p>
+          <div class="acts" style="margin-top: 8px; gap: 8px; flex-wrap: wrap">
+            <button
+              class="btn btn-pri btn-sm"
+              type="button"
+              :disabled="busy || !quizReady"
+              :title="quizReady ? '' : '请答完全部题目'"
+              @click="showQuizConfirm = true"
+            >
+              提交问卷
+            </button>
+            <button
+              v-if="latestScore != null"
+              class="btn btn-sec btn-sm"
+              type="button"
+              data-testid="train-quiz-retake"
+              :disabled="busy"
+              @click="startRetake"
+            >
+              重新作答
+            </button>
+          </div>
         </div>
 
         <p v-if="actionError" class="hint" style="color: var(--red); margin-top: 8px">{{ actionError }}</p>
@@ -130,6 +143,7 @@ const confirmStatus = ref<'NOT_CONFIRMED' | 'CONFIRMED'>('NOT_CONFIRMED')
 const loadError = ref('')
 const actionError = ref('')
 const gradeText = ref('')
+const latestScore = ref<number | null>(null)
 const passedScore = ref<number | null>(null)
 const busy = ref(false)
 const showQuizConfirm = ref(false)
@@ -157,6 +171,15 @@ const allMaterialsDone = computed(() => {
 
 function materialPct(id: number) {
   return materialProgress.value[id] ?? 0
+}
+
+function failGradeText(score: number, passScore: number) {
+  return `得分 ${score}，及格 ${passScore}，未通过，可重答`
+}
+
+function startRetake() {
+  actionError.value = ''
+  answers.splice(0, answers.length, ...quiz.value.map(() => null))
 }
 
 function parseMatProgress(raw: Record<string, number> | undefined) {
@@ -204,6 +227,10 @@ async function loadTaskAndProgress() {
     confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
     if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
       passedScore.value = rec.confirmScore
+      latestScore.value = rec.confirmScore
+    } else if (found.confirmType === 'QUIZ' && rec.confirmScore != null) {
+      latestScore.value = rec.confirmScore
+      gradeText.value = failGradeText(rec.confirmScore, found.passScore ?? 0)
     }
   }
 }
@@ -225,12 +252,14 @@ async function submitQuiz() {
     }
     const data = res.data.data || {}
     if (data.isPassed === false || data.confirmStatus !== 'CONFIRMED') {
-      gradeText.value = `得分 ${data.confirmScore}，及格 ${data.passScore}，未通过，可重答`
+      latestScore.value = data.confirmScore ?? null
+      gradeText.value = failGradeText(data.confirmScore, data.passScore)
       confirmStatus.value = 'NOT_CONFIRMED'
       return
     }
     confirmStatus.value = 'CONFIRMED'
     passedScore.value = data.confirmScore ?? null
+    latestScore.value = data.confirmScore ?? null
     progressPct.value = 100
     gradeText.value = ''
   } catch {
@@ -348,9 +377,13 @@ onMounted(loadTaskAndProgress)
   cursor: pointer;
 }
 .grade-banner {
-  margin-top: 12px;
+  margin-top: 8px;
   color: var(--red);
   font-weight: 600;
+}
+.score-empty {
+  margin-top: 8px;
+  color: var(--text2);
 }
 .modal-mask {
   position: fixed;
