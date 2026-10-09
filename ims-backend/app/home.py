@@ -175,6 +175,14 @@ def trend_placeholder() -> list[dict]:
     return [{"label": f"D-{i}", "play": 40 + i * 5, "engage": 20 + i * 3} for i in range(6, -1, -1)]
 
 
+# 日期与 IP 组只影响账号数。今日作品、播放趋势、采集异常和待办保持本地固定口径。
+FILTER_NOTE = (
+    "账号数随 IP 组变化。今日作品保持数据延迟，不请求 Football。"
+    "播放趋势为占位，不随日期或 IP 组变化。"
+    "采集异常固定统计近 7 天，不随日期或 IP 组变化。待办不按 IP 组或日期缩小。"
+)
+
+
 @router.get("/dashboard")
 def home_dashboard(
     ipGroupId: int | None = None,
@@ -196,13 +204,29 @@ def home_dashboard(
             return fail(1201, "无 IP 组权限")
     since = (utcnow() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     kpis = [
-        {"key": "accounts", "label": "账号数", "value": str(account_count(ops, tenant_id, ipGroupId))},
-        {"key": "worksToday", "label": "今日作品", "value": "数据延迟", "wow": "采集 KPI 不直连 Football"},
-        {"key": "pendingTodos", "label": "待办任务", "value": str(pending_todo_count(db, actor.id))},
+        {
+            "key": "accounts",
+            "label": "账号数",
+            "value": str(account_count(ops, tenant_id, ipGroupId)),
+            "wow": "随 IP 组变化",
+        },
+        {
+            "key": "worksToday",
+            "label": "今日作品",
+            "value": "数据延迟",
+            "wow": "采集 KPI 不直连 Football · 不随日期或 IP 组变化",
+        },
+        {
+            "key": "pendingTodos",
+            "label": "待办任务",
+            "value": str(pending_todo_count(db, actor.id)),
+            "wow": "不按 IP 组或日期缩小",
+        },
         {
             "key": "collectAlert",
             "label": "采集异常",
             "value": str(collect_fail_count(ops, tenant_id, since)),
+            "wow": "固定近 7 天，不随日期或 IP 组变化",
         },
     ]
     todos = aggregate_todos(db, ops, actor, 8)
@@ -216,6 +240,7 @@ def home_dashboard(
             "ipGroupFilter": str(ipGroupId) if ipGroupId else None,
             "dateFrom": dateFrom or None,
             "dateTo": dateTo or None,
+            "filterNote": FILTER_NOTE,
         }
     )
 

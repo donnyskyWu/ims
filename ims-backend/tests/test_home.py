@@ -29,6 +29,16 @@ def test_home_dashboard_kpis_and_shortcuts():
     keys = {k["key"] for k in data["kpis"]}
     assert keys == {"accounts", "worksToday", "pendingTodos", "collectAlert"}
     assert data["kpis"][1]["value"] == "数据延迟"
+    assert "Football" in data["kpis"][1]["wow"]
+    assert "不随日期" in data["kpis"][1]["wow"]
+    assert data["kpis"][0]["wow"] == "随 IP 组变化"
+    assert "近 7 天" in data["kpis"][3]["wow"]
+    assert "不按 IP 组或日期缩小" in data["kpis"][2]["wow"]
+    note = data["filterNote"]
+    assert "账号数随 IP 组" in note
+    assert "不请求 Football" in note
+    assert "近 7 天" in note
+    assert "不按 IP 组或日期缩小" in note
     assert len(data["shortcuts"]) >= 4
     assert any(s["route"] == "/ims/collect/task" for s in data["shortcuts"])
 

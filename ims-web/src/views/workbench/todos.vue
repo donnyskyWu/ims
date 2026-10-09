@@ -175,12 +175,14 @@ const filters = reactive({ status: 'PENDING', taskType: '', keyword: '' })
 
 const emptyTitle = computed(() => {
   if (filters.taskType) return '该类型下暂无待办'
+  if (filters.status === 'EXPIRED' && filters.keyword.trim()) return '没有匹配的已过期待办'
   if (filters.status === 'EXPIRED') return '没有已过期待办'
   if (filters.keyword.trim()) return '没有匹配的待办'
   return '暂无待办'
 })
 
 const emptyHint = computed(() => {
+  if (filters.status === 'EXPIRED' && filters.keyword.trim() && !filters.taskType) return '已过期列表里没有这个标题或摘要。'
   if (filters.taskType || filters.keyword.trim() || filters.status === 'EXPIRED') return '换一个类型、状态或关键词再查。'
   return '待处理事项会出现在这里。'
 })
