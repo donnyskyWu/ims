@@ -69,7 +69,7 @@ test.describe('fin profit history closure', () => {
     await expect(v1).toContainText('81,400.00')
     await page.screenshot({ path: `${SHOTS}/01-history-v1.png`, fullPage: true })
 
-    await page.getByTestId('fin-profit-recalc').click()
+    await drawer.getByTestId('fin-profit-recalc').click()
     const dialog = page.getByTestId('fin-profit-recalc-dialog')
     await expect(dialog).toBeVisible()
     await expect(dialog).toContainText('新版本 V2')

@@ -88,6 +88,7 @@
     <p v-show="tab === 'list'" class="hint" data-testid="fin-profit-sort-hint" style="margin: 0 0 8px">
       按{{ profitLabel }}降序 · 毛利、经营利润、净利润三列同时展示
     </p>
+    <div v-if="recalcMsg" class="hint" data-testid="fin-profit-recalc-msg" style="margin: 8px 0">{{ recalcMsg }}</div>
 
     <div v-if="error && tab === 'list'" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
 
@@ -157,6 +158,17 @@
               <td class="mono" data-testid="fin-profit-calculated-at">{{ formatCalculatedAt(row.calculatedAt) }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(String(row.sessionCode))">详情</button>
+                <button
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-profit-recalc"
+                  style="margin-left: 6px"
+                  :disabled="row.financeStatus === 'LOCKED' || recalcBusy"
+                  :title="recalcTitle(row)"
+                  @click="askListRecalc(row)"
+                >
+                  重算
+                </button>
               </td>
             </tr>
           </tbody>
@@ -326,6 +338,30 @@
         </div>
       </div>
     </div>
+
+    <div v-if="recalcTarget" class="modal-mask" data-testid="fin-profit-recalc-confirm">
+      <div class="card" style="width: 400px; padding: 20px">
+        <h3 style="margin: 0 0 12px">确认重算</h3>
+        <p style="margin: 0">
+          重算将生成新版本 V{{ nextVersion }}，旧结果留痕（FIN-P-R3）
+        </p>
+        <p class="hint" style="margin: 8px 0 0">{{ recalcTarget.sessionCode }}</p>
+        <div class="acts" style="margin-top: 16px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="fin-profit-recalc-cancel" @click="recalcTarget = null">
+            取消
+          </button>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="fin-profit-recalc-ok"
+            :disabled="recalcBusy"
+            @click="confirmRecalc"
+          >
+            确认重算
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -390,9 +426,27 @@ const metrics: { value: ProfitMetric; label: string }[] = [
   { value: 'NET', label: '净利润' },
 ]
 
+type ProfitRow = {
+  sessionCode: string
+  sessionTitle?: string
+  platform?: string
+  gmv?: number
+  grossProfit?: number
+  operatingProfit?: number
+  netProfit?: number
+  netProfitRate?: number
+  settlementStatus?: string
+  calcStatus?: string
+  calculatedAt?: string
+  calcVersion: number
+  financeStatus?: string
+}
+
 const loading = ref(false)
 const error = ref('')
-const rows = ref<Record<string, any>[]>([])
+const recalcMsg = ref('')
+const recalcTarget = ref<ProfitRow | null>(null)
+const rows = ref<ProfitRow[]>([])
 const summary = ref<Record<string, any> | null>(null)
 const drawerOpen = ref(false)
 const detail = ref<ProfitDetail | null>(null)
@@ -412,7 +466,10 @@ const query = reactive({ sessionCode: '', platform: '', calcStatus: '', dateFrom
 const profitLabel = computed(() => metrics.find((item) => item.value === profitType.value)?.label || '净利润')
 const shownProfit = computed(() => Number(summary.value?.shownProfit ?? summary.value?.totalNetProfit ?? 0))
 
-const nextVersion = computed(() => Number(detail.value?.calcVersion || 1) + 1)
+const nextVersion = computed(() => {
+  if (recalcTarget.value) return Number(recalcTarget.value.calcVersion || 0) + 1
+  return Number(detail.value?.calcVersion || 1) + 1
+})
 
 function snapshotParams(row: ProfitDetail | null) {
   return row?.calcRuleSnapshot?.params || {}
@@ -513,6 +570,11 @@ function money(n: unknown) {
   return Math.round(Number(n || 0) * 100) / 100
 }
 
+function recalcTitle(row: ProfitRow) {
+  if (row.financeStatus === 'LOCKED') return '财务期间已结账，重算冻结（1142）'
+  return '手动触发重算（FIN-P-R3）'
+}
+
 function fmt(n: unknown) {
   return money(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -527,7 +589,7 @@ function amtClass(n: unknown) {
   return Number(n || 0) < 0 ? 'neg' : 'pos'
 }
 
-function settlementLabel(s: string) {
+function settlementLabel(s: string | undefined) {
   const map: Record<string, string> = {
     PENDING_CALC: '待计算',
     READY: '待结算',
@@ -613,7 +675,7 @@ async function loadList() {
       rows.value = []
       return
     }
-    rows.value = res.data.data?.list || []
+    rows.value = (res.data.data?.list || []) as ProfitRow[]
   } finally {
     loading.value = false
   }
@@ -653,6 +715,41 @@ async function loadAbnormal() {
 function openAbnormal() {
   tab.value = 'abnormal'
   loadAbnormal()
+}
+
+function askListRecalc(row: ProfitRow) {
+  if (row.financeStatus === 'LOCKED' || recalcBusy.value) return
+  error.value = ''
+  recalcTarget.value = row
+}
+
+async function confirmRecalc() {
+  const row = recalcTarget.value
+  if (!row || recalcBusy.value) return
+  recalcBusy.value = true
+  error.value = ''
+  recalcMsg.value = ''
+  try {
+    const res = await http.post(`/fin/profit/recalc/${row.sessionCode}`)
+    const code = res.data?.code
+    if (code === 1142) {
+      row.financeStatus = 'LOCKED'
+      error.value = res.data?.msg || '财务期间已结账，重算冻结（1142）'
+      recalcTarget.value = null
+      return
+    }
+    if (code !== 0) {
+      error.value = res.data?.msg || '重算失败'
+      return
+    }
+    const data = res.data.data || {}
+    recalcMsg.value = `${data.message || '利润已重算'} · V${data.calcVersion}`
+    recalcTarget.value = null
+    await loadSummary()
+    await loadList()
+  } finally {
+    recalcBusy.value = false
+  }
 }
 
 async function openDetail(sessionCode: string, abnormal?: Record<string, unknown>) {

@@ -530,6 +530,8 @@ def test_fin_period_close_locks_writes_then_r4_red_correction():
 
     recalc = client.post(f"/admin-api/ims/fin/profit/recalc/{code}", headers=auth)
     assert recalc.json()["code"] == 1142
+    locked_list = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code})
+    assert locked_list.json()["data"]["list"][0]["financeStatus"] == "LOCKED"
 
     blocked = client.post(
         f"/admin-api/ims/fin/cost/{code}/correction",
@@ -830,3 +832,30 @@ def test_fin_profit_list_sorts_by_metric_and_summarizes():
     ).json()
     assert net_summary["data"]["profitType"] == "NET"
     assert net_summary["data"]["shownProfit"] == 3500.0
+
+
+def test_fin_profit_manual_recalc_bumps_version():
+    """#115 FIN-P-R3：列表手动重算生成新版本，期间 OPEN 可触发。"""
+    auth = headers()
+    code = approved_session(auth)
+    confirm_cost_for_session(auth, code)
+
+    listed = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code})
+    before = listed.json()["data"]["list"][0]
+    assert before["calcStatus"] == "CALCULATED"
+    assert before["financeStatus"] == "OPEN"
+    version = before["calcVersion"]
+    net = before["netProfit"]
+
+    recalc = client.post(f"/admin-api/ims/fin/profit/recalc/{code}", headers=auth)
+    body = recalc.json()
+    assert body["code"] == 0, body
+    assert body["data"]["calcStatus"] == "RECALCULATED"
+    assert body["data"]["calcVersion"] == version + 1
+    assert body["data"]["message"]
+
+    after = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code}).json()["data"]["list"][0]
+    assert after["calcStatus"] == "RECALCULATED"
+    assert after["calcVersion"] == version + 1
+    assert after["netProfit"] == net
+    assert after["financeStatus"] == "OPEN"
