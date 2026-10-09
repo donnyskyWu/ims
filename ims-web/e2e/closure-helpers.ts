@@ -71,8 +71,10 @@ export async function passContentReviewViaUi(
   await expect(reviewRow).toBeVisible({ timeout: 15_000 })
   await reviewRow.getByRole('button', { name: '审核' }).click()
   const reviewDrawer = page.locator('.drawer.on').filter({ hasText: '审核' })
+  await expect(reviewDrawer.getByText('合规性')).toBeVisible({ timeout: 10_000 })
   const boxes = reviewDrawer.locator('input[type="checkbox"]')
   const n = await boxes.count()
+  expect(n).toBeGreaterThan(0)
   for (let i = 0; i < n; i++) {
     await boxes.nth(i).check()
   }

@@ -22,7 +22,9 @@ from app.models import (
     ContentSopNode,
     ContentSopSeq,
     ContentTask,
+    Todo,
     User,
+    WorkMessage,
 )
 from app.ops_models import IpGroup, PlatformAccount
 from app.settings_runtime import param_bool
@@ -35,6 +37,120 @@ DEFAULT_REVIEW_CHECKLIST = [
     {"itemCode": "QUALITY", "itemDesc": "内容质量", "required": True},
     {"itemCode": "BRAND", "itemDesc": "品牌一致性", "required": True},
 ]
+
+
+def latest_pass_review(db: Session, project: ContentProject) -> ContentReview | None:
+    return db.scalar(
+        select(ContentReview)
+        .where(
+            ContentReview.content_project_id == project.id,
+            ContentReview.deleted == 0,
+            ContentReview.tenant_id == (project.tenant_id or 0),
+            ContentReview.conclusion == "PASS",
+        )
+        .order_by(ContentReview.id.desc())
+        .limit(1)
+    )
+
+
+def publish_readiness(db: Session, project: ContentProject, caption: str = "") -> list[dict]:
+    """发布前清单。审核三项来自最近一次 PASS；文案取发布单文案或正文。"""
+    review = latest_pass_review(db, project)
+    result = (review.checklist_result or {}) if review is not None else {}
+    items = [
+        {
+            "itemCode": "REVIEW_PASSED",
+            "itemDesc": "终审已通过",
+            "passed": bool(project.review_passed),
+            "required": True,
+        }
+    ]
+    for item in DEFAULT_REVIEW_CHECKLIST:
+        items.append(
+            {
+                "itemCode": item["itemCode"],
+                "itemDesc": item["itemDesc"],
+                "passed": bool(result.get(item["itemCode"])),
+                "required": True,
+            }
+        )
+    text = (caption or "").strip() or (project.body or "").strip()
+    items.append({"itemCode": "CAPTION", "itemDesc": "文案或正文", "passed": bool(text), "required": True})
+    return items
+
+
+def publish_checklist_block(db: Session, project: ContentProject, caption: str) -> str | None:
+    missing = [item["itemDesc"] for item in publish_readiness(db, project, caption) if not item["passed"]]
+    if not missing:
+        return None
+    return "发布清单未全部通过：" + "、".join(missing)
+
+
+def _close_publish_todos(db: Session, publish_id: int) -> None:
+    rows = db.scalars(
+        select(Todo).where(
+            Todo.ref_type == "content_publish",
+            Todo.ref_id == publish_id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for row in rows:
+        row.status = "DONE"
+
+
+def sync_publish_overdue(db: Session, actor: User, row: ContentPublish, hours: float) -> None:
+    """超 24h 未回填写入本人工作台待办和一条站内消息。重复打开列表不叠待办。"""
+    if row.publish_status != "PENDING_PUBLISH" or hours < 24 or not row.operator_user_id:
+        return
+    existing = db.scalar(
+        select(Todo.id).where(
+            Todo.assignee_user_id == row.operator_user_id,
+            Todo.task_type == "content_publish",
+            Todo.ref_type == "content_publish",
+            Todo.ref_id == row.id,
+            Todo.status == "PENDING",
+        )
+    )
+    planned = _parse_plan_at(row.plan_publish_at)
+    deadline = planned.astimezone(timezone.utc).replace(tzinfo=None) if planned is not None else None
+    title = f"发布督办：{row.publish_no}"[:128]
+    content = f"计划 {row.plan_publish_at} 已超 {hours} 小时未回填"[:512]
+    if existing is None:
+        db.add(
+            Todo(
+                assignee_user_id=row.operator_user_id,
+                task_type="content_publish",
+                ref_type="content_publish",
+                ref_id=row.id,
+                title=title,
+                content=content,
+                status="PENDING",
+                deadline=deadline,
+                tenant_id=tenant(actor),
+            )
+        )
+    noted = db.scalar(
+        select(WorkMessage.id).where(
+            WorkMessage.user_id == row.operator_user_id,
+            WorkMessage.ref_type == "content_publish",
+            WorkMessage.ref_id == row.id,
+            WorkMessage.source_module == "CONTENT",
+        )
+    )
+    if noted is None:
+        db.add(
+            WorkMessage(
+                user_id=row.operator_user_id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="CONTENT",
+                ref_type="content_publish",
+                ref_id=row.id,
+                tenant_id=tenant(actor),
+            )
+        )
 def iso(dt: datetime | None) -> str:
     if dt is None:
         return ""
@@ -147,6 +263,9 @@ def sop_vo(row: ContentSop) -> dict:
 
 
 def publish_vo(row: ContentPublish, *, archive_id: int | None = None) -> dict:
+    hours = 0.0
+    if row.publish_status == "PENDING_PUBLISH":
+        hours = _overdue_hours(row.plan_publish_at, datetime.now(BJ))
     return {
         "id": row.id,
         "publishNo": row.publish_no,
@@ -155,9 +274,12 @@ def publish_vo(row: ContentPublish, *, archive_id: int | None = None) -> dict:
         "accountNo": row.account_no,
         "platform": row.platform,
         "planPublishAt": row.plan_publish_at,
+        "caption": row.caption or "",
         "publishUrl": row.publish_url,
         "publishStatus": row.publish_status,
         "operatorUserId": row.operator_user_id,
+        "overdueHours": hours,
+        "receiptOverdue": hours >= 24,
         "archiveId": archive_id if archive_id is not None else (row.id if row.archive_no else None),
         "createdAt": iso(row.created_at),
     }
@@ -806,6 +928,10 @@ def review_conclusion(
         return fail(1500, "参数校验失败")
     if body.conclusion == "REJECT_BACK" and not body.rejectItems:
         return fail(1058, "打回缺少结构化未通过项")
+    if body.conclusion == "PASS":
+        result = body.checklistResult or {}
+        if any(not result.get(item["itemCode"]) for item in DEFAULT_REVIEW_CHECKLIST):
+            return fail(1500, "通过前须勾选全部质量清单")
     row.conclusion = body.conclusion
     row.checklist_result = body.checklistResult or {}
     row.reject_items = body.rejectItems
@@ -903,6 +1029,9 @@ def publish_create(
     blocked = ai_publish_block(db, project)
     if blocked:
         return fail(1054, blocked)
+    checklist_gap = publish_checklist_block(db, project, body.caption or "")
+    if checklist_gap:
+        return fail(1054, checklist_gap)
     account = ops.get(PlatformAccount, body.accountId)
     if account is None or account.deleted or (account.tenant_id or 0) != tenant(actor):
         return fail(1500, "参数校验失败")
@@ -1011,6 +1140,7 @@ def publish_pending(
     items = []
     for row in rows:
         hours = _overdue_hours(row.plan_publish_at, now)
+        sync_publish_overdue(db, actor, row, hours)
         if overdueOnly and hours < 24:
             continue
         proj = projects.get(row.content_project_id)
@@ -1076,6 +1206,7 @@ def publish_receipt(
         ]
     }
     row.archived_at = iso(datetime.now(BJ))
+    _close_publish_todos(db, row.id)
     return ok(None)
 
 

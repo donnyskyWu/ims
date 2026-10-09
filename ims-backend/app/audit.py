@@ -45,6 +45,8 @@ def describe(method: str, path: str) -> tuple[str, str, str]:
         module = "系统"
     elif rel.startswith("/fin"):
         module = "财务"
+    elif rel.startswith("/content"):
+        module = "内容"
     action = verb
     for needle, name in (
         ("/system/user", "用户"),
@@ -58,6 +60,9 @@ def describe(method: str, path: str) -> tuple[str, str, str]:
         ("/fin/share/result", "分成单"),
         ("/fin/cost", "成本"),
         ("/fin/profit", "利润"),
+        ("/content/publish", "发布单"),
+        ("/content/review", "审核"),
+        ("/content", "内容"),
     ):
         if needle in rel:
             action = f"{verb}{name}"

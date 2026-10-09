@@ -16,6 +16,7 @@
         <option value="">全部</option>
         <option value="登录">登录</option>
         <option value="业务">业务</option>
+        <option value="内容">内容</option>
         <option value="系统">系统</option>
       </select>
       <span class="sp"></span>
