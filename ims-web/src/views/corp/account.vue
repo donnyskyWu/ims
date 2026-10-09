@@ -928,12 +928,22 @@
           <div data-testid="acct-unlock-status">{{ verifyLabel(String(unlockRow.verifyStatus || '')) }}</div>
         </div>
         <p class="hint">已核对记录不能直接改。管理员解锁后回到未核对，才能再编辑。差异记录须已生成财务核查工单。</p>
-        <p v-if="unlockMsg" class="hint" data-testid="acct-unlock-msg">{{ unlockMsg }}</p>
+        <p v-if="unlockBlocked" class="hint verify-over" data-testid="acct-unlock-blocked">{{ unlockMsg }}</p>
+        <p v-else-if="unlockMsg" class="hint" data-testid="acct-unlock-msg">{{ unlockMsg }}</p>
       </div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="closeUnlock">关闭</button>
         <button
-          v-if="unlockRow && unlockRow.verifyStatus !== 'UNVERIFIED'"
+          v-if="unlockReady"
+          class="btn btn-pri"
+          type="button"
+          data-testid="acct-unlock-edit"
+          @click="continueEditAfterUnlock"
+        >
+          继续编辑
+        </button>
+        <button
+          v-else-if="unlockRow && unlockRow.verifyStatus !== 'UNVERIFIED'"
           class="btn btn-pri"
           type="button"
           data-testid="acct-unlock-submit"
@@ -965,8 +975,13 @@
           />
         </div>
         <p class="hint">差异率 = |冲话费总额 − 平台实际消费| / 平台实际消费。低于 2% 通过；达到或超过 2% 返回 1026，并生成财务核查工单。</p>
-        <p v-if="verifyMsg" class="hint" data-testid="acct-verify-msg" :class="{ 'verify-over': verifyOver }">{{ verifyMsg }}</p>
-        <div v-if="verifyResult" data-testid="acct-verify-result" class="verify-card" :class="{ 'verify-over': verifyOver }">
+        <div v-if="verifyEmpty" data-testid="acct-verify-empty" class="verify-empty">
+          <div class="et">该月无冲话费记录</div>
+          <p data-testid="acct-verify-msg">{{ verifyMsg }}</p>
+          <p class="hint">请先登记该月冲话费，再触发月度核对。</p>
+        </div>
+        <p v-else-if="verifyMsg" class="hint" data-testid="acct-verify-msg" :class="{ 'verify-over': verifyOver }">{{ verifyMsg }}</p>
+        <div v-if="verifyResult && !verifyEmpty" data-testid="acct-verify-result" class="verify-card" :class="{ 'verify-over': verifyOver }">
           <div data-testid="acct-verify-rate">差异率 {{ verifyResult.diffRateText }}</div>
           <div>
             冲话费 ¥{{ moneyText(verifyResult.totalRecharge) }} · 平台消费 ¥{{ moneyText(verifyResult.platformConsumed) }} · 差异 ¥{{ moneyText(verifyResult.diffAmount) }}
@@ -1172,6 +1187,12 @@ const verifyForm = reactive({
   platformConsumed: '',
 })
 const verifyOver = computed(() => !!verifyResult.value?.overThreshold || verifyMsg.value.startsWith('1026'))
+const verifyEmpty = computed(() => verifyMsg.value.includes('该月无冲话费记录'))
+const unlockBlocked = computed(() => /仅管理员|财务核查工单|核对状态不可解锁/.test(unlockMsg.value))
+const unlockReady = computed(() => {
+  if (!unlockRow.value || String(unlockRow.value.verifyStatus || '') !== 'UNVERIFIED') return false
+  return /已解锁|无需解锁/.test(unlockMsg.value)
+})
 
 type TransferRow = {
   id: number
@@ -2046,6 +2067,19 @@ function closeRecharge() {
 function closeUnlock() {
   unlockOpen.value = false
   unlockRow.value = null
+  unlockMsg.value = ''
+}
+
+function markUnlocked(message: string) {
+  unlockMsg.value = message
+  if (unlockRow.value) unlockRow.value = { ...unlockRow.value, verifyStatus: 'UNVERIFIED', verifyDiff: null }
+}
+
+function continueEditAfterUnlock() {
+  const row = unlockRow.value
+  if (!row) return
+  closeUnlock()
+  openRechargeEdit({ ...row, verifyStatus: 'UNVERIFIED' })
 }
 
 function openUnlock(item: Record<string, unknown>) {
@@ -2061,11 +2095,16 @@ async function submitUnlock() {
   try {
     const res = await http.post(`/account/recharge/${unlockRow.value.id}/unlock`, {})
     const data = res.data?.data as { message?: string; verifyStatus?: string }
-    unlockMsg.value = data?.message || '已解锁，可再次编辑'
-    if (unlockRow.value) unlockRow.value = { ...unlockRow.value, verifyStatus: 'UNVERIFIED', verifyDiff: null }
+    markUnlocked(data?.message || '已解锁，可再次编辑')
     await loadRecharges()
   } catch (e: unknown) {
-    unlockMsg.value = bizMessage(e)
+    const message = bizMessage(e)
+    if (message.includes('无需解锁')) {
+      markUnlocked(message)
+      await loadRecharges()
+    } else {
+      unlockMsg.value = message
+    }
   } finally {
     unlockBusy.value = false
   }
@@ -2128,6 +2167,7 @@ async function submitVerify() {
   if (!verifyAccount.value) return
   verifyBusy.value = true
   verifyMsg.value = ''
+  verifyResult.value = null
   try {
     const platform = Number(verifyForm.platformConsumed)
     if (!verifyForm.month) {
@@ -2150,8 +2190,8 @@ async function submitVerify() {
   } catch (e: unknown) {
     verifyMsg.value = bizMessage(e)
     const body = e as { data?: VerifyResult }
-    verifyResult.value = body?.data ?? null
-    if (body?.data) await loadRecharges()
+    verifyResult.value = verifyMsg.value.includes('该月无冲话费记录') ? null : (body?.data ?? null)
+    if (verifyResult.value) await loadRecharges()
   } finally {
     verifyBusy.value = false
   }
@@ -2298,10 +2338,15 @@ watch(activeTab, (tab) => {
 .recharge-table {
   overflow: auto;
 }
-.verify-card {
+.verify-card,
+.verify-empty {
   padding: 12px;
   border: 1px solid var(--border, #eee);
   border-radius: 8px;
+}
+.verify-empty .et {
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 .verify-over {
   color: #c45656;
