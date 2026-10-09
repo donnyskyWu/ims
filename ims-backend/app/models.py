@@ -2125,6 +2125,40 @@ class AccountTimelineEvent(Base):
     event_time: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AccountReturnOrder(Base):
+    """ACCT-003 离职归还单。未闭环前禁止关闭权限（1024 / BR-015）。"""
+
+    __tablename__ = "ims_acct_return_order"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    return_no: Mapped[str] = mapped_column(String(32), unique=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    resign_date: Mapped[str] = mapped_column(String(10), default="")
+    status: Mapped[str] = mapped_column(String(32), default="IN_PROGRESS", index=True)
+    manual: Mapped[int] = mapped_column(Integer, default=1)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AccountReturnItem(Base):
+    """归还明细：账号 / 资产 / 证件。"""
+
+    __tablename__ = "ims_acct_return_item"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    return_order_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    item_type: Mapped[str] = mapped_column(String(16), default="")
+    item_ref_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    item_snapshot: Mapped[str] = mapped_column(String(128), default="")
+    item_status: Mapped[str] = mapped_column(String(16), default="PENDING")
+    handler_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    transfer_to_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    remark: Mapped[str] = mapped_column(String(512), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AccountTransfer(Base):
     """ACCT-002 账号流转/收回。流转待新责任人确认后改责任人（TRF-R1）；收回单管理员发起后直接生效并冻结（TRF-R2）。"""
 

@@ -471,6 +471,13 @@ def apply_event(db: Session, event: OrgEvent, now: datetime) -> None:
     diff = None
     if event.event_type == "resign":
         ensure_return_todo(db, user)
+        try:
+            from app.acct_return import ReturnReject, generate_return_order
+
+            resign_day = str(payload.get("dingtalkResignDate") or payload.get("resignDate") or now.strftime("%Y-%m-%d"))
+            generate_return_order(db, user, int(user.id), resign_day, manual=False)
+        except ReturnReject:
+            pass
         if not position:
             position = before_position
     else:

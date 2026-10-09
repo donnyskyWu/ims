@@ -111,6 +111,7 @@ const router = createRouter({
         { path: 'auth/position', component: () => import('../views/auth/position.vue') },
         { path: 'corp/resource/:kind', component: () => import('../views/corp/resource.vue') },
         { path: 'corp/account/:platform', component: () => import('../views/corp/account.vue') },
+        { path: 'account/return', component: () => import('../views/corp/account-return.vue') },
         { path: 'corp/device/:kind', component: () => import('../views/corp/device.vue') },
         { path: 'corp/account', redirect: '/ims/corp/account/douyin' },
         { path: 'asset', redirect: '/ims/corp/device/office' },
