@@ -312,6 +312,11 @@ def main() -> None:
     import uvicorn
 
     init_db()
+    from app.collector_stub import start_embedded_stub
+    from app.kuaishou_collect import start_scheduler
+
+    start_embedded_stub()
+    start_scheduler()
     port = int(os.environ.get("IMS_PORT", "18080"))
     uvicorn.run(app, host="127.0.0.1", port=port)
 

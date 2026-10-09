@@ -18,9 +18,11 @@
       <input v-model.number="filters.accountId" type="number" placeholder="账号 id" style="width: 100px" />
       <select v-model="filters.status" style="width: 110px">
         <option value="">全部状态</option>
-        <option value="SUCCESS">SUCCESS</option>
-        <option value="FAILED">FAILED</option>
-        <option value="PARTIAL">PARTIAL</option>
+        <option value="SUCCESS">成功</option>
+        <option value="FAILED">失败</option>
+        <option value="PARTIAL">部分成功</option>
+        <option value="COOKIE_EXPIRED">Cookie 已失效</option>
+        <option value="ENGINE_UNAVAILABLE">浏览器引擎不可用</option>
       </select>
       <input v-model="filters.dateFrom" placeholder="开始日期 YYYY-MM-DD" style="width: 150px" />
       <span class="sp"></span>
@@ -51,7 +53,7 @@
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.taskName }}</td>
-              <td>{{ row.status }}</td>
+              <td>{{ row.statusLabel || row.status }}</td>
               <td class="num" style="font-size: 12px">{{ row.startedAt }}</td>
               <td class="num">{{ (row.durationMs / 1000).toFixed(1) }}s</td>
               <td class="num">{{ row.recordCount }}</td>
@@ -87,7 +89,7 @@
 
     <ProtoDrawer v-model="detailOpen" title="日志详情" width="520px">
       <div v-if="detail">
-        <p><b>状态</b> {{ detail.status }} · {{ detail.startedAt }}</p>
+        <p><b>状态</b> {{ detail.statusLabel || detail.status }} · {{ detail.startedAt }}</p>
         <p v-if="detail.errorSummary" class="hint" style="color: var(--red)">{{ detail.errorSummary }}</p>
         <div class="csub" style="margin: 12px 0 8px">typeResults</div>
         <details v-for="(tr, idx) in detail.typeResults" :key="idx" style="margin-bottom: 8px">

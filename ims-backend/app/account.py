@@ -65,6 +65,10 @@ def load_scope_ip_groups(db: Session, request: Request, actor: User) -> None:
 def bind_summary(row: PlatformAccount, bind: CollectorAccountBind | None) -> str:
     if row.platform_type not in COLLECT_PLATFORMS:
         return "—"
+    if bind and bind.conn_status == "COOKIE_EXPIRED":
+        return "Cookie 已失效"
+    if bind and bind.conn_status == "ENGINE_UNAVAILABLE":
+        return "浏览器引擎不可用"
     if not row.cookie_enc:
         if bind and bind.bind_status == "BOUND" and bind.conn_status == "FAILED":
             return "Cookie 失效"
@@ -115,6 +119,18 @@ def list_vo(
     }
 
 
+def _credential_mask(enc: str) -> str:
+    from app.kuaishou_collect import credential_mask
+
+    return credential_mask(enc)
+
+
+def _health_label(bind: CollectorAccountBind | None) -> str:
+    from app.kuaishou_collect import health_label
+
+    return health_label(bind)
+
+
 def detail_vo(
     row: PlatformAccount,
     groups: dict[int, str],
@@ -135,6 +151,9 @@ def detail_vo(
             "holderUserId": row.holder_user_id,
             "authorUserId": row.author_user_id,
             "hasCookie": bool(row.cookie_enc),
+            "credentialRef": row.credential_ref or "",
+            "credentialMask": _credential_mask(row.cookie_enc),
+            "healthLabel": _health_label(bind),
             "collectBindSummary": bind_summary(row, bind),
         }
     )
@@ -428,6 +447,10 @@ def collector_bind_import(
     row = ops.get(PlatformAccount, account_id)
     if not account_visible(row, actor):
         return fail(1504, "资源不可用")
+    if row.platform_type == "KUAISHOU":
+        from app.kuaishou_collect import import_kuaishou_bind
+
+        return import_kuaishou_bind(ops, row, actor)
     if not row.cookie_enc:
         return fail(1001, "凭证未配置")
     bind = ops.scalar(
@@ -472,6 +495,10 @@ def collector_bind_test(
             CollectorAccountBind.deleted == 0,
         )
     )
+    if row.platform_type == "KUAISHOU":
+        from app.kuaishou_collect import probe_kuaishou
+
+        return probe_kuaishou(ops, row)
     if bind is None or bind.bind_status != "BOUND":
         return fail(1001, "未绑定 Collector")
     bind.conn_status = "SUCCESS" if row.cookie_enc else "FAILED"

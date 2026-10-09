@@ -8,6 +8,7 @@
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="ensureUnified">确保统一任务</button>
         <button class="btn btn-sec btn-sm" type="button" @click="ensureExternal">确保外部统一任务</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="goKuaishou">快手内部账号</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新增单账号任务</button>
       </div>
     </div>
@@ -269,6 +270,10 @@ async function runTask(row: any) {
 
 function goLogs(row: any) {
   router.push({ path: '/ims/collect/log', query: { taskId: row.id } })
+}
+
+function goKuaishou() {
+  router.push('/ims/collect/kuaishou')
 }
 
 async function removeTask(row: any) {

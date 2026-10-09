@@ -133,6 +133,7 @@ from app.cert_e2e_seed import refresh_cert_e2e_seed
 from app.asset_reverse_e2e_seed import refresh_asset_reverse_e2e_session
 from app.s1_lifecycle_seed import ensure_s1_fixtures
 from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
+from app.kuaishou_collect_seed import refresh_kuaishou_collect_seed
 db = SessionLocal()
 try:
     admin = db.query(User).filter(User.username == 'admin', User.deleted == 0).first()
@@ -146,6 +147,7 @@ try:
         ensure_s1_fixtures(db)
         clear_apply_number_gap(db)
         refresh_train_stat_e2e_seed(db, admin)
+        refresh_kuaishou_collect_seed()
         db.commit()
 finally:
     db.close()

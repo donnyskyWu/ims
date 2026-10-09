@@ -35,8 +35,25 @@ def ops_engine():
         from app import ops_models  # noqa: F401
 
         OpsBase.metadata.create_all(engine)
+        _ensure_credential_ref(engine)
         _schema_ready.add(name)
     return engine
+
+
+def _ensure_credential_ref(engine) -> None:
+    """旧库补凭证引用列。create_all 不会给已有表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "oa_platform_account" not in insp.get_table_names():
+        return
+    cols = {col["name"] for col in insp.get_columns("oa_platform_account")}
+    if "credential_ref" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE oa_platform_account ADD COLUMN credential_ref VARCHAR(128) NOT NULL DEFAULT ''")
+        )
 
 
 def ops_session():

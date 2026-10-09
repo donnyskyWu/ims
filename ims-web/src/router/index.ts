@@ -36,6 +36,7 @@ const router = createRouter({
         { path: 'content/publish', component: () => import('../views/content/publish.vue') },
         { path: 'collect/task', component: () => import('../views/collect/task.vue') },
         { path: 'collect/log', component: () => import('../views/collect/log.vue') },
+        { path: 'collect/kuaishou', component: () => import('../views/collect/kuaishou.vue') },
         { path: 'collect/external/account', component: () => import('../views/collect/external-account.vue') },
         { path: 'collect/external/keyword', component: () => import('../views/collect/external-keyword.vue') },
         { path: 'collect/metadata', component: () => import('../views/collect/metadata.vue') },

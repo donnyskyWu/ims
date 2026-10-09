@@ -106,7 +106,7 @@ def bind_warning(ops: Session, account_id: int | None) -> str | None:
     if account is None:
         return None
     summary = bind_summary(account, bind_of(ops, account_id))
-    if summary in ("未绑定", "Cookie 失效", "连接失败"):
+    if summary in ("未绑定", "Cookie 失效", "Cookie 已失效", "连接失败", "浏览器引擎不可用"):
         return f"{summary} Collector，任务可保存但执行将失败"
     return None
 
@@ -164,7 +164,9 @@ def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None =
     except json.JSONDecodeError:
         type_results = []
     repair_account_id = None
-    if row.account_id and row.error_summary and "未绑定" in row.error_summary:
+    if row.account_id and (
+        (row.error_summary and "未绑定" in row.error_summary) or row.status == "COOKIE_EXPIRED"
+    ):
         repair_account_id = str(row.account_id)
     return {
         "id": str(row.id),
@@ -178,6 +180,13 @@ def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None =
         "retryCount": row.retry_count,
         "errorSummary": row.error_summary or None,
         "repairAccountId": repair_account_id,
+        "statusLabel": {
+            "SUCCESS": "成功",
+            "FAILED": "失败",
+            "PARTIAL": "部分成功",
+            "COOKIE_EXPIRED": "Cookie 已失效",
+            "ENGINE_UNAVAILABLE": "浏览器引擎不可用",
+        }.get(row.status, row.status),
     }
 
 
@@ -425,6 +434,15 @@ def task_create(
             return fail(1500, "外部配置不存在")
     method = body.method or ("EXTERNAL" if body.collectConfigId else "INTERNAL")
     warning = bind_warning(ops, body.accountId)
+    source = "API" if method == "INTERNAL" else "EXTERNAL"
+    data_type = None
+    next_run = ""
+    if method == "INTERNAL" and body.platformType == "KUAISHOU":
+        from app.kuaishou_collect import initial_next_run
+
+        source = "KUAISHOU_OPEN_API"
+        data_type = "KUAISHOU_VIDEO_LIST"
+        next_run = initial_next_run(body.frequency)
     row = CollectTask(
         task_name=body.taskName.strip(),
         platform_type=body.platformType,
@@ -432,10 +450,12 @@ def task_create(
         collect_config_id=body.collectConfigId,
         credential_profile=body.credentialProfile or "default",
         method=method,
-        source="API" if method == "INTERNAL" else "EXTERNAL",
+        source=source,
+        data_type=data_type,
         frequency=body.frequency,
         cron=body.cron.strip(),
         status=body.status,
+        next_run_at=next_run,
         tenant_id=tenant_id,
     )
     ops.add(row)
@@ -510,6 +530,18 @@ def task_run(
         return fail(1504, "资源不可用")
     if row.status == "DISABLED":
         return fail(1001, "任务已停用")
+    if (
+        row.platform_type == "KUAISHOU"
+        and row.method != "EXTERNAL"
+        and not row.collect_config_id
+        and not row.is_external_unified
+    ):
+        from app.kuaishou_collect import execute_kuaishou_task
+
+        try:
+            return ok(execute_kuaishou_task(ops, row))
+        except Exception:
+            return fail(2022, "采集失败")
     started = utcnow().strftime("%Y-%m-%d %H:%M:%S")
     status, type_results, record_count, error_summary, log_account = simulate_run(ops, row)
     duration_ms = 8200 if status == "FAILED" else 45000
@@ -760,3 +792,8 @@ def log_get(
     if not visible(row, actor):
         return fail(1504, "资源不可用")
     return ok(log_detail_vo(ops, row))
+
+
+from app.kuaishou_collect import router as kuaishou_collect_router  # noqa: E402
+
+router.include_router(kuaishou_collect_router)

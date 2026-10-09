@@ -70,7 +70,8 @@ def test_account_page_requires_platform_and_filters():
     missing = client.get("/admin-api/ims/corp/account/page", headers=auth)
     assert missing.json()["code"] == 1001
     empty = client.get("/admin-api/ims/corp/account/page", headers=auth, params={"platformType": "DOUYIN"})
-    assert empty.json()["data"]["total"] == 0
+    # schema reset 会灌入 E2E 抖音种子；这里只断言平台过滤在种子之上仍然成立。
+    baseline = empty.json()["data"]["total"]
 
     account_id = seed_account("DOUYIN")
     ops = ops_session()
@@ -94,7 +95,7 @@ def test_account_page_requires_platform_and_filters():
 
     page = client.get("/admin-api/ims/corp/account/page", headers=auth, params={"platformType": "DOUYIN"})
     body = page.json()["data"]
-    assert body["total"] == 1
+    assert body["total"] == baseline + 1
     assert body["list"][0]["platformType"] == "DOUYIN"
     assert body["list"][0]["collectBindSummary"] == "已绑定"
     assert body["list"][0]["realNameMasked"] == "张*"

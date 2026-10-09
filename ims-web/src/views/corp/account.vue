@@ -282,8 +282,32 @@
         </div>
         <div class="fld">
           <label>凭证</label>
-          <div>{{ detail.hasCookie ? '已配置（脱敏）' : '未配置' }}</div>
+          <div data-testid="ks-tab-mask">{{ detail.credentialMask || (detail.hasCookie ? '已配置（脱敏）' : '未配置') }}</div>
         </div>
+        <template v-if="meta.platform === 'KUAISHOU'">
+          <div class="fld">
+            <label>平台账号 ID</label>
+            <input v-model="ksPlatformAccountId" data-testid="ks-tab-platform-id" />
+          </div>
+          <div class="fld">
+            <label>凭证引用</label>
+            <div class="mono">{{ detail.credentialRef || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>采集健康</label>
+            <div data-testid="ks-tab-health">{{ detail.healthLabel || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>更新凭证（不明文回显）</label>
+            <input v-model="ksCredential" type="password" autocomplete="new-password" placeholder="留空则不修改" data-testid="ks-tab-credential" />
+          </div>
+          <button class="btn btn-sec btn-sm" type="button" @click="saveKsCredential">保存快手凭证</button>
+          <p class="hint">
+            定时采集与立即采集见
+            <router-link to="/ims/collect/kuaishou">快手内部账号采集</router-link>
+            。
+          </p>
+        </template>
         <p class="hint">本 Tab 为 ADR-047 平台账号采集配置，不是 COLLECT 竞品账号配置。</p>
         <div class="acts" style="margin-top: 12px">
           <button class="btn btn-sec btn-sm" type="button" :disabled="!detail.hasCookie" @click="importCollector">导入 Collector</button>
@@ -651,7 +675,7 @@ const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: strin
   'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: 'P-M4-008 · WECHAT_OFFICIAL · 08 CORP-A' },
   'wechat-channels': { title: '视频号', platform: 'WECHAT_CHANNELS', sub: 'P-M4-008 · WECHAT_CHANNELS + 采集 Tab · 08 CORP-A' },
   douyin: { title: '抖音', platform: 'DOUYIN', sub: 'P-M4-008 · DOUYIN + ADR-047 采集 Tab · 08 CORP-A' },
-  kuaishou: { title: '快手', platform: 'KUAISHOU', sub: 'P-M4-008 · KUAISHOU · 08 CORP-A' },
+  kuaishou: { title: '快手', platform: 'KUAISHOU', sub: 'P-M4-008 · KUAISHOU + 内部账号采集 · 08 CORP-A' },
   xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: 'P-M4-008 · XIAOHONGSHU · 08 CORP-A' },
 }
 
@@ -690,6 +714,8 @@ const bindInfo = ref<Record<string, unknown> | null>(null)
 const activeTab = ref('basic')
 const collectMsg = ref('')
 const collectSummary = ref('—')
+const ksPlatformAccountId = ref('')
+const ksCredential = ref('')
 
 const timelineEvents = ref<
   { id: number; eventType: string; refNo: string; snapshotSummary: string; eventTime: string }[]
@@ -1057,6 +1083,8 @@ async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   const res = await http.get(`/corp/account/${row.id}`)
   const data = res.data?.data as Record<string, unknown>
   detail.value = data
+  ksPlatformAccountId.value = String(data.platformAccountId || '')
+  ksCredential.value = ''
   collectSummary.value = String(data.collectBindSummary || '—')
   try {
     const bindRes = await http.get(`/corp/account/${row.id}/collector-bind`)
@@ -1332,6 +1360,23 @@ async function submitReturn() {
     returnMsg.value = e instanceof Error ? e.message : '归还失败'
   } finally {
     returnBusy.value = false
+  }
+}
+
+async function saveKsCredential() {
+  if (!detail.value) return
+  collectMsg.value = ''
+  try {
+    const payload: Record<string, unknown> = { platformAccountId: ksPlatformAccountId.value }
+    if (ksCredential.value) payload.cookie = ksCredential.value
+    const res = await http.put(`/collect/kuaishou/account/${detail.value.id}`, payload)
+    const account = res.data?.data?.account as Record<string, unknown> | undefined
+    if (account) detail.value = { ...detail.value, ...account }
+    ksCredential.value = ''
+    collectMsg.value = `凭证已保存，掩码 ${account?.credentialMask || '已配置'}`
+    await load()
+  } catch (e: unknown) {
+    collectMsg.value = errorMessage(e)
   }
 }
 
