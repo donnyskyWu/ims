@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.content import iso, next_seq, tenant
+from app.layout_html import sanitize_layout_html
 from app.content_fb_sync import after_content_deleted, after_content_saved, fb_sync_vo
 from app.content_task import APPROVED_CONTENT_STATUSES
 from app.corp import ops_db, page_args, paged
@@ -21,7 +22,7 @@ class ContentSaveBody(BaseModel):
     contentType: str = "SHORT_VIDEO"
     platformType: str = ""
     body: str = ""
-    layoutHtml: str = ""
+    layoutHtml: str | None = None
     documentType: str = ""
     taskId: int | None = None
     ipGroupId: int | None = None
@@ -154,7 +155,7 @@ def content_create(
         platform_type=(body.platformType or "")[:32],
         document_type=(body.documentType or "")[:32],
         body=body.body or "",
-        layout_html=body.layoutHtml or "",
+        layout_html=sanitize_layout_html(body.layoutHtml or ""),
         task_id=body.taskId,
         ip_group_id=body.ipGroupId,
         content_status="DRAFT",
@@ -195,7 +196,7 @@ def content_update(
     if body.body is not None:
         row.body = body.body
     if body.layoutHtml is not None:
-        row.layout_html = body.layoutHtml
+        row.layout_html = sanitize_layout_html(body.layoutHtml)
     if body.ipGroupId is not None:
         row.ip_group_id = body.ipGroupId
     apply_match_fields(row, body)

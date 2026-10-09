@@ -98,6 +98,11 @@
           <label>正文</label>
           <textarea v-model="form.body" rows="4" />
         </div>
+        <div class="fld">
+          <label>版式 HTML</label>
+          <textarea v-model="form.layoutHtml" rows="6" placeholder="已排版 HTML，图片用 img 标签" />
+          <p class="hint">保存到 layout_html。审核抽屉只读渲染；留空则展示上方纯文本。</p>
+        </div>
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
@@ -127,6 +132,7 @@ const form = ref({
   matchType: 1,
   matchSchemeJson: '[]',
   body: '',
+  layoutHtml: '',
 })
 
 async function loadList() {
@@ -149,7 +155,7 @@ async function loadList() {
 
 function openCreate() {
   editingId.value = null
-  form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
+  form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '', layoutHtml: '' }
   drawerOpen.value = true
 }
 
@@ -161,6 +167,7 @@ function openEdit(row: any) {
     matchType: row.matchType || 1,
     matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
     body: row.body || '',
+    layoutHtml: row.layoutHtml || '',
   }
   drawerOpen.value = true
 }
@@ -185,6 +192,7 @@ async function saveContent() {
       matchType: form.value.matchType,
       matchScheme: scheme,
       body: form.value.body,
+      layoutHtml: form.value.layoutHtml,
     }
     if (editingId.value) {
       await http.put(`/content/${editingId.value}`, payload)

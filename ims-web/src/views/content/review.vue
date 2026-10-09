@@ -52,9 +52,11 @@
       <div class="pager"><span class="pg-total">共 {{ filteredRows.length }} 条</span></div>
     </div>
 
-    <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="640px" @close="drawerOpen = false">
+    <ProtoDrawer :open="drawerOpen" :title="`审核 · ${active?.reviewNo || ''}`" width="760px" @close="drawerOpen = false">
       <p><b>{{ active?.contentTitle }}</b></p>
       <p class="hint">提交人：{{ active?.submitterName }} · 轮次 {{ active?.reviewRound }}</p>
+      <div class="dsec">正文</div>
+      <LayoutViewer :html="active?.layoutHtml" :plain="active?.body" :loading="layoutLoading" />
       <div class="dsec">质量清单</div>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
@@ -71,6 +73,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
+import LayoutViewer from '../../components/LayoutViewer.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const rows = ref<any[]>([])
@@ -80,6 +83,7 @@ const stage = ref(1)
 const titleKw = ref('')
 const stats = ref<{ firstPassRate?: number; total?: number }>({})
 const drawerOpen = ref(false)
+const layoutLoading = ref(false)
 const active = ref<any>(null)
 const checklist = ref<any[]>([])
 const checklistModel = ref<Record<string, boolean>>({})
@@ -119,10 +123,12 @@ async function loadQueue() {
 }
 
 async function openReview(row: any) {
-  active.value = row
+  active.value = { ...row, layoutHtml: '', body: '' }
+  layoutLoading.value = true
   drawerOpen.value = true
   try {
     const { data } = await http.get(`/content/review/${row.reviewNo}`)
+    active.value = { ...row, ...data.data }
     checklist.value = data.data.checklist || []
     const model: Record<string, boolean> = {}
     for (const item of checklist.value) {
@@ -131,6 +137,8 @@ async function openReview(row: any) {
     checklistModel.value = model
   } catch (e) {
     alert(errorMessage(e))
+  } finally {
+    layoutLoading.value = false
   }
 }
 
