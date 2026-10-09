@@ -34,12 +34,21 @@
           type="button"
           data-testid="fin-period-close"
           :disabled="periodStatus === 'LOCKED' || periodBusy || !periodMonthValid"
+          :title="periodCloseHint"
           @click="closePeriod"
         >
           结账
         </button>
-        <span class="hint">结账后该月场次录入/核准/重算冻结；锁后更正须 R4 审批</span>
+        <span class="hint" data-testid="fin-period-close-hint">{{ periodCloseHint }}</span>
       </div>
+      <p
+        v-if="periodClosedNote"
+        class="hint"
+        data-testid="fin-period-close-done"
+        style="color: #1f8a4c; margin-top: 8px"
+      >
+        {{ periodClosedNote }}
+      </p>
       <div
         v-if="periodStatus === 'LOCKED' && periodMonthValid"
         data-testid="fin-period-lock-banner"
@@ -237,6 +246,7 @@
         <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
         <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
       </div>
+      <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
         <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
@@ -289,6 +299,8 @@
           />
         </label>
       </div>
+      <p class="hint" data-testid="fin-cost-correction-reason-hint">更正原因必填，不超过 512 字 · {{ correctionReasonTrimmed }}/512</p>
+      <p class="hint" data-testid="fin-cost-correction-total" style="margin-top: 8px">更正后成本合计 {{ yuan(entryTotal) }}</p>
       <div v-if="correctionPreview" class="hint" style="margin-top: 8px">
         <div v-if="correctionPreview.redEntries?.length">
           红冲：
@@ -347,11 +359,27 @@ const periodError = ref('')
 const periodBusy = ref(false)
 const periodLockedBy = ref('')
 const periodLockedAt = ref('')
+const periodClosedNote = ref('')
+const periodClosedFor = ref('')
 const periodMonthValid = computed(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(periodMonth.value.trim()))
+const periodCloseHint = computed(() => {
+  if (!periodMonthValid.value) return '期间格式须为 yyyy-MM'
+  if (periodStatus.value === 'LOCKED') return '本月已结账，无需重复结账'
+  return '结账后该月场次录入/核准/重算冻结；锁后更正须 R4 审批'
+})
+const pendingFailed = ref(false)
+const enteredFailed = ref(false)
 const query = reactive({ sessionCode: '', entryStatus: '' })
 const costFiltered = ref(false)
-const pendingEmptyText = computed(() => (costFiltered.value ? '当前筛选无待录入场次' : '暂无待录入场次'))
-const enteredEmptyText = computed(() => (costFiltered.value ? '当前筛选无已录入成本' : '暂无已录入成本'))
+const pendingEmptyText = computed(() => {
+  if (pendingFailed.value) return '待录入清单加载失败，请重试'
+  return costFiltered.value ? '当前筛选无待录入场次' : '暂无待录入场次'
+})
+const enteredEmptyText = computed(() => {
+  if (enteredFailed.value) return '已录入列表加载失败，请重试'
+  return costFiltered.value ? '当前筛选无已录入成本' : '暂无已录入成本'
+})
+const correctionReasonTrimmed = computed(() => correctionReason.value.trim().length)
 
 const sessionLocked = computed(() => sessionFinanceStatus.value === 'LOCKED')
 
@@ -377,6 +405,49 @@ const form = reactive({
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function yuan(n: unknown) {
+  return `¥${fmt(n)}`
+}
+
+function round2(n: number) {
+  return Math.round(n * 100) / 100
+}
+
+function finite(n: unknown) {
+  const value = Number(n)
+  return Number.isFinite(value) ? value : Number.NaN
+}
+
+const entryTotal = computed(() => {
+  const rate = finite(form.commissionRate)
+  const gmv = finite(form.costGmv)
+  const commission = round2((Number.isFinite(gmv) ? gmv : 0) * (Number.isFinite(rate) ? rate : 0))
+  const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname]
+  const extra = parts.reduce((acc, raw) => {
+    const value = finite(raw)
+    return acc + (Number.isFinite(value) ? value : 0)
+  }, 0)
+  return round2(commission + extra)
+})
+
+function moneyError(raw: unknown) {
+  const value = finite(raw)
+  if (!Number.isFinite(value) || value < 0) return '1001 金额不能为负'
+  if (Math.abs(value * 100 - Math.round(value * 100)) > 1e-6) return '1001 金额最多两位小数'
+  return ''
+}
+
+function entryFormError() {
+  const rate = finite(form.commissionRate)
+  if (!Number.isFinite(rate) || rate <= 0 || rate > 1) return '1001 佣金率须大于 0 且不超过 1'
+  const amounts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname]
+  for (const raw of amounts) {
+    const msg = moneyError(raw)
+    if (msg) return msg
+  }
+  return ''
 }
 
 function failMsg(err: unknown, fallback: string) {
@@ -416,17 +487,17 @@ function resetQuery() {
 async function loadPending() {
   loading.value = true
   error.value = ''
+  pendingFailed.value = false
   markCostFiltered()
   try {
     const res = await http.get('/fin/cost/pending-sessions', {
       params: { pageNo: 1, pageSize: 50, sessionCode: query.sessionCode || undefined },
     })
-    if (res.data?.code !== 0) {
-      error.value = res.data?.msg || '加载失败'
-      pendingRows.value = []
-      return
-    }
     pendingRows.value = res.data.data?.list || []
+  } catch (err) {
+    pendingRows.value = []
+    pendingFailed.value = true
+    error.value = failMsg(err, '待录入清单加载失败')
   } finally {
     loading.value = false
   }
@@ -435,6 +506,7 @@ async function loadPending() {
 async function loadEntered() {
   loading.value = true
   error.value = ''
+  enteredFailed.value = false
   markCostFiltered()
   try {
     const res = await http.get('/fin/cost/list', {
@@ -445,12 +517,11 @@ async function loadEntered() {
         entryStatus: query.entryStatus || undefined,
       },
     })
-    if (res.data?.code !== 0) {
-      error.value = res.data?.msg || '加载失败'
-      enteredRows.value = []
-      return
-    }
     enteredRows.value = res.data.data?.list || []
+  } catch (err) {
+    enteredRows.value = []
+    enteredFailed.value = true
+    error.value = failMsg(err, '已录入列表加载失败')
   } finally {
     loading.value = false
   }
@@ -467,15 +538,28 @@ function switchTab(next: 'pending' | 'entered') {
 }
 
 function openEntry(row: Record<string, unknown>) {
+  error.value = ''
   form.sessionCode = String(row.sessionCode)
   form.costGmv = Number(row.gmv || 0)
   form.costRefund = Number(row.refund || 0)
+  form.commissionRate = 0.05
   form.adCost = Number(row.adCost || 0)
+  form.rechargeCost = 0
+  form.fixedCost = 0
+  form.sampleCost = 0
+  form.shareDaren = 0
+  form.shareRealname = 0
   drawerOpen.value = true
 }
 
 async function submitEntry(asDraft: boolean) {
+  const invalid = entryFormError()
+  if (invalid) {
+    error.value = invalid
+    return
+  }
   const token = crypto.randomUUID().replace(/-/g, '')
+  error.value = ''
   try {
   const res = await http.post(
     `/fin/cost/${form.sessionCode}`,
@@ -530,8 +614,10 @@ async function viewDetail(sessionCode: string) {
 
 async function loadPeriod() {
   const month = periodMonth.value.trim()
+  if (month !== periodClosedFor.value) periodClosedNote.value = ''
   if (!periodMonthValid.value) {
     periodError.value = '期间格式须为 yyyy-MM'
+    periodStatus.value = 'OPEN'
     return
   }
   periodError.value = ''
@@ -557,6 +643,10 @@ async function closePeriod() {
     periodStatus.value = data.financeStatus || 'LOCKED'
     periodLockedBy.value = data.lockedByName || ''
     periodLockedAt.value = data.lockedAt || ''
+    periodClosedFor.value = month
+    periodClosedNote.value = data.repeated
+      ? `本月已结账，无需重复结账 · ${month}`
+      : `已结账 · ${month}。录入、核准、更正均冻结`
     error.value = ''
   } catch (err) {
     periodError.value = failMsg(err, '结账失败')
@@ -641,9 +731,21 @@ async function approveLockAdjust() {
 
 async function submitCorrection() {
   correctionError.value = ''
-  if (!correctionReason.value.trim()) {
-    correctionError.value = '更正原因必填'
-    error.value = '更正原因必填'
+  const reason = correctionReason.value.trim()
+  if (!reason) {
+    correctionError.value = '1144 更正原因必填'
+    error.value = '1144 更正原因必填'
+    return
+  }
+  if (reason.length > 512) {
+    correctionError.value = '1001 更正原因不超过 512 字'
+    error.value = '1001 更正原因不超过 512 字'
+    return
+  }
+  const invalid = entryFormError()
+  if (invalid) {
+    correctionError.value = invalid
+    error.value = invalid
     return
   }
   const token = crypto.randomUUID().replace(/-/g, '')

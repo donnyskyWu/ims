@@ -34,6 +34,20 @@
       <div class="empty" data-testid="fin-ledger-loading"><div class="et">加载中</div></div>
     </div>
 
+    <div v-else-if="blankQuery" class="tbl-block" style="margin-top: 12px">
+      <div class="empty" data-testid="fin-ledger-query-empty">
+        <div class="et">请填写场次 ID</div>
+        <div class="es">场次号为字母与数字。缺哪一账，对应行显示空态。</div>
+      </div>
+    </div>
+
+    <div v-else-if="queryInvalid" class="tbl-block" style="margin-top: 12px">
+      <div class="empty" data-testid="fin-ledger-query-invalid">
+        <div class="et">场次号仅支持字母与数字</div>
+        <div class="es">去掉空格和符号后再查询。未建档的场次会显示未找到。</div>
+      </div>
+    </div>
+
     <div v-else-if="!searched" class="tbl-block" style="margin-top: 12px">
       <div class="empty" data-testid="fin-ledger-jump-empty">
         <div class="et">从利润或成本跳转后，按场次核对四账</div>
@@ -76,14 +90,18 @@
             </tr>
             <tr data-testid="fin-ledger-profit">
               <td>利润</td>
-              <td>{{ view.profit.detail }}</td>
+              <td :data-testid="view.profit.detail.includes('1143') ? 'fin-ledger-profit-mismatch' : undefined">
+                {{ view.profit.detail }}
+              </td>
               <td class="num" :data-testid="view.profit.ready ? undefined : 'fin-ledger-profit-empty'">
                 {{ view.profit.amountText }}
               </td>
             </tr>
             <tr data-testid="fin-ledger-share">
               <td>分成</td>
-              <td>{{ view.share.detail }}</td>
+              <td :data-testid="view.share.detail.includes('1143') ? 'fin-ledger-share-mismatch' : undefined">
+                {{ view.share.detail }}
+              </td>
               <td class="num" :data-testid="view.share.ready ? undefined : 'fin-ledger-share-empty'">
                 {{ view.share.amountText }}
               </td>
@@ -119,6 +137,8 @@ const queriedCode = ref('')
 const error = ref('')
 const loading = ref(false)
 const searched = ref(false)
+const blankQuery = ref(false)
+const queryInvalid = ref(false)
 const missingSession = ref(false)
 const periodLocked = ref(false)
 const periodMonth = ref('')
@@ -170,13 +190,21 @@ async function reconcile() {
   error.value = ''
   view.value = null
   missingSession.value = false
+  blankQuery.value = false
+  queryInvalid.value = false
   periodLocked.value = false
   periodMonth.value = ''
   const code = sessionCode.value.trim()
   if (!code) {
     searched.value = false
     queriedCode.value = ''
-    error.value = '请填写场次 ID'
+    blankQuery.value = true
+    return
+  }
+  if (!/^[A-Za-z0-9]+$/.test(code)) {
+    searched.value = false
+    queriedCode.value = code
+    queryInvalid.value = true
     return
   }
   loading.value = true
@@ -222,15 +250,20 @@ async function reconcile() {
 
     const booksReady = Boolean(cost && profit && shares.length)
     let headline = '四账未齐'
-    if (booksReady && cost && profit) {
+    if (cost && profit) {
       const expectedNet = money(money(cost.costGmv) - money(cost.costRefund) - money(cost.totalCost))
       const shareExpected = money(money(cost.shareDaren) + money(cost.shareRealname))
+      const netOff = Math.abs(money(profit.netProfit) - expectedNet) >= 0.01
+      const shareOff = shares.length > 0 && Math.abs(shareSum - shareExpected) >= 0.01
+      if (netOff) profitCell.detail = '净利润 · 1143 勾稽不平'
+      if (shareOff) shareCell.detail = `${shareCell.detail} · 1143 勾稽不平`
       const aligned =
+        booksReady &&
         profit.sessionCode === cost.sessionCode &&
-        Math.abs(money(profit.netProfit) - expectedNet) < 0.01 &&
-        Math.abs(shareSum - shareExpected) < 0.01 &&
+        !netOff &&
+        !shareOff &&
         paidOff
-      headline = aligned ? '四账一致' : '未对齐'
+      if (booksReady) headline = aligned ? '四账一致' : '未对齐'
     }
     view.value = {
       headline,
@@ -253,6 +286,8 @@ function resetLedger() {
   error.value = ''
   view.value = null
   searched.value = false
+  blankQuery.value = false
+  queryInvalid.value = false
   missingSession.value = false
   periodLocked.value = false
   periodMonth.value = ''
