@@ -35,7 +35,7 @@ async function filterOrgUsers(page: Page) {
   )
   await page.getByTestId('org-user-search').click()
   await successResp
-  await expect(page.getByTestId('org-user-sync-hint')).toContainText('失败包含失败重试和死信')
+  await expect(page.getByTestId('org-user-sync-hint')).toHaveText('失败状态包含失败重试和死信。')
   await expect(page.getByTestId('org-user-filter-note')).toContainText('同步状态「成功」')
 
   await page.getByTestId('org-user-keyword').fill('不存在人员XYZ212')
