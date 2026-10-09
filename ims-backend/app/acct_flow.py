@@ -1002,6 +1002,27 @@ def _money(value: float) -> Decimal | None:
     return quantized
 
 
+def _platform_scale_error(value: float) -> str | None:
+    """平台消费按金额两位小数录入。多出来的小数位不四舍五入入库。"""
+    try:
+        raw = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return "平台实际消费格式不合法"
+    exponent = raw.as_tuple().exponent
+    if isinstance(exponent, int) and exponent < -2:
+        return "平台实际消费最多两位小数"
+    return None
+
+
+def _future_verify_month(month: str) -> bool:
+    year_num = int(month[:4])
+    month_num = int(month[5:7])
+    if not 1 <= month_num <= 12:
+        return False
+    today = utcnow().date()
+    return (year_num, month_num) > (today.year, today.month)
+
+
 def _money_out(value: float) -> float:
     quantized = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return float(quantized)
@@ -1299,8 +1320,16 @@ def verify_recharge(
     month = (body.month or "").strip()
     if not MONTH_RE.match(month):
         return fail(1001, "核对月份格式不合法")
+    month_num = int(month[5:7])
+    if not 1 <= month_num <= 12:
+        return fail(1001, "核对月份格式不合法")
+    if _future_verify_month(month):
+        return fail(1001, "不能核对未来月份")
     if body.platform_consumed is None:
         return fail(1001, "平台消费数据拉取失败，请稍后重试")
+    scale_error = _platform_scale_error(body.platform_consumed)
+    if scale_error:
+        return fail(1001, scale_error)
     platform = _money(body.platform_consumed)
     if platform is None:
         return fail(1001, "平台实际消费须大于 0")
