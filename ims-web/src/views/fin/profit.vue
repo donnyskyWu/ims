@@ -105,7 +105,7 @@
           </div>
           <p class="hint">{{ detail.calcRuleSnapshot?.formula }}</p>
           <pre class="mono" style="font-size: 12px; white-space: pre-wrap">{{ JSON.stringify(detail.calcRuleSnapshot?.params, null, 2) }}</pre>
-          <p class="hint">当前版本 V{{ detail.calcVersion }} · 计算时间 {{ detail.calculatedAt || '—' }} · 状态 {{ statusLabel(detail.calcStatus) }}</p>
+          <p class="hint">当前版本 V{{ detail.calcVersion }} · 计算时间 {{ detail.calculatedAt || '—' }} · 状态 {{ detail.calcStatus }}</p>
 
           <h3 class="hist-title">重算版本历史</h3>
           <p v-if="historyError" class="hint" style="color: var(--red)">{{ historyError }}</p>
