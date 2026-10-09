@@ -847,8 +847,12 @@ export async function submitFinCostCorrectionViaUi(
   await expect(drawer).not.toBeVisible({ timeout: 10_000 })
 }
 
-/** FIN 分成单双审 → 发放 PAID_OFF（纯 UI · 须已核准成本） */
-export async function approveAndPayoffFinSharesViaUi(page: Page, sessionCode: string) {
+/** FIN 分成单双审 → 发放 PAID_OFF（纯 UI · 须已核准成本）。voucherFileName 走发放凭证本地 fileKey。 */
+export async function approveAndPayoffFinSharesViaUi(
+  page: Page,
+  sessionCode: string,
+  opts?: { voucherFileName?: string },
+) {
   await page.goto('/ims/fin/share/result')
   await expect(page.locator('h1')).toHaveText('分成单管理', { timeout: 15_000 })
   await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
@@ -895,6 +899,14 @@ export async function approveAndPayoffFinSharesViaUi(page: Page, sessionCode: st
     await row().getByTestId('fin-share-payoff-open').click()
     const drawer = page.getByTestId('fin-share-payoff-drawer')
     await expect(drawer).toBeVisible()
+    if (opts?.voucherFileName) {
+      await drawer.getByTestId('fin-share-payoff-voucher').setInputFiles({
+        name: opts.voucherFileName,
+        mimeType: 'text/plain',
+        buffer: Buffer.from('fin-voucher'),
+      })
+      await expect(drawer.getByTestId('fin-share-payoff-voucher-name')).toHaveText(opts.voucherFileName)
+    }
     await drawer.getByTestId('fin-share-payoff-note').fill(`E2E payoff ${target}`)
     const payPut = page.waitForResponse(
       (r) => r.url().includes('/payoff') && r.request().method() === 'PUT' && r.status() === 200,
@@ -903,10 +915,17 @@ export async function approveAndPayoffFinSharesViaUi(page: Page, sessionCode: st
       (r) => r.url().includes('/fin/share/results') && r.request().method() === 'GET' && r.status() === 200,
     )
     await drawer.getByTestId('fin-share-payoff-submit').click()
-    const payBody = (await (await payPut).json()) as { code: number }
+    const paid = await payPut
+    const payBody = (await paid.json()) as { code: number }
     expect(payBody.code).toBe(0)
+    if (opts?.voucherFileName) {
+      expect(paid.request().postData() || '').toContain(opts.voucherFileName)
+    }
     await payList
     await expect(row()).toContainText('已发放', { timeout: 10_000 })
+    if (opts?.voucherFileName) {
+      await expect(row().getByTestId('fin-share-voucher-name')).toHaveText(opts.voucherFileName)
+    }
   }
 }
 

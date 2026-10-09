@@ -1585,6 +1585,8 @@ def share_result_vo(row: FinShareResult) -> dict:
         "auditedBy": row.audited_by or None,
         "auditedAt": iso(row.audited_at) if row.audited_at else None,
         "paidOffAt": iso(row.paid_off_at) if row.paid_off_at else None,
+        "payoffNote": row.payoff_note or "",
+        "payoffVoucher": row.payoff_voucher or None,
         "redEntries": detail.get("redEntries") or [],
         "reverseAudit": detail.get("reverseAudit"),
         "replaced": bool(detail.get("replaced")),

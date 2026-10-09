@@ -16,7 +16,7 @@
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="button" data-testid="fin-dash-query" @click="loadAll">查询</button>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-dash-export" @click="exportBook">导出报表</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-dash-export" @click="openExport">导出报表</button>
     </form>
 
     <p v-if="error" class="hint" data-testid="fin-dash-error" style="color: var(--red); margin: 8px 0">{{ error }}</p>
@@ -106,6 +106,19 @@
     </div>
 
     <h2 style="margin: 16px 0 8px; font-size: 14px">趋势</h2>
+    <div class="tabs" data-testid="fin-dash-granularity" style="margin: 0 0 8px">
+      <button
+        v-for="item in grains"
+        :key="item.value"
+        type="button"
+        class="tab"
+        :class="{ on: granularity === item.value }"
+        :data-testid="`fin-dash-grain-${item.value}`"
+        @click="switchGrain(item.value)"
+      >
+        {{ item.label }}
+      </button>
+    </div>
     <div class="tbl-block">
       <table data-testid="fin-dash-trend">
         <thead>
@@ -115,18 +128,20 @@
             <th>成本</th>
             <th>净利润</th>
             <th>环比</th>
+            <th>同比</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!trend.length">
-            <td colspan="5"><div class="empty"><div class="et">区间内无趋势</div></div></td>
+            <td colspan="6"><div class="empty"><div class="et">区间内无趋势</div></div></td>
           </tr>
-          <tr v-for="point in trend" :key="point.statPeriod">
+          <tr v-for="point in trend" :key="point.statPeriod" data-testid="fin-dash-trend-row">
             <td>{{ point.periodLabel || point.statPeriod }}</td>
             <td class="num">¥{{ fmt(point.gmv) }}</td>
             <td class="num">¥{{ fmt(point.cost) }}</td>
             <td class="num">¥{{ fmt(point.netProfit) }}</td>
             <td>{{ point.momRate == null ? '—' : `${point.momRate}%` }}</td>
+            <td>{{ point.yoyRate == null ? '—' : `${point.yoyRate}%` }}</td>
           </tr>
         </tbody>
       </table>
@@ -180,12 +195,35 @@
         </tbody>
       </table>
     </div>
+
+    <div v-if="exportOpen" class="modal-mask" data-testid="fin-dash-export-dialog">
+      <div class="modal-card" role="dialog" aria-label="导出格式">
+        <b>导出报表</b>
+        <p class="hint" data-testid="fin-dash-export-scope">{{ statPeriod }} · {{ dimensionLabel }} · {{ profitLabel }}</p>
+        <div class="fmt">
+          <label>
+            <input v-model="exportFormat" type="radio" value="XLSX" data-testid="fin-dash-export-xlsx" />
+            Excel
+          </label>
+          <label>
+            <input v-model="exportFormat" type="radio" value="PDF" data-testid="fin-dash-export-pdf" />
+            PDF
+          </label>
+        </div>
+        <div class="modal-acts">
+          <button class="btn btn-sec btn-sm" type="button" :disabled="exportBusy" @click="exportOpen = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-dash-export-confirm" :disabled="exportBusy" @click="confirmExport">
+            下载
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Overview = {
   totalGmv: number
@@ -204,7 +242,15 @@ type DrillRow = {
   sessionCount: number
   children?: Array<{ sessionCode: string; gmv: number; totalCost: number; netProfit: number }>
 }
-type TrendPoint = { statPeriod: string; periodLabel?: string; gmv: number; cost: number; netProfit: number; momRate?: number | null }
+type TrendPoint = {
+  statPeriod: string
+  periodLabel?: string
+  gmv: number
+  cost: number
+  netProfit: number
+  momRate?: number | null
+  yoyRate?: number | null
+}
 type CostItem = { costItem: string; amount: number; ratio: number }
 type ShareItem = {
   shareTarget: string
@@ -223,12 +269,21 @@ const dimensions = [
   { value: 'DAREN', label: '达人' },
   { value: 'OWNER', label: '责任人' },
 ]
+const grains = [
+  { value: 'DAY', label: '日' },
+  { value: 'WEEK', label: '周' },
+  { value: 'MONTH', label: '月' },
+]
 
 const statPeriod = ref(currentMonth())
 const profitType = ref('NET')
 const dimension = ref('ACCOUNT')
+const granularity = ref('MONTH')
 const error = ref('')
 const exportMsg = ref('')
+const exportOpen = ref(false)
+const exportFormat = ref<'XLSX' | 'PDF'>('XLSX')
+const exportBusy = ref(false)
 const overview = ref<Overview | null>(null)
 const drill = ref<DrillRow[]>([])
 const trend = ref<TrendPoint[]>([])
@@ -240,6 +295,7 @@ const profitLabel = computed(() => {
   const map: Record<string, string> = { NET: '净利润', GROSS: '毛利', OPERATING: '经营利润' }
   return map[profitType.value] || '净利润'
 })
+const dimensionLabel = computed(() => dimensions.find((item) => item.value === dimension.value)?.label || dimension.value)
 
 function currentMonth() {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
@@ -286,6 +342,22 @@ async function switchDim(value: string) {
   await loadDrill()
 }
 
+async function switchGrain(value: string) {
+  granularity.value = value
+  await loadTrend()
+}
+
+async function loadTrend() {
+  const trendRes = await http.get('/fin/dashboard/trend', {
+    params: {
+      dateRange: monthBounds(statPeriod.value),
+      granularity: granularity.value,
+      profitType: profitType.value,
+    },
+  })
+  trend.value = trendRes.data?.data || []
+}
+
 async function loadDrill() {
   const res = await http.get('/fin/dashboard/drilldown', {
     params: {
@@ -313,7 +385,7 @@ async function loadAll() {
     http.get('/fin/dashboard/cost-structure', { params: { statPeriod: period } }),
     http.get('/fin/dashboard/share-summary', { params: { statPeriod: period } }),
     http.get('/fin/dashboard/trend', {
-      params: { dateRange: monthBounds(period), granularity: 'MONTH', profitType: profitType.value },
+      params: { dateRange: monthBounds(period), granularity: granularity.value, profitType: profitType.value },
     }),
   ])
   if (overviewRes.data?.code !== 0) {
@@ -328,21 +400,80 @@ async function loadAll() {
   await loadDrill()
 }
 
-async function exportBook() {
+function openExport() {
+  exportFormat.value = 'XLSX'
+  exportOpen.value = true
+}
+
+async function confirmExport() {
+  if (exportBusy.value) return
+  exportBusy.value = true
   exportMsg.value = ''
-  const res = await http.get('/fin/dashboard/export', {
-    params: { statPeriod: statPeriod.value, dimensionType: dimension.value, format: 'XLSX' },
-  })
-  if (res.data?.code !== 0) {
-    exportMsg.value = `${res.data?.code || ''} ${res.data?.msg || '导出失败'}`.trim()
-    return
+  const format = exportFormat.value
+  try {
+    const res = await http.get('/fin/dashboard/export', {
+      params: { statPeriod: statPeriod.value, dimensionType: dimension.value, format },
+    })
+    const downloadUrl = String(res.data.data?.downloadUrl || '')
+    const fileName = String(res.data.data?.fileName || '')
+    const token = new URL(downloadUrl, 'http://127.0.0.1').searchParams.get('token') || ''
+    const file = await http.get('/fin/dashboard/export/file', { params: { token }, responseType: 'blob' })
+    const type = String(file.headers?.['content-type'] || '')
+    const ready = format === 'PDF' ? type.includes('pdf') : type.includes('sheet')
+    if (!ready) {
+      exportMsg.value = '导出失败'
+      return
+    }
+    const blob = file.data as Blob
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName || `fin_dashboard.${format === 'PDF' ? 'pdf' : 'xlsx'}`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    exportMsg.value = `导出成功 ${fileName}`
+    exportOpen.value = false
+  } catch (err) {
+    exportMsg.value = errorMessage(err)
+  } finally {
+    exportBusy.value = false
   }
-  const downloadUrl = String(res.data.data?.downloadUrl || '')
-  const token = new URL(downloadUrl, 'http://127.0.0.1').searchParams.get('token') || ''
-  const file = await http.get('/fin/dashboard/export/file', { params: { token }, responseType: 'blob' })
-  const type = String(file.headers?.['content-type'] || '')
-  exportMsg.value = type.includes('sheet') ? `导出成功 ${res.data.data?.fileName || ''}` : '导出失败'
 }
 
 onMounted(loadAll)
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.modal-card {
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  background: #fff;
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
+.modal-card p {
+  margin: 10px 0;
+}
+.fmt {
+  display: flex;
+  gap: 16px;
+  margin: 8px 0 14px;
+}
+.modal-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>

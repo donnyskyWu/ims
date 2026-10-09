@@ -63,7 +63,12 @@
               <td class="num">¥{{ fmt(row.shareBase) }}</td>
               <td class="num">¥{{ fmt(row.shareAmount) }}</td>
               <td>{{ auditProgress(row) }}</td>
-              <td>{{ statusLabel(row.status, row) }}</td>
+              <td>
+                {{ statusLabel(row.status, row) }}
+                <div v-if="row.payoffVoucher?.fileName" class="hint" data-testid="fin-share-voucher-name">
+                  {{ row.payoffVoucher.fileName }}
+                </div>
+              </td>
               <td>
                 <button
                   v-if="row.status === 'PENDING_AUDIT' && !row.finAuditPassed"
@@ -124,6 +129,11 @@
           <button type="button" class="btn btn-sec btn-sm" @click="payoffOpen = false">关闭</button>
         </div>
         <p class="hint">场次 {{ payoffRow.sessionCode }} · 金额 ¥{{ fmt(payoffRow.shareAmount) }}</p>
+        <label class="fld">
+          <span>发放凭证</span>
+          <input type="file" data-testid="fin-share-payoff-voucher" @change="onVoucher" />
+        </label>
+        <p v-if="voucherFile" class="hint" data-testid="fin-share-payoff-voucher-name">{{ voucherFile.fileName }}</p>
         <label class="fld">
           <span>发放备注</span>
           <input v-model="payoffNote" data-testid="fin-share-payoff-note" maxlength="256" />
@@ -209,6 +219,7 @@ type ShareRow = {
   reverseAudit?: ReverseAudit | null
   replaced?: boolean
   replacementAmount?: number
+  payoffVoucher?: { fileName?: string; fileKey?: string } | null
 }
 
 const loading = ref(false)
@@ -218,6 +229,7 @@ const query = reactive({ sessionCode: '', shareTarget: '', status: '' })
 const payoffOpen = ref(false)
 const payoffRow = ref<ShareRow | null>(null)
 const payoffNote = ref('')
+const voucherFile = ref<{ fileName: string; fileKey: string } | null>(null)
 const reverseOpen = ref(false)
 const reverseRow = ref<ShareRow | null>(null)
 const reverseReason = ref('')
@@ -302,7 +314,18 @@ async function audit(row: ShareRow, auditRole: 'FINANCE' | 'BUSINESS', conclusio
 function openPayoff(row: ShareRow) {
   payoffRow.value = row
   payoffNote.value = ''
+  voucherFile.value = null
   payoffOpen.value = true
+}
+
+function onVoucher(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) {
+    voucherFile.value = null
+    return
+  }
+  const safe = file.name.replace(/[^\w.\-]+/g, '_') || 'voucher'
+  voucherFile.value = { fileName: file.name, fileKey: `voucher/${safe}` }
 }
 
 function openReverse(row: ShareRow) {
@@ -341,6 +364,7 @@ async function submitPayoff() {
   error.value = ''
   const res = await http.put(`/fin/share/result/${payoffRow.value.id}/payoff`, {
     payoffNote: payoffNote.value,
+    payoffVoucher: voucherFile.value || undefined,
   })
   if (res.data?.code !== 0) {
     error.value = res.data?.msg || '发放失败'

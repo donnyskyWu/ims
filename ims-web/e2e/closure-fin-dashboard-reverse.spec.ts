@@ -114,10 +114,14 @@ test.describe('fin dashboard and share reverse closure', () => {
     await expect(page.locator('[data-testid="fin-dash-session"]', { hasText: sessionCode })).toContainText('81,400.00')
     await page.screenshot({ path: `${shotDir}/05-dashboard-owner-drill.png`, fullPage: true })
 
+    await page.getByTestId('fin-dash-export').click()
+    const exportDialog = page.getByTestId('fin-dash-export-dialog')
+    await expect(exportDialog).toBeVisible()
+    await expect(exportDialog.getByTestId('fin-dash-export-scope')).toContainText('2026-10')
     const exportResp = page.waitForResponse(
       (r) => r.url().includes('/fin/dashboard/export') && !r.url().includes('/file') && r.request().method() === 'GET',
     )
-    await page.getByTestId('fin-dash-export').click()
+    await exportDialog.getByTestId('fin-dash-export-confirm').click()
     const exportBody = (await (await exportResp).json()) as { code: number }
     expect(exportBody.code).toBe(0)
     await expect(page.getByTestId('fin-dash-export-msg')).toContainText('导出成功')

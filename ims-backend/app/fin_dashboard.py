@@ -1,4 +1,4 @@
-"""FIN-004 利润看板：按月汇总，下钻平台/账号/IP 组/达人/责任人，并导出 xlsx。
+"""FIN-004 利润看板：按月汇总，下钻平台/账号/IP 组/达人/责任人，并导出 xlsx / pdf。
 
 契约 DrillDim 没有「主体」。公司主体在账号 company_id 上，不作为本看板维度。
 达人与责任人都取场次 responsible_user_id：场次表没有独立达人主键，分成单达人 targetRefId 同样取该字段。
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.corp import ops_db, tenant_of, user_names
-from app.dc_trace import build_xlsx
+from app.dc_trace import build_pdf, build_xlsx, matrix_lines
 from app.fin import (
     PERIOD_MONTH_RE,
     collect_visible_profits,
@@ -55,6 +55,7 @@ PLATFORM_LABEL = {
     "WECHAT_CHANNELS": "视频号",
 }
 XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PDF_MEDIA = "application/pdf"
 EXPORT_TTL_SEC = 60
 _EXPORTS: dict[str, tuple[float, bytes, str, str, int]] = {}
 
@@ -558,20 +559,27 @@ def dashboard_export(
     if err is not None:
         return err
     fmt = (format or "").strip().upper()
-    if fmt != "XLSX":
-        return fail(1001, "导出格式仅支持 XLSX")
+    if fmt not in ("XLSX", "PDF"):
+        return fail(1001, "导出格式仅支持 XLSX 或 PDF")
     dimension = (dimensionType or "ACCOUNT").strip().upper()
     if dimension not in DRILL_DIMS:
         return fail(1001, "维度仅支持 PLATFORM、ACCOUNT、IP_GROUP、DAREN、OWNER")
     tenant_id = tenant_of(actor)
     rows = month_rows(db, actor, request.state.scope, tenant_id, period)
     items = drill_items(db, ops, rows, dimension, "NET", "", True)
-    body = build_xlsx(export_matrix(items))
+    matrix = export_matrix(items)
+    if fmt == "PDF":
+        body = build_pdf([f"FIN dashboard {period}", f"dimension {dimension}", *matrix_lines(matrix)])
+        media = PDF_MEDIA
+        filename = f"fin_dashboard_{period}.pdf"
+    else:
+        body = build_xlsx(matrix)
+        media = XLSX_MEDIA
+        filename = f"fin_dashboard_{period}.xlsx"
     now = time.time()
     purge_exports(now)
     token = secrets.token_urlsafe(24)
-    filename = f"fin_dashboard_{period}.xlsx"
-    _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, XLSX_MEDIA, filename, actor.id)
+    _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, media, filename, actor.id)
     return ok(
         {
             "downloadUrl": f"/admin-api/ims/fin/dashboard/export/file?token={token}",
