@@ -619,6 +619,23 @@ class ContentProject(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ImsFile(Base):
+    """服务端文件元数据（全局规范 §6.3）。file_key 为相对路径，不存绝对路径。"""
+
+    __tablename__ = "ims_file"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    file_name: Mapped[str] = mapped_column(String(256), default="")
+    file_key: Mapped[str] = mapped_column(String(512), default="", unique=True, index=True)
+    file_size: Mapped[int] = mapped_column(BigInteger, default=0)
+    content_type: Mapped[str] = mapped_column(String(128), default="")
+    scene: Mapped[str] = mapped_column(String(64), default="", index=True)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ContentFbSyncOutbox(Base):
     __tablename__ = "ims_fb_sync_outbox"
     __table_args__ = (UniqueConstraint("tenant_id", "idempotency_key", name="uk_fb_sync_idem"),)

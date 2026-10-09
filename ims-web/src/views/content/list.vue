@@ -96,7 +96,7 @@
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
 
-    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑内容' : '新增内容'" width="720px" @close="drawerOpen = false">
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑内容' : '新增内容'" width="780px" @close="drawerOpen = false">
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
@@ -120,6 +120,32 @@
         <div class="fld">
           <label>正文</label>
           <textarea v-model="editBody" rows="4" placeholder="正文" />
+        </div>
+        <div class="fld">
+          <label>版式图片</label>
+          <p class="hint">POST /content/file/upload · scene=content_image，写入 layout_html</p>
+          <input
+            data-testid="content-image-file"
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            :disabled="uploading"
+            @change="onPickImage"
+          />
+          <p v-if="uploadError" class="hint" style="color: var(--red)">{{ uploadError }}</p>
+        </div>
+        <div class="fld">
+          <label>layout_html</label>
+          <textarea v-model="editLayoutHtml" data-testid="content-layout-html" rows="4" readonly />
+        </div>
+        <div class="fld">
+          <label>版式预览</label>
+          <div data-testid="content-layout-preview" class="content-layout-preview">
+            <figure v-for="img in previewImages" :key="img.fileKey">
+              <img :src="img.objectUrl" :alt="img.alt" />
+              <figcaption>{{ img.alt }}</figcaption>
+            </figure>
+            <div v-if="!previewImages.length" class="hint">{{ previewHint }}</div>
+          </div>
         </div>
       </div>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
@@ -156,6 +182,12 @@ const editDocType = ref('COPY')
 const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
 const editBody = ref('')
+const editLayoutHtml = ref('')
+const uploading = ref(false)
+const uploadError = ref('')
+const previewHint = ref('插入图片后在此预览')
+const previewImages = ref<{ fileKey: string; objectUrl: string; alt: string }[]>([])
+let previewToken = 0
 
 const copyLabels: Record<string, string> = { QUEUED: '生成中', GENERATING: '生成中', SUCCESS: '成功', FAILED: '失败' }
 const videoLabels: Record<string, string> = {
@@ -173,6 +205,86 @@ function copyLabel(status: string | null | undefined) {
 function videoLabel(status: string | null | undefined) {
   if (!status) return '—'
   return videoLabels[status] || status
+}
+
+function escapeAttr(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function parseLayoutImages(html: string) {
+  const found: { fileKey: string; src: string; alt: string }[] = []
+  const tags = html.match(/<img\b[^>]*>/gi) || []
+  for (const tag of tags) {
+    const src = /src="([^"]*)"/.exec(tag)?.[1] || ''
+    const fileKey = /data-file-key="([^"]*)"/.exec(tag)?.[1] || ''
+    const alt = /alt="([^"]*)"/.exec(tag)?.[1] || ''
+    if (fileKey && src.startsWith('/admin-api/ims/file/')) found.push({ fileKey, src, alt })
+  }
+  return found
+}
+
+function revokePreviews() {
+  for (const img of previewImages.value) {
+    if (img.objectUrl.startsWith('blob:')) URL.revokeObjectURL(img.objectUrl)
+  }
+  previewImages.value = []
+}
+
+async function refreshPreview() {
+  const token = ++previewToken
+  const parsed = parseLayoutImages(editLayoutHtml.value)
+  if (!parsed.length) {
+    revokePreviews()
+    previewHint.value = '插入图片后在此预览'
+    return
+  }
+  previewHint.value = '预览加载中'
+  const next: { fileKey: string; objectUrl: string; alt: string }[] = []
+  for (const item of parsed) {
+    const path = item.src.startsWith('/admin-api/ims') ? item.src.slice('/admin-api/ims'.length) : item.src
+    try {
+      const res = await http.get(path, { responseType: 'blob' })
+      next.push({ fileKey: item.fileKey, objectUrl: URL.createObjectURL(res.data as Blob), alt: item.alt || item.fileKey })
+    } catch {
+      /* 单张失败时保留其余预览 */
+    }
+  }
+  if (token !== previewToken) {
+    for (const img of next) URL.revokeObjectURL(img.objectUrl)
+    return
+  }
+  revokePreviews()
+  previewImages.value = next
+  previewHint.value = next.length ? '' : '图片预览失败'
+}
+
+async function onPickImage(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  uploading.value = true
+  uploadError.value = ''
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    body.append('scene', 'content_image')
+    const { data } = await http.post('/content/file/upload', body)
+    const fileKey = String(data.data?.fileKey || '')
+    const fileUrl = String(data.data?.fileUrl || '')
+    const fileName = String(data.data?.fileName || file.name)
+    if (!fileKey || !fileUrl) {
+      uploadError.value = '上传回执缺少 fileKey'
+      return
+    }
+    const tag = `<img src="${escapeAttr(fileUrl)}" alt="${escapeAttr(fileName)}" data-file-key="${escapeAttr(fileKey)}" />`
+    editLayoutHtml.value = editLayoutHtml.value ? `${editLayoutHtml.value}\n${tag}` : tag
+    await refreshPreview()
+  } catch (e) {
+    uploadError.value = errorMessage(e)
+  } finally {
+    uploading.value = false
+  }
 }
 
 async function loadList() {
@@ -200,6 +312,7 @@ function resetForm() {
   editMatchType.value = 1
   editScheme.value = []
   editBody.value = ''
+  editLayoutHtml.value = ''
 }
 
 function openCreate() {
@@ -207,6 +320,9 @@ function openCreate() {
   editingRow.value = null
   resetForm()
   editorSeed.value += 1
+  uploadError.value = ''
+  revokePreviews()
+  previewHint.value = '插入图片后在此预览'
   drawerOpen.value = true
 }
 
@@ -219,8 +335,11 @@ function openEdit(row: any) {
   editMatchType.value = row.matchType || 1
   editScheme.value = Array.isArray(row.matchScheme) ? row.matchScheme : []
   editBody.value = row.body || ''
+  editLayoutHtml.value = row.layoutHtml || ''
   editorSeed.value += 1
+  uploadError.value = ''
   drawerOpen.value = true
+  void refreshPreview()
 }
 
 async function saveContent() {
@@ -237,6 +356,7 @@ async function saveContent() {
       matchType: editMatchType.value,
       matchScheme: editScheme.value,
       body: editBody.value,
+      layoutHtml: editLayoutHtml.value,
     }
     if (editingId.value) {
       await http.put(`/content/${editingId.value}`, payload)
@@ -295,3 +415,27 @@ async function retrySync(id: number) {
 
 loadList()
 </script>
+
+<style scoped>
+.content-layout-preview {
+  min-height: 88px;
+  border: 1px dashed var(--line2);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fafafc;
+}
+.content-layout-preview figure {
+  margin: 0 0 8px;
+}
+.content-layout-preview img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+.content-layout-preview figcaption {
+  font-size: 12px;
+  color: var(--text2);
+}
+</style>
