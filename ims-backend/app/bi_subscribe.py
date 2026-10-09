@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -57,7 +57,7 @@ class ShareLinkBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     reportId: int
     sensitive: bool = False
-    expireDays: int = Field(default=7, ge=1, le=30)
+    expireDays: int = 7
 
 
 class ShareApprovalBody(BaseModel):
@@ -76,6 +76,33 @@ def iso(dt: datetime | None) -> str:
 
 def expire_str(days: int) -> str:
     return (datetime.now(BJ) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def expire_passed(expire_at: str) -> bool:
+    raw = (expire_at or "").strip()
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BJ)
+    return datetime.now(BJ) >= dt
+
+
+def share_block(row: BiShareLink) -> tuple[int, str] | None:
+    """打开分享链接的空/失效边：1196 待审批，过期与空令牌由调用方区分。"""
+    status = (row.approval_status or "").upper()
+    if status == "PENDING":
+        return 1196, "分享链接待审批，暂不可用"
+    if status == "REJECTED":
+        return 1001, "分享链接已驳回"
+    if status == "EXPIRED" or expire_passed(row.expire_at):
+        return 1001, "链接已过期（有效期 7~30 天）"
+    if status not in {"APPROVED", "NOT_REQUIRED"}:
+        return 1001, "分享链接不可用"
+    return None
 
 
 def dingtalk_webhook_url(db: Session) -> str:
@@ -378,6 +405,8 @@ def share_link_create(
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
+    if body.expireDays < 7 or body.expireDays > 30:
+        return fail(1197, "分享有效期须为 7~30 天")
     report = get_report(db, tenant_id, body.reportId, actor, request.state.scope)
     if report is None:
         row = db.get(BiReportDef, body.reportId)
@@ -403,6 +432,40 @@ def share_link_create(
     db.flush()
     names = user_names(db, [row.creator_user_id])
     return ok(share_vo(row, names))
+
+
+@router.get("/share-link")
+def share_link_open(
+    request: Request,
+    token: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """按令牌打开已有分享链接。空令牌、未知、待审批、驳回、过期/失效返回空态错误。"""
+    raw = token.strip()
+    if not raw:
+        return fail(1001, "分享链接为空")
+    tenant_id = tenant_of(actor)
+    row = db.scalar(
+        select(BiShareLink).where(
+            BiShareLink.deleted == 0,
+            BiShareLink.tenant_id == tenant_id,
+            BiShareLink.link_token == raw,
+        )
+    )
+    if row is None:
+        return fail(1001, "分享链接不存在")
+    if not share_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "您无权查看该报表")
+    blocked = share_block(row)
+    if blocked is not None:
+        code, msg = blocked
+        return fail(code, msg)
+    names = user_names(db, [row.creator_user_id])
+    data = share_vo(row, names)
+    data["usable"] = True
+    data["hint"] = "按您的数据权限过滤展示"
+    return ok(data)
 
 
 @router.put("/share-approval/{link_id:int}")
