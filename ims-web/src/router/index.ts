@@ -24,6 +24,7 @@ const router = createRouter({
         { path: 'fin/share/result', component: () => import('../views/fin/share-result.vue') },
         { path: 'fin/ledger', component: () => import('../views/fin/ledger.vue') },
         { path: 'content/sop', component: () => import('../views/content/sop.vue') },
+        { path: 'content/topic', component: () => import('../views/content/topic.vue') },
         { path: 'content/plan', component: () => import('../views/content/plan.vue') },
         { path: 'content/review', component: () => import('../views/content/review.vue') },
         { path: 'content/work-task', component: () => import('../views/content/work-task.vue') },

@@ -43,6 +43,7 @@ export const IMPLEMENTED: Record<string, string> = {
   finLedger: '/ims/fin/ledger',
   fin: '/ims/fin/cost',
   contentSop: '/ims/content/sop',
+  contentTopic: '/ims/content/topic',
   contentPlan: '/ims/content/plan',
   contentReview: '/ims/content/review',
   contentPublish: '/ims/content/publish',
