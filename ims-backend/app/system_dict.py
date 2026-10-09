@@ -25,6 +25,7 @@ DICT_SEED = [
     ("dict_sim_operator", "运营商", [("MOBILE", "移动"), ("UNICOM", "联通"), ("TELECOM", "电信")]),
     ("dict_sim_status", "手机卡状态", [("IN_USE", "在用"), ("IDLE", "闲置"), ("STOPPED", "停机"), ("CANCELLED", "注销"), ("DAMAGED", "损坏"), ("LOST", "丢失")]),
     ("dict_company_status", "公司状态", [("ENABLED", "启用"), ("DISABLED", "停用")]),
+    ("dict_industry", "行业", [("SPORT", "体育"), ("ESPORTS", "电竞"), ("MEDIA", "传媒"), ("OTHER", "其他")]),
     ("dict_realname_status", "实名人状态", [("ENABLED", "启用"), ("DISABLED", "停用")]),
     ("dict_id_type", "证件类型", [("ID_CARD", "身份证"), ("PASSPORT", "护照"), ("HK_MACAO", "港澳通行证"), ("TAIWAN", "台湾通行证")]),
     ("dict_phone_status", "手机状态", [("IN_USE", "在用"), ("IDLE", "闲置"), ("DAMAGED", "损坏"), ("LOST", "丢失")]),

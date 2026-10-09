@@ -26,6 +26,15 @@
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
+      <select
+        v-if="kind === 'company'"
+        v-model="industry"
+        style="width: 140px"
+        data-testid="master-company-industry"
+      >
+        <option value="">全部行业</option>
+        <option v-for="item in industries" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
       <select v-if="meta.statusOptions.length" v-model="status" style="width: 120px">
         <option value="">全部状态</option>
         <option v-for="item in meta.statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
@@ -53,8 +62,8 @@
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
                 <div class="empty">
-                  <div class="et">{{ error || meta.empty }}</div>
-                  <div class="es">{{ meta.emptyHint }}</div>
+                  <div class="et">{{ error || emptyTitle }}</div>
+                  <div class="es">{{ error ? meta.emptyHint : emptyHintText }}</div>
                 </div>
               </td>
             </tr>
@@ -107,6 +116,9 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
+    <p v-if="kind === 'company'" class="hint" data-testid="master-company-industry-hint">
+      行业来自字典 dict_industry。未列入字典的行业不会出现在下拉里。
+    </p>
     <p class="hint">{{ meta.hint }}</p>
     <div v-if="kind === 'certificate'" data-testid="corp-cert-expire-panel">
       <div class="sec rowline" style="justify-content: space-between; align-items: baseline">
@@ -496,7 +508,15 @@ const total = ref(0)
 const pageNo = ref(1)
 const pageSize = ref(10)
 const keyword = ref('')
+const industry = ref('')
 const status = ref('')
+const fallbackIndustry: Opt[] = [
+  { value: 'SPORT', label: '体育' },
+  { value: 'ESPORTS', label: '电竞' },
+  { value: 'MEDIA', label: '传媒' },
+  { value: 'OTHER', label: '其他' },
+]
+const industries = ref<Opt[]>(fallbackIndustry)
 const loading = ref(false)
 const error = ref('')
 const detailOpen = ref(false)
@@ -674,6 +694,11 @@ const specs: Record<string, {
 }
 
 const meta = computed(() => specs[kind.value] || specs.company)
+const industryFiltering = computed(() => kind.value === 'company' && Boolean(industry.value))
+const emptyTitle = computed(() => (industryFiltering.value ? '没有符合筛选的记录' : meta.value.empty))
+const emptyHintText = computed(() =>
+  industryFiltering.value ? '这个行业下没有公司。换一项，或点重置看全部。' : meta.value.emptyHint,
+)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const pageList = computed(() => {
   const end = Math.min(pageCount.value, Math.max(pageNo.value + 2, 5))
@@ -723,6 +748,7 @@ function show(row: Row, key: string) {
   const value = row[key]
   if (value === undefined || value === null || value === '') return '—'
   if (key === 'status') return statusLabel(String(value))
+  if (key === 'industry') return industries.value.find((item) => item.value === value)?.label || String(value)
   if (key === 'operator') return operators.value.find((item) => item.value === value)?.label || String(value)
   if (key === 'idType' || key === 'certType') return typeLabel(String(value))
   return String(value)
@@ -1179,6 +1205,7 @@ function params() {
     if (kind.value === 'sim-card') query.phoneNumber = text
     if (kind.value === 'certificate') query.holderName = text
   }
+  if (kind.value === 'company' && industry.value) query.industry = industry.value
   if (status.value) query.status = status.value
   return query
 }
@@ -1207,6 +1234,7 @@ function search() {
 
 function reset() {
   keyword.value = ''
+  industry.value = ''
   status.value = ''
   search()
 }
@@ -1352,6 +1380,15 @@ async function openDetail(row: Row) {
   }
 }
 
+async function prepareCompany() {
+  try {
+    const rows = await loadDict('dict_industry')
+    if (rows.length) industries.value = rows
+  } catch {
+    /* 字典失败时保留本地行业 */
+  }
+}
+
 async function loadDict(dictType: string) {
   const res = await http.get('/system/dict-data/list', { params: { dictType } })
   return asList(res.data?.data)
@@ -1433,6 +1470,7 @@ async function save() {
 
 watch(kind, async () => {
   keyword.value = ''
+  industry.value = ''
   status.value = ''
   pageNo.value = 1
   detailOpen.value = false
@@ -1446,6 +1484,7 @@ watch(kind, async () => {
   remindOpen.value = false
   fileOpen.value = false
   digitalOpen.value = false
+  if (kind.value === 'company') await prepareCompany()
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
       await prepareSim()
@@ -1461,6 +1500,7 @@ watch(kind, async () => {
 })
 
 onMounted(async () => {
+  if (kind.value === 'company') await prepareCompany()
   if (kind.value === 'sim-card') {
     try {
       await prepareSim()

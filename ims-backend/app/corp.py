@@ -301,6 +301,7 @@ def company_page(
     pageSize: int = 10,
     companyName: str = "",
     creditCode: str = "",
+    industry: str = "",
     status: str = "",
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
@@ -311,6 +312,8 @@ def company_page(
         stmt = stmt.where(Company.company_name.like(f"%{companyName}%"))
     if creditCode:
         stmt = stmt.where(Company.credit_code.like(f"%{creditCode}%"))
+    if industry.strip():
+        stmt = stmt.where(Company.industry == industry.strip())
     if status:
         stmt = stmt.where(Company.status == status)
     total = count_of(ops, stmt)
