@@ -48,7 +48,10 @@
               <td>{{ row.platform }}</td>
               <td class="mono">{{ row.accountNo }}</td>
               <td class="num" style="font-size: 12px">{{ row.planPublishAt }}</td>
-              <td><span class="chip">{{ statusLabel(row.publishStatus) }}</span></td>
+              <td>
+                <span class="chip">{{ statusLabel(row.publishStatus) }}</span>
+                <span v-if="row.receiptOverdue" data-testid="publish-overdue" style="color: #c0392b; margin-left: 6px">超24h</span>
+              </td>
               <td>
                 <a v-if="row.publishUrl" :href="row.publishUrl" target="_blank" rel="noopener">已回填</a>
                 <span v-else style="color: var(--orange)">待回填</span>
@@ -102,6 +105,14 @@
           <input v-model="createForm.caption" maxlength="512" />
         </div>
       </div>
+      <div class="dsec" data-testid="publish-checklist">发布清单</div>
+      <p v-if="checklistError" class="hint" style="color: #c0392b">{{ checklistError }}</p>
+      <p v-else-if="!shownChecklist.length" class="hint">填写内容项目 id 后核对终审、质量清单与文案。</p>
+      <ul v-else style="margin: 0; padding-left: 18px">
+        <li v-for="item in shownChecklist" :key="item.itemCode" :data-item="item.itemCode" :data-passed="item.passed ? '1' : '0'">
+          {{ item.passed ? '通过' : '未过' }} · {{ item.itemDesc }}
+        </li>
+      </ul>
       <template #footer>
         <button class="btn btn-sec btn-sm" type="button" @click="createOpen = false">取消</button>
         <button class="btn btn-pri btn-sm" type="button" :disabled="creating" @click="submitCreate">保存</button>
@@ -135,9 +146,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
-import { http } from '../../api/http'
+import { http, errorMessage } from '../../api/http'
 
 const loading = ref(false)
 const error = ref('')
@@ -155,6 +166,16 @@ const createForm = reactive({
   planPublishAt: '',
   caption: '',
 })
+const checklist = ref<any[]>([])
+const checklistError = ref('')
+const shownChecklist = computed(() =>
+  checklist.value.map((item) => {
+    if (item.itemCode === 'CAPTION') {
+      return { ...item, passed: Boolean(item.passed) || !!createForm.caption.trim() }
+    }
+    return item
+  }),
+)
 
 const receiptOpen = ref(false)
 const receiptTarget = ref<any>(null)
@@ -216,8 +237,29 @@ function openCreate() {
   createForm.platform = 'DOUYIN'
   createForm.planPublishAt = ''
   createForm.caption = ''
+  checklist.value = []
+  checklistError.value = ''
   createOpen.value = true
 }
+
+async function loadChecklist(id: number) {
+  checklist.value = []
+  checklistError.value = ''
+  if (!id || id < 1) return
+  try {
+    const { data } = await http.get(`/content/${id}`)
+    checklist.value = data.data?.publishChecklist || []
+  } catch (e) {
+    checklistError.value = errorMessage(e)
+  }
+}
+
+watch(
+  () => createForm.contentProjectId,
+  (id) => {
+    loadChecklist(Number(id) || 0)
+  },
+)
 
 async function submitCreate() {
   if (!createForm.contentProjectId || !createForm.accountId || !createForm.platform.trim() || !createForm.planPublishAt.trim()) {

@@ -130,6 +130,9 @@ def content_list(
     pageSize: int = 10,
     title: str | None = None,
     status: str | None = None,
+    contentType: str | None = None,
+    platformType: str | None = None,
+    documentType: str | None = None,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -139,6 +142,12 @@ def content_list(
         stmt = stmt.where(ContentProject.title.contains(title.strip()))
     if status:
         stmt = stmt.where(ContentProject.content_status == status.strip())
+    if contentType and contentType.strip():
+        stmt = stmt.where(ContentProject.content_type == contentType.strip())
+    if platformType and platformType.strip():
+        stmt = stmt.where(ContentProject.platform_type == platformType.strip())
+    if documentType and documentType.strip():
+        stmt = stmt.where(ContentProject.document_type == documentType.strip())
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = db.scalars(
         stmt.order_by(ContentProject.id.desc()).offset((page_no - 1) * size).limit(size)
@@ -151,7 +160,11 @@ def content_detail(content_id: int, db: Session = Depends(db_session), actor: Us
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
-    return ok(project_vo(row))
+    data = project_vo(row)
+    from app.content import publish_readiness
+
+    data["publishChecklist"] = publish_readiness(db, row)
+    return ok(data)
 
 
 @router.post("")

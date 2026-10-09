@@ -25,7 +25,24 @@
         <option value="PENDING_PUBLISH">PENDING_PUBLISH</option>
         <option value="PUBLISHED">PUBLISHED</option>
       </select>
+      <select v-model="typeKw" data-testid="filter-content-type" style="width: 140px">
+        <option value="">全部类型</option>
+        <option value="SHORT_VIDEO">短视频</option>
+        <option value="ARTICLE">图文</option>
+      </select>
+      <select v-model="platformKw" data-testid="filter-platform" style="width: 120px">
+        <option value="">全部平台</option>
+        <option value="DOUYIN">抖音</option>
+        <option value="KUAISHOU">快手</option>
+        <option value="WECHAT_CHANNELS">视频号</option>
+      </select>
+      <select v-model="docKw" data-testid="filter-document-type" style="width: 120px">
+        <option value="">全部文档</option>
+        <option value="COPY">文案</option>
+        <option value="SCRIPT">脚本</option>
+      </select>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -35,6 +52,8 @@
               <th>ID</th>
               <th>标题</th>
               <th>状态</th>
+              <th>类型</th>
+              <th>平台</th>
               <th>赛事摘要</th>
               <th>文档类型</th>
               <th>AI 文案</th>
@@ -45,15 +64,17 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无内容' }}</div></div></td>
+              <td colspan="11"><div class="empty"><div class="et">{{ error || '暂无内容' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.id }}</td>
               <td><b>{{ row.title }}</b></td>
               <td>{{ row.contentStatus }}</td>
+              <td data-testid="row-content-type">{{ typeLabel(row.contentType) }}</td>
+              <td data-testid="row-platform">{{ platformLabel(row.platformType) }}</td>
               <td>{{ row.matchSummary || row.competitionName || '—' }}</td>
               <td>{{ row.documentType || '—' }}</td>
               <td data-testid="row-ai-status">{{ copyLabel(row.aiGenerateStatus) }}</td>
@@ -106,8 +127,17 @@
         <div class="fld">
           <label>内容类型</label>
           <select v-model="editContentType">
-            <option value="SHORT_VIDEO">SHORT_VIDEO</option>
-            <option value="ARTICLE">ARTICLE</option>
+            <option value="SHORT_VIDEO">短视频</option>
+            <option value="ARTICLE">图文</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>平台</label>
+          <select v-model="editPlatform" data-testid="edit-platform">
+            <option value="">未指定</option>
+            <option value="DOUYIN">抖音</option>
+            <option value="KUAISHOU">快手</option>
+            <option value="WECHAT_CHANNELS">视频号</option>
           </select>
         </div>
         <div class="fld">
@@ -229,6 +259,9 @@ const loading = ref(false)
 const error = ref('')
 const titleKw = ref('')
 const statusKw = ref('')
+const typeKw = ref('')
+const platformKw = ref('')
+const docKw = ref('')
 const drawerOpen = ref(false)
 const viewOpen = ref(false)
 const viewRow = ref<any>(null)
@@ -245,6 +278,7 @@ const editingRow = ref<any>(null)
 const editorSeed = ref(0)
 const editTitle = ref('')
 const editContentType = ref('SHORT_VIDEO')
+const editPlatform = ref('')
 const editDocType = ref('COPY')
 const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
@@ -275,6 +309,16 @@ function copyLabel(status: string | null | undefined) {
 function videoLabel(status: string | null | undefined) {
   if (!status) return '—'
   return videoLabels[status] || status
+}
+const typeLabels: Record<string, string> = { SHORT_VIDEO: '短视频', ARTICLE: '图文' }
+const platformLabels: Record<string, string> = { DOUYIN: '抖音', KUAISHOU: '快手', WECHAT_CHANNELS: '视频号' }
+function typeLabel(value: string | null | undefined) {
+  if (!value) return '—'
+  return typeLabels[value] || value
+}
+function platformLabel(value: string | null | undefined) {
+  if (!value) return '—'
+  return platformLabels[value] || value
 }
 
 function escapeAttr(value: string) {
@@ -364,6 +408,9 @@ async function loadList() {
     const params: Record<string, unknown> = { pageNo: 1, pageSize: 50 }
     if (titleKw.value.trim()) params.title = titleKw.value.trim()
     if (statusKw.value.trim()) params.status = statusKw.value.trim()
+    if (typeKw.value) params.contentType = typeKw.value
+    if (platformKw.value) params.platformType = platformKw.value
+    if (docKw.value) params.documentType = docKw.value
     const { data } = await http.get('/content', { params })
     rows.value = data.data?.list || []
     total.value = data.data?.total || 0
@@ -375,9 +422,19 @@ async function loadList() {
   }
 }
 
+function resetFilters() {
+  titleKw.value = ''
+  statusKw.value = ''
+  typeKw.value = ''
+  platformKw.value = ''
+  docKw.value = ''
+  loadList()
+}
+
 function resetForm() {
   editTitle.value = ''
   editContentType.value = 'SHORT_VIDEO'
+  editPlatform.value = ''
   editDocType.value = 'COPY'
   editMatchType.value = 1
   editScheme.value = []
@@ -413,6 +470,7 @@ function openEdit(row: any) {
   editingRow.value = row
   editTitle.value = row.title || ''
   editContentType.value = row.contentType || 'SHORT_VIDEO'
+  editPlatform.value = row.platformType || ''
   editDocType.value = row.documentType || 'COPY'
   editMatchType.value = row.matchType || 1
   editScheme.value = Array.isArray(row.matchScheme) ? row.matchScheme : []
@@ -514,6 +572,7 @@ async function saveContent() {
     const payload = {
       title: editTitle.value.trim(),
       contentType: editContentType.value,
+      platformType: editPlatform.value,
       documentType: editDocType.value,
       matchType: editMatchType.value,
       matchScheme: editScheme.value,
