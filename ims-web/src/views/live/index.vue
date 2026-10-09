@@ -188,6 +188,7 @@
             <tr>
               <th>场次 ID</th>
               <th>主题</th>
+              <th>实际起止</th>
               <th>下播时间</th>
               <th>责任人</th>
               <th>超时小时</th>
@@ -196,10 +197,10 @@
           </thead>
           <tbody>
             <tr v-if="pendingLoading">
-              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="pendingError">
-              <td colspan="6">
+              <td colspan="7">
                 <div class="empty" data-testid="live-pending-error">
                   <div class="et">{{ pendingError }}</div>
                   <button class="btn btn-sec btn-sm" type="button" data-testid="live-pending-retry" @click="loadPending">重试</button>
@@ -207,7 +208,7 @@
               </td>
             </tr>
             <tr v-else-if="!pendingRows.length">
-              <td colspan="6">
+              <td colspan="7">
                 <div class="empty" data-testid="live-pending-empty">
                   <div class="et">{{ pendingEmptyTitle }}</div>
                   <div class="es">{{ pendingEmptyHint }}</div>
@@ -217,6 +218,10 @@
             <tr v-for="row in pendingRows" v-else :key="row.sessionCode" data-testid="live-pending-row">
               <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">{{ row.sessionCode }}</td>
               <td>{{ row.topic }}</td>
+              <td class="num" style="font-size: 12px" data-testid="live-pending-range">
+                <span v-if="pendingRangeText(row)">{{ pendingRangeText(row) }}</span>
+                <span v-else class="es" data-testid="live-pending-unrecorded">待录入</span>
+              </td>
               <td class="num" style="font-size: 12px">{{ row.endedAt || '—' }}</td>
               <td>{{ row.responsibleUserName || '—' }}</td>
               <td class="num" data-testid="live-pending-hours">{{ row.overdueHours }}</td>
@@ -423,9 +428,12 @@
           录入状态 {{ report.entryStatus || '—' }} · GMV ¥{{ displayMoney(report.gmv) }}
           · 客单价 <span data-testid="live-report-aov">{{ displayMoney(report.avgOrderValue) }}</span>
           · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
-          · 时长 <span data-testid="live-report-duration">{{ reportDurationText }}</span>
+          · 时长 {{ reportDurationText }}
         </div>
-        <p v-else class="hint" data-testid="live-report-duration">时长 {{ reportDurationText }}</p>
+        <p class="hint" data-testid="live-report-derived">
+          UV价值 <span data-testid="live-report-uv">{{ reportUvText }}</span>
+          · 时长 <span data-testid="live-report-duration">{{ reportDurationText }}</span>
+        </p>
         <div class="formrow one">
           <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
           <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
@@ -435,7 +443,11 @@
           <div v-if="showOpsFields" class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" :style="fieldMissing('peakOnline') ? 'border-color: var(--red)' : ''" /></div>
           <div v-if="showOpsFields" class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" :style="fieldMissing('newFans') ? 'border-color: var(--red)' : ''" /></div>
           <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('refundAmount') ? 'border-color: var(--red)' : ''" /></div>
-          <div class="fld"><label>投放成本</label><input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" :style="fieldMissing('adCost') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld">
+            <label>投放成本</label>
+            <input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" :style="fieldMissing('adCost') ? 'border-color: var(--red)' : ''" />
+            <p class="hint" data-testid="live-ad-cost-hint">投放成本将关联冲话费记录核对。</p>
+          </div>
           <div v-if="showCostEditor" class="fld">
             <label>成本明细</label>
             <select v-model="costDraft.costType" data-testid="live-cost-type">
@@ -498,7 +510,10 @@
             </tr>
           </tbody>
         </table>
-        <div v-else class="empty"><div class="et">暂无告警记录</div></div>
+        <div v-else class="empty" data-testid="live-related-alarm-empty">
+          <div class="et">暂无告警记录</div>
+          <div class="es">本场次还没有风险命中。处置在风险告警页完成。</div>
+        </div>
       </div>
     </ProtoDrawer>
   </div>
@@ -641,6 +656,33 @@ const pendingEmptyHint = computed(() => {
   if (overdueOnly.value) return '取消「仅看超过 24 小时」可看未超时的待录入场次。'
   return '下播后 24 小时未提交会标红，并写入站内待办。钉钉与短信只留本地桩，不外发。'
 })
+const reportUvText = computed(() => {
+  const gmv = Number(reportForm.gmv)
+  const viewers = Number(reportForm.viewerCount)
+  if (!Number.isFinite(gmv) || !Number.isFinite(viewers) || viewers <= 0) return '—'
+  return (gmv / viewers).toFixed(2)
+})
+
+function clockText(iso: string) {
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(ms)
+}
+
+function pendingRangeText(row: { actualStart?: string; actualEnd?: string }) {
+  const startText = String(row.actualStart || '').trim()
+  const endText = String(row.actualEnd || '').trim()
+  const start = Date.parse(startText)
+  const end = Date.parse(endText)
+  if (!startText || !endText || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return ''
+  const minutes = Math.floor((end - start) / 60000)
+  return `${clockText(startText)} ~ ${clockText(endText)}（${minutes} 分钟）`
+}
 
 function supplementGap(key: string) {
   return supplementGaps.value.includes(key)
@@ -657,7 +699,7 @@ const reportDurationText = computed(() => {
   if (!startText || !endText) return '—'
   const start = Date.parse(startText)
   const end = Date.parse(endText)
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return '结束须晚于开始'
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return '—（结束须晚于开始）'
   return `${Math.floor((end - start) / 60000)} 分钟`
 })
 

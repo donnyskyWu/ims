@@ -676,12 +676,20 @@ def alarm_records(
     rows = list(db.scalars(stmt.order_by(LiveAlarmRecord.id.desc()).offset((page_no - 1) * size).limit(size)).all())
     ids = {row.handler_user_id for row in rows if row.handler_user_id}
     names = user_names(db, ids)
+    severe_stmt = select(LiveAlarmRecord).where(
+        LiveAlarmRecord.deleted == 0,
+        LiveAlarmRecord.tenant_id == tenant_of(actor),
+        LiveAlarmRecord.alarm_level == 3,
+        LiveAlarmRecord.handle_status == "UNHANDLED",
+    )
+    severe_unhandled = int(db.scalar(select(func.count()).select_from(severe_stmt.subquery())) or 0)
     return ok(
         {
             "list": [record_vo(row, names) for row in rows],
             "total": total,
             "pageNo": page_no,
             "pageSize": size,
+            "severeUnhandled": severe_unhandled,
         }
     )
 
