@@ -195,6 +195,20 @@ def ensure_asset_purchase_column() -> None:
         conn.execute(text("CREATE INDEX idx_asset_ledger_purchase_batch ON ims_asset_ledger (purchase_batch_no)"))
 
 
+def ensure_content_review_remark_column() -> None:
+    """已有库补审核驳回意见。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_review" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_review")}
+    if "remark" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_content_review ADD COLUMN remark VARCHAR(512) NOT NULL DEFAULT ''"))
+
+
 def ensure_live_approve_comment_column() -> None:
     from sqlalchemy import inspect, text
 
@@ -274,6 +288,7 @@ def init_db() -> None:
     ensure_bi_br212_columns()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()
+    ensure_content_review_remark_column()
     ensure_live_approve_comment_column()
     ensure_air_key_columns()
     ensure_air_slice92_columns()

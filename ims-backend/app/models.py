@@ -714,6 +714,7 @@ class ContentReview(Base):
     checklist_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     conclusion: Mapped[str | None] = mapped_column(String(16), nullable=True)
     reject_items: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    remark: Mapped[str] = mapped_column(String(512), default="")
     first_pass: Mapped[int | None] = mapped_column(Integer, nullable=True)
     reviewed_at: Mapped[str | None] = mapped_column(String(32), nullable=True)
     creator: Mapped[int] = mapped_column(BigInteger, default=0)

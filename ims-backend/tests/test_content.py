@@ -711,3 +711,94 @@ def test_task_execute_content_gate_and_crud():
     listing = client.get("/admin-api/ims/content", headers=auth, params={"pageSize": 5})
     assert listing.json()["code"] == 0
     assert listing.json()["data"]["total"] >= 1
+
+
+def test_review_drawer_preview_steps_and_reject_remark():
+    auth = headers()
+    from app.core import SessionLocal
+
+    db = SessionLocal()
+    try:
+        project = ContentProject(
+            title="版式待审",
+            body="纯文本兜底不应盖过版式",
+            layout_html="<section><p>版式正文先看</p><script>alert(1)</script></section>",
+            document_type="ARTICLE",
+            content_type="ARTICLE",
+            match_summary="英超 · 阿森纳 VS 切尔西",
+            review_passed=0,
+            submitter_user_id=9001,
+            creator=9001,
+            tenant_id=0,
+            content_status="PENDING_REVIEW",
+        )
+        db.add(project)
+        db.flush()
+        review = ContentReview(
+            review_no="RV202610090116",
+            content_project_id=project.id,
+            content_title=project.title,
+            submitter_user_id=9001,
+            review_round=1,
+            creator=1,
+            tenant_id=0,
+        )
+        db.add(review)
+        db.commit()
+        review_no = review.review_no
+    finally:
+        db.close()
+
+    detail = client.get(f"/admin-api/ims/content/review/{review_no}", headers=auth)
+    payload = detail.json()
+    assert payload["code"] == 0
+    preview = payload["data"]["preview"]
+    assert "版式正文先看" in preview["layoutHtml"]
+    assert preview["body"] == "纯文本兜底不应盖过版式"
+    assert preview["documentType"] == "ARTICLE"
+    assert preview["contentType"] == "ARTICLE"
+    assert preview["matchSummary"] == "英超 · 阿森纳 VS 切尔西"
+    steps = payload["data"]["reviewSteps"]
+    assert [step["round"] for step in steps] == [1, 2]
+    assert steps[0]["label"].startswith("运营组长：")
+    assert steps[0]["status"] == "CURRENT"
+    assert steps[1]["label"].startswith("运营总监：")
+    assert steps[1]["status"] == "PENDING"
+
+    missing_items = client.put(
+        f"/admin-api/ims/content/review/{review_no}/conclusion",
+        headers=auth,
+        json={"conclusion": "REJECT_BACK", "checklistResult": {"COMPLIANCE": False}, "remark": "缺结构化项"},
+    )
+    assert missing_items.json()["code"] == 1058
+
+    missing_remark = client.put(
+        f"/admin-api/ims/content/review/{review_no}/conclusion",
+        headers=auth,
+        json={
+            "conclusion": "REJECT_BACK",
+            "checklistResult": {"COMPLIANCE": False, "QUALITY": True, "BRAND": True},
+            "rejectItems": [{"itemCode": "COMPLIANCE", "reason": ""}],
+        },
+    )
+    assert missing_remark.json()["code"] == 1500
+
+    rejected = client.put(
+        f"/admin-api/ims/content/review/{review_no}/conclusion",
+        headers=auth,
+        json={
+            "conclusion": "REJECT_BACK",
+            "checklistResult": {"COMPLIANCE": False, "QUALITY": True, "BRAND": True},
+            "rejectItems": [{"itemCode": "COMPLIANCE", "reason": ""}],
+            "remark": "标题与正文不符，请先改正文",
+        },
+    )
+    assert rejected.json()["code"] == 0
+
+    again = client.get(f"/admin-api/ims/content/review/{review_no}", headers=auth)
+    data = again.json()["data"]
+    assert data["conclusion"] == "REJECT_BACK"
+    assert data["remark"] == "标题与正文不符，请先改正文"
+    assert data["rejectItems"][0]["reason"] == "标题与正文不符，请先改正文"
+    assert data["reviewSteps"][0]["status"] == "DONE"
+    assert data["reviewSteps"][0]["remark"] == "标题与正文不符，请先改正文"
