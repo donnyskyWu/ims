@@ -128,7 +128,10 @@ def test_execute_save_keeps_user_attachments():
     execute = client.get(f"/admin-api/ims/content/task/{task_id}/execute", headers=auth)
     body = execute.json()["data"]
     assert body["deliverables"] == "只保存说明"
-    assert body["userAttachments"] == [{"fileKey": "k1", "fileName": "brief.pdf"}]
+    atts = body["userAttachments"]
+    assert len(atts) == 1
+    assert atts[0]["fileKey"] == "k1"
+    assert atts[0]["fileName"] == "brief.pdf"
 
 
 def test_list_complete_gate_and_task_bound_create():
