@@ -206,8 +206,11 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
 
 
 def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
-    if not body.title.strip():
+    title = body.title.strip()
+    if not title:
         return fail(1001, "title 必填")
+    if len(title) > 128:
+        return fail(1001, "标题不超过 128 字")
     if body.materialType not in MATERIAL_TYPES:
         return fail(1001, "materialType 无效")
     cate = db.get(TrainMaterialCate, body.cateId)
@@ -461,6 +464,15 @@ class TaskBody(BaseModel):
     confirmType: str = "DURATION"
     quiz: list[QuizItem] | None = None
     passScore: int | None = None
+
+
+def task_name_error(raw: str):
+    name = (raw or "").strip()
+    if not name:
+        return fail(1001, "taskName 必填")
+    if len(name) > 128:
+        return fail(1001, "任务名称不超过 128 字")
+    return None
 
 
 def next_task_no(db: Session, tenant_id: int) -> str:
@@ -1025,8 +1037,9 @@ def create_task(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    if not body.taskName.strip():
-        return fail(1001, "taskName 必填")
+    name_err = task_name_error(body.taskName)
+    if name_err:
+        return name_err
     if body.confirmType not in CONFIRM_TYPES:
         return fail(1001, "confirmType 无效")
     deadline = parse_deadline(body.deadline)
@@ -1092,8 +1105,9 @@ def update_task(
         return fail(1500, "任务不存在")
     if resolve_task_status(row) != "IN_PROGRESS":
         return fail(1102, "已过截止时间，不能编辑")
-    if not body.taskName.strip():
-        return fail(1001, "taskName 必填")
+    name_err = task_name_error(body.taskName)
+    if name_err:
+        return name_err
     if body.confirmType not in CONFIRM_TYPES:
         return fail(1001, "confirmType 无效")
     deadline = parse_deadline(body.deadline)

@@ -151,7 +151,8 @@
                       v-if="row.status !== 'OFFLINE'"
                       class="btn btn-sec btn-sm"
                       type="button"
-                      @click="offline(row)"
+                      data-testid="train-material-offline"
+                      @click="openOffline(row)"
                     >
                       下架
                     </button>
@@ -193,7 +194,7 @@
           <input v-model="form.fileKey" class="fld-in" placeholder="直传回执 key" />
         </template>
         <p v-if="editingId" class="hint">将生成新版本 V{{ editingVersion + 1 }}，旧版本留档</p>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-material-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <template v-if="editingId">
@@ -256,6 +257,29 @@
         </div>
       </div>
     </div>
+
+    <div v-if="offlineTarget" class="modal-mask" @click.self="closeOffline">
+      <div class="card" style="width: 440px; padding: 20px" data-testid="train-offline-dialog">
+        <h3 style="margin: 0 0 8px">下架资料</h3>
+        <p>下架「{{ offlineTarget.title }}」</p>
+        <p class="hint" data-testid="train-offline-copy">下架后学员不可见</p>
+        <p v-if="offlineError" class="hint" style="color: var(--red)" data-testid="train-offline-error">{{ offlineError }}</p>
+        <p v-else-if="offlineRefs === null" class="hint">正在核对进行中的学习任务…</p>
+        <p v-else class="hint" data-testid="train-offline-refs">{{ offlineRefText }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; gap: 8px">
+          <button class="btn btn-sec btn-sm" type="button" :disabled="offlineBusy" @click="closeOffline">取消</button>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="train-offline-confirm"
+            :disabled="offlineBusy || offlineRefs === null"
+            @click="confirmOffline"
+          >
+            确认下架
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -312,6 +336,16 @@ const editingVersion = ref(1)
 const detail = ref<Row | null>(null)
 const showUnupdated = ref(false)
 const formError = ref('')
+const offlineTarget = ref<Row | null>(null)
+const offlineRefs = ref<number | null>(null)
+const offlineError = ref('')
+const offlineBusy = ref(false)
+
+const offlineRefText = computed(() => {
+  const count = offlineRefs.value ?? 0
+  if (count > 0) return `被 ${count} 个进行中学习任务引用，资料保留，仅改为已下架，不强删`
+  return '当前没有进行中的学习任务引用，资料保留为已下架，不强删'
+})
 const weekly = reactive<Weekly>({
   weekStart: '',
   shouldUpdateCount: 0,
@@ -493,12 +527,16 @@ async function copyUnupdated() {
   }
 }
 
+function titleError() {
+  const title = form.title.trim()
+  if (!title || !form.cateId) return '标题与分类必填'
+  if (title.length > 128) return '标题不超过 128 字'
+  return ''
+}
+
 async function submit(publish: boolean) {
-  formError.value = ''
-  if (!form.title.trim() || !form.cateId) {
-    formError.value = '标题与分类必填'
-    return
-  }
+  formError.value = titleError()
+  if (formError.value) return
   const body: Record<string, unknown> = {
     title: form.title.trim(),
     cateId: form.cateId,
@@ -526,11 +564,8 @@ async function submit(publish: boolean) {
 }
 
 async function submitUpdate() {
-  formError.value = ''
-  if (!editingId.value || !form.title.trim() || !form.cateId) {
-    formError.value = '标题与分类必填'
-    return
-  }
+  formError.value = !editingId.value ? '标题与分类必填' : titleError()
+  if (formError.value) return
   const body: Record<string, unknown> = {
     title: form.title.trim(),
     cateId: form.cateId,
@@ -558,10 +593,62 @@ async function submitUpdate() {
   await loadWeekly()
 }
 
-async function offline(row: Row) {
-  if (!confirm(`下架「${row.title}」？`)) return
-  const res = await http.delete(`/train/material/${row.id}`)
-  if (res.data.code === 0) await loadList()
+function closeOffline() {
+  if (offlineBusy.value) return
+  offlineTarget.value = null
+}
+
+async function countInProgressRefs(materialId: number) {
+  let page = 1
+  let seen = 0
+  let total = 0
+  let hits = 0
+  do {
+    const res = await http.get('/train/task/list', {
+      params: { status: 'IN_PROGRESS', pageNo: page, pageSize: 100 },
+    })
+    if (res.data.code !== 0) throw new Error(res.data.msg || '任务列表加载失败')
+    const list = res.data.data?.list || []
+    total = Number(res.data.data?.total || 0)
+    for (const task of list) {
+      const ids = Array.isArray(task.materialIds) ? task.materialIds.map((id: number) => Number(id)) : []
+      if (ids.includes(materialId)) hits += 1
+    }
+    seen += list.length
+    page += 1
+    if (!list.length) break
+  } while (seen < total && page <= 20)
+  return hits
+}
+
+async function openOffline(row: Row) {
+  offlineTarget.value = row
+  offlineRefs.value = null
+  offlineError.value = ''
+  try {
+    offlineRefs.value = await countInProgressRefs(row.id)
+  } catch (err) {
+    offlineError.value = err instanceof Error ? err.message : '暂时无法核对待办任务'
+  }
+}
+
+async function confirmOffline() {
+  if (!offlineTarget.value || offlineBusy.value || offlineRefs.value === null) return
+  offlineBusy.value = true
+  offlineError.value = ''
+  try {
+    const res = await http.delete(`/train/material/${offlineTarget.value.id}`)
+    if (res.data.code !== 0) {
+      offlineError.value = res.data.msg || '下架失败'
+      return
+    }
+    offlineTarget.value = null
+    await loadList()
+  } catch (err) {
+    offlineError.value = errorMessage(err)
+  } finally {
+    offlineBusy.value = false
+  }
 }
 
 onMounted(async () => {

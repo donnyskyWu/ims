@@ -51,14 +51,22 @@
             <tr v-else-if="!rows.length">
               <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无任务' }}</div></div></td>
             </tr>
-            <tr v-for="row in rows" v-else :key="row.id">
+            <tr v-for="row in rows" v-else :key="row.id" :class="{ 'due-soon': deadlineTone(row) === 'soon' }">
               <td class="mono">{{ row.taskNo }}</td>
               <td style="font-weight: 500">{{ row.taskName }}</td>
               <td class="num">{{ row.materialCount }}</td>
               <td class="num">{{ row.assignedCount }}</td>
               <td :style="{ color: finishColor(row.finishRate) }">{{ row.finishRate }}%</td>
               <td>{{ confirmLabel(row.confirmType) }}</td>
-              <td class="mono">{{ row.deadline }}</td>
+              <td
+                class="mono"
+                data-testid="train-task-deadline"
+                :class="{ 'due-over': deadlineTone(row) === 'over' }"
+              >
+                {{ row.deadline }}
+                <span v-if="deadlineTone(row) === 'soon'" class="tag due-tag" data-testid="train-task-due-soon">即将到期</span>
+                <span v-else-if="deadlineTone(row) === 'over'" class="tag due-tag over" data-testid="train-task-overdue">已逾期</span>
+              </td>
               <td>{{ row.status }}</td>
               <td>
                 <button
@@ -353,6 +361,15 @@ function finishColor(rate: number) {
   return 'var(--red)'
 }
 
+function deadlineTone(row: Row): 'soon' | 'over' | '' {
+  const ts = Date.parse(row.deadline || '')
+  if (Number.isNaN(ts)) return ''
+  const delta = ts - Date.now()
+  if (delta < 0) return 'over'
+  if (row.status === 'IN_PROGRESS' && delta <= 24 * 60 * 60 * 1000) return 'soon'
+  return ''
+}
+
 function parseIds(text: string): number[] {
   return text
     .split(/[,，\s]+/)
@@ -428,6 +445,10 @@ async function submit() {
   const userIds = parseIds(form.userIdsText)
   if (!form.taskName.trim() || !materialIds.length || !userIds.length) {
     formError.value = '名称、资料与用户必填'
+    return
+  }
+  if (form.taskName.trim().length > 128) {
+    formError.value = '任务名称不超过 128 字'
     return
   }
   const payload: Record<string, unknown> = {
@@ -531,5 +552,20 @@ onMounted(async () => {
 }
 .opt-row .fld-in {
   flex: 1;
+}
+tr.due-soon {
+  background: rgba(230, 167, 0, 0.16);
+}
+.due-over {
+  color: var(--red);
+}
+.due-tag {
+  margin-left: 6px;
+  background: rgba(230, 167, 0, 0.22);
+  color: #8a6500;
+}
+.due-tag.over {
+  background: rgba(255, 59, 48, 0.12);
+  color: var(--red);
 }
 </style>
