@@ -134,7 +134,37 @@ def test_fin_profit_list_and_detail():
 
     detail = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth)
     assert detail.json()["code"] == 0
-    assert detail.json()["data"]["grossProfit"] == 93000.0
+    data = detail.json()["data"]
+    assert data["grossProfit"] == 93000.0
+    assert data["operatingProfit"] == 87900.0
+    assert data["netProfit"] == 81400.0
+    params = data["calcRuleSnapshot"]["params"]
+    assert params["revenue"] == 100000.0
+    assert params["refund"] == 2000.0
+    assert params["commissionAmount"] == 5000.0
+    assert params["adCost"] == 5000.0
+    assert params["rechargeCost"] == 100.0
+    assert params["fixedCost"] == 2000.0
+    assert params["sampleCost"] == 500.0
+    assert params["shareDaren"] == 3000.0
+    assert params["shareRealname"] == 1000.0
+    gross = round(params["revenue"] - params["refund"] - params["commissionAmount"], 2)
+    operating = round(gross - params["adCost"] - params["rechargeCost"], 2)
+    net = round(
+        operating - params["fixedCost"] - params["sampleCost"] - params["shareDaren"] - params["shareRealname"],
+        2,
+    )
+    assert gross == 93000.0
+    assert operating == 87900.0
+    assert net == 81400.0
+    assert data["grossProfit"] == gross
+    assert data["operatingProfit"] == operating
+    assert data["netProfit"] == net
+    assert round(params["revenue"] - params["refund"] - params["totalCost"], 2) == net
+    formula = data["calcRuleSnapshot"]["formula"]
+    assert "netProfit = revenue - refund - totalCost" in formula
+    assert "grossProfit = revenue - refund - commission" in formula
+    assert "operatingProfit = grossProfit - adCost - rechargeCost" in formula
 
 
 def test_dc_profit_trace_list_and_chain():

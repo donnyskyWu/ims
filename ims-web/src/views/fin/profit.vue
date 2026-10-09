@@ -165,12 +165,70 @@
         <div class="drawer-b">
           <p v-if="verifyHint" class="hint" data-testid="fin-profit-abnormal-hint" style="color: var(--red)">{{ verifyHint }}</p>
           <div class="g3" style="margin-bottom: 12px">
-            <div class="card stat"><span class="l">毛利</span><div class="n">¥{{ fmt(detail.grossProfit) }}</div></div>
-            <div class="card stat"><span class="l">经营利润</span><div class="n">¥{{ fmt(detail.operatingProfit) }}</div></div>
-            <div class="card stat"><span class="l">净利润</span><div class="n">¥{{ fmt(detail.netProfit) }}</div></div>
+            <div class="card stat" data-testid="fin-profit-level-gross">
+              <span class="l">毛利</span>
+              <div class="n">¥{{ fmt(detail.grossProfit) }}</div>
+            </div>
+            <div class="card stat" data-testid="fin-profit-level-operating">
+              <span class="l">经营利润</span>
+              <div class="n">¥{{ fmt(detail.operatingProfit) }}</div>
+            </div>
+            <div class="card stat" data-testid="fin-profit-level-net">
+              <span class="l">净利润</span>
+              <div class="n" :class="{ pos: Number(detail.netProfit) >= 0, neg: Number(detail.netProfit) < 0 }">
+                ¥{{ fmt(detail.netProfit) }}
+              </div>
+            </div>
           </div>
-          <p class="hint">{{ detail.calcRuleSnapshot?.formula }}</p>
-          <pre class="mono" style="font-size: 12px; white-space: pre-wrap">{{ JSON.stringify(detail.calcRuleSnapshot?.params, null, 2) }}</pre>
+
+          <section data-testid="fin-profit-waterfall">
+            <b>三级口径瀑布</b>
+            <p class="hint">FIN-P-R2 · GMV 逐项扣至净利润（BR-108）。悬停每级查看公式。</p>
+            <ol class="wf-list">
+              <li
+                v-for="step in waterfall"
+                :key="step.key"
+                class="wf-row"
+                :class="[step.kind, step.level]"
+                :data-testid="`fin-profit-wf-${step.key}`"
+                :data-level="step.level"
+                :data-running="step.running"
+                :title="step.formula"
+              >
+                <span class="wf-label">{{ step.label }}</span>
+                <span class="wf-track" aria-hidden="true">
+                  <span class="wf-bar" :class="[step.kind, { neg: step.running < 0 }]" :style="barStyle(step)"></span>
+                </span>
+                <span class="wf-delta num" :class="{ neg: step.kind === 'deduct' }">{{ deltaText(step) }}</span>
+                <span class="wf-run num" :class="{ neg: step.running < 0, pos: step.kind === 'level' && step.running >= 0 }">
+                  ¥{{ fmt(step.running) }}
+                </span>
+                <span class="wf-tip">{{ step.formula }}</span>
+              </li>
+            </ol>
+          </section>
+
+          <section data-testid="fin-profit-snapshot" style="margin-top: 16px">
+            <b>计算快照</b>
+            <p class="hint" data-testid="fin-profit-formula">{{ formulaText }}</p>
+            <p class="hint">金额按两位小数展示（V2-E1）</p>
+            <div class="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>参数</th>
+                    <th>金额</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in snapshotRows" :key="row.key" :data-testid="`fin-profit-param-${row.key}`">
+                    <td>{{ row.label }}</td>
+                    <td class="num">¥{{ fmt(row.value) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
           <p class="hint">当前版本 V{{ detail.calcVersion }} · 计算时间 {{ detail.calculatedAt || '—' }} · 状态 {{ detail.calcStatus }}</p>
 
           <h3 class="hist-title">重算版本历史</h3>
@@ -217,6 +275,7 @@ import { errorMessage, http } from '../../api/http'
 
 interface ProfitDetail {
   sessionCode: string
+  gmv?: number
   grossProfit: number
   operatingProfit: number
   netProfit: number
@@ -225,6 +284,32 @@ interface ProfitDetail {
   calculatedAt: string
   calcRuleSnapshot?: { formula?: string; params?: Record<string, number> }
 }
+
+type WfKind = 'start' | 'deduct' | 'level'
+type ProfitLevel = '' | 'GROSS' | 'OPERATING' | 'NET'
+
+interface WfStep {
+  key: string
+  label: string
+  kind: WfKind
+  level: ProfitLevel
+  delta: number
+  running: number
+  formula: string
+}
+
+const SNAPSHOT_FIELDS: { key: string; label: string }[] = [
+  { key: 'revenue', label: 'GMV' },
+  { key: 'refund', label: '退款' },
+  { key: 'commissionAmount', label: '平台佣金' },
+  { key: 'adCost', label: '投放成本' },
+  { key: 'rechargeCost', label: '冲话费摊销' },
+  { key: 'fixedCost', label: '固定成本' },
+  { key: 'sampleCost', label: '样品成本' },
+  { key: 'shareDaren', label: '达人分成' },
+  { key: 'shareRealname', label: '实名人分成' },
+  { key: 'totalCost', label: '成本合计' },
+]
 
 interface HistoryItem {
   calcVersion: number
@@ -257,8 +342,107 @@ const query = reactive({ sessionCode: '', platform: '', calcStatus: '' })
 
 const nextVersion = computed(() => Number(detail.value?.calcVersion || 1) + 1)
 
+function snapshotParams(row: ProfitDetail | null) {
+  return row?.calcRuleSnapshot?.params || {}
+}
+
+function buildWaterfall(row: ProfitDetail): WfStep[] {
+  const params = snapshotParams(row)
+  const gmv = money(row.gmv ?? params.revenue)
+  const refund = money(params.refund)
+  const commission = money(params.commissionAmount)
+  const ad = money(params.adCost)
+  const recharge = money(params.rechargeCost)
+  const fixed = money(params.fixedCost)
+  const sample = money(params.sampleCost)
+  const daren = money(params.shareDaren)
+  const realname = money(params.shareRealname)
+  const gross = money(row.grossProfit)
+  const operating = money(row.operatingProfit)
+  const net = money(row.netProfit)
+  const steps: WfStep[] = []
+  let running = gmv
+
+  const pushDeduct = (key: string, label: string, amount: number, formula: string) => {
+    running = money(running - amount)
+    steps.push({ key, label, kind: 'deduct', level: '', delta: money(-amount), running, formula })
+  }
+
+  steps.push({ key: 'gmv', label: 'GMV', kind: 'start', level: '', delta: 0, running: gmv, formula: '起点：GMV' })
+  pushDeduct('refund', '退款', refund, '扣减退款')
+  pushDeduct('commission', '平台佣金', commission, '扣减平台佣金')
+  steps.push({
+    key: 'gross',
+    label: '毛利',
+    kind: 'level',
+    level: 'GROSS',
+    delta: 0,
+    running: gross,
+    formula: '毛利 = GMV − 退款 − 平台佣金',
+  })
+  running = gross
+  pushDeduct('ad', '投放成本', ad, '扣减投放成本')
+  pushDeduct('recharge', '冲话费', recharge, '扣减冲话费摊销')
+  steps.push({
+    key: 'operating',
+    label: '经营利润',
+    kind: 'level',
+    level: 'OPERATING',
+    delta: 0,
+    running: operating,
+    formula: '经营利润 = 毛利 − 投放 − 冲话费',
+  })
+  running = operating
+  pushDeduct('fixed', '固定成本', fixed, '扣减固定成本')
+  pushDeduct('sample', '样品成本', sample, '扣减样品成本')
+  pushDeduct('shareDaren', '达人分成', daren, '扣减达人分成')
+  pushDeduct('shareRealname', '实名人分成', realname, '扣减实名人分成')
+  steps.push({
+    key: 'net',
+    label: '净利润',
+    kind: 'level',
+    level: 'NET',
+    delta: 0,
+    running: net,
+    formula: '净利润 = GMV − 退款 − 佣金 − 投放 − 冲话费 − 固定 − 样品 − 达人分成 − 实名人分成（BR-108）',
+  })
+  return steps
+}
+
+const waterfall = computed(() => (detail.value ? buildWaterfall(detail.value) : []))
+
+const snapshotRows = computed(() => {
+  const params = snapshotParams(detail.value)
+  return SNAPSHOT_FIELDS.map((field) => ({ ...field, value: money(params[field.key]) }))
+})
+
+const formulaText = computed(() => detail.value?.calcRuleSnapshot?.formula || '')
+
+function barStyle(step: WfStep) {
+  const steps = waterfall.value
+  const scale = Math.max(1, ...steps.map((item) => Math.max(Math.abs(item.running), Math.abs(item.running - item.delta))))
+  if (step.kind === 'deduct') {
+    const prev = step.running - step.delta
+    const left = Math.min(step.running, prev)
+    return {
+      left: `${(Math.max(left, 0) / scale) * 100}%`,
+      width: `${(Math.abs(step.delta) / scale) * 100}%`,
+    }
+  }
+  return { left: '0%', width: `${(Math.abs(step.running) / scale) * 100}%` }
+}
+
+function deltaText(step: WfStep) {
+  if (step.kind !== 'deduct') return step.kind === 'level' ? '口径' : ''
+  return `−¥${fmt(Math.abs(step.delta))}`
+}
+
+function money(n: unknown) {
+  return Math.round(Number(n || 0) * 100) / 100
+}
+
 function fmt(n: unknown) {
-  return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return money(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function settlementLabel(s: string) {
@@ -412,7 +596,7 @@ onMounted(async () => {
   z-index: 90;
 }
 .fin-profit-drawer {
-  width: min(860px, 80vw);
+  width: 80%;
   z-index: 100;
 }
 .hist-title {
@@ -462,5 +646,76 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.wf-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wf-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 108px 120px;
+  gap: 8px;
+  align-items: center;
+  position: relative;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.wf-row.level {
+  background: var(--blue-bg);
+  font-weight: 600;
+}
+.wf-row.NET {
+  background: #e8f8ee;
+}
+.wf-track {
+  position: relative;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+.wf-bar {
+  position: absolute;
+  top: 2px;
+  height: 10px;
+  border-radius: 3px;
+  min-width: 2px;
+}
+.wf-bar.start {
+  background: var(--blue);
+}
+.wf-bar.deduct {
+  background: var(--orange);
+}
+.wf-bar.level {
+  background: var(--green);
+}
+.wf-bar.neg {
+  background: var(--red);
+}
+.wf-delta,
+.wf-run {
+  text-align: right;
+  font-size: 12.5px;
+}
+.wf-tip {
+  display: none;
+  position: absolute;
+  left: 96px;
+  top: calc(100% - 2px);
+  z-index: 3;
+  background: #1d1d1f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.wf-row:hover .wf-tip {
+  display: block;
 }
 </style>

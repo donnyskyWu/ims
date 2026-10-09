@@ -615,7 +615,11 @@ def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
             }
         )
     return {
-        "formula": "netProfit = revenue - refund - totalCost; grossProfit = revenue - refund - commission",
+        "formula": (
+            "netProfit = revenue - refund - totalCost; "
+            "grossProfit = revenue - refund - commission; "
+            "operatingProfit = grossProfit - adCost - rechargeCost"
+        ),
         "params": params,
     }
 
