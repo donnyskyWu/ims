@@ -33,6 +33,7 @@ export const IMPLEMENTED: Record<string, string> = {
   workbenchMsgs: '/ims/workbench/messages',
   ipg: '/ims/ip-group',
   live: '/ims/live/sessions',
+  liveAlarm: '/ims/live/alarm',
   cost: '/ims/cost',
   finCost: '/ims/fin/cost',
   finProfit: '/ims/fin/profit',

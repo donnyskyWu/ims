@@ -525,8 +525,29 @@ class LiveAlarmRecord(Base):
     handle_status: Mapped[str] = mapped_column(String(16), default="UNHANDLED")
     handler_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     handle_remark: Mapped[str] = mapped_column(String(512), default="")
+    escalated: Mapped[int] = mapped_column(Integer, default=0)
+    escalated_at: Mapped[str] = mapped_column(String(32), default="")
+    merge_count: Mapped[int] = mapped_column(Integer, default=1)
+    notify_channels: Mapped[str] = mapped_column(String(128), default="")
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LiveAlarmRule(Base):
+    """直播风险告警规则。保存后立刻按新表达式生效（ALM-R4），不依赖进程重启。"""
+
+    __tablename__ = "ims_live_alarm_rule"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    rule_name: Mapped[str] = mapped_column(String(64), default="")
+    rule_type: Mapped[str] = mapped_column(String(16), default="THRESHOLD")
+    rule_expr: Mapped[str] = mapped_column(Text, default="{}")
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    notify_users: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED")
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ContentSop(Base):
