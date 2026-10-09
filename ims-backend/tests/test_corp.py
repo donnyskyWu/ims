@@ -63,6 +63,12 @@ def test_company_and_realname_are_query_only_and_masked():
     listed = client.get("/admin-api/ims/corp/resource/company/page", headers=auth, params={"companyName": "甲"})
     assert listed.json()["data"]["total"] == 1
     assert listed.json()["data"]["list"][0]["companyName"] == "甲公司"
+    company_id = listed.json()["data"]["list"][0]["id"]
+    company = client.get(f"/admin-api/ims/corp/resource/company/{company_id}", headers=auth)
+    assert company.json()["code"] == 0
+    assert company.json()["data"]["industry"] == ""
+    assert company.json()["data"]["address"] == ""
+    assert company.json()["data"]["expansionHistory"] == []
     foreign = client.get("/admin-api/ims/corp/resource/company/page", headers=auth, params={"companyName": "乙"})
     assert foreign.json()["data"]["total"] == 0
     other = client.get(f"/admin-api/ims/corp/resource/company/{foreign_company_id}", headers=auth)
