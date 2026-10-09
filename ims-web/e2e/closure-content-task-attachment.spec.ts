@@ -71,7 +71,7 @@ test.describe('content task attachment upload closure', () => {
     const saveResp = page.waitForResponse(
       (r) => r.url().includes('/execute/save') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await page.getByRole('button', { name: '保存' }).click()
+    await page.getByRole('button', { name: '保存', exact: true }).click()
     const saved = (await (await saveResp).json()) as {
       code: number
       data?: { userAttachments?: Array<{ fileName?: string }> }
