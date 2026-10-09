@@ -956,7 +956,9 @@ def flow_timeout_urge(
         started = started.replace(tzinfo=None)
     if now.replace(tzinfo=None) < started + timedelta(hours=DEFAULT_SLA_HOURS):
         return fail(1001, "任务未超时，不可督办")
-    _ = (body.urgeMessage or "").strip()[:256]
+    raw = body.urgeMessage or ""
+    if len(raw) > 256:
+        return fail(1001, "督办说明不能超过 256 字")
     task.remind_count = (task.remind_count or 0) + 1
     task.updated_at = now
     db.flush()
