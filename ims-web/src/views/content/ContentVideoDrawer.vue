@@ -1,5 +1,5 @@
 <template>
-  <ProtoDrawer :open="open" title="视频生成" width="640px" @close="close">
+  <ProtoDrawer :open="open" title="视频生成" width="640px" :z-index="160" @close="close">
     <div data-testid="video-gen-drawer">
       <p class="hint">无本机 GPU。提交后轮询任务状态，成功即绑定到本条内容。密钥不在此显示。</p>
       <p v-if="provider" data-testid="video-provider">服务：{{ providerLabel }}</p>
