@@ -68,6 +68,7 @@
 | **E2E-S10 问卷组卷/判分/重答 (#79)** | `closure-train-quiz-retake.spec.ts` | 纯 UI · 手工组卷及格分超题数拦截 · 交卷判分 · 不及格重答覆盖为最新成绩 · 及格后 **CONFIRMED** |
 | **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
+| **证件数字化率 / 级别 / 原图 (#127)** | `closure-corp-cert-access.spec.ts` | 纯 UI · 横幅与统计弹窗 · 待审 **1033** · 默认 L1 **1034** · 角色 L2 水印链接 60 秒且禁止下载 · 白名单 L3 明文仍禁止下载 |
 | **E2E-S2 窄切片 (#56)** | `closure-live-session-report.spec.ts` | 登记→风控→下播核准 · 19 位场次 · 列表 CONFIRMED |
 | **E2E-S12-01 场次下钻 (#53)** | `closure-dc-session-drill.spec.ts` | 账号穿透 → 场次明细抽屉（GMV/净利润/投流成本）→ 导出 XLSX → 宽日期 **1181** |
 | **E2E-S12-切片 · push-now (#39)** | `closure-bi-subscribe-push-now.spec.ts` | UI 新建报表+订阅 →「立即推送」→ 快照 GMV · 推送结果/上次推送 |

@@ -13,6 +13,17 @@
         <button class="btn btn-pri" type="button" data-testid="corp-cert-create-btn" @click="openCertCreate">录入证件</button>
       </div>
     </div>
+    <div
+      v-if="kind === 'certificate'"
+      class="hint"
+      :class="{ bad: digitalShort }"
+      data-testid="corp-cert-digital-banner"
+    >
+      数字化率 {{ digitalPercent }}（目标&gt;95%，BR-005）
+      · 应数字化 {{ digital.totalExpected }} · 已数字化 {{ digital.digitalizedCount }}
+      · {{ digitalShort ? '未达标' : '达标' }}
+      <button class="btn btn-txt btn-sm" type="button" data-testid="corp-cert-digital-open" @click="digitalOpen = true">查看统计</button>
+    </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
       <select v-if="meta.statusOptions.length" v-model="status" style="width: 120px">
@@ -56,6 +67,15 @@
                   @click="openDetail(row)"
                 >
                   {{ kind === 'certificate' ? '查看' : '详情' }}
+                </button>
+                <button
+                  v-if="kind === 'certificate'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="corp-cert-file-btn"
+                  @click="openFileUrl(row)"
+                >
+                  原图
                 </button>
                 <button v-if="kind === 'sim-card'" class="btn btn-txt btn-sm" type="button" @click="openEdit(row)">编辑</button>
                 <button
@@ -146,6 +166,27 @@
           </table>
         </div>
       </div>
+    </div>
+    <div v-if="kind === 'certificate' && levelReady" data-testid="corp-cert-level-panel">
+      <div class="sec">查看级别</div>
+      <p class="hint">默认全员 L1，不可看原图。L2 按角色编码。L3 只放管理员或行政白名单。保存后下次查看即按新级别。</p>
+      <p class="hint" data-testid="corp-cert-level-current">当前 L2 角色：{{ levelRole || '未配置' }} · 白名单 {{ levelWhitelist.length }} 人 · 透明度 {{ levelOpacity }} · 位置 {{ levelPosition }}</p>
+      <form class="qbar" @submit.prevent="saveLevel">
+        <input v-model="levelRole" placeholder="角色编码，如 sys:admin" style="width: 220px" data-testid="corp-cert-level-role" />
+        <select v-model="levelValue" style="width: 100px" data-testid="corp-cert-level-select">
+          <option value="2">L2</option>
+        </select>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-level-save">保存级别</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="corp-cert-level-reset" @click="resetLevel">恢复默认</button>
+      </form>
+      <form class="qbar" @submit.prevent="saveWhitelist">
+        <select v-model="l3UserId" style="width: 220px" data-testid="corp-cert-l3-user">
+          <option value="">选择白名单用户</option>
+          <option v-for="user in users" :key="String(user.id)" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+        </select>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-l3-save">保存白名单</button>
+      </form>
+      <p v-if="levelMessage" class="hint" data-testid="corp-cert-level-message">{{ levelMessage }}</p>
     </div>
     <div v-if="kind === 'certificate'" data-testid="corp-cert-audit-panel">
       <div class="sec">查看审计</div>
@@ -252,6 +293,30 @@
       <div v-if="kind === 'sim-card' && detail" class="hint">关联账号 {{ linkedCount }} 个。平台账号在下一片接入前这里是空列表。</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="digitalOpen" title="数字化率统计" width="480px" @close="digitalOpen = false">
+      <div data-testid="corp-cert-digital-modal">
+        <div class="formrow one"><div class="fld"><label>应数字化</label><div data-testid="corp-cert-digital-expected">{{ digital.totalExpected }}</div></div></div>
+        <div class="formrow one"><div class="fld"><label>已数字化</label><div data-testid="corp-cert-digital-count">{{ digital.digitalizedCount }}</div></div></div>
+        <div class="formrow one"><div class="fld"><label>数字化率</label><div data-testid="corp-cert-digital-rate">{{ digitalPercent }}</div></div></div>
+        <p class="hint">目标线 95%。未回收档案计入应数字化；已审核且有扫描件计入已数字化。{{ digitalShort ? '未达标' : '达标' }}。</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="digitalOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="fileOpen" title="原图链接" width="520px" @close="fileOpen = false">
+      <div v-if="fileError" class="hint bad" data-testid="corp-cert-file-error">{{ fileError }}</div>
+      <div v-else-if="fileResult" data-testid="corp-cert-file-result">
+        <p class="hint" data-testid="corp-cert-file-ttl">有效 {{ fileResult.expiresInSeconds }} 秒。禁止下载。</p>
+        <p v-if="fileResult.watermark" class="hint" data-testid="corp-cert-file-watermark">水印：{{ fileResult.watermark.text }}</p>
+        <p v-else class="hint" data-testid="corp-cert-file-plain">明文预览，禁止下载。</p>
+        <p class="hint" data-testid="corp-cert-file-url">{{ fileResult.signedUrl }}</p>
+        <p v-if="filePreview" class="hint" data-testid="corp-cert-file-preview">{{ filePreview }}</p>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="fileOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="formOpen" :title="editingId ? '编辑手机卡' : '新建手机卡'" width="480px" @close="formOpen = false">
@@ -425,6 +490,22 @@ const error = ref('')
 const detailOpen = ref(false)
 const detail = ref<Row | null>(null)
 const viewError = ref('')
+const digitalOpen = ref(false)
+const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
+const fileOpen = ref(false)
+const fileError = ref('')
+const filePreview = ref('')
+const fileResult = ref<{ expiresInSeconds?: number; signedUrl?: string; watermark?: { text?: string } } | null>(null)
+const levelReady = ref(false)
+const levelRole = ref('')
+const levelValue = ref('2')
+const levelWhitelist = ref<number[]>([])
+const levelOpacity = ref(0.12)
+const levelPosition = ref('bottom-right')
+const levelMessage = ref('')
+const l3UserId = ref('')
+const digitalPercent = computed(() => `${(Number(digital.digitalizedRate || 0) * 100).toFixed(2)}%`)
+const digitalShort = computed(() => Number(digital.digitalizedRate) < 0.95)
 const certFormOpen = ref(false)
 const certSaving = ref(false)
 const certFormError = ref('')
@@ -558,7 +639,7 @@ const specs: Record<string, {
   },
   certificate: {
     title: '证件管理',
-    sub: 'CORP-R · 索引分页 · 到期预警 · 查看带水印，不出原图',
+    sub: 'CORP-R · 索引分页 · 数字化率 · 到期预警 · 分级原图',
     placeholder: '持有人',
     empty: '没有证件档案',
     emptyHint: '可以录入。审核生效后参与到期扫描。',
@@ -685,6 +766,7 @@ async function saveCert() {
     })
     certFormOpen.value = false
     await load()
+    await loadDigital()
   } catch (e: unknown) {
     certFormError.value = errorMessage(e)
   } finally {
@@ -710,6 +792,7 @@ async function approveCert() {
     await http.put(`/cert/archive/${id}/review`, { action: 'APPROVE' })
     reviewOpen.value = false
     await load()
+    await loadDigital()
   } catch (e: unknown) {
     reviewError.value = errorMessage(e)
   } finally {
@@ -1045,6 +1128,115 @@ function changeSize(event: Event) {
   load()
 }
 
+async function loadDigital() {
+  try {
+    const res = await http.get('/cert/archive/digital-metrics')
+    const data = res.data?.data || {}
+    digital.totalExpected = Number(data.totalExpected || 0)
+    digital.digitalizedCount = Number(data.digitalizedCount || 0)
+    digital.digitalizedRate = Number(data.digitalizedRate ?? 1)
+  } catch {
+    /* 横幅保持上次数字 */
+  }
+}
+
+function applyLevel(data: Record<string, unknown>) {
+  const rules = Array.isArray(data.rules) ? data.rules : []
+  const first = rules.find((item) => item && typeof item === 'object' && (item as { target?: string }).target === 'ROLE') as
+    | { targetCode?: string; viewLevel?: number }
+    | undefined
+  levelRole.value = first?.targetCode || ''
+  levelValue.value = String(first?.viewLevel || 2)
+  const raw = Array.isArray(data.l3Whitelist) ? data.l3Whitelist : []
+  levelWhitelist.value = raw.map((item) => Number(item)).filter((item) => Number.isFinite(item))
+  levelOpacity.value = Number(data.opacity ?? 0.12)
+  levelPosition.value = String(data.position || 'bottom-right')
+}
+
+async function loadLevelConfig() {
+  try {
+    const res = await http.get('/cert/security/level-config')
+    applyLevel((res.data?.data || {}) as Record<string, unknown>)
+    levelReady.value = true
+  } catch {
+    levelReady.value = false
+  }
+}
+
+async function putLevel(rules: Array<{ target: string; targetCode: string; viewLevel: number }>, whitelist: number[]) {
+  await http.put('/cert/security/level-config', {
+    rules,
+    l3Whitelist: whitelist,
+    opacity: 0.12,
+    position: 'bottom-right',
+  })
+  levelMessage.value = '已保存，下次查看即按新级别'
+  await loadLevelConfig()
+}
+
+async function saveLevel() {
+  levelMessage.value = ''
+  const role = levelRole.value.trim()
+  if (!role) {
+    levelMessage.value = '角色编码必填'
+    return
+  }
+  try {
+    await putLevel([{ target: 'ROLE', targetCode: role, viewLevel: 2 }], levelWhitelist.value)
+  } catch (e: unknown) {
+    levelMessage.value = errorMessage(e)
+  }
+}
+
+async function resetLevel() {
+  levelMessage.value = ''
+  try {
+    await putLevel([], [])
+    levelMessage.value = '已恢复默认，全员 L1'
+  } catch (e: unknown) {
+    levelMessage.value = errorMessage(e)
+  }
+}
+
+async function saveWhitelist() {
+  levelMessage.value = ''
+  const userId = Number(l3UserId.value)
+  if (!userId) {
+    levelMessage.value = '请选择白名单用户'
+    return
+  }
+  const rules = levelRole.value.trim()
+    ? [{ target: 'ROLE', targetCode: levelRole.value.trim(), viewLevel: 2 }]
+    : []
+  try {
+    await putLevel(rules, [userId])
+  } catch (e: unknown) {
+    levelMessage.value = errorMessage(e)
+  }
+}
+
+async function openFileUrl(row: Row) {
+  fileError.value = ''
+  filePreview.value = ''
+  fileResult.value = null
+  fileOpen.value = true
+  detailOpen.value = false
+  try {
+    const res = await http.get(`/cert/archive/${row.id}/file-url`)
+    const data = res.data?.data || {}
+    fileResult.value = data
+    const signed = String(data.signedUrl || '')
+    const path = signed.replace(/^\/admin-api\/ims/, '')
+    if (path) {
+      const preview = await http.get(path)
+      filePreview.value = String(preview.data?.data?.preview || '')
+    }
+  } catch (e: unknown) {
+    fileError.value = errorMessage(e)
+    fileResult.value = null
+  }
+}
+
 async function openDetail(row: Row) {
   detail.value = null
   viewError.value = ''
@@ -1157,6 +1349,8 @@ watch(kind, async () => {
   renewOpen.value = false
   renewFinishOpen.value = false
   remindOpen.value = false
+  fileOpen.value = false
+  digitalOpen.value = false
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
       await prepareSim()
@@ -1165,6 +1359,10 @@ watch(kind, async () => {
     }
   }
   load()
+  if (kind.value === 'certificate') {
+    await loadAuditUsers()
+    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig()])
+  }
 })
 
 onMounted(async () => {
@@ -1178,7 +1376,7 @@ onMounted(async () => {
   await load()
   if (kind.value === 'certificate') {
     await loadAuditUsers()
-    await Promise.all([loadExpire(), searchAudit()])
+    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig()])
   }
 })
 </script>

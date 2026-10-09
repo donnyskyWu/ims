@@ -309,7 +309,28 @@ class CertArchive(Base):
     issue_date: Mapped[str] = mapped_column(String(10), default="")
     expire_date: Mapped[str] = mapped_column(String(10), default="")
     status: Mapped[str] = mapped_column(String(32), default="EFFECTIVE")
+    file_key: Mapped[str] = mapped_column(String(512), default="")
     uploaded_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    creator: Mapped[int] = mapped_column(BigInteger, default=0)
+    updater: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CertWatermarkConfig(Base):
+    """CERT-003 查看级别。每租户一行：角色规则、L3 白名单、水印样式。"""
+
+    __tablename__ = "ims_cert_watermark_config"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uk_cert_wm_tenant"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    rules_json: Mapped[str] = mapped_column(Text, default="[]")
+    whitelist_json: Mapped[str] = mapped_column(Text, default="[]")
+    perm_level: Mapped[int] = mapped_column(Integer, default=1)
+    watermark_text: Mapped[str] = mapped_column(String(128), default="")
+    opacity: Mapped[float] = mapped_column(Float, default=0.12)
+    position: Mapped[str] = mapped_column(String(32), default="bottom-right")
     creator: Mapped[int] = mapped_column(BigInteger, default=0)
     updater: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)

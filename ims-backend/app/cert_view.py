@@ -62,7 +62,14 @@ def enforce_view_frequency(db: Session, actor: User, cert: CertArchive):
     return None
 
 
-def record_cert_view(db: Session, actor: User, cert: CertArchive, watermark: str, request: Request) -> None:
+def record_cert_view(
+    db: Session,
+    actor: User,
+    cert: CertArchive,
+    watermark: str,
+    request: Request,
+    view_level: int = 2,
+) -> None:
     client = request.client
     ip = (client.host if client is not None else "") or ""
     device = (request.headers.get("user-agent") or "")[:256]
@@ -72,7 +79,7 @@ def record_cert_view(db: Session, actor: User, cert: CertArchive, watermark: str
             cert_id=cert.id,
             viewer_user_id=actor.id,
             viewer_name=(actor.nickname or actor.username or "")[:64],
-            view_level=2,
+            view_level=view_level,
             watermark_text=watermark[:512],
             view_duration=0,
             ip=ip[:64],
