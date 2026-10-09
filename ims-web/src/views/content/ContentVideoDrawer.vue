@@ -78,6 +78,7 @@ function seedFromContent() {
   const title = String(props.content.title || '').trim()
   const body = String(props.content.body || '').trim()
   requirementText.value = [title, body].filter(Boolean).join('\n') || title
+  provider.value = String(props.content.videoProvider || '')
   fileKey.value = String(props.content.videoFileKey || '')
   bound.value = !!fileKey.value
   pollStatus.value = String(props.content.videoJobStatus || '')

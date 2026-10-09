@@ -1,22 +1,31 @@
 <template>
   <ProtoDrawer :open="open" title="AI 文案" width="560px" :z-index="140" @close="emit('close')">
     <p class="hint">选择模型并输入提示。生成结果仅预览，采纳后写入正文，不会自动排版。</p>
+    <p class="hint" data-testid="ai-copy-stub-hint">无本机 GPU。未生成时预览为空；本地桩只写预览，不排版。</p>
     <div class="formrow one">
       <div class="fld">
         <label>模型</label>
         <select v-model="modelId">
-          <option v-if="!models.length" value="">加载中</option>
+          <option v-if="modelsState === 'loading'" value="">加载中</option>
+          <option v-else-if="!models.length" value="">暂无可用模型</option>
           <option v-for="row in models" :key="row.id" :value="row.id">
             {{ row.modelName }}（{{ row.vendor || '模型' }}）
           </option>
         </select>
       </div>
+      <p v-if="modelsState === 'empty'" class="hint" data-testid="ai-copy-models-empty">没有可选用的文案模型。</p>
       <div class="fld">
         <label>{{ roundCount >= 2 ? '本次修改要求' : '提示' }}</label>
         <textarea v-model="prompt" rows="4" placeholder="写一段赛后复盘，或描述要续写的修改" />
       </div>
     </div>
     <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
+    <div v-if="!preview && !error && !emptyResult" class="empty" data-testid="ai-copy-empty">
+      <div class="et">尚未生成</div>
+      <div class="es">预览留空，采纳不可用。</div>
+    </div>
+    <p v-if="emptyResult" class="hint" data-testid="ai-copy-result-empty">生成结果为空，可重试。</p>
+    <p v-if="stubPreview && preview" class="hint" data-testid="ai-copy-stub">桩预览 · 不占用本机 GPU</p>
     <div v-if="preview" class="fld">
       <label>预览 · 第 {{ roundCount }} 轮</label>
       <pre class="ai-copy-preview">{{ preview }}</pre>
@@ -46,10 +55,13 @@ const emit = defineEmits<{
 }>()
 
 const models = ref<ModelRow[]>([])
+const modelsState = ref<'loading' | 'ready' | 'empty' | 'error'>('loading')
 const modelId = ref('')
 const prompt = ref('')
 const preview = ref('')
 const error = ref('')
+const emptyResult = ref(false)
+const stubPreview = ref(false)
 const generating = ref(false)
 const roundCount = ref(1)
 const history = ref<Turn[]>([])
@@ -63,6 +75,9 @@ watch(
     prompt.value = ''
     preview.value = ''
     error.value = ''
+    emptyResult.value = false
+    stubPreview.value = false
+    modelsState.value = 'loading'
     roundCount.value = 1
     history.value = []
     targetField.value = 'body'
@@ -71,15 +86,19 @@ watch(
 )
 
 async function loadModels() {
+  modelsState.value = 'loading'
   try {
     const { data } = await http.get('/content/ai-content/models')
     models.value = data.data || []
     if (!models.value.some((row) => row.id === modelId.value)) {
       modelId.value = models.value[0]?.id || ''
     }
+    modelsState.value = models.value.length ? 'ready' : 'empty'
   } catch (e) {
     error.value = errorMessage(e)
     models.value = []
+    modelId.value = ''
+    modelsState.value = 'error'
   }
 }
 
@@ -101,6 +120,7 @@ async function run(continueRound: boolean) {
   lastContinue.value = continueRound
   generating.value = true
   error.value = ''
+  emptyResult.value = false
   try {
     const { data } = await http.post('/content/ai-content/generate', {
       modelId: modelId.value,
@@ -110,7 +130,13 @@ async function run(continueRound: boolean) {
       currentBody: continueRound ? preview.value : '',
       history: continueRound ? history.value : [],
     })
-    const markdown = String(data.data?.markdown || '')
+    const markdown = String(data.data?.markdown || '').trim()
+    stubPreview.value = !!data.data?.mock
+    if (!markdown) {
+      preview.value = ''
+      emptyResult.value = true
+      return
+    }
     preview.value = markdown
     roundCount.value = Number(data.data?.roundCount || nextRound)
     targetField.value = String(data.data?.targetField || 'body')

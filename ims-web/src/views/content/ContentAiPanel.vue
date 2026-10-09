@@ -2,6 +2,10 @@
   <div class="card" style="padding: 12px; margin-top: 8px" data-testid="content-ai-panel">
     <div class="dsec">AI 文案 / 视频</div>
     <p class="hint" data-testid="gpu-hint">无本机 GPU。生成走管理员配置的第三方地址，或本地桩；此处不显示密钥。</p>
+    <p data-testid="ai-copy-provider">文案服务：{{ copyProviderLabel }}</p>
+    <p data-testid="comfyui-stub-status">ComfyUI：{{ videoProviderLabel }}</p>
+    <p v-if="copyIsEmpty" class="hint" data-testid="ai-copy-empty">尚未生成文案。预览与正文都还是空的，本地桩不占用本机 GPU。</p>
+    <p v-if="videoUnconfigured" class="hint bad" data-testid="comfyui-unconfigured">未配置 ComfyUI 地址，视频生成不可用。</p>
     <p v-if="!hasMatch" class="hint bad">请先选择比赛（matchScheme 至少一场）后再生成。</p>
     <p data-testid="ai-copy-status">
       文案状态：{{ copyLabel }}
@@ -18,14 +22,14 @@
       <button class="btn btn-pri btn-sm" type="button" data-testid="ai-copy-btn" :disabled="!canGenerate" @click="generateCopy">
         AI 生成文案
       </button>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="ai-video-btn" :disabled="!canGenerate || !content.defaultWorkflowId" @click="generateVideo">
+      <button class="btn btn-sec btn-sm" type="button" data-testid="ai-video-btn" :disabled="!canGenerate || !content.defaultWorkflowId || videoUnconfigured" @click="generateVideo">
         视频生成
       </button>
       <button
         class="btn btn-sec btn-sm"
         type="button"
         data-testid="ai-video-task-btn"
-        :disabled="!hasMatch || !content.defaultWorkflowId"
+        :disabled="!hasMatch || !content.defaultWorkflowId || videoUnconfigured"
         @click="videoOpen = true"
       >
         视频任务
@@ -94,8 +98,14 @@ const videoOpen = ref(false)
 const copyLabelMap: Record<string, string> = {
   QUEUED: '生成中',
   GENERATING: '生成中',
+  GENERATED: '已生成',
   SUCCESS: '成功',
   FAILED: '失败',
+}
+const providerLabels: Record<string, string> = {
+  stub: '桩（不占用本机 GPU）',
+  remote: '第三方',
+  unconfigured: '未配置',
 }
 const videoLabelMap: Record<string, string> = {
   WAITING: '待生成',
@@ -111,8 +121,20 @@ const editable = computed(() => props.content.contentStatus === 'DRAFT' || props
 const generating = computed(() => props.content.aiGenerateStatus === 'QUEUED' || props.content.aiGenerateStatus === 'GENERATING' || props.content.videoJobStatus === 'GENERATING')
 const canGenerate = computed(() => editable.value && hasMatch.value && !busy.value && !generating.value)
 const canRetryVideo = computed(() => props.content.videoJobStatus === 'FAILED' || props.content.videoJobStatus === 'REVIEW_REJECTED')
-const copyLabel = computed(() => copyLabelMap[props.content.aiGenerateStatus] || '未生成')
-const videoLabel = computed(() => videoLabelMap[props.content.videoJobStatus] || '未生成')
+const copyIsEmpty = computed(() => !props.content.aiGenerateStatus)
+const videoUnconfigured = computed(() => props.content.videoProvider === 'unconfigured')
+const copyProviderLabel = computed(() => providerLabels[props.content.aiCopyProvider] || '未返回')
+const videoProviderLabel = computed(() => providerLabels[props.content.videoProvider] || '未返回')
+const copyLabel = computed(() => {
+  const status = props.content.aiGenerateStatus
+  if (!status) return '未生成'
+  return copyLabelMap[status] || status
+})
+const videoLabel = computed(() => {
+  const status = props.content.videoJobStatus
+  if (!status) return '未生成'
+  return videoLabelMap[status] || status
+})
 
 function requirement() {
   const title = String(props.content.title || '').trim()

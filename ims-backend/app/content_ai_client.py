@@ -81,6 +81,14 @@ def _flag(name: str) -> str | None:
     return str(raw).strip().lower()
 
 
+def copy_provider_name() -> str:
+    """stub | remote | unconfigured。不回传地址或 Token。"""
+    mode = _draft_copy_mode()
+    if mode == "http":
+        return "remote" if base_url() else "unconfigured"
+    return "stub"
+
+
 def stub_mode() -> str:
     """off | success | fail | timeout。具体开关优先于 IMS_CONTENT_GEN_STUB。"""
     specific = _flag("IMS_CONTENT_AI_STUB")

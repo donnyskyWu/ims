@@ -269,10 +269,15 @@ export async function startPlanRowViaUi(page: Page, planName: string) {
   await expect(row).toContainText('IN_PROGRESS', { timeout: 15_000 })
 }
 
-/** 计划 · 申请终止 → TERMINATE_PENDING */
-export async function requestPlanTerminateViaUi(page: Page, planName: string, _reason?: string) {
+/** 计划 · 申请终止 → TERMINATE_PENDING。原因写入抽屉，留空则列表显示未填写。 */
+export async function requestPlanTerminateViaUi(page: Page, planName: string, reason?: string) {
   const row = page.locator('tr', { hasText: planName })
   await expect(row).toContainText('IN_PROGRESS')
+  await row.getByRole('button', { name: '申请终止' }).click()
+  const drawer = page.locator('.drawer.on').filter({ hasText: '申请终止' })
+  const reasonInput = drawer.getByTestId('plan-terminate-reason-input')
+  await expect(reasonInput).toBeVisible()
+  if (reason) await reasonInput.fill(reason)
   const termResp = page.waitForResponse(
     (r) =>
       r.url().includes('/content/plan/') &&
@@ -281,7 +286,7 @@ export async function requestPlanTerminateViaUi(page: Page, planName: string, _r
       !r.url().includes('/reject') &&
       r.request().method() === 'POST',
   )
-  await row.getByRole('button', { name: '申请终止' }).click()
+  await drawer.getByTestId('plan-terminate-submit').click()
   const termBody = (await (await termResp).json()) as { code: number; data?: { status?: string } }
   expect(termBody.code).toBe(0)
   await expect(row).toContainText('TERMINATE_PENDING', { timeout: 15_000 })
