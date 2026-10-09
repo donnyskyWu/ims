@@ -8,6 +8,7 @@ import secrets
 import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import Response
@@ -43,6 +44,14 @@ from app.ops_models import PlatformAccount
 
 VOUCHER_LIMIT = Decimal("5000")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+
+def shanghai_today() -> date:
+    """冲话费「今日」按北京时间，避免 UTC 跨日把当天拒掉。"""
+    return datetime.now(SHANGHAI).date()
+
+
 MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 DIFF_RATE_LIMIT = Decimal("2.00")
 TRANSFER_REASONS = frozenset({"TRANSFER_POSITION", "PRE_RESIGN", "VIOLATION", "BUSINESS_ADJUST"})
@@ -159,8 +168,17 @@ class ReturnBody(BaseModel):
 
 @router.post("/account/apply")
 def create_apply(body: ApplyCreateBody, actor: User = Depends(current_user), db: Session = Depends(db_session)):
-    if not body.purpose.strip():
+    purpose = (body.purpose or "").strip()
+    if not purpose:
         return fail(1001, "用途说明必填")
+    if len(purpose) > 256:
+        return fail(1001, "用途说明不超过 256 字")
+    plan_start = (body.plan_start or "").strip()
+    plan_end = (body.plan_end or "").strip()
+    if not DATE_RE.match(plan_start) or not DATE_RE.match(plan_end):
+        return fail(1001, "计划起止必填")
+    if plan_end <= plan_start:
+        return fail(1001, "计划结束须晚于计划开始")
     ops = ops_session()
     try:
         account = _load_account(ops, body.account_id)
@@ -184,9 +202,9 @@ def create_apply(body: ApplyCreateBody, actor: User = Depends(current_user), db:
             account_no=account.account_no or str(account.id),
             platform=account.platform_type,
             applicant_user_id=actor.id,
-            purpose=body.purpose.strip(),
-            plan_start=body.plan_start,
-            plan_end=body.plan_end,
+            purpose=purpose,
+            plan_start=plan_start,
+            plan_end=plan_end,
             apply_status="PENDING_APPROVAL",
             tenant_id=tenant_of(actor),
         )
@@ -789,8 +807,10 @@ def create_transfer(
     if body.reason_type not in TRANSFER_REASONS:
         return fail(1001, "原因分类不合法")
     remark = (body.remark or "").strip()
-    if not remark or len(remark) > 512:
+    if not remark:
         return fail(1001, "交接说明必填")
+    if len(remark) > 512:
+        return fail(1001, "交接说明不超过 512 字")
     if body.transfer_type == "RECALL":
         return _create_recall(body, remark, actor, db)
     if body.to_user_id is None:
@@ -980,8 +1000,10 @@ def unfreeze_account(
 ):
     """TRF-R2：管理员把收回冻结账号解冻回池（FROZEN → IN_POOL）。"""
     remark = (body.remark or "").strip()
-    if not remark or len(remark) > 512:
+    if not remark:
         return fail(1001, "解冻说明必填")
+    if len(remark) > 512:
+        return fail(1001, "解冻说明不超过 512 字")
     if not _is_admin(db, actor):
         return fail(1008, "仅管理员可解冻")
     ops = ops_session()
@@ -1113,7 +1135,7 @@ def _recharge_fields(body: RechargeCreateBody) -> tuple[dict | None, object | No
         date.fromisoformat(body.recharge_date)
     except ValueError:
         return None, fail(1001, "充值日期格式不合法")
-    if date.fromisoformat(body.recharge_date) > utcnow().date():
+    if date.fromisoformat(body.recharge_date) > shanghai_today():
         return None, fail(1001, "充值日期不得晚于今日")
     if amount > VOUCHER_LIMIT and not voucher:
         return None, fail(1025, "冲话费凭证必填（金额 > 5000 元）")

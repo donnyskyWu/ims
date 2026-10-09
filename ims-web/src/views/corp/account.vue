@@ -834,19 +834,19 @@
         <div class="formrow one">
           <div class="fld">
             <label>用途说明<i class="req">*</i></label>
-            <input v-model="checkoutForm.purpose" placeholder="直播/内容用途" />
+            <input v-model="checkoutForm.purpose" data-testid="acct-checkout-purpose" maxlength="300" placeholder="直播/内容用途，不超过 256 字" />
           </div>
         </div>
         <div class="formrow one">
           <div class="fld">
             <label>计划开始<i class="req">*</i></label>
-            <input v-model="checkoutForm.planStart" type="date" />
+            <input v-model="checkoutForm.planStart" data-testid="acct-checkout-start" type="date" />
           </div>
         </div>
         <div class="formrow one">
           <div class="fld">
             <label>计划结束<i class="req">*</i></label>
-            <input v-model="checkoutForm.planEnd" type="date" />
+            <input v-model="checkoutForm.planEnd" data-testid="acct-checkout-end" type="date" />
           </div>
         </div>
         <p v-if="checkoutMsg" class="hint" data-testid="acct-checkout-msg">{{ checkoutMsg }}</p>
@@ -857,12 +857,13 @@
           <button class="btn btn-pri btn-sm" type="button" :disabled="checkoutBusy" @click="approveCheckout">审批通过</button>
         </div>
         <div v-if="checkoutStep === 'PENDING_HANDOVER'" class="formrow one" style="margin-top: 12px">
-          <label><input v-model="checkoutHandover.passwordReset" type="checkbox" /> 密码已重置</label>
+          <label><input v-model="checkoutHandover.passwordReset" data-testid="acct-checkout-password" type="checkbox" /> 密码已重置</label>
           <label><input v-model="checkoutHandover.mobileRebound" type="checkbox" /> 绑定手机已换</label>
+          <p class="hint" data-testid="acct-checkout-handover-note">密码不在系统存储，仅记录交接事实</p>
           <button class="btn btn-pri btn-sm" type="button" :disabled="checkoutBusy" @click="confirmCheckout">确认领用生效</button>
         </div>
         <div v-if="checkoutStep === 'DONE'" class="hint">领用已生效，账号状态应为「在用」。</div>
-        <p v-if="checkoutMsg" class="hint">{{ checkoutMsg }}</p>
+        <p v-if="checkoutMsg" class="hint" data-testid="acct-checkout-msg">{{ checkoutMsg }}</p>
       </template>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="closeCheckout">取消</button>
@@ -1097,7 +1098,8 @@
         </div>
         <div class="fld">
           <label>充值日期<i class="req">*</i></label>
-          <input v-model="rechargeForm.rechargeDate" data-testid="acct-recharge-date" type="date" :max="todayUtc()" />
+          <input v-model="rechargeForm.rechargeDate" data-testid="acct-recharge-date" type="date" :max="shanghaiToday()" />
+          <p class="hint" data-testid="acct-recharge-date-note">充值日期按北京时间，不得晚于今日。</p>
         </div>
         <div class="fld">
           <label>凭证</label>
@@ -1679,6 +1681,7 @@ const timelineRangeHint = computed(() => {
   const hasFrom = !!timelineFrom.value
   const hasTo = !!timelineTo.value
   if (hasFrom !== hasTo) return '请同时填写开始和结束日期'
+  if (hasFrom && hasTo && timelineTo.value < timelineFrom.value) return '结束日期不能早于开始日期'
   return ''
 })
 const timelineEmptyText = computed(() => {
@@ -1864,6 +1867,22 @@ function todayUtc() {
   return new Date().toISOString().slice(0, 10)
 }
 
+function shanghaiToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+}
+
+function addCalendarDays(iso: string, days: number) {
+  const [year, month, day] = iso.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
 const rcR1Due = computed(() => {
   const day = Number(todayUtc().slice(8, 10))
   return day >= 1 && day <= 5
@@ -1897,12 +1916,9 @@ function bizMessage(error: unknown) {
 }
 
 function defaultPlanDates() {
-  const start = new Date()
-  const end = new Date()
-  end.setDate(end.getDate() + 30)
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
-  checkoutForm.planStart = fmt(start)
-  checkoutForm.planEnd = fmt(end)
+  const start = shanghaiToday()
+  checkoutForm.planStart = start
+  checkoutForm.planEnd = addCalendarDays(start, 30)
 }
 
 const basicLines = computed(() => {
@@ -2297,19 +2313,39 @@ function closeCheckout() {
 
 async function submitCheckout() {
   if (!checkoutAccount.value) return
-  checkoutBusy.value = true
   checkoutMsg.value = ''
+  const purpose = checkoutForm.purpose.trim()
+  if (!purpose) {
+    checkoutMsg.value = '1001 用途说明必填'
+    return
+  }
+  if (purpose.length > 256) {
+    checkoutMsg.value = '1001 用途说明不超过 256 字'
+    return
+  }
+  const planStart = checkoutForm.planStart
+  const planEnd = checkoutForm.planEnd
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(planStart) || !/^\d{4}-\d{2}-\d{2}$/.test(planEnd)) {
+    checkoutMsg.value = '1001 计划起止必填'
+    return
+  }
+  if (planEnd <= planStart) {
+    checkoutMsg.value = '1001 计划结束须晚于计划开始'
+    return
+  }
+  checkoutBusy.value = true
   try {
     const res = await http.post('/account/apply', {
       accountId: checkoutAccount.value.id,
-      purpose: checkoutForm.purpose,
-      planStart: checkoutForm.planStart,
-      planEnd: checkoutForm.planEnd,
+      purpose,
+      planStart,
+      planEnd,
     })
     const vo = res.data?.data as { id: number; applyNo: string; applyStatus: string }
     checkoutApplyId.value = vo.id
     checkoutApplyNo.value = vo.applyNo
     checkoutStep.value = vo.applyStatus
+    checkoutMsg.value = '已提交，等待直属上级审批'
   } catch (e: unknown) {
     checkoutMsg.value = bizMessage(e)
   } finally {
@@ -2333,8 +2369,12 @@ async function approveCheckout() {
 
 async function confirmCheckout() {
   if (!checkoutApplyId.value) return
-  checkoutBusy.value = true
   checkoutMsg.value = ''
+  if (!checkoutHandover.passwordReset) {
+    checkoutMsg.value = '1001 须确认密码已重置'
+    return
+  }
+  checkoutBusy.value = true
   try {
     await http.put(`/account/apply/${checkoutApplyId.value}/confirm`, {
       passwordReset: checkoutHandover.passwordReset,
@@ -2397,6 +2437,10 @@ async function submitTransfer() {
       transferMsg.value = '1001 交接说明必填'
       return
     }
+    if (transferForm.remark.trim().length > 512) {
+      transferMsg.value = '1001 交接说明不超过 512 字'
+      return
+    }
     const res = await http.post('/account/transfer', {
       accountId: transferAccount.value.id,
       transferType: 'TRANSFER',
@@ -2440,6 +2484,10 @@ async function submitRecall() {
       recallMsg.value = '1001 交接说明必填'
       return
     }
+    if (recallForm.remark.trim().length > 512) {
+      recallMsg.value = '1001 交接说明不超过 512 字'
+      return
+    }
     const res = await http.post('/account/transfer', {
       accountId: recallAccount.value.id,
       transferType: 'RECALL',
@@ -2481,6 +2529,10 @@ async function submitRecycle() {
       recycleMsg.value = '1001 回收说明必填'
       return
     }
+    if (recycleRemark.value.trim().length > 512) {
+      recycleMsg.value = '1001 回收说明不超过 512 字'
+      return
+    }
     const res = await http.post(`/account/${recycleAccount.value.id}/recycle`, {
       remark: recycleRemark.value.trim(),
     })
@@ -2497,8 +2549,12 @@ async function submitRecycle() {
 
 async function exportTimeline() {
   if (!detail.value?.id) return
-  timelineExportBusy.value = true
   timelineExportNote.value = ''
+  if (timelineRangeHint.value) {
+    timelineExportNote.value = timelineRangeHint.value
+    return
+  }
+  timelineExportBusy.value = true
   try {
     const res = await http.get(`/account/timeline/${detail.value.id}/export`)
     const data = (res.data?.data || {}) as { downloadUrl?: string; fileName?: string; message?: string }
@@ -2554,6 +2610,10 @@ async function submitUnfreeze() {
   try {
     if (!unfreezeRemark.value.trim()) {
       unfreezeMsg.value = '1001 解冻说明必填'
+      return
+    }
+    if (unfreezeRemark.value.trim().length > 512) {
+      unfreezeMsg.value = '1001 解冻说明不超过 512 字'
       return
     }
     const res = await http.post(`/account/${unfreezeAccount.value.id}/unfreeze`, {
@@ -2792,7 +2852,7 @@ function openRecharge(row: Record<string, unknown>) {
   rechargeAccount.value = row
   rechargeForm.amount = ''
   rechargeForm.channel = 'ALIPAY'
-  rechargeForm.rechargeDate = todayUtc()
+  rechargeForm.rechargeDate = shanghaiToday()
   rechargeForm.voucherUrl = ''
   rechargeForm.remark = ''
   rechargeMsg.value = ''
@@ -2981,28 +3041,28 @@ async function submitVerify() {
 
 async function submitRecharge() {
   if (!rechargeAccount.value) return
-  rechargeBusy.value = true
   rechargeMsg.value = ''
+  const amountIssue = rechargeAmountIssue(rechargeForm.amount)
+  if (amountIssue) {
+    rechargeMsg.value = amountIssue
+    return
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(rechargeForm.rechargeDate)) {
+    rechargeMsg.value = '1001 充值日期格式不合法'
+    return
+  }
+  if (rechargeForm.rechargeDate > shanghaiToday()) {
+    rechargeMsg.value = '1001 充值日期不得晚于今日'
+    return
+  }
+  const remark = rechargeForm.remark.trim()
+  if (remark.length > 256) {
+    rechargeMsg.value = '1001 备注过长'
+    return
+  }
+  const amount = Number(rechargeForm.amount.trim())
+  rechargeBusy.value = true
   try {
-    const amountIssue = rechargeAmountIssue(rechargeForm.amount)
-    if (amountIssue) {
-      rechargeMsg.value = amountIssue
-      return
-    }
-    const amount = Number(rechargeForm.amount.trim())
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(rechargeForm.rechargeDate)) {
-      rechargeMsg.value = '1001 充值日期格式不合法'
-      return
-    }
-    if (rechargeForm.rechargeDate > todayUtc()) {
-      rechargeMsg.value = '1001 充值日期不得晚于今日'
-      return
-    }
-    const remark = rechargeForm.remark.trim()
-    if (remark.length > 256) {
-      rechargeMsg.value = '1001 备注过长'
-      return
-    }
     const payload = {
       accountId: rechargeAccount.value.id,
       amount,

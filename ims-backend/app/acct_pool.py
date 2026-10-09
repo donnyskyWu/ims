@@ -191,8 +191,10 @@ def recycle_account(
 ):
     """已归还账号回收回可领用池。冻结账号不在这里处理。"""
     remark = (body.remark or "").strip()
-    if not remark or len(remark) > 512:
+    if not remark:
         return fail(1001, "回收说明必填")
+    if len(remark) > 512:
+        return fail(1001, "回收说明不超过 512 字")
     if not _is_admin(db, actor):
         return fail(1008, "仅管理员可回收回池")
     ops = ops_session()
