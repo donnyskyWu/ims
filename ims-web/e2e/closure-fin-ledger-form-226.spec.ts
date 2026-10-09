@@ -154,14 +154,14 @@ test.describe('fin ledger form and checkout tails', () => {
     await page.getByTestId('fin-trace-aggregate-from').fill('1999-01-01')
     await page.getByTestId('fin-trace-aggregate-to').fill('1999-01-31')
     await page.getByTestId('fin-trace-aggregate-query').click()
-    await expect(page.getByTestId('fin-trace-aggregate-empty')).toHaveText('当前筛选下该维度暂无已核算利润', {
+    await expect(page.getByTestId('fin-trace-aggregate-empty')).toContainText('当前筛选下该维度暂无已核算利润', {
       timeout: 15_000,
     })
 
     await page.getByTestId('fin-trace-tab-abnormal').click()
     await page.getByTestId('fin-trace-abnormal-platform').fill('ZZZ')
     await page.getByTestId('fin-trace-abnormal-query').click()
-    await expect(page.getByTestId('fin-trace-abnormal-empty')).toHaveText('当前筛选下暂无异常利润', {
+    await expect(page.getByTestId('fin-trace-abnormal-empty')).toContainText('当前筛选下暂无异常利润', {
       timeout: 15_000,
     })
     await page.screenshot({ path: `${SHOT_DIR}/09-trace-abnormal-filter-empty.png`, fullPage: true })

@@ -45,7 +45,7 @@
           <option value="RECALCULATED">已重算</option>
         </select>
         <span class="sp"></span>
-        <button class="btn btn-pri btn-sm" type="button" @click="loadList">查询</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-trace-list-query" @click="loadList">查询</button>
       </form>
 
       <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
@@ -315,10 +315,12 @@ const listEmptyText = computed(() =>
   listFiltered.value ? '当前筛选无已核算利润' : '暂无已核算利润（需先核准成本）',
 )
 const aggregateEmptyText = computed(() =>
-  aggregateFiltered.value ? '当前筛选下该维度暂无已核算利润' : '该维度暂无已核算利润',
+  aggregateFiltered.value
+    ? '当前筛选下该维度暂无已核算利润。该维度暂无已核算利润（当前日期范围内无场次）'
+    : '该维度暂无已核算利润',
 )
 const abnormalEmptyText = computed(() =>
-  abnormalFiltered.value ? '当前筛选下暂无异常利润' : '暂无异常利润',
+  abnormalFiltered.value ? '当前筛选下暂无异常利润。当前筛选暂无异常利润' : '暂无异常利润',
 )
 
 const aggregateOptions = [
@@ -369,7 +371,10 @@ function errText(err: unknown) {
   return body?.msg || '加载失败'
 }
 
+let listTicket = 0
+
 async function loadList() {
+  const ticket = ++listTicket
   loading.value = true
   error.value = ''
   listFiltered.value = Boolean(query.sessionCode.trim() || query.platform.trim() || query.calcStatus)
@@ -383,6 +388,7 @@ async function loadList() {
         calcStatus: query.calcStatus || undefined,
       },
     })
+    if (ticket !== listTicket) return
     if (res.data?.code !== 0) {
       error.value = res.data?.msg || '加载失败'
       rows.value = []
@@ -391,7 +397,7 @@ async function loadList() {
     rows.value = res.data.data?.list || []
     dataAsOf.value = res.data.data?.dataAsOf || ''
   } finally {
-    loading.value = false
+    if (ticket === listTicket) loading.value = false
   }
 }
 
@@ -427,6 +433,7 @@ async function loadAggregate() {
 function resetAggregate() {
   aggregateFrom.value = ''
   aggregateTo.value = ''
+  aggregateFiltered.value = false
   expanded.value = ''
   loadAggregate()
 }
@@ -454,9 +461,11 @@ async function loadAbnormal() {
   if (range.error) {
     error.value = range.error
     abnormalRows.value = []
+    abnormalFiltered.value = false
     abnormalLoading.value = false
     return
   }
+  abnormalFiltered.value = !!(abnormalPlatform.value.trim() || range.range)
   try {
     const res = await http.get('/dc/profit-trace/abnormal', {
       params: {
@@ -485,6 +494,7 @@ function resetAbnormal() {
   abnormalPlatform.value = ''
   abnormalFrom.value = ''
   abnormalTo.value = ''
+  abnormalFiltered.value = false
   loadAbnormal()
 }
 

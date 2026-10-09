@@ -70,14 +70,26 @@ def as_int(value: str) -> int:
         return 0
 
 
-def range_too_wide(date_range: list[str] | None) -> bool:
-    if not date_range or len(date_range) < 2:
-        return False
+def query_range_error(date_range: list[str] | None) -> str | None:
+    """POST /query 的日期边界。缺一侧、颠倒或非法日与聚合接口同一句 1001。"""
+    if not date_range:
+        return None
+    parts = [(part or "").strip()[:10] for part in date_range]
+    if len(parts) != 2 or not parts[0] or not parts[1] or parts[0] > parts[1]:
+        return "dateRange 须为开始日,结束日"
     try:
-        start = datetime.strptime((date_range[0] or "")[:10], "%Y-%m-%d")
-        end = datetime.strptime((date_range[1] or "")[:10], "%Y-%m-%d")
+        datetime.strptime(parts[0], "%Y-%m-%d")
+        datetime.strptime(parts[1], "%Y-%m-%d")
     except ValueError:
+        return "dateRange 须为开始日,结束日"
+    return None
+
+
+def range_too_wide(date_range: list[str] | None) -> bool:
+    if not date_range or query_range_error(date_range):
         return False
+    start = datetime.strptime((date_range[0] or "")[:10], "%Y-%m-%d")
+    end = datetime.strptime((date_range[1] or "")[:10], "%Y-%m-%d")
     return (end - start).days > WIDE_RANGE_DAYS
 
 
@@ -1121,6 +1133,9 @@ def trace_query(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
+    range_error = query_range_error(body.dateRange)
+    if range_error:
+        return fail(1001, range_error)
     tenant_id = tenant_of(actor)
     started = time.perf_counter()
     masked = amounts_masked(db, actor, request)
