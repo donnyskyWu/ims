@@ -14,20 +14,20 @@
       </div>
       <div class="card stat">
         <span class="l">总收入</span>
-        <div class="n">¥{{ fmt(summary.totalRevenue) }}</div>
+        <div class="n" data-testid="fin-profit-summary-revenue">{{ yuan(summary.totalRevenue) }}</div>
       </div>
       <div class="card stat">
         <span class="l">总成本</span>
-        <div class="n">¥{{ fmt(summary.totalCost) }}</div>
+        <div class="n" data-testid="fin-profit-summary-cost">{{ yuan(summary.totalCost) }}</div>
       </div>
       <div class="card stat">
         <span class="l" data-testid="fin-profit-summary-label">{{ profitLabel }}合计</span>
         <div
           class="n"
           data-testid="fin-profit-summary-shown"
-          :class="{ pos: shownProfit >= 0, neg: shownProfit < 0 }"
+          :class="amtClass(summary.shownProfit)"
         >
-          ¥{{ fmtSigned(shownProfit) }}
+          {{ yuanSigned(summary.shownProfit) }}
         </div>
         <div class="d">待结算 {{ summary.readySettlementCount }} · 结算中 {{ summary.inSettlementCount }}</div>
       </div>
@@ -88,6 +88,7 @@
     <p v-show="tab === 'list'" class="hint" data-testid="fin-profit-sort-hint" style="margin: 0 0 8px">
       按{{ profitLabel }}降序 · 毛利、经营利润、净利润三列同时展示
     </p>
+    <p v-if="listAmountsMasked && tab === 'list'" class="hint" data-testid="fin-profit-amount-mask">金额已脱敏</p>
 
     <div v-if="error && tab === 'list'" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
 
@@ -140,10 +141,10 @@
               <td class="mono">{{ row.sessionCode }}</td>
               <td>{{ row.sessionTitle }}</td>
               <td>{{ row.platform }}</td>
-              <td class="num">¥{{ fmt(row.gmv) }}</td>
-              <td class="num" data-testid="fin-profit-gross" :class="amtClass(row.grossProfit)">¥{{ fmtSigned(row.grossProfit) }}</td>
-              <td class="num" data-testid="fin-profit-operating" :class="amtClass(row.operatingProfit)">¥{{ fmtSigned(row.operatingProfit) }}</td>
-              <td class="num" data-testid="fin-profit-net" :class="amtClass(row.netProfit)">¥{{ fmtSigned(row.netProfit) }}</td>
+              <td class="num" data-testid="fin-profit-gmv">{{ yuan(row.gmv) }}</td>
+              <td class="num" data-testid="fin-profit-gross" :class="amtClass(row.grossProfit)">{{ yuanSigned(row.grossProfit) }}</td>
+              <td class="num" data-testid="fin-profit-operating" :class="amtClass(row.operatingProfit)">{{ yuanSigned(row.operatingProfit) }}</td>
+              <td class="num" data-testid="fin-profit-net" :class="amtClass(row.netProfit)">{{ yuanSigned(row.netProfit) }}</td>
               <td class="num">{{ row.netProfitRate }}%</td>
               <td>{{ settlementLabel(String(row.settlementStatus || '')) }}</td>
               <td class="mono" data-testid="fin-profit-calc-version">V{{ row.calcVersion }}</td>
@@ -223,21 +224,22 @@
           <div class="g3" style="margin-bottom: 12px">
             <div class="card stat" data-testid="fin-profit-level-gross">
               <span class="l">毛利</span>
-              <div class="n">¥{{ fmt(detail.grossProfit) }}</div>
+              <div class="n">{{ yuan(detail.grossProfit) }}</div>
             </div>
             <div class="card stat" data-testid="fin-profit-level-operating">
               <span class="l">经营利润</span>
-              <div class="n">¥{{ fmt(detail.operatingProfit) }}</div>
+              <div class="n">{{ yuan(detail.operatingProfit) }}</div>
             </div>
             <div class="card stat" data-testid="fin-profit-level-net">
               <span class="l">净利润</span>
-              <div class="n" :class="{ pos: Number(detail.netProfit) >= 0, neg: Number(detail.netProfit) < 0 }">
-                ¥{{ fmt(detail.netProfit) }}
+              <div class="n" :class="amtClass(detail.netProfit)">
+                {{ yuan(detail.netProfit) }}
               </div>
             </div>
           </div>
 
-          <section data-testid="fin-profit-waterfall">
+          <p v-if="detailAmountsMasked" class="hint" data-testid="fin-profit-detail-mask">金额已脱敏 ***</p>
+          <section v-else data-testid="fin-profit-waterfall">
             <b>三级口径瀑布</b>
             <p class="hint">FIN-P-R2 · GMV 逐项扣至净利润（BR-108）。悬停每级查看公式。</p>
             <ol class="wf-list">
@@ -279,7 +281,7 @@
                 <tbody>
                   <tr v-for="row in snapshotRows" :key="row.key" :data-testid="`fin-profit-param-${row.key}`">
                     <td>{{ row.label }}</td>
-                    <td class="num">¥{{ fmt(row.value) }}</td>
+                    <td class="num">{{ yuan(row.value) }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -303,7 +305,7 @@
               </div>
               <div class="hint">{{ item.triggerReason || '—' }}</div>
               <div class="hist-amt">
-                毛利 ¥{{ fmt(item.grossProfit) }} · 经营利润 ¥{{ fmt(item.operatingProfit) }} · 净利润 ¥{{ fmt(item.netProfit) }}
+                毛利 {{ yuan(item.grossProfit) }} · 经营利润 {{ yuan(item.operatingProfit) }} · 净利润 {{ yuan(item.netProfit) }}
               </div>
               <div class="hint">{{ item.calculatedAt || '—' }}</div>
             </li>
@@ -335,14 +337,14 @@ import { errorMessage, http } from '../../api/http'
 
 interface ProfitDetail {
   sessionCode: string
-  gmv?: number
-  grossProfit: number
-  operatingProfit: number
-  netProfit: number
+  gmv?: number | string
+  grossProfit: number | string
+  operatingProfit: number | string
+  netProfit: number | string
   calcVersion: number
   calcStatus: string
   calculatedAt: string
-  calcRuleSnapshot?: { formula?: string; params?: Record<string, number> }
+  calcRuleSnapshot?: { formula?: string; params?: Record<string, number | string> }
 }
 
 type WfKind = 'start' | 'deduct' | 'level'
@@ -409,8 +411,16 @@ const recalcError = ref('')
 const profitType = ref<ProfitMetric>('NET')
 const query = reactive({ sessionCode: '', platform: '', calcStatus: '', dateFrom: '', dateTo: '' })
 
+const AMOUNT_MASK = '***'
 const profitLabel = computed(() => metrics.find((item) => item.value === profitType.value)?.label || '净利润')
-const shownProfit = computed(() => Number(summary.value?.shownProfit ?? summary.value?.totalNetProfit ?? 0))
+const listAmountsMasked = computed(
+  () => summary.value?.shownProfit === AMOUNT_MASK || rows.value.some((row) => row.netProfit === AMOUNT_MASK || row.gmv === AMOUNT_MASK),
+)
+const detailAmountsMasked = computed(() => {
+  const row = detail.value
+  if (!row) return false
+  return row.netProfit === AMOUNT_MASK || row.grossProfit === AMOUNT_MASK || snapshotParams(row).revenue === AMOUNT_MASK
+})
 
 const nextVersion = computed(() => Number(detail.value?.calcVersion || 1) + 1)
 
@@ -485,7 +495,10 @@ const waterfall = computed(() => (detail.value ? buildWaterfall(detail.value) : 
 
 const snapshotRows = computed(() => {
   const params = snapshotParams(detail.value)
-  return SNAPSHOT_FIELDS.map((field) => ({ ...field, value: money(params[field.key]) }))
+  return SNAPSHOT_FIELDS.map((field) => {
+    const raw = params[field.key]
+    return { ...field, value: raw === AMOUNT_MASK ? AMOUNT_MASK : money(raw) }
+  })
 })
 
 const formulaText = computed(() => detail.value?.calcRuleSnapshot?.formula || '')
@@ -523,7 +536,18 @@ function fmtSigned(n: unknown) {
   return value < 0 ? `(${text})` : text
 }
 
+function yuan(n: unknown) {
+  if (n === AMOUNT_MASK) return AMOUNT_MASK
+  return `¥${fmt(n)}`
+}
+
+function yuanSigned(n: unknown) {
+  if (n === AMOUNT_MASK) return AMOUNT_MASK
+  return `¥${fmtSigned(n)}`
+}
+
 function amtClass(n: unknown) {
+  if (n === AMOUNT_MASK) return ''
   return Number(n || 0) < 0 ? 'neg' : 'pos'
 }
 

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, tenant_of, user_names
-from app.live import get_session, iso, restrict_sessions
+from app.live import get_session, iso, restrict_sessions, role_tags
 from app.models import (
     FinCost,
     FinPeriod,
@@ -39,6 +39,68 @@ PERIOD_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 LOCK_MSG = "财务期间已结账，录入/核准/更正均冻结"
 LOCK_ADJUST_MSG = "周期已锁定，锁后更正须 R4 审批"
 LOCK_ADJUST_PREFIX = "FIN-LOCK-"
+AMOUNT_MASK = "***"
+# 金额字段。净利率、占比、环比保持原值（PRD：金额脱敏，不是比率脱敏）。
+FIN_MONEY_KEYS = frozenset(
+    {
+        "gmv",
+        "revenue",
+        "refund",
+        "totalGmv",
+        "totalRefund",
+        "totalCost",
+        "totalRevenue",
+        "grossProfit",
+        "operatingProfit",
+        "netProfit",
+        "shownProfit",
+        "totalGrossProfit",
+        "totalOperatingProfit",
+        "totalNetProfit",
+        "commissionAmount",
+        "adCost",
+        "rechargeCost",
+        "fixedCost",
+        "sampleCost",
+        "shareDaren",
+        "shareRealname",
+        "amount",
+        "cost",
+        "totalAmount",
+        "paidOffAmount",
+        "pendingAmount",
+        "shareBase",
+        "shareAmount",
+    }
+)
+
+
+def actor_masks_fin_amounts(db: Session, actor: User) -> bool:
+    """R9 只读脱敏。R1/R3/R4 仍看金额；同时持有这些角色时不打码。"""
+    tags = role_tags(db, actor)
+    if tags & {"r1", "r3", "r4", "sys:admin"}:
+        return False
+    return "r9" in tags
+
+
+def mask_fin_amounts(value):
+    if isinstance(value, list):
+        return [mask_fin_amounts(item) for item in value]
+    if isinstance(value, dict):
+        masked = {}
+        for key, item in value.items():
+            if key in FIN_MONEY_KEYS and not isinstance(item, (dict, list)):
+                masked[key] = AMOUNT_MASK
+            else:
+                masked[key] = mask_fin_amounts(item)
+        return masked
+    return value
+
+
+def fin_view(db: Session, actor: User, payload):
+    if actor_masks_fin_amounts(db, actor):
+        return mask_fin_amounts(payload)
+    return payload
 
 
 class FinCostEntryBody(BaseModel):
@@ -790,7 +852,7 @@ def profit_list(
     page_items = visible[start : start + size]
     return ok(
         {
-            "list": [profit_vo(db, p, s, c) for p, s, c in page_items],
+            "list": fin_view(db, actor, [profit_vo(db, p, s, c) for p, s, c in page_items]),
             "total": total,
             "pageNo": page_no,
             "pageSize": size,
@@ -836,18 +898,22 @@ def profit_summary(
     ready = sum(1 for p, _, _ in calculated if settlement_status(p.calc_status) == "READY")
     in_settlement = sum(1 for p, _, _ in calculated if settlement_status(p.calc_status) == "IN_SETTLEMENT")
     return ok(
-        {
-            "sessionCount": len(calculated),
-            "totalRevenue": money(total_revenue),
-            "totalCost": money(total_cost),
-            "totalGrossProfit": money(total_gross),
-            "totalOperatingProfit": money(total_operating),
-            "totalNetProfit": money(total_net),
-            "shownProfit": money(shown),
-            "profitType": kind,
-            "readySettlementCount": ready,
-            "inSettlementCount": in_settlement,
-        }
+        fin_view(
+            db,
+            actor,
+            {
+                "sessionCount": len(calculated),
+                "totalRevenue": money(total_revenue),
+                "totalCost": money(total_cost),
+                "totalGrossProfit": money(total_gross),
+                "totalOperatingProfit": money(total_operating),
+                "totalNetProfit": money(total_net),
+                "shownProfit": money(shown),
+                "profitType": kind,
+                "readySettlementCount": ready,
+                "inSettlementCount": in_settlement,
+            },
+        )
     )
 
 
@@ -888,7 +954,7 @@ def profit_abnormal(
     start = (page_no - 1) * size
     return ok(
         {
-            "list": rows[start : start + size],
+            "list": fin_view(db, actor, rows[start : start + size]),
             "total": total,
             "pageNo": page_no,
             "pageSize": size,
@@ -911,7 +977,7 @@ def profit_detail(
     cost = load_fin_cost(db, tenant_id, session_code)
     if profit is None or profit.calc_status in ("", "PENDING") or cost is None or cost.entry_status != "CONFIRMED":
         return fail(1145, "该场次成本未核准，利润未计算")
-    return ok(profit_vo(db, profit, session, cost, include_session=True))
+    return ok(fin_view(db, actor, profit_vo(db, profit, session, cost, include_session=True)))
 
 
 def profit_history_item(
@@ -976,33 +1042,41 @@ def profit_history(
             trigger_type = TRIGGER_AUTO_CONFIRM
             reason = "成本核准自动计算"
         return ok(
-            [
-                profit_history_item(
-                    calc_version=profit.calc_version or 1,
-                    net_profit=profit.net_profit,
-                    gross_profit=gross,
-                    operating=operating_profit(gross, cost),
-                    calc_status=profit.calc_status or "CALCULATED",
-                    trigger_type=trigger_type,
-                    trigger_reason=reason,
-                    calculated_at=profit.updated_at,
-                )
-            ]
+            fin_view(
+                db,
+                actor,
+                [
+                    profit_history_item(
+                        calc_version=profit.calc_version or 1,
+                        net_profit=profit.net_profit,
+                        gross_profit=gross,
+                        operating=operating_profit(gross, cost),
+                        calc_status=profit.calc_status or "CALCULATED",
+                        trigger_type=trigger_type,
+                        trigger_reason=reason,
+                        calculated_at=profit.updated_at,
+                    )
+                ],
+            )
         )
     return ok(
-        [
-            profit_history_item(
-                calc_version=row.calc_version,
-                net_profit=row.net_profit,
-                gross_profit=row.gross_profit,
-                operating=row.operating_profit,
-                calc_status=row.calc_status,
-                trigger_type=row.trigger_type,
-                trigger_reason=row.trigger_reason,
-                calculated_at=row.calculated_at,
-            )
-            for row in rows
-        ]
+        fin_view(
+            db,
+            actor,
+            [
+                profit_history_item(
+                    calc_version=row.calc_version,
+                    net_profit=row.net_profit,
+                    gross_profit=row.gross_profit,
+                    operating=row.operating_profit,
+                    calc_status=row.calc_status,
+                    trigger_type=row.trigger_type,
+                    trigger_reason=row.trigger_reason,
+                    calculated_at=row.calculated_at,
+                )
+                for row in rows
+            ],
+        )
     )
 
 
