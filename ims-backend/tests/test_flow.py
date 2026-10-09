@@ -280,6 +280,89 @@ def test_flow_timeout_rate_br115_stub():
     assert data["urgeCount"] >= 0
 
 
+def test_flow_timeout_list_domain_assignee_and_empty_month():
+    """#216：超时清单按业务域、处理人姓名筛选；空白姓名不筛选；空统计月无执行节点。"""
+    auth = headers()
+    listed = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20},
+    ).json()
+    assert listed["code"] == 0
+    assert listed["data"]["total"] >= 1
+    sample = listed["data"]["list"][0]
+    name = (sample.get("assigneeName") or "").strip()
+    assert name
+
+    blank = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "assigneeName": "   "},
+    ).json()
+    assert blank["code"] == 0
+    assert blank["data"]["total"] == listed["data"]["total"]
+
+    missed = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "assigneeName": "no-such-assignee-216"},
+    ).json()
+    assert missed["code"] == 0
+    assert missed["data"]["total"] == 0
+
+    hit = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "assigneeName": f"  {name}  "},
+    ).json()
+    assert hit["code"] == 0
+    assert any(row["id"] == sample["id"] for row in hit["data"]["list"])
+
+    templates = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50},
+    ).json()
+    tpl = next(row for row in templates["data"]["list"] if row["templateName"] == sample["templateName"])
+    domain = tpl["businessDomain"]
+    same_domain = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "businessDomain": domain, "assigneeName": name},
+    ).json()
+    assert same_domain["code"] == 0
+    assert any(row["id"] == sample["id"] for row in same_domain["data"]["list"])
+
+    common = client.get(
+        "/admin-api/ims/flow/timeout/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "businessDomain": "COMMON", "assigneeName": name},
+    ).json()
+    assert common["code"] == 0
+    assert common["data"]["total"] == 0
+    assert all(row["id"] != sample["id"] for row in common["data"]["list"])
+
+    empty_month = client.get(
+        "/admin-api/ims/flow/timeout/rate",
+        headers=auth,
+        params={"statMonth": "2000-01"},
+    ).json()
+    assert empty_month["code"] == 0
+    assert empty_month["data"]["statMonth"] == "2000-01"
+    assert empty_month["data"]["totalExecuted"] == 0
+    assert empty_month["data"]["timeoutCount"] == 0
+    assert empty_month["data"]["monthlyTimeoutRate"] == 0
+
+    empty_dist = client.get(
+        "/admin-api/ims/flow/timeout/distribution",
+        headers=auth,
+        params={"statMonth": "2000-01"},
+    ).json()
+    assert empty_dist["code"] == 0
+    assert empty_dist["data"]["timeoutTotal"] == 0
+    assert sum(bucket["count"] for bucket in empty_dist["data"]["durationBuckets"]) == 0
+
+
 def test_flow_timeout_distribution_stub():
     auth = headers()
     dist = client.get("/admin-api/ims/flow/timeout/distribution", headers=auth)

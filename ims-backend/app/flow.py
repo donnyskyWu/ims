@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -1216,6 +1216,7 @@ def flow_timeout_distribution(
 def flow_timeout_list(
     businessDomain: str | None = None,
     assigneeUserId: int | None = None,
+    assigneeName: str | None = None,
     templateName: str | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
@@ -1225,6 +1226,22 @@ def flow_timeout_list(
     tenant_id = tenant_of(actor)
     seed_flow(db, tenant_id, actor.id)
     now = utcnow()
+    page_no, size = page_args(pageNo, pageSize)
+    assignee_text = (assigneeName or "").strip()
+    assignee_ids: list[int] | None = None
+    if assignee_text:
+        like = f"%{assignee_text}%"
+        assignee_ids = list(
+            db.scalars(
+                select(User.id).where(
+                    User.deleted == 0,
+                    User.tenant_id == tenant_id,
+                    or_(User.nickname.like(like), User.username.like(like)),
+                )
+            ).all()
+        )
+        if not assignee_ids:
+            return paged([], 0, page_no, size)
     q = (
         select(FlowTask, FlowInstance)
         .join(FlowInstance, FlowInstance.id == FlowTask.instance_id)
@@ -1242,7 +1259,9 @@ def flow_timeout_list(
         )
     if assigneeUserId is not None and assigneeUserId > 0:
         q = q.where(FlowTask.assignee_user_id == assigneeUserId)
-    if templateName:
+    if assignee_ids is not None:
+        q = q.where(FlowTask.assignee_user_id.in_(assignee_ids))
+    if templateName and templateName.strip():
         kw = f"%{templateName.strip()}%"
         q = q.where(FlowInstance.template_name.like(kw))
     rows = list(db.execute(q.order_by(FlowTask.started_at.asc())).all())
@@ -1253,7 +1272,6 @@ def flow_timeout_list(
             started = started.replace(tzinfo=None)
         if now.replace(tzinfo=None) >= started + timedelta(hours=DEFAULT_SLA_HOURS):
             timed_out.append((task, inst))
-    page_no, size = page_args(pageNo, pageSize)
     total = len(timed_out)
     page_rows = timed_out[(page_no - 1) * size : page_no * size]
     user_ids: list[int] = []
