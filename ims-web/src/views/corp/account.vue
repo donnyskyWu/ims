@@ -187,9 +187,45 @@
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">冲话费记录</h2>
-          <div class="sub">GET /account/recharge/list · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
+          <div class="sub">GET /account/recharge/list · 账号 / 核对状态 / 充值月份 / 渠道 · 月份留空则不过滤 · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
         </div>
       </div>
+      <form class="qbar" data-testid="acct-recharge-filters" @submit.prevent="searchRecharges">
+        <label>
+          账号
+          <input
+            v-model="rechargeFilters.accountNo"
+            data-testid="acct-recharge-filter-account"
+            placeholder="账号编号"
+            style="width: 140px"
+          />
+        </label>
+        <label>
+          核对状态
+          <select v-model="rechargeFilters.verifyStatus" data-testid="acct-recharge-filter-status">
+            <option value="">全部</option>
+            <option value="UNVERIFIED">未核对</option>
+            <option value="MATCHED">一致</option>
+            <option value="DIFF">差异</option>
+          </select>
+        </label>
+        <label>
+          充值月份
+          <input v-model="rechargeFilters.month" data-testid="acct-recharge-filter-month" type="month" />
+        </label>
+        <label>
+          渠道
+          <select v-model="rechargeFilters.channel" data-testid="acct-recharge-filter-channel">
+            <option value="">全部</option>
+            <option v-for="item in rechargeChannels" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="acct-recharge-query" :disabled="rechargeListBusy">筛选</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="acct-recharge-reset" :disabled="rechargeListBusy" @click="resetRechargeFilters">
+          清空条件
+        </button>
+      </form>
+      <p v-if="rechargeFilterMsg" class="hint" data-testid="acct-recharge-filter-msg">{{ rechargeFilterMsg }}</p>
       <div class="recharge-table">
         <table>
           <thead>
@@ -205,7 +241,7 @@
           </thead>
           <tbody>
             <tr v-if="!rechargeRows.length">
-              <td colspan="7">暂无冲话费记录</td>
+              <td colspan="7" data-testid="acct-recharge-empty">{{ rechargeFilterMsg || '暂无冲话费记录' }}</td>
             </tr>
             <tr v-for="item in rechargeRows" :key="String(item.id)" data-testid="acct-recharge-row">
               <td class="mono">{{ item.accountNo }}</td>
@@ -287,7 +323,7 @@
           </thead>
           <tbody>
             <tr v-if="!summaryRows.length">
-              <td colspan="4">该月无冲话费记录</td>
+              <td colspan="4" data-testid="acct-summary-empty">该月无冲话费记录</td>
             </tr>
             <tr v-for="item in summaryRows" :key="item.dimKey" data-testid="acct-summary-row">
               <td>{{ item.dimLabel }}</td>
@@ -1142,6 +1178,14 @@ const rechargeChannels = [
   { value: 'BANK', label: '银行卡' },
 ]
 const rechargeRows = ref<Record<string, unknown>[]>([])
+const rechargeFilters = reactive({
+  accountNo: '',
+  verifyStatus: '',
+  month: '',
+  channel: '',
+})
+const rechargeFilterMsg = ref('')
+const rechargeListBusy = ref(false)
 const summaryGroups = [
   { value: 'ACCOUNT', label: '账号' },
   { value: 'DEPT', label: '部门' },
@@ -1533,14 +1577,67 @@ async function openTransferFromQuery() {
   if (!transferConfirmOpen.value) openTransferConfirm(pending)
 }
 
+function rechargeFilterActive() {
+  return Boolean(
+    rechargeFilters.accountNo.trim() || rechargeFilters.verifyStatus || rechargeFilters.month || rechargeFilters.channel,
+  )
+}
+
+async function resolveRechargeAccountId(): Promise<number | null | undefined> {
+  const key = rechargeFilters.accountNo.trim()
+  if (!key) return undefined
+  const res = await http.get('/corp/account/page', {
+    params: {
+      pageNo: 1,
+      pageSize: 50,
+      platformType: meta.value.platform,
+      keyword: key,
+    },
+  })
+  const list = ((res.data?.data as { list?: Record<string, unknown>[] })?.list) || []
+  const exact = list.find((row) => String(row.accountNo || '') === key)
+  return exact ? Number(exact.id) : null
+}
+
 async function loadRecharges() {
+  rechargeListBusy.value = true
+  rechargeFilterMsg.value = ''
   try {
-    const res = await http.get('/account/recharge/list', { params: { pageNo: 1, pageSize: 20 } })
+    const accountId = await resolveRechargeAccountId()
+    if (accountId === null) {
+      rechargeRows.value = []
+      rechargeFilterMsg.value = '未找到该账号'
+      return
+    }
+    const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+    if (accountId) params.accountId = accountId
+    if (rechargeFilters.verifyStatus) params.verifyStatus = rechargeFilters.verifyStatus
+    if (rechargeFilters.month) params.month = rechargeFilters.month
+    if (rechargeFilters.channel) params.channel = rechargeFilters.channel
+    const res = await http.get('/account/recharge/list', { params })
     const data = res.data?.data as { list: Record<string, unknown>[] }
     rechargeRows.value = data?.list || []
+    if (!rechargeRows.value.length && rechargeFilterActive()) {
+      rechargeFilterMsg.value = '没有符合筛选条件的冲话费记录'
+    }
   } catch {
     rechargeRows.value = []
+    if (!rechargeFilterMsg.value) rechargeFilterMsg.value = '冲话费列表加载失败'
+  } finally {
+    rechargeListBusy.value = false
   }
+}
+
+function searchRecharges() {
+  return loadRecharges()
+}
+
+function resetRechargeFilters() {
+  rechargeFilters.accountNo = ''
+  rechargeFilters.verifyStatus = ''
+  rechargeFilters.month = ''
+  rechargeFilters.channel = ''
+  return loadRecharges()
 }
 
 async function loadSummary() {
@@ -2120,7 +2217,12 @@ async function exportSummary(format: 'XLSX' | 'CSV') {
     const res = await http.get('/account/recharge/summary/export', {
       params: { month: summaryForm.month, groupBy: summaryForm.groupBy, format },
     })
-    const data = (res.data?.data || {}) as { downloadUrl?: string; fileName?: string }
+    const data = (res.data?.data || {}) as {
+      downloadUrl?: string
+      fileName?: string
+      recordCount?: number
+      totalAmount?: number
+    }
     const downloadUrl = String(data.downloadUrl || '')
     const fileName = String(data.fileName || `recharge_summary.${format === 'CSV' ? 'csv' : 'xlsx'}`)
     if (!downloadUrl) {
@@ -2143,7 +2245,12 @@ async function exportSummary(format: 'XLSX' | 'CSV') {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(anchor.href)
-    exportNote.value = `已导出 ${fileName} · ${summaryForm.month} · ${summaryForm.groupBy} · 合计 ¥${moneyText(summaryTotals.value.totalAmount)}`
+    const recordCount = Number(data.recordCount)
+    const totalAmount = data.totalAmount ?? summaryTotals.value.totalAmount
+    exportNote.value =
+      Number.isFinite(recordCount) && recordCount === 0
+        ? `该月无冲话费记录，已导出空表 ${fileName}`
+        : `已导出 ${fileName} · ${summaryForm.month} · ${summaryForm.groupBy} · 合计 ¥${moneyText(totalAmount)}`
   } catch (e: unknown) {
     exportNote.value = bizMessage(e)
   } finally {
