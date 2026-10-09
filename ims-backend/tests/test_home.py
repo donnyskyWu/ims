@@ -31,6 +31,7 @@ def test_home_dashboard_kpis_and_shortcuts():
     assert data["kpis"][1]["value"] == "数据延迟"
     assert len(data["shortcuts"]) >= 4
     assert any(s["route"] == "/ims/collect/task" for s in data["shortcuts"])
+    assert data["ipGroupOutput"] == []
 
 
 def test_home_date_span_1202():

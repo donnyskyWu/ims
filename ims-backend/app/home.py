@@ -213,6 +213,8 @@ def home_dashboard(
             "todos": todos,
             "shortcuts": shortcuts,
             "trendPlayEngage": trend_placeholder(),
+            # 柱状产出不直连 Football。本地桩保持空列表，页面走空态。
+            "ipGroupOutput": [],
             "ipGroupFilter": str(ipGroupId) if ipGroupId else None,
             "dateFrom": dateFrom or None,
             "dateTo": dateTo or None,

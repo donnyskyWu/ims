@@ -73,6 +73,25 @@
         </div>
       </div>
     </div>
+    <div class="card" style="margin-top: 16px" data-testid="home-ip-output">
+      <div class="hd-row">
+        <h3>IP 组产出</h3>
+        <span class="csub">柱状占位 · 不请求 Football</span>
+      </div>
+      <div v-if="!ipGroupOutput.length" class="empty" data-testid="home-ip-output-empty">
+        <div class="et">暂无 IP 组产出</div>
+        <div class="es">本地统计桩，不汇总播放与互动</div>
+      </div>
+      <div v-else class="bars">
+        <div
+          v-for="(bar, idx) in ipGroupOutput"
+          :key="idx"
+          class="b"
+          :style="{ height: `${Math.min(90, bar.value)}%` }"
+          :title="bar.label"
+        />
+      </div>
+    </div>
     <div class="sec">快捷入口</div>
     <div v-if="dashReady && !shortcuts.length" class="card" data-testid="home-shortcut-empty">
       <div class="empty">
@@ -104,6 +123,7 @@ const kpis = ref<{ key: string; label: string; value: string; wow?: string }[]>(
 const todos = ref<{ type: string; title: string; bizId: string; url: string }[]>([])
 const shortcuts = ref<{ code: string; name: string; route: string }[]>([])
 const trend = ref<{ label: string; play: number; engage: number }[]>([])
+const ipGroupOutput = ref<{ label: string; value: number }[]>([])
 const error = ref('')
 const dashReady = ref(false)
 const ipGroupId = ref<number | null>(null)
@@ -132,6 +152,7 @@ async function loadDashboard() {
     todos.value = data.todos || []
     shortcuts.value = data.shortcuts || []
     trend.value = data.trendPlayEngage || []
+    ipGroupOutput.value = data.ipGroupOutput || []
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '网络错误'
   } finally {
