@@ -166,6 +166,9 @@ def test_script_finalize_then_video_waiting_to_generating(monkeypatch):
     assert submitted.json()["code"] == 0, submitted.text
     assert submitted.json()["data"]["queueStatus"] == "WAITING"
     assert submitted.json()["data"]["gpuNode"] in (None, "")
+    assert submitted.json()["data"]["provider"] == "stub"
+    assert submitted.json()["data"]["preview"] is None
+    assert "plain-token" not in submitted.text
     job_id = submitted.json()["data"]["id"]
     generating = client.get(f"/admin-api/ims/content/ai-job/{job_id}/status", headers=auth)
     assert generating.json()["code"] == 0
@@ -176,6 +179,11 @@ def test_script_finalize_then_video_waiting_to_generating(monkeypatch):
     assert success["code"] == 0
     assert success["data"]["queueStatus"] == "SUCCESS"
     assert success["data"]["resultFileKey"] == "stub/comfyui/stable-demo.mp4"
+    assert success["data"]["provider"] == "stub"
+    assert success["data"]["boundContentId"] == draft["id"]
+    assert success["data"]["preview"]["ready"] is True
+    assert success["data"]["preview"]["kind"] == "video"
+    assert success["data"]["preview"]["fileKey"] == "stub/comfyui/stable-demo.mp4"
     finished = client.get(f"/admin-api/ims/content/ai-production/task/{task_no}", headers=auth).json()["data"]
     assert finished["taskStatus"] == "PENDING_FINAL_REVIEW"
     assert finished["outputFileUrl"] == "stub/comfyui/stable-demo.mp4"
@@ -352,6 +360,20 @@ def test_illegal_node_and_param_schema_and_self_review():
         json={"conclusion": "PASS", "checklistResult": {"COMPLIANCE": True, "QUALITY": True, "BRAND": True}},
     )
     assert conclusion.json()["code"] == 1057
+
+
+def test_provider_name_follows_stub_and_base_url(monkeypatch):
+    from app.comfyui_client import provider_name
+
+    assert provider_name() == "stub"
+    monkeypatch.setenv("IMS_COMFYUI_STUB", "0")
+    monkeypatch.delenv("IMS_COMFYUI_BASE_URL", raising=False)
+    monkeypatch.delenv("IMS_CONTENT_GEN_STUB", raising=False)
+    invalidate_param_cache()
+    assert provider_name() == "unconfigured"
+    monkeypatch.setenv("IMS_COMFYUI_BASE_URL", "http://comfy.example")
+    invalidate_param_cache()
+    assert provider_name() == "remote"
 
 
 def test_param_secret_masked():

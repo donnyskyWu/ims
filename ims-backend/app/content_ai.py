@@ -19,7 +19,7 @@ from app.api import current_user, db_session, fail, ok
 from app.content import iso
 from app.content_ai_client import CopyJob, copy_status, submit_copy
 from app.content_ai_models import ContentAiJob, ContentAiTask, ContentDraftMedia, ContentScript, ContentWorkflow
-from app.comfyui_client import VideoJob, prompt_status, submit_prompt
+from app.comfyui_client import VideoJob, prompt_status, provider_name, submit_prompt
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.models import ContentProject, User
@@ -129,6 +129,7 @@ def media_fields(project: ContentProject) -> dict:
         "videoFileKey": None,
         "videoJobError": None,
         "videoTaskNo": None,
+        "videoJobId": None,
         "videoRetryHint": None,
         "defaultWorkflowId": None,
     }
@@ -152,6 +153,7 @@ def media_fields(project: ContentProject) -> dict:
             "videoFileKey": media.video_file_key,
             "videoJobError": media.video_error,
             "videoTaskNo": media.video_task_no or None,
+            "videoJobId": media.video_job_id,
             "videoRetryHint": hint,
         }
     )
@@ -226,7 +228,9 @@ def _task_vo(row: ContentAiTask, wf: ContentWorkflow | None = None) -> dict:
     }
 
 
-def _job_vo(row: ContentAiJob) -> dict:
+def _job_vo(row: ContentAiJob, task: ContentAiTask | None = None) -> dict:
+    ready = row.queue_status == "SUCCESS" and bool(row.result_file_key)
+    bound_id = task.content_project_id if task is not None and ready else None
     return {
         "id": row.id,
         "taskNo": row.task_no,
@@ -243,6 +247,9 @@ def _job_vo(row: ContentAiJob) -> dict:
         "errorCode": row.error_code,
         "errorMsg": row.error_msg,
         "retryHint": "可重新发起" if row.queue_status == "FAILED" else None,
+        "provider": provider_name(),
+        "boundContentId": bound_id,
+        "preview": {"fileKey": row.result_file_key, "kind": "video", "ready": True} if ready else None,
     }
 
 
@@ -445,7 +452,7 @@ def _fail_timeout(db: Session, task: ContentAiTask, job: ContentAiJob):
         media.video_task_no = task.task_no
         media.video_job_id = job.id
         media.updated_at = utcnow()
-    return fail(1056, message, _job_vo(job))
+    return fail(1056, message, _job_vo(job, task))
 
 
 def _pull_job(db: Session, task: ContentAiTask, job: ContentAiJob):
@@ -455,8 +462,8 @@ def _pull_job(db: Session, task: ContentAiTask, job: ContentAiJob):
     _apply_upstream(job, upstream)
     _sync_task_from_job(db, task, job)
     if not upstream.ok or job.queue_status == "FAILED":
-        return fail(upstream.code or job.error_code or 1001, upstream.message or job.error_msg or "视频生成失败，可重新发起", _job_vo(job))
-    return ok(_job_vo(job))
+        return fail(upstream.code or job.error_code or 1001, upstream.message or job.error_msg or "视频生成失败，可重新发起", _job_vo(job, task))
+    return ok(_job_vo(job, task))
 
 
 def _apply_upstream(job: ContentAiJob, upstream: VideoJob) -> None:
@@ -507,7 +514,7 @@ def _submit_job_row(db: Session, actor: User, task: ContentAiTask, wf: ContentWo
     task.submitted_at = job.submitted_at
     _sync_task_from_job(db, task, job)
     if job.queue_status == "FAILED":
-        return job, fail(job.error_code or 1001, job.error_msg or "视频生成失败，可重新发起", _job_vo(job))
+        return job, fail(job.error_code or 1001, job.error_msg or "视频生成失败，可重新发起", _job_vo(job, task))
     return job, None
 
 
@@ -793,7 +800,7 @@ def ai_task_run(task_no: str, db: Session = Depends(db_session), actor: User = D
     if err is not None:
         return err
     assert job is not None
-    response = ok(_job_vo(job))
+    response = ok(_job_vo(job, task))
     for _ in range(4):
         if job.queue_status in ("SUCCESS", "FAILED"):
             break
@@ -881,7 +888,7 @@ def ai_job_submit(body: AiJobSubmitReq, db: Session = Depends(db_session), actor
     job, err = _submit_job_row(db, actor, task, wf, node, params, priority)
     if err is not None:
         return err
-    return ok(_job_vo(job))
+    return ok(_job_vo(job, task))
 
 
 @router.get("/ai-job/{job_id}/status")
@@ -893,5 +900,5 @@ def ai_job_status(job_id: int, db: Session = Depends(db_session), actor: User = 
     if task is None:
         return fail(1504, "资源不可用")
     if job.queue_status in ("SUCCESS", "FAILED"):
-        return ok(_job_vo(job))
+        return ok(_job_vo(job, task))
     return _pull_job(db, task, job)

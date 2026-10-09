@@ -22,6 +22,15 @@
         视频生成
       </button>
       <button
+        class="btn btn-sec btn-sm"
+        type="button"
+        data-testid="ai-video-task-btn"
+        :disabled="!hasMatch || !content.defaultWorkflowId"
+        @click="videoOpen = true"
+      >
+        视频任务
+      </button>
+      <button
         v-if="content.aiGenerateStatus === 'FAILED'"
         class="btn btn-sec btn-sm"
         type="button"
@@ -62,16 +71,25 @@
         终审打回
       </button>
     </div>
+    <ContentVideoDrawer
+      v-if="videoOpen"
+      :open="videoOpen"
+      :content="content"
+      @close="videoOpen = false"
+      @refresh="emit('refresh')"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
+import ContentVideoDrawer from './ContentVideoDrawer.vue'
 
 const props = defineProps<{ content: Record<string, any> }>()
 const emit = defineEmits<{ refresh: [] }>()
 const busy = ref(false)
+const videoOpen = ref(false)
 
 const copyLabelMap: Record<string, string> = {
   QUEUED: '生成中',
