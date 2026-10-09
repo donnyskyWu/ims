@@ -17,7 +17,10 @@
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
     <div class="tabs">
       <div class="tab" :class="{ on: view === 'sessions' }" data-testid="live-view-sessions" @click="view = 'sessions'">场次列表</div>
-      <div class="tab" :class="{ on: view === 'pending' }" data-testid="live-view-pending" @click="openPending">待录入督办</div>
+      <div class="tab" :class="{ on: view === 'pending' }" data-testid="live-view-pending" @click="openPending">
+        待录入督办
+        <span v-if="overdueCount" data-testid="live-pending-count" style="color: var(--red)">({{ overdueCount }})</span>
+      </div>
     </div>
     <form v-if="view === 'sessions'" class="qbar" @submit.prevent="loadList">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 160px" />
@@ -101,8 +104,24 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!pendingRows.length">
-              <td colspan="6"><div class="empty"><div class="et">暂无待录入场次</div></div></td>
+            <tr v-if="pendingLoading">
+              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+            </tr>
+            <tr v-else-if="pendingError">
+              <td colspan="6">
+                <div class="empty" data-testid="live-pending-error">
+                  <div class="et">{{ pendingError }}</div>
+                  <button class="btn btn-sec btn-sm" type="button" data-testid="live-pending-retry" @click="loadPending">重试</button>
+                </div>
+              </td>
+            </tr>
+            <tr v-else-if="!pendingRows.length">
+              <td colspan="6">
+                <div class="empty" data-testid="live-pending-empty">
+                  <div class="et">{{ pendingEmptyTitle }}</div>
+                  <div class="es">{{ pendingEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in pendingRows" v-else :key="row.sessionCode" data-testid="live-pending-row">
               <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">{{ row.sessionCode }}</td>
@@ -113,6 +132,7 @@
               <td>
                 <span v-if="row.overdue" data-testid="live-pending-overdue" style="color: var(--red)">超 24h</span>
                 <span v-else>未超时</span>
+                <div v-if="row.overdue" class="es" data-testid="live-urge-stub">钉钉/短信本地桩，未外发</div>
               </td>
             </tr>
           </tbody>
@@ -155,30 +175,34 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="supplementOpen" title="历史补录" width="720px" @close="supplementOpen = false">
+      <div v-if="supplementGaps.length" class="empty" data-testid="live-supplement-empty" style="padding: 12px 0 4px">
+        <div class="et">历史补录还缺 {{ supplementGaps.length }} 项</div>
+        <div class="es">账号、实名人、设备和补录说明都要填。说明为空返回 1049，审批通过后才入库。</div>
+      </div>
       <div class="formrow one">
         <div class="fld">
           <label>平台账号 id *</label>
-          <input v-model.number="sup.accountId" type="number" data-testid="live-supplement-account" />
+          <input v-model.number="sup.accountId" type="number" data-testid="live-supplement-account" :data-missing="supplementGap('account') ? '1' : '0'" :style="supplementGap('account') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>实名人 id *</label>
-          <input v-model.number="sup.realnamePersonId" type="number" data-testid="live-supplement-person" />
+          <input v-model.number="sup.realnamePersonId" type="number" data-testid="live-supplement-person" :data-missing="supplementGap('person') ? '1' : '0'" :style="supplementGap('person') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>手机设备 id *</label>
-          <input v-model.number="sup.deviceId" type="number" data-testid="live-supplement-device" />
+          <input v-model.number="sup.deviceId" type="number" data-testid="live-supplement-device" :data-missing="supplementGap('device') ? '1' : '0'" :style="supplementGap('device') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>主题 *</label>
-          <input v-model="sup.topic" data-testid="live-supplement-topic" />
+          <input v-model="sup.topic" data-testid="live-supplement-topic" :data-missing="supplementGap('topic') ? '1' : '0'" :style="supplementGap('topic') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>计划开播 *</label>
-          <input v-model="sup.planStartTime" data-testid="live-supplement-plan" />
+          <input v-model="sup.planStartTime" data-testid="live-supplement-plan" :data-missing="supplementGap('plan') ? '1' : '0'" :style="supplementGap('plan') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>补录说明 *</label>
-          <input v-model="sup.supplementReason" data-testid="live-supplement-reason" maxlength="256" />
+          <input v-model="sup.supplementReason" data-testid="live-supplement-reason" maxlength="256" :data-missing="supplementGap('reason') ? '1' : '0'" :style="supplementGap('reason') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>GMV</label>
@@ -262,6 +286,10 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '下播与 GMV'" class="tbl-block" style="margin-top: 12px">
+        <div v-if="!report" class="empty" data-testid="live-report-empty" style="padding: 12px 0">
+          <div class="et">待录入</div>
+          <div class="es">下播九项还没提交。缺字段返回 1046，提交后只能走更正单。</div>
+        </div>
         <p v-if="financeView" class="hint" data-testid="live-report-finance-scope">财务字段：仅 GMV 与成本</p>
         <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
         <div v-if="report" class="hint" data-testid="live-report-headline">
@@ -269,15 +297,15 @@
           · 客单价 {{ displayMoney(report.avgOrderValue) }} · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
         </div>
         <div class="formrow one">
-          <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" /></div>
-          <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
           <div class="fld"><label>GMV</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" /></div>
-          <div v-if="showOpsFields" class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" /></div>
-          <div v-if="showOpsFields" class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" /></div>
-          <div v-if="showOpsFields" class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" /></div>
-          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" /></div>
-          <div class="fld"><label>投放成本</label><input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" /></div>
+          <div v-if="showOpsFields" class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" :style="fieldMissing('orderCount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" :style="fieldMissing('viewerCount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" :style="fieldMissing('peakOnline') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" :style="fieldMissing('newFans') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('refundAmount') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>投放成本</label><input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" :style="fieldMissing('adCost') ? 'border-color: var(--red)' : ''" /></div>
           <div v-if="showCostEditor" class="fld">
             <label>成本明细</label>
             <select v-model="costDraft.costType" data-testid="live-cost-type">
@@ -363,6 +391,9 @@ const total = ref(0)
 const view = ref<'sessions' | 'pending'>('sessions')
 const pendingRows = ref<any[]>([])
 const pendingHint = ref('')
+const pendingLoading = ref(false)
+const pendingError = ref('')
+const overdueCount = ref(0)
 const overdueOnly = ref(false)
 const reportError = ref('')
 const reportMissing = ref<string[]>([])
@@ -424,6 +455,27 @@ const reportForm = reactive({
 })
 const costLines = ref<{ costType: string; amount: unknown; remark?: string }[]>([])
 const costDraft = reactive({ costType: 'GIFT', amount: '' })
+
+const supplementGaps = computed(() => {
+  const gaps: string[] = []
+  if (!Number(sup.accountId)) gaps.push('account')
+  if (!Number(sup.realnamePersonId)) gaps.push('person')
+  if (!Number(sup.deviceId)) gaps.push('device')
+  if (!String(sup.topic || '').trim()) gaps.push('topic')
+  if (!String(sup.planStartTime || '').trim()) gaps.push('plan')
+  if (!String(sup.supplementReason || '').trim()) gaps.push('reason')
+  return gaps
+})
+const pendingEmptyTitle = computed(() => (overdueOnly.value ? '暂无超过 24 小时的待录入' : '暂无待录入场次'))
+const pendingEmptyHint = computed(() =>
+  overdueOnly.value
+    ? '取消「仅看超过 24 小时」可看未超时的待录入场次。'
+    : '下播后 24 小时未提交会标红，并写入站内待办。钉钉与短信只留本地桩，不外发。',
+)
+
+function supplementGap(key: string) {
+  return supplementGaps.value.includes(key)
+}
 
 const reportLocked = computed(() => !!report.value && report.value.entryStatus !== 'DRAFT')
 const financeView = computed(() => report.value?.fieldScope === 'FINANCE')
@@ -697,7 +749,9 @@ async function openPending() {
 }
 
 async function loadPending() {
+  pendingLoading.value = true
   pendingHint.value = ''
+  pendingError.value = ''
   try {
     const res = await http.get('/live/report/pending', {
       params: {
@@ -706,16 +760,22 @@ async function loadPending() {
         overdueOnly: overdueOnly.value ? true : undefined,
       },
     })
-    pendingRows.value = res.data.data?.list || []
+    const data = res.data.data || {}
+    pendingRows.value = data.list || []
+    overdueCount.value = Number(data.overdueCount || 0)
   } catch (error: unknown) {
-    const body = error as { code?: number; msg?: string; data?: { list?: unknown[] } }
+    const body = error as { code?: number; msg?: string; data?: { list?: any[]; overdueCount?: number } }
     if (body?.code === 1048) {
       pendingRows.value = body.data?.list || []
+      overdueCount.value = Number(body.data?.overdueCount || pendingRows.value.filter((row) => row.overdue).length)
       pendingHint.value = `1048 ${body.msg || '24小时录入超时督办'}`
       return
     }
     pendingRows.value = []
-    pendingHint.value = bizError(error)
+    overdueCount.value = 0
+    pendingError.value = bizError(error)
+  } finally {
+    pendingLoading.value = false
   }
 }
 

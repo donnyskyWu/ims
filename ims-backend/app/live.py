@@ -1001,9 +1001,20 @@ def hours_since(moment: datetime | None, now: datetime) -> int:
     return hours if hours > 0 else 0
 
 
+def urge_stubs(session_code: str, hours: int) -> list[tuple[str, str, str]]:
+    """站内实发；钉钉与短信只落本地桩，不调用外部网关。"""
+    code = session_code
+    base = f"下播已超过 {hours} 小时未录入"
+    return [
+        ("IN_APP", f"下播超时督办 1048：{code}"[:128], f"1048 {base}"[:512]),
+        ("DINGTALK", f"钉钉桩 1048：{code}"[:128], f"1048 钉钉本地桩，未外发。{base}"[:512]),
+        ("SMS", f"短信桩 1048：{code}"[:128], f"1048 短信本地桩，未外发。{base}"[:512]),
+    ]
+
+
 def ensure_overdue_supervision(db: Session, actor: User, row: LiveSession, hours: int) -> None:
-    title = f"下播超时督办 1048：{row.session_code}"[:128]
-    content = f"1048 下播已超过 {hours} 小时未录入"[:512]
+    stubs = urge_stubs(row.session_code, hours)
+    title, content = stubs[0][1], stubs[0][2]
     tenant_id = tenant_of(actor)
     existing = db.scalar(
         select(Todo).where(
@@ -1032,28 +1043,30 @@ def ensure_overdue_supervision(db: Session, actor: User, row: LiveSession, hours
                 tenant_id=tenant_id,
             )
         )
-    message = db.scalar(
-        select(WorkMessage).where(
-            WorkMessage.user_id == row.responsible_user_id,
-            WorkMessage.source_module == "LIVE",
-            WorkMessage.ref_type == "live_report_overdue",
-            WorkMessage.ref_id == row.id,
-        )
-    )
-    if message is None:
-        db.add(
-            WorkMessage(
-                user_id=row.responsible_user_id,
-                title=title,
-                content=content,
-                channel="IN_APP",
-                read_flag=0,
-                source_module="LIVE",
-                ref_type="live_report_overdue",
-                ref_id=row.id,
-                tenant_id=tenant_id,
+    for channel, stub_title, stub_content in stubs:
+        message = db.scalar(
+            select(WorkMessage).where(
+                WorkMessage.user_id == row.responsible_user_id,
+                WorkMessage.source_module == "LIVE",
+                WorkMessage.ref_type == "live_report_overdue",
+                WorkMessage.ref_id == row.id,
+                WorkMessage.channel == channel,
             )
         )
+        if message is None:
+            db.add(
+                WorkMessage(
+                    user_id=row.responsible_user_id,
+                    title=stub_title,
+                    content=stub_content,
+                    channel=channel,
+                    read_flag=0,
+                    source_module="LIVE",
+                    ref_type="live_report_overdue",
+                    ref_id=row.id,
+                    tenant_id=tenant_id,
+                )
+            )
     alarm = db.scalar(
         select(LiveAlarmRecord).where(
             LiveAlarmRecord.deleted == 0,
@@ -1598,12 +1611,20 @@ def report_pending(
                 "submitted": bool(report and report.entry_status == "SUBMITTED"),
                 "overdueHours": hours,
                 "overdue": overdue,
+                "urgeChannels": [item[0] for item in urge_stubs(row.session_code, hours)] if overdue else [],
             }
         )
     pending.sort(key=lambda item: (-int(item["overdueHours"]), str(item["sessionCode"])))
     total = len(pending)
     chunk = pending[(page_no - 1) * size : page_no * size]
-    payload = {"list": chunk, "total": total, "pageNo": page_no, "pageSize": size, "hintCode": None}
+    payload = {
+        "list": chunk,
+        "total": total,
+        "pageNo": page_no,
+        "pageSize": size,
+        "hintCode": None,
+        "overdueCount": overdue_count,
+    }
     if overdue_count:
         payload["hintCode"] = 1048
         return fail(1048, "24小时录入超时督办", payload)
