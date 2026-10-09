@@ -14,7 +14,7 @@
       </div>
     </div>
     <div
-      v-if="kind === 'certificate'"
+      v-if="kind === 'certificate' && digitalReady"
       class="hint"
       :class="{ bad: digitalShort }"
       data-testid="corp-cert-digital-banner"
@@ -187,12 +187,47 @@
     </div>
     <div v-if="kind === 'certificate' && levelReady" data-testid="corp-cert-level-panel">
       <div class="sec">查看级别</div>
-      <p class="hint">默认全员 L1，不可看原图。L2 按角色编码。L3 只放管理员或行政白名单。保存后下次查看即按新级别。</p>
-      <p class="hint" data-testid="corp-cert-level-current">当前 L2 角色：{{ levelRole || '未配置' }} · 白名单 {{ levelWhitelist.length }} 人 · 透明度 {{ levelOpacity }} · 位置 {{ levelPosition }}</p>
+      <p class="hint">默认全员 L1，不可看原图。L2 按角色编码，水印透明度 0.05 到 0.3。L3 只放管理员或行政白名单。保存后下次查看即按新级别。</p>
+      <div class="tbl-block">
+        <div class="expire-wrap">
+          <table data-testid="corp-cert-level-table">
+            <thead>
+              <tr>
+                <th>级别</th>
+                <th>适用范围</th>
+                <th>水印样式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>L1</td>
+                <td>默认全员</td>
+                <td>不可看原图</td>
+              </tr>
+              <tr>
+                <td>L2</td>
+                <td>{{ levelRole || '未配置' }}</td>
+                <td>透明度 {{ opacityText }} · {{ positionLabel }}</td>
+              </tr>
+              <tr>
+                <td>L3</td>
+                <td>{{ l3Label }}</td>
+                <td>明文，禁止下载</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="hint" data-testid="corp-cert-level-current">当前 L2 角色：{{ levelRole || '未配置' }} · 白名单 {{ levelWhitelist.length }} 人 · 透明度 {{ opacityText }} · 位置 {{ positionLabel }}</p>
       <form class="qbar" @submit.prevent="saveLevel">
         <input v-model="levelRole" placeholder="角色编码，如 sys:admin" style="width: 220px" data-testid="corp-cert-level-role" />
         <select v-model="levelValue" style="width: 100px" data-testid="corp-cert-level-select">
           <option value="2">L2</option>
+        </select>
+        <input v-model.number="levelOpacity" type="range" min="0.05" max="0.3" step="0.01" data-testid="corp-cert-level-opacity-range" />
+        <input v-model.number="levelOpacity" type="number" min="0.05" max="0.3" step="0.01" style="width: 80px" data-testid="corp-cert-level-opacity" />
+        <select v-model="levelPosition" style="width: 120px" data-testid="corp-cert-level-position">
+          <option v-for="item in watermarkPositions" :key="item.value" :value="item.value">{{ item.label }}</option>
         </select>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="corp-cert-level-save">保存级别</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="corp-cert-level-reset" @click="resetLevel">恢复默认</button>
@@ -214,6 +249,12 @@
           <option value="">全部查看人</option>
           <option v-for="user in users" :key="user.id" :value="user.id">{{ user.nickname || user.username }}</option>
         </select>
+        <select v-model="auditLevel" style="width: 110px" data-testid="corp-cert-audit-level">
+          <option value="">全部级别</option>
+          <option value="1">L1</option>
+          <option value="2">L2</option>
+          <option value="3">L3</option>
+        </select>
         <input v-model="auditFrom" type="date" data-testid="corp-cert-audit-from" />
         <input v-model="auditTo" type="date" data-testid="corp-cert-audit-to" />
         <span class="sp"></span>
@@ -232,15 +273,21 @@
                 <th>级别</th>
                 <th>水印</th>
                 <th>时长</th>
+                <th>IP/设备</th>
                 <th>时间</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="auditLoading">
-                <td colspan="6" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+                <td colspan="7" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!auditRows.length">
-                <td colspan="6" style="white-space: normal"><div class="empty"><div class="et">没有查看记录</div></div></td>
+                <td colspan="7" style="white-space: normal">
+                  <div class="empty">
+                    <div class="et">没有查看记录</div>
+                    <div v-if="auditFiltered" class="es" data-testid="corp-cert-audit-empty">当前筛选下没有匹配的查看记录</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in auditRows" v-else :key="String(row.id)">
                 <td>{{ show(row, 'viewerName') }}</td>
@@ -248,11 +295,17 @@
                 <td>{{ viewLevelLabel(row.viewLevel) }}</td>
                 <td>{{ show(row, 'watermarkText') }}</td>
                 <td>{{ durationLabel(row.viewDuration) }}</td>
+                <td data-testid="corp-cert-audit-ip">{{ ipDevice(row) }}</td>
                 <td>{{ show(row, 'createdAt') }}</td>
               </tr>
             </tbody>
           </table>
         </div>
+      </div>
+      <div class="pager" data-testid="corp-cert-audit-pager">
+        <span class="pg-total">第 {{ auditPageNo }} / {{ auditPageCount }} 页</span>
+        <span class="pg-n" :class="{ dis: auditPageNo <= 1 }" @click="gotoAudit(auditPageNo - 1)">‹</span>
+        <span class="pg-n" :class="{ dis: auditPageNo >= auditPageCount }" @click="gotoAudit(auditPageNo + 1)">›</span>
       </div>
       <div class="sec">异常访问</div>
       <div data-testid="corp-cert-risk-report">
@@ -305,7 +358,7 @@
         class="hint"
         data-testid="corp-cert-watermark-hint"
       >
-        水印：{{ detail.watermarkText || '—' }}。本接口不返回原图。
+        水印：{{ detail.watermarkText || '当前查看没有水印文本' }}。本接口不返回原图。
       </div>
       <div v-if="kind === 'realname'" class="hint">中介人与关联账号暂无。契约没有实名人写入接口。</div>
       <div v-if="kind === 'sim-card' && detail" class="hint">关联账号 {{ linkedCount }} 个。平台账号在下一片接入前这里是空列表。</div>
@@ -328,7 +381,10 @@
       <div v-if="fileError" class="hint bad" data-testid="corp-cert-file-error">{{ fileError }}</div>
       <div v-else-if="fileResult" data-testid="corp-cert-file-result">
         <p class="hint" data-testid="corp-cert-file-ttl">有效 {{ fileResult.expiresInSeconds }} 秒。禁止下载。</p>
-        <p v-if="fileResult.watermark" class="hint" data-testid="corp-cert-file-watermark">水印：{{ fileResult.watermark.text }}</p>
+        <p v-if="fileResult.watermark" class="hint" data-testid="corp-cert-file-watermark">
+          水印：{{ fileResult.watermark.text || '—' }}
+          <span data-testid="corp-cert-file-style"> · 透明度 {{ opacityTextOf(fileResult.watermark.opacity) }} · {{ positionLabelOf(fileResult.watermark.position) }}</span>
+        </p>
         <p v-else class="hint" data-testid="corp-cert-file-plain">明文预览，禁止下载。</p>
         <p class="hint" data-testid="corp-cert-file-url">{{ fileResult.signedUrl }}</p>
         <p v-if="filePreview" class="hint" data-testid="corp-cert-file-preview">{{ filePreview }}</p>
@@ -505,6 +561,19 @@ import { asList, asTotal } from '../../api/read'
 
 type Row = Record<string, unknown>
 type Opt = { value: string; label: string }
+type WatermarkStyle = { opacity: number; position: string }
+
+const watermarkPositions: Opt[] = [
+  { value: 'center', label: '居中' },
+  { value: 'top-left', label: '左上' },
+  { value: 'top-right', label: '右上' },
+  { value: 'bottom-left', label: '左下' },
+  { value: 'bottom-right', label: '右下' },
+  { value: 'top', label: '上' },
+  { value: 'bottom', label: '下' },
+  { value: 'left', label: '左' },
+  { value: 'right', label: '右' },
+]
 
 const route = useRoute()
 const kind = computed(() => String(route.params.kind || 'company'))
@@ -521,10 +590,15 @@ const detail = ref<Row | null>(null)
 const viewError = ref('')
 const digitalOpen = ref(false)
 const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
+const digitalReady = ref(false)
 const fileOpen = ref(false)
 const fileError = ref('')
 const filePreview = ref('')
-const fileResult = ref<{ expiresInSeconds?: number; signedUrl?: string; watermark?: { text?: string } } | null>(null)
+const fileResult = ref<{
+  expiresInSeconds?: number
+  signedUrl?: string
+  watermark?: { text?: string; opacity?: number; position?: string }
+} | null>(null)
 const levelReady = ref(false)
 const levelRole = ref('')
 const levelValue = ref('2')
@@ -596,12 +670,29 @@ const remindChannel = ref('')
 const remindTarget = ref<Row | null>(null)
 const auditHolder = ref('')
 const auditViewer = ref('')
+const auditLevel = ref('')
 const auditFrom = ref('')
 const auditTo = ref('')
+const auditPageNo = ref(1)
+const auditPageSize = 20
 const auditRows = ref<Row[]>([])
 const auditTotal = ref(0)
 const auditLoading = ref(false)
 const auditError = ref('')
+const auditPageCount = computed(() => Math.max(1, Math.ceil(auditTotal.value / auditPageSize)))
+const auditFiltered = computed(() =>
+  Boolean(auditHolder.value.trim() || auditViewer.value || auditLevel.value || auditFrom.value || auditTo.value),
+)
+const opacityText = computed(() => opacityTextOf(levelOpacity.value))
+const positionLabel = computed(() => positionLabelOf(levelPosition.value))
+const l3Label = computed(() => {
+  if (!levelWhitelist.value.length) return '未配置'
+  const names = levelWhitelist.value.map((id) => {
+    const user = users.value.find((item) => Number(item.id) === id)
+    return user?.nickname || user?.username || String(id)
+  })
+  return `白名单 ${names.join('、')}`
+})
 const riskUsers = ref<{ userId: number; name: string; viewsInLastHour: number }[]>([])
 const riskTotal = ref(0)
 const formOpen = ref(false)
@@ -961,6 +1052,37 @@ function viewLevelLabel(value: unknown) {
   return '—'
 }
 
+function opacityTextOf(value: unknown) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '0.12'
+  return amount.toFixed(2)
+}
+
+function positionLabelOf(value: unknown) {
+  const code = String(value || '')
+  return watermarkPositions.find((item) => item.value === code)?.label || code || '右下'
+}
+
+function roundedOpacity(value: number) {
+  return Math.round(value * 100) / 100
+}
+
+function styleError(opacity: number, position: string) {
+  if (!(opacity >= 0.05 && opacity <= 0.3)) return '水印透明度须在 0.05 到 0.3'
+  if (!watermarkPositions.some((item) => item.value === position)) return '水印位置不合法'
+  return ''
+}
+
+function ipDevice(row: Row) {
+  const ip = String(row.ip || '').trim()
+  const device = String(row.device || '').trim()
+  const short = device.length > 48 ? `${device.slice(0, 48)}…` : device
+  if (!ip && !short) return '—'
+  if (!short) return ip
+  if (!ip) return short
+  return `${ip} / ${short}`
+}
+
 function durationLabel(value: unknown) {
   const seconds = Number(value)
   if (!Number.isFinite(seconds) || seconds < 0) return '—'
@@ -986,11 +1108,17 @@ async function loadRisk() {
   riskTotal.value = Number(data.abnormalTotal || 0)
 }
 
-async function searchAudit() {
+async function loadAudit() {
   auditLoading.value = true
   auditError.value = ''
   try {
-    const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+    if ((auditFrom.value && !auditTo.value) || (!auditFrom.value && auditTo.value)) {
+      auditRows.value = []
+      auditTotal.value = 0
+      auditError.value = '请同时填写开始和结束日期'
+      return
+    }
+    const params: Record<string, unknown> = { pageNo: auditPageNo.value, pageSize: auditPageSize }
     const holder = auditHolder.value.trim()
     if (holder) {
       if (/^\d+$/.test(holder)) {
@@ -1012,6 +1140,7 @@ async function searchAudit() {
       }
     }
     if (auditViewer.value) params.viewerUserId = Number(auditViewer.value)
+    if (auditLevel.value) params.viewLevel = Number(auditLevel.value)
     if (auditFrom.value && auditTo.value) {
       params.timeRange = [`${auditFrom.value} 00:00:00`, `${auditTo.value} 23:59:59`]
     }
@@ -1032,9 +1161,21 @@ async function searchAudit() {
   }
 }
 
+function searchAudit() {
+  auditPageNo.value = 1
+  return loadAudit()
+}
+
+function gotoAudit(page: number) {
+  if (page < 1 || page > auditPageCount.value || page === auditPageNo.value) return
+  auditPageNo.value = page
+  loadAudit()
+}
+
 function resetAudit() {
   auditHolder.value = ''
   auditViewer.value = ''
+  auditLevel.value = ''
   auditFrom.value = ''
   auditTo.value = ''
   searchAudit()
@@ -1271,6 +1412,8 @@ async function loadDigital() {
     digital.digitalizedRate = Number(data.digitalizedRate ?? 1)
   } catch {
     /* 横幅保持上次数字 */
+  } finally {
+    digitalReady.value = true
   }
 }
 
@@ -1297,12 +1440,23 @@ async function loadLevelConfig() {
   }
 }
 
-async function putLevel(rules: Array<{ target: string; targetCode: string; viewLevel: number }>, whitelist: number[]) {
+async function putLevel(
+  rules: Array<{ target: string; targetCode: string; viewLevel: number }>,
+  whitelist: number[],
+  style?: WatermarkStyle,
+) {
+  const opacity = roundedOpacity(style?.opacity ?? Number(levelOpacity.value))
+  const position = (style?.position ?? levelPosition.value).trim()
+  const problem = styleError(opacity, position)
+  if (problem) {
+    levelMessage.value = problem
+    return
+  }
   await http.put('/cert/security/level-config', {
     rules,
     l3Whitelist: whitelist,
-    opacity: 0.12,
-    position: 'bottom-right',
+    opacity,
+    position,
   })
   levelMessage.value = '已保存，下次查看即按新级别'
   await loadLevelConfig()
@@ -1324,8 +1478,10 @@ async function saveLevel() {
 
 async function resetLevel() {
   levelMessage.value = ''
+  levelOpacity.value = 0.12
+  levelPosition.value = 'bottom-right'
   try {
-    await putLevel([], [])
+    await putLevel([], [], { opacity: 0.12, position: 'bottom-right' })
     levelMessage.value = '已恢复默认，全员 L1'
   } catch (e: unknown) {
     levelMessage.value = errorMessage(e)
