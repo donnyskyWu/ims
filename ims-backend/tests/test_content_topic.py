@@ -375,3 +375,160 @@ def test_topic_filter_edit_revive_and_cancel():
         json={"title": "已立项不可改", "description": "内容要求", "sourceType": "TALENT"},
     )
     assert edit_approved.json()["code"] == 1504
+
+
+def approve(auth: dict, topic_id: int, sop_id: int, plan_date: str) -> None:
+    res = client.put(
+        f"/admin-api/ims/content/topic/{topic_id}/review",
+        headers=auth,
+        json={"action": "APPROVE_PROJECT", "planPublishDate": plan_date, "sopId": sop_id, "reviewOpinion": "排期"},
+    )
+    assert res.json()["code"] == 0
+
+
+def gantt(auth: dict, start: str, end: str, account_id: int | None = None):
+    params: list[tuple[str, str]] = [("timeRange", start), ("timeRange", end)]
+    if account_id is not None:
+        params.append(("accountId", str(account_id)))
+    return client.get("/admin-api/ims/content/topic/gantt", headers=auth, params=params)
+
+
+def test_topic_gantt_range_and_same_account_conflict():
+    from app.core import SessionLocal
+    from app.models import ContentPublish
+    from app.ops_db import ops_session
+    from app.ops_models import PlatformAccount
+
+    auth = headers()
+    sop_id = create_sop(auth, "甘特 SOP")
+    first = create_topic(auth, "甘特甲")
+    second = create_topic(auth, "甘特乙")
+    third = create_topic(auth, "甘特丙")
+    other_day = create_topic(auth, "甘特丁")
+    pending = client.post(
+        "/admin-api/ims/content/topic",
+        headers=auth,
+        json={
+            "title": "甘特待评审",
+            "description": "内容要求：尚未立项",
+            "sourceType": "ORIGINAL",
+            "planPublishDate": "2026-12-02",
+        },
+    )
+    assert pending.json()["code"] == 0
+
+    approve(auth, first["id"], sop_id, "2026-12-01")
+    approve(auth, second["id"], sop_id, "2026-12-01")
+    approve(auth, third["id"], sop_id, "2026-12-01")
+    approve(auth, other_day["id"], sop_id, "2026-12-20")
+
+    missing = client.get("/admin-api/ims/content/topic/gantt", headers=auth)
+    assert missing.json()["code"] == 1500
+    reversed_range = gantt(auth, "2026-12-07", "2026-12-01")
+    assert reversed_range.json()["code"] == 1500
+    bad_day = gantt(auth, "2026-13-01", "2026-12-07")
+    assert bad_day.json()["code"] == 1500
+
+    window = gantt(auth, "2026-12-01", "2026-12-07")
+    assert window.json()["code"] == 0
+    items = window.json()["data"]["items"]
+    assert [row["title"] for row in items] == ["甘特甲", "甘特乙", "甘特丙", "甘特待评审"]
+    assert all(row["conflictHint"] is None for row in items)
+    assert items[0]["planPublishDate"] == "2026-12-01"
+    assert items[0]["topicStatus"] == "APPROVED_PROJECT"
+    assert items[0]["sopName"] == "甘特 SOP"
+    assert items[0]["topicNo"].startswith("TP")
+    assert items[-1]["topicStatus"] == "PENDING_REVIEW"
+    assert items[-1]["sopName"] is None
+
+    listed = client.get("/admin-api/ims/content/topic/list", headers=auth, params={"keyword": "甘特甲"})
+    project_first = listed.json()["data"]["list"][0]["contentProjectId"]
+    project_second = client.get("/admin-api/ims/content/topic/list", headers=auth, params={"keyword": "甘特乙"}).json()["data"]["list"][0][
+        "contentProjectId"
+    ]
+    project_third = client.get("/admin-api/ims/content/topic/list", headers=auth, params={"keyword": "甘特丙"}).json()["data"]["list"][0][
+        "contentProjectId"
+    ]
+
+    ops = ops_session()
+    try:
+        shared = PlatformAccount(
+            account_no="AC-GANTT-140",
+            account_name="甘特共享号",
+            platform_type="DOUYIN",
+            status="IN_USE",
+            tenant_id=0,
+        )
+        alone = PlatformAccount(
+            account_no="AC-GANTT-140B",
+            account_name="甘特独享号",
+            platform_type="DOUYIN",
+            status="IN_USE",
+            tenant_id=0,
+        )
+        ops.add(shared)
+        ops.add(alone)
+        ops.commit()
+        shared_id = int(shared.id)
+        alone_id = int(alone.id)
+    finally:
+        ops.close()
+
+    db = SessionLocal()
+    try:
+        db.add_all(
+            [
+                ContentPublish(
+                    publish_no="PB-GANTT-140A",
+                    content_project_id=project_first,
+                    account_id=shared_id,
+                    account_no="AC-GANTT-140",
+                    platform="DOUYIN",
+                    plan_publish_at="2026-12-01T10:00:00+08:00",
+                    caption="甲",
+                    tenant_id=0,
+                ),
+                ContentPublish(
+                    publish_no="PB-GANTT-140B",
+                    content_project_id=project_second,
+                    account_id=shared_id,
+                    account_no="AC-GANTT-140",
+                    platform="DOUYIN",
+                    plan_publish_at="2026-12-01T11:00:00+08:00",
+                    caption="乙",
+                    tenant_id=0,
+                ),
+                ContentPublish(
+                    publish_no="PB-GANTT-140C",
+                    content_project_id=project_third,
+                    account_id=alone_id,
+                    account_no="AC-GANTT-140B",
+                    platform="DOUYIN",
+                    plan_publish_at="2026-12-01T12:00:00+08:00",
+                    caption="丙",
+                    tenant_id=0,
+                ),
+            ]
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    conflicted = gantt(auth, "2026-12-01", "2026-12-07")
+    by_title = {row["title"]: row for row in conflicted.json()["data"]["items"]}
+    assert by_title["甘特甲"]["conflictHint"] == "同账号同日超量"
+    assert by_title["甘特乙"]["conflictHint"] == "同账号同日超量"
+    assert by_title["甘特丙"]["conflictHint"] is None
+    assert by_title["甘特待评审"]["conflictHint"] is None
+
+    shared_only = gantt(auth, "2026-12-01", "2026-12-07", shared_id)
+    assert [row["title"] for row in shared_only.json()["data"]["items"]] == ["甘特甲", "甘特乙"]
+    assert all(row["conflictHint"] == "同账号同日超量" for row in shared_only.json()["data"]["items"])
+
+    alone_only = gantt(auth, "2026-12-01", "2026-12-07", alone_id)
+    assert [row["title"] for row in alone_only.json()["data"]["items"]] == ["甘特丙"]
+    assert alone_only.json()["data"]["items"][0]["conflictHint"] is None
+
+    later = gantt(auth, "2026-12-20", "2026-12-20")
+    assert [row["title"] for row in later.json()["data"]["items"]] == ["甘特丁"]
+    assert later.json()["data"]["items"][0]["conflictHint"] is None

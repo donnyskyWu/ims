@@ -3,13 +3,22 @@
     <div class="pg-h">
       <div>
         <h1>选题计划</h1>
-        <div class="sub">选题库：筛选、详情、待评审编辑、落选复活（CONTENT-002）</div>
+        <div class="sub">选题库：筛选、详情、待评审编辑、落选复活与排期甘特（CONTENT-002 · TOP-R1 / TOP-R3）</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" data-testid="topic-create-open" @click="openCreate">提报选题</button>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
+    <div class="tabs" data-testid="topic-view-switch">
+      <button type="button" class="tab" :class="{ on: view === 'list' }" data-testid="topic-view-list" @click="view = 'list'">
+        列表
+      </button>
+      <button type="button" class="tab" :class="{ on: view === 'gantt' }" data-testid="topic-view-gantt" @click="view = 'gantt'">
+        排期甘特
+      </button>
+    </div>
+    <TopicGantt v-if="view === 'gantt'" />
+    <form v-if="view === 'list'" class="qbar" @submit.prevent="loadList">
       <input v-model="topicNo" placeholder="选题编号" style="width: 150px" data-testid="topic-filter-no" />
       <input v-model="keyword" placeholder="标题关键词" style="width: 160px" data-testid="topic-filter-keyword" />
       <select v-model="sourceFilter" style="width: 120px" data-testid="topic-filter-source">
@@ -28,7 +37,7 @@
       <button class="btn btn-pri btn-sm" type="submit" data-testid="topic-filter-search">查询</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="topic-filter-reset" @click="resetFilters">重置</button>
     </form>
-    <div class="tbl-block">
+    <div v-if="view === 'list'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -262,6 +271,7 @@ import axios from 'axios'
 import { onMounted, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import TopicGantt from './topic-gantt.vue'
 
 type ChainStep = { status: string; label: string; current: boolean }
 
@@ -307,6 +317,7 @@ const PROJECT_LABEL: Record<string, string> = {
 const statusOptions = Object.entries(STATUS_LABEL).map(([value, label]) => ({ value, label }))
 const sourceOptions = Object.entries(SOURCE_LABEL).map(([value, label]) => ({ value, label }))
 
+const view = ref<'list' | 'gantt'>('list')
 const rows = ref<TopicRow[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -579,4 +590,11 @@ onMounted(() => {
 .modal-card p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; }
 .modal-card textarea { width: 100%; margin-bottom: 8px; }
 .modal-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.tabs button.tab {
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
 </style>

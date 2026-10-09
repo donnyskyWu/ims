@@ -59,6 +59,7 @@
 | **E2E-S9-01/02 (#86)** | `closure-perf-metric-pack.spec.ts` | 纯 UI · 得分规则重叠 **1152** · 重复编码 **1151** · 权重合计 99/101 **1154** · 合计 100 绑定成功 · 启用 COMPETE_SUBMIT_RATE **1153** |
 | **E2E-S7-01 · 选题立项** | `closure-content-topic.spec.ts` | 纯 UI 提报选题 → 缺 SOP/计划发布日 **1052** → 选择 SOP+内容要求立项 → **已立项** / 可出任务；落选保持不可出任务 |
 | **E2E-S7 · 选题库 (#136)** | `closure-content-topic-library.spec.ts` | 纯 UI · 来源/编号/提报人筛选与重置 → 详情无项目 → 待评审编辑 → 落选意见保留并复活 → 立项详情草稿链 → 取消 **已取消** |
+| **E2E-S7 · 选题排期甘特 (#140)** | `closure-content-topic-gantt.spec.ts` | 纯 UI 立项两条选题 → 选题计划「排期甘特」按计划发布日打点；区间外不出现 |
 | **E2E-S7-切片 · 计划** | `closure-content-plan-start.spec.ts` | UI SOP+计划 → 启动 → IN_PROGRESS + 任务列表 |
 | **E2E-S7-切片 · SOP/计划 (#101)** | `closure-content-sop-plan.spec.ts` | 纯 UI · DAG 保存 → 新版本 v2 → 逻辑删除 → 计划草稿 DRAFT |
 | **E2E-S7-切片 · 计划终止 (#36)** | `closure-content-plan-terminate.spec.ts` | 启动后申请终止 → 批准 → TERMINATED + 任务 TERMINATED |
