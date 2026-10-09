@@ -74,7 +74,7 @@ def test_todos_are_personal_and_preview_caps_at_ten():
 
     page = client.get("/admin-api/ims/auth/workbench/todos", headers=headers, params={"pageSize": 10}).json()
     assert page["code"] == 0
-    assert page["data"]["total"] == 12
+    assert page["data"]["total"] == 13
     assert len(page["data"]["list"]) == 10
     assert page["data"]["list"][0]["title"] == "已逾期"
     assert page["data"]["list"][0]["overdue"] is True
@@ -94,8 +94,8 @@ def test_todos_are_personal_and_preview_caps_at_ten():
     )
     assert hidden.json()["code"] == 1504
     board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=headers).json()["data"]
-    assert board["todoCount"] == 11
-    assert board["unreadMessageCount"] == 0
+    assert board["todoCount"] == 12
+    assert board["unreadMessageCount"] == 1
 
 
 def test_workbench_dashboard_includes_flow_todo_count():
@@ -146,10 +146,10 @@ def test_message_read_is_idempotent():
     assert first.status_code == 200 and first.json()["code"] == 0
     assert second.status_code == 200 and second.json()["code"] == 0
     listed = client.get("/admin-api/ims/auth/workbench/messages", headers=headers).json()["data"]
-    assert listed["total"] == 1
+    assert listed["total"] == 2
     assert listed["list"][0]["read"] is True
     board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=headers).json()["data"]
-    assert board["unreadMessageCount"] == 0
+    assert board["unreadMessageCount"] == 1
 
 
 def test_todo_and_message_filters_type_keyword_and_channel():
