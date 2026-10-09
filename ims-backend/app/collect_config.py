@@ -39,6 +39,7 @@ class ExternalKeywordBody(BaseModel):
     platformType: str
     keyword: str
     matchType: str = "CONTAINS"
+    collectEnabled: bool | None = None
     status: str = "ENABLED"
 
 
@@ -117,12 +118,19 @@ def external_account_vo(row: CollectConfig) -> dict:
     }
 
 
+def keyword_collect_flag(enabled: bool | None, *, default: bool = True) -> int:
+    if enabled is None:
+        return 1 if default else 0
+    return 1 if enabled else 0
+
+
 def keyword_vo(row: CollectKeyword) -> dict:
     return {
         "id": str(row.id),
         "platformType": row.platform_type,
         "keyword": row.keyword,
         "matchType": row.match_type,
+        "collectEnabled": bool(row.collect_enabled),
         "status": row.status,
         "updatedAt": row.updated_at.strftime("%Y-%m-%d %H:%M:%S") if row.updated_at else "",
     }
@@ -371,6 +379,7 @@ def external_keyword_create(
         platform_type=body.platformType,
         keyword=body.keyword.strip(),
         match_type=body.matchType,
+        collect_enabled=keyword_collect_flag(body.collectEnabled),
         status=body.status,
         tenant_id=tenant_of(actor),
     )
@@ -400,6 +409,8 @@ def external_keyword_update(
     row.keyword = body.keyword.strip()
     row.match_type = body.matchType
     row.status = body.status
+    if body.collectEnabled is not None:
+        row.collect_enabled = keyword_collect_flag(body.collectEnabled)
     row.updated_at = utcnow()
     return ok(keyword_vo(row))
 

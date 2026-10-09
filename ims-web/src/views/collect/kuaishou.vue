@@ -85,7 +85,12 @@
           </thead>
           <tbody>
             <tr v-if="!accounts.length">
-              <td colspan="8">暂无快手内部账号</td>
+              <td colspan="8">
+                <div class="empty" data-testid="ks-health-empty">
+                  <div class="et">暂无快手内部账号</div>
+                  <div class="es">保存账号后这里显示采集健康；未绑定或未探活时健康列写明空态</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in accounts" :key="row.id" :data-testid="'ks-row-' + row.platformAccountId">
               <td>{{ row.accountName }}</td>
@@ -93,7 +98,7 @@
               <td class="mono" data-testid="ks-mask">{{ row.credentialMask || '未配置' }}</td>
               <td class="mono">{{ row.credentialRef || '—' }}</td>
               <td>{{ row.collectBindSummary }}</td>
-              <td data-testid="ks-health">{{ row.healthLabel }}</td>
+              <td data-testid="ks-health" :class="{ hint: healthIsEmpty(row.healthLabel) }">{{ healthText(row.healthLabel) }}</td>
               <td class="num" data-testid="ks-follower-latest">{{ followerText(row) }}</td>
               <td>
                 <button class="btn-txt btn" type="button" @click="editRow(row)">编辑</button>
@@ -204,6 +209,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import { healthIsEmpty, healthText } from './healthLabel'
 
 type Opt = { id: number; companyName?: string; groupName?: string }
 type FollowerDaily = { statDate: string; followerCount: number; newFollowerCount: number }

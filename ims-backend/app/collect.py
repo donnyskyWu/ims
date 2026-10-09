@@ -15,6 +15,7 @@ from app.corp import check_enum, count_of, ops_db, page_args, paged, tenant_of, 
 from app.models import User
 from app.ops_models import (
     CollectConfig,
+    CollectKeyword,
     CollectLog,
     CollectTask,
     CollectTaskMember,
@@ -70,6 +71,63 @@ def load_task(ops: Session, actor: User, task_id: int) -> CollectTask | None:
     if not visible(row, actor):
         return None
     return row
+
+
+def retry_hint(status: str, retry_count: int) -> str:
+    if status == "SUCCESS":
+        return "无需重试"
+    if retry_count > 0:
+        return f"已重试 {retry_count} 次"
+    if status in {"FAILED", "PARTIAL", "COOKIE_EXPIRED", "ENGINE_UNAVAILABLE"}:
+        return "尚未重试"
+    return "—"
+
+
+def external_live_members(ops: Session, tenant_id: int) -> list[dict]:
+    """开启采集的竞品关键词与外部账号。对齐原型外部成员抽屉。"""
+    keywords = ops.scalars(
+        select(CollectKeyword)
+        .where(
+            CollectKeyword.tenant_id == tenant_id,
+            CollectKeyword.deleted == 0,
+            CollectKeyword.status == "ENABLED",
+            CollectKeyword.collect_enabled == 1,
+        )
+        .order_by(CollectKeyword.id.asc())
+    ).all()
+    configs = ops.scalars(
+        select(CollectConfig)
+        .where(
+            CollectConfig.tenant_id == tenant_id,
+            CollectConfig.deleted == 0,
+            CollectConfig.scope == "EXTERNAL",
+            CollectConfig.status == "ENABLED",
+            CollectConfig.collect_enabled == 1,
+        )
+        .order_by(CollectConfig.id.asc())
+    ).all()
+    rows: list[dict] = []
+    for kw in keywords:
+        rows.append(
+            {
+                "memberKind": "KEYWORD",
+                "memberName": f"关键词「{kw.keyword}」",
+                "platformType": kw.platform_type,
+                "collectEnabled": True,
+                "refId": str(kw.id),
+            }
+        )
+    for cfg in configs:
+        rows.append(
+            {
+                "memberKind": "ACCOUNT",
+                "memberName": cfg.config_name,
+                "platformType": cfg.platform_type,
+                "collectEnabled": True,
+                "refId": str(cfg.id),
+            }
+        )
+    return rows
 
 
 def member_count(ops: Session, task_id: int, tenant_id: int) -> int:
@@ -138,11 +196,13 @@ def task_vo(
 ) -> dict:
     bind_target = None
     platform_account = ""
+    mc = 0
     if row.is_unified or row.is_external_unified:
-        mc = member_count(ops, row.id, row.tenant_id or 0)
         if row.is_external_unified:
+            mc = len(external_live_members(ops, row.tenant_id or 0))
             platform_account = f"外部多成员（成员 {mc}）"
         else:
+            mc = member_count(ops, row.id, row.tenant_id or 0)
             platform_account = f"多账号（成员 {mc}）"
     elif row.collect_config_id:
         cfg = ops.get(CollectConfig, row.collect_config_id)
@@ -171,7 +231,7 @@ def task_vo(
         "nextRunAt": row.next_run_at or None,
         "successCount": row.success_count,
         "failCount": row.fail_count,
-        "memberCount": member_count(ops, row.id, row.tenant_id or 0) if (row.is_unified or row.is_external_unified) else None,
+        "memberCount": mc if (row.is_unified or row.is_external_unified) else None,
         "bindWarning": warning,
         "healthLabel": account_health_label(ops, row.account_id),
         "statusLabel": TASK_STATUS_LABEL.get(row.status, row.status),
@@ -201,6 +261,7 @@ def log_vo(ops: Session, row: CollectLog, tasks: dict[int, CollectTask] | None =
         "recordCount": row.record_count,
         "retryCount": row.retry_count,
         "retryable": row.status in RETRYABLE_LOG_STATUS,
+        "retryHint": retry_hint(row.status, row.retry_count or 0),
         "errorSummary": row.error_summary or None,
         "repairAccountId": repair_account_id,
         "statusLabel": {
@@ -802,6 +863,7 @@ def ensure_external_unified(
             CollectConfig.deleted == 0,
             CollectConfig.scope == "EXTERNAL",
             CollectConfig.status == "ENABLED",
+            CollectConfig.collect_enabled == 1,
         )
     ).all()
     for cfg in configs:
@@ -822,6 +884,42 @@ def ensure_external_unified(
             )
     ops.flush()
     return ok(task_vo(ops, existing))
+
+
+@router.get("/task/{task_id}/members")
+def task_members(
+    task_id: int,
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = load_task(ops, actor, task_id)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if row.is_external_unified:
+        members = external_live_members(ops, tenant_of(actor))
+        return ok({"list": members, "total": len(members)})
+    if not row.is_unified:
+        return fail(1001, "仅统一任务可查看成员")
+    stored = ops.scalars(
+        select(CollectTaskMember).where(
+            CollectTaskMember.task_id == row.id,
+            CollectTaskMember.deleted == 0,
+            CollectTaskMember.tenant_id == tenant_of(actor),
+        )
+    ).all()
+    members = []
+    for item in stored:
+        account = ops.get(PlatformAccount, item.account_id) if item.account_id else None
+        members.append(
+            {
+                "memberKind": "ACCOUNT",
+                "memberName": account.account_name if account else f"账号#{item.account_id or ''}",
+                "platformType": account.platform_type if account else row.platform_type,
+                "collectEnabled": True,
+                "refId": str(item.account_id or item.id),
+            }
+        )
+    return ok({"list": members, "total": len(members)})
 
 
 @router.get("/quality/summary")
