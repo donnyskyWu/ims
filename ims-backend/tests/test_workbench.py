@@ -150,3 +150,97 @@ def test_message_read_is_idempotent():
     assert listed["list"][0]["read"] is True
     board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=headers).json()["data"]
     assert board["unreadMessageCount"] == 0
+
+
+def test_todo_and_message_filters_type_keyword_and_channel():
+    token = login()
+    headers = auth(token)
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin").one()
+        now = utcnow()
+        db.add(
+            Todo(
+                assignee_user_id=admin.id,
+                task_type="review",
+                title="配置新岗位权限",
+                content="矩阵为空",
+                status="PENDING",
+                deadline=now + timedelta(days=2),
+            )
+        )
+        db.add(
+            Todo(
+                assignee_user_id=admin.id,
+                task_type="approval",
+                title="领用审批超时",
+                content="请处理",
+                status="PENDING",
+                deadline=now - timedelta(hours=3),
+            )
+        )
+        db.add(
+            Todo(
+                assignee_user_id=admin.id,
+                task_type="approval",
+                title="领用审批未到期",
+                content="稍后",
+                status="PENDING",
+                deadline=now + timedelta(days=1),
+            )
+        )
+        db.add(
+            WorkMessage(
+                user_id=admin.id,
+                title="钉钉调岗通知",
+                content="部门已变更",
+                channel="DINGTALK",
+                source_module="ORG",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    review = client.get(
+        "/admin-api/ims/auth/workbench/todos",
+        headers=headers,
+        params={"taskType": "review", "status": "PENDING", "keyword": "新岗位"},
+    ).json()
+    assert review["code"] == 0
+    assert review["data"]["total"] == 1
+    assert review["data"]["list"][0]["taskType"] == "review"
+    assert review["data"]["list"][0]["overdue"] is False
+
+    expired = client.get(
+        "/admin-api/ims/auth/workbench/todos",
+        headers=headers,
+        params={"status": "EXPIRED", "taskType": "approval"},
+    ).json()
+    assert expired["code"] == 0
+    assert [row["title"] for row in expired["data"]["list"]] == ["领用审批超时"]
+    assert expired["data"]["list"][0]["overdue"] is True
+
+    pending = client.get(
+        "/admin-api/ims/auth/workbench/todos",
+        headers=headers,
+        params={"status": "PENDING", "taskType": "approval"},
+    ).json()
+    assert pending["data"]["total"] == 2
+
+    ding = client.get(
+        "/admin-api/ims/auth/workbench/messages",
+        headers=headers,
+        params={"channel": "DINGTALK", "keyword": "调岗"},
+    ).json()
+    assert ding["code"] == 0
+    assert ding["data"]["total"] == 1
+    assert ding["data"]["list"][0]["channel"] == "DINGTALK"
+    assert ding["data"]["list"][0]["sourceModule"] == "ORG"
+
+    hidden = client.get(
+        "/admin-api/ims/auth/workbench/messages",
+        headers=headers,
+        params={"channel": "IN_APP", "keyword": "调岗"},
+    ).json()
+    assert hidden["data"]["total"] == 0

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -111,12 +111,17 @@ def dashboard(db: Session = Depends(db_session), user: User = Depends(current_us
     )
 
 
+def _like(keyword: str) -> str:
+    return f"%{keyword.strip()}%"
+
+
 @router.get("/auth/workbench/todos")
 def todos(
     pageNo: int = 1,
     pageSize: int = 10,
     taskType: str = "",
     status: str = "",
+    keyword: str = "",
     db: Session = Depends(db_session),
     user: User = Depends(current_user),
 ):
@@ -125,8 +130,19 @@ def todos(
     stmt = select(Todo).where(Todo.assignee_user_id == user.id)
     if taskType:
         stmt = stmt.where(Todo.task_type == taskType)
-    if status:
+    # 已过期：库存 EXPIRED，或仍 PENDING 但已过截止（WB-R1）。待处理仍含逾期项，便于置顶。
+    if status == "EXPIRED":
+        stmt = stmt.where(
+            or_(
+                Todo.status == "EXPIRED",
+                and_(Todo.status == "PENDING", Todo.deadline.is_not(None), Todo.deadline < now),
+            )
+        )
+    elif status:
         stmt = stmt.where(Todo.status == status)
+    if keyword.strip():
+        like = _like(keyword)
+        stmt = stmt.where(or_(Todo.title.like(like), Todo.content.like(like)))
     rows = list(db.scalars(stmt).all())
     rows.sort(key=lambda row: (0 if overdue(row, now) else 1, row.deadline or datetime.max, row.id))
     start = (page_no - 1) * size
@@ -152,6 +168,8 @@ def messages(
     pageNo: int = 1,
     pageSize: int = 10,
     read: bool | None = None,
+    channel: str = "",
+    keyword: str = "",
     db: Session = Depends(db_session),
     user: User = Depends(current_user),
 ):
@@ -159,6 +177,11 @@ def messages(
     stmt = select(WorkMessage).where(WorkMessage.user_id == user.id)
     if read is not None:
         stmt = stmt.where(WorkMessage.read_flag == (1 if read else 0))
+    if channel.strip():
+        stmt = stmt.where(WorkMessage.channel == channel.strip())
+    if keyword.strip():
+        like = _like(keyword)
+        stmt = stmt.where(or_(WorkMessage.title.like(like), WorkMessage.content.like(like)))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(stmt.order_by(WorkMessage.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     return ok({"list": [message_vo(row) for row in rows], "total": total, "pageNo": page_no, "pageSize": size})
