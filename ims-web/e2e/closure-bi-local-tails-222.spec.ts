@@ -80,7 +80,10 @@ test.describe('bi local tails 222', () => {
 
     await page.goto('/ims/bi/analysis')
     await expect(page.locator('h1')).toContainText('指标分析')
-    await page.getByTestId('bi-analysis-metrics').selectOption({ label: new RegExp(metricName) })
+    const metricSelect = page.getByTestId('bi-analysis-metrics')
+    const metricValue = await metricSelect.locator('option', { hasText: metricName }).getAttribute('value')
+    expect(metricValue).toBeTruthy()
+    await metricSelect.selectOption(metricValue!)
     await page.getByTestId('bi-analysis-from').fill('2026-09-20')
     await page.getByTestId('bi-analysis-to').fill('2026-09-01')
     await page.getByTestId('bi-analysis-run').click()
