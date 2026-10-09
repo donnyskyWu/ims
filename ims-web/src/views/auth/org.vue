@@ -58,6 +58,7 @@
               <th>部门</th>
               <th>岗位</th>
               <th>授予角色</th>
+              <th>权限缓冲</th>
               <th>钉钉</th>
               <th>同步状态</th>
               <th>账号状态</th>
@@ -66,10 +67,10 @@
           </thead>
           <tbody>
             <tr v-if="!userReady">
-              <td colspan="9" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="10" style="white-space: normal"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!users.length">
-              <td colspan="9" style="white-space: normal">
+              <td colspan="10" style="white-space: normal">
                 <div class="empty">
                   <div class="et">{{ userError || '没有已同步人员' }}</div>
                   <div class="es">人员来自验签后的组织事件，列表只展示接口返回的行。</div>
@@ -86,6 +87,7 @@
               <td data-testid="org-user-dept">{{ names(row.deptNames) }}</td>
               <td data-testid="org-user-position">{{ text(row.positionName) }}</td>
               <td data-testid="org-user-roles">{{ names(row.grantedRoleNames) }}</td>
+              <td data-testid="org-user-buffer">{{ bufferText(row) }}</td>
               <td class="mono">{{ text(row.dingtalkUserId) }}</td>
               <td>{{ syncText(row) }}</td>
               <td data-testid="org-user-status">{{ statusText(row.status) }}</td>
@@ -147,6 +149,7 @@
           <div class="fld"><label>授予角色</label><div data-testid="org-detail-roles">{{ names(detail.grantedRoleNames) }}</div></div>
           <div class="fld"><label>权限码</label><div data-testid="org-detail-perms">{{ names(detail.grantedPermCodes) }}</div></div>
           <div class="fld"><label>权限缓冲至</label><div data-testid="org-detail-buffer">{{ text(detail.bufferUntil) }}</div></div>
+          <div class="fld"><label>缓冲状态</label><div data-testid="org-buffer-state">{{ bufferText(detail) }}</div></div>
         </div>
         <div v-if="diff" data-testid="org-user-diff" class="card" style="margin: 12px 0">
           <div style="font-weight: 600">权限 diff</div>
@@ -234,6 +237,15 @@ function text(value: unknown) {
 function names(value: unknown) {
   if (!Array.isArray(value) || !value.length) return '—'
   return value.map((item) => String(item)).join('、')
+}
+
+function bufferText(row: Record<string, unknown> | null | undefined) {
+  if (!row) return '—'
+  if (row.bufferUntil) return '缓冲中'
+  const diff = row.permissionDiff
+  const summary = diff && typeof diff === 'object' ? String((diff as Record<string, unknown>).summary || '') : ''
+  if (summary.includes('缓冲结束')) return '已切换'
+  return '—'
 }
 
 function syncText(row: Record<string, unknown>) {

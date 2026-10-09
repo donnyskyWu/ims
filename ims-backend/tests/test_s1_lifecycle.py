@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import timedelta
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -10,7 +11,7 @@ from sqlalchemy import select
 from app.core import SessionLocal
 from app.dingtalk_crypto import pack
 from app.main import app
-from app.models import PositionRule, Role, RolePerm, Todo, User, UserDept, UserRole
+from app.models import PositionRule, Role, RolePerm, Todo, User, UserDept, UserMapping, UserRole, WorkMessage
 from app.org_sync import process_due
 
 client = TestClient(app)
@@ -243,3 +244,159 @@ def test_resign_freezes_login_and_opens_return_todo():
         assert "离职待归还" in todo.title
     finally:
         db.close()
+
+
+def transfer_to_director():
+    return {
+        "eventType": "transfer",
+        "dingtalkEventId": "evt-s1-transfer",
+        "unionId": "union-s1",
+        "beforeDept": "内容部",
+        "payloadJson": {
+            "dingtalkUserId": "dt-s1",
+            "dingtalkPosition": "编导",
+            "deptIds": [7302],
+            "deptNames": ["直播部"],
+            "beforeDept": "内容部",
+            "afterDept": "直播部",
+        },
+    }
+
+
+def pin_password(token: str) -> str:
+    user_id = client.get(
+        "/admin-api/ims/auth/org/users", headers=auth(token), params={"keyword": "dt-s1"}
+    ).json()["data"]["list"][0]["userId"]
+    assert client.put(
+        f"/admin-api/ims/system/user/{user_id}",
+        headers=auth(token),
+        json={"password": "Pass@123"},
+    ).json()["code"] == 0
+    db = SessionLocal()
+    try:
+        return db.scalar(select(User).where(User.dingtalk_user_id == "dt-s1")).username
+    finally:
+        db.close()
+
+
+def org_row(token: str) -> dict:
+    return client.get(
+        "/admin-api/ims/auth/org/users", headers=auth(token), params={"keyword": "dt-s1"}
+    ).json()["data"]["list"][0]
+
+
+def test_transfer_buffer_expires_into_new_position_and_notifies_workbench():
+    seed_rules()
+    assert post_event(hire()).json()["code"] == 0
+    consume()
+    admin = login()
+    username = pin_password(admin)
+    assert post_event(transfer_to_director()).json()["code"] == 0
+    consume()
+    row = org_row(admin)
+    assert set(row["grantedRoleNames"]) == {"主播运营", "编导"}
+    assert row["bufferUntil"]
+    assert "24 小时" in row["permissionDiff"]["summary"]
+
+    person = login(username, "Pass@123")
+    board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=auth(person)).json()["data"]
+    assert board["unreadMessageCount"] >= 1
+    titles = [
+        item["title"]
+        for item in client.get("/admin-api/ims/auth/workbench/messages", headers=auth(person)).json()["data"]["list"]
+    ]
+    assert "调岗权限缓冲" in titles
+
+    db = SessionLocal()
+    try:
+        mapping = db.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt-s1"))
+        early = mapping.buffer_until - timedelta(seconds=1)
+        due = mapping.buffer_until + timedelta(seconds=1)
+        process_due(db, now=early)
+        db.commit()
+    finally:
+        db.close()
+    still = org_row(admin)
+    assert set(still["grantedRoleNames"]) == {"主播运营", "编导"}
+    assert still["bufferUntil"]
+
+    db = SessionLocal()
+    try:
+        process_due(db, now=due)
+        db.commit()
+        user = db.scalar(select(User).where(User.dingtalk_user_id == "dt-s1"))
+        role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+        names = list(db.scalars(select(Role.role_name).where(Role.id.in_(role_ids))).all())
+        assert names == ["编导"]
+        notice = db.scalar(
+            select(WorkMessage).where(
+                WorkMessage.user_id == user.id,
+                WorkMessage.title == "调岗缓冲已结束",
+            )
+        )
+        assert notice is not None
+        assert "主播运营" in notice.content
+        process_due(db, now=due + timedelta(hours=1))
+        db.commit()
+        again = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+        assert again == role_ids
+    finally:
+        db.close()
+
+    switched = org_row(admin)
+    assert switched["bufferUntil"] is None
+    assert switched["grantedRoleNames"] == ["编导"]
+    assert switched["permissionDiff"]["removedRoleNames"] == ["主播运营"]
+    assert "缓冲结束" in switched["permissionDiff"]["summary"]
+    ended = [
+        item["title"]
+        for item in client.get("/admin-api/ims/auth/workbench/messages", headers=auth(person)).json()["data"]["list"]
+    ]
+    assert "调岗缓冲已结束" in ended
+
+
+def test_same_position_transfer_buffer_expires_without_dropping_roles():
+    seed_rules()
+    assert post_event(hire()).json()["code"] == 0
+    consume()
+    assert post_event(
+        {
+            "eventType": "transfer",
+            "dingtalkEventId": "evt-s1-transfer-same",
+            "unionId": "union-s1",
+            "beforeDept": "内容部",
+            "payloadJson": {
+                "dingtalkUserId": "dt-s1",
+                "dingtalkPosition": "主播运营",
+                "deptIds": [7302],
+                "deptNames": ["直播部"],
+                "beforeDept": "内容部",
+                "afterDept": "直播部",
+            },
+        }
+    ).json()["code"] == 0
+    consume()
+    admin = login()
+    row = org_row(admin)
+    assert row["grantedRoleNames"] == ["主播运营"]
+    assert row["bufferUntil"]
+    db = SessionLocal()
+    try:
+        mapping = db.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt-s1"))
+        process_due(db, now=mapping.buffer_until + timedelta(seconds=1))
+        db.commit()
+        user = db.scalar(select(User).where(User.dingtalk_user_id == "dt-s1"))
+        notices = list(
+            db.scalars(
+                select(WorkMessage).where(
+                    WorkMessage.user_id == user.id,
+                    WorkMessage.ref_type == "org_transfer_buffer",
+                )
+            ).all()
+        )
+        assert notices == []
+    finally:
+        db.close()
+    done = org_row(admin)
+    assert done["bufferUntil"] is None
+    assert done["grantedRoleNames"] == ["主播运营"]
