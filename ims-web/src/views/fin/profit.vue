@@ -68,6 +68,7 @@
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="button" @click="reload">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-profit-filter-reset" @click="resetList">重置</button>
     </form>
 
     <div v-show="tab === 'list'" class="tabs" data-testid="fin-profit-metric" role="radiogroup" aria-label="利润口径" style="margin: 8px 0">
@@ -129,7 +130,11 @@
               <td colspan="13"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="13"><div class="empty"><div class="et">暂无利润数据（需先核准成本）</div></div></td>
+              <td colspan="13">
+                <div class="empty" data-testid="fin-profit-list-empty">
+                  <div class="et">{{ listEmptyText }}</div>
+                </div>
+              </td>
             </tr>
             <tr
               v-for="row in rows"
@@ -158,6 +163,14 @@
               <td class="mono" data-testid="fin-profit-calculated-at">{{ formatCalculatedAt(row.calculatedAt) }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(String(row.sessionCode))">详情</button>
+                <button
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-profit-ledger-jump"
+                  @click="jumpLedger(String(row.sessionCode))"
+                >
+                  对账
+                </button>
                 <button
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -379,7 +392,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+
+const router = useRouter()
 
 interface ProfitDetail {
   sessionCode: string
@@ -477,6 +493,10 @@ const recalcError = ref('')
 const recalcNote = ref('')
 const profitType = ref<ProfitMetric>('NET')
 const query = reactive({ sessionCode: '', platform: '', calcStatus: '', dateFrom: '', dateTo: '' })
+const listFiltered = ref(false)
+const listEmptyText = computed(() =>
+  listFiltered.value ? '当前筛选无利润数据' : '暂无利润数据（需先核准成本）',
+)
 
 const profitLabel = computed(() => metrics.find((item) => item.value === profitType.value)?.label || '净利润')
 const shownProfit = computed(() => Number(summary.value?.shownProfit ?? summary.value?.totalNetProfit ?? 0))
@@ -681,9 +701,31 @@ async function loadSummary() {
   if (res.data?.code === 0) summary.value = res.data.data
 }
 
+function markListFiltered() {
+  listFiltered.value = Boolean(
+    query.sessionCode.trim() || query.platform.trim() || query.dateFrom || query.dateTo || query.calcStatus,
+  )
+}
+
+function jumpLedger(code: string) {
+  const session = code.trim()
+  if (!session) return
+  router.push({ path: '/ims/fin/ledger', query: { sessionCode: session } })
+}
+
+function resetList() {
+  query.sessionCode = ''
+  query.platform = ''
+  query.calcStatus = ''
+  query.dateFrom = ''
+  query.dateTo = ''
+  return reload()
+}
+
 async function loadList() {
   loading.value = true
   error.value = ''
+  markListFiltered()
   try {
     const res = await http.get('/fin/profit/list', { params: listParams() })
     if (res.data?.code !== 0) {
