@@ -8,7 +8,6 @@ import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
  */
 const SHOTS = '/opt/cursor/artifacts/acct-217'
 const POOL_NO = 'AC-E2E-POOL'
-const POOL_GROUP = 'E2E领用组'
 
 async function createUser(page: Page, username: string, nickname: string) {
   await page.goto('/ims/system/user')
@@ -68,7 +67,7 @@ test.describe('ACCT list filter leftovers #217', () => {
     const baselineTotal = Number(baseline.data?.total || 0)
     await expect(page.locator('h1')).toContainText('抖音')
 
-    await page.getByTestId('acct-filter-ip-group').fill('E2E领')
+    await page.getByTestId('acct-filter-ip-group').fill('E2E')
     await page.getByTestId('acct-list-filters').getByRole('button', { name: '查询' }).click()
     await expect(page.getByTestId('acct-ip-group-msg')).toContainText('请输入完整 IP 组名称')
     await expect(page.getByTestId('acct-list-empty')).toContainText('请改成完整 IP 组名称')
@@ -95,7 +94,28 @@ test.describe('ACCT list filter leftovers #217', () => {
     await expect(page.locator('.pg-total')).toHaveText('共 0 条')
     await page.screenshot({ path: `${SHOTS}/02-ip-group-empty.png`, fullPage: true })
 
-    await page.getByTestId('acct-filter-ip-group').fill(POOL_GROUP)
+    await page.getByTestId('acct-list-filters').getByRole('button', { name: '重置' }).click()
+    await page.getByTestId('acct-filter-keyword').fill(POOL_NO)
+    const poolResp = page.waitForResponse(
+      (r) => r.url().includes('/corp/account/page') && r.url().includes('keyword=') && r.status() === 200,
+    )
+    await page.getByTestId('acct-list-filters').getByRole('button', { name: '查询' }).click()
+    await poolResp
+    const poolRow = page.locator('.tbl-wrap tbody tr').filter({ hasText: POOL_NO })
+    await poolRow.getByRole('button', { name: '详情' }).click()
+    const detail = page.locator('.drawer.on').filter({ hasText: '详情' })
+    const groupText = await detail.locator('.fld', { hasText: 'IP 组' }).innerText()
+    const poolGroup = groupText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && line !== 'IP 组')
+      .pop()
+    expect(poolGroup).toBeTruthy()
+    await detail.getByRole('button', { name: '关闭' }).click()
+    await expect(detail).toBeHidden()
+
+    await page.getByTestId('acct-filter-keyword').fill('')
+    await page.getByTestId('acct-filter-ip-group').fill(poolGroup || '')
     const hitResp = page.waitForResponse(
       (r) =>
         r.url().includes('/corp/account/page') &&
@@ -109,9 +129,21 @@ test.describe('ACCT list filter leftovers #217', () => {
     const hitTotal = Number(hitBody.data?.total || 0)
     expect(hitTotal).toBeGreaterThan(0)
     expect(hitTotal).toBeLessThan(baselineTotal)
-    expect((hitBody.data?.list || []).some((row) => row.accountNo === POOL_NO)).toBeTruthy()
-    await expect(page.locator('.tbl-wrap tbody tr').filter({ hasText: POOL_NO })).toBeVisible()
+    expect((hitBody.data?.list || []).length).toBeLessThanOrEqual(hitTotal)
     await expect(page.locator('.pg-total')).toHaveText(`共 ${hitTotal} 条`)
+
+    await page.getByTestId('acct-filter-keyword').fill(POOL_NO)
+    const narrowed = page.waitForResponse(
+      (r) =>
+        r.url().includes('/corp/account/page') &&
+        r.url().includes('ipGroupId=') &&
+        r.url().includes('keyword=') &&
+        r.status() === 200,
+    )
+    await page.getByTestId('acct-list-filters').getByRole('button', { name: '查询' }).click()
+    const narrowedBody = (await (await narrowed).json()) as { data?: { list?: { accountNo?: string }[] } }
+    expect((narrowedBody.data?.list || []).some((row) => row.accountNo === POOL_NO)).toBeTruthy()
+    await expect(page.locator('.tbl-wrap tbody tr').filter({ hasText: POOL_NO })).toBeVisible()
     await page.screenshot({ path: `${SHOTS}/03-ip-group-hit.png`, fullPage: true })
     expect(pageErrors).toEqual([])
   })
