@@ -123,7 +123,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1
 
 1. 探测 **18080** `/health`、**6173** Vite；未起则后台启动 API（KillPort + `python -m app.main`）与 `npm run dev`（超时 120s / 90s）。
 2. admin 登录 preflight；失败提示运行 `ims-backend\scripts\init_ims_db.ps1`。
-3. `npx playwright test --workers=1 --reporter=list,html` → `playwright-report/index.html`。
+3. `npx playwright test --reporter=list,html` → `playwright-report/index.html`。worker 默认 **2**（`playwright.config.ts`）；`IMS_E2E_WORKERS=1` 退回单 worker。
 4. 摘要写入 **`e2e_result.txt`**（末行 `N passed`）。
 
 服务已就绪时：`.\scripts\run_e2e.ps1 -SkipServe`
@@ -134,7 +134,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_e2e.ps1
 
 ```bash
 cd ims-web
-npm run test:e2e          # 等同 playwright test（config 已 workers=1）
+npm run test:e2e          # 等同 playwright test（默认 workers=2；IMS_E2E_WORKERS=1 可退回）
 npm run test:e2e:skip     # SKIP_E2E=1 跳过
 ```
 
