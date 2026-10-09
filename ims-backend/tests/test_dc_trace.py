@@ -192,6 +192,33 @@ def _entry_hit(auth: dict, entry_type: str, keyword: str, entry_id: str) -> dict
     return hit
 
 
+def test_attach_drill_fields_stubs_missing_external():
+    """外部资产 / IP 组缺失时明细仍可返回，标签用资产桩，IP 组留空。"""
+    from types import SimpleNamespace
+
+    from app.dc_trace import attach_drill_fields
+
+    session = SimpleNamespace(session_code="IMS1", responsible_user_id=0, account_id=9)
+    rows = [{"sessionCode": "IMS1", "assetIds": [42]}]
+    attach_drill_fields(
+        rows,
+        [session],
+        reports={},
+        profits={},
+        names={},
+        groups={9: (0, "未归属IP组")},
+        labels={},
+        masked=False,
+    )
+    assert rows[0]["gmv"] is None
+    assert rows[0]["netProfit"] is None
+    assert rows[0]["responsibleUserId"] == 0
+    assert rows[0]["responsibleUserName"] == ""
+    assert rows[0]["ipGroupId"] == 0
+    assert rows[0]["ipGroupName"] == ""
+    assert rows[0]["assetLabels"] == ["资产#42"]
+
+
 def test_dc_trace_person_responsible_asset_and_ip_group():
     """#88 · 实名人 / 责任人 / 资产 / IP 组入口搜到场次，并下钻明细。无关资产不回全量场次。"""
     from app.ops_db import ops_session
@@ -255,14 +282,28 @@ def test_dc_trace_person_responsible_asset_and_ip_group():
     group_data = _query_detail(auth, "IP_GROUP", group_id)
     assert code in [row["sessionCode"] for row in group_data["detailList"]["list"]]
 
+    listed = next(item for item in person_data["detailList"]["list"] if item["sessionCode"] == code)
+    assert listed["gmv"] == 100000.0
+    assert listed["responsibleUserId"] == int(responsible_id)
+    assert listed["responsibleUserName"] == responsible_name
+    assert int(asset_id) in listed["assetIds"]
+    assert listed["assetLabels"]
+    assert listed["ipGroupId"] == int(group_id)
+    assert listed["ipGroupName"] == group_name
+
     detail = client.get(f"/admin-api/ims/dc/trace/detail/{code}", headers=auth).json()
     assert detail["code"] == 0
     roles = {row["roleType"]: row["userName"] for row in detail["data"]["persons"]}
     assert roles["RESPONSIBLE"] == responsible_name
     assert roles["REALNAME"] == person_name
+    assert detail["data"]["ipGroupId"] == int(group_id)
+    assert detail["data"]["ipGroupName"] == group_name
+    assert detail["data"]["assetLabels"]
+    assert len(detail["data"]["assetLabels"]) == len(detail["data"]["assetIds"])
 
     unrelated = _query_detail(auth, "ASSET", "999999999")
     assert unrelated["detailList"]["total"] == 0
+    assert unrelated["detailList"]["list"] == []
     assert unrelated["nodes"] == []
 
     exported = client.get(

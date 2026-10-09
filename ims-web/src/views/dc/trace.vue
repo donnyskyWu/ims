@@ -92,6 +92,30 @@
         {{ crumb.label }}
       </button>
     </div>
+    <div
+      v-if="queried && viewMode === 'SPLIT'"
+      class="hint"
+      data-testid="dc-trace-relation-chips"
+      style="margin: 8px 0"
+    >
+      关联下钻
+      <button
+        v-for="chip in relationChips"
+        :key="chip.entryType + ':' + chip.entryId"
+        type="button"
+        class="btn btn-sec btn-sm"
+        style="margin-left: 6px"
+        data-testid="dc-trace-relation-chip"
+        :data-entry-type="chip.entryType"
+        :data-entry-id="chip.entryId"
+        @click="drillEntry(chip)"
+      >
+        {{ chip.relation }} · {{ chip.entryLabel }}
+      </button>
+      <span v-if="!assetChips.length" data-testid="dc-trace-asset-empty" style="margin-left: 8px">暂无绑定资产</span>
+      <span v-if="!ownerChips.length" data-testid="dc-trace-owner-empty" style="margin-left: 8px">暂无责任人</span>
+      <span v-if="!ipChips.length" data-testid="dc-trace-ip-group-empty" style="margin-left: 8px">未关联 IP 组</span>
+    </div>
     <div class="hint" style="margin: 8px 0">
       <button
         type="button"
@@ -212,7 +236,9 @@
             <template v-else>{{ n.nodeLabel }}</template>
           </li>
         </ul>
-        <p v-if="!nodes.length" class="csub">选择入口后查询</p>
+        <p v-if="!nodes.length" class="csub" data-testid="dc-trace-graph-empty">
+          {{ queried ? '该入口暂无关联场次' : '选择入口后查询' }}
+        </p>
       </div>
       <div class="tbl-block" data-testid="dc-trace-detail-table">
         <div class="tbl-wrap">
@@ -223,6 +249,8 @@
                 <th>平台</th>
                 <th>账号</th>
                 <th>实名人</th>
+                <th>关联资产</th>
+                <th>GMV</th>
               </tr>
             </thead>
             <tbody>
@@ -241,9 +269,25 @@
                 <td>{{ d.platform }}</td>
                 <td>{{ d.accountNo }}</td>
                 <td>{{ d.realnameName }}</td>
+                <td>
+                  <button
+                    v-for="(assetId, index) in d.assetIds || []"
+                    :key="assetId"
+                    type="button"
+                    class="btn btn-sec btn-sm"
+                    style="margin-right: 4px"
+                    data-testid="dc-trace-detail-asset"
+                    :data-entry-id="assetId"
+                    @click="drillAsset(d, index)"
+                  >
+                    {{ (d.assetLabels || [])[index] || `资产#${assetId}` }}
+                  </button>
+                  <span v-if="!(d.assetIds || []).length" data-testid="dc-trace-detail-asset-empty">—</span>
+                </td>
+                <td class="num">{{ moneyOrDash(d.gmv) }}</td>
               </tr>
               <tr v-if="!details.length">
-                <td colspan="4"><div class="empty"><div class="et">暂无明细</div></div></td>
+                <td colspan="6"><div class="empty"><div class="et">暂无明细</div></div></td>
               </tr>
             </tbody>
           </table>
@@ -291,7 +335,45 @@
             data-testid="dc-trace-person-line"
           >
             {{ personRoleLabel(p.roleType) }}：{{ p.userName || '—' }}
+            <button
+              v-if="p.roleType === 'RESPONSIBLE' && p.userId"
+              type="button"
+              class="btn btn-sec btn-sm"
+              data-testid="dc-trace-drawer-responsible"
+              :data-entry-id="p.userId"
+              @click="drillFromDrawer('RESPONSIBLE', String(p.userId), p.userName || `责任人#${p.userId}`)"
+            >
+              下钻责任人
+            </button>
           </li>
+          <li v-if="!(sessionDetail.assetIds || []).length" data-testid="dc-trace-drawer-asset-empty">
+            关联资产：暂无绑定资产
+          </li>
+          <li v-for="(assetId, index) in sessionDetail.assetIds || []" :key="'asset-' + assetId">
+            关联资产：
+            <button
+              type="button"
+              class="btn btn-sec btn-sm"
+              data-testid="dc-trace-drawer-asset"
+              :data-entry-id="assetId"
+              @click="drillFromDrawer('ASSET', String(assetId), (sessionDetail.assetLabels || [])[index] || `资产#${assetId}`)"
+            >
+              {{ (sessionDetail.assetLabels || [])[index] || `资产#${assetId}` }}
+            </button>
+          </li>
+          <li v-if="sessionDetail.ipGroupId">
+            IP组：
+            <button
+              type="button"
+              class="btn btn-sec btn-sm"
+              data-testid="dc-trace-drawer-ip-group"
+              :data-entry-id="sessionDetail.ipGroupId"
+              @click="drillFromDrawer('IP_GROUP', String(sessionDetail.ipGroupId), sessionDetail.ipGroupName || `IP组#${sessionDetail.ipGroupId}`)"
+            >
+              {{ sessionDetail.ipGroupName || `IP组#${sessionDetail.ipGroupId}` }}
+            </button>
+          </li>
+          <li v-else data-testid="dc-trace-drawer-ip-empty">IP组：未关联 IP 组</li>
         </ul>
         <h3 style="font-size: 14px; margin-bottom: 6px">成本明细</h3>
         <table>
@@ -323,7 +405,21 @@ type Node = {
   nodeLabel: string
   metrics?: { totalCost?: number | null; netProfit?: number | null; gmv?: number | null }
 }
-type Detail = { sessionCode: string; platform: string; accountNo: string; realnameName: string }
+type Detail = {
+  sessionCode: string
+  platform: string
+  accountNo: string
+  realnameName: string
+  assetIds?: number[]
+  assetLabels?: string[]
+  gmv?: number | null
+  netProfit?: number | null
+  responsibleUserId?: number
+  responsibleUserName?: string
+  ipGroupId?: number
+  ipGroupName?: string
+}
+type RelationChip = { entryType: string; entryId: string; entryLabel: string; relation: string }
 type AggregateRow = {
   dimensionValue: string
   dimensionLabel: string
@@ -351,6 +447,10 @@ type SessionDetail = {
   costDetail?: CostItem[]
   account?: { accountNo?: string }
   persons?: Array<{ userId: number; userName: string; roleType: string }>
+  assetIds?: number[]
+  assetLabels?: string[]
+  ipGroupId?: number
+  ipGroupName?: string
 }
 type TracePayload = {
   queryCostMs?: number
@@ -415,6 +515,59 @@ function onEntryTypeChange() {
   aggregates.value = []
 }
 
+const assetChips = computed<RelationChip[]>(() => {
+  const seen = new Set<string>()
+  const chips: RelationChip[] = []
+  for (const node of nodes.value) {
+    if (node.nodeType !== 'ASSET' || !node.nodeId || node.nodeId === '0') continue
+    if (seen.has(node.nodeId)) continue
+    seen.add(node.nodeId)
+    chips.push({
+      entryType: 'ASSET',
+      entryId: node.nodeId,
+      entryLabel: node.nodeLabel,
+      relation: '绑定资产',
+    })
+  }
+  return chips
+})
+
+const ownerChips = computed<RelationChip[]>(() => {
+  const seen = new Set<string>()
+  const chips: RelationChip[] = []
+  for (const row of details.value) {
+    const id = String(row.responsibleUserId || '')
+    if (!id || id === '0' || seen.has(id)) continue
+    seen.add(id)
+    chips.push({
+      entryType: 'RESPONSIBLE',
+      entryId: id,
+      entryLabel: row.responsibleUserName || `责任人#${id}`,
+      relation: '责任人',
+    })
+  }
+  return chips
+})
+
+const ipChips = computed<RelationChip[]>(() => {
+  const seen = new Set<string>()
+  const chips: RelationChip[] = []
+  for (const row of details.value) {
+    const id = String(row.ipGroupId || '')
+    if (!id || id === '0' || seen.has(id)) continue
+    seen.add(id)
+    chips.push({
+      entryType: 'IP_GROUP',
+      entryId: id,
+      entryLabel: row.ipGroupName || `IP组#${id}`,
+      relation: 'IP组',
+    })
+  }
+  return chips
+})
+
+const relationChips = computed(() => [...assetChips.value, ...ownerChips.value, ...ipChips.value])
+
 function relationName(nodeType: string) {
   if (nodeType === 'ACCOUNT') return '持有账号'
   if (nodeType === 'ASSET') return '绑定资产'
@@ -477,13 +630,39 @@ async function searchEntry() {
   }
 }
 
-function drillNode(n: Node) {
-  const entry = { entryType: n.nodeType, entryId: n.nodeId, entryLabel: n.nodeLabel }
-  entryType.value = n.nodeType
+function drillEntry(chip: RelationChip) {
+  const entry = { entryType: chip.entryType, entryId: chip.entryId, entryLabel: chip.entryLabel }
+  entryType.value = chip.entryType
   selectedEntry.value = entry
-  crumbs.value = [...crumbs.value, { label: `关联：${relationName(n.nodeType)} → ${n.nodeLabel}`, entry }]
+  crumbs.value = [...crumbs.value, { label: `关联：${chip.relation} → ${chip.entryLabel}`, entry }]
   viewMode.value = 'SPLIT'
+  drawerOpen.value = false
   runQuery()
+}
+
+function drillFromDrawer(entryType: string, entryId: string, entryLabel: string) {
+  const relation = entryType === 'ASSET' ? '绑定资产' : entryType === 'IP_GROUP' ? 'IP组' : '责任人'
+  drillEntry({ entryType, entryId, entryLabel, relation })
+}
+
+function drillAsset(row: Detail, index: number) {
+  const assetId = (row.assetIds || [])[index]
+  if (!assetId) return
+  drillEntry({
+    entryType: 'ASSET',
+    entryId: String(assetId),
+    entryLabel: (row.assetLabels || [])[index] || `资产#${assetId}`,
+    relation: '绑定资产',
+  })
+}
+
+function drillNode(n: Node) {
+  drillEntry({
+    entryType: n.nodeType,
+    entryId: n.nodeId,
+    entryLabel: n.nodeLabel,
+    relation: relationName(n.nodeType),
+  })
 }
 
 function truncateCrumb(index: number) {

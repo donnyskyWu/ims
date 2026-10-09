@@ -438,6 +438,55 @@ def search_ip_group_entries(db: Session, tenant_id: int, keyword: str, limit: in
     return items
 
 
+def safe_asset_labels(asset_ids: set[int]) -> dict[int, str]:
+    """Ops 手机台账不可用时仍给出资产桩标签，穿透查询不因外部库中断。"""
+    try:
+        return asset_label_map(asset_ids)
+    except Exception:
+        return {asset_id: f"资产#{asset_id}" for asset_id in asset_ids}
+
+
+def safe_account_groups(tenant_id: int, account_ids: set[int]) -> dict[int, tuple[int, str]]:
+    """Ops IP 组不可用时按未关联处理，前端展示空态。"""
+    try:
+        return account_group_map(tenant_id, account_ids)
+    except Exception:
+        return {}
+
+
+def attach_drill_fields(
+    rows: list[dict],
+    sessions: list[LiveSession],
+    *,
+    reports: dict[str, LiveReport],
+    profits: dict[str, FinProfit],
+    names: dict[int, str],
+    groups: dict[int, tuple[int, str]],
+    labels: dict[int, str],
+    masked: bool,
+) -> None:
+    """在既有明细行上补资产 / 责任人 / IP 组，供再次 POST /dc/trace/query，不新增接口。"""
+    by_code = {row.session_code: row for row in sessions}
+    for item in rows:
+        session = by_code.get(item["sessionCode"])
+        if session is None:
+            continue
+        report = reports.get(session.session_code)
+        profit = profits.get(session.session_code)
+        item["gmv"] = money(report.gmv) if report is not None else None
+        item["netProfit"] = None if masked or profit is None else money(profit.net_profit)
+        user_id = int(session.responsible_user_id or 0)
+        item["responsibleUserId"] = user_id
+        item["responsibleUserName"] = names.get(user_id, "") if user_id else ""
+        group_id, group_name = groups.get(int(session.account_id or 0), (0, ""))
+        if not group_id:
+            group_id, group_name = 0, ""
+        item["ipGroupId"] = int(group_id)
+        item["ipGroupName"] = group_name
+        asset_ids = [int(asset_id) for asset_id in (item.get("assetIds") or [])]
+        item["assetLabels"] = [labels.get(asset_id, f"资产#{asset_id}") for asset_id in asset_ids]
+
+
 def detail_from_sessions(sessions: list[LiveSession], page_no: int, size: int) -> tuple[list[dict], int]:
     total = len(sessions)
     chunk = sessions[(page_no - 1) * size : page_no * size]
@@ -496,6 +545,14 @@ def session_detail(db: Session, tenant_id: int, session: LiveSession, *, masked:
         )
     gmv = money(report.gmv) if report is not None else 0.0
     refund = money(report.refund_amount) if report is not None else 0.0
+    asset_ids = parse_asset_ids(session.device_asset_ids or "[]")
+    asset_labels = safe_asset_labels(set(asset_ids))
+    group_id, group_name = safe_account_groups(tenant_id, {int(session.account_id or 0)}).get(
+        int(session.account_id or 0),
+        (0, ""),
+    )
+    ip_group_id = int(group_id or 0)
+    ip_group_name = group_name if ip_group_id else ""
     return {
         "sessionCode": session.session_code,
         "sessionTitle": session.topic or session.session_code,
@@ -520,7 +577,10 @@ def session_detail(db: Session, tenant_id: int, session: LiveSession, *, masked:
             "accountNo": session.account_no or "",
             "nickname": session.account_no or "",
         },
-        "assetIds": parse_asset_ids(session.device_asset_ids or "[]"),
+        "assetIds": asset_ids,
+        "assetLabels": [asset_labels.get(asset_id, f"资产#{asset_id}") for asset_id in asset_ids],
+        "ipGroupId": ip_group_id,
+        "ipGroupName": ip_group_name,
         "dataAsOf": data_as_of(),
     }
 
@@ -1093,6 +1153,16 @@ def trace_query(
     detail_list = None
     if body.mode == "DETAIL":
         rows, total = detail_from_sessions(sessions, page_no, size)
+        attach_drill_fields(
+            rows,
+            sessions,
+            reports=reports,
+            profits=profits,
+            names=user_names(db, {int(row.responsible_user_id or 0) for row in sessions}),
+            groups=safe_account_groups(tenant_id, {int(row.account_id or 0) for row in sessions}),
+            labels=labels,
+            masked=masked,
+        )
         detail_list = {"list": rows, "total": total, "pageNo": page_no, "pageSize": size}
     elapsed = round((time.perf_counter() - started) * 1000, 1)
     label = describe_entry(db, tenant_id, body.entryType, body.entryId, sessions, labels)
