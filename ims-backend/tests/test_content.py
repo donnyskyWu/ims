@@ -416,6 +416,28 @@ def test_review_gate_and_publish():
     listing = client.get("/admin-api/ims/content/publish/list", headers=auth)
     assert listing.json()["code"] == 0
     assert listing.json()["data"]["total"] >= 1
+    publish_no = publish.json()["data"]["publishNo"]
+    scoped = client.get(
+        "/admin-api/ims/content/publish/list",
+        headers=auth,
+        params={
+            "accountId": account_id,
+            "platform": "DOUYIN",
+            "publishStatus": "PENDING_PUBLISH",
+            "timeFrom": "2026-10-08T00:00:00+08:00",
+            "timeTo": "2026-10-08T23:59:59+08:00",
+            "pageSize": 50,
+        },
+    )
+    assert scoped.json()["code"] == 0
+    assert any(row["publishNo"] == publish_no for row in scoped.json()["data"]["list"])
+    missed = client.get(
+        "/admin-api/ims/content/publish/list",
+        headers=auth,
+        params={"platform": "KUAISHOU", "accountId": account_id, "pageSize": 50},
+    )
+    assert missed.json()["code"] == 0
+    assert all(row["publishNo"] != publish_no for row in missed.json()["data"]["list"])
 
     pending = client.get("/admin-api/ims/content/publish/pending", headers=auth)
     assert pending.json()["code"] == 0

@@ -11,16 +11,27 @@
       </div>
     </div>
     <div class="hint" data-testid="publish-supervise" style="margin-bottom: 10px">督办：待发布 {{ pendingCount }}<span v-if="overdueCount > 0" data-testid="publish-overdue-count" style="margin-left: 12px; color: var(--red); font-weight: 600">超计划 24h {{ overdueCount }}</span></div>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.publishNo" placeholder="发布单号" style="width: 140px" />
-      <select v-model="filters.publishStatus" style="width: 130px">
+    <form class="qbar" data-testid="publish-filters" @submit.prevent="loadList">
+      <input v-model="filters.publishNo" data-testid="publish-filter-no" placeholder="发布单号" style="width: 140px" />
+      <select v-model="filters.publishStatus" data-testid="publish-filter-status" style="width: 130px">
         <option value="">全部状态</option>
         <option value="PENDING_PUBLISH">待发布</option>
+        <option value="PUBLISHED">已发布</option>
         <option value="ARCHIVED">已归档</option>
         <option value="PUBLISH_FAILED">发布失败</option>
       </select>
+      <select v-model="filters.platform" data-testid="publish-filter-platform" style="width: 120px">
+        <option value="">全部平台</option>
+        <option value="DOUYIN">抖音</option>
+        <option value="KUAISHOU">快手</option>
+        <option value="WECHAT_CHANNELS">视频号</option>
+      </select>
+      <input v-model="filters.accountId" data-testid="publish-filter-account" placeholder="发布账号 id" style="width: 120px" />
+      <input v-model="filters.timeFrom" data-testid="publish-filter-from" type="date" />
+      <input v-model="filters.timeTo" data-testid="publish-filter-to" type="date" />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="publish-filter-reset" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -41,7 +52,12 @@
               <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无发布单' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="publish-list-empty">
+                  <div class="et">{{ error || publishEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ publishEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.publishNo }}</td>
@@ -127,8 +143,9 @@
       <p class="hint">回填后自动归档打包（PUB-R3）</p>
       <label class="rowline" style="flex-direction: column; align-items: stretch; gap: 4px">
         发布链接
-        <input v-model="receiptForm.publishUrl" placeholder="https://..." />
+        <input v-model="receiptForm.publishUrl" data-testid="publish-receipt-url" placeholder="https://..." />
       </label>
+      <p v-if="receiptError" class="hint bad" data-testid="publish-receipt-error">{{ receiptError }}</p>
       <label class="rowline" style="flex-direction: column; align-items: stretch; gap: 4px; margin-top: 8px">
         发布时间
         <input v-model="receiptForm.publishedAt" placeholder="2026-10-08T20:00:00+08:00" />
@@ -144,7 +161,10 @@
       <ul v-if="archive?.fileList?.length">
         <li v-for="f in archive.fileList" :key="f.fileKey">{{ f.fileType }} · {{ f.fileName }}</li>
       </ul>
-      <p v-else class="empty"><div class="et">无文件清单</div></p>
+      <div v-else class="empty" data-testid="publish-archive-empty">
+        <div class="et">无文件清单</div>
+        <div class="es">回填并归档后，这里列出源片、脚本、审核单和回执。</div>
+      </div>
     </ProtoDrawer>
   </div>
 </template>
@@ -160,7 +180,22 @@ const rows = ref<any[]>([])
 const total = ref(0)
 const pendingCount = ref(0)
 const overdueCount = ref(0)
-const filters = reactive({ publishNo: '', publishStatus: '' })
+const filters = reactive({
+  publishNo: '',
+  publishStatus: '',
+  platform: '',
+  accountId: '',
+  timeFrom: '',
+  timeTo: '',
+})
+const publishFiltering = computed(() => {
+  const account = String(filters.accountId || '').trim()
+  return !!(filters.publishNo.trim() || filters.publishStatus || filters.platform || account || filters.timeFrom || filters.timeTo)
+})
+const publishEmptyTitle = computed(() => (publishFiltering.value ? '没有符合筛选的发布单' : '暂无发布单'))
+const publishEmptyHint = computed(() =>
+  publishFiltering.value ? '换单号、状态、平台、账号或计划日期，或重置筛选' : '终审通过后，点「新建发布单」',
+)
 
 const createOpen = ref(false)
 const creating = ref(false)
@@ -185,6 +220,7 @@ const shownChecklist = computed(() =>
 const receiptOpen = ref(false)
 const receiptTarget = ref<any>(null)
 const receiptForm = reactive({ publishUrl: '', publishedAt: '' })
+const receiptError = ref('')
 
 const archiveOpen = ref(false)
 const archive = ref<any>(null)
@@ -192,6 +228,7 @@ const archive = ref<any>(null)
 function statusLabel(s: string) {
   const map: Record<string, string> = {
     PENDING_PUBLISH: '待发布',
+    PUBLISHED: '已发布',
     ARCHIVED: '已归档',
     PUBLISH_FAILED: '发布失败',
   }
@@ -236,8 +273,19 @@ async function loadList() {
   loading.value = true
   error.value = ''
   try {
+    if (filters.timeFrom && filters.timeTo && filters.timeTo < filters.timeFrom) {
+      error.value = '计划结束日不能早于开始日'
+      rows.value = []
+      total.value = 0
+      return
+    }
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 50 }
     if (filters.publishStatus) params.publishStatus = filters.publishStatus
+    if (filters.platform) params.platform = filters.platform
+    const account = String(filters.accountId || '').trim()
+    if (account && Number(account) > 0) params.accountId = Number(account)
+    if (filters.timeFrom) params.timeFrom = `${filters.timeFrom}T00:00:00+08:00`
+    if (filters.timeTo) params.timeTo = `${filters.timeTo}T23:59:59+08:00`
     const { data } = await http.get('/content/publish/list', { params })
     if (data.code !== 0) {
       error.value = data.msg || '加载失败'
@@ -257,6 +305,16 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.publishNo = ''
+  filters.publishStatus = ''
+  filters.platform = ''
+  filters.accountId = ''
+  filters.timeFrom = ''
+  filters.timeTo = ''
+  void loadList()
 }
 
 function openCreate() {
@@ -321,14 +379,25 @@ function openReceipt(row: any) {
   receiptTarget.value = row
   receiptForm.publishUrl = row.publishUrl || ''
   receiptForm.publishedAt = new Date().toISOString().slice(0, 19) + '+08:00'
+  receiptError.value = ''
   receiptOpen.value = true
 }
 
 async function submitReceipt() {
   const id = receiptTarget.value?.id
   if (!id) return
+  const url = receiptForm.publishUrl.trim()
+  if (!url) {
+    receiptError.value = '请填写发布链接'
+    return
+  }
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    receiptError.value = '发布链接需以 http:// 或 https:// 开头'
+    return
+  }
+  receiptError.value = ''
   const res = await http.put(`/content/publish/${id}/receipt`, {
-    publishUrl: receiptForm.publishUrl,
+    publishUrl: url,
     publishedAt: receiptForm.publishedAt,
   })
   if (res.data.code !== 0) {

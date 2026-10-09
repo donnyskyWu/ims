@@ -11,7 +11,17 @@
           <option v-for="tpl in templates" :key="tpl.id" :value="String(tpl.id)">{{ tpl.templateName }}</option>
         </select>
       </div>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="content-layout-apply-template" @click="applyTemplate">
+      <p v-if="templatesState === 'empty'" class="hint" data-testid="content-layout-templates-empty">
+        没有已启用的公推模板。到公推模板库新建并发布后再套用。
+      </p>
+      <p v-if="!body.trim()" class="hint" data-testid="content-layout-need-body">正文为空时不能套用模板或预览排版。</p>
+      <button
+        class="btn btn-sec btn-sm"
+        type="button"
+        data-testid="content-layout-apply-template"
+        :disabled="!body.trim()"
+        @click="applyTemplate"
+      >
         套用模板
       </button>
       <div class="fld" style="margin-top: 10px">
@@ -21,7 +31,13 @@
         </select>
       </div>
       <div class="acts" style="margin: 8px 0">
-        <button class="btn btn-sec btn-sm" type="button" data-testid="content-layout-preview-btn" @click="previewRule">
+        <button
+          class="btn btn-sec btn-sm"
+          type="button"
+          data-testid="content-layout-preview-btn"
+          :disabled="!body.trim()"
+          @click="previewRule"
+        >
           预览排版
         </button>
         <button
@@ -81,6 +97,7 @@ const presets = [
 ]
 
 const templates = ref<TemplateRow[]>([])
+const templatesState = ref<'loading' | 'ready' | 'empty' | 'error'>('loading')
 const templateId = ref('')
 const preset = ref('clean-read')
 const previewHtml = ref('')
@@ -106,6 +123,7 @@ function bizCode(err: unknown): number | null {
 }
 
 async function loadTemplates() {
+  templatesState.value = 'loading'
   try {
     const res = await http.get('/content/layout-template/list', {
       params: { status: 'ENABLED', pageNo: 1, pageSize: 50 },
@@ -115,7 +133,10 @@ async function loadTemplates() {
       const clean = templates.value.find((row) => row.templateName === '清爽阅读')
       templateId.value = String((clean || templates.value[0]).id)
     }
+    templatesState.value = templates.value.length ? 'ready' : 'empty'
   } catch (e) {
+    templates.value = []
+    templatesState.value = 'error'
     error.value = errorMessage(e)
   }
 }
@@ -146,6 +167,7 @@ function emitApplied(data: {
 async function applyTemplate() {
   error.value = ''
   if (!props.contentId) return
+  if (!props.body.trim()) return
   if (!templateId.value) {
     error.value = '请选择版式模板'
     return
@@ -184,7 +206,7 @@ async function applyTemplate() {
 async function previewRule() {
   error.value = ''
   fidelityNote.value = ''
-  if (!props.contentId) return
+  if (!props.contentId || !props.body.trim()) return
   try {
     const res = await http.post(`/content/${props.contentId}/typeset/preview`, {
       mode: 'RULE',

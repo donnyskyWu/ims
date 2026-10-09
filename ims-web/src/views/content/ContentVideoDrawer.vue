@@ -3,16 +3,25 @@
     <div data-testid="video-gen-drawer">
       <p class="hint">无本机 GPU。提交后轮询任务状态，成功即绑定到本条内容。密钥不在此显示。</p>
       <p v-if="provider" data-testid="video-provider">服务：{{ providerLabel }}</p>
+      <p v-if="!editable" class="hint" data-testid="video-locked">只有草稿或被驳回的内容可以提交视频任务。</p>
       <div class="fld">
         <label>成片要求</label>
         <textarea v-model="requirementText" rows="4" data-testid="video-requirement" :disabled="busy" />
       </div>
+      <p v-if="editable && !requirementText.trim()" class="hint" data-testid="video-requirement-empty">
+        成片要求为空时不能提交。本地桩不会出片，也不占用本机 GPU。
+      </p>
       <p data-testid="video-poll-status">
         任务状态：{{ statusLabel }}
         <span v-if="progress != null && polling"> · {{ progress }}%</span>
         <span v-if="jobId"> · 任务 {{ jobId }}</span>
       </p>
+      <p v-if="pollStale" class="hint" data-testid="video-poll-wait">桩任务仍在排队。关闭后再打开可继续看状态。</p>
       <p v-if="errorText" class="hint bad" data-testid="video-gen-error">{{ errorText }}</p>
+      <div v-if="!showPreview && !errorText" class="empty" data-testid="video-preview-empty">
+        <div class="et">尚未绑定成片</div>
+        <div class="es">提交后由本地桩轮询，成功才出现预览。</div>
+      </div>
       <div v-if="showPreview" class="video-preview" data-testid="video-preview">
         <div class="video-frame" data-testid="video-preview-frame">成片预览</div>
         <p data-testid="video-bind-line">已绑定到本条内容 · {{ fileKey }}</p>
@@ -51,6 +60,7 @@ const jobId = ref<number | null>(null)
 const fileKey = ref('')
 const bound = ref(false)
 const errorText = ref('')
+const pollStale = ref(false)
 let pollToken = 0
 
 const providerLabels: Record<string, string> = {
@@ -83,6 +93,7 @@ function seedFromContent() {
   pollStatus.value = String(props.content.videoJobStatus || '')
   jobId.value = props.content.videoJobId || null
   errorText.value = String(props.content.videoJobError || '')
+  pollStale.value = false
 }
 
 watch(
@@ -123,6 +134,8 @@ async function sleep(ms: number) {
 async function pollUntilDone(id: number) {
   const token = ++pollToken
   polling.value = true
+  pollStale.value = false
+  let settled = false
   try {
     for (let i = 0; i < 8; i += 1) {
       if (token !== pollToken) return
@@ -130,21 +143,29 @@ async function pollUntilDone(id: number) {
       const job = data.data || {}
       applyJob(job)
       if (job.queueStatus === 'SUCCESS' || job.queueStatus === 'FAILED') {
+        settled = true
         emit('refresh')
         return
       }
       await sleep(700)
     }
   } catch (e) {
-    if (token === pollToken) errorText.value = errorMessage(e)
+    if (token === pollToken) {
+      errorText.value = errorMessage(e)
+      settled = true
+    }
   } finally {
-    if (token === pollToken) polling.value = false
+    if (token === pollToken) {
+      polling.value = false
+      pollStale.value = !settled && pollStatus.value !== 'SUCCESS' && pollStatus.value !== 'FAILED'
+    }
   }
 }
 
 async function submitJob() {
   busy.value = true
   errorText.value = ''
+  pollStale.value = false
   bound.value = false
   fileKey.value = ''
   try {

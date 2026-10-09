@@ -14,7 +14,6 @@
     </p>
     <form class="qbar" data-testid="plan-filters" @submit.prevent="loadList">
       <input v-model="planName" data-testid="plan-filter-name" placeholder="计划名称" style="width: 160px" />
-      <input v-model="planName" data-testid="plan-name-filter" placeholder="计划名" style="width: 160px" />
       <select v-model="status" data-testid="plan-filter-status" style="width: 180px">
         <option value="">全部状态</option>
         <option value="DRAFT">草稿 DRAFT</option>
@@ -170,13 +169,11 @@ const error = ref('')
 const planName = ref('')
 const status = ref('')
 const filtering = computed(() => !!(planName.value.trim() || status.value))
-const planEmptyTitle = computed(() =>
-  filtering.value ? '没有符合筛选的计划，没有符合条件的计划' : '暂无计划',
-)
+const planEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的计划' : '暂无计划'))
 const planEmptyHint = computed(() =>
   filtering.value
-    ? '换个计划名或状态后再查。换计划名或状态，或重置筛选'
-    : '点右上角「新增计划」保存草稿，再启动才会生成任务。点「新增计划」保存草稿；启动后这里显示任务完成率',
+    ? '换计划名或状态后再查，或重置筛选'
+    : '点「新增计划」保存草稿；启动后这里显示任务完成率',
 )
 const createOpen = ref(false)
 const saving = ref(false)
