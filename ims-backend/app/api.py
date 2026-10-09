@@ -298,6 +298,7 @@ from app.asset_penetrate import router as asset_penetrate_router
 from app.asset_export import router as asset_export_router
 from app.asset_verify import router as asset_verify_router
 from app.content import router as content_router
+from app.content_ai import router as content_ai_router
 from app.content_fb import router as content_fb_router
 from app.content_production import router as content_production_router
 from app.content_task import router as content_task_router
@@ -364,6 +365,7 @@ router.include_router(asset_export_router)
 router.include_router(asset_verify_router)
 router.include_router(live_router)
 router.include_router(content_router)
+router.include_router(content_ai_router)
 router.include_router(content_fb_router)
 router.include_router(content_production_router)
 router.include_router(content_task_router)

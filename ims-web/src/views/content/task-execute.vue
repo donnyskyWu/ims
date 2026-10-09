@@ -70,10 +70,19 @@
           <textarea v-model="editForm.matchSchemeJson" rows="6" placeholder='[{"matchId":"1","homeName":"主","awayName":"客","matchPlays":[]}]' />
         </div>
         <div class="fld">
-          <label>正文</label>
-          <textarea v-model="editForm.body" rows="4" />
+          <div class="rowline" style="justify-content: space-between; margin-bottom: 6px">
+            <label style="margin: 0">正文</label>
+            <button class="btn btn-sec btn-sm" type="button" @click="aiOpen = true">AI 文案</button>
+          </div>
+          <textarea v-model="editForm.body" rows="6" />
         </div>
       </div>
+      <AiCopyDrawer
+        :open="aiOpen"
+        :content-id="vo.linkedContent?.id"
+        @close="aiOpen = false"
+        @adopt="adoptAi"
+      />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="editOpen = false">取消</button>
         <button class="btn btn-pri" type="button" @click="saveContent">保存内容</button>
@@ -87,6 +96,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import AiCopyDrawer from '../../components/AiCopyDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,6 +106,7 @@ const loading = ref(true)
 const error = ref('')
 const deliverables = ref('')
 const editOpen = ref(false)
+const aiOpen = ref(false)
 const editForm = ref({
   title: '',
   matchType: 1,
@@ -160,13 +171,35 @@ async function completeTask() {
   }
 }
 
-function openContentEdit() {
+function adoptAi(payload: { markdown: string; targetField: string }) {
+  const key = payload.targetField
+  if ((key === 'paidBody' || key === 'freeBody') && key in editForm.value) {
+    ;(editForm.value as Record<string, string>)[key] = payload.markdown
+  } else {
+    editForm.value.body = payload.markdown
+  }
+  aiOpen.value = false
+}
+
+async function openContentEdit() {
   const lc = vo.value.linkedContent
   editForm.value.title = lc?.title || ''
   editForm.value.body = ''
   editForm.value.matchType = 1
   editForm.value.matchSchemeJson = '[]'
+  aiOpen.value = false
   editOpen.value = true
+  if (!lc?.id) return
+  try {
+    const { data } = await http.get(`/content/${lc.id}`)
+    const row = data.data || {}
+    editForm.value.title = row.title || editForm.value.title
+    editForm.value.body = row.body || ''
+    editForm.value.matchType = row.matchType || 1
+    editForm.value.matchSchemeJson = JSON.stringify(row.matchScheme || [], null, 2)
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
 }
 
 async function saveContent() {

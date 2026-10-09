@@ -65,6 +65,11 @@ PARAM_SEED = [
         "",
         "Football 生产 WebAPI 根地址（示例 https://saas.shenyu.com/；空则订单/文章桩）",
     ),
+    (
+        "content.ai.baseUrl",
+        "",
+        "内容文案 LLM 根地址（OpenAI 兼容 /v1/chat/completions；空则 IMS_CONTENT_AI_STUB 桩）",
+    ),
 ]
 
 

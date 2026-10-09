@@ -194,7 +194,8 @@ def content_update(
         row.document_type = body.documentType[:32]
     if body.body is not None:
         row.body = body.body
-    if body.layoutHtml is not None:
+    # 未显式提交 layoutHtml 时保留已有版式。文案采纳只写 body，不顺带清空排版。
+    if "layoutHtml" in body.model_fields_set:
         row.layout_html = body.layoutHtml
     if body.ipGroupId is not None:
         row.ip_group_id = body.ipGroupId

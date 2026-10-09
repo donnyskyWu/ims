@@ -95,10 +95,14 @@
           <textarea v-model="form.matchSchemeJson" rows="5" />
         </div>
         <div class="fld">
-          <label>正文</label>
-          <textarea v-model="form.body" rows="4" />
+          <div class="rowline" style="justify-content: space-between; margin-bottom: 6px">
+            <label style="margin: 0">正文</label>
+            <button class="btn btn-sec btn-sm" type="button" @click="aiOpen = true">AI 文案</button>
+          </div>
+          <textarea v-model="form.body" rows="6" />
         </div>
       </div>
+      <AiCopyDrawer :open="aiOpen" :content-id="editingId" @close="aiOpen = false" @adopt="adoptAi" />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
@@ -111,6 +115,7 @@
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import AiCopyDrawer from '../../components/AiCopyDrawer.vue'
 
 const rows = ref<any[]>([])
 const total = ref(0)
@@ -119,6 +124,7 @@ const error = ref('')
 const titleKw = ref('')
 const statusKw = ref('')
 const drawerOpen = ref(false)
+const aiOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const form = ref({
@@ -150,7 +156,18 @@ async function loadList() {
 function openCreate() {
   editingId.value = null
   form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
+  aiOpen.value = false
   drawerOpen.value = true
+}
+
+function adoptAi(payload: { markdown: string; targetField: string }) {
+  const key = payload.targetField
+  if ((key === 'paidBody' || key === 'freeBody') && key in form.value) {
+    ;(form.value as Record<string, string>)[key] = payload.markdown
+  } else {
+    form.value.body = payload.markdown
+  }
+  aiOpen.value = false
 }
 
 function openEdit(row: any) {
@@ -162,6 +179,7 @@ function openEdit(row: any) {
     matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
     body: row.body || '',
   }
+  aiOpen.value = false
   drawerOpen.value = true
 }
 

@@ -27,6 +27,7 @@ PARAM_ENV_DEFAULT: dict[str, tuple[str | None, str]] = {
     ),
     "dingtalk.l3Enabled": ("IMS_DINGTALK_L3", ""),
     "football.webapiBaseUrl": ("IMS_FOOTBALL_WEBAPI_BASE_URL", ""),
+    "content.ai.baseUrl": ("IMS_CONTENT_AI_BASE_URL", ""),
     "bi.dingtalk.webhook.url": ("IMS_BI_DINGTALK_WEBHOOK_URL", ""),
 }
 
