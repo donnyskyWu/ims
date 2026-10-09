@@ -641,7 +641,14 @@ export async function resolveLiveFinRegisterIdsViaUi(page: Page): Promise<{
 export async function registerLiveSessionConfirmedReportViaUi(
   page: Page,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
-  opts?: { topic?: string; gmv?: number; refundAmount?: number; planStartTime?: string },
+  opts?: {
+    topic?: string
+    gmv?: number
+    refundAmount?: number
+    planStartTime?: string
+    actualStart?: string
+    actualEnd?: string
+  },
 ): Promise<{
   sessionCode: string
   realnameName: string
@@ -700,6 +707,12 @@ export async function registerLiveSessionConfirmedReportViaUi(
   }
 
   await detailDrawer.locator('.tab', { hasText: '下播与 GMV' }).click()
+  if (opts?.actualStart) {
+    await detailDrawer.getByTestId('live-report-start').fill(opts.actualStart)
+  }
+  if (opts?.actualEnd) {
+    await detailDrawer.getByTestId('live-report-end').fill(opts.actualEnd)
+  }
   await detailDrawer.locator('label', { hasText: 'GMV' }).locator('..').locator('input').fill(String(gmv))
   await detailDrawer
     .locator('label', { hasText: '退款' })
@@ -732,7 +745,15 @@ export async function registerLiveSessionConfirmedReportViaUi(
 export async function submitAndConfirmFinCostViaUi(
   page: Page,
   sessionCode: string,
-  costs?: { commissionRate?: string; adCost?: string; rechargeCost?: string; fixedCost?: string; sampleCost?: string; shareDaren?: string; shareRealname?: string },
+  costs?: {
+    commissionRate?: string
+    adCost?: string
+    rechargeCost?: string
+    fixedCost?: string
+    sampleCost?: string
+    shareDaren?: string
+    shareRealname?: string
+  },
 ) {
   await page.goto('/ims/fin/cost')
   await expect(page.locator('h1')).toHaveText('成本核算', { timeout: 15_000 })

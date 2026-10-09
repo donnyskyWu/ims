@@ -669,6 +669,26 @@ def profit_vo(
     return vo
 
 
+PROFIT_TYPES = ("GROSS", "OPERATING", "NET")
+
+
+def parse_profit_type(profit_type: str) -> tuple[str | None, object | None]:
+    """列表/汇总口径。缺省净利润。看板同名枚举，不另开 REST。"""
+    kind = (profit_type or "NET").strip().upper() or "NET"
+    if kind not in PROFIT_TYPES:
+        return None, fail(1001, "口径仅支持 GROSS、OPERATING、NET")
+    return kind, None
+
+
+def metric_amount(profit: FinProfit, cost: FinCost | None, kind: str) -> float:
+    gross = money(profit.gross_profit)
+    if kind == "GROSS":
+        return gross
+    if kind == "OPERATING":
+        return operating_profit(gross, cost)
+    return money(profit.net_profit)
+
+
 def session_in_date_range(session: LiveSession, date_from: str, date_to: str) -> bool:
     anchor = (session.actual_start or session.plan_start_time or "")[:10]
     if not anchor:
@@ -720,6 +740,18 @@ def collect_visible_profits(
     return items
 
 
+def sort_profits(
+    visible: list[tuple[FinProfit, LiveSession, FinCost | None]],
+    kind: str,
+) -> list[tuple[FinProfit, LiveSession, FinCost | None]]:
+    """口径金额降序；同金额按利润 id 降序，分页前后顺序稳定。"""
+    return sorted(
+        visible,
+        key=lambda item: (metric_amount(item[0], item[2], kind), item[0].id or 0),
+        reverse=True,
+    )
+
+
 @router.get("/profit/list")
 def profit_list(
     request: Request,
@@ -730,10 +762,58 @@ def profit_list(
     calcStatus: str = "",
     dateFrom: str = "",
     dateTo: str = "",
+    profitType: str = "NET",
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
+    kind, err = parse_profit_type(profitType)
+    if err is not None:
+        return err
     page_no, size = page_args(pageNo, pageSize)
+    tenant_id = tenant_of(actor)
+    visible = sort_profits(
+        collect_visible_profits(
+            db,
+            actor,
+            request.state.scope,
+            tenant_id,
+            session_code=sessionCode,
+            platform=platform,
+            calc_status=calcStatus,
+            date_from=dateFrom,
+            date_to=dateTo,
+        ),
+        kind or "NET",
+    )
+    total = len(visible)
+    start = (page_no - 1) * size
+    page_items = visible[start : start + size]
+    return ok(
+        {
+            "list": [profit_vo(db, p, s, c) for p, s, c in page_items],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+            "profitType": kind,
+        }
+    )
+
+
+@router.get("/profit/summary")
+def profit_summary(
+    request: Request,
+    sessionCode: str = "",
+    platform: str = "",
+    calcStatus: str = "",
+    dateFrom: str = "",
+    dateTo: str = "",
+    profitType: str = "NET",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    kind, err = parse_profit_type(profitType)
+    if err is not None:
+        return err
     tenant_id = tenant_of(actor)
     visible = collect_visible_profits(
         db,
@@ -746,40 +826,13 @@ def profit_list(
         date_from=dateFrom,
         date_to=dateTo,
     )
-    total = len(visible)
-    start = (page_no - 1) * size
-    page_items = visible[start : start + size]
-    return ok(
-        {
-            "list": [profit_vo(db, p, s, c) for p, s, c in page_items],
-            "total": total,
-            "pageNo": page_no,
-            "pageSize": size,
-        }
-    )
-
-
-@router.get("/profit/summary")
-def profit_summary(
-    request: Request,
-    dateFrom: str = "",
-    dateTo: str = "",
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
-    tenant_id = tenant_of(actor)
-    visible = collect_visible_profits(
-        db,
-        actor,
-        request.state.scope,
-        tenant_id,
-        date_from=dateFrom,
-        date_to=dateTo,
-    )
     calculated = [item for item in visible if item[0].calc_status in ("CALCULATED", "RECALCULATED")]
     total_revenue = sum(money(p.revenue) for p, _, _ in calculated)
     total_cost = sum(money(p.total_cost) for p, _, _ in calculated)
-    total_net = sum(money(p.net_profit) for p, _, _ in calculated)
+    total_gross = sum(metric_amount(p, c, "GROSS") for p, _, c in calculated)
+    total_operating = sum(metric_amount(p, c, "OPERATING") for p, _, c in calculated)
+    total_net = sum(metric_amount(p, c, "NET") for p, _, c in calculated)
+    shown = {"GROSS": total_gross, "OPERATING": total_operating, "NET": total_net}[kind or "NET"]
     ready = sum(1 for p, _, _ in calculated if settlement_status(p.calc_status) == "READY")
     in_settlement = sum(1 for p, _, _ in calculated if settlement_status(p.calc_status) == "IN_SETTLEMENT")
     return ok(
@@ -787,7 +840,11 @@ def profit_summary(
             "sessionCount": len(calculated),
             "totalRevenue": money(total_revenue),
             "totalCost": money(total_cost),
+            "totalGrossProfit": money(total_gross),
+            "totalOperatingProfit": money(total_operating),
             "totalNetProfit": money(total_net),
+            "shownProfit": money(shown),
+            "profitType": kind,
             "readySettlementCount": ready,
             "inSettlementCount": in_settlement,
         }
