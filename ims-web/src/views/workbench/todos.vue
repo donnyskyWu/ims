@@ -28,9 +28,8 @@
         <option value="DONE">已处理</option>
         <option value="EXPIRED">已过期</option>
       </select>
-      <select v-model="filters.taskType" style="width: 120px" data-testid="todo-task-type">
-        <option value="">全部类型</option>
-        <option value="exam">考试</option>
+      <select :value="filters.taskType" style="width: 140px" data-testid="todo-task-type" @change="onTypeSelect">
+        <option v-for="item in typeOptions" :key="item.value || 'all-types'" :value="item.value">{{ item.label }}</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="todo-search">查询</button>
@@ -153,6 +152,18 @@ const typeTabs = [
   { value: 'exam', label: '考试', testId: 'todo-tab-exam' },
 ]
 
+const extraTypeOptions = [
+  { value: 'supplement', label: '补录' },
+  { value: 'recharge_verify', label: '充值核对' },
+  { value: 'acct_transfer', label: '账号流转' },
+]
+
+const typeOptions = [
+  { value: '', label: '全部类型' },
+  ...typeTabs.filter((tab) => tab.value).map((tab) => ({ value: tab.value, label: tab.label })),
+  ...extraTypeOptions,
+]
+
 const typeNames: Record<string, string> = {
   approval: '审批',
   return: '归还',
@@ -176,11 +187,17 @@ const filters = reactive({ status: 'PENDING', taskType: '', keyword: '' })
 const emptyTitle = computed(() => {
   if (filters.taskType) return '该类型下暂无待办'
   if (filters.status === 'EXPIRED') return '没有已过期待办'
+  if (filters.status === 'DONE' && filters.keyword.trim()) return '没有匹配的已处理待办'
+  if (filters.status === 'DONE') return '没有已处理待办'
+  if (filters.keyword.trim() && filters.status === 'PENDING') return '没有匹配的待处理待办'
   if (filters.keyword.trim()) return '没有匹配的待办'
   return '暂无待办'
 })
 
 const emptyHint = computed(() => {
+  if (filters.status === 'DONE' && filters.keyword.trim() && !filters.taskType) return '已处理列表里没有这个标题或摘要。'
+  if (filters.status === 'DONE' && !filters.taskType) return '已关闭或已完成的待办会出现在这里。'
+  if (filters.keyword.trim() && filters.status === 'PENDING' && !filters.taskType) return '待处理列表里没有这个标题或摘要。'
   if (filters.taskType || filters.keyword.trim() || filters.status === 'EXPIRED') return '换一个类型、状态或关键词再查。'
   return '待处理事项会出现在这里。'
 })
@@ -230,6 +247,11 @@ function search() {
 function setType(value: string) {
   filters.taskType = value
   search()
+}
+
+function onTypeSelect(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  setType(value)
 }
 
 function prev() {

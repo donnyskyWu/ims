@@ -129,7 +129,10 @@ def test_workbench_e2e_seed_todo_and_message():
     assert any(row["title"] == "E2E-WB-CLOSE" and row["status"] == "PENDING" for row in todos["data"]["list"])
     messages = client.get("/admin-api/ims/auth/workbench/messages", headers=headers).json()
     assert messages["code"] == 0
-    assert any(row["title"] == "E2E-WB-MSG" and row["read"] is False for row in messages["data"]["list"])
+    seed_msg = next(row for row in messages["data"]["list"] if row["title"] == "E2E-WB-MSG")
+    assert seed_msg["read"] is False
+    assert seed_msg["refType"] == "cert_expire"
+    assert int(seed_msg["refId"]) == 1
 
 
 def test_message_read_is_idempotent():

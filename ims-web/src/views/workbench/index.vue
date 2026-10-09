@@ -95,7 +95,10 @@
         </table>
       </div>
     </div>
-    <div class="sec">待办</div>
+    <div class="sec rowline" style="justify-content: space-between; align-items: baseline">
+      <span>待办</span>
+      <router-link class="btn btn-txt btn-sm" data-testid="wb-todo-more" to="/ims/workbench/todos">查看更多</router-link>
+    </div>
     <div class="tbl-block" style="margin-bottom: 16px">
       <div class="tbl-wrap">
         <table>
