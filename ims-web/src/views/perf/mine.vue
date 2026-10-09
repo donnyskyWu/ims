@@ -16,6 +16,9 @@
     </div>
 
     <template v-else-if="mine">
+      <p v-if="lowScore" data-testid="perf-mine-alert" class="mine-alert">
+        本期得分低于 60，已通知您与直属上级
+      </p>
       <p class="hint">{{ mine.periodMonth }} · {{ mine.deptName }}</p>
       <p data-testid="perf-mine-score" style="font-size: 32px; font-weight: 600">{{ scoreText(mine.totalScore) }}</p>
       <p v-if="lowScore" class="hint" data-testid="perf-mine-low" style="color: #c46a00">
@@ -81,6 +84,7 @@ type Mine = {
 type Rank = {
   rankNo: number
   gradeLevel: string
+  alertStatus?: string
   deptTotalCount: number
   scoreDistribution: { excellent: number; qualified: number; improve: number }
 }
@@ -90,8 +94,10 @@ const mine = ref<Mine | null>(null)
 const rank = ref<Rank | null>(null)
 const empty = ref('')
 const lowScore = computed(() => {
-  const score = mine.value?.totalScore
-  return score != null && Number(score) < 60
+  if (!mine.value) return false
+  if (rank.value?.alertStatus === 'ALERTED') return true
+  if (mine.value.gradeLevel === 'IMPROVE') return true
+  return mine.value.totalScore != null && Number(mine.value.totalScore) < 60
 })
 
 function previousMonth() {
@@ -105,18 +111,19 @@ function scoreText(value: number | null | undefined) {
   return Number(value).toFixed(2)
 }
 
+function dataStatusText(status: string) {
+  if (status === 'AUTO') return '自动取数'
+  if (status === 'MANUAL') return '人工补充'
+  if (status === 'MISSING') return '缺项'
+  if (status === 'EXAM') return '考试取数'
+  return status || '—'
+}
+
 function gradeText(level: string) {
   if (level === 'EXCELLENT') return '优秀 ≥85'
   if (level === 'QUALIFIED') return '合格 60~84'
   if (level === 'IMPROVE') return '待改进 <60'
   return '—'
-}
-
-function dataStatusText(status: string) {
-  if (status === 'AUTO') return '系统自动'
-  if (status === 'MANUAL') return '手工录入'
-  if (status === 'MISSING') return '缺项'
-  return status || '—'
 }
 
 async function load() {
@@ -149,3 +156,13 @@ async function load() {
 
 void load()
 </script>
+
+<style scoped>
+.mine-alert {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: rgba(255, 149, 0, 0.16);
+  color: #c46a00;
+  border-radius: 8px;
+}
+</style>

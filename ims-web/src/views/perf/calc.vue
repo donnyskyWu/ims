@@ -63,7 +63,10 @@
             </tr>
             <tr v-else-if="!visibleRows.length">
               <td colspan="8">
-                <div class="empty" data-testid="perf-calc-empty"><div class="et">{{ emptyText }}</div></div>
+                <div class="empty" data-testid="perf-calc-empty">
+                  <div class="et">{{ emptyText }}</div>
+                  <div class="es">每月 1 日自动计算上月，也可手动触发补算。第 23 周前无基线数据。</div>
+                </div>
               </td>
             </tr>
             <tr v-for="row in visibleRows" v-else :key="row.id" :data-testid="`perf-row-${row.userName}`">
@@ -72,14 +75,14 @@
               <td class="mono">{{ row.positionCode }}</td>
               <td class="num">
                 {{ scoreText(row.totalScore) }}
-                <span
+                <div
                   v-if="row.resultStatus === 'PENDING_MANUAL' && row.missingCount"
-                  data-testid="perf-calc-missing"
+                  class="hint"
+                  :data-testid="`perf-missing-hint-${row.userName}`"
                   :title="`含 ${row.missingCount} 项缺项按 0 分计入（PER-C-R1）`"
-                  style="color: #c46a00"
                 >
-                  · 含 {{ row.missingCount }} 项缺项按 0 分计入
-                </span>
+                  <span data-testid="perf-calc-missing">含 {{ row.missingCount }} 项缺项按 0 分计入（PER-C-R1）</span>
+                </div>
               </td>
               <td>
                 <span class="tag" :data-testid="`perf-grade-${row.userName}`">{{ gradeText(row.gradeLevel) }}</span>
@@ -163,6 +166,10 @@
       <p class="hint">
         待人工 {{ counts.PENDING_MANUAL }} 人默认排除。核准后员工可见本人明细，并生成排名与分档。
       </p>
+      <p v-if="manualRows.length" class="hint" data-testid="perf-approve-manual-note">
+        以下人员存在缺项，默认排除本次发布，补充后再发布。
+      </p>
+      <p v-else class="hint" data-testid="perf-approve-manual-empty">本周期没有待人工人员，可直接核准发布。</p>
       <div v-for="row in manualRows" :key="row.id" class="fld">
         <label>
           <input v-model="excluded[row.userId]" type="checkbox" :data-testid="`perf-exclude-${row.userName}`" />
@@ -173,10 +180,19 @@
         <label>审批意见</label>
         <textarea v-model="approveRemark" data-testid="perf-approve-remark" rows="3"></textarea>
       </div>
+      <p v-if="!approveRemark.trim()" data-testid="perf-reject-hint" class="hint" style="color: var(--red)">
+        驳回须填写审批意见
+      </p>
       <p v-if="approveError" data-testid="perf-approve-error" class="hint" style="color: var(--red)">{{ approveError }}</p>
       <p v-if="approveResult" data-testid="perf-approve-result" class="hint">{{ approveResult }}</p>
       <template #foot>
-        <button class="btn btn-sec" type="button" data-testid="perf-approve-reject" @click="submitApprove(false)">
+        <button
+          class="btn btn-sec"
+          type="button"
+          data-testid="perf-approve-reject"
+          :disabled="!approveRemark.trim()"
+          @click="submitApprove(false)"
+        >
           驳回
         </button>
         <button class="btn btn-pri" type="button" data-testid="perf-approve-confirm" @click="submitApprove(true)">
@@ -196,6 +212,10 @@
       <div v-if="active?.resultStatus === 'PUBLISHED'" class="acts" style="margin-bottom: 8px">
         <button class="btn btn-sec btn-sm" type="button" data-testid="perf-recalc" @click="recalc">申请重算</button>
       </div>
+      <p v-if="tenureNote" data-testid="perf-tenure-note" class="hint">{{ tenureNote }}</p>
+      <p v-if="active?.approveRemark" data-testid="perf-approve-remark-view" class="hint">
+        审批意见：{{ active.approveRemark }}
+      </p>
       <p v-if="lockError" data-testid="perf-lock-error" class="hint" style="color: var(--red)">{{ lockError }}</p>
       <table>
         <thead>
@@ -214,7 +234,7 @@
             <td class="num">{{ item.metricValue ?? '—' }}</td>
             <td class="num">{{ scoreText(item.metricScore) }}</td>
             <td class="num">{{ item.weight }}%</td>
-            <td>{{ item.dataStatus }}</td>
+            <td>{{ dataStatusText(item.dataStatus) }}</td>
             <td class="num">{{ scoreText(item.contribution) }}</td>
           </tr>
         </tbody>
@@ -260,6 +280,7 @@ type Row = {
   resultStatus: string
   missingCount: number
   version: number
+  approveRemark?: string
   calcSnapshot?: { engineVersion?: string; fetchTime?: string; tenureRatio?: number }
   details?: Detail[]
   versionHistory?: History[]
@@ -321,6 +342,11 @@ const emptyText = computed(() => {
   if (!deptOn && statusOn) return '当前状态没有计算结果'
   return '当前筛选没有计算结果'
 })
+const tenureNote = computed(() => {
+  const ratio = active.value?.calcSnapshot?.tenureRatio
+  if (ratio === undefined || ratio === null || Number(ratio) >= 1) return ''
+  return `入职/离职当月按在职天数折算（PER-C-R2），折算比例 ${Number(ratio).toFixed(2)}`
+})
 
 function previousMonth() {
   const now = new Date()
@@ -341,6 +367,14 @@ function gradeText(level: string) {
   return '—'
 }
 
+function dataStatusText(status: string) {
+  if (status === 'AUTO') return '自动取数 AUTO'
+  if (status === 'MANUAL') return '人工补充 MANUAL'
+  if (status === 'MISSING') return '缺项 MISSING'
+  if (status === 'EXAM') return '考试取数 EXAM'
+  return status || '—'
+}
+
 function statusText(status: string) {
   if (status === 'CALCULATING') return '计算中'
   if (status === 'PENDING_MANUAL') return '待人工'
@@ -352,6 +386,9 @@ function statusText(status: string) {
 function rejectText(err: unknown) {
   if (err && typeof err === 'object' && 'code' in err) {
     const body = err as { code?: number; msg?: string }
+    if (body.code === 1156) return '1156 观察期不足：第 23 周前无基线数据'
+    if (body.code === 1155) return '1155 绩效月数据已锁定，更正须运营总监审批并留痕（PER-C-R4）'
+    if (body.code === 1001 && (body.msg || '').includes('审批意见')) return '1001 驳回须填写审批意见'
     return `${body.code ?? ''} ${body.msg || ''}`.trim()
   }
   return '请求失败'
