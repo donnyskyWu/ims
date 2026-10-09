@@ -71,6 +71,114 @@ def test_train_material_cates_create_list_offline():
     assert any(row["id"] == material_id for row in again.json()["data"]["list"])
 
 
+def test_train_material_list_filters_type_status_position_and_empty():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    token = uuid.uuid4().hex[:8]
+    doc_title = f"筛选文档 {token}"
+    link_title = f"筛选外链 {token}"
+
+    doc = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": doc_title,
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/filter-doc.pdf",
+            "positionCodes": ["R5"],
+            "publish": True,
+        },
+    )
+    link = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": link_title,
+            "cateId": cate_id,
+            "materialType": "LINK",
+            "linkUrl": "https://example.com/train-filter",
+            "positionCodes": ["R6"],
+            "publish": False,
+        },
+    )
+    assert doc.json()["code"] == 0
+    assert link.json()["code"] == 0
+    doc_id = doc.json()["data"]["id"]
+    link_id = link.json()["data"]["id"]
+
+    listed = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"title": token, "pageNo": 1, "pageSize": 20},
+    )
+    listed_body = listed.json()
+    assert listed_body["code"] == 0
+    ids = {row["id"] for row in listed_body["data"]["list"]}
+    assert ids == {doc_id, link_id}
+    assert listed_body["data"]["total"] == 2
+
+    by_type = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"title": token, "materialType": "LINK", "pageNo": 1, "pageSize": 20},
+    )
+    type_body = by_type.json()
+    assert type_body["code"] == 0
+    assert [row["id"] for row in type_body["data"]["list"]] == [link_id]
+    assert type_body["data"]["total"] == 1
+
+    by_status = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"title": token, "status": "DRAFT", "pageNo": 1, "pageSize": 20},
+    )
+    status_rows = by_status.json()["data"]["list"]
+    assert [row["id"] for row in status_rows] == [link_id]
+    assert status_rows[0]["status"] == "DRAFT"
+
+    by_pos = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"title": token, "positionCode": "R5", "pageNo": 1, "pageSize": 20},
+    )
+    pos_body = by_pos.json()
+    assert pos_body["code"] == 0
+    assert [row["id"] for row in pos_body["data"]["list"]] == [doc_id]
+    assert pos_body["data"]["list"][0]["positionCodes"] == ["R5"]
+
+    mismatch = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"title": token, "materialType": "DOC", "positionCode": "R6", "pageNo": 1, "pageSize": 20},
+    )
+    assert mismatch.json()["code"] == 0
+    assert mismatch.json()["data"]["total"] == 0
+    assert mismatch.json()["data"]["list"] == []
+
+    missing = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"title": f"missing-{token}", "pageNo": 1, "pageSize": 20},
+    )
+    assert missing.json()["data"]["total"] == 0
+
+    bad_type = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"materialType": "PDF"},
+    )
+    assert bad_type.json()["code"] == 1001
+
+    bad_pos = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"positionCode": 'R5"'},
+    )
+    assert bad_pos.json()["code"] == 1001
+
+
 def test_train_task_create_and_list():
     auth = headers()
     cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
