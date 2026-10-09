@@ -127,12 +127,26 @@
             </tr>
             <tr v-for="row in todoRows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.instanceNo }}</td>
-              <td>{{ row.templateName }}</td>
+              <td>
+                {{ row.templateName }}
+                <span v-if="row.formData?.accountNo">{{ row.formData.accountNo }}</span>
+              </td>
               <td>{{ row.nodeName }}</td>
               <td>{{ row.initiatorName || '—' }}</td>
               <td>
-                <span class="btn-txt btn" @click="handleTask(row, 'APPROVE')">通过</span>
-                <span class="btn-txt btn" style="color: var(--red)" @click="handleTask(row, 'REJECT')">驳回</span>
+                <button
+                  v-if="row.formData?.transferId"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="flow-acct-transfer-go"
+                  @click="router.push(transferFlowPath(row))"
+                >
+                  去处理
+                </button>
+                <template v-else>
+                  <span class="btn-txt btn" @click="handleTask(row, 'APPROVE')">通过</span>
+                  <span class="btn-txt btn" style="color: var(--red)" @click="handleTask(row, 'REJECT')">驳回</span>
+                </template>
               </td>
             </tr>
           </tbody>
@@ -228,14 +242,43 @@
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+
+const router = useRouter()
+
+function platformSlug(platform: string) {
+  const map: Record<string, string> = {
+    DOUYIN: 'douyin',
+    KUAISHOU: 'kuaishou',
+    XIAOHONGSHU: 'xiaohongshu',
+    WECHAT_OFFICIAL: 'wechat-official',
+    WECHAT_CHANNELS: 'wechat-channels',
+  }
+  return map[platform.trim().toUpperCase()] || 'douyin'
+}
+
+function transferFlowPath(row: { formData?: { transferId?: number; platform?: string } }) {
+  const id = row.formData?.transferId
+  if (!id) return ''
+  return `/ims/corp/account/${platformSlug(String(row.formData?.platform || 'DOUYIN'))}?transferId=${id}`
+}
 
 const tab = ref<'instance' | 'template' | 'todo' | 'timeout'>('instance')
 const loading = ref(false)
 const error = ref('')
 const total = ref(0)
 const instRows = ref<Record<string, unknown>[]>([])
-const todoRows = ref<{ id: number; instanceNo: string; templateName: string; nodeName: string; initiatorName: string }[]>([])
+const todoRows = ref<
+  {
+    id: number
+    instanceNo: string
+    templateName: string
+    nodeName: string
+    initiatorName: string
+    formData?: { transferId?: number; platform?: string; accountNo?: string }
+  }[]
+>([])
 const timeoutRows = ref<
   {
     id: number

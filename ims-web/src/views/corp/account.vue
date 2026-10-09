@@ -771,6 +771,10 @@
           <div class="mono">{{ transferConfirm.transferNo }}</div>
         </div>
         <div class="fld">
+          <label>账号</label>
+          <div class="mono">{{ transferConfirm.accountNo || '—' }}</div>
+        </div>
+        <div class="fld">
           <label>责任人</label>
           <div>{{ transferConfirm.fromUserName || '—' }} → {{ transferConfirm.toUserName || '—' }}</div>
         </div>
@@ -1083,6 +1087,7 @@ type TransferRow = {
   id: number
   transferNo: string
   accountId: number
+  accountNo: string
   toUserId: number
   fromUserId: number
   fromUserName: string
@@ -1298,6 +1303,30 @@ async function loadTransfers() {
   } catch {
     pendingByAccount.value = {}
   }
+  await openTransferFromQuery()
+}
+
+let openingTransferLink = false
+
+async function openTransferFromQuery() {
+  const transferId = Number(route.query.transferId || 0)
+  if (!transferId) return
+  const pending = Object.values(pendingByAccount.value).find((item) => Number(item.id) === transferId)
+  if (!pending) return
+  const hit = rows.value.find((row) => Number(row.id) === Number(pending.accountId))
+  if (!hit) {
+    if (openingTransferLink || keyword.value === pending.accountNo) return
+    openingTransferLink = true
+    keyword.value = pending.accountNo
+    pageNo.value = 1
+    try {
+      await load()
+    } finally {
+      openingTransferLink = false
+    }
+    return
+  }
+  if (!transferConfirmOpen.value) openTransferConfirm(pending)
 }
 
 async function loadRecharges() {
@@ -1968,6 +1997,13 @@ watch(
   () => [route.query.openId, route.query.tab],
   () => {
     applyDeepLink()
+  },
+)
+
+watch(
+  () => route.query.transferId,
+  () => {
+    void openTransferFromQuery()
   },
 )
 

@@ -1,6 +1,6 @@
 """CORP 账号领用 E2E 种子：池内抖音号 AC-E2E-POOL（幂等 / 可 refresh）。"""
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import engine
@@ -10,6 +10,8 @@ from app.models import (
     AccountRechargeVerify,
     AccountTimelineEvent,
     AccountTransfer,
+    FlowInstance,
+    FlowTask,
     Role,
     RoleMenu,
     RolePerm,
@@ -44,6 +46,8 @@ E2E_SUM_ACCOUNT_NO = "AC-E2E-SUM"
 E2E_SUM_NICK = "E2E汇总抖音"
 E2E_TAIL_ACCOUNT_NO = "AC-E2E-TAIL"
 E2E_TAIL_NICK = "E2E解锁导出抖音"
+E2E_XTODO_ACCOUNT_NO = "AC-E2E-XTODO"
+E2E_XTODO_NICK = "E2E流转待办抖音"
 E2E_SUM_DEPT_USER = "e2e_acct_sum"
 E2E_SUM_DEPT_NICK = "汇总部门"
 E2E_SUM_DEPT_ID = 70070
@@ -101,6 +105,7 @@ def ensure_acct_e2e_pool_account(db: Session, admin: User) -> None:
         _ensure_named_account(ops, admin, E2E_RECON_ACCOUNT_NO, E2E_RECON_NICK)
         _ensure_named_account(ops, admin, E2E_SUM_ACCOUNT_NO, E2E_SUM_NICK)
         _ensure_named_account(ops, admin, E2E_TAIL_ACCOUNT_NO, E2E_TAIL_NICK)
+        _ensure_named_account(ops, admin, E2E_XTODO_ACCOUNT_NO, E2E_XTODO_NICK)
         ops.commit()
     finally:
         ops.close()
@@ -250,6 +255,7 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
             E2E_RECON_ACCOUNT_NO,
             E2E_SUM_ACCOUNT_NO,
             E2E_TAIL_ACCOUNT_NO,
+            E2E_XTODO_ACCOUNT_NO,
         ):
             row = _account_row(ops, account_no)
             if row is None:
@@ -262,6 +268,39 @@ def refresh_acct_e2e_pool(db: Session, admin: User) -> None:
         ops.close()
     if not account_ids:
         return
+    transfer_ids = list(
+        db.scalars(select(AccountTransfer.id).where(AccountTransfer.account_id.in_(account_ids))).all()
+    )
+    e2e_nos = (
+        E2E_POOL_ACCOUNT_NO,
+        E2E_XFER_ACCOUNT_NO,
+        E2E_RECALL_ACCOUNT_NO,
+        E2E_UNFREEZE_ACCOUNT_NO,
+        E2E_RECON_ACCOUNT_NO,
+        E2E_SUM_ACCOUNT_NO,
+        E2E_TAIL_ACCOUNT_NO,
+        E2E_XTODO_ACCOUNT_NO,
+    )
+    db.execute(
+        delete(Todo).where(
+            Todo.task_type == "acct_transfer",
+            or_(*[Todo.content.like(f"%{no}%") for no in e2e_nos]),
+        )
+    )
+    flow_ids = set(
+        db.scalars(select(FlowInstance.id).where(FlowInstance.title.like("账号流转 AC-E2E-%"))).all()
+    )
+    if transfer_ids:
+        flow_ids.update(
+            db.scalars(
+                select(FlowInstance.id).where(
+                    FlowInstance.business_key.in_([f"ACCT-TRF-{item}" for item in transfer_ids])
+                )
+            ).all()
+        )
+    if flow_ids:
+        db.execute(delete(FlowTask).where(FlowTask.instance_id.in_(flow_ids)))
+        db.execute(delete(FlowInstance).where(FlowInstance.id.in_(flow_ids)))
     db.execute(delete(AccountTimelineEvent).where(AccountTimelineEvent.account_id.in_(account_ids)))
     db.execute(delete(AccountApply).where(AccountApply.account_id.in_(account_ids)))
     db.execute(delete(AccountRecharge).where(AccountRecharge.account_id.in_(account_ids)))
