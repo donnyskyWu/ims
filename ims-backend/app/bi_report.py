@@ -366,6 +366,20 @@ PREVIEW_TABLE = [
     {"platform": "斗鱼", "gmv": 96700, "orders": 322, "mom": "-2.1%"},
     {"platform": "快手", "gmv": 61200, "orders": 204, "mom": "-2.1%"},
 ]
+# 预览指标卡的本地样本窗。落在窗外时只空指标卡，不下钻过滤（下钻过滤属查询性能切片）。
+SAMPLE_FROM = "2026-09-01"
+SAMPLE_TO = "2026-10-03"
+
+
+def preview_day(raw: str) -> str | None:
+    text = (raw or "").strip()[:10]
+    if not text:
+        return ""
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return text
 
 DRILL_CHILDREN = {
     "抖音": [{"account": "神鱼官方", "gmv": 120000, "orders": 400, "mom": "+5.1%"}],
@@ -388,22 +402,50 @@ def report_preview_run(
             if not report_row_visible(db, row, actor, request.state.scope):
                 return fail(1008, "无权查看该报表")
             title = row.report_name
+    day_from = preview_day(body.dateFrom)
+    day_to = preview_day(body.dateTo)
+    if day_from is None or day_to is None:
+        return fail(1001, "日期格式应为 yyyy-MM-dd")
+    if day_from and day_to and day_from > day_to:
+        return fail(1001, "开始日期不能晚于结束日期")
+    outside = bool(day_from and day_to and (day_to < SAMPLE_FROM or day_from > SAMPLE_TO))
     t0 = time.perf_counter()
     rows = [dict(r) for r in PREVIEW_TABLE]
-    if body.platform:
+    if body.platform and not outside:
         plat = body.platform.strip()
         rows = [r for r in rows if r["platform"] == plat] or rows[:1]
     elapsed = int((time.perf_counter() - t0) * 1000) + 856
+    filters = {
+        "dateFrom": day_from or body.dateFrom,
+        "dateTo": day_to or body.dateTo,
+        "ipGroupId": body.ipGroupId,
+        "platform": body.platform,
+        "timeGrain": body.timeGrain,
+    }
+    if outside:
+        return ok(
+            {
+                "reportTitle": title,
+                "filters": filters,
+                "kpis": [],
+                "trend": [],
+                "pie": [],
+                "columns": ["platform", "gmv", "orders", "mom"],
+                "rows": [],
+                "total": 0,
+                "drillPath": [],
+                "queryCostMs": elapsed,
+                "cacheHit": False,
+                "dataAsOf": "2026-10-03T14:00:00+08:00",
+                "dataset": "METRIC_LIB",
+                "empty": True,
+                "emptyReason": "当前筛选下暂无指标",
+            }
+        )
     return ok(
         {
             "reportTitle": title,
-            "filters": {
-                "dateFrom": body.dateFrom,
-                "dateTo": body.dateTo,
-                "ipGroupId": body.ipGroupId,
-                "platform": body.platform,
-                "timeGrain": body.timeGrain,
-            },
+            "filters": filters,
             "kpis": [
                 {"label": "GMV（近 30 天累计）", "value": "¥412.8 万", "delta": "+18.6%"},
                 {"label": "直播场次", "value": "14 场", "delta": "覆盖 4 平台"},
@@ -419,6 +461,8 @@ def report_preview_run(
             "cacheHit": True,
             "dataAsOf": "2026-10-03T14:00:00+08:00",
             "dataset": "METRIC_LIB",
+            "empty": False,
+            "emptyReason": "",
         }
     )
 

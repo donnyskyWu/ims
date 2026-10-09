@@ -671,6 +671,7 @@ def issue_export(actor_id: int, body: bytes, media: str, filename: str) -> dict:
     return {
         "downloadUrl": f"/admin-api/ims/dc/trace/export/file?token={token}",
         "expiresIn": EXPORT_TTL_SEC,
+        "fileName": filename,
     }
 
 
@@ -1219,15 +1220,18 @@ def trace_export(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    if format not in {"XLSX", "PDF"}:
+    fmt = (format or "").strip().upper()
+    if fmt not in {"XLSX", "PDF"}:
         return fail(1001, "format 仅支持 XLSX 或 PDF")
     if entryType not in ENTRY_TYPES:
         return fail(1001, "entryType 无效")
+    if not (entryId or "").strip():
+        return fail(1001, "entryId 不能为空")
     started = time.perf_counter()
-    sessions = load_entry_sessions(db, tenant_of(actor), entryType, entryId)
+    sessions = load_entry_sessions(db, tenant_of(actor), entryType, entryId.strip())
     elapsed = round((time.perf_counter() - started) * 1000, 1)
     matrix = export_matrix(db, tenant_of(actor), sessions, elapsed)
-    if format == "PDF":
+    if fmt == "PDF":
         body = build_pdf(matrix_lines(matrix))
         media = "application/pdf"
         filename = "dc_trace_report.pdf"
@@ -1235,7 +1239,9 @@ def trace_export(
         body = build_xlsx(matrix)
         media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         filename = "dc_trace_report.xlsx"
-    return ok(issue_export(actor.id, body, media, filename))
+    payload = issue_export(actor.id, body, media, filename)
+    payload["sessionCount"] = len(sessions)
+    return ok(payload)
 
 
 @router.get("/export/file")

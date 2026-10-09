@@ -9,6 +9,7 @@
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-drill-reset" @click="resetDrill">重置路径</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-xlsx" @click="exportDrill('XLSX')">导出 XLSX</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-csv" @click="exportDrill('CSV')">导出 CSV</button>
+        <router-link class="btn btn-sec btn-sm" data-testid="bi-workbench-link" to="/ims/workbench/messages?sourceModule=BI">工作台通知</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/list">← 返回列表</router-link>
       </div>
     </div>
@@ -17,26 +18,36 @@
       <b>{{ preview?.reportTitle || '运营日报' }}</b>
       <span class="chip">预览模式</span>
       <span class="sp"></span>
-      <input v-model="filters.dateFrom" type="date" />
+      <input v-model="filters.dateFrom" data-testid="bi-filter-from" type="date" />
       <span class="csub">至</span>
-      <input v-model="filters.dateTo" type="date" />
-      <select v-model="filters.platform" style="width: 110px">
+      <input v-model="filters.dateTo" data-testid="bi-filter-to" type="date" />
+      <select v-model="filters.platform" data-testid="bi-filter-platform" style="width: 110px">
         <option value="">全部平台</option>
         <option value="抖音">抖音</option>
         <option value="视频号">视频号</option>
         <option value="斗鱼">斗鱼</option>
         <option value="快手">快手</option>
       </select>
-      <button class="btn btn-pri btn-sm" type="button" @click="runPreview">查询</button>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="bi-filter-run" @click="runPreview({ user: true })">查询</button>
     </div>
+    <p v-if="filterRestored" class="hint" data-testid="bi-filter-restored">已恢复上次筛选</p>
+    <p v-if="filterError" class="hint bad" data-testid="bi-filter-error">{{ filterError }}</p>
 
     <p v-if="preview" class="csub" style="margin-top: 8px">
       数据截至 {{ preview.dataAsOf }} · 耗时 {{ preview.queryCostMs }}ms ·
       {{ preview.cacheHit ? '缓存命中 ✓' : '未命中' }} · {{ preview.total }} 行 · {{ preview.dataset }}
     </p>
 
-    <div v-if="preview?.kpis" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px">
-      <div v-for="k in preview.kpis" :key="k.label" class="card">
+    <div
+      v-if="widgetEmpty"
+      class="empty"
+      data-testid="bi-widget-empty"
+      style="margin-top: 12px"
+    >
+      <div class="et">{{ widgetEmptyReason }}</div>
+    </div>
+    <div v-else-if="kpiCards.length" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px">
+      <div v-for="k in kpiCards" :key="k.label" class="card" data-testid="bi-widget-kpi">
         <div style="font-size: 20px; font-weight: 600">{{ k.value }}</div>
         <div class="csub">{{ k.label }}</div>
         <div class="csub" style="color: var(--green)">{{ k.delta }}</div>
@@ -48,9 +59,18 @@
         <button type="button" class="btn btn-txt btn-sm" :data-testid="`bi-crumb-${c.key}`" @click="rollUp(i)">
           {{ c.label }} {{ c.value }}
         </button>
-        <span> → </span>
+        <span data-testid="bi-crumb-sep"> ▸ </span>
       </template>
       <b data-testid="bi-drill-dimension" :data-dimension="currentKey">{{ currentLabel }}</b>
+      <button
+        v-if="crumbs.length"
+        type="button"
+        class="btn btn-txt btn-sm"
+        data-testid="bi-drill-rollup"
+        @click="rollUpOne"
+      >
+        返回上卷
+      </button>
     </div>
     <p v-if="drillToast" class="hint bad" data-testid="bi-drill-toast">{{ drillToast }}</p>
     <p v-if="exportNote" class="hint" data-testid="bi-export-note">{{ exportNote }}</p>
@@ -61,7 +81,10 @@
       <div class="csub mono">{{ jump.jumpUrl }}</div>
     </div>
 
-    <div v-if="tableRows.length" class="tbl-block" style="margin-top: 12px">
+    <div v-if="!tableRows.length && drillReady" class="empty" data-testid="bi-drill-empty" style="margin-top: 12px">
+      <div class="et">当前层暂无下钻数据</div>
+    </div>
+    <div v-else-if="tableRows.length" class="tbl-block" style="margin-top: 12px">
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -99,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 
@@ -122,12 +145,52 @@ const drillToast = ref('')
 const exportNote = ref('')
 const drillMeta = ref('')
 const jump = ref<Jump | null>(null)
+const filterRestored = ref(false)
+const filterError = ref('')
+const drillReady = ref(false)
+const FILTER_KEY = 'ims.bi.preview.filters'
 const filters = reactive({
   dateFrom: '2026-09-01',
   dateTo: '2026-10-03',
   platform: '',
   reportId: route.query.reportId ? Number(route.query.reportId) : undefined,
 })
+
+const kpiCards = computed(() => {
+  const raw = preview.value?.kpis
+  return Array.isArray(raw) ? (raw as Array<{ label: string; value: string; delta: string }>) : []
+})
+const widgetEmpty = computed(() => Boolean(preview.value && preview.value.empty))
+const widgetEmptyReason = computed(() => String(preview.value?.emptyReason || '当前筛选下暂无指标'))
+
+function filterStorageKey() {
+  return `${FILTER_KEY}:${filters.reportId ?? ''}`
+}
+
+function persistFilters() {
+  sessionStorage.setItem(
+    filterStorageKey(),
+    JSON.stringify({
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      platform: filters.platform,
+    }),
+  )
+}
+
+function restoreFilters() {
+  const raw = sessionStorage.getItem(filterStorageKey())
+  if (!raw) return false
+  try {
+    const saved = JSON.parse(raw) as { dateFrom?: string; dateTo?: string; platform?: string }
+    if (typeof saved.dateFrom === 'string') filters.dateFrom = saved.dateFrom
+    if (typeof saved.dateTo === 'string') filters.dateTo = saved.dateTo
+    if (typeof saved.platform === 'string') filters.platform = saved.platform
+    return true
+  } catch {
+    return false
+  }
+}
 
 function rejected(error: unknown): { code: number; msg: string } | null {
   if (error && typeof error === 'object' && 'code' in error) {
@@ -154,18 +217,32 @@ async function loadTree() {
   }
 }
 
-async function runPreview() {
+async function runPreview(options?: { user?: boolean }) {
+  if (options?.user) filterRestored.value = false
+  filterError.value = ''
+  if (filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo) {
+    filterError.value = '开始日期不能晚于结束日期'
+    persistFilters()
+    return
+  }
+  persistFilters()
   crumbs.value = []
   jump.value = null
   drillToast.value = ''
-  const res = await http.post('/bi/report/preview/run', {
-    reportId: filters.reportId,
-    dateFrom: filters.dateFrom,
-    dateTo: filters.dateTo,
-    platform: filters.platform,
-    timeGrain: 'DAY',
-  })
-  if (res.data.code === 0) preview.value = res.data.data
+  try {
+    const res = await http.post('/bi/report/preview/run', {
+      reportId: filters.reportId,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      platform: filters.platform,
+      timeGrain: 'DAY',
+    })
+    preview.value = res.data.data
+  } catch (error: unknown) {
+    const body = rejected(error)
+    filterError.value = body ? `${body.code} ${body.msg}` : errorMessage(error)
+    return
+  }
   const root = chain.value[0]?.dimensionKey || 'PLATFORM'
   await loadLevel([root], {}, 'DOWN')
 }
@@ -181,6 +258,7 @@ async function loadLevel(path: string[], filter: Record<string, string>, directi
     })
     const data = res.data.data
     tableRows.value = data.rows || []
+    drillReady.value = true
     currentKey.value = data.dimensionKey || path[path.length - 1]
     currentLabel.value = data.dimensionLabel || currentLabel.value
     filterContext.value = filter
@@ -223,8 +301,13 @@ async function rollUp(index: number) {
   if (ok) crumbs.value = crumbs.value.slice(0, index)
 }
 
+function rollUpOne() {
+  if (!crumbs.value.length) return
+  rollUp(crumbs.value.length - 1)
+}
+
 function resetDrill() {
-  runPreview()
+  runPreview({ user: true })
 }
 
 async function cellDrill(row: DrillRow) {
@@ -283,16 +366,20 @@ async function exportDrill(format: 'XLSX' | 'CSV') {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(anchor.href)
-    const sample = tableRows.value[0]?.dimensionValue || currentLabel.value
-    exportNote.value = `已导出 ${fileName} · ${currentLabel.value} · ${sample}`
+    const sample = tableRows.value[0]?.dimensionValue || (tableRows.value.length ? currentLabel.value : '表头')
+    const ttl = Number(data.expiresIn ?? 60)
+    const emptyNote = tableRows.value.length ? '' : ' · 当前层无数据，已导出表头'
+    exportNote.value = `已导出 ${fileName} · ${currentLabel.value} · ${sample} · ${ttl} 秒内有效${emptyNote}`
   } catch (error: unknown) {
     const body = rejected(error)
     exportNote.value = ''
-    drillToast.value = body ? `${body.code} ${body.msg}` : errorMessage(error)
+    drillToast.value =
+      body?.code === 1002 ? '下载链接已过期，请重新导出' : body ? `${body.code} ${body.msg}` : errorMessage(error)
   }
 }
 
 onMounted(async () => {
+  filterRestored.value = restoreFilters()
   await loadTree()
   await runPreview()
 })
