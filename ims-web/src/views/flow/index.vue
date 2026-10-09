@@ -265,6 +265,7 @@
               <td colspan="8">
                 <div class="empty" data-testid="flow-template-empty">
                   <div class="et">{{ templateEmptyText }}</div>
+                  <div v-if="!error && templateEmptyHint" class="es">{{ templateEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -305,12 +306,15 @@
           </select>
         </div>
         <div class="fld">
-          <label>标题</label>
+          <label>标题（必填 · ≤256）</label>
           <input v-model="startForm.title" data-testid="flow-start-title" placeholder="formData.title" />
+          <p class="hint" :class="{ bad: startTitle.length > 256 }">{{ startTitle.length }}/256</p>
         </div>
         <div class="fld">
-          <label>businessKey（可选 · 幂等）</label>
+          <label>businessKey（可选 · 幂等 · ≤64）</label>
           <input v-model="startForm.businessKey" data-testid="flow-start-key" />
+          <p class="hint" data-testid="flow-start-idem-hint">同一 businessKey 再次提交会沿用原单，不会新建</p>
+          <p class="hint" :class="{ bad: startKey.length > 64 }">{{ startKey.length }}/64</p>
         </div>
       </template>
       <p v-if="startMsg" class="hint" :class="{ bad: startErr }" data-testid="flow-start-msg">{{ startMsg }}</p>
@@ -352,6 +356,38 @@
         </div>
       </div>
     </div>
+
+    <ProtoDrawer :open="approveOpen" title="通过待办" width="480px" @close="closeApprove">
+      <p class="hint" data-testid="flow-approve-copy">意见可选，不超过 512 字。留空按无意见通过。</p>
+      <p v-if="approveTarget" class="csub">{{ approveTarget.instanceNo }} · {{ approveTarget.nodeName }}</p>
+      <div class="fld">
+        <label>补充表单</label>
+        <div v-if="!approveFormPairs.length" class="empty" data-testid="flow-approve-form-empty" style="padding: 12px">
+          <div class="et">暂无补充表单</div>
+        </div>
+        <ul v-else data-testid="flow-approve-form" style="margin: 0; padding-left: 18px">
+          <li v-for="pair in approveFormPairs" :key="pair[0]">{{ pair[0] }}：{{ pair[1] }}</li>
+        </ul>
+      </div>
+      <div class="fld">
+        <label>审批意见</label>
+        <textarea v-model="approveComment" data-testid="flow-approve-comment" rows="3" placeholder="可不填" />
+      </div>
+      <p class="hint" :class="{ bad: approveComment.trim().length > 512 }">{{ approveComment.trim().length }}/512</p>
+      <p v-if="approveMsg" class="hint err" data-testid="flow-approve-msg">{{ approveMsg }}</p>
+      <template #footer>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="flow-approve-cancel" @click="closeApprove">取消</button>
+        <button
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="flow-approve-confirm"
+          :disabled="approveSaving"
+          @click="submitApprove"
+        >
+          {{ approveSaving ? '提交中…' : '确认通过' }}
+        </button>
+      </template>
+    </ProtoDrawer>
 
     <div v-if="previewOpen" class="modal-mask" data-testid="flow-template-preview" @click.self="previewOpen = false">
       <div class="modal-card" style="width: min(480px, 92vw)">
@@ -411,7 +447,7 @@ const todoRows = ref<
     initiatorName: string
     slaDeadline?: string
     slaTone?: string
-    formData?: { transferId?: number; platform?: string; accountNo?: string }
+    formData?: { transferId?: number; platform?: string; accountNo?: string; title?: string; [key: string]: string | number | null | undefined }
   }[]
 >([])
 const todoBadge = ref(0)
@@ -459,10 +495,27 @@ const todoEmptyText = computed(() => {
 })
 const templateEmptyText = computed(() => {
   if (error.value) return error.value
-  if (tplFilters.value.status === 'DRAFT') return '暂无草稿模板'
-  if (tplFilters.value.status === 'DISABLED') return '暂无停用模板'
-  if (tplFilters.value.templateName.trim() || tplFilters.value.businessDomain) return '没有符合条件的模板'
+  const name = tplFilters.value.templateName.trim()
+  const domain = tplFilters.value.businessDomain
+  const status = tplFilters.value.status
+  if (status === 'DRAFT') return '暂无草稿模板'
+  if (status === 'DISABLED') return '暂无停用模板'
+  if (status === 'PUBLISHED' && !name && !domain) return '暂无已发布模板'
+  if (domain && !name && !status) return '该业务域暂无模板'
+  if (name || domain || status) return '没有符合条件的模板'
   return '暂无模板'
+})
+const templateEmptyHint = computed(() => {
+  if (error.value) return ''
+  const name = tplFilters.value.templateName.trim()
+  const domain = tplFilters.value.businessDomain
+  const status = tplFilters.value.status
+  if (status === 'DRAFT') return '草稿只能预览，发布后才能发起'
+  if (status === 'DISABLED') return '停用后不可发起新实例，在途实例仍按原版本运行'
+  if (status === 'PUBLISHED' && !name && !domain) return '发布模板后才能发起流程'
+  if (domain && !name && !status) return '换一个业务域，或点重置查看全部模板'
+  if (name || domain || status) return '调整名称、业务域或状态后再查询'
+  return ''
 })
 const timeoutEmptyText = computed(() => {
   if (error.value) return error.value
@@ -487,6 +540,22 @@ const startMsg = ref('')
 const startErr = ref(false)
 const publishedTemplates = ref<{ id: number; templateCode: string; templateName: string }[]>([])
 const startForm = ref({ templateId: 0, title: '', businessKey: '' })
+const startTitle = computed(() => startForm.value.title.trim())
+const startKey = computed(() => startForm.value.businessKey.trim())
+const approveOpen = ref(false)
+const approveSaving = ref(false)
+const approveComment = ref('')
+const approveMsg = ref('')
+const approveTarget = ref<{
+  id: number
+  instanceNo: string
+  nodeName: string
+  formData?: Record<string, string | number | null | undefined>
+} | null>(null)
+const approveFormPairs = computed(() => {
+  const data = approveTarget.value?.formData || {}
+  return Object.entries(data).filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '')
+})
 const urgeOpen = ref(false)
 const urgeSaving = ref(false)
 const urgeMessage = ref(URGE_DEFAULT)
@@ -680,18 +749,74 @@ async function refreshTodoBadge() {
   }
 }
 
-async function handleTask(row: { id: number }, action: 'APPROVE' | 'REJECT') {
-  const label = action === 'APPROVE' ? '通过' : '驳回'
-  const entered = window.prompt(`${label}意见（可选，驳回建议填写）`, action === 'APPROVE' ? '同意' : '')
+function openApprove(row: {
+  id: number
+  instanceNo: string
+  nodeName: string
+  formData?: Record<string, string | number | null | undefined>
+}) {
+  approveTarget.value = row
+  approveComment.value = ''
+  approveMsg.value = ''
+  approveOpen.value = true
+}
+
+function closeApprove() {
+  if (approveSaving.value) return
+  approveOpen.value = false
+}
+
+async function submitApprove() {
+  const row = approveTarget.value
+  if (!row) return
+  const comment = approveComment.value.trim()
+  if (comment.length > 512) {
+    approveMsg.value = '审批意见不能超过 512 字'
+    return
+  }
+  approveSaving.value = true
+  approveMsg.value = ''
+  handleHint.value = ''
+  handleHintErr.value = false
+  try {
+    const res = await http.put(`/flow/task/${row.id}/handle`, { action: 'APPROVE', comment })
+    const hint = String(res.data.data?.commentHint || '')
+    handleHint.value = hint ? `通过成功。${hint}` : '通过成功'
+    approveOpen.value = false
+    await loadTodos()
+    await refreshTodoBadge()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    approveMsg.value = body?.msg || (e instanceof Error ? e.message : '网络错误')
+    if (body?.code === 1135 || String(body?.msg || '').includes('已处理')) {
+      approveOpen.value = false
+      await loadTodos()
+    }
+  } finally {
+    approveSaving.value = false
+  }
+}
+
+async function handleTask(row: { id: number; instanceNo?: string; nodeName?: string }, action: 'APPROVE' | 'REJECT') {
+  if (action === 'APPROVE') {
+    openApprove({
+      id: row.id,
+      instanceNo: row.instanceNo || '',
+      nodeName: row.nodeName || '',
+      formData: (row as { formData?: Record<string, string | number | null | undefined> }).formData,
+    })
+    return
+  }
+  const entered = window.prompt('驳回意见（可选，驳回建议填写）', '')
   if (entered === null) return
-  if (!confirm(`确认${label}该待办？`)) return
+  if (!confirm('确认驳回该待办？')) return
   handleHint.value = ''
   handleHintErr.value = false
   try {
     const res = await http.put(`/flow/task/${row.id}/handle`, { action, comment: entered })
     const hint = String(res.data.data?.commentHint || '')
     handleHintErr.value = false
-    handleHint.value = hint ? `${label}成功。${hint}` : `${label}成功`
+    handleHint.value = hint ? `驳回成功。${hint}` : '驳回成功'
     await loadTodos()
     await refreshTodoBadge()
   } catch (e: unknown) {
@@ -823,8 +948,23 @@ async function openStart() {
 }
 
 async function submitStart() {
-  if (!startForm.value.templateId || !startForm.value.title.trim()) {
-    startMsg.value = '请选择模板并填写标题'
+  if (!startForm.value.templateId) {
+    startMsg.value = '请选择模板'
+    startErr.value = true
+    return
+  }
+  if (!startTitle.value) {
+    startMsg.value = '请填写标题'
+    startErr.value = true
+    return
+  }
+  if (startTitle.value.length > 256) {
+    startMsg.value = '标题不能超过 256 字'
+    startErr.value = true
+    return
+  }
+  if (startKey.value.length > 64) {
+    startMsg.value = 'businessKey 不能超过 64 字'
     startErr.value = true
     return
   }
@@ -834,21 +974,23 @@ async function submitStart() {
   try {
     const payload: Record<string, unknown> = {
       templateId: startForm.value.templateId,
-      formData: { title: startForm.value.title.trim() },
+      formData: { title: startTitle.value },
     }
-    if (startForm.value.businessKey.trim()) payload.businessKey = startForm.value.businessKey.trim()
+    if (startKey.value) payload.businessKey = startKey.value
     const res = await http.post('/flow/instance', payload)
-    if (res.data.code !== 0) {
-      startMsg.value = res.data.msg || '发起失败'
-      startErr.value = true
+    const data = res.data.data || {}
+    if (data.idempotent) {
+      startMsg.value = `该 businessKey 已发起过，沿用原单 ${data.instanceNo}（未新建）`
+      startErr.value = false
       return
     }
-    startMsg.value = `已发起：${res.data.data.instanceNo}`
+    startMsg.value = `已发起：${data.instanceNo}`
     startOpen.value = false
     tab.value = 'instance'
     await loadInstances()
   } catch (e: unknown) {
-    startMsg.value = e instanceof Error ? e.message : '网络错误'
+    const body = rejectedBody(e)
+    startMsg.value = body?.msg || (e instanceof Error ? e.message : '网络错误')
     startErr.value = true
   } finally {
     startLoading.value = false

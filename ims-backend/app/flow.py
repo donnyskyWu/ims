@@ -729,6 +729,8 @@ def flow_instance_start(
     tenant_id = tenant_of(actor)
     seed_flow(db, tenant_id, actor.id)
     biz_key = (body.businessKey or "").strip() or None
+    if biz_key and len(biz_key) > 64:
+        return fail(1001, "businessKey 不能超过 64 字")
     if biz_key:
         existing = db.scalar(
             select(FlowInstance).where(
@@ -743,7 +745,9 @@ def flow_instance_start(
                 return fail(1001, "模板不存在")
             ensure_pending_task(db, existing, tenant_id, actor.id, existing.current_node_name)
             names = user_names(db, [existing.initiator_user_id, actor.id])
-            return ok(instance_start_vo(existing, tpl, actor, names))
+            replay = instance_start_vo(existing, tpl, actor, names)
+            replay["idempotent"] = True
+            return ok(replay)
 
     tpl = db.get(FlowTemplate, body.templateId)
     if tpl is None or tpl.deleted or tpl.tenant_id != tenant_id:
@@ -755,6 +759,8 @@ def flow_instance_start(
     title = str(form.get("title") or form.get("subject") or "").strip()
     if not title:
         return fail(1001, "formData.title 必填")
+    if len(title) > 256:
+        return fail(1001, "标题不能超过 256 字")
 
     first_node = FIRST_NODE_BY_CODE.get(tpl.template_code, "审批节点")
     now = utcnow()
@@ -863,7 +869,9 @@ def flow_task_handle(
         inst.form_data = merged
 
     now = utcnow()
-    comment = (body.comment or "").strip()[:512]
+    comment = (body.comment or "").strip()
+    if len(comment) > 512:
+        return fail(1001, "审批意见不能超过 512 字")
     task.comment = comment
     task.handled_at = now
     task.updated_at = now
