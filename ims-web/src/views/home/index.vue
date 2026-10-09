@@ -48,7 +48,7 @@
       <div class="card">
         <div class="hd-row">
           <h3>播放 / 互动</h3>
-          <span class="csub">占位趋势 · 不请求 Football</span>
+          <span class="csub">占位趋势 · 不请求 Football · 不随筛选变化</span>
         </div>
         <div v-if="dashReady && !trend.length" class="empty" data-testid="home-trend-empty">
           <div class="et">暂无播放趋势</div>
@@ -68,7 +68,10 @@
           <span class="csub">不请求 OPS</span>
         </div>
         <div v-if="!dashReady" class="empty"><div class="et">加载中</div></div>
-        <div v-else-if="!todos.length" class="empty" data-testid="home-todo-empty"><div class="et">暂无待办</div></div>
+        <div v-else-if="!todos.length" class="empty" data-testid="home-todo-empty">
+          <div class="et">暂无待办</div>
+          <div class="es">审核、工作任务和采集失败会列在这里，且不按 IP 组或日期过滤。</div>
+        </div>
         <div
           v-for="(row, idx) in todos"
           v-else
@@ -121,6 +124,7 @@
         <div style="font-size: 12px; font-weight: 500">{{ sc.name }}</div>
       </div>
     </div>
+    <p v-if="filterNote" class="hint" data-testid="home-filter-note">{{ filterNote }}</p>
   </div>
 </template>
 
@@ -133,6 +137,7 @@ const router = useRouter()
 const kpis = ref<{ key: string; label: string; value: string; wow?: string }[]>([])
 const todos = ref<{ type: string; title: string; bizId: string; url: string }[]>([])
 const shortcuts = ref<{ code: string; name: string; route: string }[]>([])
+const filterNote = ref('')
 const trend = ref<{ label: string; play: number; engage: number }[]>([])
 const ipGroupOutput = ref<{ label: string; value: number }[]>([])
 const error = ref('')
@@ -245,6 +250,7 @@ async function loadDashboard() {
     const data = res.data.data
     dashBlocked.value = false
     kpis.value = data.kpis || []
+    filterNote.value = typeof data.filterNote === 'string' ? data.filterNote : ''
     todos.value = data.todos || []
     shortcuts.value = data.shortcuts || []
     trend.value = data.trendPlayEngage || []

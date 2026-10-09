@@ -8,17 +8,26 @@
       <div class="card stat">
         <span class="l">待办预览</span>
         <div class="n">{{ dashReady ? dash.todoCount ?? '—' : '—' }}</div>
-        <div class="d">{{ dashError || 'GET /auth/workbench/dashboard' }}</div>
+        <div class="d" data-testid="wb-todo-hint">{{ todoWidgetHint }}</div>
+        <button
+          v-if="dashReady && dashError"
+          class="btn btn-txt btn-sm"
+          type="button"
+          data-testid="wb-dash-retry"
+          @click="load"
+        >
+          重试
+        </button>
       </div>
       <router-link class="card stat hov" to="/ims/flow" style="text-decoration: none; color: inherit">
         <span class="l">流程待办</span>
         <div class="n">{{ dashReady ? dash.flowTodoCount ?? '—' : '—' }}</div>
-        <div class="d">GET /flow/task/my-todo · 流程管理</div>
+        <div class="d" data-testid="wb-flow-hint">{{ flowWidgetHint }}</div>
       </router-link>
       <div class="card stat">
         <span class="l">未读消息</span>
         <div class="n">{{ dashReady ? dash.unreadMessageCount ?? '—' : '—' }}</div>
-        <div class="d">{{ dashError || 'GET /auth/workbench/dashboard' }}</div>
+        <div class="d" data-testid="wb-unread-hint">{{ unreadWidgetHint }}</div>
       </div>
     </div>
     <div class="g4" data-testid="wb-mine-cards">
@@ -64,7 +73,19 @@
             </tr>
             <tr v-else-if="!flowTodos.length">
               <td colspan="3" style="white-space: normal">
-                <div class="empty"><div class="et">{{ flowError || '暂无流程待办' }}</div></div>
+                <div class="empty">
+                  <div class="et">{{ flowError ? '加载失败' : '暂无流程待办' }}</div>
+                  <div v-if="flowError" class="es">{{ flowError }}</div>
+                  <button
+                    v-if="flowError"
+                    class="btn btn-txt btn-sm"
+                    type="button"
+                    data-testid="wb-flow-retry"
+                    @click="load"
+                  >
+                    重试
+                  </button>
+                </div>
               </td>
             </tr>
             <tr
@@ -116,7 +137,19 @@
             </tr>
             <tr v-else-if="!todos.length">
               <td colspan="4" style="white-space: normal">
-                <div class="empty"><div class="et">{{ todoError || '没有待办' }}</div></div>
+                <div class="empty">
+                  <div class="et">{{ todoError ? '加载失败' : '没有待办' }}</div>
+                  <div v-if="todoError" class="es">{{ todoError }}</div>
+                  <button
+                    v-if="todoError"
+                    class="btn btn-txt btn-sm"
+                    type="button"
+                    data-testid="wb-todo-retry"
+                    @click="load"
+                  >
+                    重试
+                  </button>
+                </div>
               </td>
             </tr>
             <tr
@@ -192,7 +225,19 @@
             </tr>
             <tr v-else-if="!messages.length">
               <td colspan="3" style="white-space: normal">
-                <div class="empty"><div class="et">{{ msgError || '没有消息' }}</div></div>
+                <div class="empty">
+                  <div class="et">{{ msgError ? '加载失败' : '没有消息' }}</div>
+                  <div v-if="msgError" class="es">{{ msgError }}</div>
+                  <button
+                    v-if="msgError"
+                    class="btn btn-txt btn-sm"
+                    type="button"
+                    data-testid="wb-msg-retry"
+                    @click="load"
+                  >
+                    重试
+                  </button>
+                </div>
               </td>
             </tr>
             <tr v-for="(row, index) in messages" v-else :key="String(row.id ?? index)">
@@ -289,7 +334,7 @@ const hello = computed(() => {
 })
 const dashLine = computed(() => {
   if (!dashReady.value) return '正在读取工作台'
-  if (dashError.value) return dashError.value
+  if (dashError.value) return '工作台加载失败'
   const flow = dash.flowTodoCount ?? '—'
   return `待办 ${dash.todoCount ?? '—'} · 流程 ${flow} · 未读 ${dash.unreadMessageCount ?? '—'}`
 })
@@ -346,6 +391,23 @@ const mineCards = computed(() => {
     },
   ]
 })
+
+function widgetHint(ready: boolean, error: string, count: number | undefined, zero: string, normal: string) {
+  if (!ready) return '正在读取'
+  if (error) return '加载失败'
+  if ((count ?? 0) === 0) return zero
+  return normal
+}
+
+const todoWidgetHint = computed(() =>
+  widgetHint(dashReady.value, dashError.value, dash.todoCount, '暂无待办', '本人待处理'),
+)
+const flowWidgetHint = computed(() =>
+  widgetHint(dashReady.value, dashError.value, dash.flowTodoCount, '暂无流程待办', '待我处理的流程'),
+)
+const unreadWidgetHint = computed(() =>
+  widgetHint(dashReady.value, dashError.value, dash.unreadMessageCount, '暂无未读', '站内未读'),
+)
 
 async function load() {
   const board = await readData('/auth/workbench/dashboard')

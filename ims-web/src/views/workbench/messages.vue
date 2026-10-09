@@ -160,10 +160,17 @@ const emptyText = computed(() => {
   if (sourceModule.value) return `来源 ${sourceModule.value} 暂无消息`
   if (filters.channel === 'DINGTALK') return '没有钉钉消息'
   if (filters.channel === 'IN_APP') return '没有站内消息'
+  if (filters.keyword.trim() && filters.read === 'true') return '没有匹配的已读消息'
+  if (filters.keyword.trim() && filters.read === 'false') return '没有匹配的未读消息'
   if (filters.keyword.trim()) return '没有匹配的消息'
+  if (filters.read === 'true') return '没有已读消息'
+  if (filters.read === 'false') return '暂无未读消息'
   return '暂无消息'
 })
 const emptyHint = computed(() => {
+  if (filters.keyword.trim() && filters.read === 'true' && !filters.channel) return '已读列表里没有这个标题或摘要。'
+  if (filters.keyword.trim() && filters.read === 'false' && !filters.channel) return '未读列表里没有这个标题或摘要。'
+  if (filters.read === 'true' && !filters.channel && !filters.keyword.trim()) return '已读消息会出现在这里。'
   if (filters.channel || filters.keyword.trim()) return '换一个类型或关键词再查。站内与钉钉分开展示。'
   return '未读消息会列在这里。'
 })
