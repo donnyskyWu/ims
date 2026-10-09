@@ -66,6 +66,7 @@ test.describe('content ComfyUI video drawer closure', () => {
     await page.screenshot({ path: path.join(SHOTS, '02-video-bound-preview.png'), fullPage: true })
 
     await videoDrawer.getByRole('button', { name: '关闭' }).click()
+    await expect(videoDrawer).toBeHidden()
     await expect(editDrawer.getByTestId('video-status')).toContainText('待终审', { timeout: 15_000 })
     await expect(editDrawer.getByTestId('video-file-key')).toHaveText('stub/comfyui/stable-demo.mp4')
     await page.screenshot({ path: path.join(SHOTS, '03-content-video-bound.png'), fullPage: true })
