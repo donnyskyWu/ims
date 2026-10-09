@@ -369,6 +369,62 @@ def key_renew(
     return ok(plain_vo(row, plain))
 
 
+class FreezeBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    reason: str | None = None
+
+
+def _tenant_key(db: Session, key_id: int, tenant_id: int) -> AirApiKey | None:
+    row = db.get(AirApiKey, key_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    return row
+
+
+@router.post("/{key_id}/freeze")
+def key_freeze(
+    key_id: int,
+    body: FreezeBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = _tenant_key(db, key_id, actor.tenant_id or 0)
+    if row is None:
+        return fail(1001, "Key 不存在")
+    if row.status == "REVOKED":
+        return fail(1001, "已吊销的 Key 不可冻结")
+    if row.status == "FROZEN":
+        return ok(None)
+    if row.status != "ACTIVE":
+        return fail(1001, "仅启用中的 Key 可冻结")
+    reason = ((body.reason if body else None) or "").strip() or "管理员停用"
+    row.status = "FROZEN"
+    row.freeze_reason = reason[:64]
+    row.updated_at = utcnow()
+    return ok(None)
+
+
+@router.post("/{key_id}/unfreeze")
+def key_unfreeze(
+    key_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """解冻后清空认证失败窗口，避免 BR-033 的 10 次计数立刻再次锁定。"""
+    row = _tenant_key(db, key_id, actor.tenant_id or 0)
+    if row is None:
+        return fail(1001, "Key 不存在")
+    if row.status == "REVOKED":
+        return fail(1001, "已吊销的 Key 不可解冻")
+    if row.status != "FROZEN":
+        return fail(1001, "仅冻结中的 Key 可解冻")
+    row.status = "ACTIVE"
+    row.freeze_reason = ""
+    row.updated_at = utcnow()
+    db.execute(delete(AirAuthFail).where(AirAuthFail.key_id == row.id))
+    return ok(None)
+
+
 @router.post("/{key_id}/revoke")
 def key_revoke(
     key_id: int,

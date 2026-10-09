@@ -49,6 +49,7 @@ def audit_log(
     tool: str | None = None,
     result: str | None = None,
     keyId: int | None = None,
+    keyCode: str | None = None,
     dateRange: str | None = None,
     pageNo: int = 1,
     pageSize: int = 20,
@@ -72,6 +73,14 @@ def audit_log(
         q = q.where(AirMcpLog.tool == tool.strip())
     if keyId:
         q = q.where(AirMcpLog.key_id == keyId)
+    code_text = (keyCode or "").strip()
+    if code_text:
+        matched_ids = select(AirApiKey.id).where(
+            AirApiKey.deleted == 0,
+            AirApiKey.tenant_id == tenant_id,
+            AirApiKey.key_code == code_text,
+        )
+        q = q.where(AirMcpLog.key_id.in_(matched_ids))
     wanted = (result or "").strip().upper()
     if wanted == "SUCCESS":
         q = q.where(AirMcpLog.result_code == "0")

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -353,17 +353,35 @@ def audit_vo(row: AirAuditLog, names: dict[int, str]) -> dict:
     }
 
 
+KEY_STATUSES = frozenset({"ACTIVE", "FROZEN", "REVOKED"})
+
+
 @router.get("/key/page")
 def key_page(
     pageNo: int = 1,
     pageSize: int = 20,
+    userName: str | None = None,
+    status: str | None = None,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
     seed_air_keys(db, tenant_id, actor.id)
+    wanted = (status or "").strip().upper()
+    if wanted and wanted not in KEY_STATUSES:
+        return fail(1001, "status 仅支持 ACTIVE、FROZEN、REVOKED")
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(AirApiKey).where(AirApiKey.deleted == 0, AirApiKey.tenant_id == tenant_id)
+    if wanted:
+        stmt = stmt.where(AirApiKey.status == wanted)
+    keyword = (userName or "").strip()
+    if keyword:
+        like = f"%{keyword}%"
+        matched_owners = select(User.id).where(
+            User.deleted == 0,
+            or_(User.username.like(like), User.nickname.like(like)),
+        )
+        stmt = stmt.where(AirApiKey.owner_user_id.in_(matched_owners))
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(db.scalars(stmt.order_by(AirApiKey.id.desc()).offset((page_no - 1) * size).limit(size)).all())
     owner_ids = [r.owner_user_id for r in rows]
