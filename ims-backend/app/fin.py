@@ -415,6 +415,87 @@ def net_profit_rate(revenue: float, refund: float, net: float) -> float:
     return round(net * 100 / base, 2)
 
 
+COST_ITEM_FIELDS = (
+    ("commission", "commission_amount"),
+    ("ad", "ad_cost"),
+    ("recharge", "recharge_cost"),
+    ("fixed", "fixed_cost"),
+    ("sample", "sample_cost"),
+    ("shareDaren", "share_daren"),
+    ("shareRealname", "share_realname"),
+)
+
+
+def dominant_cost_item(cost: FinCost | None) -> str:
+    """异常场次里金额最大的成本项，供反查抽屉高亮。"""
+    if cost is None:
+        return ""
+    best_key = ""
+    best_amount = -1.0
+    for key, attr in COST_ITEM_FIELDS:
+        amount = money(getattr(cost, attr) or 0)
+        if amount > best_amount:
+            best_amount = amount
+            best_key = key
+    return best_key if best_amount > 0 else ""
+
+
+def parse_day_range(raw: str) -> tuple[str, str, str | None]:
+    text = (raw or "").strip()
+    if not text:
+        return "", "", None
+    parts = [part.strip()[:10] for part in text.split(",") if part.strip()]
+    if len(parts) != 2 or parts[0] > parts[1]:
+        return "", "", "dateRange 须为开始日,结束日"
+    for part in parts:
+        try:
+            datetime.strptime(part, "%Y-%m-%d")
+        except ValueError:
+            return "", "", "dateRange 须为开始日,结束日"
+    return parts[0], parts[1], None
+
+
+def abnormal_marks(rows: list[tuple[FinProfit, LiveSession, FinCost | None]]) -> dict[str, dict]:
+    """同类 = 同平台已核算场次。净利率用留一法相对同行均值，|偏离| ≥ 2σ 记异常（FIN-P-R4）。
+
+    同行不足 2 场时无法估计 σ。同行净利率完全相同（σ=0）而本场不同时，偏离记为 ±99。
+    """
+    grouped: dict[str, list[tuple[FinProfit, LiveSession, FinCost | None]]] = {}
+    for profit, session, cost in rows:
+        if (profit.calc_status or "") in ("", "PENDING"):
+            continue
+        grouped.setdefault(session.platform or "", []).append((profit, session, cost))
+    found: dict[str, dict] = {}
+    for items in grouped.values():
+        rates = [
+            net_profit_rate(profit.revenue, profit.refund_amount, profit.net_profit)
+            for profit, _session, _cost in items
+        ]
+        for index, (profit, _session, cost) in enumerate(items):
+            peers = [rate for peer_index, rate in enumerate(rates) if peer_index != index]
+            if len(peers) < 2:
+                continue
+            mean = sum(peers) / len(peers)
+            variance = sum((rate - mean) ** 2 for rate in peers) / len(peers)
+            sigma = variance ** 0.5
+            rate = rates[index]
+            if sigma < 1e-9:
+                if abs(rate - mean) < 0.005:
+                    continue
+                deviation = 99.0 if rate >= mean else -99.0
+            else:
+                deviation = (rate - mean) / sigma
+            if abs(deviation) < 2:
+                continue
+            found[profit.session_code] = {
+                "peerAvgRate": round(mean, 2),
+                "sigma": round(sigma, 4),
+                "deviationSigma": round(deviation, 2),
+                "abnormalCostItem": dominant_cost_item(cost),
+            }
+    return found
+
+
 def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
     params: dict[str, float] = {
         "revenue": money(profit.revenue),
@@ -605,6 +686,51 @@ def profit_summary(
             "totalNetProfit": money(total_net),
             "readySettlementCount": ready,
             "inSettlementCount": in_settlement,
+        }
+    )
+
+
+@router.get("/profit/abnormal")
+def profit_abnormal(
+    request: Request,
+    pageNo: int = 1,
+    pageSize: int = 20,
+    platform: str = "",
+    dateRange: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    date_from, date_to, err = parse_day_range(dateRange)
+    if err:
+        return fail(1001, err)
+    page_no, size = page_args(pageNo, pageSize)
+    visible = collect_visible_profits(
+        db,
+        actor,
+        request.state.scope,
+        tenant_of(actor),
+        platform=platform,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    marks = abnormal_marks(visible)
+    rows = []
+    for profit, session, cost in visible:
+        mark = marks.get(profit.session_code)
+        if mark is None:
+            continue
+        vo = profit_vo(db, profit, session, cost)
+        vo.update(mark)
+        rows.append(vo)
+    rows.sort(key=lambda item: abs(float(item["deviationSigma"])), reverse=True)
+    total = len(rows)
+    start = (page_no - 1) * size
+    return ok(
+        {
+            "list": rows[start : start + size],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
         }
     )
 
