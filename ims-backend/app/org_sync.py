@@ -681,6 +681,20 @@ def event_vo(event: OrgEvent) -> dict:
     }
 
 
+def user_matches_sync_status(item: dict, wanted: str) -> bool:
+    """人员列表按四态筛选。失败重试和死信在行上归成 FAILED，另带 retryFlag / deadLetter。"""
+    status = (wanted or "").strip()
+    if not status:
+        return True
+    if status == "FAILED_RETRY":
+        return bool(item.get("retryFlag"))
+    if status == "DEAD_LETTER":
+        return bool(item.get("deadLetter"))
+    if status == "FAILED":
+        return item.get("syncStatus") == "FAILED" and not item.get("retryFlag") and not item.get("deadLetter")
+    return item.get("syncStatus") == status
+
+
 @router.get("/auth/org/users")
 def org_users(
     pageNo: int = 1,
@@ -705,7 +719,7 @@ def org_users(
     items = []
     for mapping in rows:
         item = org_user_vo(db, mapping)
-        if syncStatus and item["syncStatus"] != syncStatus:
+        if not user_matches_sync_status(item, syncStatus):
             continue
         items.append(item)
     total = len(items)

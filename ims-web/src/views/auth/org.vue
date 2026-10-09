@@ -21,7 +21,7 @@
     <div class="g4">
       <div class="card stat">
         <span class="l">同步延迟</span>
-        <div class="n">{{ metricReady && !metricError && metrics.delayMillis != null ? metrics.delayMillis : '—' }}<small v-if="metricReady && !metricError"> ms</small></div>
+        <div class="n" :style="delayStyle">{{ metricReady && !metricError && metrics.delayMillis != null ? metrics.delayMillis : '—' }}<small v-if="metricReady && !metricError"> ms</small></div>
         <div class="d">{{ metricError || levelText }}</div>
       </div>
       <div class="card stat">
@@ -47,7 +47,15 @@
     <div v-if="tab === 'users'" class="tbl-block">
       <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchUsers">
         <input v-model="keyword" data-testid="org-user-keyword" placeholder="姓名 / 钉钉用户" style="width: 180px" />
+        <select v-model="syncStatus" data-testid="org-sync-status" style="width: 140px">
+          <option value="">全部同步状态</option>
+          <option value="PENDING">待处理</option>
+          <option value="SUCCESS">成功</option>
+          <option value="FAILED_RETRY">失败重试</option>
+          <option value="DEAD_LETTER">死信</option>
+        </select>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="org-user-search">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="org-user-reset" @click="resetUsers">重置</button>
       </form>
       <div class="tbl-wrap">
         <table>
@@ -70,9 +78,9 @@
             </tr>
             <tr v-else-if="!users.length">
               <td colspan="9" style="white-space: normal">
-                <div class="empty">
-                  <div class="et">{{ userError || '没有已同步人员' }}</div>
-                  <div class="es">人员来自验签后的组织事件，列表只展示接口返回的行。</div>
+                <div class="empty" data-testid="org-user-empty">
+                  <div class="et">{{ userEmptyTitle }}</div>
+                  <div class="es">{{ userEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -87,7 +95,7 @@
               <td data-testid="org-user-position">{{ text(row.positionName) }}</td>
               <td data-testid="org-user-roles">{{ names(row.grantedRoleNames) }}</td>
               <td class="mono">{{ text(row.dingtalkUserId) }}</td>
-              <td>{{ syncText(row) }}</td>
+              <td><span class="tag" data-testid="org-sync-tag" :style="syncStyle(row)"><span class="dot"></span>{{ syncText(row) }}</span></td>
               <td data-testid="org-user-status">{{ statusText(row.status) }}</td>
               <td class="mono">{{ text(row.lastSyncTime) }}</td>
             </tr>
@@ -97,6 +105,25 @@
       <div class="pager"><span class="pg-total">共 {{ userTotal }} 条</span></div>
     </div>
     <div v-else class="tbl-block">
+      <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchEvents">
+        <select v-model="eventType" data-testid="org-event-type" style="width: 140px">
+          <option value="">全部类型</option>
+          <option value="hire">入职</option>
+          <option value="transfer">调岗</option>
+          <option value="resign">离职</option>
+          <option value="dept_change">部门变更</option>
+          <option value="reconcile">对账</option>
+        </select>
+        <select v-model="eventSyncStatus" data-testid="org-event-status" style="width: 140px">
+          <option value="">全部同步状态</option>
+          <option value="PENDING">待处理</option>
+          <option value="SUCCESS">成功</option>
+          <option value="FAILED_RETRY">失败重试</option>
+          <option value="DEAD_LETTER">死信</option>
+        </select>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="org-event-search">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="org-event-reset" @click="resetEvents">重置</button>
+      </form>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -115,9 +142,9 @@
             </tr>
             <tr v-else-if="!events.length">
               <td colspan="6" style="white-space: normal">
-                <div class="empty">
-                  <div class="et">{{ eventError || '没有同步事件' }}</div>
-                  <div class="es">对账成功后，这里会出现对账记录。</div>
+                <div class="empty" data-testid="org-event-empty">
+                  <div class="et">{{ eventEmptyTitle }}</div>
+                  <div class="es">{{ eventEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -125,7 +152,7 @@
               <td>{{ eventLabel(row.eventType) }}</td>
               <td class="mono">{{ text(row.dingtalkEventId) }}</td>
               <td>{{ deptChange(row) }}</td>
-              <td>{{ text(row.syncStatus) }}</td>
+              <td><span class="tag" data-testid="org-event-sync-tag" :style="eventSyncStyle(row)">{{ eventSyncText(row) }}</span></td>
               <td class="num">{{ row.retryCount ?? 0 }}</td>
               <td class="mono">{{ text(row.syncedAt) }}</td>
             </tr>
@@ -192,6 +219,9 @@ const msg = ref('')
 const confirming = ref(false)
 const tab = ref<'users' | 'events'>('users')
 const keyword = ref('')
+const syncStatus = ref('')
+const eventType = ref('')
+const eventSyncStatus = ref('')
 const detailOpen = ref(false)
 const detail = ref<Record<string, unknown> | null>(null)
 
@@ -210,6 +240,36 @@ const holding = computed(() => {
     certActive: Number(row.certActive || 0),
     certRecycled: Number(row.certRecycled || 0),
   }
+})
+
+const delayStyle = computed(() => {
+  if (!metricReady.value || metricError.value) return {}
+  if (metrics.level === 'red') return { color: '#c62828' }
+  if (metrics.level === 'green') return { color: '#1e8e3e' }
+  return {}
+})
+
+const userEmptyTitle = computed(() => {
+  if (userError.value) return userError.value
+  if (syncStatus.value) return '没有该同步状态的人员'
+  if (keyword.value.trim()) return '没有匹配的人员'
+  return '没有已同步人员'
+})
+
+const userEmptyHint = computed(() => {
+  if (syncStatus.value || keyword.value.trim()) return '换一个状态或姓名后再查。重置会回到全部人员。'
+  return '人员来自验签后的组织事件，列表只展示接口返回的行。'
+})
+
+const eventEmptyTitle = computed(() => {
+  if (eventError.value) return eventError.value
+  if (eventType.value || eventSyncStatus.value) return '没有符合条件的同步事件'
+  return '没有同步事件'
+})
+
+const eventEmptyHint = computed(() => {
+  if (eventType.value || eventSyncStatus.value) return '换一个类型或状态后再查。'
+  return '对账成功后，这里会出现对账记录。'
 })
 
 const levelText = computed(() => {
@@ -237,12 +297,29 @@ function names(value: unknown) {
 }
 
 function syncText(row: Record<string, unknown>) {
-  if (row.deadLetter) return '死信'
-  if (row.retryFlag) return '失败重试'
+  if (row.deadLetter || row.syncStatus === 'DEAD_LETTER') return '死信'
+  if (row.retryFlag || row.syncStatus === 'FAILED_RETRY') return '失败重试'
   if (row.syncStatus === 'SUCCESS') return '成功'
   if (row.syncStatus === 'PENDING') return '待处理'
   if (row.syncStatus === 'FAILED') return '失败'
   return text(row.syncStatus)
+}
+
+function syncStyle(row: Record<string, unknown>) {
+  const label = syncText(row)
+  if (label === '成功') return 'background:rgba(52,199,89,.12);color:#1e8e3e'
+  if (label === '待处理') return 'background:rgba(0,113,227,.12);color:#0057b8'
+  if (label === '失败重试') return 'background:rgba(255,149,0,.12);color:#c46a00'
+  if (label === '死信') return 'background:rgba(255,59,48,.12);color:#c62828'
+  return ''
+}
+
+function eventSyncText(row: Record<string, unknown>) {
+  return syncText(row)
+}
+
+function eventSyncStyle(row: Record<string, unknown>) {
+  return syncStyle(row)
 }
 
 function eventLabel(value: unknown) {
@@ -273,11 +350,10 @@ async function load() {
   metricError.value = metricRes.error
   if (metricRes.data && typeof metricRes.data === 'object') Object.assign(metrics, metricRes.data)
 
-  const userRes = await readData('/auth/org/users', {
-    pageNo: 1,
-    pageSize: 20,
-    keyword: keyword.value.trim() || undefined,
-  })
+  const userParams: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+  if (keyword.value.trim()) userParams.keyword = keyword.value.trim()
+  if (syncStatus.value) userParams.syncStatus = syncStatus.value
+  const userRes = await readData('/auth/org/users', userParams)
   userReady.value = true
   userError.value = userRes.error
   users.value = asList(userRes.data)
@@ -285,7 +361,10 @@ async function load() {
     ? (userRes.data as { total: number }).total
     : users.value.length
 
-  const eventRes = await readData('/auth/org/events', { pageNo: 1, pageSize: 10 })
+  const eventParams: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+  if (eventType.value) eventParams.eventType = eventType.value
+  if (eventSyncStatus.value) eventParams.syncStatus = eventSyncStatus.value
+  const eventRes = await readData('/auth/org/events', eventParams)
   eventReady.value = true
   eventError.value = eventRes.error
   events.value = asList(eventRes.data)
@@ -297,6 +376,23 @@ async function load() {
 function searchUsers() {
   userReady.value = false
   load()
+}
+
+function resetUsers() {
+  keyword.value = ''
+  syncStatus.value = ''
+  searchUsers()
+}
+
+function searchEvents() {
+  eventReady.value = false
+  load()
+}
+
+function resetEvents() {
+  eventType.value = ''
+  eventSyncStatus.value = ''
+  searchEvents()
 }
 
 function openUser(row: Record<string, unknown>) {

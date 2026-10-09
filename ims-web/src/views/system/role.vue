@@ -18,6 +18,10 @@
       <div class="card stat"><span class="l">自动创建</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
       <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">ENABLED</div></div>
     </div>
+    <form class="qbar" style="margin-bottom: 10px" @submit.prevent>
+      <input v-model="keyword" data-testid="role-keyword" placeholder="角色编码 / 名称 / 岗位" style="width: 220px" />
+      <button class="btn btn-sec btn-sm" type="button" data-testid="role-reset" @click="keyword = ''">重置</button>
+    </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -38,10 +42,15 @@
             <tr v-if="!ready">
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!rows.length">
-              <td colspan="9"><div class="empty"><div class="et">{{ error || '没有角色' }}</div></div></td>
+            <tr v-else-if="!filtered.length">
+              <td colspan="9" style="white-space: normal">
+                <div class="empty" data-testid="role-list-empty">
+                  <div class="et">{{ error || (keyword.trim() ? '没有匹配的角色' : '没有角色') }}</div>
+                  <div v-if="keyword.trim()" class="es">按角色编码、名称或钉钉岗位再筛。</div>
+                </div>
+              </td>
             </tr>
-            <tr v-for="row in rows" v-else :key="String(row.id)">
+            <tr v-for="row in filtered" v-else :key="String(row.id)" data-testid="role-row">
               <td class="mono">{{ cell(row, ['roleKey']) }}</td>
               <td>{{ cell(row, ['roleName']) }}</td>
               <td class="num">{{ menuCount(row) }}</td>
@@ -120,6 +129,7 @@ const error = ref('')
 const diff = ref('')
 const previewError = ref('')
 const positionName = ref('')
+const keyword = ref('')
 const drawer = ref(false)
 const saveError = ref('')
 const editingId = ref<number | string>('')
@@ -130,6 +140,16 @@ const user = useUserStore()
 const pending = computed(() => rows.value.filter((row) => row.status === 'PENDING_CONFIG').length)
 const autoCount = computed(() => rows.value.filter((row) => row.source === 'DINGTALK_AUTO').length)
 const enabled = computed(() => rows.value.filter((row) => row.status === 'ENABLED').length)
+const filtered = computed(() => {
+  const query = keyword.value.trim().toLowerCase()
+  if (!query) return rows.value
+  return rows.value.filter((row) => {
+    const key = String(row.roleKey || '').toLowerCase()
+    const name = String(row.roleName || '').toLowerCase()
+    const position = String(row.dingtalkPosition || '').toLowerCase()
+    return key.includes(query) || name.includes(query) || position.includes(query)
+  })
+})
 
 function menuCount(row: Record<string, unknown>) {
   return Array.isArray(row.menuIds) ? row.menuIds.length : 0
