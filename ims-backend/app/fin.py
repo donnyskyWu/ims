@@ -73,6 +73,10 @@ FIN_MONEY_KEYS = frozenset(
         "pendingAmount",
         "shareBase",
         "shareAmount",
+        "shareTotal",
+        "partAmount",
+        "replacementAmount",
+        "redAmount",
     }
 )
 
@@ -1785,7 +1789,7 @@ def apply_share_reverse(
         result_code=0,
     )
     db.flush()
-    return ok(share_result_vo(row))
+    return ok(fin_view(db, actor, share_result_vo(row)))
 
 
 def audit_result_vo(row: FinShareResult) -> dict:
@@ -1891,12 +1895,16 @@ def share_results(
     start = (page_no - 1) * size
     page_rows = visible[start : start + size]
     return ok(
-        {
-            "list": [share_result_vo(row) for row in page_rows],
-            "total": total,
-            "pageNo": page_no,
-            "pageSize": size,
-        }
+        fin_view(
+            db,
+            actor,
+            {
+                "list": [share_result_vo(row) for row in page_rows],
+                "total": total,
+                "pageNo": page_no,
+                "pageSize": size,
+            },
+        )
     )
 
 
@@ -1924,11 +1932,14 @@ def share_result_audit(
     if row.status in ("PAID_OFF", "REVERSED"):
         return fail(1148, "分成单当前状态不可审批")
     if body.conclusion == "REJECT":
+        remark = (body.remark or "").strip()
+        if len(remark) > 512:
+            return fail(1001, "驳回备注不超过 512 字")
         reversed_resp = apply_share_reverse(
             db,
             actor,
             row,
-            body.remark or "审批驳回",
+            remark or "审批驳回",
             allow_pending=True,
         )
         if not isinstance(reversed_resp, dict):

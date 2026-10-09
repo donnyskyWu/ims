@@ -41,7 +41,9 @@
         <div class="d" data-testid="fin-dash-sessions">场次 {{ overview.sessionCount }}</div>
       </div>
     </div>
-    <p v-if="overview" class="hint" data-testid="fin-dash-refreshed">缓存时间 {{ overview.refreshedAt }}</p>
+    <p v-if="overview" class="hint" data-testid="fin-dash-refreshed">
+      数据截至 {{ overview.refreshedAt }} · 缓存时间 {{ overview.refreshedAt }}
+    </p>
     <p v-if="amountsMasked" class="hint" data-testid="fin-dash-amount-mask">金额已脱敏</p>
 
     <div class="tabs" style="margin: 12px 0 8px">
@@ -73,7 +75,11 @@
           </thead>
           <tbody>
             <tr v-if="!drill.length">
-              <td colspan="6"><div class="empty"><div class="et">本月暂无已核算场次</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="fin-dash-drill-empty">
+                  <div class="et">{{ panelEmpty('本月暂无已核算场次') }}</div>
+                </div>
+              </td>
             </tr>
             <template v-for="row in drill" :key="row.dimensionValue">
               <tr>
@@ -143,7 +149,11 @@
         </thead>
         <tbody>
           <tr v-if="!trend.length">
-            <td colspan="6"><div class="empty"><div class="et">区间内无趋势</div></div></td>
+            <td colspan="6">
+              <div class="empty" data-testid="fin-dash-trend-empty">
+                <div class="et">{{ panelEmpty('区间内无趋势') }}</div>
+              </div>
+            </td>
           </tr>
           <tr v-for="point in trend" :key="point.statPeriod" data-testid="fin-dash-trend-row">
             <td>{{ point.periodLabel || point.statPeriod }}</td>
@@ -168,7 +178,14 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in structure" :key="item.costItem">
+          <tr v-if="!structureVisible.length">
+            <td colspan="3">
+              <div class="empty" data-testid="fin-dash-cost-empty">
+                <div class="et">{{ panelEmpty('本月无成本结构') }}</div>
+              </div>
+            </td>
+          </tr>
+          <tr v-for="item in structureVisible" :key="item.costItem">
             <td>{{ costLabel(item.costItem) }}</td>
             <td class="num">{{ yuan(item.amount) }}</td>
             <td class="num">{{ item.ratio }}</td>
@@ -192,14 +209,24 @@
         </thead>
         <tbody>
           <tr v-if="!shares.length">
-            <td colspan="6"><div class="empty"><div class="et">本月无分成</div></div></td>
+            <td colspan="6">
+              <div class="empty" data-testid="fin-dash-share-empty">
+                <div class="et">{{ panelEmpty('本月无分成') }}</div>
+              </div>
+            </td>
           </tr>
           <tr v-for="row in shares" :key="`${row.shareTarget}-${row.targetRefId}`">
             <td>{{ targetLabel(row.shareTarget) }}</td>
             <td>{{ row.targetRefName }}</td>
             <td class="num" data-testid="fin-dash-share-total">{{ yuan(row.totalAmount) }}</td>
             <td class="num">{{ yuan(row.paidOffAmount) }}</td>
-            <td class="num">{{ yuan(row.pendingAmount) }}</td>
+            <td
+              class="num"
+              :class="{ 'pending-hot': pendingHot(row.pendingAmount) }"
+              data-testid="fin-dash-share-pending"
+            >
+              {{ yuan(row.pendingAmount) }}
+            </td>
             <td class="num">{{ row.sessionCount }}</td>
           </tr>
         </tbody>
@@ -290,6 +317,8 @@ const grains = [
   { value: 'MONTH', label: '月' },
 ]
 
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
 const router = useRouter()
 const statPeriod = ref(currentMonth())
 const profitType = ref('NET')
@@ -315,6 +344,24 @@ const dimensionLabel = computed(() => dimensions.find((item) => item.value === d
 const amountsMasked = computed(
   () => overview.value?.totalGmv === AMOUNT_MASK || overview.value?.shownProfit === AMOUNT_MASK,
 )
+const structureVisible = computed(() => {
+  if (overview.value && Number(overview.value.sessionCount) === 0) return []
+  return structure.value
+})
+
+function periodOk(value: string) {
+  return PERIOD_RE.test(value.trim())
+}
+
+function panelEmpty(idle: string) {
+  if (!periodOk(statPeriod.value)) return '统计周期须为 yyyy-MM'
+  if (error.value) return '加载失败'
+  return idle
+}
+
+function pendingHot(value: unknown) {
+  return typeof value === 'number' && value > 0
+}
 
 function yuan(value: unknown) {
   if (value === AMOUNT_MASK) return AMOUNT_MASK
@@ -376,6 +423,10 @@ async function switchGrain(value: string) {
 }
 
 async function loadTrend() {
+  if (!periodOk(statPeriod.value)) {
+    trend.value = []
+    return
+  }
   const trendRes = await http.get('/fin/dashboard/trend', {
     params: {
       dateRange: monthBounds(statPeriod.value),
@@ -387,6 +438,10 @@ async function loadTrend() {
 }
 
 async function loadDrill() {
+  if (!periodOk(statPeriod.value)) {
+    drill.value = []
+    return
+  }
   const res = await http.get('/fin/dashboard/drilldown', {
     params: {
       statPeriod: statPeriod.value,
@@ -407,7 +462,17 @@ async function loadAll() {
   error.value = ''
   exportMsg.value = ''
   expanded.value = ''
-  const period = statPeriod.value
+  if (!periodOk(statPeriod.value)) {
+    error.value = '统计周期须为 yyyy-MM'
+    overview.value = null
+    drill.value = []
+    trend.value = []
+    structure.value = []
+    shares.value = []
+    return
+  }
+  const period = statPeriod.value.trim()
+  try {
   const [overviewRes, structureRes, shareRes, trendRes] = await Promise.all([
     http.get('/fin/dashboard/overview', { params: { statPeriod: period, profitType: profitType.value } }),
     http.get('/fin/dashboard/cost-structure', { params: { statPeriod: period } }),
@@ -426,9 +491,22 @@ async function loadAll() {
   shares.value = shareRes.data?.code === 0 ? shareRes.data.data || [] : []
   trend.value = trendRes.data?.code === 0 ? trendRes.data.data || [] : []
   await loadDrill()
+  } catch (err) {
+    error.value = errorMessage(err)
+    overview.value = null
+    drill.value = []
+    trend.value = []
+    structure.value = []
+    shares.value = []
+  }
 }
 
 function openExport() {
+  if (!periodOk(statPeriod.value)) {
+    exportMsg.value = '统计周期须为 yyyy-MM'
+    exportOpen.value = false
+    return
+  }
   exportFormat.value = 'XLSX'
   exportOpen.value = true
 }
@@ -522,5 +600,9 @@ onMounted(loadAll)
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.pending-hot {
+  color: #c46a00;
+  font-weight: 600;
 }
 </style>

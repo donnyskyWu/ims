@@ -101,7 +101,7 @@ import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
-type ShareRow = { shareAmount?: number; status?: string }
+type ShareRow = { shareAmount?: number | string; status?: string }
 type BookCell = { ready: boolean; detail: string; amountText: string }
 type LedgerView = {
   headline: string
@@ -196,7 +196,18 @@ async function reconcile() {
     }
     const profit = profitHit.ok ? profitHit.data : null
     const cost = costHit.ok ? costHit.data : null
-    const shares = (shareHit.ok ? shareHit.data?.list || [] : []).filter((row) => row.status !== 'REVERSED')
+    const shareRows = shareHit.ok ? shareHit.data?.list || [] : []
+    if (
+      profit?.netProfit === '***' ||
+      profit?.gmv === '***' ||
+      cost?.costGmv === '***' ||
+      cost?.totalCost === '***' ||
+      shareRows.some((row) => row.shareAmount === '***')
+    ) {
+      error.value = '金额已脱敏，当前角色不能对账'
+      return
+    }
+    const shares = shareRows.filter((row) => row.status !== 'REVERSED')
     const lockedSource = profit || cost
     periodLocked.value = String(lockedSource?.financeStatus || '') === 'LOCKED'
     periodMonth.value = String(lockedSource?.periodMonth || '')

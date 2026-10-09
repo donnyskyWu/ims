@@ -765,6 +765,22 @@ export async function registerLiveSessionConfirmedReportViaUi(
   }
 }
 
+/** 详情和下播 Tab 都会拉报表。等默认值落地，并吃掉紧接着的第二次回填，再写入。 */
+async function fillAfterReportSettle(page: Page, input: Locator, value: string, settled: string) {
+  await expect(input).toBeVisible()
+  await expect(input).toHaveValue(settled)
+  const late = await page
+    .waitForResponse(
+      (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
+      { timeout: 1500 },
+    )
+    .then(() => true)
+    .catch(() => false)
+  if (late) await expect(input).toHaveValue(settled)
+  await input.fill(value)
+  await expect(input).toHaveValue(value)
+}
+
 /** FIN 成本录入 + 核准（纯 UI）。costs 只覆盖传入项，缺省与 #50 样例一致。 */
 export async function submitAndConfirmFinCostViaUi(
   page: Page,

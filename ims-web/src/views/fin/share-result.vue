@@ -32,12 +32,14 @@
       <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-filter-reset" @click="resetQuery">重置</button>
     </form>
 
-    <p v-if="rows.length" class="hint" data-testid="fin-share-split-sum" style="margin: 8px 0">
+    <p v-if="rows.length && !amountsMasked" class="hint" data-testid="fin-share-split-sum" style="margin: 8px 0">
       拆分合计 {{ fmt(splitSum) }} = 总额 {{ fmt(shareTotal) }}
       <span v-if="splitMatches"> · 金额拆分累计等于总额</span>
     </p>
+    <p v-if="auditHint" class="hint" data-testid="fin-share-audit-wait" style="margin: 8px 0">{{ auditHint }}</p>
+    <p v-if="amountsMasked" class="hint" data-testid="fin-share-amount-mask">金额已脱敏</p>
 
-    <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+    <div v-if="error" class="hint" data-testid="fin-share-error" style="color: var(--red); margin: 8px 0">{{ error }}</div>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -63,6 +65,15 @@
               <td colspan="9">
                 <div class="empty" data-testid="fin-share-empty">
                   <div class="et">{{ shareEmptyText }}</div>
+                  <button
+                    v-if="error"
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    data-testid="fin-share-retry"
+                    @click="loadList"
+                  >
+                    重试
+                  </button>
                 </div>
               </td>
             </tr>
@@ -71,8 +82,8 @@
               <td>{{ row.ruleName }}</td>
               <td>{{ targetLabel(row.shareTarget) }}</td>
               <td>{{ row.targetRefName }}</td>
-              <td class="num">¥{{ fmt(row.shareBase) }}</td>
-              <td class="num">¥{{ fmt(row.shareAmount) }}</td>
+              <td class="num">{{ moneyText(row.shareBase) }}</td>
+              <td class="num" data-testid="fin-share-amount">{{ moneyText(row.shareAmount) }}</td>
               <td>{{ auditProgress(row) }}</td>
               <td>
                 {{ statusLabel(row.status, row) }}
@@ -98,6 +109,15 @@
                   @click="audit(row, 'BUSINESS', 'APPROVE')"
                 >
                   业务审
+                </button>
+                <button
+                  v-if="row.status === 'PENDING_AUDIT'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-share-reject-open"
+                  @click="openReject(row)"
+                >
+                  驳回
                 </button>
                 <button
                   v-if="row.status === 'AUDITED'"
@@ -227,7 +247,33 @@
           {{ detailRow.reverseAudit.actorName }} · {{ detailRow.reverseAudit.reversedAt }} ·
           {{ detailRow.reverseAudit.reason }}
         </p>
-        <p v-if="detailRow.replaced" class="hint">补发金额 ¥{{ fmt(detailRow.replacementAmount) }}</p>
+        <p v-if="detailRow.replaced" class="hint">补发金额 {{ moneyText(detailRow.replacementAmount) }}</p>
+      </div>
+    </div>
+
+    <div v-if="rejectOpen && rejectRow" class="drawer-mask" @click.self="rejectOpen = false">
+      <div class="drawer on" data-testid="fin-share-reject-drawer" style="width: 480px">
+        <div class="drawer-h">
+          <b>驳回 · {{ targetLabel(rejectRow.shareTarget) }}</b>
+          <button type="button" class="btn btn-sec btn-sm" @click="rejectOpen = false">关闭</button>
+        </div>
+        <p class="hint" data-testid="fin-share-reject-hint">驳回后进入冲销通道 · 备注不超过 512 字</p>
+        <label class="fld">
+          <span>驳回备注</span>
+          <input v-model="rejectRemark" data-testid="fin-share-reject-remark" maxlength="512" />
+        </label>
+        <p v-if="rejectError" class="hint" data-testid="fin-share-reject-error" style="color: var(--red)">{{ rejectError }}</p>
+        <div class="drawer-f">
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="fin-share-reject-submit"
+            :disabled="rejectBusy"
+            @click="submitReject"
+          >
+            确认驳回
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -237,7 +283,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 
-type RedEntry = { item: string; amount: number }
+type RedEntry = { item: string; amount: number | string }
 type ReverseAudit = { actorName?: string; reversedAt?: string; reason?: string; fromStatus?: string }
 type ShareRow = {
   id: number
@@ -245,8 +291,8 @@ type ShareRow = {
   ruleName: string
   shareTarget: string
   targetRefName: string
-  shareBase: number
-  shareAmount: number
+  shareBase: number | string
+  shareAmount: number | string
   status: string
   finAuditPassed?: boolean
   bizAuditPassed?: boolean
@@ -254,7 +300,7 @@ type ShareRow = {
   redEntries?: RedEntry[]
   reverseAudit?: ReverseAudit | null
   replaced?: boolean
-  replacementAmount?: number
+  replacementAmount?: number | string
   payoffVoucher?: { fileName?: string; fileKey?: string } | null
 }
 
@@ -279,6 +325,12 @@ const reverseRed = ref<RedEntry[]>([])
 const reverseAudit = ref<ReverseAudit | null>(null)
 const detailOpen = ref(false)
 const detailRow = ref<ShareRow | null>(null)
+const auditHint = ref('')
+const rejectOpen = ref(false)
+const rejectRow = ref<ShareRow | null>(null)
+const rejectRemark = ref('')
+const rejectError = ref('')
+const rejectBusy = ref(false)
 
 const splitSum = computed(() => rows.value.reduce((acc, row) => acc + Number(row.shareAmount || 0), 0))
 const shareTotal = computed(() => {
@@ -296,10 +348,22 @@ const pageList = computed(() => {
   return pages
 })
 const shareFiltered = computed(() => Boolean(query.sessionCode.trim() || query.shareTarget || query.status))
-const shareEmptyText = computed(() => (shareFiltered.value ? '当前筛选无分成单' : '暂无分成单（需先核准成本）'))
+const amountsMasked = computed(() =>
+  rows.value.some((row) => row.shareBase === '***' || row.shareAmount === '***'),
+)
+const shareEmptyText = computed(() => {
+  if (error.value) return '分成单加载失败'
+  if (shareFiltered.value) return '当前筛选无分成单'
+  return '暂无分成单（需先核准成本）'
+})
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function moneyText(n: unknown) {
+  if (n === '***') return '***'
+  return `¥${fmt(n)}`
 }
 
 function targetLabel(value: string) {
@@ -318,7 +382,8 @@ function statusLabel(value: string, row?: ShareRow) {
   return map[value] || value
 }
 
-function redText(amount: number) {
+function redText(amount: number | string) {
+  if (amount === '***') return '（***）'
   return `（${fmt(Math.abs(Number(amount || 0)))}）`
 }
 
@@ -354,6 +419,7 @@ async function loadList() {
 
 function search() {
   pageNo.value = 1
+  auditHint.value = ''
   return loadList()
 }
 
@@ -362,6 +428,7 @@ function resetQuery() {
   query.shareTarget = ''
   query.status = ''
   pageNo.value = 1
+  auditHint.value = ''
   return loadList()
 }
 
@@ -371,14 +438,59 @@ function gotoPage(page: number) {
   return loadList()
 }
 
-async function audit(row: ShareRow, auditRole: 'FINANCE' | 'BUSINESS', conclusion: 'APPROVE' | 'REJECT') {
+async function audit(
+  row: ShareRow,
+  auditRole: 'FINANCE' | 'BUSINESS',
+  conclusion: 'APPROVE' | 'REJECT',
+  remark = '',
+) {
   error.value = ''
-  const res = await http.put(`/fin/share/result/${row.id}/audit`, { conclusion, auditRole })
-  if (res.data?.code !== 0) {
-    error.value = res.data?.msg || '审批失败'
+  auditHint.value = ''
+  try {
+    const res = await http.put(`/fin/share/result/${row.id}/audit`, { conclusion, auditRole, remark })
+    const data = res.data?.data || {}
+    if (conclusion === 'REJECT') auditHint.value = '已驳回，进入冲销通道'
+    else if (!data.bothPassed) auditHint.value = '等待另一角色审核后生效'
+    await loadList()
+  } catch (err) {
+    const body = err as { code?: number; msg?: string }
+    error.value = `${body?.code ?? ''} ${body?.msg || errorMessage(err)}`.trim()
+  }
+}
+
+function openReject(row: ShareRow) {
+  rejectRow.value = row
+  rejectRemark.value = ''
+  rejectError.value = ''
+  rejectBusy.value = false
+  rejectOpen.value = true
+}
+
+async function submitReject() {
+  if (!rejectRow.value || rejectBusy.value) return
+  rejectBusy.value = true
+  rejectError.value = ''
+  const remark = rejectRemark.value.trim()
+  if (remark.length > 512) {
+    rejectError.value = '1001 驳回备注不超过 512 字'
+    rejectBusy.value = false
     return
   }
-  await loadList()
+  try {
+    await http.put(`/fin/share/result/${rejectRow.value.id}/audit`, {
+      conclusion: 'REJECT',
+      auditRole: 'FINANCE',
+      remark,
+    })
+    auditHint.value = '已驳回，进入冲销通道'
+    rejectOpen.value = false
+    await loadList()
+  } catch (err) {
+    const body = err as { code?: number; msg?: string }
+    rejectError.value = `${body?.code ?? ''} ${body?.msg || errorMessage(err)}`.trim()
+  } finally {
+    rejectBusy.value = false
+  }
 }
 
 function openPayoff(row: ShareRow) {
@@ -417,10 +529,15 @@ function openReverseDetail(row: ShareRow) {
 async function submitReverse() {
   if (!reverseRow.value) return
   reverseError.value = ''
+  const reason = reverseReason.value.trim()
+  if (!reason) {
+    reverseError.value = '1144 冲销原因必填'
+    return
+  }
   try {
     const res = await http.put(`/fin/share/result/${reverseRow.value.id}/payoff`, {
       reverse: true,
-      reverseReason: reverseReason.value,
+      reverseReason: reason,
     })
     reverseRed.value = res.data.data?.redEntries || []
     reverseAudit.value = res.data.data?.reverseAudit || null
