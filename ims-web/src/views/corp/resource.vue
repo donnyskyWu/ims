@@ -33,6 +33,15 @@
         style="width: 160px"
         data-testid="master-company-credit"
       />
+      <select
+        v-if="kind === 'company'"
+        v-model="industry"
+        style="width: 140px"
+        data-testid="master-company-industry"
+      >
+        <option value="">全部行业</option>
+        <option v-for="item in industries" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
       <select v-if="kind === 'realname'" v-model="idType" style="width: 140px" data-testid="master-realname-idtype">
         <option value="">全部证件类型</option>
         <option v-for="item in idTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
@@ -131,6 +140,9 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
+    <p v-if="kind === 'company'" class="hint" data-testid="master-company-industry-hint">
+      行业来自字典 dict_industry。未列入字典的行业不会出现在下拉里。
+    </p>
     <p class="hint">{{ meta.hint }}</p>
     <div v-if="kind === 'certificate'" data-testid="corp-cert-expire-panel">
       <div class="sec rowline" style="justify-content: space-between; align-items: baseline">
@@ -607,6 +619,7 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const keyword = ref('')
 const creditCode = ref('')
+const industry = ref('')
 const idType = ref('')
 const operator = ref('')
 const realnameId = ref('')
@@ -618,6 +631,13 @@ const idTypes = ref<Opt[]>([
   { value: 'HK_MACAO', label: '港澳通行证' },
   { value: 'TAIWAN', label: '台湾通行证' },
 ])
+const fallbackIndustry: Opt[] = [
+  { value: 'SPORT', label: '体育' },
+  { value: 'ESPORTS', label: '电竞' },
+  { value: 'MEDIA', label: '传媒' },
+  { value: 'OTHER', label: '其他' },
+]
+const industries = ref<Opt[]>(fallbackIndustry)
 const loading = ref(false)
 const error = ref('')
 const detailOpen = ref(false)
@@ -831,6 +851,7 @@ const hasFilter = computed(() =>
   Boolean(
     keyword.value.trim() ||
       creditCode.value.trim() ||
+      industry.value ||
       idType.value ||
       operator.value ||
       realnameId.value ||
@@ -844,6 +865,7 @@ const emptyTitle = computed(() => {
 })
 const emptyHintText = computed(() => {
   if (phoneHint.value) return '号码按完整手机号精确匹配，不支持片段。'
+  if (kind.value === 'company' && industry.value) return '这个行业下没有公司。换一项，或点重置看全部。'
   if (hasFilter.value) return '换个条件，或点重置看全部。'
   return meta.value.emptyHint
 })
@@ -896,6 +918,7 @@ function show(row: Row, key: string) {
   const value = row[key]
   if (value === undefined || value === null || value === '') return '—'
   if (key === 'status') return statusLabel(String(value))
+  if (key === 'industry') return industries.value.find((item) => item.value === value)?.label || String(value)
   if (key === 'operator') return operators.value.find((item) => item.value === value)?.label || String(value)
   if (key === 'idType' || key === 'certType') return typeLabel(String(value))
   return String(value)
@@ -1421,6 +1444,7 @@ function params() {
   }
   const code = creditCode.value.trim()
   if (kind.value === 'company' && code) query.creditCode = code
+  if (kind.value === 'company' && industry.value) query.industry = industry.value
   if (kind.value === 'realname' && idType.value) query.idType = idType.value
   if (kind.value === 'sim-card' && operator.value) query.operator = operator.value
   if (kind.value === 'sim-card' && realnameId.value) query.realnameId = Number(realnameId.value)
@@ -1460,6 +1484,7 @@ function search() {
 function reset() {
   keyword.value = ''
   creditCode.value = ''
+  industry.value = ''
   idType.value = ''
   operator.value = ''
   realnameId.value = ''
@@ -1624,6 +1649,15 @@ async function openDetail(row: Row) {
   }
 }
 
+async function prepareCompany() {
+  try {
+    const rows = await loadDict('dict_industry')
+    if (rows.length) industries.value = rows
+  } catch {
+    /* 字典失败时保留本地行业 */
+  }
+}
+
 async function loadDict(dictType: string) {
   const res = await http.get('/system/dict-data/list', { params: { dictType } })
   return asList(res.data?.data)
@@ -1715,6 +1749,7 @@ async function save() {
 watch(kind, async () => {
   keyword.value = ''
   creditCode.value = ''
+  industry.value = ''
   idType.value = ''
   operator.value = ''
   realnameId.value = ''
@@ -1732,6 +1767,7 @@ watch(kind, async () => {
   remindOpen.value = false
   fileOpen.value = false
   digitalOpen.value = false
+  if (kind.value === 'company') await prepareCompany()
   if (kind.value === 'sim-card' && !operators.value.length) {
     try {
       await prepareSim()
@@ -1748,6 +1784,7 @@ watch(kind, async () => {
 })
 
 onMounted(async () => {
+  if (kind.value === 'company') await prepareCompany()
   if (kind.value === 'realname') await prepareRealname()
   if (kind.value === 'sim-card') {
     try {
