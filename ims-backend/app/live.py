@@ -870,7 +870,7 @@ def reject_report_body(body: ReportBody):
     for key in REPORT_NUMBERS:
         value = getattr(body, key)
         if value is not None and value < 0:
-            return fail(1001, "数值不能为负")
+            return fail(1001, "数值不能为负", {"field": key})
     start = parse_iso(body.actualStart)
     end = parse_iso(body.actualEnd)
     if start is None or end is None:
@@ -2222,7 +2222,9 @@ def ledger_export(
     issued = issue_ledger_export(actor.id, body)
     if issued is None:
         return fail(5005, "台账导出失败，请稍后重试")
-    if truncated:
+    if not rows:
+        issued["message"] = "当前筛选没有场次，已导出空表（仅表头）"
+    elif truncated:
         issued["message"] = "导出任务已提交，仅包含前 5000 条"
     return ok(issued)
 

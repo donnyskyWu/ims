@@ -18,6 +18,7 @@
       <button class="btn btn-sec btn-sm" type="button" data-testid="live-export-claim" :disabled="exporting" @click="claimExport">领取文件</button>
     </p>
     <p v-if="exportError" class="hint bad" data-testid="live-export-error">{{ exportError }}</p>
+    <p v-if="slowQueryHint" class="hint" data-testid="live-slow-query">{{ slowQueryHint }}</p>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
     <div class="tabs">
       <div class="tab" :class="{ on: view === 'sessions' }" data-testid="live-view-sessions" @click="view = 'sessions'">场次列表</div>
@@ -394,11 +395,18 @@
               <option value="GIFT">打赏</option>
               <option value="SAMPLE">样品</option>
             </select>
-            <input v-model="costDraft.amount" type="number" step="0.01" placeholder="金额" data-testid="live-cost-amount" />
+            <input v-model="costDraft.amount" type="number" step="0.01" placeholder="金额" data-testid="live-cost-amount" :style="fieldMissing('amount') ? 'border-color: var(--red)' : ''" />
           </div>
           <div v-if="correcting" class="fld">
             <label>更正原因 *</label>
-            <input v-model="correctionReason" maxlength="512" data-testid="live-report-correction-reason" />
+            <input
+              v-model="correctionReason"
+              maxlength="512"
+              data-testid="live-report-correction-reason"
+              :data-missing="correctionReasonBad ? '1' : '0'"
+              :style="correctionReasonBad ? 'border-color: var(--red)' : ''"
+            />
+            <p class="hint" data-testid="live-correction-reason-hint">更正原因必填。留空不会生成更正单。</p>
           </div>
         </div>
         <ul v-if="costLines.length" data-testid="live-cost-details">
@@ -491,6 +499,8 @@ const overdueCount = ref(0)
 const overdueOnly = ref(false)
 const reportError = ref('')
 const reportMissing = ref<string[]>([])
+const reportBadField = ref('')
+const slowQueryHint = ref('')
 const correcting = ref(false)
 const correctionReason = ref('')
 const correctionTrace = ref<any>(null)
@@ -671,8 +681,21 @@ function reportPayload() {
   return payload
 }
 
+const correctionReasonBad = computed(() => correcting.value && reportError.value.includes('更正原因'))
+
+const numberFieldLabel: Record<string, string> = {
+  gmv: 'GMV',
+  refundAmount: '退款',
+  adCost: '投放成本',
+  orderCount: '订单数',
+  viewerCount: '观看人数',
+  peakOnline: '峰值在线',
+  newFans: '涨粉',
+  amount: '成本金额',
+}
+
 function fieldMissing(key: string) {
-  return reportMissing.value.includes(key)
+  return reportMissing.value.includes(key) || reportBadField.value === key
 }
 
 const detailTitle = computed(() => (detail.value ? `场次 ${detail.value.sessionCode}` : '场次详情'))
@@ -714,6 +737,8 @@ function syncLabel(v: string | undefined) {
 async function loadList() {
   loading.value = true
   error.value = ''
+  slowQueryHint.value = ''
+  const started = Date.now()
   try {
     const res = await apiGet(`/live/sessions/list?${ledgerQueryParams(true).toString()}`)
     rows.value = res.list || []
@@ -721,6 +746,9 @@ async function loadList() {
   } catch (e: unknown) {
     error.value = errorMessage(e)
   } finally {
+    if (Date.now() - started >= 3000) {
+      slowQueryHint.value = '查询超过 3 秒，请缩小开播日期区间后再查。'
+    }
     loading.value = false
   }
 }
@@ -1195,6 +1223,7 @@ async function submitReport() {
   if (!detail.value) return
   reportError.value = ''
   reportMissing.value = []
+  reportBadField.value = ''
   try {
     report.value = await apiPost(`/live/report/${detail.value.sessionCode}`, reportPayload())
     applyReport(report.value)
@@ -1203,9 +1232,11 @@ async function submitReport() {
     await refreshDetail()
     await loadList()
   } catch (e: unknown) {
-    const body = e as { data?: { missing?: string[] } }
+    const body = e as { data?: { missing?: string[]; field?: string } }
     reportMissing.value = body.data?.missing || []
-    reportError.value = bizError(e)
+    reportBadField.value = body.data?.field || ''
+    const label = numberFieldLabel[reportBadField.value]
+    reportError.value = label ? `${bizError(e)}（${label}）` : bizError(e)
     hint.value = reportError.value
   }
 }
@@ -1231,6 +1262,7 @@ function openCorrection() {
 async function submitCorrection() {
   if (!detail.value) return
   reportError.value = ''
+  reportBadField.value = ''
   if (!correctionReason.value.trim()) {
     reportError.value = '更正原因必填'
     return
@@ -1247,7 +1279,10 @@ async function submitCorrection() {
     bindCorrections(report.value)
     hint.value = `更正单 ${data.correctionId} 已留痕`
   } catch (e: unknown) {
-    reportError.value = bizError(e)
+    const body = e as { data?: { field?: string } }
+    reportBadField.value = body.data?.field || ''
+    const label = numberFieldLabel[reportBadField.value]
+    reportError.value = label ? `${bizError(e)}（${label}）` : bizError(e)
     hint.value = reportError.value
   }
 }
