@@ -188,18 +188,20 @@ async function openContentEdit() {
   editForm.value.matchType = 1
   editForm.value.matchSchemeJson = '[]'
   aiOpen.value = false
-  editOpen.value = true
-  if (!lc?.id) return
-  try {
-    const { data } = await http.get(`/content/${lc.id}`)
-    const row = data.data || {}
-    editForm.value.title = row.title || editForm.value.title
-    editForm.value.body = row.body || ''
-    editForm.value.matchType = row.matchType || 1
-    editForm.value.matchSchemeJson = JSON.stringify(row.matchScheme || [], null, 2)
-  } catch (e) {
-    window.alert(errorMessage(e))
+  if (lc?.id) {
+    try {
+      const { data } = await http.get(`/content/${lc.id}`)
+      const row = data.data || {}
+      editForm.value.title = row.title || editForm.value.title
+      editForm.value.body = row.body || ''
+      editForm.value.matchType = row.matchType || 1
+      editForm.value.matchSchemeJson = JSON.stringify(row.matchScheme || [], null, 2)
+    } catch (e) {
+      window.alert(errorMessage(e))
+      return
+    }
   }
+  editOpen.value = true
 }
 
 async function saveContent() {
