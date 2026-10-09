@@ -41,8 +41,8 @@
       </div>
     </div>
     <div class="tabs">
-      <div class="tab" :class="{ on: tab === 'users' }" @click="tab = 'users'">人员列表</div>
-      <div class="tab" :class="{ on: tab === 'events' }" @click="tab = 'events'">同步事件</div>
+      <div class="tab" :class="{ on: tab === 'users' }" data-testid="org-tab-users" @click="tab = 'users'">人员列表</div>
+      <div class="tab" :class="{ on: tab === 'events' }" data-testid="org-tab-events" @click="tab = 'events'">同步事件</div>
     </div>
     <template v-if="tab === 'users'">
     <div class="card" data-testid="org-dept-tree" style="margin-bottom: 12px">
@@ -76,10 +76,19 @@
       </div>
     </div>
     <div class="tbl-block">
-      <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchUsers">
+      <form class="qbar" style="margin-bottom: 10px" data-testid="org-user-filters" @submit.prevent="searchUsers">
         <input v-model="keyword" data-testid="org-user-keyword" placeholder="姓名 / 钉钉用户" style="width: 180px" />
+        <select v-model="userSync" data-testid="org-user-sync" style="width: 140px">
+          <option value="">全部同步状态</option>
+          <option value="PENDING">待处理</option>
+          <option value="SUCCESS">成功</option>
+          <option value="FAILED">失败</option>
+        </select>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="org-user-search">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="org-user-reset" @click="resetUsers">重置</button>
       </form>
+      <p class="sub" data-testid="org-user-sync-hint" style="margin: 0 0 8px">失败状态包含失败重试和死信。</p>
+      <p v-if="userFilterNote" class="hint" data-testid="org-user-filter-note">{{ userFilterNote }}</p>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -101,9 +110,9 @@
             </tr>
             <tr v-else-if="!users.length">
               <td colspan="9" style="white-space: normal">
-                <div class="empty">
+                <div class="empty" data-testid="org-user-empty">
                   <div class="et">{{ userError || userEmpty }}</div>
-                  <div class="es">人员来自验签后的组织事件，列表只展示接口返回的行。</div>
+                  <div class="es">{{ userEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -129,6 +138,29 @@
     </div>
     </template>
     <div v-else class="tbl-block">
+      <form class="qbar" style="margin-bottom: 10px" data-testid="org-event-filters" @submit.prevent="searchEvents">
+        <select v-model="eventType" data-testid="org-event-type" style="width: 140px">
+          <option value="">全部类型</option>
+          <option value="hire">入职</option>
+          <option value="transfer">调岗</option>
+          <option value="resign">离职</option>
+          <option value="dept_change">部门变更</option>
+          <option value="reconcile">对账</option>
+        </select>
+        <select v-model="eventSync" data-testid="org-event-sync" style="width: 140px">
+          <option value="">全部状态</option>
+          <option value="PENDING">待处理</option>
+          <option value="SUCCESS">成功</option>
+          <option value="FAILED_RETRY">失败重试</option>
+          <option value="DEAD_LETTER">死信</option>
+        </select>
+        <input v-model="eventFrom" data-testid="org-event-from" type="date" />
+        <input v-model="eventTo" data-testid="org-event-to" type="date" />
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="org-event-search">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="org-event-reset" @click="resetEvents">重置</button>
+      </form>
+      <p v-if="eventHint" class="hint bad" data-testid="org-event-hint">{{ eventHint }}</p>
+      <p v-else-if="eventFilterNote" class="hint" data-testid="org-event-filter-note">{{ eventFilterNote }}</p>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -147,9 +179,9 @@
             </tr>
             <tr v-else-if="!events.length">
               <td colspan="6" style="white-space: normal">
-                <div class="empty">
-                  <div class="et">{{ eventError || '没有同步事件' }}</div>
-                  <div class="es">对账成功后，这里会出现对账记录。</div>
+                <div class="empty" data-testid="org-event-empty">
+                  <div class="et">{{ eventError || eventEmpty }}</div>
+                  <div class="es">{{ eventEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -206,7 +238,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
-import { asList, readData } from '../../api/read'
+import { asList, asTotal, readData } from '../../api/read'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const metrics = reactive<{ delayMillis?: number; level?: string; avgSyncDelayMinutes?: number; successRate?: number }>({})
@@ -224,6 +256,19 @@ const msg = ref('')
 const confirming = ref(false)
 const tab = ref<'users' | 'events'>('users')
 const keyword = ref('')
+const userSync = ref('')
+const appliedKeyword = ref('')
+const appliedSync = ref('')
+const appliedDeptId = ref<number | null>(null)
+const eventType = ref('')
+const eventSync = ref('')
+const eventFrom = ref('')
+const eventTo = ref('')
+const appliedEventType = ref('')
+const appliedEventSync = ref('')
+const appliedEventFrom = ref('')
+const appliedEventTo = ref('')
+const eventHint = ref('')
 const deptQuery = ref('')
 const deptCatalog = ref<Record<string, unknown>[]>([])
 const deptReady = ref(false)
@@ -254,10 +299,44 @@ const visibleDeptNodes = computed(() => {
   return deptNodes.value.filter((node) => node.name.includes(query) || String(node.id).includes(query))
 })
 
+const userFilterNote = computed(() => {
+  const bits: string[] = []
+  if (appliedDeptId.value) bits.push('当前部门')
+  if (appliedKeyword.value) bits.push(`姓名「${appliedKeyword.value}」`)
+  if (appliedSync.value) bits.push(`同步状态「${syncOptionLabel(appliedSync.value)}」`)
+  if (!bits.length) return ''
+  return `人员列表按${bits.join('、')}筛选。`
+})
+
 const userEmpty = computed(() => {
-  if (selectedDeptId.value) return '该部门下没有已同步人员'
-  if (keyword.value.trim()) return '没有匹配的人员'
+  if (appliedDeptId.value && !appliedKeyword.value && !appliedSync.value) return '该部门下没有已同步人员'
+  if (appliedSync.value && !appliedKeyword.value && !appliedDeptId.value) return '没有该同步状态的人员'
+  if (appliedKeyword.value || appliedSync.value || appliedDeptId.value) return '没有匹配的人员'
   return '没有已同步人员'
+})
+
+const userEmptyHint = computed(() => {
+  if (appliedKeyword.value || appliedSync.value || appliedDeptId.value) return '换姓名、部门或同步状态后再查。'
+  return '人员来自验签后的组织事件，列表只展示接口返回的行。'
+})
+
+const eventFilterNote = computed(() => {
+  const bits: string[] = []
+  if (appliedEventType.value) bits.push(`类型「${eventLabel(appliedEventType.value)}」`)
+  if (appliedEventSync.value) bits.push(`状态「${eventSyncLabel(appliedEventSync.value)}」`)
+  if (appliedEventFrom.value && appliedEventTo.value) bits.push(`${appliedEventFrom.value} 至 ${appliedEventTo.value}`)
+  if (!bits.length) return ''
+  return `同步事件按${bits.join('、')}筛选。`
+})
+
+const eventEmpty = computed(() => {
+  if (appliedEventType.value || appliedEventSync.value || appliedEventFrom.value || appliedEventTo.value) return '没有符合条件的同步事件'
+  return '没有同步事件'
+})
+
+const eventEmptyHint = computed(() => {
+  if (appliedEventType.value || appliedEventSync.value || appliedEventFrom.value || appliedEventTo.value) return '换事件类型、状态或日期区间后再查。'
+  return '对账成功后，这里会出现对账记录。'
 })
 
 const diff = computed(() => {
@@ -321,6 +400,14 @@ function eventLabel(value: unknown) {
   return map[String(value)] || text(value)
 }
 
+function syncOptionLabel(value: string) {
+  return { PENDING: '待处理', SUCCESS: '成功', FAILED: '失败' }[value] || value
+}
+
+function eventSyncLabel(value: string) {
+  return { PENDING: '待处理', SUCCESS: '成功', FAILED_RETRY: '失败重试', DEAD_LETTER: '死信' }[value] || value
+}
+
 function deptChange(row: Record<string, unknown>) {
   const before = text(row.beforeDept)
   const after = text(row.afterDept)
@@ -332,7 +419,21 @@ function percent(value: number) {
   return `${Math.round(value * 1000) / 10}%`
 }
 
+function captureUserFilters() {
+  appliedKeyword.value = keyword.value.trim()
+  appliedSync.value = userSync.value
+  appliedDeptId.value = selectedDeptId.value
+}
+
+function captureEventFilters() {
+  appliedEventType.value = eventType.value
+  appliedEventSync.value = eventSync.value
+  appliedEventFrom.value = eventFrom.value
+  appliedEventTo.value = eventTo.value
+}
+
 async function load() {
+  captureUserFilters()
   const metricRes = await readData('/auth/org/sync-metrics')
   metricReady.value = true
   metricError.value = metricRes.error
@@ -341,21 +442,39 @@ async function load() {
   const userParams: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
   if (keyword.value.trim()) userParams.keyword = keyword.value.trim()
   if (selectedDeptId.value) userParams.deptId = selectedDeptId.value
+  if (userSync.value) userParams.syncStatus = userSync.value
   const userRes = await readData('/auth/org/users', userParams)
   userReady.value = true
   userError.value = userRes.error
   users.value = asList(userRes.data)
-  userTotal.value = userRes.data && typeof userRes.data === 'object' && typeof (userRes.data as { total?: unknown }).total === 'number'
-    ? (userRes.data as { total: number }).total
-    : users.value.length
+  userTotal.value = asTotal(userRes.data, users.value.length)
+  await loadEvents()
+}
 
-  const eventRes = await readData('/auth/org/events', { pageNo: 1, pageSize: 10 })
-  eventReady.value = true
-  eventError.value = eventRes.error
-  events.value = asList(eventRes.data)
-  total.value = eventRes.data && typeof eventRes.data === 'object' && typeof (eventRes.data as { total?: unknown }).total === 'number'
-    ? (eventRes.data as { total: number }).total
-    : events.value.length
+async function loadEvents() {
+  captureEventFilters()
+  const params: Record<string, unknown> = { pageNo: 1, pageSize: 10 }
+  if (eventType.value) params.eventType = eventType.value
+  if (eventSync.value) params.syncStatus = eventSync.value
+  if (eventFrom.value && eventTo.value) {
+    params.timeRange = [`${eventFrom.value} 00:00:00`, `${eventTo.value} 23:59:59`]
+  }
+  try {
+    const res = await http.get('/auth/org/events', {
+      params,
+      paramsSerializer: { indexes: null },
+    })
+    const data = res.data?.data
+    eventError.value = ''
+    events.value = asList(data)
+    total.value = asTotal(data, events.value.length)
+  } catch (error) {
+    eventError.value = errorMessage(error)
+    events.value = []
+    total.value = 0
+  } finally {
+    eventReady.value = true
+  }
 }
 
 async function loadDeptTree() {
@@ -367,6 +486,40 @@ async function loadDeptTree() {
 function searchUsers() {
   userReady.value = false
   load()
+}
+
+function resetUsers() {
+  keyword.value = ''
+  userSync.value = ''
+  selectedDeptId.value = null
+  deptQuery.value = ''
+  searchUsers()
+}
+
+function searchEvents() {
+  eventHint.value = ''
+  const from = eventFrom.value
+  const to = eventTo.value
+  if ((from && !to) || (!from && to)) {
+    eventHint.value = '请同时填写开始和结束日期'
+    return
+  }
+  if (from && to && from > to) {
+    eventHint.value = '结束日期不能早于开始日期'
+    return
+  }
+  eventReady.value = false
+  loadEvents()
+}
+
+function resetEvents() {
+  eventType.value = ''
+  eventSync.value = ''
+  eventFrom.value = ''
+  eventTo.value = ''
+  eventHint.value = ''
+  eventReady.value = false
+  loadEvents()
 }
 
 function clearDept() {

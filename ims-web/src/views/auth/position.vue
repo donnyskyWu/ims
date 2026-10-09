@@ -6,18 +6,36 @@
         <div class="sub">AUTH-003 · 只挂角色，权限明细在角色页</div>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="create">
-      <input v-model="name" placeholder="规则名" style="width: 160px" />
-      <input v-model="position" placeholder="钉钉岗位" style="width: 160px" />
-      <select v-model="roleId" style="width: 180px">
+    <form class="qbar" data-testid="pos-create" @submit.prevent="create">
+      <input v-model="name" data-testid="pos-create-name" placeholder="规则名" style="width: 160px" />
+      <input v-model="position" data-testid="pos-create-position" placeholder="钉钉岗位" style="width: 160px" />
+      <select v-model="roleId" data-testid="pos-create-role" style="width: 180px">
         <option value="">授予角色</option>
         <option v-for="role in roles" :key="String(role.id)" :value="String(role.id)">
           {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
         </option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">新建</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="pos-create-submit">新建</button>
     </form>
+    <form class="qbar" data-testid="pos-filters" @submit.prevent="search">
+      <input v-model="filterKeyword" data-testid="pos-filter-keyword" placeholder="规则名 / 岗位" style="width: 160px" />
+      <input v-model="filterPosition" data-testid="pos-filter-position" placeholder="钉钉岗位（精确）" style="width: 160px" />
+      <select v-model="filterRoleId" data-testid="pos-filter-role" style="width: 180px">
+        <option value="">全部角色</option>
+        <option v-for="role in filterRoles" :key="String(role.id)" :value="String(role.id)">
+          {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
+        </option>
+      </select>
+      <select v-model="filterStatus" data-testid="pos-filter-status" style="width: 120px">
+        <option value="">全部状态</option>
+        <option value="ENABLED">启用</option>
+        <option value="DISABLED">停用</option>
+      </select>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="pos-filter-search">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="pos-filter-reset" @click="resetFilters">重置</button>
+    </form>
+    <p v-if="filterNote" class="hint" data-testid="pos-filter-summary">{{ filterNote }}</p>
     <p v-if="msg" class="hint" style="margin-bottom: 10px">{{ msg }}</p>
     <div v-if="confirmId" class="card" style="margin-bottom: 12px">
       <div style="font-weight: 600; margin-bottom: 6px">确认删除</div>
@@ -47,10 +65,13 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="7" style="white-space: normal">
-                <div class="empty"><div class="et">{{ error || '没有供给规则' }}</div></div>
+                <div class="empty" data-testid="pos-list-empty">
+                  <div class="et">{{ error || (hasFilters ? '没有符合条件的供给规则' : '没有供给规则') }}</div>
+                  <div v-if="hasFilters" class="es">换规则名、岗位、角色或状态后再查。</div>
+                </div>
               </td>
             </tr>
-            <tr v-for="row in rows" v-else :key="String(row.id)">
+            <tr v-for="row in rows" v-else :key="String(row.id)" data-testid="pos-rule-row">
               <td style="font-weight: 500">{{ cell(row, ['ruleName']) }}</td>
               <td>{{ cell(row, ['dingtalkPosition']) }}</td>
               <td class="mono">{{ cell(row, ['version']) }}</td>
@@ -71,20 +92,44 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal, cell, readData } from '../../api/read'
 
 const rows = ref<Record<string, unknown>[]>([])
 const roles = ref<Record<string, unknown>[]>([])
+const filterRoles = ref<Record<string, unknown>[]>([])
 const ready = ref(false)
 const error = ref('')
 const name = ref('')
 const position = ref('')
 const roleId = ref('')
+const filterKeyword = ref('')
+const filterPosition = ref('')
+const filterRoleId = ref('')
+const filterStatus = ref('')
+const appliedKeyword = ref('')
+const appliedPosition = ref('')
+const appliedRoleId = ref('')
+const appliedStatus = ref('')
 const msg = ref('')
 const total = ref(0)
 const confirmId = ref(0)
+
+const hasFilters = computed(() => Boolean(appliedKeyword.value || appliedPosition.value || appliedRoleId.value || appliedStatus.value))
+
+const filterNote = computed(() => {
+  const bits: string[] = []
+  if (appliedKeyword.value) bits.push(`关键词「${appliedKeyword.value}」`)
+  if (appliedPosition.value) bits.push(`岗位「${appliedPosition.value}」`)
+  if (appliedRoleId.value) {
+    const role = filterRoles.value.find((item) => String(item.id) === appliedRoleId.value)
+    bits.push(`角色「${role?.roleName || appliedRoleId.value}」`)
+  }
+  if (appliedStatus.value) bits.push(appliedStatus.value === 'ENABLED' ? '启用' : '停用')
+  if (!bits.length) return ''
+  return `供给规则按${bits.join('、')}筛选。`
+})
 
 function roleNames(row: Record<string, unknown>) {
   const grants = row.grantRoles
@@ -92,16 +137,43 @@ function roleNames(row: Record<string, unknown>) {
   return grants.map((item) => String((item as { roleName?: string }).roleName || '')).filter(Boolean).join('、') || '—'
 }
 
+function captureFilters() {
+  appliedKeyword.value = filterKeyword.value.trim()
+  appliedPosition.value = filterPosition.value.trim()
+  appliedRoleId.value = filterRoleId.value
+  appliedStatus.value = filterStatus.value
+}
+
 async function load() {
+  captureFilters()
   const roleRes = await readData('/system/role/list')
-  roles.value = asList(roleRes.data).filter((role) => role.status === 'ENABLED')
+  filterRoles.value = asList(roleRes.data)
+  roles.value = filterRoles.value.filter((role) => role.status === 'ENABLED')
   if (!roleId.value && roles.value.length) roleId.value = String(roles.value[0].id)
 
-  const res = await readData('/auth/position/rules', { pageNo: 1, pageSize: 10 })
+  const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+  if (appliedKeyword.value) params.keyword = appliedKeyword.value
+  if (appliedPosition.value) params.dingtalkPosition = appliedPosition.value
+  if (appliedRoleId.value) params.grantRoleId = Number(appliedRoleId.value)
+  if (appliedStatus.value) params.status = appliedStatus.value
+  const res = await readData('/auth/position/rules', params)
   ready.value = true
   error.value = res.error
   rows.value = asList(res.data)
   total.value = asTotal(res.data, rows.value.length)
+}
+
+function search() {
+  ready.value = false
+  load()
+}
+
+function resetFilters() {
+  filterKeyword.value = ''
+  filterPosition.value = ''
+  filterRoleId.value = ''
+  filterStatus.value = ''
+  search()
 }
 
 async function create() {
