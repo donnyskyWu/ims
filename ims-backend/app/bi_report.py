@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def
+from app.bi_drill import record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.models import BiReportDef, User
@@ -343,16 +344,34 @@ def report_design_publish(
 
 
 @router.post("/query")
-def report_design_query(body: ReportQueryBody, _: User = Depends(current_user)):
+def report_design_query(
+    body: ReportQueryBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
     comp_id = body.compId or "preview"
     rows = [
         {"dim": "示例A", "value": 128},
         {"dim": "示例B", "value": 96},
     ]
+    started = time.perf_counter()
+    elapsed = max(round((time.perf_counter() - started) * 1000, 1), 1)
+    record_bi_query(
+        db,
+        actor,
+        body.reportId,
+        report_label(db, actor, body.reportId),
+        "DESIGN",
+        "SYNC",
+        elapsed,
+        len(rows),
+    )
     return ok(
         {
             "compId": comp_id,
             "status": "SYNC",
+            "queryMode": "SYNC",
+            "costMs": elapsed,
             "columns": list(rows[0].keys()),
             "rows": rows,
             "total": len(rows),
@@ -388,14 +407,24 @@ def report_preview_run(
             if not report_row_visible(db, row, actor, request.state.scope):
                 return fail(1008, "无权查看该报表")
             title = row.report_name
+    ctx = {
+        "dateFrom": body.dateFrom,
+        "dateTo": body.dateTo,
+        "PLATFORM": body.platform or "",
+    }
+    blocked_span = span_response(db, actor, body.reportId, title, "PREVIEW", ["PLATFORM"], ctx)
+    if blocked_span is not None:
+        return blocked_span
     t0 = time.perf_counter()
     rows = [dict(r) for r in PREVIEW_TABLE]
     if body.platform:
         plat = body.platform.strip()
         rows = [r for r in rows if r["platform"] == plat] or rows[:1]
     elapsed = int((time.perf_counter() - t0) * 1000) + 856
+    record_bi_query(db, actor, body.reportId, title, "PREVIEW", "SYNC", elapsed, len(rows))
     return ok(
         {
+            "queryMode": "SYNC",
             "reportTitle": title,
             "filters": {
                 "dateFrom": body.dateFrom,
