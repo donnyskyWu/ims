@@ -107,6 +107,9 @@ def test_workbench_dashboard_includes_flow_todo_count():
     assert "flowTodoCount" in data
     assert isinstance(data["flowTodoCount"], int)
     assert data["flowTodoCount"] >= 1
+    for key in ("myAccountCount", "myAssetCount", "myCertCount", "myLiveSessionCount", "myCertWarningCount"):
+        assert isinstance(data[key], int)
+    assert data["myCertWarningCount"] == 0
     preview = client.get(
         "/admin-api/ims/flow/task/my-todo",
         headers=headers,

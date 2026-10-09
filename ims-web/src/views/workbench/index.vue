@@ -21,6 +21,29 @@
         <div class="d">{{ dashError || 'GET /auth/workbench/dashboard' }}</div>
       </div>
     </div>
+    <div class="g4" data-testid="wb-mine-cards">
+      <router-link
+        v-for="card in mineCards"
+        :key="card.key"
+        class="card stat hov"
+        :class="{ 'wb-card-empty': card.empty }"
+        :to="card.to"
+        :data-testid="card.testId"
+        style="text-decoration: none; color: inherit"
+      >
+        <span class="l">
+          {{ card.label }}
+          <span
+            v-if="card.badge"
+            class="badge"
+            style="position: static; margin-left: 6px"
+            data-testid="wb-cert-warn"
+          >{{ card.badge }}</span>
+        </span>
+        <div class="n">{{ card.value }}</div>
+        <div class="d">{{ card.hint }}</div>
+      </router-link>
+    </div>
     <div class="sec rowline" style="justify-content: space-between; align-items: baseline">
       <span>流程待办</span>
       <router-link class="btn btn-txt btn-sm" to="/ims/flow">全部流程</router-link>
@@ -208,7 +231,16 @@ function transferFlowPath(row: Record<string, unknown>) {
   if (!form?.transferId) return ''
   return `/ims/corp/account/${platformSlug(String(form.platform || 'DOUYIN'))}?transferId=${form.transferId}`
 }
-const dash = reactive<{ todoCount?: number; flowTodoCount?: number; unreadMessageCount?: number }>({})
+const dash = reactive<{
+  todoCount?: number
+  flowTodoCount?: number
+  unreadMessageCount?: number
+  myAccountCount?: number
+  myAssetCount?: number
+  myCertCount?: number
+  myCertWarningCount?: number
+  myLiveSessionCount?: number
+}>({})
 const flowTodos = ref<Record<string, unknown>[]>([])
 const flowReady = ref(false)
 const flowError = ref('')
@@ -235,6 +267,59 @@ const dashLine = computed(() => {
   if (dashError.value) return dashError.value
   const flow = dash.flowTodoCount ?? '—'
   return `待办 ${dash.todoCount ?? '—'} · 流程 ${flow} · 未读 ${dash.unreadMessageCount ?? '—'}`
+})
+
+const mineCards = computed(() => {
+  const ready = dashReady.value
+  const account = dash.myAccountCount ?? 0
+  const asset = dash.myAssetCount ?? 0
+  const cert = dash.myCertCount ?? 0
+  const warn = dash.myCertWarningCount ?? 0
+  const live = dash.myLiveSessionCount ?? 0
+  const show = (count: number) => (ready ? String(count) : '—')
+  const emptyHint = (count: number, text: string) => (ready ? (count > 0 ? '名下统计桩' : text) : '统计桩')
+  return [
+    {
+      key: 'account',
+      label: '我名下账号',
+      value: show(account),
+      hint: emptyHint(account, '暂无'),
+      to: '/ims/corp/account/douyin',
+      testId: 'wb-card-account',
+      empty: ready && account === 0,
+      badge: '',
+    },
+    {
+      key: 'asset',
+      label: '我名下资产',
+      value: show(asset),
+      hint: emptyHint(asset, '暂无'),
+      to: '/ims/corp/device/office',
+      testId: 'wb-card-asset',
+      empty: ready && asset === 0,
+      badge: '',
+    },
+    {
+      key: 'cert',
+      label: '我的证件',
+      value: show(cert),
+      hint: ready ? (warn > 0 ? `预警 ${warn}` : '暂无预警') : '统计桩',
+      to: '/ims/corp/resource/certificate',
+      testId: 'wb-card-cert',
+      empty: ready && cert === 0 && warn === 0,
+      badge: ready && warn > 0 ? String(warn) : '',
+    },
+    {
+      key: 'live',
+      label: '我的场次',
+      value: show(live),
+      hint: emptyHint(live, '暂无'),
+      to: '/ims/live/sessions',
+      testId: 'wb-card-session',
+      empty: ready && live === 0,
+      badge: '',
+    },
+  ]
 })
 
 async function load() {
@@ -267,8 +352,16 @@ function readLabel(row: Record<string, unknown>) {
   return isRead(row) ? '是' : '否'
 }
 
+function overdueDays(deadline: unknown) {
+  if (typeof deadline !== 'string' || deadline.length < 10) return 1
+  const stamp = Date.parse(deadline.endsWith('Z') ? deadline : `${deadline}Z`)
+  if (Number.isNaN(stamp)) return 1
+  const days = Math.ceil((Date.now() - stamp) / 86_400_000)
+  return days > 0 ? days : 1
+}
+
 function overdueLabel(row: Record<string, unknown>) {
-  if (row.overdue === true) return '是'
+  if (row.overdue === true) return `逾期 ${overdueDays(row.deadline)} 天`
   if (row.overdue === false) return '否'
   return cell(row, ['overdue'])
 }
@@ -305,3 +398,10 @@ async function closeTodo(row: Record<string, unknown>) {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.wb-card-empty {
+  border: 1px dashed var(--line);
+  box-shadow: none;
+}
+</style>

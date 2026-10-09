@@ -106,6 +106,8 @@ def dashboard(db: Session = Depends(db_session), user: User = Depends(current_us
             "myAccountCount": 0,
             "myAssetCount": 0,
             "myCertCount": 0,
+            # 证件预警角标不扫描档案。本地桩为 0，卡片空态写「暂无预警」。
+            "myCertWarningCount": 0,
             "myLiveSessionCount": 0,
         }
     )
