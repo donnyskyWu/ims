@@ -597,3 +597,124 @@ def test_alert_escalate_pending_levels_and_timeline_stub():
     trend = client.get("/admin-api/ims/alert/stats/response-rate", headers=auth)
     assert trend.json()["code"] == 0
     assert sum(item["alertCount"] for item in trend.json()["data"]) == 5
+
+
+def test_alert_record_filters_receipt_and_my_alerts():
+    auth = headers()
+    code = f"receipt.filter.{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": code,
+            "ruleName": "回执筛选",
+            "thresholdExpr": "delayMinutes>1",
+            "level": 3,
+            "enabled": True,
+        },
+    )
+    assert created.json()["code"] == 0
+    rule_id = created.json()["data"]["id"]
+    run = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth)
+    body = run.json()
+    assert body["code"] == 0
+    alert_no = body["data"]["alertNo"]
+    assert body["data"]["pushStatus"] == "DELIVERED"
+    assert body["data"]["ruleCode"] == code
+    channels = {item["channel"]: item for item in body["data"]["pushChannels"]}
+    assert channels["WORKBENCH"]["success"] is True
+    assert channels["DINGTALK"]["success"] is True
+    assert channels["SMS"]["success"] is False
+
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.models import AlertRecord
+
+    window = datetime(1800, 1, 1) + timedelta(days=uuid.uuid4().int % 50000)
+    day = window.strftime("%Y-%m-%d")
+    db = SessionLocal()
+    try:
+        row = db.scalar(select(AlertRecord).where(AlertRecord.alert_no == alert_no))
+        assert row is not None
+        row.occurred_at = window.replace(hour=8, minute=0, second=0)
+        db.commit()
+    finally:
+        db.close()
+
+    listed = client.get(
+        "/admin-api/ims/alert/check/records",
+        headers=auth,
+        params={
+            "ruleCode": code,
+            "level": "L3",
+            "pushStatus": "DELIVERED",
+            "responseStatus": "OPEN",
+            "dateRange": f"{day},{day}",
+            "pageNo": 1,
+            "pageSize": 10,
+        },
+    )
+    assert listed.json()["code"] == 0
+    assert [row["alertNo"] for row in listed.json()["data"]["list"]] == [alert_no]
+
+    missed = client.get(
+        "/admin-api/ims/alert/check/records",
+        headers=auth,
+        params={"ruleCode": code, "pushStatus": "FAILED", "dateRange": f"{day},{day}"},
+    )
+    assert missed.json()["data"]["total"] == 0
+
+    bad_level = client.get(
+        "/admin-api/ims/alert/check/records",
+        headers=auth,
+        params={"level": "L9"},
+    )
+    assert bad_level.json()["code"] == 1001
+
+    detail = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth)
+    assert detail.json()["code"] == 0
+    assert detail.json()["data"]["escalationTimeline"] == []
+    assert detail.json()["data"]["retryCount"] == 0
+    assert detail.json()["data"]["sourceJumpUrl"] == "/ims/alert/rule"
+
+    mine = client.get("/admin-api/ims/alert/check/my-alerts", headers=auth)
+    assert mine.json()["code"] == 0
+    hit = next(item for item in mine.json()["data"] if item["alertNo"] == alert_no)
+    assert hit["isUnread"] is True
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(select(AlertRecord).where(AlertRecord.alert_no == alert_no))
+        assert row is not None
+        row.push_status = 3
+        db.commit()
+    finally:
+        db.close()
+
+    failed = client.get(
+        "/admin-api/ims/alert/check/records",
+        headers=auth,
+        params={"ruleCode": code, "pushStatus": "FAILED", "dateRange": f"{day},{day}"},
+    )
+    assert failed.json()["data"]["list"][0]["alertNo"] == alert_no
+    assert failed.json()["data"]["list"][0]["pushChannels"][0]["success"] is False
+
+    stats = client.get(
+        "/admin-api/ims/alert/check/delivery-stats",
+        headers=auth,
+        params={"dateRange": f"{day},{day}"},
+    )
+    assert stats.json()["code"] == 0
+    payload = stats.json()["data"]
+    assert payload["target"] == 99
+    assert payload["totalShould"] == 1
+    assert payload["totalDelivered"] == 0
+    assert payload["failedAlerts"] == [{"alertNo": alert_no, "failedChannel": "SMS", "retryCount": 1}]
+
+    again = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth)
+    assert again.json()["data"]["retryCount"] == 1
+    assert again.json()["data"]["pushStatus"] == "FAILED"
+
+    todos = client.get("/admin-api/ims/home/todos", headers=auth, params={"pageNo": 1, "pageSize": 20})
+    assert any(item.get("type") == "ALERT" and item.get("bizId") == alert_no for item in todos.json()["data"]["list"])

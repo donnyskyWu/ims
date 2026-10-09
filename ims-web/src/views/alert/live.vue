@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>实时预警</h1>
-        <div class="sub">ALERT-002/003/004 · 实时 · 处置记录 · 去重</div>
+        <div class="sub">ALERT-002 · 记录筛选 · 推送回执（钉钉/短信为本地桩）</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>
@@ -18,6 +18,45 @@
       <div class="tab" :class="{ on: tab === 'dedup' }" @click="switchTab('dedup')">去重合并</div>
     </div>
 
+    <div v-if="tab === 'live'" class="g2" style="margin: 12px 0">
+      <div class="card stat" data-testid="alert-delivery-card">
+        <span class="l">送达率</span>
+        <div class="n" data-testid="alert-delivery-rate">{{ delivery ? `${delivery.deliveryRate}%` : '—' }}</div>
+        <div class="d">
+          已送达 {{ delivery?.totalDelivered ?? 0 }} / {{ delivery?.totalShould ?? 0 }} · 目标 &gt;{{ delivery?.target ?? 99 }}%
+          · 钉钉/短信本地桩
+        </div>
+        <p v-if="delivery && delivery.deliveryRate < (delivery.target || 99)" class="hint" style="color: var(--red)">
+          未达标（BR-111）
+        </p>
+        <div v-if="delivery?.failedAlerts?.length" data-testid="alert-delivery-failed">
+          <div v-for="item in delivery.failedAlerts" :key="item.alertNo" class="hint">
+            {{ item.alertNo }} · {{ channelName(item.failedChannel) }}失败 · 已自动补发 {{ item.retryCount }} 次（ALR-P-R2）
+          </div>
+        </div>
+      </div>
+      <div class="card" data-testid="alert-my-card">
+        <div class="hd-row">
+          <h3>我的预警</h3>
+          <span class="csub">{{ myAlerts.length }} 条未响应</span>
+        </div>
+        <div v-if="!myAlerts.length" class="empty"><div class="et">暂无待响应预警</div></div>
+        <div
+          v-for="item in myAlerts"
+          :key="item.alertNo"
+          class="mg-i"
+          style="cursor: pointer"
+          data-testid="alert-my-item"
+          @click="openDetail(item.alertNo)"
+        >
+          <div>
+            <div class="mt">L{{ item.level }} {{ item.content }}</div>
+            <div class="md">{{ item.alertNo }} · 未读</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-if="tab === 'history' && summary" class="g4" style="margin: 12px 0">
       <div class="card stat"><span class="l">累计</span><div class="n">{{ summary.totalAlerts }}</div></div>
       <div class="card stat"><span class="l">已处置</span><div class="n">{{ summary.handledCount }}</div></div>
@@ -25,17 +64,35 @@
       <div class="card stat"><span class="l">误报</span><div class="n">{{ summary.falsePositiveCount }}</div></div>
     </div>
 
-    <form v-if="tab !== 'dedup'" class="qbar" @submit.prevent="loadList">
-      <select v-model="filters.responseStatus" style="width: 120px">
+    <form v-if="tab !== 'dedup'" class="qbar" data-testid="alert-filter-bar" @submit.prevent="loadList">
+      <input v-model="filters.ruleCode" data-testid="alert-filter-rule" placeholder="规则编码" style="width: 160px" />
+      <select v-model="filters.level" data-testid="alert-filter-level" style="width: 110px">
+        <option value="">全部级别</option>
+        <option value="L1">L1</option>
+        <option value="L2">L2</option>
+        <option value="L3">L3</option>
+      </select>
+      <select v-model="filters.responseStatus" data-testid="alert-filter-status" style="width: 120px">
         <option value="">全部处置</option>
         <option value="OPEN">待响应</option>
         <option value="CONFIRMED">已确认</option>
         <option value="RESOLVED">已解决</option>
         <option value="FALSE_ALARM">误报</option>
       </select>
+      <select v-model="filters.pushStatus" data-testid="alert-filter-push" style="width: 120px">
+        <option value="">全部推送</option>
+        <option value="PENDING">待推送</option>
+        <option value="DELIVERED">已送达</option>
+        <option value="PARTIAL_FAILED">部分失败</option>
+        <option value="FAILED">失败</option>
+      </select>
+      <input v-model="filters.dateFrom" data-testid="alert-filter-from" type="date" />
+      <input v-model="filters.dateTo" data-testid="alert-filter-to" type="date" />
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">刷新</button>
+      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-filter-reset" @click="resetFilters">重置</button>
     </form>
+    <p v-if="filterError" class="hint" style="color: var(--red)">{{ filterError }}</p>
 
     <div v-if="tab === 'dedup'" class="tbl-block">
       <div class="tbl-wrap">
@@ -74,6 +131,7 @@
               <th>规则</th>
               <th>级别</th>
               <th>内容</th>
+              <th>推送回执</th>
               <th>状态</th>
               <th>时间</th>
               <th v-if="tab === 'live'">操作</th>
@@ -81,19 +139,31 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td :colspan="tab === 'live' ? 7 : 6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td :colspan="tab === 'live' ? 8 : 7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td :colspan="tab === 'live' ? 7 : 6"><div class="empty"><div class="et">{{ error || '暂无预警' }}</div></div></td>
+              <td :colspan="tab === 'live' ? 8 : 7">
+                <div class="empty" data-testid="alert-list-empty"><div class="et">{{ error || '暂无预警' }}</div></div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.alertNo }}</td>
-              <td>{{ row.ruleName }}</td>
+              <td>
+                <div class="mono">{{ row.ruleCode || '—' }}</div>
+                <div>{{ row.ruleName }}</div>
+              </td>
               <td class="num">L{{ row.level }}</td>
               <td>{{ row.content }}</td>
+              <td :data-testid="`alert-push-${row.alertNo}`" :title="channelTitle(row)">
+                <div>{{ pushLabel(row.pushStatus) }}</div>
+                <div class="d">{{ channelBrief(row) }}</div>
+              </td>
               <td>{{ row.responseStatus }}</td>
               <td class="mono">{{ row.occurredAt?.slice(0, 16) || '—' }}</td>
               <td v-if="tab === 'live'">
+                <button class="btn btn-txt btn-sm" type="button" data-testid="alert-detail-btn" @click="openDetail(row.alertNo)">
+                  回执
+                </button>
                 <button
                   v-if="row.responseStatus === 'OPEN'"
                   class="btn btn-sec btn-sm"
@@ -128,6 +198,37 @@
       </div>
     </div>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
+
+    <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="closeDetail">
+      <div v-if="detail" data-testid="alert-receipt-drawer">
+        <p>{{ detail.content }}</p>
+        <p class="hint">{{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ detail.responseStatus }}</p>
+        <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
+        <table>
+          <thead>
+            <tr>
+              <th>通道</th>
+              <th>状态</th>
+              <th>回执时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="ch in detail.pushChannels" :key="ch.channel" data-testid="alert-receipt-row">
+              <td>{{ channelName(ch.channel) }}</td>
+              <td>{{ ch.success ? '✓' : '✗' }}</td>
+              <td class="mono">{{ ch.receiptAt || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-if="detail.retryCount" class="hint" style="color: var(--red)" data-testid="alert-receipt-retry">
+          已自动补发 1 次（ALR-P-R2）
+        </p>
+        <p v-if="detail.sourceJumpUrl" class="hint">
+          <router-link :to="detail.sourceJumpUrl">查看来源</router-link>
+        </p>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="alert-receipt-close" @click="closeDetail">关闭</button>
+      </div>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -135,16 +236,24 @@
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
+
+type Channel = { channel: string; success: boolean; receiptAt?: string }
 
 type Row = {
   id: number
   alertNo: string
+  ruleCode?: string
   ruleName: string
   level: number
   content: string
+  pushStatus: string
+  pushChannels?: Channel[]
   responseStatus: string
   occurredAt: string
 }
+
+type Detail = Row & { sourceJumpUrl?: string; retryCount?: number }
 
 type DedupRow = {
   id: number
@@ -156,18 +265,70 @@ type DedupRow = {
   enabled: boolean
 }
 
+type Delivery = {
+  totalDelivered: number
+  totalShould: number
+  deliveryRate: number
+  failedAlerts: { alertNo: string; failedChannel: string; retryCount: number }[]
+  target: number
+}
+
 const route = useRoute()
 const router = useRouter()
 const tab = ref<'live' | 'history' | 'dedup'>('live')
 const rows = ref<Row[]>([])
 const dedupRows = ref<DedupRow[]>([])
+const myAlerts = ref<Row[]>([])
+const delivery = ref<Delivery | null>(null)
+const detail = ref<Detail | null>(null)
+const detailOpen = ref(false)
 const loading = ref(false)
 const error = ref('')
+const filterError = ref('')
 const summary = ref<{ totalAlerts: number; handledCount: number; openCount: number; falsePositiveCount: number } | null>(
   null
 )
-const filters = reactive({ responseStatus: '' })
+const filters = reactive({
+  ruleCode: '',
+  level: '',
+  responseStatus: '',
+  pushStatus: '',
+  dateFrom: '',
+  dateTo: '',
+})
 const toast = ref('')
+
+const PUSH_LABELS: Record<string, string> = {
+  PENDING: '待推送',
+  DELIVERED: '已送达',
+  PARTIAL_FAILED: '部分失败',
+  FAILED: '失败',
+}
+const CHANNEL_NAMES: Record<string, string> = {
+  WORKBENCH: '工作台',
+  DINGTALK: '钉钉',
+  SMS: '短信',
+}
+
+function pushLabel(status: string) {
+  return PUSH_LABELS[status] || status || '—'
+}
+
+function channelName(channel: string) {
+  return CHANNEL_NAMES[channel] || channel
+}
+
+function channelBrief(row: Row) {
+  return (row.pushChannels || [])
+    .map((ch) => `${channelName(ch.channel)}${ch.success ? '✓' : '✗'}`)
+    .join(' ')
+}
+
+function channelTitle(row: Row) {
+  return (row.pushChannels || [])
+    .map((ch) => `${channelName(ch.channel)} ${ch.success ? '✓' : '✗'} ${ch.receiptAt || ''}`)
+    .join('\n')
+}
 
 function tabFromRoute() {
   const q = String(route.query.tab || '')
@@ -188,9 +349,29 @@ function switchTab(name: 'live' | 'history' | 'dedup') {
   }
 }
 
+function resetFilters() {
+  filters.ruleCode = ''
+  filters.level = ''
+  filters.responseStatus = ''
+  filters.pushStatus = ''
+  filters.dateFrom = ''
+  filters.dateTo = ''
+  filterError.value = ''
+  loadList()
+}
+
 async function loadSummary() {
   const res = await http.get('/alert/history/summary')
   if (res.data.code === 0) summary.value = res.data.data
+}
+
+async function loadInbox() {
+  const [mine, stats] = await Promise.all([
+    http.get('/alert/check/my-alerts'),
+    http.get('/alert/check/delivery-stats'),
+  ])
+  if (mine.data.code === 0) myAlerts.value = mine.data.data || []
+  if (stats.data.code === 0) delivery.value = stats.data.data
 }
 
 async function loadDedup() {
@@ -206,9 +387,21 @@ async function loadDedup() {
 async function loadList() {
   loading.value = true
   error.value = ''
+  filterError.value = ''
   try {
     const params: Record<string, unknown> = { pageNo: 1, pageSize: 50 }
+    if (filters.ruleCode.trim()) params.ruleCode = filters.ruleCode.trim()
+    if (filters.level) params.level = filters.level
     if (filters.responseStatus) params.responseStatus = filters.responseStatus
+    if (filters.pushStatus) params.pushStatus = filters.pushStatus
+    if (filters.dateFrom || filters.dateTo) {
+      if (!filters.dateFrom || !filters.dateTo) {
+        filterError.value = '请同时填写起止日期'
+        rows.value = []
+        return
+      }
+      params.dateRange = `${filters.dateFrom},${filters.dateTo}`
+    }
     const res = await http.get('/alert/check/records', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
@@ -220,11 +413,34 @@ async function loadList() {
       list = list.filter((r) => r.responseStatus !== 'OPEN')
     }
     rows.value = list
+    if (tab.value === 'live') {
+      try {
+        await loadInbox()
+      } catch {
+        /* 列表已返回；收件箱失败不改筛选结果 */
+      }
+    }
   } catch {
     error.value = '网络错误'
     rows.value = []
   } finally {
     loading.value = false
+  }
+}
+
+function closeDetail() {
+  detailOpen.value = false
+  detail.value = null
+}
+
+async function openDetail(alertNo: string) {
+  detail.value = null
+  detailOpen.value = true
+  try {
+    const res = await http.get(`/alert/check/${alertNo}`)
+    detail.value = res.data.data
+  } catch (err) {
+    toast.value = errorMessage(err)
   }
 }
 
