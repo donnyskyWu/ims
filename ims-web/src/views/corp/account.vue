@@ -1765,6 +1765,7 @@ watch(activeTab, (tab) => {
   }
   if (tab === 'collect' && detail.value?.id) {
     loadDyLogs(detail.value.id)
+    loadWxLogs(detail.value.id)
   }
 })
 </script>
