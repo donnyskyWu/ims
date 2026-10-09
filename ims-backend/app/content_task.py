@@ -75,7 +75,7 @@ def work_task_remark(row: ContentWorkTaskAssignment | None) -> str:
 def linked_content_vo(project: ContentProject | None) -> dict | None:
     if project is None or project.deleted:
         return None
-    return {
+    data = {
         "id": project.id,
         "title": project.title,
         "status": project.content_status,
@@ -83,6 +83,10 @@ def linked_content_vo(project: ContentProject | None) -> dict | None:
         "aiGenerateStatus": project.ai_generate_status,
         "aiGenerateError": project.ai_generate_error,
     }
+    from app.content_ai import media_fields
+
+    data.update(media_fields(project))
+    return data
 
 
 def task_list_vo(db: Session, ops: Session, row: ContentTask) -> dict:

@@ -30,16 +30,18 @@
               <th>状态</th>
               <th>赛事摘要</th>
               <th>文档类型</th>
+              <th>AI 文案</th>
+              <th>视频</th>
               <th>Football 同步</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无内容' }}</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无内容' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.id }}</td>
@@ -47,6 +49,8 @@
               <td>{{ row.contentStatus }}</td>
               <td>{{ row.matchSummary || row.competitionName || '—' }}</td>
               <td>{{ row.documentType || '—' }}</td>
+              <td data-testid="row-ai-status">{{ copyLabel(row.aiGenerateStatus) }}</td>
+              <td data-testid="row-video-status">{{ videoLabel(row.videoJobStatus) }}</td>
               <td>{{ row.fbSyncStatusLabel || row.fbSyncStatus || '—' }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
@@ -99,6 +103,8 @@
           <textarea v-model="form.body" rows="4" />
         </div>
       </div>
+      <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
+      <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
@@ -111,6 +117,7 @@
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import ContentAiPanel from './ContentAiPanel.vue'
 
 const rows = ref<any[]>([])
 const total = ref(0)
@@ -121,6 +128,25 @@ const statusKw = ref('')
 const drawerOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
+const editingRow = ref<any>(null)
+
+const copyLabels: Record<string, string> = { QUEUED: '生成中', GENERATING: '生成中', SUCCESS: '成功', FAILED: '失败' }
+const videoLabels: Record<string, string> = {
+  WAITING: '待生成',
+  GENERATING: '生成中',
+  PENDING_FINAL_REVIEW: '待终审',
+  REVIEW_PASSED: '终审通过',
+  REVIEW_REJECTED: '终审打回',
+  FAILED: '失败',
+}
+function copyLabel(status: string | null | undefined) {
+  if (!status) return '—'
+  return copyLabels[status] || status
+}
+function videoLabel(status: string | null | undefined) {
+  if (!status) return '—'
+  return videoLabels[status] || status
+}
 const form = ref({
   title: '',
   contentType: 'SHORT_VIDEO',
@@ -149,12 +175,14 @@ async function loadList() {
 
 function openCreate() {
   editingId.value = null
+  editingRow.value = null
   form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
   drawerOpen.value = true
 }
 
 function openEdit(row: any) {
   editingId.value = row.id
+  editingRow.value = row
   form.value = {
     title: row.title,
     contentType: row.contentType || 'SHORT_VIDEO',
@@ -192,11 +220,24 @@ async function saveContent() {
       await http.post('/content', payload)
     }
     drawerOpen.value = false
+    editingRow.value = null
     await loadList()
   } catch (e) {
     window.alert(errorMessage(e))
   } finally {
     saving.value = false
+  }
+}
+
+async function reloadEditing() {
+  if (!editingId.value) return
+  try {
+    const { data } = await http.get(`/content/${editingId.value}`)
+    editingRow.value = data.data
+    form.value.body = data.data?.body || ''
+    await loadList()
+  } catch (e) {
+    window.alert(errorMessage(e))
   }
 }
 

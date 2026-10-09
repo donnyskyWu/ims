@@ -797,6 +797,11 @@ def publish_create(
         return fail(1504, "资源不可用")
     if not project.review_passed:
         return fail(1054, "终审未通过禁止发布")
+    from app.content_ai import ai_publish_block
+
+    blocked = ai_publish_block(db, project)
+    if blocked:
+        return fail(1054, blocked)
     account = ops.get(PlatformAccount, body.accountId)
     if account is None or account.deleted or (account.tenant_id or 0) != tenant(actor):
         return fail(1500, "参数校验失败")

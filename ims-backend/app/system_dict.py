@@ -65,6 +65,10 @@ PARAM_SEED = [
         "",
         "Football 生产 WebAPI 根地址（示例 https://saas.shenyu.com/；空则订单/文章桩）",
     ),
+    ("content.ai.baseUrl", "", "AI 文案第三方根地址（IMS_CONTENT_AI_BASE_URL；空且未开桩则不可生成）"),
+    ("content.ai.tokenSecret", "", "AI 文案 Token（敏感，仅系统参数或 IMS_CONTENT_AI_TOKEN，界面掩码）"),
+    ("comfyui.baseUrl", "", "ComfyUI 根地址（IMS_COMFYUI_BASE_URL；空且未开桩则不可生成）"),
+    ("comfyui.tokenSecret", "", "ComfyUI Token（敏感，仅系统参数或 IMS_COMFYUI_TOKEN，界面掩码）"),
 ]
 
 
