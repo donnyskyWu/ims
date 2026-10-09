@@ -1,5 +1,8 @@
 """本地 unify-collector 桩。路径与真实内部作品 / 粉丝接口一致。
 
+作品统计（douyin video-stats、douyin accounts/{id}/videos/stats、kuaishou video-stats）
+与作品列表的播放 / 点赞 / 评论 / 转发重复，日快照已覆盖，桩不另开这些路径。
+
 `account_id` 含 `COOKIE_EXPIRED` → Cookie 已失效；
 含 `ENGINE_DOWN` → 浏览器引擎不可用；
 含 `FOLLOWER_FAIL` 时作品仍成功，粉丝统计与粉丝列表返回「粉丝统计失败」。

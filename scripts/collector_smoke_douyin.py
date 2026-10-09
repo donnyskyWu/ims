@@ -16,6 +16,11 @@
   GET /api/v1/internal/douyin/accounts/{account_id}/videos
   GET /api/v1/internal/douyin/accounts/{account_id}/followers
   GET /api/v1/internal/douyin/follower-stats?account_id=
+
+现有 GET 之后可选探活作品统计（不入库；日快照已由作品列表覆盖）：
+  GET /api/v1/internal/douyin/accounts/{account_id}/videos/stats
+  GET /api/v1/internal/douyin/video-stats?account_id=&item_id=
+  单条 video-stats 仅在作品列表返回 video_id 时调用。任一已调用接口失败则退出 1。
 """
 
 from __future__ import annotations
@@ -88,6 +93,34 @@ def _public_message(message: str, secrets: list[str]) -> str:
     return public[:200]
 
 
+def _first_video_id(body: dict) -> str:
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    videos = data.get("videos") if isinstance(data.get("videos"), list) else []
+    if not videos or not isinstance(videos[0], dict):
+        return ""
+    first = videos[0]
+    return str(first.get("video_id") or first.get("item_id") or first.get("photo_id") or "").strip()
+
+
+def _print_metric_fields(body: dict) -> None:
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    for key in (
+        "play_count",
+        "like_count",
+        "comment_count",
+        "share_count",
+        "collect_count",
+        "total_videos",
+        "total_plays",
+        "total_likes",
+        "total_comments",
+        "total_shares",
+        "total_collects",
+    ):
+        if key in data and data[key] is not None:
+            print(f"{key}={data[key]}")
+
+
 def _report(name: str, http_status: int, body: dict, secrets: list[str]) -> str:
     message = str(body.get("message") or body.get("msg") or "")
     code = body.get("code")
@@ -111,6 +144,7 @@ def _report(name: str, http_status: int, body: dict, secrets: list[str]) -> str:
         print(f"followers={len(followers)}")
     if follower_count is not None:
         print(f"follower_count={follower_count}")
+    _print_metric_fields(body)
     return kind
 
 
@@ -128,11 +162,30 @@ def main() -> int:
         ("follower-stats", "/api/v1/internal/douyin/follower-stats", {"account_id": account_id}),
     ]
     failed = False
+    item_id = ""
     try:
         for name, path, params in calls:
             http_status, body = _get(base, token, path, params)
             kind = _report(name, http_status, body, secrets)
+            if name == "videos":
+                item_id = _first_video_id(body)
             if kind != "ok":
+                failed = True
+        # 日快照已覆盖。stats 只探活，列表未给出 video_id 时跳过单条接口。
+        extra = [
+            ("videos/stats", f"/api/v1/internal/douyin/accounts/{quoted}/videos/stats", None),
+        ]
+        if item_id:
+            extra.append(
+                ("video-stats", "/api/v1/internal/douyin/video-stats", {"account_id": account_id, "item_id": item_id})
+            )
+        else:
+            print("endpoint=video-stats")
+            print("status=skipped")
+            print("message=列表未返回 video_id，跳过单条 video-stats")
+        for name, path, params in extra:
+            http_status, body = _get(base, token, path, params)
+            if _report(name, http_status, body, secrets) != "ok":
                 failed = True
     except urllib.error.URLError as exc:
         print(f"status=error message=无法连接 Collector ({exc.reason})")

@@ -356,6 +356,32 @@
             <router-link to="/ims/collect/douyin">抖音内部账号采集</router-link>
             。
           </p>
+          <h3 style="margin: 8px 0; font-size: 14px">作品日快照</h3>
+          <table data-testid="dy-tab-video-snapshot">
+            <thead>
+              <tr>
+                <th>作品</th>
+                <th>统计日</th>
+                <th>播放</th>
+                <th>点赞</th>
+                <th>评论</th>
+                <th>转发</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!videoSnapshotsOf(detail).length">
+                <td colspan="6">暂无作品日快照</td>
+              </tr>
+              <tr v-for="snap in videoSnapshotsOf(detail)" :key="String(snap.videoId) + String(snap.statDate)">
+                <td class="mono">{{ snap.videoId }}</td>
+                <td>{{ snap.statDate }}</td>
+                <td data-testid="dy-tab-video-play">{{ snap.playCount }}</td>
+                <td>{{ snap.likeCount }}</td>
+                <td>{{ snap.commentCount }}</td>
+                <td>{{ snap.shareCount }}</td>
+              </tr>
+            </tbody>
+          </table>
           <h3 style="margin: 8px 0; font-size: 14px">采集记录</h3>
           <table data-testid="dy-tab-logs">
             <thead>
@@ -413,6 +439,32 @@
                 <td>{{ snap.statDate }}</td>
                 <td data-testid="ks-tab-follower-count">{{ snap.followerCount }}</td>
                 <td>{{ snap.newFollowerCount }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <h3 style="margin: 8px 0; font-size: 14px">作品日快照</h3>
+          <table data-testid="ks-tab-video-snapshot">
+            <thead>
+              <tr>
+                <th>作品</th>
+                <th>统计日</th>
+                <th>播放</th>
+                <th>点赞</th>
+                <th>评论</th>
+                <th>转发</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!videoSnapshotsOf(detail).length">
+                <td colspan="6">暂无作品日快照</td>
+              </tr>
+              <tr v-for="snap in videoSnapshotsOf(detail)" :key="String(snap.videoId) + String(snap.statDate)">
+                <td class="mono">{{ snap.videoId }}</td>
+                <td>{{ snap.statDate }}</td>
+                <td data-testid="ks-tab-video-play">{{ snap.playCount }}</td>
+                <td>{{ snap.likeCount }}</td>
+                <td>{{ snap.commentCount }}</td>
+                <td>{{ snap.shareCount }}</td>
               </tr>
             </tbody>
           </table>
@@ -1045,6 +1097,11 @@ const checkoutStepLabel = computed(() => {
 function followerDailyOf(row: Record<string, unknown> | null) {
   const daily = row?.followerDaily
   return Array.isArray(daily) ? (daily as Array<Record<string, unknown>>) : []
+}
+
+function videoSnapshotsOf(row: Record<string, unknown> | null) {
+  const snaps = row?.videoSnapshots
+  return Array.isArray(snaps) ? (snaps as Array<Record<string, unknown>>) : []
 }
 
 function followerText(row: Record<string, unknown> | null) {

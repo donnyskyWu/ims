@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>抖音内部账号采集</h1>
-        <div class="sub">C2/C3 · 同一 IMS 定时器采集作品与粉丝日统计</div>
+        <div class="sub">C2/C3/C4 · 同一 IMS 定时器采集作品、作品日快照与粉丝日统计</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goTasks">采集任务</button>
@@ -11,9 +11,10 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      凭证加密入库，页面只显示掩码和凭证引用。作品写入 <code>oa_douyin_video</code>，粉丝列表写入
-      <code>oa_douyin_follower</code>，粉丝日统计写入 <code>oa_douyin_follower_daily</code>。同一天重复采集按日更新。
-      Cookie 已失效、浏览器引擎不可用与粉丝统计失败分开显示。
+      凭证加密入库，页面只显示掩码和凭证引用。作品写入 <code>oa_douyin_video</code>，作品日快照写入
+      <code>oa_douyin_video_snapshot</code>，粉丝列表写入 <code>oa_douyin_follower</code>，粉丝日统计写入
+      <code>oa_douyin_follower_daily</code>。同一天重复采集按日更新。播放、点赞、评论、转发来自作品列表；Collector
+      作品统计与列表重复，日快照已覆盖。Cookie 已失效、浏览器引擎不可用与粉丝统计失败分开显示。
     </p>
 
     <form class="qbar" style="align-items: flex-end" @submit.prevent="saveAccount">
@@ -134,6 +135,39 @@
       </div>
     </div>
 
+    <h2 style="margin: 16px 0 8px; font-size: 16px">作品日快照</h2>
+    <div class="tbl-block">
+      <div class="tbl-wrap">
+        <table data-testid="dy-video-snapshot">
+          <thead>
+            <tr>
+              <th>账号</th>
+              <th>作品</th>
+              <th>统计日</th>
+              <th>播放</th>
+              <th>点赞</th>
+              <th>评论</th>
+              <th>转发</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!videoRows.length">
+              <td colspan="7">暂无作品日快照</td>
+            </tr>
+            <tr v-for="snap in videoRows" :key="snap.key">
+              <td>{{ snap.accountName }}</td>
+              <td class="mono" data-testid="dy-video-id">{{ snap.videoId }}</td>
+              <td class="num" data-testid="dy-video-date">{{ snap.statDate }}</td>
+              <td class="num" data-testid="dy-video-play">{{ snap.playCount }}</td>
+              <td class="num" data-testid="dy-video-like">{{ snap.likeCount }}</td>
+              <td class="num" data-testid="dy-video-comment">{{ snap.commentCount }}</td>
+              <td class="num" data-testid="dy-video-share">{{ snap.shareCount }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <h2 style="margin: 16px 0 8px; font-size: 16px">采集记录</h2>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -174,6 +208,14 @@ import { errorMessage, http } from '../../api/http'
 
 type Opt = { id: number; companyName?: string; groupName?: string }
 type FollowerDaily = { statDate: string; followerCount: number; newFollowerCount: number }
+type VideoSnapshot = {
+  videoId: string
+  statDate: string
+  playCount: number
+  likeCount: number
+  commentCount: number
+  shareCount: number
+}
 type AccountRow = {
   id: number
   accountName: string
@@ -185,6 +227,7 @@ type AccountRow = {
   followerCount?: number | null
   followerStatDate?: string
   followerDaily?: FollowerDaily[]
+  videoSnapshots?: VideoSnapshot[]
 }
 type LogRow = {
   id: string
@@ -220,6 +263,16 @@ const followerRows = computed(() => {
   for (const account of accounts.value) {
     for (const snap of account.followerDaily || []) {
       rows.push({ ...snap, accountName: account.accountName, key: `${account.id}-${snap.statDate}` })
+    }
+  }
+  return rows
+})
+
+const videoRows = computed(() => {
+  const rows: Array<VideoSnapshot & { accountName: string; key: string }> = []
+  for (const account of accounts.value) {
+    for (const snap of account.videoSnapshots || []) {
+      rows.push({ ...snap, accountName: account.accountName, key: `${account.id}-${snap.videoId}-${snap.statDate}` })
     }
   }
   return rows
