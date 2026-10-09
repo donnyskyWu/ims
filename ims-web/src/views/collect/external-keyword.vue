@@ -10,13 +10,19 @@
       </div>
     </div>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.keyword" placeholder="关键词" style="width: 140px" />
+      <input v-model="filters.keyword" data-testid="kw-keyword" placeholder="关键词" style="width: 140px" />
       <select v-model="filters.platformType" style="width: 110px">
         <option value="">全部平台</option>
         <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
       </select>
+      <select v-model="filters.status" data-testid="kw-status" style="width: 110px">
+        <option value="">全部状态</option>
+        <option value="ENABLED">ENABLED</option>
+        <option value="DISABLED">DISABLED</option>
+      </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="kw-query">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="kw-reset" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -32,8 +38,16 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!rows.length && !loading">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无关键词' }}</div></div></td>
+            <tr v-if="loading">
+              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+            </tr>
+            <tr v-else-if="!rows.length">
+              <td colspan="6">
+                <div class="empty" data-testid="kw-empty">
+                  <div class="et">{{ error || keywordEmptyTitle }}</div>
+                  <div class="es">{{ keywordEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.id }}</td>
@@ -62,7 +76,7 @@
         </div>
         <div class="formrow">
           <label>关键词</label>
-          <input v-model="form.keyword" />
+          <input v-model="form.keyword" data-testid="kw-form-keyword" />
         </div>
         <div class="formrow">
           <label>匹配类型</label>
@@ -79,10 +93,10 @@
             <option value="DISABLED">DISABLED</option>
           </select>
         </div>
-        <p v-if="formMsg" class="hint">{{ formMsg }}</p>
+        <p v-if="formMsg" class="hint" data-testid="kw-form-msg">{{ formMsg }}</p>
         <div class="drawer-acts">
           <button class="btn btn-sec btn-sm" type="button" @click="drawerOpen = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="save">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="kw-save" @click="save">保存</button>
         </div>
       </div>
     </div>
@@ -90,8 +104,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { errorMessage, http } from '../../api/http'
 
 const platforms = ['DOUYIN', 'KUAISHOU', 'XIAOHONGSHU']
 const rows = ref<Record<string, unknown>[]>([])
@@ -101,7 +115,12 @@ const error = ref('')
 const drawerOpen = ref(false)
 const editingId = ref('')
 const formMsg = ref('')
-const filters = reactive({ keyword: '', platformType: '' })
+const filters = reactive({ keyword: '', platformType: '', status: '' })
+const keywordFiltered = computed(() => Boolean(filters.keyword || filters.platformType || filters.status))
+const keywordEmptyTitle = computed(() => (keywordFiltered.value ? '没有符合筛选的关键词' : '暂无关键词'))
+const keywordEmptyHint = computed(() =>
+  keywordFiltered.value ? '换个关键词、平台或状态后再查' : '新增一条竞品关键词后会出现在这里',
+)
 const form = reactive({
   platformType: 'DOUYIN',
   keyword: '',
@@ -115,6 +134,7 @@ async function loadList() {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
     if (filters.keyword) params.keyword = filters.keyword
     if (filters.platformType) params.platformType = filters.platformType
+    if (filters.status) params.status = filters.status
     const res = await http.get('/collect/external/keyword/page', { params })
     rows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
@@ -123,6 +143,13 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.keyword = ''
+  filters.platformType = ''
+  filters.status = ''
+  loadList()
 }
 
 function openCreate() {
@@ -155,7 +182,7 @@ async function save() {
     drawerOpen.value = false
     await loadList()
   } catch (e) {
-    formMsg.value = e instanceof Error ? e.message : '保存失败'
+    formMsg.value = errorMessage(e)
   }
 }
 

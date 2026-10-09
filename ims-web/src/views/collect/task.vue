@@ -67,7 +67,12 @@
               <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="11"><div class="empty"><div class="et">{{ error || '暂无采集任务' }}</div></div></td>
+              <td colspan="11">
+                <div class="empty" data-testid="task-empty">
+                  <div class="et">{{ error || (filtersActive ? '没有符合筛选的采集任务' : '暂无采集任务') }}</div>
+                  <div class="es">{{ filtersActive ? '换个条件，或重置筛选后再看排期' : '新增单账号任务或确保统一任务后，这里显示下次执行' }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td>
@@ -81,8 +86,8 @@
               <td class="num">{{ row.frequency }}</td>
               <td class="mono" style="font-size: 11px">{{ row.cron }}</td>
               <td class="num" style="font-size: 11px">{{ row.lastRunAt || '—' }}</td>
-              <td class="num" style="font-size: 11px" data-testid="task-next-run">{{ row.nextRunAt || '—' }}</td>
-              <td data-testid="task-health">{{ row.healthLabel || '—' }}</td>
+              <td class="num" style="font-size: 11px" data-testid="task-next-run">{{ row.scheduleLabel || row.nextRunAt || '尚未排期' }}</td>
+              <td data-testid="task-health">{{ row.healthLabel || '无账号探活' }}</td>
               <td class="num">
                 <span style="color: var(--green)">{{ row.successCount }}</span> /
                 <span style="color: var(--red)">{{ row.failCount }}</span>
@@ -156,8 +161,8 @@
         </label>
         <label>Cron<input v-model="form.cron" required placeholder="0 2 * * *" /></label>
         <p v-if="editingId" class="hint" data-testid="task-monitor">
-          最近 {{ monitor.lastRunAt || '—' }} · 下次 {{ monitor.nextRunAt || '—' }} · 成功
-          {{ monitor.successCount }} / 失败 {{ monitor.failCount }} · 健康 {{ monitor.healthLabel || '—' }}
+          最近 {{ monitor.lastRunAt || '—' }} · 下次 {{ monitor.nextRunAt || monitor.scheduleLabel || '尚未排期' }} · 成功
+          {{ monitor.successCount }} / 失败 {{ monitor.failCount }} · 健康 {{ monitor.healthLabel || '无账号探活' }}
         </p>
         <label>
           状态
@@ -178,7 +183,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
@@ -212,10 +217,15 @@ const form = reactive({
 const monitor = reactive({
   lastRunAt: '',
   nextRunAt: '',
+  scheduleLabel: '',
   successCount: 0,
   failCount: 0,
   healthLabel: '',
 })
+const filtersActive = computed(
+  () =>
+    Boolean(filters.taskName || filters.platformType || filters.method || filters.frequency || filters.status),
+)
 
 async function loadList() {
   loading.value = true
@@ -270,6 +280,7 @@ function openEdit(row: any) {
   form.status = row.status === 'DISABLED' ? 'DISABLED' : 'ENABLED'
   monitor.lastRunAt = row.lastRunAt || ''
   monitor.nextRunAt = row.nextRunAt || ''
+  monitor.scheduleLabel = row.scheduleLabel || ''
   monitor.successCount = row.successCount || 0
   monitor.failCount = row.failCount || 0
   monitor.healthLabel = row.healthLabel || ''

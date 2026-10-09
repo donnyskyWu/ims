@@ -107,12 +107,14 @@ def test_stop_blocks_run_and_start_reschedules():
     assert stopped.json()["data"]["status"] == "DISABLED"
     assert stopped.json()["data"]["statusLabel"] == "停用"
     assert not stopped.json()["data"]["nextRunAt"]
+    assert stopped.json()["data"]["scheduleLabel"] == "已停止，暂无下次执行"
     blocked = client.post(f"/admin-api/ims/collect/task/{task_id}/run", headers=auth)
     assert blocked.json()["code"] == 1001
     started = client.post(f"/admin-api/ims/collect/task/{task_id}/start", headers=auth)
     assert started.json()["code"] == 0
     assert started.json()["data"]["status"] == "ENABLED"
     assert started.json()["data"]["nextRunAt"]
+    assert started.json()["data"]["scheduleLabel"] == started.json()["data"]["nextRunAt"]
     again = client.post(f"/admin-api/ims/collect/task/{task_id}/start", headers=auth)
     assert again.json()["data"]["nextRunAt"] == started.json()["data"]["nextRunAt"]
 

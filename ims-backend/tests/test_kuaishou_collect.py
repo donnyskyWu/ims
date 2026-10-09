@@ -211,3 +211,71 @@ def test_missing_collector_url_is_failed_not_500(monkeypatch):
     assert run.json()["code"] == 0
     assert run.json()["data"]["status"] == "FAILED"
     assert "未配置 Collector" in (run.json()["data"]["errorSummary"] or "")
+
+
+def test_kuaishou_probe_empty_and_credential_clear_stay_stub_safe():
+    auth = headers()
+    company_id, group_id = seed_master()
+    created = create_account(auth, company_id, group_id, "KS_PROBE_EMPTY", "探活空态")
+    account_id = created["account"]["id"]
+    assert created["task"]["scheduleLabel"] == created["task"]["nextRunAt"]
+    rotated = "ks-cookie-rotated-should-not-leak"
+
+    probe = client.post(f"/admin-api/ims/collect/kuaishou/account/{account_id}/probe", headers=auth)
+    assert probe.status_code == 200
+    body = probe.json()
+    assert body["code"] == 0
+    assert body["data"]["healthLabel"] == "未绑定"
+    assert body["data"]["lastProbeAt"] == ""
+    assert "请先导入" in body["data"]["notice"]
+    assert SECRET not in probe.text
+
+    tab = client.post(f"/admin-api/ims/corp/account/{account_id}/collector-bind/test-connection", headers=auth)
+    assert tab.status_code == 200
+    assert tab.json()["code"] == 0
+    assert tab.json()["data"]["healthLabel"] == "未绑定"
+    assert "请先导入" in tab.json()["data"]["notice"]
+
+    bound = client.post(f"/admin-api/ims/collect/kuaishou/account/{account_id}/bind", headers=auth)
+    assert bound.json()["code"] == 0
+    assert bound.json()["data"]["healthLabel"] == "连接正常"
+    assert bound.json()["data"]["lastProbeAt"]
+
+    updated = client.put(
+        f"/admin-api/ims/collect/kuaishou/account/{account_id}",
+        headers=auth,
+        json={"cookie": rotated},
+    )
+    assert updated.json()["code"] == 0
+    account = updated.json()["data"]["account"]
+    assert account["healthLabel"] == "未探活"
+    assert account["lastProbeAt"] == ""
+    assert account["credentialMask"].startswith("****")
+    assert rotated not in updated.text
+
+    reprobe = client.post(f"/admin-api/ims/collect/kuaishou/account/{account_id}/probe", headers=auth)
+    assert reprobe.json()["data"]["healthLabel"] == "连接正常"
+    assert reprobe.json()["data"]["lastProbeAt"]
+
+    cleared = client.put(
+        f"/admin-api/ims/collect/kuaishou/account/{account_id}",
+        headers=auth,
+        json={"clearCredential": True},
+    )
+    assert cleared.json()["code"] == 0
+    cleared_account = cleared.json()["data"]["account"]
+    assert cleared_account["healthLabel"] == "未探活"
+    assert cleared_account["hasCredential"] is False
+    assert cleared_account["credentialMask"] == ""
+    assert cleared_account["credentialRef"].startswith("cred_ks_")
+    assert SECRET not in cleared.text
+    assert rotated not in cleared.text
+
+    empty_probe = client.post(f"/admin-api/ims/collect/kuaishou/account/{account_id}/probe", headers=auth)
+    assert empty_probe.json()["code"] == 0
+    assert empty_probe.json()["data"]["healthLabel"] == "未探活"
+    assert "凭证未配置" in empty_probe.json()["data"]["notice"]
+    listed = client.get("/admin-api/ims/collect/kuaishou/account/page", headers=auth).json()["data"]["list"]
+    row = next(item for item in listed if item["id"] == account_id)
+    assert row["scheduleLabel"]
+    assert row["healthLabel"] == "未探活"

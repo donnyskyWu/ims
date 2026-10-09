@@ -47,7 +47,7 @@ test.describe('采集任务调度与失败重试', () => {
     await row.getByTestId('task-stop').click()
     expect(((await (await stopResp).json()) as { code: number }).code).toBe(0)
     await expect(row.getByTestId('task-status')).toHaveText('停用')
-    await expect(row.getByTestId('task-next-run')).toHaveText('—')
+    await expect(row.getByTestId('task-next-run')).toHaveText('已停止，暂无下次执行')
     await expect(row.getByTestId('task-start')).toBeVisible()
     await page.screenshot({ path: path.join(SHOTS, '02-stopped.png'), fullPage: true })
 

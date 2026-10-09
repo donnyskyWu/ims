@@ -440,7 +440,7 @@
           </div>
           <div class="fld">
             <label>采集健康</label>
-            <div data-testid="ks-tab-health">{{ detail.healthLabel || '—' }}</div>
+            <div data-testid="ks-tab-health">{{ detail.healthLabel || '未探活' }}</div>
           </div>
           <div class="fld">
             <label>最新粉丝</label>
@@ -496,7 +496,14 @@
             <label>更新凭证（不明文回显）</label>
             <input v-model="ksCredential" type="password" autocomplete="new-password" placeholder="留空则不修改" data-testid="ks-tab-credential" />
           </div>
+          <div class="fld">
+            <label>最近探活</label>
+            <div data-testid="ks-tab-probe">{{ (bindInfo && bindInfo.lastProbeAt) || '尚未探活' }}</div>
+          </div>
           <button class="btn btn-sec btn-sm" type="button" @click="saveKsCredential">保存快手凭证</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="ks-tab-clear-credential" @click="clearKsCredential">
+            清空凭证
+          </button>
           <p class="hint">
             定时采集与立即采集见
             <router-link to="/ims/collect/kuaishou">快手内部账号采集</router-link>
@@ -514,7 +521,7 @@
           </div>
           <div class="fld">
             <label>采集健康</label>
-            <div data-testid="wx-tab-health">{{ detail.healthLabel || '—' }}</div>
+            <div data-testid="wx-tab-health">{{ detail.healthLabel || '未探活' }}</div>
           </div>
           <div class="fld">
             <label>最新粉丝</label>
@@ -540,6 +547,13 @@
               </tr>
             </tbody>
           </table>
+          <div class="fld">
+            <label>最近探活</label>
+            <div data-testid="wx-tab-probe">{{ (bindInfo && bindInfo.lastProbeAt) || '尚未探活' }}</div>
+          </div>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="wx-tab-clear-credential" @click="clearWxCredential">
+            清空凭证
+          </button>
           <p class="hint">
             定时采集与立即采集见
             <router-link to="/ims/collect/wechat-channels">视频号内部账号采集</router-link>
@@ -573,7 +587,7 @@
           <button class="btn btn-sec btn-sm" type="button" :disabled="!detail.hasCookie" @click="importCollector">导入 Collector</button>
           <button class="btn btn-sec btn-sm" type="button" @click="testConnection">测试连接</button>
         </div>
-        <p v-if="collectMsg" class="hint">{{ collectMsg }}</p>
+        <p v-if="collectMsg" class="hint" :data-testid="collectMsgTestId">{{ collectMsg }}</p>
       </div>
       <div v-if="detail && activeTab === 'timeline'">
         <div class="acts" style="margin-bottom: 8px">
@@ -1043,6 +1057,11 @@ const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: strin
 const meta = computed(() => {
   const slug = String(route.params.platform || 'douyin')
   return PLATFORM_MAP[slug] || PLATFORM_MAP.douyin
+})
+const collectMsgTestId = computed(() => {
+  if (meta.value.platform === 'KUAISHOU') return 'ks-tab-collect-msg'
+  if (meta.value.platform === 'WECHAT_CHANNELS') return 'wx-tab-collect-msg'
+  return undefined
 })
 
 const statusOptions = [
@@ -1978,11 +1997,44 @@ async function saveKsCredential() {
     const account = res.data?.data?.account as Record<string, unknown> | undefined
     if (account) detail.value = { ...detail.value, ...account }
     ksCredential.value = ''
-    collectMsg.value = `凭证已保存，掩码 ${account?.credentialMask || '已配置'}`
+    collectMsg.value = account?.healthLabel
+      ? `凭证已保存，掩码 ${account.credentialMask || '已配置'}，采集健康 ${account.healthLabel}`
+      : `凭证已保存，掩码 ${account?.credentialMask || '已配置'}`
     await load()
   } catch (e: unknown) {
     collectMsg.value = errorMessage(e)
   }
+}
+
+async function clearPlatformCredential(path: string) {
+  if (!detail.value) return
+  collectMsg.value = ''
+  try {
+    const res = await http.put(path, { clearCredential: true })
+    const account = res.data?.data?.account as Record<string, unknown> | undefined
+    if (account && detail.value) {
+      detail.value = { ...detail.value, ...account, hasCookie: account.hasCredential }
+    }
+    bindInfo.value = {
+      ...(bindInfo.value || {}),
+      lastProbeAt: '',
+      connStatus: '',
+    }
+    collectMsg.value = `凭证已清空，采集健康 ${account?.healthLabel || '未探活'}`
+    await load()
+  } catch (e: unknown) {
+    collectMsg.value = errorMessage(e)
+  }
+}
+
+function clearKsCredential() {
+  if (!detail.value) return
+  return clearPlatformCredential(`/collect/kuaishou/account/${detail.value.id}`)
+}
+
+function clearWxCredential() {
+  if (!detail.value) return
+  return clearPlatformCredential(`/collect/wechat-channels/account/${detail.value.id}`)
 }
 
 async function importCollector() {
@@ -2004,8 +2056,26 @@ async function testConnection() {
   collectMsg.value = ''
   try {
     const bindRes = await http.post(`/corp/account/${detail.value.id}/collector-bind/test-connection`, {})
-    bindInfo.value = bindRes.data?.data as Record<string, unknown>
-    collectMsg.value = '探活成功'
+    const data = (bindRes.data?.data || {}) as Record<string, unknown>
+    if (data.healthLabel || data.notice) {
+      detail.value = {
+        ...detail.value,
+        healthLabel: data.healthLabel || detail.value.healthLabel,
+        credentialMask: (data.credentialMask as string) ?? detail.value.credentialMask,
+        hasCookie: data.hasCredential ?? detail.value.hasCookie,
+      }
+      bindInfo.value = {
+        ...(bindInfo.value || {}),
+        lastProbeAt: (data.lastProbeAt as string) || '',
+        connStatus: (data.connStatus as string) || '',
+        collectorAccountId: (data.collectorAccountId as string) || bindInfo.value?.collectorAccountId,
+      }
+      const label = String(data.healthLabel || '未探活')
+      collectMsg.value = data.notice ? `测试连接：${label}。${data.notice}` : '探活成功'
+    } else {
+      bindInfo.value = data
+      collectMsg.value = '探活成功'
+    }
   } catch (e: unknown) {
     collectMsg.value = e instanceof Error ? e.message : '探活失败'
   }
