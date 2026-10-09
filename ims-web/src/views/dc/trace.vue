@@ -632,10 +632,12 @@ function restoreDcFilters() {
 onMounted(() => {
   const presetKeyword = typeof route.query.keyword === 'string' ? route.query.keyword : ''
   const presetType = typeof route.query.entryType === 'string' ? route.query.entryType : ''
+  const openDetail = route.query.openDetail === '1'
   if (presetKeyword || (presetType && ENTRY_LABELS[presetType])) {
     if (presetType && ENTRY_LABELS[presetType]) entryType.value = presetType
     if (presetKeyword) {
       keyword.value = presetKeyword
+      if (openDetail && entryType.value === 'SESSION') openSession(presetKeyword)
       searchEntry().then(() => {
         const hit = entries.value.find((item) => (item.entryLabel || '').includes(presetKeyword)) || entries.value[0]
         if (hit) pickEntry(hit)

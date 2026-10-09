@@ -1,5 +1,5 @@
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -254,3 +254,62 @@ def test_dashboard_freshness_and_delay_alarm():
     assert delayed["businessToDwsDelayMinutes"] >= 90
     dws = next(item for item in delayed["syncTaskStatus"] if "聚合层" in item["taskName"])
     assert dws["status"] == "DELAYED"
+
+
+def test_dashboard_freshness_failed_keeps_last_snapshot():
+    """FAILED 仍告警；有成功任务时 dataAsOf 取成功快照，全部失败时不回落到当前时刻。"""
+    auth = headers()
+    assert client.get("/admin-api/ims/dc/dashboard/freshness", headers=auth).json()["code"] == 0
+    success_at = utcnow().replace(microsecond=0) - timedelta(minutes=12)
+    failed_at = utcnow().replace(microsecond=0) - timedelta(hours=4)
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        tenant_id = int(admin.tenant_id or 0)
+        rows = list(
+            db.scalars(
+                select(DcSyncTask).where(DcSyncTask.deleted == 0, DcSyncTask.tenant_id == tenant_id)
+            ).all()
+        )
+        assert rows
+        for row in rows:
+            row.status = "SUCCESS"
+            row.last_run_at = success_at
+        failed = next(row for row in rows if "看板缓存" in (row.task_name or ""))
+        failed.status = "FAILED"
+        failed.last_run_at = failed_at
+        db.commit()
+    finally:
+        db.close()
+
+    mixed = client.get("/admin-api/ims/dc/dashboard/freshness", headers=auth).json()["data"]
+    assert mixed["isAlarm"] is True
+    cache = next(item for item in mixed["syncTaskStatus"] if "看板缓存" in item["taskName"])
+    assert cache["status"] == "FAILED"
+    others = [item for item in mixed["syncTaskStatus"] if item is not cache]
+    assert others
+    assert {item["status"] for item in others} == {"SUCCESS"}
+    mixed_as_of = datetime.fromisoformat(mixed["dataAsOf"])
+    assert abs((mixed_as_of - success_at.replace(tzinfo=timezone.utc).astimezone(mixed_as_of.tzinfo)).total_seconds()) < 90
+
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        tenant_id = int(admin.tenant_id or 0)
+        rows = list(
+            db.scalars(
+                select(DcSyncTask).where(DcSyncTask.deleted == 0, DcSyncTask.tenant_id == tenant_id)
+            ).all()
+        )
+        for row in rows:
+            row.status = "FAILED"
+            row.last_run_at = failed_at
+        db.commit()
+    finally:
+        db.close()
+    stalled = client.get("/admin-api/ims/dc/dashboard/freshness", headers=auth).json()["data"]
+    assert stalled["isAlarm"] is True
+    assert {item["status"] for item in stalled["syncTaskStatus"]} == {"FAILED"}
+    stalled_as_of = datetime.fromisoformat(stalled["dataAsOf"])
+    age_minutes = (datetime.now(stalled_as_of.tzinfo) - stalled_as_of).total_seconds() / 60
+    assert age_minutes > 120
