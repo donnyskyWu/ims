@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
 import { attachClosurePageHooks, loginAdmin, loginAs, passContentReviewViaUi } from './closure-helpers'
 
@@ -79,10 +80,15 @@ test.describe('content publish supervision closure', () => {
     expect(pubBody.data?.publishStatus).toBe('PENDING_PUBLISH')
 
     await expect(page.getByText(/^督办：/)).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('publish-supervise')).toContainText('督办：待发布')
+    await expect(page.getByTestId('publish-overdue-count')).toContainText('超计划 24h')
 
     const row = page.locator('.tbl-wrap tbody tr').filter({ hasText: publishNo }).first()
     await expect(row).toBeVisible({ timeout: 15_000 })
     await expect(row).toContainText('待发布')
+    await expect(row.getByTestId('publish-receipt-pending')).toContainText('待回填 · 超 24h')
+    mkdirSync('/opt/cursor/artifacts/content-171', { recursive: true })
+    await page.screenshot({ path: '/opt/cursor/artifacts/content-171/06-publish-overdue.png', fullPage: true })
 
     await row.getByRole('button', { name: '回填' }).click()
     const drawer = page.locator('.drawer.on').filter({ hasText: '回填发布链接' })

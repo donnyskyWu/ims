@@ -14,12 +14,13 @@
     </p>
     <form class="qbar" data-testid="plan-filters" @submit.prevent="loadList">
       <input v-model="planName" data-testid="plan-filter-name" placeholder="计划名称" style="width: 160px" />
-      <select v-model="status" data-testid="plan-filter-status" style="width: 160px">
+      <input v-model="planName" data-testid="plan-name-filter" placeholder="计划名" style="width: 160px" />
+      <select v-model="status" data-testid="plan-filter-status" style="width: 180px">
         <option value="">全部状态</option>
-        <option value="DRAFT">DRAFT</option>
-        <option value="IN_PROGRESS">IN_PROGRESS</option>
-        <option value="TERMINATE_PENDING">TERMINATE_PENDING</option>
-        <option value="TERMINATED">TERMINATED</option>
+        <option value="DRAFT">草稿 DRAFT</option>
+        <option value="IN_PROGRESS">执行中 IN_PROGRESS</option>
+        <option value="TERMINATE_PENDING">终止待审 TERMINATE_PENDING</option>
+        <option value="TERMINATED">已终止 TERMINATED</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -46,8 +47,10 @@
             <tr v-else-if="!rows.length">
               <td colspan="7">
                 <div class="empty" data-testid="plan-list-empty">
-                  <div class="et">{{ error || planEmptyTitle }}</div>
-                  <div v-if="!error" class="es">{{ planEmptyHint }}</div>
+                  <div data-testid="plan-empty">
+                    <div class="et">{{ error || planEmptyTitle }}</div>
+                    <div v-if="!error" class="es">{{ planEmptyHint }}</div>
+                  </div>
                 </div>
               </td>
             </tr>
@@ -167,9 +170,13 @@ const error = ref('')
 const planName = ref('')
 const status = ref('')
 const filtering = computed(() => !!(planName.value.trim() || status.value))
-const planEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的计划' : '暂无计划'))
+const planEmptyTitle = computed(() =>
+  filtering.value ? '没有符合筛选的计划，没有符合条件的计划' : '暂无计划',
+)
 const planEmptyHint = computed(() =>
-  filtering.value ? '换计划名或状态，或重置筛选' : '点「新增计划」保存草稿；启动后这里显示任务完成率',
+  filtering.value
+    ? '换个计划名或状态后再查。换计划名或状态，或重置筛选'
+    : '点右上角「新增计划」保存草稿，再启动才会生成任务。点「新增计划」保存草稿；启动后这里显示任务完成率',
 )
 const createOpen = ref(false)
 const saving = ref(false)
@@ -222,18 +229,23 @@ async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await http.get('/content/plan', {
-      params: {
-        pageNo: 1,
-        pageSize: 50,
-        planName: planName.value.trim() || undefined,
-        status: status.value || undefined,
-      },
-    })
-    rows.value = data.data.list
-    total.value = data.data.total
+    const params: Record<string, string | number> = { pageNo: 1, pageSize: 50 }
+    const name = planName.value.trim()
+    if (name) params.planName = name
+    if (status.value) params.status = status.value
+    const { data } = await http.get('/content/plan', { params })
+    if (data.code !== 0) {
+      error.value = data.msg || '加载失败'
+      rows.value = []
+      total.value = 0
+      return
+    }
+    rows.value = data.data?.list || []
+    total.value = data.data?.total || 0
   } catch (e) {
     error.value = errorMessage(e)
+    rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }

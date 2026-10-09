@@ -18,7 +18,7 @@
       <div class="tab" :class="{ on: !onlyMine }" @click="onlyMine = false; loadList()">全部任务</div>
     </div>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model.number="ipGroupId" type="number" placeholder="IP 组 id" style="width: 100px" />
+      <input v-model.number="ipGroupId" data-testid="task-ip-filter" type="number" placeholder="IP 组 id" style="width: 100px" />
       <select v-model="statusKw" style="width: 140px">
         <option value="">全部状态</option>
         <option value="PENDING">PENDING</option>
@@ -55,7 +55,12 @@
               <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无任务' }}</div></div></td>
+              <td colspan="8">
+                <div class="empty" data-testid="task-empty">
+                  <div class="et">{{ taskEmptyTitle }}</div>
+                  <div v-if="taskEmptyHint" class="es">{{ taskEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.id }}</td>
@@ -102,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import { COMPLETE_GATE_HINT, contentPassesGate } from './content-gate'
@@ -116,6 +121,23 @@ const onlyMine = ref(true)
 const ipGroupId = ref<number | undefined>()
 const assigneeUserId = ref<number | undefined>()
 const statusKw = ref('')
+
+const taskQueryActive = computed(() => {
+  const ip = Number(ipGroupId.value)
+  const assignee = Number(assigneeUserId.value)
+  return Boolean(statusKw.value) || (Number.isFinite(ip) && ip > 0) || (!onlyMine.value && Number.isFinite(assignee) && assignee > 0)
+})
+const taskEmptyTitle = computed(() => {
+  if (error.value) return error.value
+  if (taskQueryActive.value) return '当前筛选下暂无任务'
+  return onlyMine.value ? '暂无我的任务' : '暂无任务'
+})
+const taskEmptyHint = computed(() => {
+  if (error.value) return ''
+  if (taskQueryActive.value) return '清空 IP 组、状态或执行人后再查。任务来自计划启动或工作任务确认。'
+  if (onlyMine.value) return '切换「全部任务」查看其他执行人，或先启动计划、确认工作任务。'
+  return '启动计划，或在工作任务登记确认出任务后，节点会出现在这里。'
+})
 
 function canSubmit(row: any) {
   const st = row.linkedContent?.status
