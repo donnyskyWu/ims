@@ -1965,13 +1965,20 @@ def share_result_payoff(
         return ok(None)
     if row.status != "AUDITED":
         return fail(1148, "双审未齐")
+    note = body.payoffNote or ""
+    if len(note) > 256:
+        return fail(1001, "发放备注不超过 256 字")
+    voucher = None
+    if body.payoffVoucher is not None:
+        name = (body.payoffVoucher.fileName or "").strip()
+        key = (body.payoffVoucher.fileKey or "").strip()
+        if not name or not key:
+            return fail(1001, "发放凭证需包含文件名与文件键")
+        voucher = {"fileName": name, "fileKey": key}
     row.status = "PAID_OFF"
     row.paid_off_at = utcnow()
-    row.payoff_note = (body.payoffNote or "")[:256]
-    if body.payoffVoucher is not None:
-        row.payoff_voucher = {
-            "fileName": body.payoffVoucher.fileName,
-            "fileKey": body.payoffVoucher.fileKey,
-        }
+    row.payoff_note = note
+    if voucher is not None:
+        row.payoff_voucher = voucher
     db.flush()
     return ok(None)

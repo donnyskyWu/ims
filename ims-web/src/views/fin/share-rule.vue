@@ -10,7 +10,7 @@
       </button>
     </div>
 
-    <form class="qbar" @submit.prevent="loadList">
+    <form class="qbar" @submit.prevent="search">
       <select v-model="query.shareTarget" style="width: 140px">
         <option value="">全部对象</option>
         <option value="DAREN">达人</option>
@@ -23,7 +23,8 @@
         <option value="DISABLED">停用</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="button" @click="loadList">查询</button>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-query" @click="search">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-reset" @click="resetQuery">重置</button>
     </form>
 
     <p class="hint" data-testid="fin-share-rule-sum" style="margin: 8px 0">同范围启用比例合计 {{ sumText }}</p>
@@ -51,7 +52,20 @@
               <td colspan="10"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="10"><div class="empty"><div class="et">暂无分成规则</div></div></td>
+              <td colspan="10">
+                <div class="empty" data-testid="fin-share-rule-empty">
+                  <div class="et">{{ emptyText }}</div>
+                  <button
+                    v-if="error"
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    data-testid="fin-share-rule-retry"
+                    @click="loadList"
+                  >
+                    重试
+                  </button>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id" :data-testid="'fin-share-rule-row-' + row.id">
               <td>{{ row.ruleName }}</td>
@@ -85,6 +99,23 @@
         </table>
       </div>
     </div>
+    <p class="hint" data-testid="fin-share-rule-pager" style="margin: 8px 0">
+      第 {{ pageNo }} 页 · 共 {{ total }} 条
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-prev" :disabled="pageNo <= 1" @click="goPage(pageNo - 1)">
+        上一页
+      </button>
+      <button
+        class="btn btn-sec btn-sm"
+        type="button"
+        data-testid="fin-share-rule-next"
+        :disabled="pageNo * pageSize >= total"
+        @click="goPage(pageNo + 1)"
+      >
+        下一页
+      </button>
+      <input v-model="pageInput" data-testid="fin-share-rule-page" inputmode="numeric" style="width: 72px" />
+      <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-page-go" @click="goPage(Number(pageInput))">跳转</button>
+    </p>
 
     <div v-if="drawerOpen" class="mask on" @click.self="drawerOpen = false"></div>
     <div v-if="drawerOpen" class="drawer on" data-testid="fin-share-rule-drawer" style="width: 760px">
@@ -267,6 +298,10 @@ const error = ref('')
 const formError = ref('')
 const rows = ref<RuleRow[]>([])
 const query = reactive({ shareTarget: '', status: '' })
+const pageNo = ref(1)
+const pageSize = 20
+const total = ref(0)
+const pageInput = ref('1')
 const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
 const clientToken = ref('')
@@ -293,6 +328,13 @@ const form = reactive({
     { min: '0', max: '10000', rate: '10' },
     { min: '10000', max: '', rate: '20' },
   ],
+})
+
+const emptyText = computed(() => {
+  if (error.value) return '规则列表加载失败'
+  if (query.shareTarget || query.status) return '无匹配规则'
+  if (total.value === 0) return '暂无分成规则'
+  return '本页无规则'
 })
 
 const sumText = computed(() => {
@@ -414,19 +456,40 @@ async function loadList() {
   try {
     const res = await http.get('/fin/share/rules', {
       params: {
-        pageNo: 1,
-        pageSize: 50,
+        pageNo: pageNo.value,
+        pageSize,
         shareTarget: query.shareTarget || undefined,
         status: query.status || undefined,
       },
     })
     rows.value = res.data?.data?.list || []
+    total.value = Number(res.data?.data?.total || 0)
   } catch (err) {
     error.value = errText(err)
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function search() {
+  pageNo.value = 1
+  pageInput.value = '1'
+  return loadList()
+}
+
+function resetQuery() {
+  query.shareTarget = ''
+  query.status = ''
+  return search()
+}
+
+function goPage(raw: number) {
+  const next = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1
+  pageNo.value = next
+  pageInput.value = String(next)
+  return loadList()
 }
 
 function openCreate() {
@@ -474,6 +537,8 @@ async function save(confirmConflict: boolean) {
     else await http.post('/fin/share/rule', payload)
     conflictOpen.value = false
     drawerOpen.value = false
+    pageNo.value = 1
+    pageInput.value = '1'
     await loadList()
   } catch (err) {
     const body = err as ApiErr

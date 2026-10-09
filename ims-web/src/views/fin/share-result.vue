@@ -129,6 +129,7 @@
           <button type="button" class="btn btn-sec btn-sm" @click="payoffOpen = false">关闭</button>
         </div>
         <p class="hint">场次 {{ payoffRow.sessionCode }} · 金额 ¥{{ fmt(payoffRow.shareAmount) }}</p>
+        <p class="hint" data-testid="fin-share-payoff-hint">凭证可选 · 备注不超过 256 字</p>
         <label class="fld">
           <span>发放凭证</span>
           <input type="file" data-testid="fin-share-payoff-voucher" @change="onVoucher" />
@@ -138,6 +139,7 @@
           <span>发放备注</span>
           <input v-model="payoffNote" data-testid="fin-share-payoff-note" maxlength="256" />
         </label>
+        <p v-if="payoffError" class="hint" data-testid="fin-share-payoff-error" style="color: var(--red)">{{ payoffError }}</p>
         <div class="drawer-f">
           <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-payoff-submit" @click="submitPayoff">
             确认发放
@@ -229,6 +231,7 @@ const query = reactive({ sessionCode: '', shareTarget: '', status: '' })
 const payoffOpen = ref(false)
 const payoffRow = ref<ShareRow | null>(null)
 const payoffNote = ref('')
+const payoffError = ref('')
 const voucherFile = ref<{ fileName: string; fileKey: string } | null>(null)
 const reverseOpen = ref(false)
 const reverseRow = ref<ShareRow | null>(null)
@@ -314,6 +317,7 @@ async function audit(row: ShareRow, auditRole: 'FINANCE' | 'BUSINESS', conclusio
 function openPayoff(row: ShareRow) {
   payoffRow.value = row
   payoffNote.value = ''
+  payoffError.value = ''
   voucherFile.value = null
   payoffOpen.value = true
 }
@@ -361,17 +365,18 @@ async function submitReverse() {
 
 async function submitPayoff() {
   if (!payoffRow.value) return
-  error.value = ''
-  const res = await http.put(`/fin/share/result/${payoffRow.value.id}/payoff`, {
-    payoffNote: payoffNote.value,
-    payoffVoucher: voucherFile.value || undefined,
-  })
-  if (res.data?.code !== 0) {
-    error.value = res.data?.msg || '发放失败'
-    return
+  payoffError.value = ''
+  try {
+    await http.put(`/fin/share/result/${payoffRow.value.id}/payoff`, {
+      payoffNote: payoffNote.value,
+      payoffVoucher: voucherFile.value || undefined,
+    })
+    payoffOpen.value = false
+    await loadList()
+  } catch (err) {
+    const body = err as { code?: number; msg?: string }
+    payoffError.value = `${body?.code ?? ''} ${body?.msg || '发放失败'}`.trim()
   }
-  payoffOpen.value = false
-  await loadList()
 }
 
 onMounted(loadList)
