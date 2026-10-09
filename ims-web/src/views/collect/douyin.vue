@@ -64,6 +64,9 @@
         <input v-model="form.cron" data-testid="dy-cron" />
       </label>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="dy-save">{{ editingId ? '更新账号' : '保存账号' }}</button>
+      <button v-if="editingId" class="btn btn-sec btn-sm" type="button" data-testid="dy-clear-credential" @click="clearCredential">
+        清空凭证
+      </button>
       <button v-if="editingId" class="btn btn-sec btn-sm" type="button" @click="resetForm">取消编辑</button>
     </form>
     <p v-if="notice" class="hint" data-testid="dy-notice">{{ notice }}</p>
@@ -94,7 +97,10 @@
               <td class="mono" data-testid="dy-mask">{{ row.credentialMask || '未配置' }}</td>
               <td class="mono">{{ row.credentialRef || '—' }}</td>
               <td>{{ row.collectBindSummary }}</td>
-              <td data-testid="dy-health">{{ row.healthLabel }}</td>
+              <td data-testid="dy-health">
+                <div>{{ row.healthLabel || '未探活' }}</div>
+                <div class="hint" data-testid="dy-probe-at">{{ row.lastProbeAt || '尚未探活' }}</div>
+              </td>
               <td class="num" data-testid="dy-follower-latest">{{ followerText(row) }}</td>
               <td>
                 <button class="btn-txt btn" type="button" @click="editRow(row)">编辑</button>
@@ -224,6 +230,7 @@ type AccountRow = {
   credentialRef: string
   collectBindSummary: string
   healthLabel: string
+  lastProbeAt?: string
   followerCount?: number | null
   followerStatDate?: string
   followerDaily?: FollowerDaily[]
@@ -376,12 +383,27 @@ async function bindRow(row: AccountRow) {
   }
 }
 
+async function clearCredential() {
+  if (!editingId.value) return
+  notice.value = ''
+  try {
+    const res = await http.put(`/collect/douyin/account/${editingId.value}`, { clearCredential: true })
+    const account = res.data?.data?.account
+    notice.value = `凭证已清空，采集健康 ${account?.healthLabel || '未探活'}`
+    form.cookie = ''
+    await loadAccounts()
+  } catch (e: unknown) {
+    notice.value = errorMessage(e)
+  }
+}
+
 async function probeRow(row: AccountRow) {
   notice.value = ''
   try {
     const res = await http.post(`/collect/douyin/account/${row.id}/probe`)
-    const label = res.data?.data?.healthLabel || res.data?.data?.notice || '已探活'
-    notice.value = `测试连接：${label}`
+    const data = res.data?.data || {}
+    const label = data.healthLabel || '未探活'
+    notice.value = data.notice ? `测试连接：${label}。${data.notice}` : `测试连接：${label}`
     await loadAccounts()
   } catch (e: unknown) {
     notice.value = errorMessage(e)

@@ -328,7 +328,7 @@
           <label>Collector account_id</label>
           <div class="mono">{{ bindInfo.collectorAccountId || '—' }}</div>
         </div>
-        <div v-if="bindInfo" class="fld">
+        <div v-if="bindInfo && meta.platform !== 'DOUYIN'" class="fld">
           <label>最近探活</label>
           <div>{{ bindInfo.lastProbeAt || '—' }} {{ bindInfo.connStatus === 'SUCCESS' ? '成功' : bindInfo.connStatus === 'FAILED' ? '失败' : '' }}</div>
         </div>
@@ -349,7 +349,29 @@
           </div>
           <div class="fld">
             <label>采集健康</label>
-            <div data-testid="dy-tab-health">{{ detail.healthLabel || '—' }}</div>
+            <div data-testid="dy-tab-health">{{ detail.healthLabel || '未探活' }}</div>
+          </div>
+          <div class="fld">
+            <label>最近探活</label>
+            <div data-testid="dy-tab-probe">{{ douyinProbeLine() }}</div>
+          </div>
+          <div class="fld">
+            <label>更新凭证（不明文回显）</label>
+            <input
+              v-model="dyCredential"
+              type="password"
+              autocomplete="new-password"
+              placeholder="留空则不修改"
+              data-testid="dy-tab-credential"
+            />
+          </div>
+          <div class="acts">
+            <button class="btn btn-sec btn-sm" type="button" data-testid="dy-tab-save-credential" @click="saveDyCredential">
+              保存凭证
+            </button>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="dy-tab-clear-credential" @click="clearDyCredential">
+              清空凭证
+            </button>
           </div>
           <div class="fld">
             <label>最新粉丝</label>
@@ -573,7 +595,9 @@
           <button class="btn btn-sec btn-sm" type="button" :disabled="!detail.hasCookie" @click="importCollector">导入 Collector</button>
           <button class="btn btn-sec btn-sm" type="button" @click="testConnection">测试连接</button>
         </div>
-        <p v-if="collectMsg" class="hint">{{ collectMsg }}</p>
+        <p v-if="collectMsg" class="hint" :data-testid="meta.platform === 'DOUYIN' ? 'dy-tab-collect-msg' : undefined">
+          {{ collectMsg }}
+        </p>
       </div>
       <div v-if="detail && activeTab === 'timeline'">
         <div class="acts" style="margin-bottom: 8px">
@@ -1078,6 +1102,7 @@ const collectMsg = ref('')
 const collectSummary = ref('—')
 const ksPlatformAccountId = ref('')
 const ksCredential = ref('')
+const dyCredential = ref('')
 const dyLogs = ref<Array<Record<string, unknown>>>([])
 const wxLogs = ref<Array<Record<string, unknown>>>([])
 
@@ -1606,6 +1631,7 @@ async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   detail.value = data
   ksPlatformAccountId.value = String(data.platformAccountId || '')
   ksCredential.value = ''
+  dyCredential.value = ''
   collectSummary.value = String(data.collectBindSummary || '—')
   if (tab === 'collect') {
     await loadDyLogs(row.id)
@@ -1985,6 +2011,75 @@ async function saveKsCredential() {
   }
 }
 
+function douyinProbeLine() {
+  const bind = bindInfo.value
+  const when = String(bind?.lastProbeAt || '').trim()
+  const status = String(bind?.connStatus || '')
+  const health = String(detail.value?.healthLabel || '')
+  const mapped =
+    status === 'SUCCESS' || status === 'CONNECTED'
+      ? '成功'
+      : status === 'FAILED'
+        ? '失败'
+        : status === 'COOKIE_EXPIRED'
+          ? 'Cookie 已失效'
+          : status === 'ENGINE_UNAVAILABLE'
+            ? '浏览器引擎不可用'
+            : health === '未绑定'
+              ? '未绑定'
+              : ''
+  if (!when && (!mapped || mapped === '未绑定')) return '尚未探活'
+  if (!when) return mapped || '尚未探活'
+  return mapped ? `${when} ${mapped}` : when
+}
+
+async function refreshBind(accountId: unknown) {
+  try {
+    const bindRes = await http.get(`/corp/account/${accountId}/collector-bind`)
+    bindInfo.value = bindRes.data?.data as Record<string, unknown>
+  } catch {
+    bindInfo.value = null
+  }
+}
+
+async function saveDyCredential() {
+  if (!detail.value) return
+  collectMsg.value = ''
+  if (!dyCredential.value.trim()) {
+    collectMsg.value = '请填写新凭证，或使用清空凭证'
+    return
+  }
+  try {
+    const res = await http.put(`/collect/douyin/account/${detail.value.id}`, { cookie: dyCredential.value })
+    const account = res.data?.data?.account as Record<string, unknown> | undefined
+    if (account) detail.value = { ...detail.value, ...account }
+    dyCredential.value = ''
+    collectMsg.value = `凭证已保存，掩码 ${account?.credentialMask || '已配置'}。健康改为 ${account?.healthLabel || '未探活'}，需重新测试连接。`
+    collectSummary.value = String(account?.collectBindSummary || collectSummary.value)
+    await refreshBind(detail.value.id)
+    await load()
+  } catch (e: unknown) {
+    collectMsg.value = errorMessage(e)
+  }
+}
+
+async function clearDyCredential() {
+  if (!detail.value) return
+  collectMsg.value = ''
+  try {
+    const res = await http.put(`/collect/douyin/account/${detail.value.id}`, { clearCredential: true })
+    const account = res.data?.data?.account as Record<string, unknown> | undefined
+    if (account) detail.value = { ...detail.value, ...account }
+    dyCredential.value = ''
+    collectMsg.value = `凭证已清空，采集健康 ${account?.healthLabel || '未探活'}`
+    collectSummary.value = String(account?.collectBindSummary || collectSummary.value)
+    await refreshBind(detail.value.id)
+    await load()
+  } catch (e: unknown) {
+    collectMsg.value = errorMessage(e)
+  }
+}
+
 async function importCollector() {
   if (!detail.value) return
   collectMsg.value = ''
@@ -2004,10 +2099,23 @@ async function testConnection() {
   collectMsg.value = ''
   try {
     const bindRes = await http.post(`/corp/account/${detail.value.id}/collector-bind/test-connection`, {})
-    bindInfo.value = bindRes.data?.data as Record<string, unknown>
-    collectMsg.value = '探活成功'
+    const data = (bindRes.data?.data || {}) as Record<string, unknown>
+    bindInfo.value = data
+    if (data.healthLabel || data.collectBindSummary) {
+      detail.value = {
+        ...detail.value,
+        healthLabel: data.healthLabel || detail.value.healthLabel,
+        collectBindSummary: data.collectBindSummary || detail.value.collectBindSummary,
+      }
+      if (data.collectBindSummary) collectSummary.value = String(data.collectBindSummary)
+    }
+    const label = String(data.healthLabel || '')
+    const notice = String(data.notice || '')
+    if (notice) collectMsg.value = notice
+    else if (label && label !== '连接正常') collectMsg.value = `测试连接：${label}`
+    else collectMsg.value = '探活成功'
   } catch (e: unknown) {
-    collectMsg.value = e instanceof Error ? e.message : '探活失败'
+    collectMsg.value = errorMessage(e)
   }
 }
 
