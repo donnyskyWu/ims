@@ -35,6 +35,7 @@ test.describe('air key qpm closure S8', () => {
         (response) => response.url().includes('/air/cfg/key/page') && response.request().method() === 'GET',
       )
       await revoke.click()
+      await page.getByTestId('air-key-revoke-ok').click()
       await done
       await listed
     }

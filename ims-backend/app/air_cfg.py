@@ -356,12 +356,24 @@ def audit_vo(row: AirAuditLog, names: dict[int, str]) -> dict:
 KEY_STATUSES = frozenset({"ACTIVE", "FROZEN", "REVOKED"})
 
 
+def parse_whitelist_on(raw: str | None) -> bool | None | str:
+    text = (raw or "").strip().lower()
+    if not text:
+        return None
+    if text in {"true", "1", "yes"}:
+        return True
+    if text in {"false", "0", "no"}:
+        return False
+    return "invalid"
+
+
 @router.get("/key/page")
 def key_page(
     pageNo: int = 1,
     pageSize: int = 20,
     userName: str | None = None,
     status: str | None = None,
+    whitelistOn: str | None = None,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -370,10 +382,17 @@ def key_page(
     wanted = (status or "").strip().upper()
     if wanted and wanted not in KEY_STATUSES:
         return fail(1001, "status 仅支持 ACTIVE、FROZEN、REVOKED")
+    flag = parse_whitelist_on(whitelistOn)
+    if flag == "invalid":
+        return fail(1001, "whitelistOn 仅支持 true 或 false")
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(AirApiKey).where(AirApiKey.deleted == 0, AirApiKey.tenant_id == tenant_id)
     if wanted:
         stmt = stmt.where(AirApiKey.status == wanted)
+    if flag is True:
+        stmt = stmt.where(AirApiKey.whitelist != "")
+    elif flag is False:
+        stmt = stmt.where(or_(AirApiKey.whitelist == "", AirApiKey.whitelist.is_(None)))
     keyword = (userName or "").strip()
     if keyword:
         like = f"%{keyword}%"

@@ -42,9 +42,15 @@
           <option value="FROZEN">冻结</option>
           <option value="REVOKED">已吊销</option>
         </select>
+        <select v-model="keyQuery.whitelistOn" style="width: 120px" data-testid="air-key-whitelist">
+          <option value="">全部白名单</option>
+          <option value="true">已开启</option>
+          <option value="false">未开启</option>
+        </select>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="air-key-search">查询</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="air-key-reset" @click="resetKeys">重置</button>
       </form>
+      <p class="hint" data-testid="air-key-whitelist-hint">白名单总开关未开启，已填写的白名单仅预存，调用时不生效。</p>
       <p v-if="keyListError" class="hint" style="color: var(--red)" data-testid="air-key-list-error">{{ keyListError }}</p>
       <div class="tbl-wrap">
         <table>
@@ -55,22 +61,27 @@
               <th>掩码</th>
               <th>QPM 限额</th>
               <th>状态</th>
+              <th>白名单</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-if="loading"><td colspan="7"><div class="empty"><div class="et">加载中</div></div></td></tr>
             <tr v-else-if="!keys.length">
-              <td colspan="6">
-                <div class="empty" data-testid="air-key-empty"><div class="et">暂无 Key</div></div>
+              <td colspan="7">
+                <div class="empty" data-testid="air-key-empty">
+                  <div class="et">暂无 Key</div>
+                  <div v-if="keyFiltered" class="hint" data-testid="air-key-filter-empty">当前筛选下没有 Key</div>
+                </div>
               </td>
             </tr>
-            <tr v-for="row in keys" v-else :key="row.id" :data-status="row.status">
+            <tr v-for="row in keys" v-else :key="row.id" :data-status="row.status" :data-whitelist="row.whitelist ? 'on' : 'off'">
               <td class="mono">{{ row.keyCode }}</td>
               <td>{{ row.ownerUsername || row.ownerName || row.ownerUserId }}</td>
               <td class="mono" data-testid="air-key-mask">{{ row.keyMask || row.keyPrefix }}</td>
               <td class="num" data-testid="air-qpm-cell">{{ row.qpmLimit }}</td>
               <td data-testid="air-key-status-cell">{{ keyStatusLabel(row) }}</td>
+              <td data-testid="air-key-whitelist-cell">{{ row.whitelist ? '已开启' : '未开启' }}</td>
               <td>
                 <button
                   v-if="row.status === 'ACTIVE'"
@@ -100,11 +111,11 @@
                   启用
                 </button>
                 <button
-                  v-if="row.status === 'ACTIVE'"
+                  v-if="row.status !== 'REVOKED'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="air-key-revoke"
-                  @click="revokeKey(row)"
+                  @click="askRevoke(row)"
                 >
                   吊销
                 </button>
@@ -182,7 +193,14 @@
                 <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!mcpLogs.length">
-                <td colspan="9"><div class="empty"><div class="et">暂无调用日志</div></div></td>
+                <td colspan="9">
+                  <div class="empty" data-testid="air-mcp-empty">
+                    <div class="et">暂无调用日志</div>
+                    <div v-if="mcpFiltered && !mcpFilterError" class="hint" data-testid="air-mcp-filter-empty">
+                      当前筛选下没有调用日志
+                    </div>
+                  </div>
+                </td>
               </tr>
               <tr
                 v-for="row in mcpLogs"
@@ -251,6 +269,7 @@
             按工具
           </button>
           <button class="btn btn-pri btn-sm" type="submit" data-testid="air-usage-search">统计</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-usage-reset" @click="resetUsage">重置</button>
         </form>
         <p v-if="usageError" class="hint" style="color: var(--red)" data-testid="air-usage-error">{{ usageError }}</p>
         <p v-if="usageEmpty" class="hint" data-testid="air-usage-empty">该区间暂无调用</p>
@@ -282,6 +301,11 @@
               </tr>
             </thead>
             <tbody>
+              <tr v-if="!usageError && !usagePeople.length">
+                <td colspan="5">
+                  <div class="empty" data-testid="air-usage-person-empty"><div class="et">该区间没有调用人</div></div>
+                </td>
+              </tr>
               <tr v-for="row in usagePeople" :key="row.userId" data-testid="air-usage-person" :data-count="row.callCnt">
                 <td>{{ row.userName || row.userId }}</td>
                 <td>{{ row.deptName }}</td>
@@ -418,6 +442,24 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="revokeTarget" class="modal-mask" data-testid="air-key-revoke-modal">
+      <div class="card" style="width: 440px; padding: 20px">
+        <h3 style="margin: 0 0 12px">吊销 Key</h3>
+        <p class="hint" data-testid="air-key-revoke-hint">
+          吊销不可恢复，所有调用立即 401。离职联动无需手工操作。
+        </p>
+        <p style="margin: 8px 0 0">{{ revokeTarget.keyCode }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-key-revoke-cancel" @click="revokeTarget = null">
+            取消
+          </button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-key-revoke-ok" @click="confirmRevoke">
+            确认吊销
+          </button>
+        </div>
       </div>
     </div>
 
@@ -600,6 +642,7 @@ type KeyRow = {
   qpmLimit: number
   status: string
   freezeReason?: string
+  whitelist?: string
   graceUntil: string
 }
 
@@ -615,8 +658,10 @@ const keys = ref<KeyRow[]>([])
 const showKeyForm = ref(false)
 const keyError = ref('')
 const keyListError = ref('')
-const keyQuery = reactive({ userName: '', status: '' })
+const keyQuery = reactive({ userName: '', status: '', whitelistOn: '' })
+const keyFiltered = computed(() => Boolean(keyQuery.userName.trim() || keyQuery.status || keyQuery.whitelistOn))
 const keyAction = ref<null | { id: number; keyCode: string; kind: 'freeze' | 'unfreeze' }>(null)
+const revokeTarget = ref<null | { id: number; keyCode: string }>(null)
 const userKeyword = ref('')
 const userOptions = ref<{ id: string; username: string; nickname: string }[]>([])
 const issued = ref<IssuedKey | null>(null)
@@ -668,6 +713,18 @@ const usageError = ref('')
 const usageDays = ref<UsageDay[]>([])
 const usagePeople = ref<UsagePerson[]>([])
 const usageTools = ref<UsageTool[]>([])
+const mcpFiltered = computed(
+  () =>
+    Boolean(
+      mcpKeyword.value.trim() ||
+        mcpTool.value ||
+        mcpResult.value ||
+        mcpKeyCode.value.trim() ||
+        mcpFrom.value ||
+        mcpTo.value ||
+        drillLabel.value,
+    ),
+)
 const usageEmpty = computed(() => {
   if (usageError.value) return false
   if (usageBy.value === 'DAY') return usageDays.value.length > 0 && usageDays.value.every((row) => row.callCnt === 0)
@@ -727,7 +784,7 @@ function defaultExpire(): string {
 }
 
 function keyStatusLabel(row: KeyRow): string {
-  if (row.status === 'REVOKED') return '已吊销'
+  if (row.status === 'REVOKED') return row.freezeReason ? `已吊销·${row.freezeReason}` : '已吊销'
   if (row.status === 'FROZEN') return row.freezeReason ? `冻结·${row.freezeReason}` : '冻结'
   if (row.graceUntil) return '启用（宽限）'
   return '启用'
@@ -810,10 +867,17 @@ async function submitKey() {
   }
 }
 
-async function revokeKey(row: KeyRow) {
-  if (!window.confirm(`吊销 ${row.keyCode} 后不可恢复，调用立即失败。`)) return
+function askRevoke(row: KeyRow) {
+  keyListError.value = ''
+  revokeTarget.value = { id: row.id, keyCode: row.keyCode }
+}
+
+async function confirmRevoke() {
+  const target = revokeTarget.value
+  if (!target) return
+  revokeTarget.value = null
   try {
-    await http.post(`/air/key/${row.id}/revoke`, { reason: '页面吊销' })
+    await http.post(`/air/key/${target.id}/revoke`, { reason: '管理员手工' })
     await loadKeys()
   } catch (error) {
     keyListError.value = errorMessage(error)
@@ -844,6 +908,7 @@ async function confirmKeyAction() {
 function resetKeys() {
   keyQuery.userName = ''
   keyQuery.status = ''
+  keyQuery.whitelistOn = ''
   loadKeys()
 }
 
@@ -857,6 +922,7 @@ async function loadKeys() {
         pageSize: 100,
         userName: keyQuery.userName.trim() || undefined,
         status: keyQuery.status || undefined,
+        whitelistOn: keyQuery.whitelistOn || undefined,
       },
     })
     if (res.data.code === 0) keys.value = res.data.data.list || []
@@ -1002,7 +1068,18 @@ async function loadMcpLogs() {
   }
   if (from && to && to < from) {
     mcpFilterError.value = '结束日不能早于开始日'
+    mcpLogs.value = []
     return
+  }
+  if (from && to) {
+    const startMs = Date.parse(`${from}T00:00:00`)
+    const endMs = Date.parse(`${to}T00:00:00`)
+    const days = Math.round((endMs - startMs) / 86_400_000) + 1
+    if (days > 180) {
+      mcpFilterError.value = '查询区间不能超过 180 天'
+      mcpLogs.value = []
+      return
+    }
   }
   mcpLoading.value = true
   exportMsg.value = ''
@@ -1036,10 +1113,30 @@ async function loadMcpLogs() {
   }
 }
 
+function resetUsage() {
+  usageStart.value = ''
+  usageEnd.value = ''
+  usageBy.value = 'DAY'
+  usageError.value = ''
+  loadUsage()
+}
+
+function clearUsageRows() {
+  usageDays.value = []
+  usagePeople.value = []
+  usageTools.value = []
+}
+
 async function loadUsage() {
   usageError.value = ''
   if ((usageStart.value && !usageEnd.value) || (!usageStart.value && usageEnd.value)) {
     usageError.value = '请同时选择开始和结束日期'
+    clearUsageRows()
+    return
+  }
+  if (usageStart.value && usageEnd.value && usageEnd.value < usageStart.value) {
+    usageError.value = '结束日不能早于开始日'
+    clearUsageRows()
     return
   }
   try {
