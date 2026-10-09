@@ -601,6 +601,8 @@ def dashboard_export(
             "downloadUrl": f"/admin-api/ims/fin/dashboard/export/file?token={token}",
             "expiresIn": EXPORT_TTL_SEC,
             "fileName": filename,
+            "empty": len(items) == 0,
+            "rowCount": max(len(matrix) - 1, 0),
         }
     )
 

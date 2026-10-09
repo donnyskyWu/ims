@@ -210,6 +210,7 @@
       <div class="modal-card" role="dialog" aria-label="导出格式">
         <b>导出报表</b>
         <p class="hint" data-testid="fin-dash-export-scope">{{ statPeriod }} · {{ dimensionLabel }} · {{ profitLabel }}</p>
+        <p class="hint" data-testid="fin-dash-export-ttl">下载链接 60 秒内有效，过期请重新发起</p>
         <div class="fmt">
           <label>
             <input v-model="exportFormat" type="radio" value="XLSX" data-testid="fin-dash-export-xlsx" />
@@ -432,6 +433,18 @@ function openExport() {
   exportOpen.value = true
 }
 
+async function exportFileError(data: unknown) {
+  try {
+    const text = typeof data === 'string' ? data : await (data as Blob).text()
+    const body = JSON.parse(text) as { code?: number; msg?: string }
+    if (body.code === 1002) return '下载链接已过期，请重新发起'
+    if (body.msg) return `${body.code ?? ''} ${body.msg}`.trim()
+  } catch {
+    /* 非 JSON 错误体 */
+  }
+  return '导出失败'
+}
+
 async function confirmExport() {
   if (exportBusy.value) return
   exportBusy.value = true
@@ -441,14 +454,20 @@ async function confirmExport() {
     const res = await http.get('/fin/dashboard/export', {
       params: { statPeriod: statPeriod.value, dimensionType: dimension.value, format },
     })
-    const downloadUrl = String(res.data.data?.downloadUrl || '')
-    const fileName = String(res.data.data?.fileName || '')
+    const data = res.data.data || {}
+    const downloadUrl = String(data.downloadUrl || '')
+    const fileName = String(data.fileName || '')
+    const expiresIn = Number(data.expiresIn ?? 60)
     const token = new URL(downloadUrl, 'http://127.0.0.1').searchParams.get('token') || ''
+    if (!token) {
+      exportMsg.value = '导出失败'
+      return
+    }
     const file = await http.get('/fin/dashboard/export/file', { params: { token }, responseType: 'blob' })
     const type = String(file.headers?.['content-type'] || '')
     const ready = format === 'PDF' ? type.includes('pdf') : type.includes('sheet')
     if (!ready) {
-      exportMsg.value = '导出失败'
+      exportMsg.value = await exportFileError(file.data)
       return
     }
     const blob = file.data as Blob
@@ -460,7 +479,8 @@ async function confirmExport() {
     link.click()
     link.remove()
     URL.revokeObjectURL(url)
-    exportMsg.value = `导出成功 ${fileName}`
+    const emptyNote = data.empty ? ' · 本期无已核算场次，已导出表头' : ''
+    exportMsg.value = `导出成功 ${fileName} · ${expiresIn} 秒内有效，过期请重新发起${emptyNote}`
     exportOpen.value = false
   } catch (err) {
     exportMsg.value = errorMessage(err)
