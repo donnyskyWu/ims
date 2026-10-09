@@ -5,8 +5,11 @@
     <p data-testid="ai-copy-provider">文案服务：{{ copyProviderLabel }}</p>
     <p data-testid="comfyui-stub-status">ComfyUI：{{ videoProviderLabel }}</p>
     <p v-if="copyIsEmpty" class="hint" data-testid="ai-copy-empty">尚未生成文案。预览与正文都还是空的，本地桩不占用本机 GPU。</p>
+    <p v-if="locked" class="hint" data-testid="ai-panel-locked">当前不是草稿或驳回，不能新提交文案或视频。本地桩也不会出新任务。</p>
+    <p v-if="copyUnconfigured" class="hint bad" data-testid="ai-copy-unconfigured">未配置 AI 文案地址，文案生成不可用。</p>
     <p v-if="videoUnconfigured" class="hint bad" data-testid="comfyui-unconfigured">未配置 ComfyUI 地址，视频生成不可用。</p>
-    <p v-if="!hasMatch" class="hint bad">请先选择比赛（matchScheme 至少一场）后再生成。</p>
+    <p v-if="workflowMissing" class="hint" data-testid="ai-workflow-empty">还没有默认视频工作流，视频任务不可提交。</p>
+    <p v-if="!hasMatch" class="hint bad" data-testid="ai-panel-need-match">请先选择比赛（matchScheme 至少一场）后再生成。本地桩也不会出稿。</p>
     <p data-testid="ai-copy-status">
       文案状态：{{ copyLabel }}
       <span v-if="content.aiGenerateError"> · {{ content.aiGenerateError }}</span>
@@ -17,9 +20,10 @@
       <span v-if="content.videoJobError"> · {{ content.videoJobError }}</span>
       <span v-else-if="content.videoRetryHint"> · {{ content.videoRetryHint }}</span>
     </p>
+    <p v-if="panelError" class="hint bad" data-testid="ai-panel-error">{{ panelError }}</p>
     <p v-if="content.videoFileKey" class="mono" data-testid="video-file-key">{{ content.videoFileKey }}</p>
     <div class="acts" style="margin-top: 8px; flex-wrap: wrap; gap: 8px">
-      <button class="btn btn-pri btn-sm" type="button" data-testid="ai-copy-btn" :disabled="!canGenerate" @click="generateCopy">
+      <button class="btn btn-pri btn-sm" type="button" data-testid="ai-copy-btn" :disabled="!canGenerateCopy" @click="generateCopy">
         AI 生成文案
       </button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="ai-video-btn" :disabled="!canGenerate || !content.defaultWorkflowId || videoUnconfigured" @click="generateVideo">
@@ -75,6 +79,9 @@
         终审打回
       </button>
     </div>
+    <p v-if="content.videoJobStatus === 'PENDING_FINAL_REVIEW'" class="hint" data-testid="ai-review-reject-hint">
+      打回会记「终审打回，可重新发起」。本地桩不另开 GPU。
+    </p>
     <ContentVideoDrawer
       v-if="videoOpen"
       :open="videoOpen"
@@ -94,6 +101,7 @@ const props = defineProps<{ content: Record<string, any> }>()
 const emit = defineEmits<{ refresh: [] }>()
 const busy = ref(false)
 const videoOpen = ref(false)
+const panelError = ref('')
 
 const copyLabelMap: Record<string, string> = {
   QUEUED: '生成中',
@@ -118,11 +126,18 @@ const videoLabelMap: Record<string, string> = {
 
 const hasMatch = computed(() => Array.isArray(props.content.matchScheme) && props.content.matchScheme.length > 0)
 const editable = computed(() => props.content.contentStatus === 'DRAFT' || props.content.contentStatus === 'REJECTED')
+const locked = computed(() => {
+  const status = String(props.content.contentStatus || '')
+  return !!status && !editable.value
+})
 const generating = computed(() => props.content.aiGenerateStatus === 'QUEUED' || props.content.aiGenerateStatus === 'GENERATING' || props.content.videoJobStatus === 'GENERATING')
 const canGenerate = computed(() => editable.value && hasMatch.value && !busy.value && !generating.value)
+const copyUnconfigured = computed(() => props.content.aiCopyProvider === 'unconfigured')
+const canGenerateCopy = computed(() => canGenerate.value && !copyUnconfigured.value)
 const canRetryVideo = computed(() => props.content.videoJobStatus === 'FAILED' || props.content.videoJobStatus === 'REVIEW_REJECTED')
 const copyIsEmpty = computed(() => !props.content.aiGenerateStatus)
 const videoUnconfigured = computed(() => props.content.videoProvider === 'unconfigured')
+const workflowMissing = computed(() => !videoUnconfigured.value && !props.content.defaultWorkflowId)
 const copyProviderLabel = computed(() => providerLabels[props.content.aiCopyProvider] || '未返回')
 const videoProviderLabel = computed(() => providerLabels[props.content.videoProvider] || '未返回')
 const copyLabel = computed(() => {
@@ -142,7 +157,16 @@ function requirement() {
   return [title, body].filter(Boolean).join('\n') || title
 }
 
+function noteError(message: string) {
+  panelError.value = message
+}
+
 async function generateCopy() {
+  panelError.value = ''
+  if (!requirement()) {
+    noteError('标题和正文都为空时不能生成。本地桩也不会出文案。')
+    return
+  }
   busy.value = true
   try {
     await http.post('/content/script/generate', {
@@ -153,13 +177,18 @@ async function generateCopy() {
     })
     emit('refresh')
   } catch (e) {
-    window.alert(errorMessage(e))
+    noteError(errorMessage(e))
   } finally {
     busy.value = false
   }
 }
 
 async function generateVideo() {
+  panelError.value = ''
+  if (!requirement()) {
+    noteError('标题和正文都为空时不能生成。本地桩也不会出成片。')
+    return
+  }
   busy.value = true
   try {
     const created = await http.post('/content/ai-production/task', {
@@ -169,34 +198,36 @@ async function generateVideo() {
     })
     const taskNo = created.data?.data?.taskNo
     if (!taskNo) {
-      window.alert('未返回生产任务号')
+      noteError('未返回生产任务号')
       return
     }
     await http.post(`/content/ai-production/task/${taskNo}/run`)
     emit('refresh')
   } catch (e) {
-    window.alert(errorMessage(e))
+    noteError(errorMessage(e))
   } finally {
     busy.value = false
   }
 }
 
 async function retryCopy() {
+  panelError.value = ''
   busy.value = true
   try {
     await http.post(`/content/${props.content.id}/retry-ai-generate`)
     emit('refresh')
   } catch (e) {
-    window.alert(errorMessage(e))
+    noteError(errorMessage(e))
   } finally {
     busy.value = false
   }
 }
 
 async function retryVideo() {
+  panelError.value = ''
   const taskNo = props.content.videoTaskNo
   if (!taskNo) {
-    window.alert('没有可重新发起的视频任务')
+    noteError('没有可重新发起的视频任务')
     return
   }
   busy.value = true
@@ -204,13 +235,14 @@ async function retryVideo() {
     await http.post(`/content/ai-production/task/${taskNo}/run`)
     emit('refresh')
   } catch (e) {
-    window.alert(errorMessage(e))
+    noteError(errorMessage(e))
   } finally {
     busy.value = false
   }
 }
 
 async function reviewVideo(pass: boolean) {
+  panelError.value = ''
   const taskNo = props.content.videoTaskNo
   if (!taskNo) return
   busy.value = true
@@ -221,7 +253,7 @@ async function reviewVideo(pass: boolean) {
     })
     emit('refresh')
   } catch (e) {
-    window.alert(errorMessage(e))
+    noteError(errorMessage(e))
   } finally {
     busy.value = false
   }

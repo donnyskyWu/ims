@@ -124,6 +124,7 @@
           <label>文案</label>
           <input v-model="createForm.caption" maxlength="512" />
         </div>
+        <p v-if="createError" class="hint bad" data-testid="publish-create-error">{{ createError }}</p>
       </div>
       <div class="dsec" data-testid="publish-checklist">发布清单</div>
       <p v-if="checklistError" class="hint" style="color: #c0392b">{{ checklistError }}</p>
@@ -208,6 +209,7 @@ const createForm = reactive({
 })
 const checklist = ref<any[]>([])
 const checklistError = ref('')
+const createError = ref('')
 const shownChecklist = computed(() =>
   checklist.value.map((item) => {
     if (item.itemCode === 'CAPTION') {
@@ -325,6 +327,7 @@ function openCreate() {
   createForm.caption = ''
   checklist.value = []
   checklistError.value = ''
+  createError.value = ''
   createOpen.value = true
 }
 
@@ -347,9 +350,35 @@ watch(
   },
 )
 
+function publishAtOk(raw: string) {
+  const text = raw.trim()
+  if (!text.includes('T')) return false
+  const normalized = text.replace(/Z$/i, '+00:00')
+  const hasZone = /[+-]\d{2}:\d{2}$/.test(normalized)
+  const parsed = new Date(hasZone ? normalized : `${normalized}+08:00`)
+  return !Number.isNaN(parsed.getTime())
+}
+
 async function submitCreate() {
-  if (!createForm.contentProjectId || !createForm.accountId || !createForm.platform.trim() || !createForm.planPublishAt.trim()) {
-    alert('请填写必填项')
+  createError.value = ''
+  if (!createForm.contentProjectId || createForm.contentProjectId < 1) {
+    createError.value = '请填写内容项目 id'
+    return
+  }
+  if (!createForm.accountId || createForm.accountId < 1) {
+    createError.value = '请填写平台账号 id'
+    return
+  }
+  if (!createForm.platform.trim()) {
+    createError.value = '请填写平台'
+    return
+  }
+  if (!createForm.planPublishAt.trim()) {
+    createError.value = '请填写计划发布时间'
+    return
+  }
+  if (!publishAtOk(createForm.planPublishAt)) {
+    createError.value = '计划发布时间需包含日期和时间，例如 2026-10-08T20:00:00+08:00'
     return
   }
   creating.value = true
@@ -362,14 +391,14 @@ async function submitCreate() {
       caption: createForm.caption.trim(),
     })
     if (res.data.code !== 0) {
-      alert(res.data.msg || '创建失败')
+      createError.value = res.data.msg || '创建失败'
       return
     }
     createOpen.value = false
     await loadList()
     await loadPendingHint()
-  } catch (e: any) {
-    alert(e?.message || '网络错误')
+  } catch (e) {
+    createError.value = errorMessage(e)
   } finally {
     creating.value = false
   }
