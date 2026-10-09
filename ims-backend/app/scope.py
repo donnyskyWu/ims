@@ -437,6 +437,7 @@ PREFIXES = [
     ("PUT", "/admin-api/ims/air/expert", "ims_air_expert"),
     ("DELETE", "/admin-api/ims/air/expert", "ims_air_expert"),
     ("GET", "/admin-api/ims/air/mcp/audit-log", "ims_mcp_log"),
+    ("GET", "/admin-api/ims/air/usage/stat", "ims_mcp_log"),
     ("GET", "/admin-api/ims/dc/dashboard", "ims_dc_dashboard"),
     ("POST", "/admin-api/ims/dc/dashboard", "ims_dc_dashboard"),
     ("PUT", "/admin-api/ims/dc/dashboard", "ims_dc_dashboard"),

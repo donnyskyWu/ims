@@ -80,9 +80,13 @@ test.describe('air s8 local tails closure', () => {
 
     await page.goto('/ims/air/cfg?tab=audit')
     await expect(page.getByTestId('air-mcp-audit')).toBeVisible({ timeout: 15_000 })
-    await page.getByTestId('air-mcp-keyword').fill(`zzz-no-tool-${Date.now()}`)
+    const missingKeyword = `zzz-no-tool-${Date.now()}`
+    await page.getByTestId('air-mcp-keyword').fill(missingKeyword)
     const emptyAudit = page.waitForResponse(
-      (response) => response.url().includes('/air/mcp/audit-log') && response.request().method() === 'GET',
+      (response) =>
+        response.url().includes('/air/mcp/audit-log') &&
+        response.url().includes(`keyword=${missingKeyword}`) &&
+        response.request().method() === 'GET',
     )
     await page.getByTestId('air-mcp-search').click()
     expect((await (await emptyAudit).json()).data.total).toBe(0)
