@@ -21,6 +21,16 @@ router = APIRouter(prefix="/alert", tags=["alert"])
 BJ = timezone(timedelta(hours=8))
 # 契约 AlertEventStatus。1=CONFIRMED（旧称 ACK），2=RESOLVED（旧称 HANDLED）。
 RESPONSE_LABELS = {0: "OPEN", 1: "CONFIRMED", 2: "RESOLVED", 3: "FALSE_ALARM"}
+# 0 待推送 / 1 工作台已落库视为已送达 / 2 钉钉桩失败后短信兜底 / 3 补发后仍失败。钉钉与短信只记本地回执，不外发。
+PUSH_LABELS = {0: "PENDING", 1: "DELIVERED", 2: "PARTIAL_FAILED", 3: "FAILED"}
+PUSH_CODES = {label: code for code, label in PUSH_LABELS.items()}
+SOURCE_JUMPS = {
+    "SESSION": "/ims/live",
+    "CERT": "/ims/corp/resource/certificate",
+    "ACCOUNT": "/ims/corp/account/douyin",
+    "COST": "/ims/cost",
+    "MANUAL": "/ims/alert/rule",
+}
 STATUS_ALIASES = {
     "ACK": "CONFIRMED",
     "HANDLED": "RESOLVED",
@@ -74,6 +84,61 @@ def status_code(label: str) -> int | None:
     key = STATUS_ALIASES.get(label.upper(), label.upper())
     rev = {value: code for code, value in RESPONSE_LABELS.items()}
     return rev.get(key)
+
+
+def parse_level(raw: str | None) -> tuple[int | None, str | None]:
+    if raw is None or not str(raw).strip():
+        return None, None
+    text = str(raw).strip().upper()
+    if text.startswith("L"):
+        text = text[1:]
+    if text in {"1", "2", "3"}:
+        return int(text), None
+    return None, "level 无效"
+
+
+def parse_push(raw: str | None) -> tuple[int | None, str | None]:
+    if raw is None or not str(raw).strip():
+        return None, None
+    key = str(raw).strip().upper()
+    if key in PUSH_CODES:
+        return PUSH_CODES[key], None
+    if key.isdigit() and int(key) in PUSH_LABELS:
+        return int(key), None
+    return None, "pushStatus 无效"
+
+
+def push_channels(row: AlertRecord) -> list[dict]:
+    """本地回执。钉钉/短信 success 只表示桩已记账，不表示已经外发。"""
+    at = iso(row.occurred_at) if row.occurred_at else None
+    status = row.push_status
+    if status == 1:
+        return [
+            {"channel": "WORKBENCH", "success": True, "receiptAt": at},
+            {"channel": "DINGTALK", "success": True, "receiptAt": at},
+            {"channel": "SMS", "success": False},
+        ]
+    if status == 2:
+        return [
+            {"channel": "WORKBENCH", "success": True, "receiptAt": at},
+            {"channel": "DINGTALK", "success": False},
+            {"channel": "SMS", "success": True, "receiptAt": at},
+        ]
+    if status == 3:
+        return [
+            {"channel": "WORKBENCH", "success": False},
+            {"channel": "DINGTALK", "success": False},
+            {"channel": "SMS", "success": False},
+        ]
+    return [
+        {"channel": "WORKBENCH", "success": False},
+        {"channel": "DINGTALK", "success": False},
+        {"channel": "SMS", "success": False},
+    ]
+
+
+def source_jump(row: AlertRecord) -> str:
+    return SOURCE_JUMPS.get((row.source_ref_type or "").upper(), "")
 
 
 def rate_pct(part: int, whole: int) -> float:
@@ -233,19 +298,33 @@ def rule_vo(row: AlertRule) -> dict:
 
 
 def record_vo(row: AlertRecord, rule: AlertRule | None = None) -> dict:
+    rule_code = rule.rule_code if rule else ""
+    ref = f"{row.source_ref_type or ''}:{row.source_ref_id or 0}"
     return {
         "id": row.id,
         "alertNo": row.alert_no,
         "ruleId": row.rule_id,
+        "ruleCode": rule_code,
         "ruleName": rule.rule_name if rule else "",
         "level": row.level,
         "content": row.content,
         "sourceRefType": row.source_ref_type or None,
         "sourceRefId": row.source_ref_id or None,
-        "pushStatus": row.push_status,
+        "dedupKey": f"{rule_code}+{ref}" if rule_code else ref,
+        "mergedCount": 1,
+        "notifyTargetUserIds": [],
+        "pushStatus": PUSH_LABELS.get(row.push_status, "PENDING"),
+        "pushChannels": push_channels(row),
         "responseStatus": RESPONSE_LABELS.get(row.response_status, "OPEN"),
         "occurredAt": iso(row.occurred_at),
     }
+
+
+def _rules_for(db: Session, rows: list[AlertRecord]) -> dict[int, AlertRule]:
+    rule_ids = {row.rule_id for row in rows if row.rule_id}
+    if not rule_ids:
+        return {}
+    return {rule.id: rule for rule in db.scalars(select(AlertRule).where(AlertRule.id.in_(rule_ids))).all()}
 
 
 @router.get("/rule/list")
@@ -388,6 +467,10 @@ def toggle_rule(
 def check_records(
     responseStatus: str | None = None,
     ruleId: int | None = None,
+    ruleCode: str | None = None,
+    level: str | None = None,
+    pushStatus: str | None = None,
+    dateRange: str | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
     db: Session = Depends(db_session),
@@ -398,11 +481,42 @@ def check_records(
     stmt = select(AlertRecord).where(AlertRecord.deleted == 0, AlertRecord.tenant_id == tenant_id)
     if ruleId:
         stmt = stmt.where(AlertRecord.rule_id == ruleId)
+    code = (ruleCode or "").strip()
+    if code:
+        matched = list(
+            db.scalars(
+                select(AlertRule.id).where(
+                    AlertRule.deleted == 0,
+                    AlertRule.tenant_id == tenant_id,
+                    AlertRule.rule_code == code,
+                )
+            ).all()
+        )
+        if not matched:
+            return paged([], 0, page_no, size)
+        stmt = stmt.where(AlertRecord.rule_id.in_(matched))
+    level_code, level_error = parse_level(level)
+    if level_error:
+        return fail(1001, level_error)
+    if level_code is not None:
+        stmt = stmt.where(AlertRecord.level == level_code)
+    push_code, push_error = parse_push(pushStatus)
+    if push_error:
+        return fail(1001, push_error)
+    if push_code is not None:
+        stmt = stmt.where(AlertRecord.push_status == push_code)
     if responseStatus:
-        code = status_code(responseStatus)
-        if code is None:
+        status = status_code(responseStatus)
+        if status is None:
             return fail(1001, "responseStatus 无效")
-        stmt = stmt.where(AlertRecord.response_status == code)
+        stmt = stmt.where(AlertRecord.response_status == status)
+    start, end, range_error = parse_day_range(dateRange)
+    if range_error:
+        return fail(1001, range_error)
+    if start is not None:
+        stmt = stmt.where(AlertRecord.occurred_at >= start)
+    if end is not None:
+        stmt = stmt.where(AlertRecord.occurred_at <= end)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         db.scalars(
@@ -411,12 +525,93 @@ def check_records(
             .limit(size)
         ).all()
     )
-    rule_ids = {r.rule_id for r in rows if r.rule_id}
-    rules = {}
-    if rule_ids:
-        for rule in db.scalars(select(AlertRule).where(AlertRule.id.in_(rule_ids))).all():
-            rules[rule.id] = rule
+    rules = _rules_for(db, rows)
     return paged([record_vo(r, rules.get(r.rule_id)) for r in rows], total, page_no, size)
+
+
+def _find_record(db: Session, tenant_id: int, alert_no: str) -> AlertRecord | None:
+    return db.scalar(
+        select(AlertRecord).where(
+            AlertRecord.deleted == 0,
+            AlertRecord.tenant_id == tenant_id,
+            AlertRecord.alert_no == alert_no,
+        )
+    )
+
+
+@router.get("/check/my-alerts")
+def my_alerts(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    """工作台「我的预警」。本库没有通知目标人列，未响应记录即当前租户待办。"""
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(AlertRecord)
+            .where(
+                AlertRecord.deleted == 0,
+                AlertRecord.tenant_id == tenant_id,
+                AlertRecord.response_status == 0,
+            )
+            .order_by(AlertRecord.occurred_at.desc(), AlertRecord.id.desc())
+            .limit(20)
+        ).all()
+    )
+    rules = _rules_for(db, rows)
+    data = []
+    for row in rows:
+        item = record_vo(row, rules.get(row.rule_id))
+        item["isUnread"] = True
+        data.append(item)
+    return ok(data)
+
+
+@router.get("/check/delivery-stats")
+def delivery_stats(
+    dateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """送达率。分母为记录数，分子为 push_status=1。失败明细含本地补发 1 次，不外发钉钉/短信。"""
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    rows = _overview_rows(db, tenant_of(actor), start, end)
+    delivered = 0
+    failed: list[dict] = []
+    for row in rows:
+        if row.push_status == 1:
+            delivered += 1
+        elif row.push_status == 2:
+            failed.append({"alertNo": row.alert_no, "failedChannel": "DINGTALK", "retryCount": 1})
+        elif row.push_status == 3:
+            failed.append({"alertNo": row.alert_no, "failedChannel": "SMS", "retryCount": 1})
+    total = len(rows)
+    return ok(
+        {
+            "totalDelivered": delivered,
+            "totalShould": total,
+            "deliveryRate": rate_pct(delivered, total),
+            "failedAlerts": failed[:20],
+            "target": 99,
+        }
+    )
+
+
+@router.get("/check/{alert_no}")
+def check_detail(
+    alert_no: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = _find_record(db, tenant_id, alert_no)
+    if row is None:
+        return fail(1500, "预警不存在")
+    rule = db.get(AlertRule, row.rule_id) if row.rule_id else None
+    data = record_vo(row, rule)
+    data["sourceJumpUrl"] = source_jump(row)
+    data["escalationTimeline"] = []
+    data["retryCount"] = 1 if row.push_status in (2, 3) else 0
+    return ok(data)
 
 
 @router.put("/check/{alert_no}/respond")
@@ -440,13 +635,7 @@ def respond_alert(
     if action not in mapping:
         return fail(1001, "action 无效")
     tenant_id = tenant_of(actor)
-    row = db.scalar(
-        select(AlertRecord).where(
-            AlertRecord.deleted == 0,
-            AlertRecord.tenant_id == tenant_id,
-            AlertRecord.alert_no == alert_no,
-        )
-    )
+    row = _find_record(db, tenant_id, alert_no)
     if row is None:
         return fail(1500, "预警不存在")
     if row.response_status in TERMINAL_STATUS:

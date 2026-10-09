@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, visible
-from app.models import ContentReview, Todo, User
+from app.models import AlertRecord, ContentReview, Todo, User
 from app.ops_models import CollectLog, IpGroup, PlatformAccount
 from app.scope import resolve
 
@@ -97,6 +97,25 @@ def pending_todo_count(db: Session, user_id: int) -> int:
 
 def aggregate_todos(db: Session, ops: Session, actor: User, limit: int = 10) -> list[dict]:
     items: list[dict] = []
+    alerts = db.scalars(
+        select(AlertRecord)
+        .where(
+            AlertRecord.deleted == 0,
+            AlertRecord.tenant_id == tenant_of(actor),
+            AlertRecord.response_status == 0,
+        )
+        .order_by(AlertRecord.id.desc())
+        .limit(3)
+    ).all()
+    for row in alerts:
+        items.append(
+            {
+                "type": "ALERT",
+                "title": f"预警待响应 {row.alert_no}",
+                "bizId": row.alert_no,
+                "url": "/ims/alert/live",
+            }
+        )
     reviews = db.scalars(
         select(ContentReview)
         .where(ContentReview.deleted == 0, ContentReview.conclusion.is_(None))

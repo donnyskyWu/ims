@@ -79,6 +79,20 @@
         </div>
       </div>
     </div>
+
+    <div
+      v-if="overview && overview.totalAlertCount === 0"
+      class="card"
+      style="margin-top: 12px"
+      data-testid="alert-stats-empty"
+    >
+      <div class="empty"><div class="et">当前筛选范围内暂无预警</div></div>
+    </div>
+
+    <div v-if="overview" class="card" style="margin-top: 12px" data-testid="alert-stats-weekly-empty">
+      <div class="hd-row"><h3>周报</h3></div>
+      <div class="empty"><div class="et">本周期周报尚未生成（每日汇总，周一推送管理层）</div></div>
+    </div>
   </div>
 </template>
 
