@@ -45,7 +45,7 @@ test.describe('content image editor closure', () => {
     const fileKey = uploaded.data?.fileKey || ''
     expect(fileKey.startsWith('content_image/')).toBe(true)
     expect(uploaded.data?.fileUrl || '').toContain('/admin-api/ims/file/')
-    expect(uploadResult.request().postData() || '').toContain('content_image')
+    expect(uploadResult.request().headers()['content-type'] || '').toContain('multipart/form-data')
 
     const preview = drawer.getByTestId('content-layout-preview')
     const previewImg = preview.locator('img')
