@@ -1440,6 +1440,31 @@ class PerfRank(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PerfRankAlert(Base):
+    """得分 <60 的预警处置。同一人同一周期只留一条，处置状态不随排名重写丢失。"""
+
+    __tablename__ = "ims_perf_rank_alert"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "period_month", "user_id", name="uk_perf_rank_alert"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="", index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    user_name: Mapped[str] = mapped_column(String(64), default="")
+    dept_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    dept_name: Mapped[str] = mapped_column(String(128), default="")
+    total_score: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=0)
+    alerted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    push_targets: Mapped[list] = mapped_column(JSON, default=list)
+    handle_status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    handle_remark: Mapped[str] = mapped_column(String(512), default="")
+    follow_up_plan: Mapped[str] = mapped_column(String(512), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AlertRule(Base):
     __tablename__ = "ims_alert_rule"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

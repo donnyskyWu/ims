@@ -16,6 +16,14 @@
     </div>
 
     <template v-else-if="mine">
+      <p
+        v-if="rank?.alertStatus === 'ALERTED'"
+        data-testid="perf-mine-alert"
+        class="hint"
+        style="color: #c46a00"
+      >
+        本期得分低于 60，已通知您与直属上级
+      </p>
       <p class="hint">{{ mine.periodMonth }} · {{ mine.deptName }}</p>
       <p data-testid="perf-mine-score" style="font-size: 32px; font-weight: 600">{{ scoreText(mine.totalScore) }}</p>
       <p>
@@ -78,6 +86,7 @@ type Mine = {
 type Rank = {
   rankNo: number
   gradeLevel: string
+  alertStatus?: string
   deptTotalCount: number
   scoreDistribution: { excellent: number; qualified: number; improve: number }
 }

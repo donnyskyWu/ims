@@ -28,6 +28,7 @@ from app.models import (
     PerfPeriod,
     PerfPositionBind,
     PerfRank,
+    PerfRankAlert,
     ReportSubmission,
     TrainTask,
     TrainTaskRecord,
@@ -62,10 +63,16 @@ def role_tags(db: Session, actor: User) -> set[str]:
             tags.add(key)
         if key == "sys:admin" or "系统管理员" in name:
             tags.update({"r1", "sys:admin"})
+        if key == "r2" or key.endswith(":r2") or "人事" in name or "行政管理" in name:
+            tags.add("r2")
+        if key == "r3" or key.endswith(":r3") or "财务" in name:
+            tags.add("r3")
         if key == "r4" or key.endswith(":r4") or "运营总监" in name:
             tags.add("r4")
         if key == "r9" or key.endswith(":r9") or "数据分析" in name:
             tags.add("r9")
+        if key in {"dept_leader", "dept:leader"} or "部门负责人" in name:
+            tags.add("dept_leader")
     return tags
 
 
@@ -93,6 +100,12 @@ class ApproveBody(BaseModel):
     approve: bool
     remark: str = ""
     excludeUserIds: list[int] = Field(default_factory=list)
+
+
+class AlertHandleBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    handleRemark: str = ""
+    followUpPlan: str = ""
 
 
 def period_ok(value: str) -> bool:
@@ -142,6 +155,27 @@ def can_approve(tags: set[str]) -> bool:
 
 def can_calc(tags: set[str]) -> bool:
     return bool(tags & {"r1", "r4", "sys:admin"})
+
+
+def can_view_coverage(tags: set[str]) -> bool:
+    return bool(tags & {"r1", "r4", "sys:admin"})
+
+
+def can_test_fetch(tags: set[str]) -> bool:
+    return bool(tags & {"r1", "r3", "r4", "sys:admin"})
+
+
+def can_view_alerts(tags: set[str]) -> bool:
+    return bool(tags & {"r1", "r2", "r4", "sys:admin"})
+
+
+def can_handle_alert(tags: set[str]) -> bool:
+    """本地 sys:admin / R1 代 R4 登记（与核准同一口径）。"""
+    return bool(tags & {"r1", "r2", "r4", "sys:admin"})
+
+
+def can_view_coaching(tags: set[str]) -> bool:
+    return bool(tags & {"r1", "r4", "sys:admin", "dept_leader"})
 
 
 def lock_key(period: str) -> str:
@@ -699,6 +733,68 @@ def consecutive_improve(db: Session, tenant_id: int, user_id: int, period: str, 
     return count
 
 
+PUSH_TARGETS = ["SELF", "SUPERIOR", "HR"]
+
+
+def sync_rank_alerts(db: Session, tenant_id: int, period: str | None = None) -> None:
+    """把当前待改进排名落成预警。已处置的记录只更新分数，不改回待处置。"""
+    stmt = select(PerfRank).where(
+        PerfRank.deleted == 0,
+        PerfRank.tenant_id == tenant_id,
+        PerfRank.is_current == 1,
+        PerfRank.alert_status == "ALERTED",
+    )
+    if period:
+        stmt = stmt.where(PerfRank.period_month == period)
+    now = utcnow()
+    for rank in db.scalars(stmt).all():
+        alert = db.scalar(
+            select(PerfRankAlert).where(
+                PerfRankAlert.deleted == 0,
+                PerfRankAlert.tenant_id == tenant_id,
+                PerfRankAlert.period_month == rank.period_month,
+                PerfRankAlert.user_id == rank.user_id,
+            )
+        )
+        if alert is None:
+            alert = PerfRankAlert(
+                period_month=rank.period_month,
+                user_id=rank.user_id,
+                user_name=rank.user_name,
+                dept_id=rank.dept_id,
+                dept_name=rank.dept_name,
+                total_score=rank.total_score or ZERO,
+                alerted_at=now,
+                push_targets=list(PUSH_TARGETS),
+                handle_status="PENDING",
+                tenant_id=tenant_id,
+            )
+            db.add(alert)
+            db.flush()
+            score = float(rank.total_score or 0)
+            db.add(
+                WorkMessage(
+                    user_id=rank.user_id,
+                    title="绩效预警",
+                    content=(
+                        f"{rank.period_month} 综合得分 {score:.2f}，低于 60，"
+                        "已通知本人、直属上级与 HR"
+                    ),
+                    channel="IN_APP",
+                    source_module="PERF",
+                    ref_type="perf_rank_alert",
+                    ref_id=alert.id,
+                    tenant_id=tenant_id,
+                )
+            )
+            continue
+        alert.user_name = rank.user_name
+        alert.dept_id = rank.dept_id
+        alert.dept_name = rank.dept_name
+        alert.total_score = rank.total_score or ZERO
+        alert.updated_at = now
+
+
 def write_ranks(db: Session, tenant_id: int, period: str) -> None:
     published = [
         row
@@ -736,6 +832,8 @@ def write_ranks(db: Session, tenant_id: int, period: str) -> None:
                 tenant_id=tenant_id,
             )
         )
+    db.flush()
+    sync_rank_alerts(db, tenant_id, period)
 
 
 def rank_vo(row: PerfRank) -> dict:
@@ -1057,4 +1155,135 @@ def rank_mine(
     data = rank_vo(row)
     data["deptTotalCount"] = len(peers)
     data["scoreDistribution"] = distribution(list(peers))
+    return ok(data)
+
+
+def alert_vo(row: PerfRankAlert) -> dict:
+    data = {
+        "id": row.id,
+        "periodMonth": row.period_month,
+        "userId": row.user_id,
+        "userName": row.user_name,
+        "deptName": row.dept_name,
+        "totalScore": float(row.total_score or 0),
+        "alertedAt": iso(row.alerted_at),
+        "pushTargets": list(row.push_targets or PUSH_TARGETS),
+        "handleStatus": row.handle_status,
+    }
+    if row.handle_remark:
+        data["handleRemark"] = row.handle_remark
+    if row.follow_up_plan:
+        data["followUpPlan"] = row.follow_up_plan
+    return data
+
+
+def period_score(row: PerfRank) -> dict:
+    return {
+        "periodMonth": row.period_month,
+        "totalScore": float(row.total_score or 0),
+        "gradeLevel": row.grade_level,
+    }
+
+
+@router.get("/rank/alerts")
+def rank_alerts(
+    periodMonth: str = "",
+    handleStatus: str = "",
+    pageNo: int = 1,
+    pageSize: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_view_alerts(role_tags(db, actor)):
+        return fail(403, "仅管理者可查看绩效预警")
+    period = periodMonth.strip()
+    if period and not period_ok(period):
+        return fail(1001, "绩效月格式须为 yyyy-MM")
+    status = handleStatus.strip().upper()
+    if status and status not in {"PENDING", "DONE"}:
+        return fail(1001, "处置状态无效")
+    tenant_id = tenant_of(actor)
+    sync_rank_alerts(db, tenant_id, period or None)
+    stmt = select(PerfRankAlert).where(
+        PerfRankAlert.deleted == 0,
+        PerfRankAlert.tenant_id == tenant_id,
+    )
+    if period:
+        stmt = stmt.where(PerfRankAlert.period_month == period)
+    if status:
+        stmt = stmt.where(PerfRankAlert.handle_status == status)
+    page_no, size = page_args(pageNo, pageSize)
+    ordered = stmt.order_by(PerfRankAlert.alerted_at.desc(), PerfRankAlert.id.desc())
+    total = int(db.scalar(select(func.count()).select_from(ordered.subquery())) or 0)
+    rows = db.scalars(ordered.offset((page_no - 1) * size).limit(size)).all()
+    return paged([alert_vo(row) for row in rows], total, page_no, size)
+
+
+@router.put("/rank/alert/{alert_id}/handle")
+def handle_rank_alert(
+    alert_id: int,
+    body: AlertHandleBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_handle_alert(role_tags(db, actor)):
+        return fail(403, "仅运营总监或人事可登记预警处置")
+    remark = body.handleRemark.strip()
+    if not remark:
+        return fail(1001, "处置说明必填")
+    tenant_id = tenant_of(actor)
+    row = db.get(PerfRankAlert, alert_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1500, "预警不存在")
+    if row.handle_status == "DONE":
+        return fail(1001, "预警已处置")
+    row.handle_status = "DONE"
+    row.handle_remark = remark
+    row.follow_up_plan = body.followUpPlan.strip()
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(None)
+
+
+@router.get("/rank/coaching-list")
+def coaching_list(
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_view_coaching(role_tags(db, actor)):
+        return fail(403, "仅管理者或部门负责人可查看重点辅导名单")
+    tenant_id = tenant_of(actor)
+    rows = db.scalars(
+        select(PerfRank).where(
+            PerfRank.deleted == 0,
+            PerfRank.tenant_id == tenant_id,
+            PerfRank.is_current == 1,
+            PerfRank.grade_level == "IMPROVE",
+            PerfRank.consecutive_months >= 2,
+        )
+    ).all()
+    latest: dict[int, PerfRank] = {}
+    for row in rows:
+        held = latest.get(row.user_id)
+        if held is None or row.period_month > held.period_month:
+            latest[row.user_id] = row
+    ordered = sorted(latest.values(), key=lambda item: (-int(item.consecutive_months or 0), float(item.total_score or 0)))
+    data = []
+    for row in ordered:
+        prev = db.scalar(
+            select(PerfRank).where(
+                PerfRank.deleted == 0,
+                PerfRank.tenant_id == tenant_id,
+                PerfRank.period_month == previous_period(row.period_month),
+                PerfRank.user_id == row.user_id,
+                PerfRank.is_current == 1,
+            )
+        )
+        item = rank_vo(row)
+        periods = []
+        if prev is not None:
+            periods.append(period_score(prev))
+        periods.append(period_score(row))
+        item["lastTwoPeriods"] = periods
+        data.append(item)
     return ok(data)

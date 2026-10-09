@@ -14,6 +14,37 @@
     <p class="hint" style="margin-bottom: 12px">
       竞品分析提交率（COMPETE_SUBMIT_RATE）在 V2 锁定禁用。岗位指标集保存时服务端校验权重合计。
     </p>
+    <div
+      data-testid="metric-coverage"
+      :data-level="coverageLevel"
+      style="margin-bottom: 12px; padding: 12px 14px; border-radius: 10px"
+      :style="coverageStyle"
+    >
+      <div style="font-weight: 600">自动取数覆盖率</div>
+      <div data-testid="metric-coverage-rate" style="font-size: 22px; margin-top: 4px">{{ coverageRateText }}</div>
+      <div data-testid="metric-coverage-count" class="hint">
+        自动 {{ coverage.autoMetricCount }} / 启用 {{ coverage.enabledMetricCount }}
+      </div>
+      <div data-testid="metric-coverage-flag">{{ coverageFlag }}</div>
+      <button
+        v-if="coverage.manualMetrics.length"
+        class="btn btn-sec btn-sm"
+        type="button"
+        data-testid="metric-coverage-manual"
+        style="margin-top: 8px"
+        @click="showManual = !showManual"
+      >
+        未自动取数清单
+      </button>
+      <ul v-if="showManual" data-testid="metric-coverage-manual-list" style="margin: 8px 0 0; padding-left: 18px">
+        <li v-for="item in coverage.manualMetrics" :key="item.metricCode">
+          {{ item.metricCode }} {{ item.metricName }}
+        </li>
+      </ul>
+      <p v-if="coverageError" data-testid="metric-coverage-error" class="hint" style="color: var(--red)">
+        {{ coverageError }}
+      </p>
+    </div>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.metricName" placeholder="指标名称" style="width: 160px" />
       <select v-model="filters.dataSource" style="width: 120px">
@@ -82,15 +113,20 @@
                 >
                   查看
                 </button>
-                <button
-                  v-else-if="row.status === 'ENABLED'"
-                  class="btn btn-sec btn-sm"
-                  type="button"
-                  @click="disableRow(row)"
-                >
-                  禁用
-                </button>
-                <span v-else class="csub">已禁用</span>
+                <template v-else>
+                  <button class="btn btn-sec btn-sm" type="button" data-testid="metric-fetch" @click="openFetch(row)">
+                    试取数
+                  </button>
+                  <button
+                    v-if="row.status === 'ENABLED'"
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    @click="disableRow(row)"
+                  >
+                    禁用
+                  </button>
+                  <span v-else class="csub">已禁用</span>
+                </template>
               </td>
             </tr>
           </tbody>
@@ -256,6 +292,21 @@
       </template>
     </ProtoDrawer>
 
+    <ProtoDrawer :open="fetchOpen" title="试取数" width="480px" @close="fetchOpen = false">
+      <p v-if="fetchTarget" class="hint">{{ fetchTarget.metricCode }} · {{ fetchTarget.metricName }}</p>
+      <div class="fld">
+        <label>试取周期</label>
+        <input v-model="fetchPeriod" data-testid="metric-fetch-period" type="month" />
+      </div>
+      <p class="hint">发布前建议试一次。本地只验证取数通道，不访问外部系统。</p>
+      <p v-if="fetchResult" data-testid="metric-fetch-result">{{ fetchResult }}</p>
+      <p v-if="fetchError" data-testid="metric-fetch-error" class="hint" style="color: var(--red)">{{ fetchError }}</p>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="fetchOpen = false">关闭</button>
+        <button class="btn btn-pri" type="button" data-testid="metric-fetch-run" @click="runFetch">试取</button>
+      </template>
+    </ProtoDrawer>
+
     <ProtoDrawer :open="competeOpen" title="查看指标" width="640px" @close="competeOpen = false">
       <div v-if="compete" class="formrow one">
         <div class="fld"><label>指标编码</label><div class="mono">{{ compete.metricCode }}</div></div>
@@ -331,6 +382,43 @@ const bindOk = ref('')
 const competeOpen = ref(false)
 const compete = ref<MetricRow | null>(null)
 const competeError = ref('')
+
+type ManualMetric = { metricCode: string; metricName: string }
+const coverage = reactive({
+  enabledMetricCount: 0,
+  autoMetricCount: 0,
+  autoCoverageRate: 0,
+  manualMetrics: [] as ManualMetric[],
+})
+const coverageError = ref('')
+const showManual = ref(false)
+const fetchOpen = ref(false)
+const fetchTarget = ref<MetricRow | null>(null)
+const fetchPeriod = ref(previousMonth())
+const fetchResult = ref('')
+const fetchError = ref('')
+
+const coverageLevel = computed(() => {
+  if (!coverage.enabledMetricCount) return 'empty'
+  return coverage.autoCoverageRate > 80 ? 'ok' : 'warn'
+})
+const coverageStyle = computed(() => {
+  if (coverageLevel.value === 'ok') return { background: 'rgba(52,199,89,.12)', border: '1px solid rgba(52,199,89,.35)' }
+  if (coverageLevel.value === 'warn') return { background: 'rgba(255,149,0,.12)', border: '1px solid rgba(255,149,0,.4)' }
+  return { background: 'rgba(0,0,0,.03)', border: '1px solid rgba(0,0,0,.08)' }
+})
+const coverageRateText = computed(() => `${Number(coverage.autoCoverageRate || 0).toFixed(2)}%`)
+const coverageFlag = computed(() => {
+  if (!coverage.enabledMetricCount) return '暂无启用指标'
+  if (coverage.autoCoverageRate > 80) return '达标（BR-105 >80%）'
+  return '未达标'
+})
+
+function previousMonth() {
+  const now = new Date()
+  const cursor = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  return `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`
+}
 
 const bindTotal = computed(() => {
   let sum = 0
@@ -477,6 +565,7 @@ async function submitCreate() {
     await http.post('/perf/metric', payload)
     createOpen.value = false
     await loadList()
+    await loadCoverage()
   } catch (err) {
     formError.value = rejectText(err)
   }
@@ -487,6 +576,7 @@ async function disableRow(row: MetricRow) {
   try {
     await http.delete(`/perf/metric/${row.id}`)
     await loadList()
+    await loadCoverage()
   } catch (err) {
     error.value = rejectText(err)
   }
@@ -553,5 +643,49 @@ async function tryEnableCompete() {
   }
 }
 
-onMounted(loadList)
+async function loadCoverage() {
+  coverageError.value = ''
+  try {
+    const res = await http.get('/perf/metric/auto-coverage')
+    const data = res.data.data || {}
+    coverage.enabledMetricCount = data.enabledMetricCount || 0
+    coverage.autoMetricCount = data.autoMetricCount || 0
+    coverage.autoCoverageRate = data.autoCoverageRate || 0
+    coverage.manualMetrics = data.manualMetrics || []
+  } catch (err) {
+    coverageError.value = rejectText(err)
+  }
+}
+
+function openFetch(row: MetricRow) {
+  fetchTarget.value = row
+  fetchPeriod.value = previousMonth()
+  fetchResult.value = ''
+  fetchError.value = ''
+  fetchOpen.value = true
+}
+
+async function runFetch() {
+  if (!fetchTarget.value) return
+  fetchResult.value = ''
+  fetchError.value = ''
+  try {
+    const res = await http.post('/perf/metric/test-fetch', {
+      metricId: fetchTarget.value.id,
+      testPeriod: fetchPeriod.value,
+    })
+    const data = res.data.data || {}
+    const sample = data.sampleValue === undefined || data.sampleValue === null ? '' : `样本 ${data.sampleValue}`
+    const reason = data.errorReason ? String(data.errorReason) : ''
+    const state = data.fetchable ? '通道可用' : '未能取数'
+    fetchResult.value = [state, sample, reason, `${data.elapsedMs ?? 0} ms`].filter(Boolean).join(' · ')
+  } catch (err) {
+    fetchError.value = rejectText(err)
+  }
+}
+
+onMounted(() => {
+  void loadList()
+  void loadCoverage()
+})
 </script>

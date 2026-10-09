@@ -411,6 +411,7 @@ PREFIXES = [
     ("POST", "/admin-api/ims/perf/calc/", "ims_perf_result"),
     ("PUT", "/admin-api/ims/perf/calc/", "ims_perf_result"),
     ("GET", "/admin-api/ims/perf/rank/", "ims_perf_rank"),
+    ("PUT", "/admin-api/ims/perf/rank/", "ims_perf_rank"),
     ("GET", "/admin-api/ims/bi/report", "ims_bi_custom_query"),
     ("GET", "/admin-api/ims/air/skill", "ims_air_skill"),
     ("POST", "/admin-api/ims/air/skill", "ims_air_skill"),
