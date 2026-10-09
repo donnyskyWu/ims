@@ -460,6 +460,11 @@ def collector_bind_import(
 
         if is_internal_account(row):
             return import_douyin_bind(ops, row, actor)
+    if row.platform_type == "WECHAT_CHANNELS":
+        from app.wechat_channels_collect import import_wechat_channels_bind, is_internal_account
+
+        if is_internal_account(row):
+            return import_wechat_channels_bind(ops, row, actor)
     if not row.cookie_enc:
         return fail(1001, "凭证未配置")
     bind = ops.scalar(
@@ -513,6 +518,11 @@ def collector_bind_test(
 
         if is_internal_account(row):
             return probe_douyin(ops, row)
+    if row.platform_type == "WECHAT_CHANNELS":
+        from app.wechat_channels_collect import is_internal_account, probe_wechat_channels
+
+        if is_internal_account(row):
+            return probe_wechat_channels(ops, row)
     if bind is None or bind.bind_status != "BOUND":
         return fail(1001, "未绑定 Collector")
     bind.conn_status = "SUCCESS" if row.cookie_enc else "FAILED"

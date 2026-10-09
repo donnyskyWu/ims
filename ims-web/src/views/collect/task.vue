@@ -10,6 +10,7 @@
         <button class="btn btn-sec btn-sm" type="button" @click="ensureExternal">确保外部统一任务</button>
         <button class="btn btn-sec btn-sm" type="button" @click="goDouyin">抖音内部账号</button>
         <button class="btn btn-sec btn-sm" type="button" @click="goKuaishou">快手内部账号</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="goWechatChannels">视频号内部账号</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新增单账号任务</button>
       </div>
     </div>
@@ -278,6 +279,9 @@ function goDouyin() {
 }
 function goKuaishou() {
   router.push('/ims/collect/kuaishou')
+}
+function goWechatChannels() {
+  router.push('/ims/collect/wechat-channels')
 }
 
 async function removeTask(row: any) {
