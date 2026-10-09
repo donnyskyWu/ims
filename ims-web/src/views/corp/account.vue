@@ -1224,6 +1224,7 @@
           />
         </div>
         <p class="hint">差异率 = |冲话费总额 − 平台实际消费| / 平台实际消费。低于 2% 通过；达到或超过 2% 返回 1026，并生成财务核查工单。</p>
+        <p class="hint" data-testid="acct-verify-rules">平台实际消费须大于 0，最多两位小数。不能核对未来月份。</p>
         <div v-if="verifyEmpty" data-testid="acct-verify-empty" class="verify-empty">
           <div class="et">该月无冲话费记录</div>
           <p data-testid="acct-verify-msg">{{ verifyMsg }}</p>
@@ -1235,6 +1236,8 @@
           <div>
             冲话费 ¥{{ moneyText(verifyResult.totalRecharge) }} · 平台消费 ¥{{ moneyText(verifyResult.platformConsumed) }} · 差异 ¥{{ moneyText(verifyResult.diffAmount) }}
           </div>
+          <div data-testid="acct-verify-side">{{ verifySide }}</div>
+          <div v-if="verifyExactEdge" data-testid="acct-verify-exact">刚好达到 2.00%，按超阈值处理</div>
           <div>
             核对状态：
             <span class="tag" data-testid="acct-verify-result-tag" :style="verifyStyle(verifyResult.verifyStatus)">
@@ -1242,6 +1245,27 @@
             </span>
           </div>
           <div v-if="verifyResult.workOrderId" data-testid="acct-verify-ticket">已生成财务核查工单 #{{ verifyResult.workOrderId }}</div>
+          <div data-testid="acct-verify-items">
+            <table v-if="verifyResult.diffItems && verifyResult.diffItems.length">
+              <thead>
+                <tr>
+                  <th>账号</th>
+                  <th>充值额</th>
+                  <th>平台消费</th>
+                  <th>差异</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in verifyResult.diffItems" :key="item.accountId" data-testid="acct-verify-item">
+                  <td>{{ item.accountNo }}</td>
+                  <td>¥{{ moneyText(item.rechargeAmount) }}</td>
+                  <td>¥{{ moneyText(item.platformAmount) }}</td>
+                  <td>¥{{ moneyText(item.diff) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else data-testid="acct-verify-items-empty">无逐账号差异明细</p>
+          </div>
         </div>
       </div>
       <template #foot>
@@ -1495,6 +1519,13 @@ const rechargeForm = reactive({
   remark: '',
 })
 
+type VerifyDiffItem = {
+  accountId: number
+  accountNo: string
+  rechargeAmount: number
+  platformAmount: number
+  diff: number
+}
 type VerifyResult = {
   verifyTaskId: string
   message: string
@@ -1505,6 +1536,7 @@ type VerifyResult = {
   diffAmount: number
   overThreshold: boolean
   workOrderId?: number | null
+  diffItems?: VerifyDiffItem[]
 }
 const verifyOpen = ref(false)
 const verifyAccount = ref<Record<string, unknown> | null>(null)
@@ -1517,6 +1549,10 @@ const verifyForm = reactive({
 })
 const verifyOver = computed(() => !!verifyResult.value?.overThreshold || verifyMsg.value.startsWith('1026'))
 const verifyEmpty = computed(() => verifyMsg.value.includes('该月无冲话费记录'))
+const verifySide = computed(() => verifySideText(verifyResult.value))
+const verifyExactEdge = computed(
+  () => !!verifyResult.value?.overThreshold && verifyResult.value.diffRateText === '2.00%',
+)
 const unlockBlocked = computed(() => /仅管理员|财务核查工单|核对状态不可解锁/.test(unlockMsg.value))
 const unlockReady = computed(() => {
   if (!unlockRow.value || String(unlockRow.value.verifyStatus || '') !== 'UNVERIFIED') return false
@@ -1791,6 +1827,32 @@ function previousMonthUtc() {
   const prev = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 1, 1))
   const month = String(prev.getUTCMonth() + 1).padStart(2, '0')
   return `${prev.getUTCFullYear()}-${month}`
+}
+
+function currentMonthUtc() {
+  return todayUtc().slice(0, 7)
+}
+
+function verifyPlatformIssue(raw: string) {
+  const text = raw.trim()
+  if (!text) return '请填写平台实际消费'
+  if (/^\d+\.\d{3,}$/.test(text)) return '1001 平台实际消费最多两位小数'
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) return '1001 平台实际消费格式不合法'
+  const amount = Number(text)
+  if (!Number.isFinite(amount) || amount <= 0) return '1001 平台实际消费须大于 0'
+  if (amount > 9999999999.99) return '1001 平台实际消费超出范围'
+  return ''
+}
+
+function verifySideText(result: VerifyResult | null) {
+  if (!result) return ''
+  const recharge = Number(result.totalRecharge)
+  const platform = Number(result.platformConsumed)
+  if (!Number.isFinite(recharge) || !Number.isFinite(platform)) return ''
+  const delta = Math.round((recharge - platform) * 100)
+  if (delta === 0) return '冲话费与平台消费一致'
+  if (delta > 0) return '冲话费高于平台消费'
+  return '平台消费高于冲话费'
 }
 
 function moneyText(value: unknown) {
@@ -2884,15 +2946,20 @@ async function submitVerify() {
   verifyMsg.value = ''
   verifyResult.value = null
   try {
-    const platform = Number(verifyForm.platformConsumed)
     if (!verifyForm.month) {
       verifyMsg.value = '1001 核对月份格式不合法'
       return
     }
-    if (!Number.isFinite(platform) || platform <= 0) {
-      verifyMsg.value = '1001 平台实际消费须大于 0'
+    if (verifyForm.month > currentMonthUtc()) {
+      verifyMsg.value = '1001 不能核对未来月份'
       return
     }
+    const platformIssue = verifyPlatformIssue(verifyForm.platformConsumed)
+    if (platformIssue) {
+      verifyMsg.value = platformIssue
+      return
+    }
+    const platform = Number(verifyForm.platformConsumed.trim())
     const res = await http.post('/account/recharge/verify', {
       month: verifyForm.month,
       accountIds: [verifyAccount.value.id],
@@ -3086,6 +3153,17 @@ watch(activeTab, (tab) => {
 .verify-over {
   color: #c45656;
   font-weight: 600;
+}
+.verify-card table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+.verify-card th,
+.verify-card td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border, #eee);
 }
 .asset-hint-mask {
   position: fixed;
