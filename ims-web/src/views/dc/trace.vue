@@ -5,6 +5,11 @@
         <h1>穿透查询</h1>
         <div class="sub">DC-001 · /ims/dc/trace · GET/POST /dc/trace/* · 12 DC</div>
       </div>
+      <div class="acts">
+        <router-link class="btn btn-sec btn-sm" to="/ims/dc/dashboard" data-testid="dc-trace-open-dashboard">
+          全链路看板
+        </router-link>
+      </div>
     </div>
     <div class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">
       <span v-if="dataAsOf">数据截至 <b>{{ dataAsOf }}</b> · </span>
@@ -428,8 +433,17 @@ function rememberSource(entry: Entry) {
 }
 
 onMounted(() => {
+  const presetType = route.query.entryType
+  const allowed = ['PERSON', 'ACCOUNT', 'ASSET', 'SESSION', 'RESPONSIBLE', 'IP_GROUP']
+  if (typeof presetType === 'string' && allowed.includes(presetType)) entryType.value = presetType
   const preset = route.query.keyword
-  if (typeof preset === 'string' && preset) keyword.value = preset
+  if (typeof preset === 'string' && preset) {
+    keyword.value = preset
+    searchEntry().then(() => {
+      const hit = entries.value.find((item) => (item.entryLabel || '').includes(preset)) || entries.value[0]
+      if (hit) pickEntry(hit)
+    })
+  }
 })
 
 function fmt(n: unknown) {
