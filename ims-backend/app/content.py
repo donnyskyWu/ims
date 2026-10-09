@@ -27,6 +27,7 @@ from app.models import (
     UserRole,
 )
 from app.ops_models import IpGroup, PlatformAccount
+from app.content_review_preview import build_content_preview
 from app.settings_runtime import get_param, param_bool
 
 router = APIRouter(prefix="/content", tags=["content"])
@@ -973,6 +974,7 @@ def review_detail(
         data["body"] = project.body or ""
     data["preview"] = review_preview(ops, project, data["submitterName"])
     data["reviewSteps"] = build_review_steps(db, ops, project, history)
+    data["contentPreview"] = build_content_preview(project)
     return ok(data)
 
 

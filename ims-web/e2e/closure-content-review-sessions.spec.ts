@@ -68,7 +68,9 @@ test.describe('content review readonly sessions', () => {
     await expect(drawer.getByRole('button', { name: '保存' })).toHaveCount(0)
     await expect(drawer.getByRole('button', { name: '确定玩法' })).toHaveCount(0)
     await expect(drawer.getByTestId('content-review-reject-opinion')).toHaveCount(1)
-    await expect(drawer.locator('textarea')).toHaveCount(1)
+    await expect(drawer.getByTestId('content-review-paid')).toBeDisabled()
+    await expect(drawer.getByTestId('content-review-free')).toBeDisabled()
+    await expect(drawer.locator('textarea:not([disabled])')).toHaveCount(1)
 
     mkdirSync('/opt/cursor/artifacts/e2e-117-screenshots', { recursive: true })
     await page.screenshot({

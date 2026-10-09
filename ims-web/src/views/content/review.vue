@@ -81,6 +81,7 @@
       <div class="dsec">赛事与玩法</div>
       <p v-if="!detailReady" class="hint">场次加载中</p>
       <template v-else>
+        <div data-testid="content-review-play-tabs">
         <div class="tabs review-match-tabs" data-testid="review-match-tabs">
           <div
             v-for="tab in MATCH_TABS"
@@ -92,8 +93,9 @@
             {{ tab.label }}
           </div>
         </div>
+        </div>
         <p class="hint" data-testid="review-play-summary">玩法摘要：{{ active?.matchSummary || '—' }}</p>
-        <div class="tbl-wrap">
+        <div class="tbl-wrap" data-testid="content-review-session">
           <table data-testid="review-session-list">
             <thead>
               <tr>
@@ -122,6 +124,41 @@
       <div data-testid="content-review-preview">
         <LayoutViewer :html="active?.layoutHtml" :plain="active?.body" :loading="layoutLoading" />
         <ContentLayoutPreview :layout-html="preview.layoutHtml || previewLayout" :body="preview.body || previewBody" />
+      </div>
+
+      <div class="dsec">正文预览</div>
+      <div class="layout-view" data-testid="content-review-layout">
+        <pre class="layout-fallback">{{ contentPreview.body || preview.body || active?.body || '（无正文）' }}</pre>
+      </div>
+
+      <div class="dsec">付费内容 / 免费内容</div>
+      <p class="hint">
+        <span class="chip" data-testid="content-review-paywall">{{ contentPreview.paywall ? '含付费' : '无付费标记' }}</span>
+        双栏只读，不可编辑
+      </p>
+      <div class="review-dual" data-testid="content-review-paid-free" :data-split="contentPreview.columnSplit || 'default-free'">
+        <div>
+          <div class="csub">付费内容 · body_paid</div>
+          <textarea
+            data-testid="content-review-paid"
+            :value="contentPreview.paidBody || ''"
+            readonly
+            disabled
+            rows="6"
+            placeholder="暂无付费内容"
+          />
+        </div>
+        <div>
+          <div class="csub">免费内容 · free_body</div>
+          <textarea
+            data-testid="content-review-free"
+            :value="contentPreview.freeBody || ''"
+            readonly
+            disabled
+            rows="6"
+            placeholder="暂无免费内容"
+          />
+        </div>
       </div>
 
       <div class="dsec" data-testid="content-review-conclusion">审核结论</div>
@@ -190,6 +227,7 @@ const detailReady = ref(false)
 const remark = ref('')
 const steps = ref<any[]>([])
 const preview = ref<Record<string, any>>({})
+const contentPreview = ref<Record<string, any>>({})
 
 const MATCH_TABS = [
   { value: 1, label: '竞足' },
@@ -295,6 +333,7 @@ async function openReview(row: any) {
   remark.value = ''
   steps.value = []
   preview.value = {}
+  contentPreview.value = {}
   checklist.value = []
   checklistModel.value = {}
   drawerOpen.value = true
@@ -311,6 +350,7 @@ async function openReview(row: any) {
     }
     checklistModel.value = model
     preview.value = payload.preview || {}
+    contentPreview.value = payload.contentPreview || {}
     steps.value = payload.reviewSteps || []
     previewLayout.value = payload.layoutHtml || payload.preview?.layoutHtml || ''
     previewBody.value = payload.body || payload.preview?.body || ''
@@ -386,5 +426,19 @@ loadQueue()
 .review-match-tabs {
   pointer-events: none;
   margin-bottom: 8px;
+}
+.layout-fallback {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+.review-dual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.review-dual textarea {
+  width: 100%;
+  box-sizing: border-box;
 }
 </style>

@@ -84,6 +84,8 @@ _ATTR_ORDER = (
     "rowspan",
     "data-w",
     "data-file-key",
+    "data-zone",
+    "data-paywall",
     "class",
     "style",
 )
@@ -183,6 +185,12 @@ def _clean_attrs(tag: str, attrs: list[tuple[str, str | None]]) -> list[tuple[st
                 cleaned[key] = raw[key].strip()
     if _CLASS.fullmatch(raw.get("class", "").strip()):
         cleaned["class"] = raw["class"].strip()
+    zone = raw.get("data-zone", "").strip().lower()
+    if zone in ("paid", "body_paid", "free", "free_body"):
+        cleaned["data-zone"] = zone
+    paywall = raw.get("data-paywall", "").strip().lower()
+    if paywall in ("1", "true", "yes", "paid", "0", "false", "no", "free"):
+        cleaned["data-paywall"] = paywall
     if tag != "img":
         style = _safe_style(raw.get("style", ""))
         if style and tag in ("p", "div", "span", "figure", "section", "td", "th"):
