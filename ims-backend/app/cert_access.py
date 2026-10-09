@@ -272,6 +272,10 @@ def level_config_put(
             return fail(1001, "级别适用范围不合法")
         if not code:
             return fail(1001, "角色或岗位编码必填")
+        if any(ch.isspace() for ch in code):
+            return fail(1001, "角色编码不能含空格")
+        if len(code) > 64:
+            return fail(1001, "角色编码不超过 64 字")
         if rule.viewLevel not in (1, 2):
             return fail(1001, "L3 只能通过白名单配置")
         key = (target, code)
