@@ -66,7 +66,7 @@
       <div class="card stat">
         <span class="l">升级率</span>
         <div class="n" data-testid="alert-stats-escalate-rate">{{ overview.escalateRate }}%</div>
-        <div class="d">无升级台账，固定 0</div>
+        <div class="d">越过起始级仍未在时限内响应</div>
       </div>
       <div class="card stat">
         <span class="l">级别分布</span>

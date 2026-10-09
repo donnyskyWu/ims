@@ -401,7 +401,7 @@ def test_alert_stats_overview_rates_and_range():
     assert data["resolutionRate"] == 50.0
     assert data["falseAlarmRate"] == 0.0
     assert data["deliveryRate"] == 100.0
-    assert data["escalateRate"] == 0.0
+    assert data["escalateRate"] == 50.0
     assert data["avgResponseMinutes"] == 12.0
     assert data["respondedCount"] == 1
     assert data["resolvedCount"] == 1

@@ -6,6 +6,7 @@
         <div class="sub">ALERT-002/003/004 · 实时 · 处置记录 · 去重</div>
       </div>
       <div class="acts">
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/stats">统计总览</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/rule">预警规则</router-link>
       </div>
@@ -242,6 +243,9 @@ async function respond(alertNo: string, action: string) {
       FALSE_ALARM: '已标记误报',
     }
     toast.value = `处置成功：${labels[status] || status}（${alertNo}）`
+    if (res.data.data?.escalationStopped) {
+      toast.value += ' · 响应成功，后续升级已停止'
+    }
     if (tab.value === 'history') await loadSummary()
     await loadList()
   } catch (error) {

@@ -7,6 +7,7 @@
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建规则</button>
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/stats">统计总览</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
       </div>
