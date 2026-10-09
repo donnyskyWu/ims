@@ -532,3 +532,48 @@ def test_topic_gantt_range_and_same_account_conflict():
     later = gantt(auth, "2026-12-20", "2026-12-20")
     assert [row["title"] for row in later.json()["data"]["items"]] == ["甘特丁"]
     assert later.json()["data"]["items"][0]["conflictHint"] is None
+
+
+def test_topic_gantt_single_day_pending_and_unknown_account():
+    """未立项但已填计划发布日的选题落在单日区间内；不存在的账号返回空列表。"""
+    auth = headers()
+    pending = client.post(
+        "/admin-api/ims/content/topic",
+        headers=auth,
+        json={
+            "title": "单日待评审",
+            "description": "内容要求：甘特边界",
+            "sourceType": "ORIGINAL",
+            "planPublishDate": "2026-11-18",
+        },
+    )
+    assert pending.json()["code"] == 0
+    assert pending.json()["data"]["topicStatus"] == "PENDING_REVIEW"
+    assert pending.json()["data"]["planPublishDate"] == "2026-11-18"
+
+    bare = client.post(
+        "/admin-api/ims/content/topic",
+        headers=auth,
+        json={
+            "title": "无发布日",
+            "description": "内容要求：不进甘特",
+            "sourceType": "ORIGINAL",
+        },
+    )
+    assert bare.json()["code"] == 0
+
+    one = gantt(auth, "2026-11-18", "2026-11-18")
+    assert one.json()["code"] == 0
+    items = one.json()["data"]["items"]
+    assert [row["title"] for row in items] == ["单日待评审"]
+    assert items[0]["topicStatus"] == "PENDING_REVIEW"
+    assert items[0]["planPublishDate"] == "2026-11-18"
+    assert items[0]["conflictHint"] is None
+
+    missing_account = gantt(auth, "2026-11-18", "2026-11-18", 999_999)
+    assert missing_account.json()["code"] == 0
+    assert missing_account.json()["data"]["items"] == []
+
+    other_day = gantt(auth, "2026-11-19", "2026-11-19")
+    assert other_day.json()["code"] == 0
+    assert other_day.json()["data"]["items"] == []

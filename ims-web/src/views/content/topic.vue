@@ -133,15 +133,32 @@
         </div>
         <div class="fld">
           <label>来源类型 *</label>
-          <select v-model="form.sourceType" data-testid="topic-source">
+          <select v-model="form.sourceType" data-testid="topic-source" @change="onSourceChange">
             <option v-for="item in sourceOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </div>
-        <template v-if="editorMode === 'edit'">
-          <div class="fld">
-            <label>计划发布日</label>
-            <input v-model="form.planPublishDate" type="date" data-testid="topic-edit-plan-date" />
+        <div v-if="form.sourceType === 'HOTSPOT'" class="hotspot" data-testid="topic-hotspot">
+          <div class="hotspot-h">热点参考 <span>只读 · 作品监测</span></div>
+          <div v-if="hotspotLoading" class="empty"><div class="et">加载中</div></div>
+          <div v-else-if="hotspotError" data-testid="topic-hotspot-error">
+            <p class="hint bad">{{ hotspotError }}</p>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="topic-hotspot-retry" @click="loadHotspot">重试</button>
           </div>
+          <div v-else-if="!hotspotRows.length" class="empty" data-testid="topic-hotspot-empty">
+            <div class="et">热点榜暂无数据</div>
+          </div>
+          <ul v-else class="hotspot-list">
+            <li v-for="row in hotspotRows" :key="row.dimensionKey" data-testid="topic-hotspot-row">
+              {{ row.dimensionLabel }} · 作品 {{ row.workCount }} · 爆款 {{ row.hitCount }}
+            </li>
+          </ul>
+        </div>
+        <div class="fld">
+          <label>计划发布日</label>
+          <input v-model="form.planPublishDate" type="date" data-testid="topic-edit-plan-date" />
+          <p class="hint">可选。填写后，待评审选题也会出现在排期甘特。</p>
+        </div>
+        <template v-if="editorMode === 'edit'">
           <div class="fld">
             <label>建议 SOP</label>
             <select v-model="form.sopId" data-testid="topic-edit-sop">
@@ -174,6 +191,8 @@
             <option value="">请选择 SOP</option>
             <option v-for="sop in sops" :key="sop.id" :value="String(sop.id)">{{ sop.sopName }}</option>
           </select>
+          <p v-if="sopLoading" class="hint">正在加载启用中的 SOP</p>
+          <p v-else-if="!reviewError && !sops.length" class="hint" data-testid="topic-sop-empty">暂无启用中的 SOP。请先在 SOP 管理启用一条，再立项。</p>
         </div>
         <div class="fld">
           <label>计划发布日 *</label>
@@ -340,6 +359,10 @@ const reviewError = ref('')
 const reviewRow = ref<TopicRow | null>(null)
 const reviewForm = ref({ sopId: '', planPublishDate: '', reviewOpinion: '' })
 const sops = ref<{ id: number; sopName: string }[]>([])
+const sopLoading = ref(false)
+const hotspotRows = ref<{ dimensionKey: string; dimensionLabel: string; workCount: number; hitCount: number }[]>([])
+const hotspotLoading = ref(false)
+const hotspotError = ref('')
 const detailOpen = ref(false)
 const detailRow = ref<TopicRow | null>(null)
 const reviveRow = ref<TopicRow | null>(null)
@@ -431,7 +454,36 @@ function openCreate() {
   editingId.value = null
   form.value = { title: '', description: '', sourceType: 'ORIGINAL', planPublishDate: '', sopId: '' }
   createError.value = ''
+  resetHotspot()
   createOpen.value = true
+}
+
+function resetHotspot() {
+  hotspotRows.value = []
+  hotspotError.value = ''
+  hotspotLoading.value = false
+}
+
+async function loadHotspot() {
+  hotspotLoading.value = true
+  hotspotError.value = ''
+  try {
+    const { data } = await http.get('/monitor/ip-theme/page', { params: { pageNo: 1, pageSize: 5 } })
+    hotspotRows.value = data.data?.list || []
+  } catch (e) {
+    hotspotRows.value = []
+    hotspotError.value = formatBiz(e)
+  } finally {
+    hotspotLoading.value = false
+  }
+}
+
+function onSourceChange() {
+  if (form.value.sourceType === 'HOTSPOT') {
+    loadHotspot()
+    return
+  }
+  resetHotspot()
 }
 
 async function openEdit(row: TopicRow) {
@@ -446,6 +498,7 @@ async function openEdit(row: TopicRow) {
   }
   createError.value = ''
   createOpen.value = true
+  onSourceChange()
   try {
     await loadSops()
   } catch (e) {
@@ -472,6 +525,7 @@ async function saveTopic() {
         title: payload.title,
         description: payload.description,
         sourceType: payload.sourceType,
+        planPublishDate: payload.planPublishDate,
       })
     }
     createOpen.value = false
@@ -487,12 +541,16 @@ async function openReview(row: TopicRow) {
   reviewRow.value = row
   reviewForm.value = { sopId: '', planPublishDate: '', reviewOpinion: '' }
   reviewError.value = ''
+  sops.value = []
+  sopLoading.value = true
   reviewOpen.value = true
   try {
     await loadSops()
   } catch (e) {
     sops.value = []
     reviewError.value = formatBiz(e)
+  } finally {
+    sopLoading.value = false
   }
 }
 
@@ -596,5 +654,31 @@ onMounted(() => {
   font: inherit;
   color: inherit;
   cursor: pointer;
+}
+.hotspot {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+}
+.hotspot-h {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.hotspot-h span {
+  font-weight: 400;
+  color: var(--text2);
+  font-size: 12px;
+}
+.hotspot-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.hotspot-list li + li {
+  margin-top: 4px;
 }
 </style>
