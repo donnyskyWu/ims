@@ -92,27 +92,73 @@
     </div>
 
     <div v-if="drawerOpen && detail" class="drawer-mask" @click.self="drawerOpen = false">
-      <div class="drawer" style="width: 640px">
+      <div class="drawer on" data-testid="fin-profit-detail-drawer" style="width: 80%">
         <div class="drawer-h">
           <b>利润详情 · {{ detail.sessionCode }}</b>
           <button type="button" class="btn btn-sec btn-sm" @click="drawerOpen = false">关闭</button>
         </div>
-        <div class="g3" style="margin-bottom: 12px">
-          <div class="card stat"><span class="l">毛利</span><div class="n">¥{{ fmt(detail.grossProfit) }}</div></div>
-          <div class="card stat"><span class="l">经营利润</span><div class="n">¥{{ fmt(detail.operatingProfit) }}</div></div>
-          <div class="card stat"><span class="l">净利润</span><div class="n">¥{{ fmt(detail.netProfit) }}</div></div>
+        <div class="drawer-b">
+          <div class="g3" style="margin-bottom: 12px">
+            <div class="card stat"><span class="l">毛利</span><div class="n">¥{{ fmt(detail.grossProfit) }}</div></div>
+            <div class="card stat"><span class="l">经营利润</span><div class="n">¥{{ fmt(detail.operatingProfit) }}</div></div>
+            <div class="card stat"><span class="l">净利润</span><div class="n">¥{{ fmt(detail.netProfit) }}</div></div>
+          </div>
+          <p class="hint">{{ snapshotFormula }}</p>
+          <pre class="mono" style="font-size: 12px; white-space: pre-wrap">{{ snapshotParams }}</pre>
+          <p class="hint">计算时间：{{ detail.calculatedAt || '—' }} · 状态 {{ detail.calcStatus }} · 版本 V{{ detail.calcVersion }}</p>
+          <p v-if="recalcNote" class="hint" data-testid="fin-profit-recalc-done">{{ recalcNote }}</p>
         </div>
-        <p class="hint">{{ detail.calcRuleSnapshot?.formula }}</p>
-        <pre class="mono" style="font-size: 12px; white-space: pre-wrap">{{ JSON.stringify(detail.calcRuleSnapshot?.params, null, 2) }}</pre>
-        <p class="hint">计算时间：{{ detail.calculatedAt || '—' }} · 状态 {{ detail.calcStatus }}</p>
+        <div class="drawer-f">
+          <span
+            v-if="periodLocked"
+            class="hint"
+            data-testid="fin-profit-recalc-locked"
+            style="margin-right: auto; color: var(--red)"
+          >
+            财务期间已结账，重算冻结（1142）
+          </span>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="fin-profit-recalc-open"
+            :disabled="periodLocked || recalcBusy"
+            :title="periodLocked ? '财务期间已结账，重算冻结（1142）' : '手动触发重算'"
+            @click="openRecalcConfirm"
+          >
+            手动触发重算
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="recalcConfirm && detail" class="modal-mask" data-testid="fin-profit-recalc-confirm">
+      <div class="card" style="width: 400px; padding: 20px" role="dialog" aria-label="重算确认">
+        <h3 style="margin: 0 0 12px">重算确认</h3>
+        <p>重算将生成新版本 V{{ nextVersion }}，旧结果留痕</p>
+        <p class="hint">重算生成新版本，旧结果留痕（FIN-P-R3）</p>
+        <p v-if="recalcError" class="hint" data-testid="fin-profit-recalc-error" style="color: var(--red)">
+          {{ recalcError }}
+        </p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="recalcConfirm = false">取消</button>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="fin-profit-recalc-submit"
+            :disabled="periodLocked || recalcBusy"
+            @click="submitRecalc"
+          >
+            确认重算
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { errorMessage, http } from '../../api/http'
 
 const loading = ref(false)
 const error = ref('')
@@ -120,7 +166,22 @@ const rows = ref<Record<string, unknown>[]>([])
 const summary = ref<Record<string, unknown> | null>(null)
 const drawerOpen = ref(false)
 const detail = ref<Record<string, unknown> | null>(null)
+const recalcConfirm = ref(false)
+const recalcBusy = ref(false)
+const recalcError = ref('')
+const recalcNote = ref('')
 const query = reactive({ sessionCode: '', platform: '', calcStatus: '' })
+
+const periodLocked = computed(() => String(detail.value?.financeStatus || '') === 'LOCKED')
+const nextVersion = computed(() => Number(detail.value?.calcVersion || 1) + 1)
+const snapshotFormula = computed(() => {
+  const snap = detail.value?.calcRuleSnapshot as { formula?: string } | undefined
+  return snap?.formula || ''
+})
+const snapshotParams = computed(() => {
+  const snap = detail.value?.calcRuleSnapshot as { params?: unknown } | undefined
+  return JSON.stringify(snap?.params, null, 2)
+})
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -166,13 +227,51 @@ async function loadList() {
 }
 
 async function openDetail(sessionCode: string) {
-  const res = await http.get(`/fin/profit/${sessionCode}`)
-  if (res.data?.code !== 0) {
-    error.value = res.data?.msg || '加载详情失败'
+  recalcConfirm.value = false
+  recalcError.value = ''
+  recalcNote.value = ''
+  try {
+    const res = await http.get(`/fin/profit/${encodeURIComponent(sessionCode)}`)
+    detail.value = res.data.data
+    drawerOpen.value = true
+  } catch (err) {
+    error.value = errorMessage(err) || '加载详情失败'
+  }
+}
+
+function openRecalcConfirm() {
+  if (!detail.value || periodLocked.value || recalcBusy.value) return
+  recalcError.value = ''
+  recalcConfirm.value = true
+}
+
+async function submitRecalc() {
+  if (!detail.value) return
+  if (periodLocked.value) {
+    recalcError.value = '财务期间已结账，重算冻结（1142）'
     return
   }
-  detail.value = res.data.data
-  drawerOpen.value = true
+  const sessionCode = String(detail.value.sessionCode || '')
+  recalcBusy.value = true
+  recalcError.value = ''
+  try {
+    const res = await http.post(`/fin/profit/recalc/${encodeURIComponent(sessionCode)}`)
+    recalcNote.value = String(res.data?.data?.message || '利润已重算')
+    recalcConfirm.value = false
+    const fresh = await http.get(`/fin/profit/${encodeURIComponent(sessionCode)}`)
+    detail.value = fresh.data.data
+    await loadList()
+  } catch (err) {
+    const body = err as { code?: number; msg?: string }
+    if (body?.code === 1142 && detail.value) {
+      detail.value = { ...detail.value, financeStatus: 'LOCKED' }
+      recalcError.value = body.msg || '财务期间已结账，重算冻结（1142）'
+      return
+    }
+    recalcError.value = errorMessage(err)
+  } finally {
+    recalcBusy.value = false
+  }
 }
 
 onMounted(async () => {
@@ -180,3 +279,15 @@ onMounted(async () => {
   await loadList()
 })
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+</style>

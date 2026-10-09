@@ -574,3 +574,48 @@ def test_fin_period_close_locks_writes_then_r4_red_correction():
         json=_cost_body(),
     )
     assert still.json()["code"] == 0, still.json()
+
+
+def test_fin_profit_manual_recalc_versions_and_period_lock():
+    """#118 FIN-P-R3：详情可手动重算出新版本；期间 LOCKED 时详情 financeStatus=LOCKED 且重算 1142。"""
+    auth = headers()
+    deps = seed_live_deps()
+    code = _session_in_period(auth, "2097-04-15T20:00:00+08:00", deps)
+    created = client.post(
+        f"/admin-api/ims/fin/cost/{code}",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=_cost_body(),
+    )
+    assert created.json()["code"] == 0, created.json()
+    confirmed = client.put(f"/admin-api/ims/fin/cost/{code}/confirm", headers=auth)
+    assert confirmed.json()["code"] == 0, confirmed.json()
+
+    detail = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth)
+    body = detail.json()
+    assert body["code"] == 0, body
+    assert body["data"]["calcStatus"] == "CALCULATED"
+    assert body["data"]["calcVersion"] == 1
+    assert body["data"]["financeStatus"] == "OPEN"
+    assert body["data"]["periodMonth"] == "2097-04"
+    assert body["data"]["netProfit"] == 81400.0
+
+    recalc = client.post(f"/admin-api/ims/fin/profit/recalc/{code}", headers=auth)
+    done = recalc.json()
+    assert done["code"] == 0, done
+    assert done["data"]["calcStatus"] == "RECALCULATED"
+    assert done["data"]["calcVersion"] == 2
+    assert done["data"]["message"]
+
+    again = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()
+    assert again["code"] == 0, again
+    assert again["data"]["calcStatus"] == "RECALCULATED"
+    assert again["data"]["calcVersion"] == 2
+    assert again["data"]["netProfit"] == 81400.0
+
+    closed = client.post("/admin-api/ims/fin/period/close", headers=auth, json={"periodMonth": "2097-04"})
+    assert closed.json()["code"] == 0, closed.json()
+    locked = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()
+    assert locked["data"]["financeStatus"] == "LOCKED"
+    denied = client.post(f"/admin-api/ims/fin/profit/recalc/{code}", headers=auth)
+    assert denied.json()["code"] == 1142
+    assert "财务期间已结账" in denied.json()["msg"]

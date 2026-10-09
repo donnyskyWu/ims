@@ -624,7 +624,11 @@ def profit_detail(
     cost = load_fin_cost(db, tenant_id, session_code)
     if profit is None or profit.calc_status in ("", "PENDING") or cost is None or cost.entry_status != "CONFIRMED":
         return fail(1145, "该场次成本未核准，利润未计算")
-    return ok(profit_vo(db, profit, session, cost, include_session=True))
+    vo = profit_vo(db, profit, session, cost, include_session=True)
+    month, status = period_of_session(db, tenant_id, session)
+    vo["periodMonth"] = month
+    vo["financeStatus"] = status
+    return ok(vo)
 
 
 @router.get("/cost/pending-sessions")
