@@ -64,6 +64,7 @@ test.describe('content list view layout preview closure', () => {
     await expect(viewDrawer.getByRole('button', { name: '保存' })).toHaveCount(0)
     await expect(viewDrawer.getByRole('button', { name: '提审' })).toHaveCount(0)
     await expect(html).toHaveCSS('max-width', '677px')
+    await expect(page.locator('h1')).toHaveText('内容管理')
     await page.screenshot({ path: `${shotDir}/01-view-layout-html.png` })
     await viewDrawer.getByRole('button', { name: '关闭' }).click()
     await expect(viewDrawer).not.toBeVisible()
@@ -110,6 +111,8 @@ test.describe('content list view layout preview closure', () => {
     await expect(reviewHtml).not.toContainText(bodyText)
     await expect(reviewDrawer.getByTestId('content-layout-preview').locator('script, textarea')).toHaveCount(0)
     await expect(reviewHtml).toHaveCSS('max-width', '677px')
+    await expect(page.locator('h1')).toHaveText('内容审核')
+    await expect(reviewDrawer.getByRole('button', { name: '通过' })).toBeVisible()
     await page.screenshot({ path: `${shotDir}/03-review-same-layout.png` })
 
     const boxes = reviewDrawer.locator('input[type="checkbox"]')
