@@ -26,9 +26,33 @@
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
-      <select v-if="meta.statusOptions.length" v-model="status" style="width: 120px">
+      <input
+        v-if="kind === 'company'"
+        v-model="creditCode"
+        placeholder="信用代码"
+        style="width: 160px"
+        data-testid="master-company-credit"
+      />
+      <select v-if="kind === 'realname'" v-model="idType" style="width: 140px" data-testid="master-realname-idtype">
+        <option value="">全部证件类型</option>
+        <option v-for="item in idTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
+      <select v-if="kind === 'sim-card'" v-model="operator" style="width: 120px" data-testid="master-sim-operator">
+        <option value="">全部运营商</option>
+        <option v-for="item in operators" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
+      <select v-if="kind === 'sim-card'" v-model="realnameId" style="width: 140px" data-testid="master-sim-realname">
+        <option value="">全部实名人</option>
+        <option v-for="person in persons" :key="person.id" :value="String(person.id)">{{ person.realName }}</option>
+      </select>
+      <select
+        v-if="statusChoices.length"
+        v-model="status"
+        style="width: 120px"
+        :data-testid="kind === 'sim-card' ? 'master-sim-status' : undefined"
+      >
         <option value="">全部状态</option>
-        <option v-for="item in meta.statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        <option v-for="item in statusChoices" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -53,8 +77,8 @@
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
                 <div class="empty">
-                  <div class="et">{{ error || meta.empty }}</div>
-                  <div class="es">{{ meta.emptyHint }}</div>
+                  <div class="et">{{ error || emptyTitle }}</div>
+                  <div class="es">{{ error ? meta.emptyHint : emptyHintText }}</div>
                 </div>
               </td>
             </tr>
@@ -496,7 +520,18 @@ const total = ref(0)
 const pageNo = ref(1)
 const pageSize = ref(10)
 const keyword = ref('')
+const creditCode = ref('')
+const idType = ref('')
+const operator = ref('')
+const realnameId = ref('')
 const status = ref('')
+const phoneHint = ref('')
+const idTypes = ref<Opt[]>([
+  { value: 'ID_CARD', label: '身份证' },
+  { value: 'PASSPORT', label: '护照' },
+  { value: 'HK_MACAO', label: '港澳通行证' },
+  { value: 'TAIWAN', label: '台湾通行证' },
+])
 const loading = ref(false)
 const error = ref('')
 const detailOpen = ref(false)
@@ -674,6 +709,27 @@ const specs: Record<string, {
 }
 
 const meta = computed(() => specs[kind.value] || specs.company)
+const statusChoices = computed(() => (kind.value === 'sim-card' ? simStatus.value : meta.value.statusOptions))
+const hasFilter = computed(() =>
+  Boolean(
+    keyword.value.trim() ||
+      creditCode.value.trim() ||
+      idType.value ||
+      operator.value ||
+      realnameId.value ||
+      status.value,
+  ),
+)
+const emptyTitle = computed(() => {
+  if (phoneHint.value) return phoneHint.value
+  if (hasFilter.value) return '没有符合筛选的记录'
+  return meta.value.empty
+})
+const emptyHintText = computed(() => {
+  if (phoneHint.value) return '号码按完整手机号精确匹配，不支持片段。'
+  if (hasFilter.value) return '换个条件，或点重置看全部。'
+  return meta.value.emptyHint
+})
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const pageList = computed(() => {
   const end = Math.min(pageCount.value, Math.max(pageNo.value + 2, 5))
@@ -1171,14 +1227,23 @@ function typeLabel(value: string) {
 }
 
 function params() {
+  phoneHint.value = ''
   const query: Record<string, string | number> = { pageNo: pageNo.value, pageSize: pageSize.value }
   const text = keyword.value.trim()
   if (text) {
     if (kind.value === 'company') query.companyName = text
     if (kind.value === 'realname') query.realName = text
-    if (kind.value === 'sim-card') query.phoneNumber = text
+    if (kind.value === 'sim-card') {
+      if (!/^1\d{10}$/.test(text)) phoneHint.value = '请输入完整 11 位手机号'
+      else query.phoneNumber = text
+    }
     if (kind.value === 'certificate') query.holderName = text
   }
+  const code = creditCode.value.trim()
+  if (kind.value === 'company' && code) query.creditCode = code
+  if (kind.value === 'realname' && idType.value) query.idType = idType.value
+  if (kind.value === 'sim-card' && operator.value) query.operator = operator.value
+  if (kind.value === 'sim-card' && realnameId.value) query.realnameId = Number(realnameId.value)
   if (status.value) query.status = status.value
   return query
 }
@@ -1186,8 +1251,15 @@ function params() {
 async function load() {
   loading.value = true
   error.value = ''
+  const query = params()
+  if (phoneHint.value) {
+    rows.value = []
+    total.value = 0
+    loading.value = false
+    return
+  }
   try {
-    const res = await http.get(`/corp/resource/${kind.value}/page`, { params: params() })
+    const res = await http.get(`/corp/resource/${kind.value}/page`, { params: query })
     const data = res.data?.data
     rows.value = asList(data)
     total.value = asTotal(data, rows.value.length)
@@ -1207,7 +1279,12 @@ function search() {
 
 function reset() {
   keyword.value = ''
+  creditCode.value = ''
+  idType.value = ''
+  operator.value = ''
+  realnameId.value = ''
   status.value = ''
+  phoneHint.value = ''
   search()
 }
 
@@ -1359,6 +1436,15 @@ async function loadDict(dictType: string) {
     .map((row) => ({ value: String(row.dictValue), label: String(row.dictLabel) }))
 }
 
+async function prepareRealname() {
+  try {
+    const rows = await loadDict('dict_id_type')
+    if (rows.length) idTypes.value = rows
+  } catch {
+    /* 字典失败时保留本地证件类型 */
+  }
+}
+
 async function prepareSim() {
   const [yn, ops, st, userPage, personPage] = await Promise.all([
     loadDict('dict_yes_no'),
@@ -1433,7 +1519,12 @@ async function save() {
 
 watch(kind, async () => {
   keyword.value = ''
+  creditCode.value = ''
+  idType.value = ''
+  operator.value = ''
+  realnameId.value = ''
   status.value = ''
+  phoneHint.value = ''
   pageNo.value = 1
   detailOpen.value = false
   viewError.value = ''
@@ -1453,6 +1544,7 @@ watch(kind, async () => {
       /* 字典失败时列表仍可打开 */
     }
   }
+  if (kind.value === 'realname') await prepareRealname()
   load()
   if (kind.value === 'certificate') {
     await loadAuditUsers()
@@ -1461,6 +1553,7 @@ watch(kind, async () => {
 })
 
 onMounted(async () => {
+  if (kind.value === 'realname') await prepareRealname()
   if (kind.value === 'sim-card') {
     try {
       await prepareSim()

@@ -18,6 +18,13 @@
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="keyword" :placeholder="meta.placeholder" style="width: 180px" />
+      <input
+        v-if="kind === 'phone'"
+        v-model="phoneModel"
+        placeholder="型号"
+        style="width: 140px"
+        data-testid="master-phone-model"
+      />
       <select v-if="kind === 'phone'" v-model="status" style="width: 120px">
         <option value="">全部状态</option>
         <option v-for="item in phoneStatus" :key="item.value" :value="item.value">{{ item.label }}</option>
@@ -48,8 +55,8 @@
             <tr v-else-if="!rows.length">
               <td :colspan="meta.columns.length + 1" style="white-space: normal">
                 <div class="empty">
-                  <div class="et">{{ error || meta.empty }}</div>
-                  <div class="es">{{ meta.emptyHint }}</div>
+                  <div class="et">{{ error || emptyTitle }}</div>
+                  <div class="es">{{ error || !phoneFiltering ? meta.emptyHint : '换个编号、型号或状态，或点重置。' }}</div>
                 </div>
               </td>
             </tr>
@@ -477,6 +484,7 @@ const total = ref(0)
 const pageNo = ref(1)
 const pageSize = ref(10)
 const keyword = ref('')
+const phoneModel = ref('')
 const status = ref('')
 const loading = ref(false)
 const error = ref('')
@@ -622,6 +630,10 @@ const specs: Record<string, {
 }
 
 const meta = computed(() => specs[kind.value] || specs.office)
+const phoneFiltering = computed(
+  () => kind.value === 'phone' && Boolean(keyword.value.trim() || phoneModel.value.trim() || status.value),
+)
+const emptyTitle = computed(() => (phoneFiltering.value ? '没有符合筛选的记录' : meta.value.empty))
 const assetStatusOptions = computed(() => (assetStatuses.value.length ? assetStatuses.value : fallbackStatus))
 const importErrors = computed(() => (importResult.value?.errors as Row[] | undefined) || [])
 const importOk = computed(() => (importResult.value?.imported as Row[] | undefined) || [])
@@ -750,10 +762,12 @@ async function load() {
   try {
     const query: Record<string, string | number> = { pageNo: pageNo.value, pageSize: pageSize.value }
     const text = keyword.value.trim()
+    const model = phoneModel.value.trim()
     if (kind.value === 'phone' && text) {
       if (/^[A-Za-z0-9-]+$/.test(text) && !/^\d{11}$/.test(text)) query.deviceNumber = text
-      else query.phoneModel = text
+      else if (!model) query.phoneModel = text
     }
+    if (kind.value === 'phone' && model) query.phoneModel = model
     if (kind.value !== 'phone' && text) query.keyword = text
     if (status.value) query.status = status.value
     const url = kind.value === 'phone' ? '/corp/device/phone/page' : `/corp/device/${kind.value}/page`
@@ -777,6 +791,7 @@ function search() {
 
 function reset() {
   keyword.value = ''
+  phoneModel.value = ''
   status.value = ''
   search()
 }
@@ -1415,6 +1430,7 @@ function submitScrap() {
 
 watch(kind, async () => {
   keyword.value = ''
+  phoneModel.value = ''
   status.value = ''
   pageNo.value = 1
   detailOpen.value = false

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import timedelta, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, ok
+from app.core import utcnow
 from app.corp import ops_db, tenant_of
 from app.models import CertArchive, User
 from app.ops_models import Company, Phone, PlatformAccount, Realname, SimCard
@@ -42,4 +45,5 @@ def master_overview(
         {"key": "phone", "label": "工作手机", "count": ops_count(Phone), "href": "/ims/corp/device/phone"},
         {"key": "platformAccount", "label": "平台账号", "count": ops_count(PlatformAccount), "href": "/ims/corp/account/douyin"},
     ]
-    return ok({"blocks": blocks, "updatedAt": ""})
+    stamp = utcnow().replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8)))
+    return ok({"blocks": blocks, "updatedAt": stamp.strftime("%Y-%m-%d %H:%M:%S")})
