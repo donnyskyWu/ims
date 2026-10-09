@@ -1144,6 +1144,28 @@ class FinProfit(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class FinProfitHistory(Base):
+    """FIN-P-R3 利润计算版本留痕。写入后不改：重算只追加新版本。"""
+
+    __tablename__ = "ims_fin_profit_history"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "session_code", "calc_version", name="uk_fin_profit_hist_ver"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_code: Mapped[str] = mapped_column(String(32), index=True)
+    calc_version: Mapped[int] = mapped_column(Integer, default=1)
+    gross_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    operating_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    net_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    calc_status: Mapped[str] = mapped_column(String(16), default="CALCULATED")
+    trigger_type: Mapped[str] = mapped_column(String(32), default="")
+    trigger_reason: Mapped[str] = mapped_column(String(256), default="")
+    calculated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class FinShareResult(Base):
     """FIN-003 分成单（手工拆分窄切片 · #57）。规则引擎 CRUD 不在本表。"""
 

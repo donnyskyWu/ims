@@ -19,6 +19,7 @@ from app.models import (
     FinCost,
     FinPeriod,
     FinProfit,
+    FinProfitHistory,
     FinShareResult,
     FlowInstance,
     LiveReport,
@@ -299,6 +300,84 @@ def apply_cost_row(row: FinCost, session: LiveSession, report: LiveReport, body:
     row.remark = body.remark or ""
 
 
+# 契约重算枚举为 AUTO_CORRECTION | MANUAL。首算不是重算，用 AUTO_CONFIRM 把 V1 留在时间轴上（FIN-P-R3）。
+TRIGGER_AUTO_CONFIRM = "AUTO_CONFIRM"
+TRIGGER_AUTO_CORRECTION = "AUTO_CORRECTION"
+TRIGGER_MANUAL = "MANUAL"
+
+
+def history_version_pending(db: Session, tenant_id: int, session_code: str, version: int) -> bool:
+    for obj in db.new:
+        if (
+            isinstance(obj, FinProfitHistory)
+            and obj.deleted == 0
+            and obj.tenant_id == tenant_id
+            and obj.session_code == session_code
+            and int(obj.calc_version or 0) == version
+        ):
+            return True
+    return False
+
+
+def append_profit_history(
+    db: Session,
+    profit: FinProfit,
+    cost: FinCost | None,
+    tenant_id: int,
+    *,
+    trigger_type: str,
+    trigger_reason: str,
+    operating: float | None = None,
+) -> None:
+    """同一版本只写一次。已存在的行不更新。"""
+    version = int(profit.calc_version or 0)
+    if version <= 0 or profit.calc_status in ("", "PENDING"):
+        return
+    if history_version_pending(db, tenant_id, profit.session_code, version):
+        return
+    exists = db.scalar(
+        select(FinProfitHistory.id).where(
+            FinProfitHistory.tenant_id == tenant_id,
+            FinProfitHistory.session_code == profit.session_code,
+            FinProfitHistory.calc_version == version,
+            FinProfitHistory.deleted == 0,
+        )
+    )
+    if exists is not None:
+        return
+    gross = money(profit.gross_profit)
+    op = money(operating if operating is not None else operating_profit(gross, cost))
+    when = profit.updated_at or profit.created_at or utcnow()
+    db.add(
+        FinProfitHistory(
+            session_code=profit.session_code,
+            calc_version=version,
+            gross_profit=gross,
+            operating_profit=op,
+            net_profit=money(profit.net_profit),
+            calc_status=profit.calc_status or "CALCULATED",
+            trigger_type=trigger_type,
+            trigger_reason=(trigger_reason or "")[:256],
+            calculated_at=when,
+            tenant_id=tenant_id,
+        )
+    )
+
+
+def preserve_profit_snapshot(db: Session, tenant_id: int, session_code: str, cost: FinCost | None) -> None:
+    """重算覆盖当前行之前，把尚未留痕的版本按当时成本记下来。"""
+    profit = load_profit(db, tenant_id, session_code)
+    if profit is None:
+        return
+    if profit.calc_status == "RECALCULATED":
+        trigger_type = TRIGGER_AUTO_CORRECTION
+        reason = "升级前重算结果留痕"
+    else:
+        trigger_type = TRIGGER_AUTO_CONFIRM
+        reason = "成本核准自动计算"
+    append_profit_history(db, profit, cost, tenant_id, trigger_type=trigger_type, trigger_reason=reason)
+
+
 def upsert_profit(
     db: Session,
     session_code: str,
@@ -307,7 +386,10 @@ def upsert_profit(
     tenant_id: int,
     *,
     after_correction: bool = False,
+    trigger_type: str = "",
+    trigger_reason: str = "",
 ) -> FinProfit:
+    preserve_profit_snapshot(db, tenant_id, session_code, cost)
     revenue = money(report.gmv)
     refund = money(report.refund_amount)
     total_cost = money(cost.total_cost)
@@ -328,6 +410,24 @@ def upsert_profit(
     else:
         profit.calc_status = "CALCULATED"
     profit.calc_version = (profit.calc_version or 0) + 1
+    if not trigger_type:
+        if after_correction and not first_calc:
+            trigger_type = TRIGGER_AUTO_CORRECTION
+            trigger_reason = trigger_reason or "成本更正自动重算"
+        else:
+            trigger_type = TRIGGER_AUTO_CONFIRM
+            trigger_reason = trigger_reason or "成本核准自动计算"
+    now = utcnow()
+    profit.updated_at = now
+    append_profit_history(
+        db,
+        profit,
+        cost,
+        tenant_id,
+        trigger_type=trigger_type,
+        trigger_reason=trigger_reason or "利润计算",
+        operating=operating_profit(gross, cost),
+    )
     db.flush()
     sync_share_results(db, tenant_id, session_code, cost, profit)
     return profit
@@ -625,6 +725,98 @@ def profit_detail(
     if profit is None or profit.calc_status in ("", "PENDING") or cost is None or cost.entry_status != "CONFIRMED":
         return fail(1145, "该场次成本未核准，利润未计算")
     return ok(profit_vo(db, profit, session, cost, include_session=True))
+
+
+def profit_history_item(
+    *,
+    calc_version: int,
+    net_profit: float,
+    gross_profit: float,
+    operating: float,
+    calc_status: str,
+    trigger_type: str,
+    trigger_reason: str,
+    calculated_at: datetime | None,
+) -> dict:
+    return {
+        "calcVersion": int(calc_version or 1),
+        "netProfit": money(net_profit),
+        "grossProfit": money(gross_profit),
+        "operatingProfit": money(operating),
+        "calcStatus": calc_status or "CALCULATED",
+        "triggerType": trigger_type or "",
+        "triggerReason": trigger_reason or "",
+        "calculatedAt": iso(calculated_at) if calculated_at else "",
+    }
+
+
+def load_profit_history(db: Session, tenant_id: int, session_code: str) -> list[FinProfitHistory]:
+    return list(
+        db.scalars(
+            select(FinProfitHistory)
+            .where(
+                FinProfitHistory.tenant_id == tenant_id,
+                FinProfitHistory.session_code == session_code,
+                FinProfitHistory.deleted == 0,
+            )
+            .order_by(FinProfitHistory.calc_version.desc(), FinProfitHistory.id.desc())
+        ).all()
+    )
+
+
+@router.get("/profit/history/{session_code}")
+def profit_history(
+    request: Request,
+    session_code: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    session = get_session(db, actor, request.state.scope, session_code)
+    if session is None:
+        return fail(1504, "资源不可用")
+    profit = load_profit(db, tenant_id, session_code)
+    cost = load_fin_cost(db, tenant_id, session_code)
+    if profit is None or profit.calc_status in ("", "PENDING") or cost is None or cost.entry_status != "CONFIRMED":
+        return fail(1145, "该场次成本未核准，利润未计算")
+    rows = load_profit_history(db, tenant_id, session_code)
+    if not rows:
+        gross = money(profit.gross_profit)
+        if profit.calc_status == "RECALCULATED":
+            trigger_type = TRIGGER_AUTO_CORRECTION
+            reason = "升级前重算结果留痕"
+        else:
+            trigger_type = TRIGGER_AUTO_CONFIRM
+            reason = "成本核准自动计算"
+        return ok(
+            [
+                profit_history_item(
+                    calc_version=profit.calc_version or 1,
+                    net_profit=profit.net_profit,
+                    gross_profit=gross,
+                    operating=operating_profit(gross, cost),
+                    calc_status=profit.calc_status or "CALCULATED",
+                    trigger_type=trigger_type,
+                    trigger_reason=reason,
+                    calculated_at=profit.updated_at,
+                )
+            ]
+        )
+    return ok(
+        [
+            profit_history_item(
+                calc_version=row.calc_version,
+                net_profit=row.net_profit,
+                gross_profit=row.gross_profit,
+                operating=row.operating_profit,
+                calc_status=row.calc_status,
+                trigger_type=row.trigger_type,
+                trigger_reason=row.trigger_reason,
+                calculated_at=row.calculated_at,
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.get("/cost/pending-sessions")
@@ -934,7 +1126,15 @@ def cost_confirm(
     if row is None or row.entry_status not in ("DRAFT", "SUBMITTED"):
         return fail(1141, "成本未提交")
     row.entry_status = "CONFIRMED"
-    profit = upsert_profit(db, session_code, report, row, tenant_id)
+    profit = upsert_profit(
+        db,
+        session_code,
+        report,
+        row,
+        tenant_id,
+        trigger_type=TRIGGER_AUTO_CONFIRM,
+        trigger_reason="成本核准自动计算",
+    )
     db.flush()
     return ok(
         {
@@ -986,13 +1186,23 @@ def cost_correction(
     if locked_adjust is not None:
         return locked_adjust
     before = cost_amount_snapshot(row)
+    preserve_profit_snapshot(db, tenant_id, session_code, row)
     apply_cost_row(row, session, report, body.corrected, actor)
     row.entry_status = "CONFIRMED"
     after = cost_amount_snapshot(row)
     red, blue = correction_diff(before, after)
     correction_no = f"CR-{row.id}-{int(utcnow().timestamp())}"
     row.remark = remark_with_idem(reason, clientToken, correction_no)
-    upsert_profit(db, session_code, report, row, tenant_id, after_correction=True)
+    upsert_profit(
+        db,
+        session_code,
+        report,
+        row,
+        tenant_id,
+        after_correction=True,
+        trigger_type=TRIGGER_AUTO_CORRECTION,
+        trigger_reason=reason,
+    )
     db.flush()
     return ok(correction_response_vo(correction_no, red, blue))
 
@@ -1017,7 +1227,16 @@ def profit_recalc(
     locked = reject_if_period_locked(db, tenant_id, session)
     if locked is not None:
         return locked
-    profit = upsert_profit(db, session_code, report, row, tenant_id, after_correction=True)
+    profit = upsert_profit(
+        db,
+        session_code,
+        report,
+        row,
+        tenant_id,
+        after_correction=True,
+        trigger_type=TRIGGER_MANUAL,
+        trigger_reason="手动触发重算",
+    )
     db.flush()
     return ok(
         {
