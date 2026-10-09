@@ -63,6 +63,20 @@ def _ensure_e2e_douyin_account(db, ops) -> None:
     )
 
 
+def _ensure_fin_r9_user(db) -> None:
+    """数据分析师（fin:r9）。看板与利润列表金额脱敏，菜单克隆自管理员以便纯 UI 登录。"""
+    from app.acct_seed import _ensure_cloned_user
+
+    _ensure_cloned_user(
+        db,
+        username="e2e_fin_r9",
+        nickname="财务数据分析师",
+        mobile="13900000146",
+        role_key="fin:r9",
+        role_name="数据分析师",
+    )
+
+
 def _ensure_e2e_author(db) -> None:
     """Playwright 发布督办闭环：审核人( admin ) ≠ 提交人( e2e_author )，规避 1057。"""
     role = db.scalar(select(Role).where(Role.role_key == "sys:admin", Role.deleted == 0))
@@ -142,6 +156,7 @@ def seed() -> None:
             refresh_workbench_e2e_seed(db, admin)
             ensure_acct_e2e_pool_account(db, admin)
             refresh_acct_e2e_pool(db, admin)
+            _ensure_fin_r9_user(db)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)

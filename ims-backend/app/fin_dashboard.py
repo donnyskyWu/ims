@@ -19,8 +19,12 @@ from app.api import current_user, db_session, fail, ok
 from app.corp import ops_db, tenant_of, user_names
 from app.dc_trace import build_pdf, build_xlsx, matrix_lines
 from app.fin import (
+    AMOUNT_MASK,
     PERIOD_MONTH_RE,
+    actor_masks_fin_amounts,
     collect_visible_profits,
+    fin_view,
+    mask_fin_amounts,
     money,
     net_profit_rate,
     operating_profit,
@@ -227,7 +231,7 @@ def dashboard_overview(
         }
     )
     summary.pop("totalRefund", None)
-    return ok(summary)
+    return ok(fin_view(db, actor, summary))
 
 
 def bucket_of(day: str, granularity: str) -> str:
@@ -344,7 +348,7 @@ def dashboard_trend(
                 "yoyRate": change_rate(summary["shownProfit"], None if year_ago is None else year_ago["shownProfit"]),
             }
         )
-    return ok(points)
+    return ok(fin_view(db, actor, points))
 
 
 def drill_items(
@@ -419,14 +423,18 @@ def dashboard_drilldown(
     tenant_id = tenant_of(actor)
     rows = month_rows(db, actor, request.state.scope, tenant_id, period)
     return ok(
-        drill_items(
+        fin_view(
             db,
-            ops,
-            rows,
-            dimension,
-            kind or "NET",
-            (dimensionValue or "").strip(),
-            drillToSession,
+            actor,
+            drill_items(
+                db,
+                ops,
+                rows,
+                dimension,
+                kind or "NET",
+                (dimensionValue or "").strip(),
+                drillToSession,
+            ),
         )
     )
 
@@ -445,7 +453,7 @@ def dashboard_cost_structure(
     if dimensionType and dimensionType.strip().upper() not in DRILL_DIMS:
         return fail(1001, "维度仅支持 PLATFORM、ACCOUNT、IP_GROUP、DAREN、OWNER")
     rows = month_rows(db, actor, request.state.scope, tenant_of(actor), period)
-    return ok(cost_structure(rows))
+    return ok(fin_view(db, actor, cost_structure(rows)))
 
 
 @router.get("/share-summary")
@@ -506,13 +514,19 @@ def dashboard_share_summary(
             }
         )
     data.sort(key=lambda item: item["totalAmount"], reverse=True)
-    return ok(data)
+    return ok(fin_view(db, actor, data))
 
 
 def purge_exports(now: float) -> None:
     dead = [key for key, item in _EXPORTS.items() if item[0] < now]
     for key in dead:
         _EXPORTS.pop(key, None)
+
+
+def export_money(value) -> str:
+    if value == AMOUNT_MASK:
+        return AMOUNT_MASK
+    return f"{float(value or 0):.2f}"
 
 
 def export_matrix(items: list[dict]) -> list[list[str]]:
@@ -524,9 +538,9 @@ def export_matrix(items: list[dict]) -> list[list[str]]:
                 "汇总",
                 str(item["dimensionLabel"]),
                 "",
-                f"{item['totalGmv']:.2f}",
-                f"{item['totalCost']:.2f}",
-                f"{item['netProfit']:.2f}",
+                export_money(item["totalGmv"]),
+                export_money(item["totalCost"]),
+                export_money(item["netProfit"]),
                 str(item["sessionCount"]),
             ]
         )
@@ -536,9 +550,9 @@ def export_matrix(items: list[dict]) -> list[list[str]]:
                     "场次",
                     str(item["dimensionLabel"]),
                     str(child.get("sessionCode") or ""),
-                    f"{float(child.get('gmv') or 0):.2f}",
-                    f"{float(child.get('totalCost') or 0):.2f}",
-                    f"{float(child.get('netProfit') or 0):.2f}",
+                    export_money(child.get("gmv")),
+                    export_money(child.get("totalCost")),
+                    export_money(child.get("netProfit")),
                     "1",
                 ]
             )
@@ -567,6 +581,8 @@ def dashboard_export(
     tenant_id = tenant_of(actor)
     rows = month_rows(db, actor, request.state.scope, tenant_id, period)
     items = drill_items(db, ops, rows, dimension, "NET", "", True)
+    if actor_masks_fin_amounts(db, actor):
+        items = mask_fin_amounts(items)
     matrix = export_matrix(items)
     if fmt == "PDF":
         body = build_pdf([f"FIN dashboard {period}", f"dimension {dimension}", *matrix_lines(matrix)])

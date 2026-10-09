@@ -193,7 +193,7 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="detailOpen" :title="detailTitle" width="90%" @close="detailOpen = false">
-      <div v-if="detail" class="tabs">
+      <div v-if="detail" class="tabs" data-testid="live-ledger-detail">
         <div v-for="t in tabs" :key="t" class="tab" :class="{ on: tab === t }" @click="switchTab(t)">{{ t }}</div>
       </div>
       <div v-if="detail && tab === '基本信息'" class="tbl-block" style="margin-top: 12px">
@@ -334,6 +334,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 
@@ -352,6 +353,7 @@ async function apiPut(url: string, body?: unknown) {
   return res.data.data
 }
 
+const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const hint = ref('')
@@ -930,5 +932,10 @@ async function confirmReport() {
   }
 }
 
-onMounted(loadList)
+onMounted(async () => {
+  const code = typeof route.query.sessionCode === 'string' ? route.query.sessionCode.trim() : ''
+  if (code) query.sessionCode = code
+  await loadList()
+  if (code) await openDetail({ sessionCode: code })
+})
 </script>

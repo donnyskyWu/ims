@@ -25,15 +25,15 @@
     <div v-if="overview" class="g4" style="margin: 12px 0">
       <div class="card stat">
         <span class="l">GMV</span>
-        <div class="n" data-testid="fin-dash-gmv">¥{{ fmt(overview.totalGmv) }}</div>
+        <div class="n" data-testid="fin-dash-gmv">{{ yuan(overview.totalGmv) }}</div>
       </div>
       <div class="card stat">
         <span class="l">总成本</span>
-        <div class="n" data-testid="fin-dash-cost">¥{{ fmt(overview.totalCost) }}</div>
+        <div class="n" data-testid="fin-dash-cost">{{ yuan(overview.totalCost) }}</div>
       </div>
       <div class="card stat">
         <span class="l">{{ profitLabel }}</span>
-        <div class="n" data-testid="fin-dash-profit">¥{{ fmt(overview.shownProfit) }}</div>
+        <div class="n" data-testid="fin-dash-profit">{{ yuan(overview.shownProfit) }}</div>
       </div>
       <div class="card stat">
         <span class="l">净利率</span>
@@ -42,6 +42,7 @@
       </div>
     </div>
     <p v-if="overview" class="hint" data-testid="fin-dash-refreshed">缓存时间 {{ overview.refreshedAt }}</p>
+    <p v-if="amountsMasked" class="hint" data-testid="fin-dash-amount-mask">金额已脱敏</p>
 
     <div class="tabs" style="margin: 12px 0 8px">
       <button
@@ -77,9 +78,9 @@
             <template v-for="row in drill" :key="row.dimensionValue">
               <tr>
                 <td>{{ row.dimensionLabel }}</td>
-                <td class="num">¥{{ fmt(row.totalGmv) }}</td>
-                <td class="num">¥{{ fmt(row.totalCost) }}</td>
-                <td class="num">¥{{ fmt(row.netProfit) }}</td>
+                <td class="num">{{ yuan(row.totalGmv) }}</td>
+                <td class="num">{{ yuan(row.totalCost) }}</td>
+                <td class="num">{{ yuan(row.netProfit) }}</td>
                 <td class="num">{{ row.sessionCount }}</td>
                 <td>
                   <button class="btn btn-sec btn-sm" type="button" data-testid="fin-dash-expand" @click="toggle(row.dimensionValue)">
@@ -93,11 +94,20 @@
                 data-testid="fin-dash-session"
               >
                 <td class="mono">{{ child.sessionCode }}</td>
-                <td class="num">¥{{ fmt(child.gmv) }}</td>
-                <td class="num">¥{{ fmt(child.totalCost) }}</td>
-                <td class="num" data-testid="fin-dash-session-net">¥{{ fmt(child.netProfit) }}</td>
+                <td class="num">{{ yuan(child.gmv) }}</td>
+                <td class="num">{{ yuan(child.totalCost) }}</td>
+                <td class="num" data-testid="fin-dash-session-net">{{ yuan(child.netProfit) }}</td>
                 <td class="num">1</td>
-                <td></td>
+                <td>
+                  <button
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    data-testid="fin-dash-open-ledger"
+                    @click="openLedger(child.sessionCode)"
+                  >
+                    直播台账
+                  </button>
+                </td>
               </tr>
             </template>
           </tbody>
@@ -137,9 +147,9 @@
           </tr>
           <tr v-for="point in trend" :key="point.statPeriod" data-testid="fin-dash-trend-row">
             <td>{{ point.periodLabel || point.statPeriod }}</td>
-            <td class="num">¥{{ fmt(point.gmv) }}</td>
-            <td class="num">¥{{ fmt(point.cost) }}</td>
-            <td class="num">¥{{ fmt(point.netProfit) }}</td>
+            <td class="num">{{ yuan(point.gmv) }}</td>
+            <td class="num">{{ yuan(point.cost) }}</td>
+            <td class="num">{{ yuan(point.netProfit) }}</td>
             <td>{{ point.momRate == null ? '—' : `${point.momRate}%` }}</td>
             <td>{{ point.yoyRate == null ? '—' : `${point.yoyRate}%` }}</td>
           </tr>
@@ -160,7 +170,7 @@
         <tbody>
           <tr v-for="item in structure" :key="item.costItem">
             <td>{{ costLabel(item.costItem) }}</td>
-            <td class="num">¥{{ fmt(item.amount) }}</td>
+            <td class="num">{{ yuan(item.amount) }}</td>
             <td class="num">{{ item.ratio }}</td>
           </tr>
         </tbody>
@@ -187,9 +197,9 @@
           <tr v-for="row in shares" :key="`${row.shareTarget}-${row.targetRefId}`">
             <td>{{ targetLabel(row.shareTarget) }}</td>
             <td>{{ row.targetRefName }}</td>
-            <td class="num">¥{{ fmt(row.totalAmount) }}</td>
-            <td class="num">¥{{ fmt(row.paidOffAmount) }}</td>
-            <td class="num">¥{{ fmt(row.pendingAmount) }}</td>
+            <td class="num" data-testid="fin-dash-share-total">{{ yuan(row.totalAmount) }}</td>
+            <td class="num">{{ yuan(row.paidOffAmount) }}</td>
+            <td class="num">{{ yuan(row.pendingAmount) }}</td>
             <td class="num">{{ row.sessionCount }}</td>
           </tr>
         </tbody>
@@ -223,12 +233,16 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 
+const AMOUNT_MASK = '***'
+
+type Money = number | string
 type Overview = {
-  totalGmv: number
-  totalCost: number
-  shownProfit: number
+  totalGmv: Money
+  totalCost: Money
+  shownProfit: Money
   netProfitRate: number
   sessionCount: number
   refreshedAt: string
@@ -236,29 +250,29 @@ type Overview = {
 type DrillRow = {
   dimensionValue: string
   dimensionLabel: string
-  totalGmv: number
-  totalCost: number
-  netProfit: number
+  totalGmv: Money
+  totalCost: Money
+  netProfit: Money
   sessionCount: number
-  children?: Array<{ sessionCode: string; gmv: number; totalCost: number; netProfit: number }>
+  children?: Array<{ sessionCode: string; gmv: Money; totalCost: Money; netProfit: Money }>
 }
 type TrendPoint = {
   statPeriod: string
   periodLabel?: string
-  gmv: number
-  cost: number
-  netProfit: number
+  gmv: Money
+  cost: Money
+  netProfit: Money
   momRate?: number | null
   yoyRate?: number | null
 }
-type CostItem = { costItem: string; amount: number; ratio: number }
+type CostItem = { costItem: string; amount: Money; ratio: number }
 type ShareItem = {
   shareTarget: string
   targetRefId: number
   targetRefName: string
-  totalAmount: number
-  paidOffAmount: number
-  pendingAmount: number
+  totalAmount: Money
+  paidOffAmount: Money
+  pendingAmount: Money
   sessionCount: number
 }
 
@@ -275,6 +289,7 @@ const grains = [
   { value: 'MONTH', label: '月' },
 ]
 
+const router = useRouter()
 const statPeriod = ref(currentMonth())
 const profitType = ref('NET')
 const dimension = ref('ACCOUNT')
@@ -296,6 +311,18 @@ const profitLabel = computed(() => {
   return map[profitType.value] || '净利润'
 })
 const dimensionLabel = computed(() => dimensions.find((item) => item.value === dimension.value)?.label || dimension.value)
+const amountsMasked = computed(
+  () => overview.value?.totalGmv === AMOUNT_MASK || overview.value?.shownProfit === AMOUNT_MASK,
+)
+
+function yuan(value: unknown) {
+  if (value === AMOUNT_MASK) return AMOUNT_MASK
+  return `¥${fmt(value)}`
+}
+
+function openLedger(sessionCode: string) {
+  router.push({ path: '/ims/live/sessions', query: { sessionCode } })
+}
 
 function currentMonth() {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
