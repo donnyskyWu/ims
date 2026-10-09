@@ -21,12 +21,35 @@
     <div v-if="tab === 'live'" class="g2" style="margin: 12px 0">
       <div class="card stat" data-testid="alert-delivery-card">
         <span class="l">送达率</span>
-        <div class="n" data-testid="alert-delivery-rate">{{ delivery ? `${delivery.deliveryRate}%` : '—' }}</div>
+        <div
+          class="n"
+          data-testid="alert-delivery-rate"
+          :data-neutral="delivery && delivery.totalShould === 0 ? '1' : '0'"
+          :style="{ color: deliveryColor }"
+        >
+          {{ delivery ? `${delivery.deliveryRate}%` : '—' }}
+        </div>
         <div class="d">
           已送达 {{ delivery?.totalDelivered ?? 0 }} / {{ delivery?.totalShould ?? 0 }} · 目标 &gt;{{ delivery?.target ?? 99 }}%
           · 钉钉/短信本地桩
         </div>
-        <p v-if="delivery && delivery.deliveryRate < (delivery.target || 99)" class="hint" style="color: var(--red)">
+        <p v-if="delivery && delivery.totalShould === 0" class="hint" data-testid="alert-delivery-empty">
+          当前没有送达样本（钉钉/短信本地桩，不外发）
+        </p>
+        <p
+          v-else-if="delivery && delivery.deliveryRate >= (delivery.target || 99)"
+          class="hint"
+          data-testid="alert-delivery-ok"
+          style="color: var(--green, #15803d)"
+        >
+          达标（BR-111）
+        </p>
+        <p
+          v-else-if="delivery && delivery.deliveryRate < (delivery.target || 99)"
+          class="hint"
+          data-testid="alert-delivery-miss"
+          style="color: var(--red)"
+        >
           未达标（BR-111）
         </p>
         <div v-if="delivery?.failedAlerts?.length" data-testid="alert-delivery-failed">
@@ -100,6 +123,11 @@
     </form>
     <p v-if="filterError" class="hint" style="color: var(--red)">{{ filterError }}</p>
 
+    <form v-if="tab === 'dedup'" class="qbar" data-testid="alert-dedup-filter" @submit.prevent>
+      <input v-model="dedupKeyword" data-testid="alert-dedup-keyword" placeholder="策略编码或名称" style="width: 180px" />
+      <span class="sp"></span>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-dedup-reset" @click="dedupKeyword = ''">重置</button>
+    </form>
     <div v-if="tab === 'dedup'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -115,10 +143,12 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
-            <tr v-else-if="!dedupRows.length">
-              <td colspan="6"><div class="empty" data-testid="alert-dedup-empty"><div class="et">暂无去重策略</div></div></td>
+            <tr v-else-if="!dedupVisible.length">
+              <td colspan="6">
+                <div class="empty" data-testid="alert-dedup-empty"><div class="et">{{ dedupEmptyText }}</div></div>
+              </td>
             </tr>
-            <tr v-for="row in dedupRows" v-else :key="row.id">
+            <tr v-for="row in dedupVisible" v-else :key="row.id">
               <td class="mono">{{ row.policyCode }}</td>
               <td>{{ row.policyName }}</td>
               <td class="num">{{ row.windowMinutes }}</td>
@@ -153,7 +183,7 @@
             <tr v-else-if="!rows.length">
               <td :colspan="tab === 'live' ? 8 : 7">
                 <div class="empty" data-testid="alert-list-empty">
-                  <div class="et" data-testid="alert-tab-empty">{{ error || (tab === 'history' ? '暂无处置记录' : '暂无预警') }}</div>
+                  <div class="et" data-testid="alert-tab-empty">{{ listEmptyText }}</div>
                 </div>
               </td>
             </tr>
@@ -169,7 +199,7 @@
                 <div>{{ pushLabel(row.pushStatus) }}</div>
                 <div class="d">{{ channelBrief(row) }}</div>
               </td>
-              <td>{{ row.responseStatus }}</td>
+              <td>{{ statusText(row.responseStatus) }}</td>
               <td class="mono">{{ row.occurredAt?.slice(0, 16) || '—' }}</td>
               <td v-if="tab === 'live'">
                 <button class="btn btn-txt btn-sm" type="button" data-testid="alert-detail-btn" @click="openDetail(row.alertNo)">
@@ -213,8 +243,11 @@
     <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="closeDetail">
       <div v-if="detail" data-testid="alert-receipt-drawer">
         <p>{{ detail.content }}</p>
-        <p class="hint">{{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ detail.responseStatus }}</p>
+        <p class="hint">{{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ statusText(detail.responseStatus) }}</p>
         <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
+        <p v-if="detail.level === 3" class="hint" data-testid="alert-receipt-priority">
+          严重级按工作台与钉钉本地桩优先，短信仅兜底，不外发（ALR-P-R1）
+        </p>
         <table>
           <thead>
             <tr>
@@ -260,7 +293,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
@@ -324,6 +357,7 @@ const filters = reactive({
   dateTo: '',
 })
 const toast = ref('')
+const dedupKeyword = ref('')
 const falseTarget = ref('')
 const falseReason = ref('')
 const handleRemark = ref('')
@@ -340,8 +374,51 @@ const CHANNEL_NAMES: Record<string, string> = {
   SMS: '短信',
 }
 
+const STATUS_TEXT: Record<string, string> = {
+  OPEN: '未响应 OPEN',
+  CONFIRMED: '已确认 CONFIRMED',
+  RESOLVED: '已解决 RESOLVED',
+  FALSE_ALARM: '误报 FALSE_ALARM',
+}
+
+const deliveryColor = computed(() => {
+  if (!delivery.value || delivery.value.totalShould === 0) return 'inherit'
+  const target = delivery.value.target || 99
+  return delivery.value.deliveryRate >= target ? 'var(--green, #15803d)' : 'var(--red)'
+})
+
+const dedupVisible = computed(() => {
+  const keyword = dedupKeyword.value.trim().toLowerCase()
+  if (!keyword) return dedupRows.value
+  return dedupRows.value.filter((row) =>
+    `${row.policyCode} ${row.policyName}`.toLowerCase().includes(keyword),
+  )
+})
+
+const dedupEmptyText = computed(() =>
+  dedupKeyword.value.trim() ? '当前筛选下暂无去重策略' : '暂无去重策略',
+)
+
+const listEmptyText = computed(() => {
+  if (error.value) return error.value
+  const filtered = !!(
+    filters.ruleCode.trim() ||
+    filters.level ||
+    filters.responseStatus ||
+    filters.pushStatus ||
+    filters.dateFrom ||
+    filters.dateTo
+  )
+  if (tab.value === 'history') return filtered ? '当前筛选下暂无处置记录' : '暂无处置记录'
+  return filtered ? '当前筛选下暂无预警' : '暂无预警'
+})
+
 function pushLabel(status: string) {
   return PUSH_LABELS[status] || status || '—'
+}
+
+function statusText(status: string) {
+  return STATUS_TEXT[status] || status || '—'
 }
 
 function channelName(channel: string) {
@@ -379,6 +456,13 @@ function switchTab(name: 'live' | 'history' | 'dedup') {
   }
 }
 
+function applyRouteFilters() {
+  const rule = String(route.query.ruleCode || '').trim()
+  const level = String(route.query.level || '').trim().toUpperCase()
+  if (rule) filters.ruleCode = rule
+  if (level === 'L1' || level === 'L2' || level === 'L3') filters.level = level
+}
+
 function resetFilters() {
   filters.ruleCode = ''
   filters.level = ''
@@ -395,10 +479,10 @@ async function loadSummary() {
   if (res.data.code === 0) summary.value = res.data.data
 }
 
-async function loadInbox() {
+async function loadInbox(dateRange?: string) {
   const [mine, stats] = await Promise.all([
     http.get('/alert/check/my-alerts'),
-    http.get('/alert/check/delivery-stats'),
+    http.get('/alert/check/delivery-stats', dateRange ? { params: { dateRange } } : undefined),
   ])
   if (mine.data.code === 0) myAlerts.value = mine.data.data || []
   if (stats.data.code === 0) delivery.value = stats.data.data
@@ -424,13 +508,20 @@ async function loadList() {
     if (filters.level) params.level = filters.level
     if (filters.responseStatus) params.responseStatus = filters.responseStatus
     if (filters.pushStatus) params.pushStatus = filters.pushStatus
+    let dateRange = ''
     if (filters.dateFrom || filters.dateTo) {
       if (!filters.dateFrom || !filters.dateTo) {
         filterError.value = '请同时填写起止日期'
         rows.value = []
         return
       }
-      params.dateRange = `${filters.dateFrom},${filters.dateTo}`
+      if (filters.dateFrom > filters.dateTo) {
+        filterError.value = '起始日期不能晚于结束日期'
+        rows.value = []
+        return
+      }
+      dateRange = `${filters.dateFrom},${filters.dateTo}`
+      params.dateRange = dateRange
     }
     const res = await http.get('/alert/check/records', { params })
     if (res.data.code !== 0) {
@@ -445,13 +536,14 @@ async function loadList() {
     rows.value = list
     if (tab.value === 'live') {
       try {
-        await loadInbox()
+        await loadInbox(dateRange || undefined)
       } catch {
         /* 列表已返回；收件箱失败不改筛选结果 */
       }
     }
-  } catch {
-    error.value = '网络错误'
+  } catch (err) {
+    const body = err as { msg?: string }
+    error.value = body?.msg || '网络错误'
     rows.value = []
   } finally {
     loading.value = false
@@ -533,6 +625,7 @@ watch(
 
 onMounted(() => {
   tab.value = tabFromRoute()
+  applyRouteFilters()
   if (tab.value === 'dedup') loadDedup()
   else {
     if (tab.value === 'history') loadSummary()

@@ -837,3 +837,54 @@ def test_alert_stats_rank_merge_and_false_remark():
     )
     assert missing.json()["data"]["total"] == 0
     assert missing.json()["data"]["list"] == []
+
+
+def test_alert_rule_level_filter_and_empty_delivery():
+    auth = headers()
+    suffix = uuid.uuid4().hex[:8]
+    name = f"级别筛选{suffix}"
+    low = f"level.l1.{suffix}"
+    high = f"level.l3.{suffix}"
+    created_low = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": low, "ruleName": name, "thresholdExpr": "delayMinutes>1", "level": 1, "enabled": True},
+    )
+    created_high = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": high, "ruleName": name, "thresholdExpr": "delayMinutes>1", "level": 3, "enabled": False},
+    )
+    assert created_low.json()["code"] == 0
+    assert created_high.json()["code"] == 0
+    assert created_low.json()["data"]["level"] == 1
+    assert created_high.json()["data"]["level"] == 3
+
+    listed = client.get(
+        "/admin-api/ims/alert/rule/list",
+        headers=auth,
+        params={"ruleName": name, "level": "L1", "pageNo": 1, "pageSize": 20},
+    )
+    assert listed.json()["code"] == 0
+    codes = [row["ruleCode"] for row in listed.json()["data"]["list"]]
+    assert codes == [low]
+
+    listed_high = client.get(
+        "/admin-api/ims/alert/rule/list",
+        headers=auth,
+        params={"ruleName": name, "level": "3", "pageNo": 1, "pageSize": 20},
+    )
+    assert [row["ruleCode"] for row in listed_high.json()["data"]["list"]] == [high]
+
+    bad = client.get("/admin-api/ims/alert/rule/list", headers=auth, params={"level": "L9"})
+    assert bad.json()["code"] == 1001
+
+    empty = client.get(
+        "/admin-api/ims/alert/check/delivery-stats",
+        headers=auth,
+        params={"dateRange": "2099-01-01,2099-01-02"},
+    )
+    assert empty.json()["code"] == 0
+    assert empty.json()["data"]["totalShould"] == 0
+    assert empty.json()["data"]["deliveryRate"] == 0
+    assert empty.json()["data"]["failedAlerts"] == []

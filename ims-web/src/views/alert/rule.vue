@@ -13,15 +13,24 @@
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.ruleName" placeholder="规则名称" style="width: 160px" />
-      <select v-model="filters.enabled" style="width: 110px">
+    <form class="qbar" data-testid="alert-rule-filter" @submit.prevent="loadList">
+      <input v-model="filters.ruleName" data-testid="alert-rule-filter-name" placeholder="规则名称" style="width: 160px" />
+      <select v-model="filters.level" data-testid="alert-rule-filter-level" style="width: 110px">
+        <option value="">全部级别</option>
+        <option value="L1">L1</option>
+        <option value="L2">L2</option>
+        <option value="L3">L3</option>
+      </select>
+      <select v-model="filters.enabled" data-testid="alert-rule-filter-enabled" style="width: 110px">
         <option value="">全部状态</option>
         <option value="true">已启用</option>
         <option value="false">未启用</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-rule-filter-reset" @click="resetFilters">
+        重置
+      </button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -42,7 +51,9 @@
               <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无规则' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="alert-rule-empty"><div class="et">{{ ruleEmptyText }}</div></div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.ruleCode }}</td>
@@ -132,6 +143,12 @@
         <p v-if="codeError" data-testid="alert-rule-code-error" class="hint" style="color: var(--red)">{{ codeError }}</p>
         <label class="fld">规则名称</label>
         <input v-model="form.ruleName" class="fld-in" />
+        <label class="fld">级别</label>
+        <select v-model.number="form.level" data-testid="alert-rule-form-level" class="fld-in">
+          <option :value="1">L1 提示</option>
+          <option :value="2">L2 警告</option>
+          <option :value="3">L3 严重</option>
+        </select>
         <label class="fld">阈值表达式</label>
         <input v-model="form.thresholdExpr" class="fld-in" placeholder="delayMinutes>30" />
         <label class="fld">触发条件 DSL</label>
@@ -177,10 +194,11 @@ const editingId = ref<number | null>(null)
 const formError = ref('')
 const codeError = ref('')
 const dslError = ref('')
-const filters = reactive({ ruleName: '', enabled: '' })
+const filters = reactive({ ruleName: '', level: '', enabled: '' })
 const form = reactive({
   ruleCode: '',
   ruleName: '',
+  level: 2,
   thresholdExpr: '',
   dslSource: '',
   dslField: '',
@@ -218,6 +236,11 @@ const dslTouched = computed(
   () => !!(form.dslSource.trim() || form.dslField.trim() || form.dslOp.trim() || form.dslValue.trim()),
 )
 
+const ruleFilterOn = computed(
+  () => !!(filters.ruleName.trim() || filters.level || filters.enabled),
+)
+const ruleEmptyText = computed(() => error.value || (ruleFilterOn.value ? '当前筛选下暂无规则' : '暂无规则'))
+
 const dslPreview = computed(() => {
   if (!dslTouched.value) return 'DSL 预览：未填写'
   return `DSL 预览：${JSON.stringify(buildTriggerConfig())}`
@@ -242,7 +265,8 @@ async function loadList() {
   error.value = ''
   try {
     const params: Record<string, unknown> = { pageNo: 1, pageSize: 50 }
-    if (filters.ruleName) params.ruleName = filters.ruleName
+    if (filters.ruleName.trim()) params.ruleName = filters.ruleName.trim()
+    if (filters.level) params.level = filters.level
     if (filters.enabled === 'true') params.enabled = true
     if (filters.enabled === 'false') params.enabled = false
     const res = await http.get('/alert/rule/list', { params })
@@ -260,9 +284,17 @@ async function loadList() {
   }
 }
 
+function resetFilters() {
+  filters.ruleName = ''
+  filters.level = ''
+  filters.enabled = ''
+  loadList()
+}
+
 function resetForm() {
   form.ruleCode = ''
   form.ruleName = ''
+  form.level = 2
   form.thresholdExpr = ''
   form.dslSource = ''
   form.dslField = ''
@@ -285,6 +317,7 @@ function openEdit(row: Row) {
   resetForm()
   form.ruleCode = row.ruleCode
   form.ruleName = row.ruleName
+  form.level = row.level || 2
   form.thresholdExpr = row.thresholdExpr || ''
   form.enabled = row.enabled
   showForm.value = true
@@ -296,6 +329,7 @@ async function submitCreate() {
   dslError.value = ''
   const payload: Record<string, unknown> = {
     ruleName: form.ruleName,
+    level: form.level,
     thresholdExpr: form.thresholdExpr,
     enabled: form.enabled,
   }

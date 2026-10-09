@@ -118,7 +118,11 @@
           </tbody>
           <tbody v-else-if="!rows.length">
             <tr>
-              <td colspan="6"><div class="empty"><div class="et">暂无待升级预警</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="alert-escalate-empty">
+                  <div class="et">{{ levelFilter ? '该级别暂无待升级预警' : '暂无待升级预警' }}</div>
+                </div>
+              </td>
             </tr>
           </tbody>
           <tbody v-for="row in rows" v-else :key="row.alertNo" :data-testid="`alert-escalate-row-${row.alertNo}`">
