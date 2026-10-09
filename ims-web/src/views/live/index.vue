@@ -25,6 +25,22 @@
     </div>
     <form v-if="view === 'sessions'" class="qbar" @submit.prevent="loadList">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 160px" />
+      <input
+        v-model="query.accountId"
+        inputmode="numeric"
+        data-testid="live-filter-account"
+        placeholder="账号 id"
+        aria-label="账号 id"
+        style="width: 110px"
+      />
+      <input
+        v-model="query.responsibleUserId"
+        inputmode="numeric"
+        data-testid="live-filter-owner"
+        placeholder="责任人 id"
+        aria-label="责任人 id"
+        style="width: 120px"
+      />
       <select v-model="query.sessionStatus" style="width: 100px">
         <option value="">全部状态</option>
         <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
@@ -53,6 +69,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetQuery">重置</button>
     </form>
+    <p v-if="view === 'sessions' && dateRangeHint" class="hint" data-testid="live-filter-date-hint">{{ dateRangeHint }}</p>
     <div v-if="view === 'sessions'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -75,9 +92,9 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="9">
-                <div class="empty">
+                <div class="empty" data-testid="live-sessions-empty">
                   <div class="et">{{ error || '暂无场次' }}</div>
-                  <div class="es">登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。</div>
+                  <div class="es" data-testid="live-sessions-empty-hint">{{ sessionsEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -125,12 +142,21 @@
         </div>
       </div>
       <form class="qbar" @submit.prevent="loadPending">
+        <input
+          v-model="pendingOwner"
+          inputmode="numeric"
+          data-testid="live-pending-owner"
+          placeholder="责任人 id"
+          aria-label="待录入责任人"
+          style="width: 120px"
+        />
         <label class="hint">
           <input v-model="overdueOnly" type="checkbox" data-testid="live-overdue-only" />
           仅看超过 24 小时
         </label>
         <span class="sp"></span>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="live-pending-query">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="live-pending-reset" @click="resetPending">重置</button>
       </form>
       <div class="tbl-wrap">
         <table>
@@ -146,7 +172,12 @@
           </thead>
           <tbody>
             <tr v-if="!pendingRows.length">
-              <td colspan="6"><div class="empty"><div class="et">暂无待录入场次</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="live-pending-empty">
+                  <div class="et">{{ pendingEmptyTitle }}</div>
+                  <div v-if="positiveId(pendingOwner)" class="es">换一个责任人，或清空后再查全部待录入。</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in pendingRows" v-else :key="row.sessionCode" data-testid="live-pending-row">
               <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">{{ row.sessionCode }}</td>
@@ -430,6 +461,8 @@ const correctionTrace = ref<any>(null)
 const correctionSlips = ref<any[]>([])
 const query = reactive({
   sessionCode: '',
+  accountId: '',
+  responsibleUserId: '',
   sessionStatus: '',
   platform: '',
   riskLevel: '',
@@ -437,6 +470,7 @@ const query = reactive({
   timeFrom: '',
   timeTo: '',
 })
+const pendingOwner = ref('')
 const statusOptions = [
   { value: 'PENDING_RISK_CHECK', label: '待风控' },
   { value: 'APPROVED', label: '已放行' },
@@ -587,6 +621,37 @@ function fieldMissing(key: string) {
 const detailTitle = computed(() => (detail.value ? `场次 ${detail.value.sessionCode}` : '场次详情'))
 const overdueCards = computed(() => pendingRows.value.filter((row) => row.overdue))
 
+function positiveId(value: unknown) {
+  const text = String(value ?? '').trim()
+  if (!/^[1-9]\d*$/.test(text)) return null
+  return Number(text)
+}
+
+const dateRangeHint = computed(() => {
+  const from = query.timeFrom.trim()
+  const to = query.timeTo.trim()
+  if ((from && !to) || (!from && to)) return '开播起止要一起选，只填一侧不会收窄日期。'
+  return ''
+})
+
+const sessionsEmptyHint = computed(() => {
+  const narrowed =
+    query.sessionCode.trim() ||
+    positiveId(query.accountId) ||
+    positiveId(query.responsibleUserId) ||
+    query.sessionStatus ||
+    query.platform ||
+    query.riskLevel ||
+    query.isSupplement ||
+    query.timeFrom ||
+    query.timeTo
+  return narrowed
+    ? '没有符合当前账号、责任人或筛选条件的场次。'
+    : '登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。'
+})
+
+const pendingEmptyTitle = computed(() => (positiveId(pendingOwner.value) ? '该责任人暂无待录入' : '暂无待录入场次'))
+
 function ledgerQueryParams(withPage: boolean) {
   const params = new URLSearchParams()
   if (withPage) {
@@ -595,6 +660,10 @@ function ledgerQueryParams(withPage: boolean) {
   }
   const sessionCode = query.sessionCode.trim()
   if (sessionCode) params.set('sessionCode', sessionCode)
+  const accountId = positiveId(query.accountId)
+  if (accountId) params.set('accountId', String(accountId))
+  const ownerId = positiveId(query.responsibleUserId)
+  if (ownerId) params.set('responsibleUserId', String(ownerId))
   if (query.sessionStatus) params.set('sessionStatus', query.sessionStatus)
   if (query.platform) params.set('platform', query.platform)
   if (query.riskLevel) params.set('riskLevel', query.riskLevel)
@@ -636,6 +705,8 @@ async function loadList() {
 
 function resetQuery() {
   query.sessionCode = ''
+  query.accountId = ''
+  query.responsibleUserId = ''
   query.sessionStatus = ''
   query.platform = ''
   query.riskLevel = ''
@@ -811,14 +882,22 @@ async function openPending() {
   await loadPending()
 }
 
+function resetPending() {
+  pendingOwner.value = ''
+  overdueOnly.value = false
+  loadPending()
+}
+
 async function loadPending() {
   pendingHint.value = ''
   try {
+    const ownerId = positiveId(pendingOwner.value)
     const res = await http.get('/live/report/pending', {
       params: {
         pageNo: 1,
         pageSize: 20,
         overdueOnly: overdueOnly.value ? true : undefined,
+        responsibleUserId: ownerId || undefined,
       },
     })
     pendingRows.value = res.data.data?.list || []

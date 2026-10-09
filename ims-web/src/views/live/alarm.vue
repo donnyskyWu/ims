@@ -35,9 +35,13 @@
           <option value="HANDLED">已处理</option>
           <option value="FALSE_ALARM">误报</option>
         </select>
+        <input v-model="filters.timeFrom" type="date" data-testid="live-alarm-from" aria-label="告警起" />
+        <input v-model="filters.timeTo" type="date" data-testid="live-alarm-to" aria-label="告警止" />
         <span class="sp"></span>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="live-alarm-query">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="live-alarm-reset" @click="resetRecords">重置</button>
       </form>
+      <p v-if="alarmDateHint" class="hint" data-testid="live-alarm-date-hint">{{ alarmDateHint }}</p>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table>
@@ -54,7 +58,11 @@
             </thead>
             <tbody>
               <tr v-if="!records.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无告警</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="live-alarm-empty">
+                    <div class="et">{{ alarmEmptyTitle }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in records" v-else :key="row.id" data-testid="live-alarm-row">
                 <td class="mono">{{ row.id }}</td>
@@ -93,6 +101,22 @@
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-rule-open" @click.stop="openRule()">新建规则</button>
         </span>
       </div>
+      <form class="qbar" @submit.prevent="loadRules">
+        <input v-model="ruleFilters.keyword" data-testid="live-rule-keyword" placeholder="规则名" style="width: 160px" />
+        <select v-model="ruleFilters.ruleType" data-testid="live-rule-type" style="width: 110px">
+          <option value="">全部类型</option>
+          <option value="THRESHOLD">阈值</option>
+          <option value="EVENT">事件</option>
+        </select>
+        <select v-model="ruleFilters.status" data-testid="live-rule-status" style="width: 110px">
+          <option value="">全部状态</option>
+          <option value="ENABLED">启用</option>
+          <option value="DISABLED">停用</option>
+        </select>
+        <span class="sp"></span>
+        <button class="btn btn-pri btn-sm" type="submit" data-testid="live-rule-query">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="live-rule-reset" @click="resetRules">重置</button>
+      </form>
       <div class="tbl-block">
         <div class="tbl-wrap">
           <table>
@@ -109,7 +133,11 @@
             </thead>
             <tbody>
               <tr v-if="!rules.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无规则</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="live-rule-empty">
+                    <div class="et">{{ ruleEmptyTitle }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in rules" v-else :key="row.id" data-testid="live-alarm-rule-row">
                 <td>{{ row.ruleName }}</td>
@@ -297,7 +325,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
@@ -341,7 +369,18 @@ const error = ref('')
 const records = ref<AlarmRow[]>([])
 const rules = ref<RuleRow[]>([])
 const stats = ref<Stats | null>(null)
-const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '' })
+const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '', timeFrom: '', timeTo: '' })
+const ruleFilters = reactive({ keyword: '', ruleType: '', status: '' })
+const alarmDateHint = computed(() => {
+  const from = filters.timeFrom.trim()
+  const to = filters.timeTo.trim()
+  if ((from && !to) || (!from && to)) return '告警起止要一起选，只填一侧不会收窄时间。'
+  return ''
+})
+const alarmEmptyTitle = computed(() => (filters.timeFrom && filters.timeTo ? '该时段暂无风险告警' : '暂无告警'))
+const ruleEmptyTitle = computed(() =>
+  ruleFilters.keyword.trim() || ruleFilters.ruleType || ruleFilters.status ? '没有符合条件的规则' : '暂无规则',
+)
 
 const ruleOpen = ref(false)
 const editingId = ref<number | null>(null)
@@ -411,24 +450,48 @@ function switchTab(name: 'records' | 'rules' | 'stats') {
   else if (name === 'stats') loadStats()
 }
 
+function resetRecords() {
+  filters.sessionCode = ''
+  filters.alarmLevel = ''
+  filters.handleStatus = ''
+  filters.timeFrom = ''
+  filters.timeTo = ''
+  loadRecords()
+}
+
 async function loadRecords() {
   error.value = ''
-  const params: Record<string, string> = { pageNo: '1', pageSize: '20' }
-  if (filters.sessionCode.trim()) params.sessionCode = filters.sessionCode.trim()
-  if (filters.alarmLevel) params.alarmLevel = filters.alarmLevel
-  if (filters.handleStatus) params.handleStatus = filters.handleStatus
+  const params = new URLSearchParams({ pageNo: '1', pageSize: '20' })
+  if (filters.sessionCode.trim()) params.set('sessionCode', filters.sessionCode.trim())
+  if (filters.alarmLevel) params.set('alarmLevel', filters.alarmLevel)
+  if (filters.handleStatus) params.set('handleStatus', filters.handleStatus)
+  if (filters.timeFrom && filters.timeTo) {
+    params.append('timeRange', filters.timeFrom)
+    params.append('timeRange', filters.timeTo)
+  }
   try {
-    const res = await http.get('/live/alarm/records', { params })
+    const res = await http.get(`/live/alarm/records?${params.toString()}`)
     records.value = res.data.data.list || []
   } catch (err) {
     error.value = errorMessage(err)
   }
 }
 
+function resetRules() {
+  ruleFilters.keyword = ''
+  ruleFilters.ruleType = ''
+  ruleFilters.status = ''
+  loadRules()
+}
+
 async function loadRules() {
   error.value = ''
+  const params: Record<string, string | number> = { pageNo: 1, pageSize: 20 }
+  if (ruleFilters.keyword.trim()) params.keyword = ruleFilters.keyword.trim()
+  if (ruleFilters.ruleType) params.ruleType = ruleFilters.ruleType
+  if (ruleFilters.status) params.status = ruleFilters.status
   try {
-    const res = await http.get('/live/alarm/rules', { params: { pageNo: 1, pageSize: 20 } })
+    const res = await http.get('/live/alarm/rules', { params })
     rules.value = res.data.data.list || []
   } catch (err) {
     error.value = errorMessage(err)
