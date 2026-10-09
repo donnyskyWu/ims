@@ -170,7 +170,8 @@ if ($env:E2E_BASE_URL -and $env:E2E_BASE_URL -ne $WebBase) {
 $env:E2E_BASE_URL = $WebBase
 Write-Host "[e2e] E2E_BASE_URL=$env:E2E_BASE_URL"
 
-Write-Host "[e2e] Running Playwright (--workers=1, HTML -> playwright-report/) ..."
+$E2eWorkers = if ($env:E2E_WORKERS) { $env:E2E_WORKERS } else { "2" }
+Write-Host "[e2e] Running Playwright (--workers=$E2eWorkers, HTML -> playwright-report/) ..."
 $logPath = Join-Path $WebRoot "e2e_run.log"
 if (Test-Path $logPath) {
     Remove-Item $logPath -Force -ErrorAction SilentlyContinue
@@ -180,7 +181,7 @@ Push-Location $WebRoot
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
-    & npx playwright test --workers=1 --reporter=list,html 2>&1 | Tee-Object -FilePath $logPath
+    & npx playwright test --workers=$E2eWorkers --retries=1 --reporter=list,html 2>&1 | Tee-Object -FilePath $logPath
     $exitCode = $LASTEXITCODE
     if ($null -eq $exitCode) { $exitCode = 0 }
 } finally {

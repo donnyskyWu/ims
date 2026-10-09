@@ -167,6 +167,24 @@ def ensure_bi_br212_columns() -> None:
             conn.execute(text(f"CREATE INDEX idx_{table}_dept_id ON {table} (dept_id)"))
 
 
+def ensure_exam_question_answer_columns() -> None:
+    """已有库补题目选项与答案。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_exam_question" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_exam_question")}
+    alters: list[str] = []
+    if "options" not in cols:
+        alters.append("ADD COLUMN options JSON NULL")
+    if "answer" not in cols:
+        alters.append("ADD COLUMN answer JSON NULL")
+    if alters:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE ims_exam_question {', '.join(alters)}"))
+
+
 def ensure_train_stat_schema() -> None:
     from sqlalchemy import inspect, text
 
@@ -274,6 +292,7 @@ def init_db() -> None:
     ensure_bi_br212_columns()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()
+    ensure_exam_question_answer_columns()
     ensure_live_approve_comment_column()
     ensure_air_key_columns()
     ensure_air_slice92_columns()

@@ -651,8 +651,14 @@ def ensure_exam_questions(db: Session, tenant_id: int, actor_id: int) -> None:
         .select_from(ExamQuestion)
         .where(ExamQuestion.deleted == 0, ExamQuestion.tenant_id == tenant_id)
     )
-    if count:
-        return
+    if not count:
+        _insert_exam_question_seeds(db, tenant_id, actor_id)
+    from app.exam_paper import backfill_question_answers
+
+    backfill_question_answers(db, tenant_id)
+
+
+def _insert_exam_question_seeds(db: Session, tenant_id: int, actor_id: int) -> None:
     seeds = [
         ("EQ-001", "直播开场 15 分钟的留存红线是？", "LIVE_RULE", "SINGLE", 10, 6),
         ("EQ-002", "以下哪些行为属于平台高危违规（多选）？", "LIVE_RULE", "MULTIPLE", 10, 5),
@@ -1190,3 +1196,8 @@ def bind_position_metrics(
         )
     db.flush()
     return ok({"positionCode": position, "boundCount": len(chosen), "totalWeight": float(total)})
+
+
+from app.exam_paper import router as exam_paper_router
+
+router.include_router(exam_paper_router)
