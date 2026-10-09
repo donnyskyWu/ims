@@ -54,7 +54,11 @@
             </thead>
             <tbody>
               <tr v-if="!records.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无告警</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="live-alarm-empty">
+                    <div class="et">{{ filters.sessionCode.trim() ? '该场次暂无风险告警' : '暂无告警' }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in records" v-else :key="row.id" data-testid="live-alarm-row">
                 <td class="mono">{{ row.id }}</td>
@@ -134,6 +138,7 @@
     </template>
 
     <template v-else>
+      <p v-if="statsEmpty" class="hint" data-testid="live-alarm-stats-empty">暂无风险命中</p>
       <div v-if="stats" class="g4" style="margin-top: 12px">
         <div class="card stat">
           <span class="l">L1 提示</span>
@@ -297,7 +302,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
@@ -341,6 +346,11 @@ const error = ref('')
 const records = ref<AlarmRow[]>([])
 const rules = ref<RuleRow[]>([])
 const stats = ref<Stats | null>(null)
+const statsEmpty = computed(() => {
+  const levels = stats.value?.byLevel
+  if (!levels) return false
+  return Number(levels['1'] || 0) + Number(levels['2'] || 0) + Number(levels['3'] || 0) === 0
+})
 const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '' })
 
 const ruleOpen = ref(false)

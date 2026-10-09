@@ -49,10 +49,18 @@
             <tr v-if="loading">
               <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
+            <tr v-else-if="error">
+              <td colspan="9">
+                <div class="empty" data-testid="live-sessions-error">
+                  <div class="et">{{ error }}</div>
+                  <button class="btn btn-sec btn-sm" type="button" data-testid="live-sessions-retry" @click="loadList">重试</button>
+                </div>
+              </td>
+            </tr>
             <tr v-else-if="!rows.length">
               <td colspan="9">
-                <div class="empty">
-                  <div class="et">{{ error || '暂无场次' }}</div>
+                <div class="empty" data-testid="live-sessions-empty">
+                  <div class="et">暂无场次</div>
                   <div class="es">登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。</div>
                 </div>
               </td>
@@ -206,7 +214,12 @@
       <div v-else-if="detail && tab === '直播数据'" class="tbl-block" style="margin-top: 12px">
         <p class="hint">GMV / 峰值 / 涨粉等由下播录入承载；此处只读 live_room。</p>
         <div class="acts" style="margin: 8px 0">
-          <button class="btn btn-pri btn-sm" type="button" :disabled="!detail.footballRoomId" @click="doSync">从 Football 同步</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="live-sync-btn" @click="doSync">从 Football 同步</button>
+        </div>
+        <p v-if="syncError" class="hint bad" data-testid="live-sync-error">{{ syncError }}</p>
+        <div v-if="metrics && !metrics.footballRoomBasic" class="empty" data-testid="live-metrics-empty">
+          <div class="et">未绑定 Football 房间</div>
+          <div class="es">观看、点赞、预约留在 live_room；GMV 仍走下播录入。</div>
         </div>
         <table v-if="metrics" class="ipg-info-grid">
           <tbody>
@@ -252,7 +265,11 @@
             <button class="btn btn-sec btn-sm" type="button" data-testid="live-supplement-reject" @click="doSupplementApprove(false)">拒绝补录</button>
           </div>
         </div>
-        <table v-if="detail.riskCheckResults?.length">
+        <div v-if="!detail.riskCheckResults?.length" class="empty" data-testid="live-risk-empty">
+          <div class="et">尚未执行风控</div>
+          <div class="es">五项检查待落库：证件、账号、话费、违禁词、设备</div>
+        </div>
+        <table v-else>
           <thead><tr><th>检查项</th><th>结果</th><th>权重分</th></tr></thead>
           <tbody>
             <tr v-for="c in detail.riskCheckResults" :key="c.id">
@@ -266,8 +283,11 @@
         <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
         <div v-if="report" class="hint" data-testid="live-report-headline">
           录入状态 {{ report.entryStatus || '—' }} · GMV ¥{{ displayMoney(report.gmv) }}
-          · 客单价 {{ displayMoney(report.avgOrderValue) }} · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
+          · 客单价 <span data-testid="live-report-aov">{{ displayMoney(report.avgOrderValue) }}</span>
+          · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
+          · 时长 <span data-testid="live-report-duration">{{ reportDurationText }}</span>
         </div>
+        <p v-else class="hint" data-testid="live-report-duration">时长 {{ reportDurationText }}</p>
         <div class="formrow one">
           <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" /></div>
           <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" /></div>
@@ -296,11 +316,13 @@
         <ul v-if="costLines.length" data-testid="live-cost-details">
           <li v-for="(item, index) in costLines" :key="index">{{ costLabel(item.costType) }} {{ displayMoney(item.amount) }}</li>
         </ul>
+        <p v-else-if="report" class="hint" data-testid="live-cost-empty">暂无成本明细</p>
         <p v-if="reportError" class="hint bad" data-testid="live-report-error">{{ reportError }}</p>
         <p v-if="correctionTrace" class="hint" data-testid="live-correction-trace">
           更正单 {{ correctionTrace.correctionId }} · GMV {{ correctionTrace.before?.gmv }} → {{ correctionTrace.after?.gmv }}
         </p>
         <div v-if="!financeView" class="acts" style="margin-top: 8px">
+          <button v-if="!reportLocked" class="btn btn-sec btn-sm" type="button" data-testid="live-report-draft" @click="saveDraft">保存草稿</button>
           <button v-if="!reportLocked" class="btn btn-pri btn-sm" type="button" data-testid="live-report-submit" @click="submitReport">提交下播</button>
           <button
             v-if="report && report.entryStatus === 'SUBMITTED'"
@@ -367,6 +389,7 @@ const pendingRows = ref<any[]>([])
 const pendingHint = ref('')
 const overdueOnly = ref(false)
 const reportError = ref('')
+const syncError = ref('')
 const reportMissing = ref<string[]>([])
 const correcting = ref(false)
 const correctionReason = ref('')
@@ -431,6 +454,16 @@ const reportLocked = computed(() => !!report.value && report.value.entryStatus !
 const financeView = computed(() => report.value?.fieldScope === 'FINANCE')
 const showOpsFields = computed(() => !financeView.value)
 const showCostEditor = computed(() => !financeView.value && (!reportLocked.value || correcting.value))
+
+const reportDurationText = computed(() => {
+  const startText = reportForm.actualStart.trim()
+  const endText = reportForm.actualEnd.trim()
+  if (!startText || !endText) return '—'
+  const start = Date.parse(startText)
+  const end = Date.parse(endText)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return '结束须晚于开始'
+  return `${Math.floor((end - start) / 60000)} 分钟`
+})
 
 function displayMoney(value: unknown) {
   if (value === '***') return '***'
@@ -543,6 +576,8 @@ async function loadList() {
     total.value = res.total || 0
   } catch (e: unknown) {
     error.value = errorMessage(e)
+    rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -681,6 +716,7 @@ async function openDetail(row: any) {
   tab.value = '基本信息'
   reportError.value = ''
   reportMissing.value = []
+  syncError.value = ''
   correcting.value = false
   correctionReason.value = ''
   correctionTrace.value = null
@@ -739,8 +775,14 @@ async function switchTab(name: string) {
 
 async function doSync() {
   if (!detail.value) return
-  metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, {})
-  hint.value = '已同步 live_room'
+  syncError.value = ''
+  try {
+    metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, {})
+    hint.value = '已同步 live_room'
+  } catch (e: unknown) {
+    syncError.value = bizError(e)
+    hint.value = syncError.value
+  }
 }
 
 async function refreshDetail() {
@@ -859,6 +901,21 @@ async function doSupplementApprove(pass: boolean) {
   }
   await refreshDetail()
   await loadList()
+}
+
+async function saveDraft() {
+  if (!detail.value) return
+  reportError.value = ''
+  reportMissing.value = []
+  try {
+    await apiPut(`/live/report/${detail.value.sessionCode}`, reportPayload())
+    report.value = await apiGet(`/live/report/${detail.value.sessionCode}`)
+    applyReport(report.value)
+    hint.value = '草稿已保存'
+  } catch (e: unknown) {
+    reportError.value = bizError(e)
+    hint.value = reportError.value
+  }
 }
 
 async function submitReport() {
