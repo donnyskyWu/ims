@@ -109,17 +109,18 @@ def template_version_no(row: FlowTemplate) -> int:
 def next_instance_no(db: Session, tenant_id: int) -> str:
     day = datetime.now(BJ).strftime("%Y%m%d")
     prefix = f"FI{day}"
-    cnt = int(
-        db.scalar(
-            select(func.count()).select_from(FlowInstance).where(
-                FlowInstance.deleted == 0,
+    taken = set(
+        db.scalars(
+            select(FlowInstance.instance_no).where(
                 FlowInstance.tenant_id == tenant_id,
                 FlowInstance.instance_no.like(f"{prefix}%"),
             )
-        )
-        or 0
+        ).all()
     )
-    return f"{prefix}{cnt + 1:03d}"
+    n = 1
+    while f"{prefix}{n:03d}" in taken and n < 10000:
+        n += 1
+    return f"{prefix}{n:03d}"
 
 
 def instance_start_vo(row: FlowInstance, tpl: FlowTemplate, actor: User, names: dict[int, str]) -> dict:
@@ -416,25 +417,25 @@ def instance_vo(row: FlowInstance, names: dict[int, str]) -> dict:
 
 
 def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
-    tpl_count = int(
-        db.scalar(
-            select(func.count()).select_from(FlowTemplate).where(
+    """补齐默认模板和示例实例。已有账号流转等业务实例时仍要补，不能因表非空整段跳过。"""
+    now = utcnow()
+    templates = [
+        ("FL-LEAVE", "请假审批", "ADMIN", "PUBLISHED", "v1.2", 4),
+        ("FL-REIMB", "费用报销", "FINANCE", "PUBLISHED", "v2.0", 5),
+        ("FL-CONTENT", "内容审核", "BUSINESS", "PUBLISHED", "v1.0", 3),
+        ("FL-LIVE", "开播审批", "BUSINESS", "DRAFT", "v0.9", 2),
+    ]
+    existing_codes = set(
+        db.scalars(
+            select(FlowTemplate.template_code).where(
                 FlowTemplate.deleted == 0, FlowTemplate.tenant_id == tenant_id
             )
-        )
-        or 0
+        ).all()
     )
-    if tpl_count == 0:
-        now = utcnow()
-        templates = [
-            ("FL-LEAVE", "请假审批", "ADMIN", "PUBLISHED", "v1.2", 4),
-            ("FL-REIMB", "费用报销", "FINANCE", "PUBLISHED", "v2.0", 5),
-            ("FL-CONTENT", "内容审核", "BUSINESS", "PUBLISHED", "v1.0", 3),
-            ("FL-LIVE", "开播审批", "BUSINESS", "DRAFT", "v0.9", 2),
-        ]
-        tpl_rows: list[FlowTemplate] = []
-        for code, name, domain, status, ver, nodes in templates:
-            tpl_rows.append(
+    missing = [item for item in templates if item[0] not in existing_codes]
+    if missing:
+        db.add_all(
+            [
                 FlowTemplate(
                     template_code=code,
                     template_name=name,
@@ -447,54 +448,71 @@ def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
                     created_at=now,
                     updated_at=now,
                 )
-            )
-        db.add_all(tpl_rows)
+                for code, name, domain, status, ver, nodes in missing
+            ]
+        )
         db.flush()
 
-    inst_count = int(
-        db.scalar(
-            select(func.count()).select_from(FlowInstance).where(
-                FlowInstance.deleted == 0, FlowInstance.tenant_id == tenant_id
-            )
-        )
-        or 0
+    tpls = list(
+        db.scalars(
+            select(FlowTemplate).where(FlowTemplate.deleted == 0, FlowTemplate.tenant_id == tenant_id)
+        ).all()
     )
-    if inst_count == 0:
-        tpls = list(
-            db.scalars(
-                select(FlowTemplate).where(FlowTemplate.deleted == 0, FlowTemplate.tenant_id == tenant_id)
-            ).all()
-        )
-        by_code = {t.template_code: t for t in tpls}
-        now = utcnow()
-        day = datetime.now(BJ).strftime("%Y%m%d")
-        seeds = [
-            (f"FI{day}001", "FL-LEAVE", "张三 · 年假 3 天", "RUNNING", "部门负责人审批", 26),
-            (f"FI{day}002", "FL-REIMB", "差旅报销 · 上海出差", "RUNNING", "财务复核", 2),
-            (f"FI{day}003", "FL-CONTENT", "短视频《赛事集锦》发布", "APPROVED", "—", 0),
-        ]
-        for no, code, title, st, node, age_hours in seeds:
-            tpl = by_code.get(code)
-            if tpl is None:
-                continue
-            finished = now if st == "APPROVED" else None
-            started = now - timedelta(hours=age_hours) if age_hours else now
-            db.add(
-                FlowInstance(
-                    instance_no=no,
-                    template_id=tpl.id,
-                    template_name=tpl.template_name,
-                    title=title,
-                    instance_status=st,
-                    current_node_name=node,
-                    initiator_user_id=creator_id,
-                    tenant_id=tenant_id,
-                    started_at=started,
-                    finished_at=finished,
-                    created_at=now,
-                    updated_at=now,
-                )
+    by_code = {t.template_code: t for t in tpls}
+    day = datetime.now(BJ).strftime("%Y%m%d")
+    seeds = [
+        (f"FI{day}001", "FL-LEAVE", "张三 · 年假 3 天", "RUNNING", "部门负责人审批", 26),
+        (f"FI{day}002", "FL-REIMB", "差旅报销 · 上海出差", "RUNNING", "财务复核", 2),
+        (f"FI{day}003", "FL-CONTENT", "短视频《赛事集锦》发布", "APPROVED", "—", 0),
+    ]
+    existing_titles = set(
+        db.scalars(
+            select(FlowInstance.title).where(FlowInstance.deleted == 0, FlowInstance.tenant_id == tenant_id)
+        ).all()
+    )
+    # 含软删：uk_flow_instance_no 不区分 deleted，固定 001/002/003 可能已被闭环实例占用。
+    taken_nos = set(
+        db.scalars(
+            select(FlowInstance.instance_no).where(
+                FlowInstance.tenant_id == tenant_id,
+                FlowInstance.instance_no.like(f"FI{day}%"),
             )
+        ).all()
+    )
+    added = False
+    for preferred, code, title, st, node, age_hours in seeds:
+        if title in existing_titles:
+            continue
+        tpl = by_code.get(code)
+        if tpl is None:
+            continue
+        no = preferred
+        if no in taken_nos:
+            n = 1
+            while f"FI{day}{n:03d}" in taken_nos and n < 10000:
+                n += 1
+            no = f"FI{day}{n:03d}"
+        taken_nos.add(no)
+        finished = now if st == "APPROVED" else None
+        started = now - timedelta(hours=age_hours) if age_hours else now
+        db.add(
+            FlowInstance(
+                instance_no=no,
+                template_id=tpl.id,
+                template_name=tpl.template_name,
+                title=title,
+                instance_status=st,
+                current_node_name=node,
+                initiator_user_id=creator_id,
+                tenant_id=tenant_id,
+                started_at=started,
+                finished_at=finished,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        added = True
+    if added:
         db.flush()
     sync_seed_tasks(db, tenant_id, creator_id)
     _backdate_demo_timeout_task(db, tenant_id)

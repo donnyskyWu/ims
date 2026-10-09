@@ -19,7 +19,7 @@ from app.acct_seed import FINANCE_ROLE_KEY
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
-from app.flow import ensure_pending_task, next_instance_no
+from app.flow import ensure_pending_task, next_instance_no, seed_flow
 from app.ops_db import ops_session
 from app.models import (
     AccountApply,
@@ -463,6 +463,7 @@ def _open_transfer_followups(
 ) -> None:
     """流转待确认：新责任人工作台待办 + 流程待办。确认仍走既有 PUT …/confirm。"""
     tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
     platform = (account.platform_type or "DOUYIN").upper()
     title = f"账号流转待确认 {row.account_no}"[:128]
     content = f"{platform}|{row.account_no}|{row.transfer_no}|确认接收后责任人变更"[:512]
