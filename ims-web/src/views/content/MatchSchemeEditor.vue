@@ -18,7 +18,11 @@
       <input v-model="draft.awayName" placeholder="客队" style="width: 120px" />
       <button class="btn btn-sec btn-sm" type="button" @click="addMatch">添加场次</button>
     </div>
-    <div v-if="!scheme.length" class="hint">尚未添加场次</div>
+    <p v-if="fieldError" class="hint bad" data-testid="match-scheme-error">{{ fieldError }}</p>
+    <div v-if="!scheme.length" class="empty" data-testid="match-scheme-empty">
+      <div class="et">尚未添加场次</div>
+      <div class="es">文案和视频都要至少一场。本地桩也不会在没有场次时出稿。</div>
+    </div>
     <div v-for="(item, index) in scheme" :key="index" class="card" style="padding: 8px 10px; margin-bottom: 6px">
       <span>{{ item.homeName || '主' }} VS {{ item.awayName || '客' }}</span>
       <span class="csub" style="margin-left: 8px">{{ item.matchId || item.scheduleId }}</span>
@@ -57,6 +61,7 @@ const tabs = [
 ]
 
 const confirmed = ref(false)
+const fieldError = ref('')
 const draft = reactive({ matchId: '', homeName: '', awayName: '' })
 
 watch(
@@ -72,6 +77,7 @@ watch(
 function switchType(id: number) {
   if (id === matchType.value) return
   if (!confirmed.value) scheme.value = []
+  fieldError.value = ''
   matchType.value = id
 }
 
@@ -80,9 +86,10 @@ function addMatch() {
   const homeName = draft.homeName.trim()
   const awayName = draft.awayName.trim()
   if (!matchId || !homeName || !awayName) {
-    window.alert('请填写 matchId、主队、客队')
+    fieldError.value = '请填写 matchId、主队、客队'
     return
   }
+  fieldError.value = ''
   scheme.value = [...scheme.value, { matchId, homeName, awayName, matchPlays: [] }]
   confirmed.value = false
   draft.matchId = ''
@@ -97,9 +104,10 @@ function removeAt(index: number) {
 
 function confirmPlays() {
   if (!scheme.value.length) {
-    window.alert('请先添加场次')
+    fieldError.value = '请先添加场次'
     return
   }
+  fieldError.value = ''
   confirmed.value = true
 }
 </script>

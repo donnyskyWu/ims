@@ -14,10 +14,14 @@
         </select>
       </div>
       <p v-if="modelsState === 'empty'" class="hint" data-testid="ai-copy-models-empty">没有可选用的文案模型。</p>
+      <p v-if="modelsState === 'error'" class="hint bad" data-testid="ai-copy-models-error">
+        文案模型没有加载出来。关闭后再打开可重试。本地桩不占用本机 GPU。
+      </p>
       <div class="fld">
         <label>{{ roundCount >= 2 ? '本次修改要求' : '提示' }}</label>
-        <textarea v-model="prompt" rows="4" placeholder="写一段赛后复盘，或描述要续写的修改" />
+        <textarea v-model="prompt" rows="4" data-testid="ai-copy-prompt" placeholder="写一段赛后复盘，或描述要续写的修改" />
       </div>
+      <p v-if="!prompt.trim()" class="hint" data-testid="ai-copy-prompt-empty">提示为空时不能生成。本地桩也不会写预览。</p>
     </div>
     <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
     <div v-if="!preview && !error && !emptyResult" class="empty" data-testid="ai-copy-empty">
@@ -31,10 +35,10 @@
       <pre class="ai-copy-preview">{{ preview }}</pre>
     </div>
     <template #footer>
-      <button class="btn btn-sec" type="button" @click="emit('close')">关闭</button>
+      <button class="btn btn-sec" type="button" :disabled="generating" @click="emit('close')">关闭</button>
       <button v-if="error" class="btn btn-sec" type="button" :disabled="generating" @click="retry">重试</button>
       <button v-if="preview" class="btn btn-sec" type="button" :disabled="generating" @click="run(true)">续写</button>
-      <button class="btn btn-sec" type="button" :disabled="generating || !modelId" @click="run(false)">生成</button>
+      <button class="btn btn-sec" type="button" data-testid="ai-copy-generate" :disabled="generating || !modelId || !prompt.trim()" @click="run(false)">生成</button>
       <button class="btn btn-pri" type="button" :disabled="!preview" @click="adopt">采纳</button>
     </template>
   </ProtoDrawer>

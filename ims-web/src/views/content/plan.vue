@@ -123,7 +123,7 @@
       <div class="formrow one">
         <div class="fld">
           <label>计划名称 *</label>
-          <input v-model="form.planName" />
+          <input v-model="form.planName" maxlength="128" data-testid="plan-create-name" />
         </div>
         <div class="fld">
           <label>SOP 模板</label>
@@ -162,6 +162,7 @@
           没有已启用的 SOP 模板。先到 SOP 管理保存模板。
         </p>
         <p v-if="dateError" class="hint bad" data-testid="plan-date-error">{{ dateError }}</p>
+        <p v-if="formError" class="hint bad" data-testid="plan-form-error">{{ formError }}</p>
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="createOpen = false">取消</button>
@@ -219,6 +220,7 @@ const form = ref({
 const sopPick = ref('')
 const sopLoaded = ref(false)
 const dateError = ref('')
+const formError = ref('')
 const sopOptions = ref<{ id: number; sopName: string; sopCode: string; version: number }[]>([])
 const ipOptions = ref<{ id: number; name: string }[]>([])
 const terminateOpen = ref(false)
@@ -310,6 +312,7 @@ function openCreate() {
   form.value = { planName: '', sopId: 0, ipGroupIds: '', startDate: '', endDate: '' }
   sopPick.value = ''
   dateError.value = ''
+  formError.value = ''
   sopLoaded.value = false
   createOpen.value = true
   void loadCreateOptions()
@@ -324,19 +327,33 @@ function parseIpIds(raw: string): number[] {
 
 async function savePlan() {
   dateError.value = ''
+  formError.value = ''
   if (form.value.startDate && form.value.endDate && form.value.endDate < form.value.startDate) {
     dateError.value = '结束日期不能早于开始日期'
     return
   }
+  const name = form.value.planName.trim()
   const ipGroupIds = parseIpIds(form.value.ipGroupIds)
-  if (!form.value.planName || !form.value.sopId || !ipGroupIds.length || !form.value.startDate || !form.value.endDate) {
-    alert('请填写必填项')
+  if (!name) {
+    formError.value = '请填写计划名称'
+    return
+  }
+  if (!form.value.sopId) {
+    formError.value = '请选择已启用的 SOP 模板'
+    return
+  }
+  if (!ipGroupIds.length) {
+    formError.value = '请填写有效的 IP 组 id'
+    return
+  }
+  if (!form.value.startDate || !form.value.endDate) {
+    formError.value = '请填写开始日期和结束日期'
     return
   }
   saving.value = true
   try {
     await http.post('/content/plan', {
-      planName: form.value.planName,
+      planName: name,
       sopId: form.value.sopId,
       ipGroupIds,
       startDate: form.value.startDate,
@@ -345,7 +362,7 @@ async function savePlan() {
     createOpen.value = false
     await loadList()
   } catch (e) {
-    alert(errorMessage(e))
+    formError.value = errorMessage(e)
   } finally {
     saving.value = false
   }

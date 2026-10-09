@@ -82,11 +82,13 @@
       <div class="formrow">
         <div class="fld">
           <label>模板名称 *</label>
-          <input v-model="form.sopName" maxlength="128" />
+          <input v-model="form.sopName" maxlength="128" data-testid="sop-name" />
+          <p v-if="nameError" class="hint bad" data-testid="sop-name-error">{{ nameError }}</p>
         </div>
         <div class="fld">
           <label>内容类型 *</label>
-          <input v-model="form.contentType" placeholder="SHORT_VIDEO" />
+          <input v-model="form.contentType" data-testid="sop-content-type" placeholder="SHORT_VIDEO" />
+          <p v-if="typeError" class="hint bad" data-testid="sop-type-error">{{ typeError }}</p>
         </div>
         <div class="fld">
           <label>级别</label>
@@ -320,6 +322,8 @@ const sopEmptyHint = computed(() =>
 const editorOpen = ref(false)
 const saving = ref(false)
 const saveError = ref('')
+const nameError = ref('')
+const typeError = ref('')
 const editingId = ref<number | null>(null)
 const editingVersion = ref(1)
 const form = ref({
@@ -496,6 +500,8 @@ function openCreate() {
   editingId.value = null
   editingVersion.value = 1
   saveError.value = ''
+  nameError.value = ''
+  typeError.value = ''
   form.value = { sopName: '', contentType: 'SHORT_VIDEO', sopLevel: 'STANDARD', marketingPlan: '' }
   nodes.value = defaultNodes()
   selectedKey.value = nodes.value[0].key
@@ -556,16 +562,22 @@ function onDragStart(ev: PointerEvent, node: EditorNode) {
 
 async function saveSop() {
   saveError.value = ''
-  if (!form.value.sopName.trim() || !form.value.contentType.trim()) {
-    saveError.value = '请填写模板名称与内容类型'
+  nameError.value = ''
+  typeError.value = ''
+  const name = form.value.sopName.trim()
+  const contentTypeName = form.value.contentType.trim()
+  if (!name) nameError.value = '请填写模板名称'
+  if (!contentTypeName) typeError.value = '请填写内容类型'
+  if (!name || !contentTypeName) {
+    saveError.value = !name && !contentTypeName ? '请填写模板名称与内容类型' : nameError.value || typeError.value
     return
   }
   if (dagError.value) return
   saving.value = true
   try {
     const body = {
-      sopName: form.value.sopName.trim(),
-      contentType: form.value.contentType.trim(),
+      sopName: name,
+      contentType: contentTypeName,
       sopLevel: form.value.sopLevel,
       marketingPlan: form.value.marketingPlan || undefined,
       nodes: payloadNodes(),
@@ -586,6 +598,8 @@ async function saveSop() {
 
 async function openEdit(row: SopRow) {
   saveError.value = ''
+  nameError.value = ''
+  typeError.value = ''
   nodes.value = []
   editingId.value = row.id
   editingVersion.value = row.version || 1
