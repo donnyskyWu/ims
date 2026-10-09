@@ -13,7 +13,7 @@
       <button class="btn btn-pri btn-sm" type="button" @click="reconcile">查询</button>
     </form>
 
-    <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+    <div v-if="error" class="hint" data-testid="fin-ledger-error" style="color: var(--red); margin: 8px 0">{{ error }}</div>
 
     <div v-if="view" class="tbl-block" style="margin-top: 12px">
       <p class="hint" data-testid="fin-ledger-consistent" style="margin-bottom: 8px">
@@ -60,7 +60,7 @@
 import { ref } from 'vue'
 import { http } from '../../api/http'
 
-type ShareRow = { shareAmount?: number; status?: string }
+type ShareRow = { shareAmount?: number | string; status?: string }
 
 const sessionCode = ref('')
 const error = ref('')
@@ -109,7 +109,18 @@ async function reconcile() {
   }
   const profit = profitRes.data.data || {}
   const cost = costRes.data.data || {}
-  const shares = ((shareRes.data.data?.list || []) as ShareRow[]).filter((row) => row.status !== 'REVERSED')
+  const shareRows = (shareRes.data.data?.list || []) as ShareRow[]
+  if (
+    profit.netProfit === '***' ||
+    profit.gmv === '***' ||
+    cost.costGmv === '***' ||
+    cost.totalCost === '***' ||
+    shareRows.some((row) => row.shareAmount === '***')
+  ) {
+    error.value = '金额已脱敏，当前角色不能对账'
+    return
+  }
+  const shares = shareRows.filter((row) => row.status !== 'REVERSED')
   const expectedNet = money(money(cost.costGmv) - money(cost.costRefund) - money(cost.totalCost))
   const shareExpected = money(money(cost.shareDaren) + money(cost.shareRealname))
   const shareSum = money(shares.reduce((acc, row) => acc + money(row.shareAmount), 0))
