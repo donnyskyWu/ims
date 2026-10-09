@@ -327,6 +327,7 @@ from app.fin_share_rule import router as fin_share_rule_router
 from app.dc_dashboard import router as dc_dashboard_router
 from app.dc_profit_trace import router as dc_profit_trace_router
 from app.dc_trace import router as dc_trace_router
+from app.dc_dashboard import router as dc_dashboard_router
 from app.perf import router as perf_router
 from app.perf_calc import router as perf_calc_router
 from app.alert import router as alert_router

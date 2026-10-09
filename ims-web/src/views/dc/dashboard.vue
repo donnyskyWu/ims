@@ -6,6 +6,7 @@
         <div class="sub">DC-003 · /ims/dc/dashboard · 经营总览 / 链路健康度 / 维度下钻</div>
       </div>
       <div class="acts">
+        <button class="btn btn-pri btn-sm" type="button" data-testid="dc-dash-manage" @click="openManage">看板管理</button>
         <router-link class="btn btn-sec btn-sm" to="/ims/dc/trace">返回穿透查询</router-link>
       </div>
     </div>
@@ -16,6 +17,11 @@
         <input v-model="period" data-testid="dc-dash-period" type="month" @change="load" />
       </label>
       <span data-testid="dc-dash-as-of" class="hint">数据截至 {{ overview?.dataAsOf || '—' }}</span>
+      <span data-testid="dc-dash-asof" class="hint">数据截至 {{ freshness?.dataAsOf || overview?.dataAsOf || '—' }}</span>
+      <select v-model="selectedId" data-testid="dc-dash-select" style="width: 180px" @change="onSelect">
+        <option value="">未选看板</option>
+        <option v-for="row in dashboards" :key="row.id" :value="String(row.id)">{{ row.dashboardName }}</option>
+      </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit" data-testid="dc-dash-refresh">刷新</button>
     </form>
@@ -184,11 +190,101 @@
         </table>
       </div>
     </div>
+
+    <div v-if="selected" class="card" data-testid="dc-dash-layout-preview" style="margin-top: 12px">
+      <b>当前布局 · {{ selected.dashboardName }}</b>
+      <p class="hint">刷新策略 {{ selected.refreshCron }}</p>
+      <div v-if="selected.layoutConfig?.length" class="preview">
+        <div
+          v-for="widget in selected.layoutConfig"
+          :key="widget.widgetKey"
+          class="preview-item"
+          data-testid="dc-dash-preview-widget"
+        >
+          {{ widgetLabel(widget.widgetType) }}
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 12px">
+      <b>同步任务</b>
+      <div class="tbl-wrap">
+        <table data-testid="dc-dash-freshness">
+          <thead>
+            <tr><th>任务名</th><th>最近运行</th><th>状态</th><th>延迟分钟</th></tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="task in freshness?.syncTaskStatus || []"
+              :key="task.taskName"
+              data-testid="dc-dash-sync-row"
+              :data-status="task.status"
+            >
+              <td>{{ task.taskName }}</td>
+              <td class="mono">{{ task.lastRunAt }}</td>
+              <td>{{ task.status }}</td>
+              <td class="num">{{ task.delayMinutes }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-if="drawer" class="drawer-mask" @click.self="drawer = false">
+      <div class="drawer on" data-testid="dc-dash-drawer" style="width: 960px">
+        <div class="drawer-h">
+          <b>{{ editingId ? '编辑布局' : '创建看板' }}</b>
+          <button type="button" class="btn btn-sec btn-sm" data-testid="dc-dash-drawer-close" @click="drawer = false">关闭</button>
+        </div>
+        <div class="drawer-b designer">
+          <div class="palette">
+            <div class="hint">组件库</div>
+            <button
+              v-for="item in widgetTypes"
+              :key="item.type"
+              type="button"
+              class="btn btn-sec"
+              :data-testid="`dc-dash-widget-${item.type}`"
+              @click="addWidget(item.type)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+          <div>
+            <div class="qbar" style="margin-bottom: 10px">
+              <input v-model="form.name" data-testid="dc-dash-name" placeholder="看板名称" maxlength="64" style="width: 180px" />
+              <input v-model="form.cron" data-testid="dc-dash-cron" placeholder="0 * * * *" style="width: 140px" />
+              <button class="btn btn-sec btn-sm" type="button" data-testid="dc-dash-new" @click="resetForm">新建</button>
+            </div>
+            <div class="canvas" data-testid="dc-dash-canvas">
+              <button
+                v-for="(widget, index) in form.layout"
+                :key="widget.widgetKey"
+                type="button"
+                class="canvas-item"
+                :class="{ on: selectedWidget === index }"
+                data-testid="dc-dash-canvas-widget"
+                @click="selectedWidget = index"
+              >
+                {{ widgetLabel(widget.widgetType) }}
+              </button>
+            </div>
+            <div v-if="activeWidget" class="props" data-testid="dc-dash-props">
+              <label>y <input v-model.number="activeWidget.position.y" type="number" data-testid="dc-dash-pos-y" /></label>
+            </div>
+          </div>
+        </div>
+        <div class="drawer-f">
+          <span v-if="saveNote" class="hint" data-testid="dc-dash-save-note">{{ saveNote }}</span>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="dc-dash-save" @click="saveLayout">保存布局</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 
 type Overview = {
@@ -208,6 +304,24 @@ type Health = {
   trend: Array<{ statDate: string; completeRate: number }>
   accountDigitizationRate: number
   ledgerTraceRate: number
+}
+type WidgetType = 'METRIC_CARD' | 'TREND_CHART' | 'RANK_LIST' | 'HEALTH_PANEL'
+type Widget = {
+  widgetKey: string
+  widgetType: WidgetType
+  position: { x: number; y: number; w: number; h: number }
+  config: Record<string, string>
+}
+type Dashboard = {
+  id: number
+  dashboardName: string
+  status: string
+  refreshCron: string
+  layoutConfig: Widget[]
+}
+type Freshness = {
+  dataAsOf: string
+  syncTaskStatus: Array<{ taskName: string; lastRunAt: string; status: string; delayMinutes: number }>
 }
 type Child = { dimensionValue: string; gmv: number | null; netProfit: number | null; sessionCount: number }
 type DimRow = {
@@ -235,6 +349,22 @@ const rows = ref<DimRow[]>([])
 const error = ref('')
 const open = reactive<Record<string, boolean>>({})
 let dimensionSeq = 0
+const widgetTypes: Array<{ type: WidgetType; label: string }> = [
+  { type: 'METRIC_CARD', label: '指标卡' },
+  { type: 'TREND_CHART', label: '趋势图' },
+  { type: 'RANK_LIST', label: '排行' },
+  { type: 'HEALTH_PANEL', label: '健康面板' },
+]
+const dashboards = ref<Dashboard[]>([])
+const selectedId = ref('')
+const freshness = ref<Freshness | null>(null)
+const drawer = ref(false)
+const editingId = ref<number | null>(null)
+const selectedWidget = ref(-1)
+const saveNote = ref('')
+const form = ref({ name: '', cron: '0 * * * *', layout: [] as Widget[] })
+const selected = computed(() => dashboards.value.find((row) => String(row.id) === selectedId.value) || null)
+const activeWidget = computed(() => form.value.layout[selectedWidget.value] || null)
 
 function currentPeriod() {
   const now = new Date()
@@ -277,18 +407,111 @@ async function loadDimension() {
   for (const key of Object.keys(open)) delete open[key]
 }
 
+function widgetLabel(type: string) {
+  return widgetTypes.find((item) => item.type === type)?.label || type
+}
+
+function resetForm() {
+  editingId.value = null
+  selectedWidget.value = -1
+  saveNote.value = ''
+  form.value = { name: '', cron: '0 * * * *', layout: [] }
+}
+
+function fillForm(row: Dashboard) {
+  editingId.value = row.id
+  selectedWidget.value = row.layoutConfig.length ? 0 : -1
+  form.value = {
+    name: row.dashboardName,
+    cron: row.refreshCron || '0 * * * *',
+    layout: row.layoutConfig.map((widget) => ({
+      widgetKey: widget.widgetKey,
+      widgetType: widget.widgetType,
+      position: { ...widget.position },
+      config: { ...(widget.config || {}) },
+    })),
+  }
+}
+
+function addWidget(type: WidgetType) {
+  const y = form.value.layout.reduce((max, widget) => Math.max(max, widget.position.y + widget.position.h), 0)
+  form.value.layout.push({
+    widgetKey: `${type}-${Date.now()}`,
+    widgetType: type,
+    position: { x: 0, y, w: type === 'METRIC_CARD' ? 3 : 6, h: 2 },
+    config: { metricKey: type === 'HEALTH_PANEL' ? 'assetRelationCompleteRate' : 'totalGmv' },
+  })
+  selectedWidget.value = form.value.layout.length - 1
+}
+
+function openManage() {
+  drawer.value = true
+  saveNote.value = ''
+  const current = selected.value
+  if (current) fillForm(current)
+  else resetForm()
+}
+
+function onSelect() {
+  const current = selected.value
+  if (drawer.value && current) fillForm(current)
+}
+
 async function load() {
   error.value = ''
   try {
-    const [overviewRes, healthRes] = await Promise.all([
+    const [overviewRes, healthRes, listRes, freshRes] = await Promise.all([
       http.get('/dc/dashboard/overview', { params: { statPeriod: period.value } }),
       http.get('/dc/dashboard/health', { params: { dateRange: monthBounds(period.value) } }),
+      http.get('/dc/dashboard/list'),
+      http.get('/dc/dashboard/freshness'),
     ])
     overview.value = overviewRes.data.data
     health.value = healthRes.data.data
+    dashboards.value = Array.isArray(listRes.data.data) ? listRes.data.data : []
+    freshness.value = freshRes.data.data
+    if (!dashboards.value.some((row) => String(row.id) === selectedId.value)) {
+      const enabled = dashboards.value.find((row) => row.status === 'ENABLED') || dashboards.value[0]
+      selectedId.value = enabled ? String(enabled.id) : ''
+    }
     await loadDimension()
   } catch (err) {
     error.value = errorMessage(err)
+  }
+}
+
+async function saveLayout() {
+  saveNote.value = ''
+  const payload = {
+    dashboardName: form.value.name.trim(),
+    refreshCron: form.value.cron.trim() || '0 * * * *',
+    layoutConfig: form.value.layout.map((widget) => ({
+      widgetKey: widget.widgetKey,
+      widgetType: widget.widgetType,
+      position: {
+        x: Number(widget.position.x) || 0,
+        y: Number(widget.position.y) || 0,
+        w: Number(widget.position.w) || 1,
+        h: Number(widget.position.h) || 1,
+      },
+      config: widget.config || {},
+    })),
+  }
+  try {
+    if (editingId.value) {
+      await http.put(`/dc/dashboard/${editingId.value}`, payload)
+      saveNote.value = '布局已保存'
+    } else {
+      const res = await http.post('/dc/dashboard', payload)
+      editingId.value = res.data.data.id
+      selectedId.value = String(res.data.data.id)
+      saveNote.value = '看板已创建'
+    }
+    await load()
+    const current = dashboards.value.find((row) => row.id === editingId.value)
+    if (current) fillForm(current)
+  } catch (err) {
+    saveNote.value = errorMessage(err)
   }
 }
 
@@ -305,4 +528,12 @@ onMounted(load)
 @media (max-width: 1100px) {
   .dash-grid { grid-template-columns: 1fr 1fr 1fr; }
 }
+.preview { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.preview-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 120px; }
+.drawer-mask { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 90; }
+.designer { display: grid; grid-template-columns: 28% 1fr; gap: 16px; min-height: 420px; }
+.palette { display: flex; flex-direction: column; gap: 8px; }
+.canvas { display: flex; gap: 8px; flex-wrap: wrap; min-height: 160px; border: 1px dashed var(--line2); border-radius: 8px; padding: 8px; }
+.canvas-item { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 10px; }
+.canvas-item.on { border-color: var(--blue); }
 </style>

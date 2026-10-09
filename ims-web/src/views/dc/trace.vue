@@ -6,9 +6,7 @@
         <div class="sub">DC-001 · /ims/dc/trace · GET/POST /dc/trace/* · 12 DC</div>
       </div>
       <div class="acts">
-        <router-link class="btn btn-sec btn-sm" to="/ims/dc/dashboard" data-testid="dc-trace-open-dashboard">
-          全链路看板
-        </router-link>
+        <router-link class="btn btn-sec btn-sm" data-testid="dc-trace-dashboard" to="/ims/dc/dashboard">全链路看板</router-link>
       </div>
     </div>
     <div class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">

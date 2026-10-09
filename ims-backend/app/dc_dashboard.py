@@ -7,19 +7,22 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.bi_br212 import primary_dept_id
-from app.corp import ops_db, tenant_of
+from app.core import utcnow
+from app.corp import ops_db, tenant_of, user_names
 from app.dc_profit_trace import parse_asset_ids
 from app.fin import collect_visible_profits, money, session_period_month
-from app.live import BJ, restrict_sessions
-from app.models import LiveReport, LiveSession, User
+from app.live import BJ, restrict_sessions, role_tags
+from app.models import DcDashboard, DcSyncTask, LiveReport, LiveSession, User
 from app.ops_models import IpGroup, PlatformAccount
 
 router = APIRouter(prefix="/dc/dashboard", tags=["dc-dashboard"])
@@ -27,6 +30,15 @@ router = APIRouter(prefix="/dc/dashboard", tags=["dc-dashboard"])
 OVERVIEW_DIMS = frozenset({"PLATFORM", "IP_GROUP", "TEAM"})
 DRILL_DIMS = ("PLATFORM", "ACCOUNT", "IP_GROUP", "TEAM", "REALNAME")
 HEALTH_TARGET = 98
+WIDGET_TYPES = {"METRIC_CARD", "TREND_CHART", "RANK_LIST", "HEALTH_PANEL"}
+DEFAULT_CRON = "0 * * * *"
+FRESH_TARGET = 60
+DWS_TASK = "DWD→DWS 聚合层刷新"
+DEFAULT_TASKS = (
+    ("ODS→DWD 业务台账同步", 12),
+    (DWS_TASK, 28),
+    ("DWS→ADS 看板缓存", 35),
+)
 PLATFORM_LABEL = {
     "DOUYIN": "抖音",
     "KUAISHOU": "快手",
@@ -315,3 +327,268 @@ def dashboard_dimension(
         )
     items.sort(key=lambda row: row["gmv"] or 0, reverse=True)
     return ok(items)
+
+
+class DashboardBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    dashboardName: str | None = None
+    layoutConfig: object | None = None
+    refreshCron: str | None = None
+
+
+def iso_utc(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    aware = dt.replace(tzinfo=timezone.utc)
+    return aware.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def can_configure(db: Session, actor: User) -> bool:
+    tags = role_tags(db, actor)
+    return bool(tags & {"r1", "r4", "sys:admin"})
+
+def layout_of(raw: str) -> list:
+    try:
+        parsed = json.loads(raw or "[]")
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def as_grid_int(value, low: int, high: int) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < low or value > high:
+        return None
+    return value
+
+
+def normalize_layout(raw) -> tuple[list | None, str | None]:
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list):
+        return None, "layoutConfig 须为组件数组"
+    widgets: list[dict] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            return None, "布局组件格式无效"
+        key = str(item.get("widgetKey") or "").strip()
+        if not key or len(key) > 64:
+            return None, "widgetKey 必填且不超过 64 字"
+        if key in seen:
+            return None, "widgetKey 不能重复"
+        seen.add(key)
+        kind = str(item.get("widgetType") or "").strip().upper()
+        if kind not in WIDGET_TYPES:
+            return None, "组件类型仅支持指标卡、趋势图、排行、健康面板"
+        position = item.get("position")
+        if not isinstance(position, dict):
+            return None, "组件位置无效"
+        x = as_grid_int(position.get("x"), 0, 24)
+        y = as_grid_int(position.get("y"), 0, 200)
+        w = as_grid_int(position.get("w"), 1, 24)
+        h = as_grid_int(position.get("h"), 1, 24)
+        if None in (x, y, w, h):
+            return None, "组件位置须为网格整数"
+        config = item.get("config") if "config" in item else {}
+        if not isinstance(config, dict):
+            return None, "组件配置须为对象"
+        widgets.append(
+            {
+                "widgetKey": key,
+                "widgetType": kind,
+                "position": {"x": x, "y": y, "w": w, "h": h},
+                "config": config,
+            }
+        )
+    return widgets, None
+
+
+def normalize_cron(raw: str | None, fallback: str) -> tuple[str | None, str | None]:
+    if raw is None:
+        return fallback, None
+    text = raw.strip()
+    if not text:
+        return fallback, None
+    if len(text) > 64:
+        return None, "refreshCron 过长"
+    return text, None
+
+
+def dashboard_vo(row: DcDashboard, names: dict[int, str]) -> dict:
+    return {
+        "id": row.id,
+        "dashboardName": row.dashboard_name,
+        "ownerUserId": row.owner_user_id,
+        "ownerName": names.get(row.owner_user_id, ""),
+        "status": row.status,
+        "refreshCron": row.refresh_cron or DEFAULT_CRON,
+        "refreshedAt": iso_utc(row.refreshed_at or row.updated_at),
+        "layoutConfig": layout_of(row.layout_config),
+    }
+
+
+def load_dashboard(db: Session, tenant_id: int, dashboard_id: int) -> DcDashboard | None:
+    row = db.get(DcDashboard, dashboard_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    return row
+
+def ensure_sync_tasks(db: Session, tenant_id: int) -> list[DcSyncTask]:
+    rows = list(
+        db.scalars(
+            select(DcSyncTask).where(DcSyncTask.deleted == 0, DcSyncTask.tenant_id == tenant_id).order_by(DcSyncTask.id.asc())
+        ).all()
+    )
+    if rows:
+        return rows
+    now = utcnow()
+    created: list[DcSyncTask] = []
+    for name, delay in DEFAULT_TASKS:
+        row = DcSyncTask(
+            task_name=name,
+            last_run_at=now - timedelta(minutes=delay),
+            status="SUCCESS",
+            delay_minutes=delay,
+            tenant_id=tenant_id,
+            created_at=now,
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
+
+
+def task_view(row: DcSyncTask, now: datetime) -> dict:
+    last = row.last_run_at or now
+    delay = max(0, int((now - last).total_seconds() // 60))
+    stored = (row.status or "SUCCESS").upper()
+    if stored == "FAILED":
+        status = "FAILED"
+    elif delay > FRESH_TARGET:
+        status = "DELAYED"
+    else:
+        status = "SUCCESS"
+    return {
+        "taskName": row.task_name,
+        "lastRunAt": iso_utc(last),
+        "status": status,
+        "delayMinutes": delay,
+        "_last": last,
+    }
+
+
+@router.get("/list")
+def dashboard_list(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(DcDashboard).where(DcDashboard.deleted == 0, DcDashboard.tenant_id == tenant_id)
+        ).all()
+    )
+    rows.sort(key=lambda row: (0 if row.status == "ENABLED" else 1, row.id))
+    names = user_names(db, {row.owner_user_id for row in rows})
+    return ok([dashboard_vo(row, names) for row in rows])
+
+
+@router.post("")
+def dashboard_create(
+    body: DashboardBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_configure(db, actor):
+        return fail(1008, "仅管理员与运营总监可配置看板")
+    name = (body.dashboardName or "").strip()
+    if not name:
+        return fail(1001, "看板名称必填")
+    if len(name) > 64:
+        return fail(1001, "看板名称不超过 64 字")
+    widgets, error = normalize_layout(body.layoutConfig)
+    if error:
+        return fail(1001, error)
+    cron, cron_error = normalize_cron(body.refreshCron, DEFAULT_CRON)
+    if cron_error:
+        return fail(1001, cron_error)
+    now = utcnow()
+    row = DcDashboard(
+        dashboard_name=name,
+        owner_user_id=actor.id,
+        status="ENABLED",
+        refresh_cron=cron or DEFAULT_CRON,
+        layout_config=json.dumps(widgets or [], ensure_ascii=False),
+        refreshed_at=now,
+        tenant_id=tenant_of(actor),
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return ok({"id": row.id, "dashboardName": row.dashboard_name})
+
+
+@router.put("/{dashboard_id}")
+def dashboard_update(
+    dashboard_id: int,
+    body: DashboardBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not can_configure(db, actor):
+        return fail(1008, "仅管理员与运营总监可配置看板")
+    row = load_dashboard(db, tenant_of(actor), dashboard_id)
+    if row is None:
+        return fail(1504, "看板不存在")
+    if body.dashboardName is not None:
+        name = body.dashboardName.strip()
+        if not name:
+            return fail(1001, "看板名称必填")
+        if len(name) > 64:
+            return fail(1001, "看板名称不超过 64 字")
+        row.dashboard_name = name
+    if body.layoutConfig is not None:
+        widgets, error = normalize_layout(body.layoutConfig)
+        if error:
+            return fail(1001, error)
+        row.layout_config = json.dumps(widgets or [], ensure_ascii=False)
+    if body.refreshCron is not None:
+        cron, cron_error = normalize_cron(body.refreshCron, row.refresh_cron or DEFAULT_CRON)
+        if cron_error:
+            return fail(1001, cron_error)
+        row.refresh_cron = cron or DEFAULT_CRON
+    now = utcnow()
+    row.refreshed_at = now
+    row.updated_at = now
+    return ok(None)
+
+
+@router.get("/freshness")
+def dashboard_freshness(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    rows = ensure_sync_tasks(db, tenant_of(actor))
+    now = utcnow()
+    tasks = [task_view(row, now) for row in rows]
+    dws = next((item for item in tasks if item["taskName"] == DWS_TASK), None)
+    business_delay = dws["delayMinutes"] if dws else max((item["delayMinutes"] for item in tasks), default=0)
+    alarm = business_delay > FRESH_TARGET or any(item["status"] != "SUCCESS" for item in tasks)
+    stamps = [item["_last"] for item in tasks if item["status"] != "FAILED"]
+    data_as_of = iso_utc(min(stamps) if stamps else now)
+    public = [
+        {
+            "taskName": item["taskName"],
+            "lastRunAt": item["lastRunAt"],
+            "status": item["status"],
+            "delayMinutes": item["delayMinutes"],
+        }
+        for item in tasks
+    ]
+    return ok(
+        {
+            "businessToDwsDelayMinutes": business_delay,
+            "target": FRESH_TARGET,
+            "isAlarm": alarm,
+            "syncTaskStatus": public,
+            "dataAsOf": data_as_of,
+        }
+    )
+
