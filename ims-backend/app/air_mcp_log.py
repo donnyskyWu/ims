@@ -70,12 +70,19 @@ def audit_log(
             return fail(1001, "dateRange 须为开始日,结束日")
         start = parse_day(parts[0])
         end = parse_day(parts[1])
-        if start is None or end is None or end < start:
+        if start is None or end is None:
             return fail(1001, "dateRange 日期无效")
+        if end < start:
+            return fail(1001, "结束日不能早于开始日")
+        if (end.date() - start.date()).days + 1 > RETAIN_DAYS:
+            return fail(1001, "查询区间不能超过 180 天")
         end = end + timedelta(days=1)
+    tool_name = (tool or "").strip()
+    if tool_name and tool_name not in USAGE_TOOLS:
+        return fail(1001, "tool 仅支持 skills.list、skills.get、experts.list、experts.assemble")
     q = select(AirMcpLog).where(AirMcpLog.deleted == 0, AirMcpLog.tenant_id == tenant_id)
-    if tool:
-        q = q.where(AirMcpLog.tool == tool.strip())
+    if tool_name:
+        q = q.where(AirMcpLog.tool == tool_name)
     if keyId:
         q = q.where(AirMcpLog.key_id == keyId)
     code_text = (keyCode or "").strip()
@@ -146,8 +153,10 @@ def parse_usage_range(date_range: str | None, today: datetime) -> tuple[datetime
             return fail(1001, "dateRange 须为开始日,结束日")
         start = parse_day(parts[0])
         end = parse_day(parts[1])
-        if start is None or end is None or end.date() < start.date():
+        if start is None or end is None:
             return fail(1001, "dateRange 日期无效")
+        if end.date() < start.date():
+            return fail(1001, "结束日不能早于开始日")
         start_day = start.date()
         end_day = end.date()
     if (end_day - start_day).days + 1 > RETAIN_DAYS:

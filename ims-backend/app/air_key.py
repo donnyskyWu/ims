@@ -438,6 +438,8 @@ def key_revoke(
         return fail(1001, "Key 不存在")
     if row.status == "REVOKED":
         return ok(None)
+    reason = ((body.reason if body else None) or "").strip() or "管理员手工"
     row.status = "REVOKED"
+    row.freeze_reason = reason[:64]
     row.updated_at = utcnow()
     return ok(None)
