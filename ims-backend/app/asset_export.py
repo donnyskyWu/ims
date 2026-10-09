@@ -142,11 +142,19 @@ def purge_exports(now: float) -> None:
             Path(path).unlink(missing_ok=True)
 
 
-def issue_export(actor_id: int, body: bytes, media: str, filename: str, kind: str) -> dict | None:
+def issue_export(
+    actor_id: int,
+    body: bytes,
+    media: str,
+    filename: str,
+    kind: str,
+    route: str | None = None,
+    message: str | None = None,
+) -> dict | None:
     now = time.time()
     purge_exports(now)
     token = secrets.token_urlsafe(24)
-    ext = "pdf" if kind == "pdf" else "xlsx"
+    ext = {"pdf": "pdf", "csv": "csv"}.get(kind, "xlsx")
     folder = _root() / "asset" / datetime.now().strftime("%Y%m")
     path = folder / f"{token}.{ext}"
     try:
@@ -155,11 +163,12 @@ def issue_export(actor_id: int, body: bytes, media: str, filename: str, kind: st
     except OSError:
         return None
     _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, media, filename, actor_id, str(path))
-    route = "forward" if kind == "pdf" else "reverse"
+    route_name = route or ("forward" if kind == "pdf" else "reverse")
+    text = message or (FORWARD_MESSAGE if kind == "pdf" else REVERSE_MESSAGE)
     return {
         "exportTaskId": token,
-        "message": FORWARD_MESSAGE if kind == "pdf" else REVERSE_MESSAGE,
-        "downloadUrl": f"/admin-api/ims/asset/{route}/export/file?token={token}",
+        "message": text,
+        "downloadUrl": f"/admin-api/ims/asset/{route_name}/export/file?token={token}",
         "fileName": filename,
     }
 

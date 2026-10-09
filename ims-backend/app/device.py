@@ -20,6 +20,9 @@ def office_page(
     assetCode: str = "",
     keyword: str = "",
     status: str = "",
+    ownerUserId: int = 0,
+    unassigned: int = 0,
+    linkGap: int = 0,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -34,6 +37,9 @@ def office_page(
         asset_code=assetCode,
         keyword=keyword,
         status=status,
+        owner_user_id=ownerUserId,
+        unassigned=bool(unassigned) and ownerUserId <= 0,
+        link_gap=bool(linkGap),
     )
 
 
@@ -45,6 +51,9 @@ def live_page(
     assetType: str = "",
     keyword: str = "",
     status: str = "",
+    ownerUserId: int = 0,
+    unassigned: int = 0,
+    linkGap: int = 0,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -62,6 +71,9 @@ def live_page(
         asset_code=assetCode,
         keyword=keyword,
         status=status,
+        owner_user_id=ownerUserId,
+        unassigned=bool(unassigned) and ownerUserId <= 0,
+        link_gap=bool(linkGap),
     )
 
 
