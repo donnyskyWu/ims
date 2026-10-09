@@ -294,6 +294,9 @@
               <button class="btn btn-sec btn-sm" type="button" data-testid="dc-dash-new" @click="resetForm">新建</button>
             </div>
             <div class="canvas" data-testid="dc-dash-canvas">
+              <p v-if="!form.layout.length" class="hint" data-testid="dc-dash-canvas-empty">
+                从左侧组件库选择组件加入画布
+              </p>
               <button
                 v-for="(widget, index) in form.layout"
                 :key="widget.widgetKey"

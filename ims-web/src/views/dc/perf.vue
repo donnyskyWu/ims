@@ -18,6 +18,14 @@
     </form>
 
     <p
+      v-if="rangeNote"
+      class="hint"
+      data-testid="dc-trace-perf-range"
+      style="color: var(--red); font-weight: 600"
+    >
+      {{ rangeNote }}
+    </p>
+    <p
       v-if="alertText"
       class="hint"
       data-testid="dc-trace-perf-alert"
@@ -86,8 +94,8 @@
               <td class="num" style="color: var(--red)">{{ fmtMs(row.costMs) }}</td>
               <td>{{ row.occurredAt }}</td>
             </tr>
-            <tr v-if="!metrics.slowQueries.length">
-              <td colspan="4"><div class="empty"><div class="et">暂无慢查询</div></div></td>
+            <tr v-if="!metrics.slowQueries.length" data-testid="dc-trace-perf-empty">
+              <td colspan="4"><div class="empty"><div class="et">{{ slowEmptyText }}</div></div></td>
             </tr>
           </tbody>
         </table>
@@ -116,6 +124,11 @@ const start = ref('')
 const end = ref('')
 const metrics = ref<PerfMetrics | null>(null)
 const error = ref('')
+const rangeNote = ref('')
+const slowEmptyText = computed(() => {
+  if ((metrics.value?.queryCount || 0) === 0) return '所选日期暂无穿透查询'
+  return '所选日期暂无慢查询'
+})
 
 const overP95 = computed(() => (metrics.value?.p95Ms ?? 0) > 3000)
 const overP99 = computed(() => (metrics.value?.p99Ms ?? 0) > 8000)
@@ -141,8 +154,21 @@ function openEntry(row: SlowQuery) {
   router.push({ path: '/ims/dc/trace', query: row.entryLabel ? { keyword: row.entryLabel } : {} })
 }
 
+function rangeEdge(): string {
+  if ((start.value && !end.value) || (!start.value && end.value)) return '请同时填写开始日和结束日'
+  if (start.value && end.value && start.value > end.value) return '开始日期不能晚于结束日期'
+  return ''
+}
+
 async function load() {
   error.value = ''
+  rangeNote.value = ''
+  const edge = rangeEdge()
+  if (edge) {
+    rangeNote.value = edge
+    metrics.value = null
+    return
+  }
   try {
     const params: Record<string, string> = {}
     if (start.value && end.value) params.dateRange = `${start.value},${end.value}`

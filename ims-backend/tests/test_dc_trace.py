@@ -507,3 +507,31 @@ def test_dc_trace_aggregate_cost_profit_and_perf_metrics():
     masked_cost = next(node for node in masked_graph["data"]["nodes"] if node["nodeId"] == f"cost:{code}")
     assert masked_cost["metrics"]["totalCost"] is None
     assert nodes  # 管理员图里成本/利润节点已取到
+
+
+def test_dc_trace_query_rejects_inverted_or_partial_date_range():
+    auth = headers()
+    inverted = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=auth,
+        json={
+            "entryType": "ACCOUNT",
+            "entryId": "1",
+            "mode": "DETAIL",
+            "dateRange": ["2030-02-01", "2030-01-01"],
+        },
+    ).json()
+    assert inverted["code"] == 1001
+    assert inverted["msg"] == "dateRange 须为开始日,结束日"
+    partial = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=auth,
+        json={
+            "entryType": "SESSION",
+            "entryId": "IMS0000000000000000",
+            "mode": "DETAIL",
+            "dateRange": ["2030-01-01"],
+        },
+    ).json()
+    assert partial["code"] == 1001
+    assert partial["msg"] == "dateRange 须为开始日,结束日"

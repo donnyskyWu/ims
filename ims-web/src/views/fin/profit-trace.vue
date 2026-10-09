@@ -45,7 +45,7 @@
           <option value="RECALCULATED">已重算</option>
         </select>
         <span class="sp"></span>
-        <button class="btn btn-pri btn-sm" type="button" @click="loadList">查询</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-trace-list-query" @click="loadList">查询</button>
       </form>
 
       <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
@@ -69,7 +69,11 @@
                 <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!rows.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无已核算利润（需先核准成本）</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="fin-trace-list-empty">
+                    <div class="et">{{ listEmptyText }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in rows" v-else :key="row.sessionCode">
                 <td class="mono">{{ row.sessionCode }}</td>
@@ -124,7 +128,11 @@
                 <td colspan="5"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!aggregateRows.length">
-                <td colspan="5"><div class="empty"><div class="et">该维度暂无已核算利润</div></div></td>
+                <td colspan="5">
+                  <div class="empty" data-testid="fin-trace-aggregate-empty">
+                    <div class="et">{{ aggregateEmptyText }}</div>
+                  </div>
+                </td>
               </tr>
               <template v-for="row in aggregateRows" v-else :key="row.dimensionValue">
                 <tr :data-testid="'fin-trace-aggregate-row-' + row.dimensionValue">
@@ -202,7 +210,11 @@
                 <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!abnormalRows.length">
-                <td colspan="7"><div class="empty"><div class="et">暂无异常利润</div></div></td>
+                <td colspan="7">
+                  <div class="empty" data-testid="fin-trace-abnormal-empty">
+                    <div class="et">{{ abnormalEmptyText }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in abnormalRows" v-else :key="row.sessionCode" :data-testid="'fin-trace-abnormal-row-' + row.sessionCode">
                 <td class="mono">{{ row.sessionCode }}</td>
@@ -280,7 +292,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -315,6 +327,18 @@ const abnormalRows = ref<Record<string, any>[]>([])
 const abnormalPlatform = ref('')
 const abnormalFrom = ref('')
 const abnormalTo = ref('')
+const listFiltered = ref(false)
+const aggregateRanged = ref(false)
+const abnormalFiltered = ref(false)
+const listEmptyText = computed(() =>
+  listFiltered.value ? '当前筛选无已核算利润' : '暂无已核算利润（需先核准成本）',
+)
+const aggregateEmptyText = computed(() =>
+  aggregateRanged.value ? '该维度暂无已核算利润（当前日期范围内无场次）' : '该维度暂无已核算利润',
+)
+const abnormalEmptyText = computed(() =>
+  abnormalFiltered.value ? '当前筛选暂无异常利润' : '暂无异常利润',
+)
 
 const costLabels: Record<string, string> = {
   commission: '平台佣金',
@@ -348,6 +372,7 @@ function errText(err: unknown) {
 async function loadList() {
   loading.value = true
   error.value = ''
+  listFiltered.value = !!(query.sessionCode.trim() || query.platform.trim() || query.calcStatus)
   try {
     const res = await http.get('/dc/profit-trace/list', {
       params: {
@@ -377,9 +402,11 @@ async function loadAggregate() {
   if (range.error) {
     error.value = range.error
     aggregateRows.value = []
+    aggregateRanged.value = false
     aggregateLoading.value = false
     return
   }
+  aggregateRanged.value = !!range.range
   try {
     const res = await http.get('/dc/profit-trace/aggregate', {
       params: { aggregateBy: aggregateBy.value, dateRange: range.range || undefined },
@@ -401,6 +428,7 @@ async function loadAggregate() {
 function resetAggregate() {
   aggregateFrom.value = ''
   aggregateTo.value = ''
+  aggregateRanged.value = false
   expanded.value = ''
   loadAggregate()
 }
@@ -427,9 +455,11 @@ async function loadAbnormal() {
   if (range.error) {
     error.value = range.error
     abnormalRows.value = []
+    abnormalFiltered.value = false
     abnormalLoading.value = false
     return
   }
+  abnormalFiltered.value = !!(abnormalPlatform.value.trim() || range.range)
   try {
     const res = await http.get('/dc/profit-trace/abnormal', {
       params: {
@@ -458,6 +488,7 @@ function resetAbnormal() {
   abnormalPlatform.value = ''
   abnormalFrom.value = ''
   abnormalTo.value = ''
+  abnormalFiltered.value = false
   loadAbnormal()
 }
 

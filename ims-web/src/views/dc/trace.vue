@@ -152,7 +152,7 @@
         聚合
       </button>
     </div>
-    <div v-if="error" class="hint" style="color: var(--red)">{{ error }}</div>
+    <div v-if="error" class="hint" data-testid="dc-trace-error" style="color: var(--red)">{{ error }}</div>
     <div v-if="viewMode === 'AGGREGATE'" class="tbl-block" data-testid="dc-trace-aggregate" style="margin-top: 12px">
       <div class="hint" style="margin-bottom: 8px">
         汇总维度
@@ -161,8 +161,11 @@
           <option value="ACCOUNT">按账号</option>
           <option value="TEAM">按团队</option>
           <option value="IP_GROUP">按IP组</option>
-        </select>
+          </select>
       </div>
+      <p v-if="aggregateBy === 'TEAM'" class="hint" data-testid="dc-trace-aggregate-team-hint">
+        团队汇总不可下钻，请改按人、账号或 IP 组
+      </p>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -202,7 +205,11 @@
               <td class="num">{{ row.personCount }}</td>
             </tr>
             <tr v-if="!aggregates.length">
-              <td colspan="6"><div class="empty"><div class="et">暂无汇总</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="dc-trace-aggregate-empty">
+                  <div class="et">{{ aggregateEmptyText }}</div>
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -252,7 +259,7 @@
           </li>
         </ul>
         <div v-if="!nodes.length" class="empty" data-testid="dc-trace-graph-empty">
-          <div class="et">{{ queried ? '当前链路暂无节点，该入口暂无关联场次' : '选择入口后查询' }}</div>
+          <div class="et">{{ graphEmptyText }}</div>
         </div>
       </div>
       <div class="tbl-block" data-testid="dc-trace-detail-table">
@@ -302,7 +309,11 @@
                 <td class="num">{{ moneyOrDash(d.gmv) }}</td>
               </tr>
               <tr v-if="!details.length">
-                <td colspan="6"><div class="empty"><div class="et">暂无明细</div></div></td>
+                <td colspan="6">
+                  <div class="empty" data-testid="dc-trace-detail-empty">
+                    <div class="et">{{ detailEmptyText }}</div>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -504,6 +515,20 @@ const sessionDetail = ref<SessionDetail | null>(null)
 const timeoutHint = computed(() =>
   timeoutDegraded.value ? '1181 穿透查询超时降级，请缩小日期范围' : '超时降级 1181',
 )
+const dateFiltered = computed(
+  () => !!(dateFrom.value && dateTo.value && dateFrom.value <= dateTo.value),
+)
+const graphEmptyText = computed(() => {
+  if (!queried.value) return '选择入口后查询'
+  if (dateFiltered.value) return '该日期范围内暂无关联场次'
+  return '当前链路暂无节点，该入口暂无关联场次'
+})
+const detailEmptyText = computed(() =>
+  queried.value && dateFiltered.value ? '该日期范围内暂无场次' : '暂无明细',
+)
+const aggregateEmptyText = computed(() =>
+  dateFiltered.value ? '该日期范围内暂无汇总' : '暂无汇总',
+)
 
 const ENTRY_LABELS: Record<string, string> = {
   PERSON: '实名人',
@@ -666,6 +691,27 @@ function dateRange(): string[] | undefined {
   return undefined
 }
 
+function dateEdgeError(): string {
+  const from = dateFrom.value
+  const to = dateTo.value
+  if ((from && !to) || (!from && to)) return '请同时填写开始日和结束日'
+  if (from && to && from > to) return '开始日期不能晚于结束日期'
+  return ''
+}
+
+function rejectDateEdge(): boolean {
+  const edge = dateEdgeError()
+  if (!edge) return false
+  error.value = edge
+  nodes.value = []
+  details.value = []
+  aggregates.value = []
+  queried.value = false
+  timeoutDegraded.value = false
+  persistDcFilters()
+  return true
+}
+
 function applyResult(data: TracePayload | undefined, degraded: boolean) {
   nodes.value = degraded ? [] : data?.nodes || []
   details.value = degraded ? [] : data?.detailList?.list || []
@@ -779,6 +825,7 @@ async function loadAggregate() {
     error.value = '请先选择穿透入口'
     return
   }
+  if (rejectDateEdge()) return
   error.value = ''
   try {
     const res = await http.get('/dc/trace/aggregate', {
@@ -804,6 +851,7 @@ async function loadAggregate() {
 
 async function onSubmit() {
   filterRestored.value = false
+  if (rejectDateEdge()) return
   persistDcFilters()
   if (selectedEntry.value) {
     if (viewMode.value === 'AGGREGATE') await loadAggregate()
@@ -818,6 +866,7 @@ async function runQuery() {
     error.value = '请先选择穿透入口'
     return
   }
+  if (rejectDateEdge()) return
   error.value = ''
   exportNote.value = ''
   try {
