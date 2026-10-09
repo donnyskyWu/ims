@@ -54,7 +54,12 @@
                 <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!editableRows.length">
-                <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无登记行' }}</div></div></td>
+                <td colspan="9">
+                  <div class="empty" data-testid="wt-register-empty">
+                    <div class="et">{{ error || '暂无登记行' }}</div>
+                    <div v-if="!error" class="es">换 IP 组或日期后再查询。新表会带出空白登记行。</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="row in editableRows" v-else :key="row.rowNo">
                 <td>
@@ -82,11 +87,14 @@
                     :disabled="row.rowStatus === 'CONFIRMED'"
                     style="max-width: 180px"
                   >
-                    <option :value="0">{{ sopsFor(row.marketingPlan).length === 1 ? '唯一启用模板' : '请选择模板' }}</option>
+                    <option :value="0">{{ sopPickLabel(row.marketingPlan) }}</option>
                     <option v-for="sop in sopsFor(row.marketingPlan)" :key="sop.id" :value="sop.id">
                       {{ sop.sopName }}
                     </option>
                   </select>
+                  <p v-if="!sopsFor(row.marketingPlan).length" class="hint" data-testid="wt-sop-empty">
+                    没有匹配的启用 SOP。到 SOP 管理把营销计划设成同一类型后再选。
+                  </p>
                 </td>
                 <td>
                   <input
@@ -151,7 +159,12 @@
                 <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
               </tr>
               <tr v-else-if="!executionRows.length">
-                <td colspan="8"><div class="empty"><div class="et">{{ execError || '暂无执行记录' }}</div></div></td>
+                <td colspan="8">
+                  <div class="empty" data-testid="wt-exec-empty">
+                    <div class="et">{{ execError || execEmptyTitle }}</div>
+                    <div v-if="!execError" class="es">{{ execEmptyHint }}</div>
+                  </div>
+                </td>
               </tr>
               <tr v-for="line in executionRows" v-else :key="line.id">
                 <td>{{ line.competitionName || '—' }}</td>
@@ -270,7 +283,10 @@
               </tr>
               <tr v-if="!matrixTableRows.length">
                 <td :colspan="5 + matrixAuthors.length * 4">
-                  <div class="empty"><div class="et">暂无矩阵数据</div></div>
+                  <div class="empty" data-testid="wt-matrix-empty">
+                    <div class="et">暂无矩阵数据</div>
+                    <div class="es">登记表里填上作者和赛事后，矩阵才会按场次展开。</div>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -342,6 +358,11 @@ const selectedIds = ref<number[]>([])
 const execLoading = ref(false)
 const execError = ref('')
 const execMarketingPlan = ref('')
+const execFiltering = computed(() => !!execMarketingPlan.value)
+const execEmptyTitle = computed(() => (execFiltering.value ? '没有符合筛选的执行记录' : '暂无执行记录'))
+const execEmptyHint = computed(() =>
+  execFiltering.value ? '换营销计划，或改回全部营销计划' : '确认出任务后，节点会出现在这里',
+)
 const executionRows = ref<ExecRow[]>([])
 const sopOptions = ref<SopOption[]>([])
 
@@ -353,6 +374,13 @@ const allSelected = computed(
 
 function sopsFor(plan: string) {
   return sopOptions.value.filter((sop) => sop.marketingPlan === plan)
+}
+
+function sopPickLabel(plan: string) {
+  const count = sopsFor(plan).length
+  if (!count) return '没有匹配的启用 SOP'
+  if (count === 1) return '唯一启用模板'
+  return '请选择模板'
 }
 
 function marketingPlanLabel(code: string) {

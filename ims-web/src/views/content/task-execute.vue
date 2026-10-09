@@ -125,7 +125,8 @@
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
-          <input v-model="editTitle" />
+          <input v-model="editTitle" data-testid="task-content-title" />
+          <p v-if="titleError" class="hint bad" data-testid="task-content-title-error">{{ titleError }}</p>
         </div>
         <div class="fld">
           <label>文档类型</label>
@@ -198,6 +199,7 @@ const aiOpen = ref(false)
 const editContent = ref<any>(null)
 const editorSeed = ref(0)
 const editTitle = ref('')
+const titleError = ref('')
 const editDocType = ref('COPY')
 const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
@@ -377,6 +379,7 @@ function adoptAi(payload: { markdown: string }) {
 }
 
 async function openContentEdit() {
+  titleError.value = ''
   const lc = vo.value.linkedContent
   const seedTitle = lc?.title || ''
   const seedBody = lc?.body || ''
@@ -440,7 +443,9 @@ async function refreshEditContent() {
 }
 
 async function saveContent() {
+  titleError.value = ''
   if (!editTitle.value.trim()) {
+    titleError.value = '请填写标题'
     window.alert('请填写标题')
     return
   }

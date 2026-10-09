@@ -13,8 +13,8 @@
       <div class="tab" :class="{ on: stage === 1 }" @click="stage = 1; loadQueue()">一级审核</div>
       <div class="tab" :class="{ on: stage === 2 }" @click="stage = 2; loadQueue()">二级审核</div>
     </div>
-    <form class="qbar" @submit.prevent="loadQueue">
-      <input v-model="titleKw" placeholder="标题" style="width: 140px" />
+    <form class="qbar" data-testid="review-filters" @submit.prevent="loadQueue">
+      <input v-model="titleKw" data-testid="review-filter-title" placeholder="标题" style="width: 140px" />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
     </form>
@@ -37,7 +37,12 @@
               <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!filteredRows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无待审' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="review-list-empty">
+                  <div class="et">{{ error || reviewEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ reviewEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in filteredRows" v-else :key="row.reviewNo">
               <td class="mono">{{ row.reviewNo }}</td>
@@ -164,6 +169,9 @@
       <div class="dsec" data-testid="content-review-conclusion">审核结论</div>
       <p class="hint">先看正文，再勾选清单并下结论。</p>
       <div class="dsec">质量清单</div>
+      <p v-if="detailReady && !checklist.length" class="hint" data-testid="review-checklist-empty">
+        这条内容没有质量清单，可直接下结论。
+      </p>
       <label v-for="item in checklist" :key="item.itemCode" class="rowline" style="gap: 8px; margin-bottom: 6px">
         <input v-model="checklistModel[item.itemCode]" type="checkbox" />
         <span>{{ item.itemDesc }}</span>
@@ -177,6 +185,7 @@
           maxlength="512"
           placeholder="驳回时必填，不超过 512 字"
         />
+        <p v-if="remarkError" class="hint bad" data-testid="review-reject-error">{{ remarkError }}</p>
       </div>
       <template #footer>
         <button
@@ -214,6 +223,11 @@ const loading = ref(false)
 const error = ref('')
 const stage = ref(1)
 const titleKw = ref('')
+const reviewFiltering = computed(() => !!titleKw.value.trim())
+const reviewEmptyTitle = computed(() => (reviewFiltering.value ? '暂无待审，没有符合当前标题' : '暂无待审'))
+const reviewEmptyHint = computed(() =>
+  reviewFiltering.value ? '换标题，或清空后再查询' : '待审内容按审核级出现在这里',
+)
 const stats = ref<{ firstPassRate?: number; total?: number }>({})
 const drawerOpen = ref(false)
 const layoutLoading = ref(false)
@@ -225,6 +239,7 @@ const previewLayout = ref('')
 const previewBody = ref('')
 const detailReady = ref(false)
 const remark = ref('')
+const remarkError = ref('')
 const steps = ref<any[]>([])
 const preview = ref<Record<string, any>>({})
 const contentPreview = ref<Record<string, any>>({})
@@ -327,6 +342,7 @@ async function loadPreview(contentId: number | null | undefined) {
 }
 
 async function openReview(row: any) {
+  remarkError.value = ''
   active.value = { ...row, layoutHtml: '', body: '' }
   layoutLoading.value = true
   detailReady.value = false
@@ -364,6 +380,7 @@ async function openReview(row: any) {
 
 async function submit(conclusion: 'PASS' | 'REJECT_BACK') {
   if (!active.value || !detailReady.value) return
+  remarkError.value = ''
   const checklistResult: Record<string, boolean> = { ...checklistModel.value }
   const opinion = remark.value.trim()
   if (conclusion === 'PASS') {
@@ -373,6 +390,7 @@ async function submit(conclusion: 'PASS' | 'REJECT_BACK') {
   const body: any = { conclusion, checklistResult }
   if (conclusion === 'REJECT_BACK') {
     if (!opinion) {
+      remarkError.value = '请先填写驳回意见'
       window.alert('请先填写驳回意见')
       return
     }

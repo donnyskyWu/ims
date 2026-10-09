@@ -14,8 +14,8 @@
       GET <code>/admin-api/ims/content/fb-sync/outbox/page</code> · POST
       <code>…/fb-sync/outbox/{id}/retry</code>
     </p>
-    <form class="qbar" @submit.prevent="loadList">
-      <select v-model="statusFilter" style="width: 140px">
+    <form class="qbar" data-testid="fb-sync-filters" @submit.prevent="loadList">
+      <select v-model="statusFilter" data-testid="fb-sync-filter-status" style="width: 140px">
         <option value="">全部状态</option>
         <option value="PENDING">PENDING</option>
         <option value="SUCCESS">SUCCESS</option>
@@ -42,7 +42,12 @@
               <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无补偿任务' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="fb-sync-empty">
+                  <div class="et">{{ error || syncEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ syncEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.id }}</td>
@@ -71,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 
 const rows = ref<any[]>([])
@@ -79,6 +84,11 @@ const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const statusFilter = ref('')
+const filtering = computed(() => !!statusFilter.value)
+const syncEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的补偿任务' : '暂无补偿任务'))
+const syncEmptyHint = computed(() =>
+  filtering.value ? '换同步状态，或改回全部状态' : 'Football 写失败才会进入这条队列',
+)
 
 async function loadList() {
   loading.value = true
