@@ -1149,6 +1149,29 @@ class TrainMaterial(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class TrainMaterialVersion(Base):
+    """TRN-M-R2 资料版本快照。只追加，已归档行不可改。"""
+
+    __tablename__ = "ims_train_material_version"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "material_id", "version", name="uk_train_material_version"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    material_id: Mapped[int] = mapped_column(BigInteger, index=True, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(256), default="")
+    cate_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    material_type: Mapped[str] = mapped_column(String(16), default="DOC")
+    file_key: Mapped[str] = mapped_column(String(256), default="")
+    link_url: Mapped[str] = mapped_column(String(512), default="")
+    position_codes: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="DRAFT")
+    editor_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class FinCost(Base):
     __tablename__ = "ims_fin_cost"
     __table_args__ = (

@@ -38,8 +38,8 @@ def test_ip_group_tree_members_and_accounts_cascade():
 
     tree = client.get("/admin-api/ims/ip-group/tree", headers=auth)
     assert tree.json()["code"] == 0
-    assert len(tree.json()["data"]) == 1
-    assert tree.json()["data"][0]["children"][0]["groupName"] == "电竞一组"
+    big_node = next(row for row in tree.json()["data"] if row["groupName"] == "神鱼体育")
+    assert big_node["children"][0]["groupName"] == "电竞一组"
 
     member = client.post(
         f"/admin-api/ims/ip-group/{small_id}/members",

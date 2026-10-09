@@ -9,7 +9,24 @@
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；资料按分类维护，支持发布/下架。</p>
+    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；更新资料生成新版本并留档（TRN-M-R2）。</p>
+    <div
+      class="card weekly-card"
+      :class="{ warn: weekly.weeklyUpdateRate < 100 }"
+      data-testid="train-weekly-rate"
+    >
+      <div>
+        <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
+        <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
+        <div class="hint">
+          已更新 {{ weekly.updatedCount }} / 应更新 {{ weekly.shouldUpdateCount }}
+          <span v-if="weekly.weeklyUpdateRate < 100"> · 未达 100%，请督办</span>
+        </div>
+      </div>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="showUnupdated = true">
+        未更新清单
+      </button>
+    </div>
     <div class="g2" style="margin-bottom: 12px; align-items: flex-start">
       <div class="card" style="padding: 12px; max-height: 280px; overflow: auto">
         <div style="font-weight: 600; margin-bottom: 8px">分类树</div>
@@ -53,25 +70,33 @@
                   <th>编号</th>
                   <th>标题</th>
                   <th>类型</th>
+                  <th>版本</th>
                   <th>状态</th>
-                  <th>上传人</th>
+                  <th>更新人</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+                  <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
                 </tr>
                 <tr v-else-if="!rows.length">
-                  <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无资料' }}</div></div></td>
+                  <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无资料' }}</div></div></td>
                 </tr>
                 <tr v-for="row in rows" v-else :key="row.id">
                   <td class="mono">{{ row.materialNo }}</td>
                   <td style="font-weight: 500">{{ row.title }}</td>
                   <td>{{ row.materialType }}</td>
+                  <td class="mono" data-testid="train-material-version">V{{ row.version || 1 }}</td>
                   <td>{{ row.status }}</td>
                   <td>{{ row.uploaderName }}</td>
                   <td>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="train-material-detail" @click="openDetail(row)">
+                      详情
+                    </button>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="train-material-edit" @click="openEdit(row)">
+                      编辑
+                    </button>
                     <button
                       v-if="row.status !== 'OFFLINE'"
                       class="btn btn-sec btn-sm"
@@ -91,7 +116,7 @@
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 400px; padding: 20px">
-        <h3 style="margin: 0 0 12px">上传资料</h3>
+        <h3 style="margin: 0 0 12px">{{ editingId ? '更新资料' : '上传资料' }}</h3>
         <label class="fld">分类 ID</label>
         <input v-model.number="form.cateId" type="number" class="fld-in" />
         <label class="fld">标题</label>
@@ -108,11 +133,67 @@
           <label class="fld">fileKey</label>
           <input v-model="form.fileKey" class="fld-in" placeholder="直传回执 key" />
         </template>
+        <p v-if="editingId" class="hint">将生成新版本 V{{ editingVersion + 1 }}，旧版本留档</p>
         <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-sec btn-sm" type="button" @click="submit(false)">草稿</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submit(true)">发布</button>
+          <template v-if="editingId">
+            <button class="btn btn-pri btn-sm" type="button" @click="submitUpdate">保存新版本</button>
+          </template>
+          <template v-else>
+            <button class="btn btn-sec btn-sm" type="button" @click="submit(false)">草稿</button>
+            <button class="btn btn-pri btn-sm" type="button" @click="submit(true)">发布</button>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="detail" class="modal-mask" @click.self="detail = null">
+      <div class="card" style="width: 520px; padding: 20px" data-testid="train-material-detail-drawer">
+        <h3 style="margin: 0 0 12px">资料详情</h3>
+        <p class="mono">{{ detail.materialNo }} · V{{ detail.version || 1 }}</p>
+        <p>{{ detail.title }}</p>
+        <p class="hint">{{ detail.materialType }} · {{ detail.status }} · {{ detail.uploaderName }}</p>
+        <h4 style="margin: 12px 0 8px">版本历史</h4>
+        <ul v-if="detail.versions?.length" data-testid="train-version-history">
+          <li v-for="item in detail.versions" :key="item.version">
+            V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ item.updatedAt }}
+          </li>
+        </ul>
+        <p v-else class="hint" data-testid="train-version-history">尚无历史版本</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-pri btn-sm" type="button" @click="detail = null">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showUnupdated" class="modal-mask" @click.self="showUnupdated = false">
+      <div class="card" style="width: 560px; padding: 20px; max-height: 80vh; overflow: auto" data-testid="train-unupdated-drawer">
+        <h3 style="margin: 0 0 12px">未更新清单</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>编号</th>
+              <th>标题</th>
+              <th>负责人</th>
+              <th>最后更新</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!weekly.unupdatedList.length">
+              <td colspan="4">本周已发布资料都已更新</td>
+            </tr>
+            <tr v-for="item in weekly.unupdatedList" v-else :key="item.materialNo">
+              <td class="mono">{{ item.materialNo }}</td>
+              <td>{{ item.title }}</td>
+              <td>{{ item.ownerName || '—' }}</td>
+              <td class="mono">{{ item.lastUpdatedAt }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="copyUnupdated">复制清单</button>
+          <button class="btn btn-pri btn-sm" type="button" @click="showUnupdated = false">关闭</button>
         </div>
       </div>
     </div>
@@ -121,7 +202,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Cate = {
   id: number
@@ -131,13 +212,33 @@ type Cate = {
   children: Cate[]
 }
 
+type VersionItem = {
+  version: number
+  title: string
+  editorName?: string
+  updatedAt: string
+}
+
 type Row = {
   id: number
   materialNo: string
   title: string
+  cateId?: number
   materialType: string
+  fileKey?: string
+  linkUrl?: string
+  version?: number
+  versions?: VersionItem[]
   status: string
   uploaderName: string
+}
+
+type Weekly = {
+  weekStart: string
+  shouldUpdateCount: number
+  updatedCount: number
+  weeklyUpdateRate: number
+  unupdatedList: Array<{ materialNo: string; title: string; lastUpdatedAt: string; ownerName: string }>
 }
 
 const cates = ref<Cate[]>([])
@@ -145,7 +246,18 @@ const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
+const editingId = ref(0)
+const editingVersion = ref(1)
+const detail = ref<Row | null>(null)
+const showUnupdated = ref(false)
 const formError = ref('')
+const weekly = reactive<Weekly>({
+  weekStart: '',
+  shouldUpdateCount: 0,
+  updatedCount: 0,
+  weeklyUpdateRate: 100,
+  unupdatedList: [],
+})
 const filters = reactive({ title: '', materialType: '', status: '', cateId: 0 })
 const form = reactive({
   cateId: 0,
@@ -191,6 +303,8 @@ async function loadList() {
 }
 
 function openCreate() {
+  editingId.value = 0
+  editingVersion.value = 1
   form.title = ''
   form.materialType = 'DOC'
   form.fileKey = 'demo/file.pdf'
@@ -200,6 +314,44 @@ function openCreate() {
   }
   formError.value = ''
   showForm.value = true
+}
+
+function openEdit(row: Row) {
+  editingId.value = row.id
+  editingVersion.value = row.version || 1
+  form.cateId = row.cateId || form.cateId
+  form.title = row.title
+  form.materialType = row.materialType || 'DOC'
+  form.fileKey = row.fileKey || 'demo/file.pdf'
+  form.linkUrl = row.linkUrl || ''
+  formError.value = ''
+  showForm.value = true
+}
+
+function openDetail(row: Row) {
+  detail.value = row
+}
+
+async function loadWeekly() {
+  const res = await http.get('/train/material/weekly-update-metrics')
+  if (res.data.code !== 0) return
+  const data = res.data.data || {}
+  weekly.weekStart = data.weekStart || ''
+  weekly.shouldUpdateCount = data.shouldUpdateCount || 0
+  weekly.updatedCount = data.updatedCount || 0
+  weekly.weeklyUpdateRate = data.weeklyUpdateRate ?? 100
+  weekly.unupdatedList = data.unupdatedList || []
+}
+
+async function copyUnupdated() {
+  const text = weekly.unupdatedList
+    .map((item) => `${item.materialNo}\t${item.title}\t${item.ownerName}\t${item.lastUpdatedAt}`)
+    .join('\n')
+  try {
+    await navigator.clipboard.writeText(text || '本周无未更新资料')
+  } catch {
+    /* 浏览器拒绝剪贴板时清单仍留在抽屉里 */
+  }
 }
 
 async function submit(publish: boolean) {
@@ -217,7 +369,13 @@ async function submit(publish: boolean) {
   }
   if (form.materialType === 'LINK') body.linkUrl = form.linkUrl
   else body.fileKey = form.fileKey
-  const res = await http.post('/train/material', body)
+  let res
+  try {
+    res = await http.post('/train/material', body)
+  } catch (err) {
+    formError.value = errorMessage(err)
+    return
+  }
   if (res.data.code !== 0) {
     formError.value = res.data.msg || '保存失败'
     return
@@ -225,6 +383,40 @@ async function submit(publish: boolean) {
   showForm.value = false
   await loadCates()
   await loadList()
+  await loadWeekly()
+}
+
+async function submitUpdate() {
+  formError.value = ''
+  if (!editingId.value || !form.title.trim() || !form.cateId) {
+    formError.value = '标题与分类必填'
+    return
+  }
+  const body: Record<string, unknown> = {
+    title: form.title.trim(),
+    cateId: form.cateId,
+    materialType: form.materialType,
+    positionCodes: [],
+    publish: true,
+  }
+  if (form.materialType === 'LINK') body.linkUrl = form.linkUrl
+  else body.fileKey = form.fileKey
+  let res
+  try {
+    res = await http.put(`/train/material/${editingId.value}`, body)
+  } catch (err) {
+    formError.value = errorMessage(err)
+    return
+  }
+  if (res.data.code !== 0) {
+    formError.value = res.data.msg || '保存失败'
+    return
+  }
+  showForm.value = false
+  editingId.value = 0
+  await loadCates()
+  await loadList()
+  await loadWeekly()
 }
 
 async function offline(row: Row) {
@@ -236,6 +428,7 @@ async function offline(row: Row) {
 onMounted(async () => {
   await loadCates()
   await loadList()
+  await loadWeekly()
 })
 </script>
 
@@ -274,6 +467,24 @@ onMounted(async () => {
 .fld-in {
   width: 100%;
   box-sizing: border-box;
+}
+.weekly-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+.weekly-card.warn {
+  border: 1px solid #e6a700;
+}
+.weekly-label {
+  font-size: 12px;
+  color: var(--text2);
+}
+.weekly-num {
+  font-size: 22px;
+  font-weight: 650;
 }
 .g2 {
   display: grid;

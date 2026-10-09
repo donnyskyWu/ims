@@ -61,6 +61,16 @@
               <td class="mono">{{ row.deadline }}</td>
               <td>{{ row.status }}</td>
               <td>
+                <button
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="train-task-edit"
+                  :disabled="row.status !== 'IN_PROGRESS'"
+                  :title="row.status === 'IN_PROGRESS' ? '截止前可编辑，已有学习记录不回滚' : '已过截止时间'"
+                  @click="openEdit(row)"
+                >
+                  编辑
+                </button>
                 <button class="btn btn-sec btn-sm" type="button" @click="goStudy(row)">去学习</button>
                 <button class="btn btn-sec btn-sm" type="button" @click="openRecords(row)">学习记录</button>
               </td>
@@ -72,7 +82,7 @@
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto">
-        <h3 style="margin: 0 0 12px">下达学习任务</h3>
+        <h3 style="margin: 0 0 12px">{{ editingId ? '编辑学习任务' : '下达学习任务' }}</h3>
         <label class="fld">任务名称</label>
         <input v-model="form.taskName" class="fld-in" />
         <label class="fld">已发布资料（多选）</label>
@@ -120,7 +130,8 @@
           </div>
           <button class="btn btn-sec btn-sm" type="button" style="margin-top: 8px" @click="addQuestion">添加题目</button>
         </div>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="editingId" class="hint">已产生的学习记录不会回滚。</p>
+        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-task-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
@@ -166,7 +177,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 const router = useRouter()
 const route = useRoute()
@@ -175,18 +186,23 @@ type Row = {
   id: number
   taskNo: string
   taskName: string
+  materialIds?: number[]
+  assignTargetUserIds?: number[]
   materialCount: number
   assignedCount: number
   finishRate: number
   confirmType: string
   deadline: string
   status: string
+  passScore?: number
+  quiz?: QuizDraft[]
 }
 
 const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
+const editingId = ref(0)
 const formError = ref('')
 const filters = reactive({ taskName: '', status: '', confirmType: '' })
 type MatPick = { id: number; title: string }
@@ -331,7 +347,33 @@ async function loadList() {
   }
 }
 
+function openEdit(row: Row) {
+  if (row.status !== 'IN_PROGRESS') return
+  editingId.value = row.id
+  form.taskName = row.taskName
+  form.materialIds = [...(row.materialIds || [])]
+  form.userIdsText = (row.assignTargetUserIds && row.assignTargetUserIds.length
+    ? row.assignTargetUserIds
+    : [1]
+  ).join(',')
+  form.deadline = row.deadline || defaultDeadline()
+  form.confirmType = row.confirmType || 'DURATION'
+  form.passScore = row.passScore || 1
+  form.quiz =
+    row.quiz && row.quiz.length
+      ? row.quiz.map((question) => ({
+          question: question.question,
+          options: [...(question.options || ['', ''])],
+          answerIndex: question.answerIndex || 0,
+        }))
+      : [blankQuestion()]
+  formError.value = ''
+  void loadPublishedMaterials()
+  showForm.value = true
+}
+
 function openCreate() {
+  editingId.value = 0
   form.taskName = ''
   form.materialIds = []
   form.userIdsText = '1'
@@ -373,12 +415,21 @@ async function submit() {
       answerIndex: question.answerIndex,
     }))
   }
-  const res = await http.post('/train/task', payload)
+  let res
+  try {
+    res = editingId.value
+      ? await http.put(`/train/task/${editingId.value}`, payload)
+      : await http.post('/train/task', payload)
+  } catch (err) {
+    formError.value = errorMessage(err)
+    return
+  }
   if (res.data.code !== 0) {
     formError.value = res.data.msg || `失败 (${res.data.code})`
     return
   }
   showForm.value = false
+  editingId.value = 0
   await loadList()
 }
 

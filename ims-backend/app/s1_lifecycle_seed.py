@@ -15,6 +15,7 @@ from app.core import SessionLocal
 from app.dingtalk_crypto import pack
 from app.models import (
     AccountApply,
+    AssetLedger,
     CertArchive,
     CertExpireLog,
     OrgEvent,
@@ -185,6 +186,16 @@ def reset_s1_subject(db) -> None:
     for apply in applies:
         if apply.apply_status in ("PENDING_APPROVAL", "PENDING_HANDOVER", "APPROVED"):
             apply.apply_status = "RETURNED"
+    # 中途超时的 closure 会留下 IN_USE 台账。下一次入职要清掉，否则名下「资产在用」不为 0。
+    assets = db.scalars(
+        select(AssetLedger).where(
+            AssetLedger.owner_user_id == user.id,
+            AssetLedger.deleted == 0,
+            AssetLedger.status == "IN_USE",
+        )
+    ).all()
+    for asset in assets:
+        asset.status = "RETURNED"
 
 
 def _post(db, payload: dict) -> None:
