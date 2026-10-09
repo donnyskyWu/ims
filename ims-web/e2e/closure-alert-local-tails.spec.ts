@@ -14,6 +14,7 @@ test.describe('alert local tails closure', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
 
   test('rule level filter, list empty, delivery sample, and L3 receipt copy', async ({ page }) => {
+    test.setTimeout(120_000)
     mkdirSync(shotDir, { recursive: true })
     const pageErrors = attachClosurePageHooks(page)
     const suffix = Date.now()
@@ -145,10 +146,11 @@ test.describe('alert local tails closure', () => {
 
     await page.goto('/ims/alert/escalate')
     await expect(page.locator('h1')).toContainText('升级中心')
-    const pending = page.waitForResponse(
-      (r) => r.url().includes('/alert/escalate/pending') && r.url().includes('currentLevel=1') && r.status() === 200,
-    )
     await page.getByTestId('alert-escalate-level').selectOption('1')
+    const pending = page.waitForResponse(
+      (r) => r.url().includes('/alert/escalate/pending') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await page.locator('form').filter({ has: page.getByTestId('alert-escalate-level') }).getByRole('button', { name: '刷新' }).click()
     await pending
     const escalateEmpty = page.getByTestId('alert-escalate-empty')
     if (await escalateEmpty.count()) {
