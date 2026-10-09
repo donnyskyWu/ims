@@ -67,6 +67,11 @@ PARAM_SEED = [
     ),
     ("content.ai.baseUrl", "", "AI 文案第三方根地址（IMS_CONTENT_AI_BASE_URL；空且未开桩则不可生成）"),
     ("content.ai.tokenSecret", "", "AI 文案 Token（敏感，仅系统参数或 IMS_CONTENT_AI_TOKEN，界面掩码）"),
+    (
+        "content.ai.stubMode",
+        "",
+        "内容文案桩模式 success/fail/http。空则遵循 IMS_CONTENT_AI_STUB；仍空且未配 content.ai.baseUrl 时为 success",
+    ),
     ("comfyui.baseUrl", "", "ComfyUI 根地址（IMS_COMFYUI_BASE_URL；空且未开桩则不可生成）"),
     ("comfyui.tokenSecret", "", "ComfyUI Token（敏感，仅系统参数或 IMS_COMFYUI_TOKEN，界面掩码）"),
 ]

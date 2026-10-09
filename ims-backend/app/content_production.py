@@ -303,12 +303,27 @@ def content_retry_ai(content_id: int, db: Session = Depends(db_session), actor: 
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
+    status = row.ai_generate_status
+    if status in ("GENERATED", "GENERATING"):
+        return ok({"aiGenerateStatus": status, "aiGenerateError": row.ai_generate_error})
     scheme = row.match_scheme or []
     has_matches = isinstance(scheme, list) and len(scheme) >= 1
     if has_matches:
         from app.content_ai import retry_copy
 
         return retry_copy(content_id, db, actor)
-    row.ai_generate_status = "QUEUED"
-    row.ai_generate_error = None
-    return ok({"aiGenerateStatus": row.ai_generate_status})
+    # 工作任务确认草稿：只重写 body。无任务的失败仍按旧路径重新排队。
+    if row.task_id and status in ("FAILED", "QUEUED"):
+        from app.content_ai_draft import retry_project_draft
+
+        try:
+            retry_project_draft(db, row)
+        except Exception:
+            row.ai_generate_status = "FAILED"
+            row.ai_generate_error = "AI 文案生成失败"
+        return ok({"aiGenerateStatus": row.ai_generate_status, "aiGenerateError": row.ai_generate_error})
+    if status == "FAILED":
+        row.ai_generate_status = "QUEUED"
+        row.ai_generate_error = None
+        return ok({"aiGenerateStatus": row.ai_generate_status})
+    return fail(1502, "业务规则冲突")

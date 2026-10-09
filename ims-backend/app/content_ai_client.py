@@ -365,6 +365,30 @@ def extract_markdown(data: Any) -> str:
     return ""
 
 
+def _draft_copy_mode() -> str:
+    """文案预览与确认草稿。``IMS_CONTENT_AI_STUB`` 优先于系统参数 ``content.ai.stubMode``。
+
+    返回 ``fail`` / ``http`` / ``stub``。任务客户端的 ``stub_mode()`` 仍只看环境变量。
+    """
+    raw = (os.environ.get("IMS_CONTENT_AI_STUB") or "").strip().lower()
+    if raw in ("fail", "http"):
+        return raw
+    if raw in ("1", "true", "yes", "on", "success", "timeout"):
+        return "stub"
+    if raw in ("0", "false", "no", "off"):
+        return "http" if base_url() else "stub"
+    configured = get_param("content.ai.stubMode").strip().lower()
+    if configured in ("fail", "http"):
+        return configured
+    if configured == "success":
+        return "stub"
+    if stub_mode() == "fail":
+        return "fail"
+    if stub_mode() == "off" and base_url():
+        return "http"
+    return "stub"
+
+
 def generate_copy(
     *,
     model_name: str,
@@ -376,12 +400,12 @@ def generate_copy(
     """成功返回 ({markdown, mock}, None)；失败返回 (None, reason)。
 
     任务桩（success/timeout/1）与未配置地址时走本地 Markdown。
-    IMS_CONTENT_AI_STUB=http 或未开桩但已配置 content.ai.baseUrl 时走 OpenAI 兼容接口。
+    IMS_CONTENT_AI_STUB=http，或未开桩但已配置 content.ai.baseUrl，或系统参数 stubMode=http 时走 OpenAI 兼容接口。
     """
-    raw = (os.environ.get("IMS_CONTENT_AI_STUB") or "").strip().lower()
-    if raw == "fail" or stub_mode() == "fail":
+    mode = _draft_copy_mode()
+    if mode == "fail":
         return None, "AI 文案生成失败"
-    if raw == "http" or (stub_mode() == "off" and base_url()):
+    if mode == "http":
         return _http_generate(
             model_name=model_name,
             prompt=prompt,

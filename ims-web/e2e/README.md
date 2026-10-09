@@ -63,6 +63,7 @@
 | **E2E-S7-切片 · 任务** | `closure-content-task-execute.spec.ts` | UI 启动计划 → 执行页工作说明 → DONE |
 | **E2E-S7-切片 · 工作任务 (#35)** | `closure-content-work-task.spec.ts` | 工作任务登记确认 → CONTENT_GENERATION 执行/提审 → e2e_author 审过 → DONE |
 | **E2E-S7-切片 · 矩阵出任务 (#103)** | `closure-content-s2-matrix.spec.ts` | 按用例 SOP 绑定 → 矩阵改红黑 → 确认出任务 → 撤回 |
+| **E2E-S7-切片 · 确认草稿 (#128)** | `closure-content-ai-draft.spec.ts` | 打开自动文案 → 确认出任务失败可重试 → 执行页见草稿 → AI 润色与人工修订，不自动提审 |
 | **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
 | **E2E-S7-切片 · 查看版式 (#114)** | `closure-content-view-layout.spec.ts` | 纯 UI · 列表「查看」与审核抽屉同一只读 `layout_html` · 无版式回退正文 · 脚本不渲染 |
 | **E2E-S7-切片 · 审核场次 (#117)** | `closure-content-review-sessions.spec.ts` | 纯 UI · 传足两场 matchScheme 提审 → 审核抽屉只读 Tab + 场次列表 + 玩法摘要「2场」 |

@@ -78,23 +78,18 @@
           <p>
             <b>{{ vo.linkedContent.title }}</b> · {{ vo.linkedContent.status }}
             <span v-if="vo.linkedContent.documentType"> · {{ vo.linkedContent.documentType }}</span>
-            <span v-if="vo.linkedContent.aiGenerateStatus"> · 文案 {{ vo.linkedContent.aiGenerateStatus }}</span>
-            <span v-if="vo.linkedContent.videoJobStatus"> · 视频 {{ vo.linkedContent.videoJobStatus }}</span>
-            <span v-if="vo.linkedContent.aiGenerateStatus === 'FAILED' && vo.linkedContent.aiGenerateError">
-              · {{ vo.linkedContent.aiGenerateError }}
+            <span v-if="aiStatusLabel" class="ai-draft-status" :data-ai-status="vo.linkedContent.aiGenerateStatus">
+              · AI {{ aiStatusLabel }}
             </span>
+            <span v-if="vo.linkedContent.videoJobStatus"> · 视频 {{ vo.linkedContent.videoJobStatus }}</span>
           </p>
+          <p v-if="vo.linkedContent.aiGenerateStatus === 'FAILED'" class="hint">
+            {{ vo.linkedContent.aiGenerateError || 'AI 文案生成失败' }}
+            <button class="btn btn-sec btn-sm" type="button" style="margin-left: 8px" @click="retryAi">重试</button>
+          </p>
+          <pre v-if="vo.linkedContent.body" class="ai-draft-body">{{ vo.linkedContent.body }}</pre>
           <p class="hint" data-testid="gpu-hint">无本机 GPU。密钥仅在系统参数中配置，任务页不展示。</p>
           <button class="btn btn-pri btn-sm" type="button" @click="openContentEdit">进入内容创作</button>
-          <button
-            v-if="vo.linkedContent.aiGenerateStatus === 'FAILED'"
-            class="btn btn-sec btn-sm"
-            type="button"
-            style="margin-left: 8px"
-            @click="retryAi"
-          >
-            重新发起文案
-          </button>
           <button
             v-if="canSubmitReview"
             class="btn btn-sec btn-sm"
@@ -141,8 +136,11 @@
         </div>
         <MatchSchemeEditor v-model:match-type="editMatchType" v-model:scheme="editScheme" :seed-key="editorSeed" />
         <div class="fld">
-          <label>正文</label>
-          <textarea v-model="editBody" rows="4" placeholder="正文" />
+          <div class="rowline" style="justify-content: space-between; margin-bottom: 6px">
+            <label style="margin: 0">正文</label>
+            <button class="btn btn-sec btn-sm" type="button" @click="aiOpen = true">AI 文案</button>
+          </div>
+          <textarea v-model="editBody" rows="6" placeholder="正文" />
         </div>
         <ContentLayoutPanel
           :content-id="vo.linkedContent?.id || null"
@@ -153,6 +151,12 @@
         />
       </div>
       <ContentAiPanel v-if="editContent" :content="editContent" @refresh="refreshEditContent" />
+      <AiCopyDrawer
+        :open="aiOpen"
+        :content-id="vo.linkedContent?.id"
+        @close="aiOpen = false"
+        @adopt="adoptAi"
+      />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="editOpen = false">取消</button>
         <button class="btn btn-pri" type="button" @click="saveContent">保存内容</button>
@@ -165,6 +169,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
+import AiCopyDrawer from '../../components/AiCopyDrawer.vue'
 import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import ContentAiPanel from './ContentAiPanel.vue'
@@ -189,6 +194,7 @@ const uploading = ref(false)
 const uploadError = ref('')
 const savedHint = ref('')
 const editOpen = ref(false)
+const aiOpen = ref(false)
 const editContent = ref<any>(null)
 const editorSeed = ref(0)
 const editTitle = ref('')
@@ -205,6 +211,14 @@ const executeSubtitle = computed(() => {
   if (loading.value) return '加载中…'
   const head = vo.value.planName || '工作任务'
   return `${head} · ${vo.value.nodeName || '—'}`
+})
+
+const aiStatusLabel = computed(() => {
+  const status = vo.value.linkedContent?.aiGenerateStatus
+  if (status === 'QUEUED' || status === 'GENERATING') return '生成中'
+  if (status === 'GENERATED') return '已生成'
+  if (status === 'FAILED') return '失败'
+  return ''
 })
 
 const canSubmitReview = computed(() => {
@@ -357,24 +371,32 @@ async function downloadAttachment(item: UserAttachment) {
   }
 }
 
+function adoptAi(payload: { markdown: string }) {
+  editBody.value = payload.markdown
+  aiOpen.value = false
+}
+
 async function openContentEdit() {
   const lc = vo.value.linkedContent
-  editTitle.value = lc?.title || ''
+  const seedTitle = lc?.title || ''
+  const seedBody = lc?.body || ''
+  editTitle.value = seedTitle
   editDocType.value = lc?.documentType || 'COPY'
   editMatchType.value = 1
   editScheme.value = []
-  editBody.value = ''
+  editBody.value = seedBody
   editContent.value = null
+  aiOpen.value = false
   if (lc?.id) {
     try {
       const { data } = await http.get(`/content/${lc.id}`)
       const detail = data.data || {}
       editContent.value = detail
-      editTitle.value = detail.title || editTitle.value
+      if (editTitle.value === seedTitle) editTitle.value = detail.title || seedTitle
       editDocType.value = detail.documentType || editDocType.value
       editMatchType.value = detail.matchType || 1
       editScheme.value = Array.isArray(detail.matchScheme) ? detail.matchScheme : []
-      editBody.value = detail.body || ''
+      if (editBody.value === seedBody) editBody.value = detail.body || seedBody
       editLayoutHtml.value = detail.layoutHtml || ''
       editLayoutJson.value = typeof detail.layoutJson === 'string' ? detail.layoutJson : JSON.stringify(detail.layoutJson || '')
       editBodyFormat.value = detail.bodyFormat || 'PLAIN'
@@ -474,3 +496,19 @@ async function retryAi() {
 
 watch(taskId, loadExecute, { immediate: true })
 </script>
+
+<style scoped>
+.ai-draft-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 8px 0 12px;
+  max-height: 220px;
+  overflow: auto;
+  background: #f6f8fa;
+  border: 1px solid var(--line);
+  border-radius: var(--r-s);
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+</style>
