@@ -140,6 +140,29 @@ def test_fin_dashboard_groups_month_account_and_exports_xlsx():
     assert trend.json()["data"][0]["netProfit"] == 81400.0
     assert trend.json()["data"][0]["momRate"] is None
 
+    day = client.get(
+        "/admin-api/ims/fin/dashboard/trend",
+        headers=auth,
+        params={"dateRange": "2026-10-01,2026-10-31", "granularity": "DAY"},
+    )
+    assert day.json()["code"] == 0
+    assert day.json()["data"][0]["statPeriod"] == "2026-10-06"
+    assert day.json()["data"][0]["gmv"] == 100000.0
+    week = client.get(
+        "/admin-api/ims/fin/dashboard/trend",
+        headers=auth,
+        params={"dateRange": "2026-10-01,2026-10-31", "granularity": "WEEK"},
+    )
+    assert week.json()["code"] == 0
+    assert week.json()["data"][0]["gmv"] == 100000.0
+    assert "周" in week.json()["data"][0]["periodLabel"]
+    bad_grain = client.get(
+        "/admin-api/ims/fin/dashboard/trend",
+        headers=auth,
+        params={"dateRange": "2026-10-01,2026-10-31", "granularity": "YEAR"},
+    )
+    assert bad_grain.json()["code"] == 1001
+
     exported = client.get(
         "/admin-api/ims/fin/dashboard/export",
         headers=auth,
@@ -154,9 +177,24 @@ def test_fin_dashboard_groups_month_account_and_exports_xlsx():
     pdf = client.get(
         "/admin-api/ims/fin/dashboard/export",
         headers=auth,
-        params={"statPeriod": "2026-10", "format": "PDF"},
+        params={"statPeriod": "2026-10", "dimensionType": "ACCOUNT", "format": "PDF"},
     )
-    assert pdf.json()["code"] == 1001
+    assert pdf.json()["code"] == 0
+    assert pdf.json()["data"]["expiresIn"] == 60
+    assert pdf.json()["data"]["fileName"] == "fin_dashboard_2026-10.pdf"
+    pdf_token = pdf.json()["data"]["downloadUrl"].split("token=", 1)[1]
+    pdf_file = client.get("/admin-api/ims/fin/dashboard/export/file", headers=auth, params={"token": pdf_token})
+    assert pdf_file.status_code == 200
+    assert pdf_file.headers["content-type"].startswith("application/pdf")
+    assert pdf_file.content.startswith(b"%PDF")
+    assert b"2026-10" in pdf_file.content
+    assert code.encode() in pdf_file.content
+    bad_fmt = client.get(
+        "/admin-api/ims/fin/dashboard/export",
+        headers=auth,
+        params={"statPeriod": "2026-10", "format": "CSV"},
+    )
+    assert bad_fmt.json()["code"] == 1001
 
 
 def test_fin_share_reverse_writes_red_entry_audit_and_1150():

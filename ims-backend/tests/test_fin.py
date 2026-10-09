@@ -416,6 +416,9 @@ def test_fin_share_audit_payoff_amounts_sum_to_total():
     paid_rows = again.json()["data"]["list"]
     assert len(paid_rows) == 2
     assert sum(row["shareAmount"] for row in paid_rows) == 4000.0
+    assert all(row["payoffNote"] == "paid" for row in paid_rows)
+    assert all(row["payoffVoucher"]["fileName"] == "v.txt" for row in paid_rows)
+    assert all(row["payoffVoucher"]["fileKey"] == "k" for row in paid_rows)
 
 
 def test_fin_cost_rejects_unapproved_session():
