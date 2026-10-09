@@ -119,7 +119,10 @@
         </div>
         <MatchSchemeEditor v-model:match-type="editMatchType" v-model:scheme="editScheme" :seed-key="editorSeed" />
         <div class="fld">
-          <label>正文</label>
+          <div class="rowline" style="justify-content: space-between; margin-bottom: 6px">
+            <label style="margin: 0">正文</label>
+            <button class="btn btn-sec btn-sm" type="button" @click="aiOpen = true">AI 文案</button>
+          </div>
           <textarea v-model="editBody" rows="4" placeholder="正文" />
         </div>
         <div class="fld">
@@ -167,6 +170,7 @@
       </div>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
       <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
+      <AiCopyDrawer :open="aiOpen" :content-id="editingId" @close="aiOpen = false" @adopt="adoptAi" />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
@@ -194,6 +198,7 @@ import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
+import AiCopyDrawer from '../../components/AiCopyDrawer.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import ContentAiPanel from './ContentAiPanel.vue'
 import MatchSchemeEditor, { type MatchSchemeItem } from './MatchSchemeEditor.vue'
@@ -207,6 +212,7 @@ const statusKw = ref('')
 const drawerOpen = ref(false)
 const viewOpen = ref(false)
 const viewRow = ref<any>(null)
+const aiOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const editingRow = ref<any>(null)
@@ -364,7 +370,13 @@ function openCreate() {
   uploadError.value = ''
   revokePreviews()
   previewHint.value = '插入图片后在此预览'
+  aiOpen.value = false
   drawerOpen.value = true
+}
+
+function adoptAi(payload: { markdown: string }) {
+  editBody.value = payload.markdown
+  aiOpen.value = false
 }
 
 function openEdit(row: any) {
@@ -382,6 +394,7 @@ function openEdit(row: any) {
   editLayoutTemplateId.value = row.layoutTemplateId ?? null
   editorSeed.value += 1
   uploadError.value = ''
+  aiOpen.value = false
   drawerOpen.value = true
   void refreshPreview()
 }

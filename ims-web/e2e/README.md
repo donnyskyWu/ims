@@ -66,6 +66,7 @@
 | **E2E-S7-切片 · 发布** | `closure-content-publish.spec.ts` | author 立项送审 → admin 审过 → UI 发布单 → 督办 hint → 回填 |
 | **E2E-S7-切片 · 查看版式 (#114)** | `closure-content-view-layout.spec.ts` | 纯 UI · 列表「查看」与审核抽屉同一只读 `layout_html` · 无版式回退正文 · 脚本不渲染 |
 | **E2E-S7-切片 · 审核场次 (#117)** | `closure-content-review-sessions.spec.ts` | 纯 UI · 传足两场 matchScheme 提审 → 审核抽屉只读 Tab + 场次列表 + 玩法摘要「2场」 |
+| **E2E-S7-切片 · AI 文案 (#124)** | `closure-content-ai-copy.spec.ts` | 列表编辑打开 AI 文案 → 生成预览 → 采纳后正文可见标记 |
 | **HOME 看板 (#38)** | `closure-home-dashboard.spec.ts` | `/ims/home` KPI「数据延迟」→ 刷新 dashboard → 账号数下钻抖音 → 快捷「登记工作任务」 |
 | **E2E-S5-01 (#68)** | `closure-asset-purchase-import.spec.ts` | 纯 UI 文件选择器上传 CSV · 部分成功 2 条待审核 · 第 3 行 `assetName` · 坏编号不在台账 · 时间线「采购入台账」 |
 | **E2E-S5-05 (#72)** | `closure-asset-reverse-entry.spec.ts` | 纯 UI 绑定 `AC-E2E-FIN` / `IMS20261008DYE0072` · 不存在入口 **1500** · 领用后账号反查「在用」· 场次反查不含只绑账号的那台 |
