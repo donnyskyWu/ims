@@ -48,10 +48,21 @@
               <td>{{ row.status }}</td>
               <td class="num">{{ row.usageCount }}</td>
               <td>
+                <button class="btn btn-txt btn-sm" type="button" @click="openPreview(row)">预览</button>
+                <button
+                  v-if="row.source !== 'PRESET'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  @click="openEdit(row)"
+                >
+                  编辑
+                </button>
                 <button
                   v-if="row.status === 'DRAFT'"
                   class="btn btn-sec btn-sm"
                   type="button"
+                  style="margin-left: 6px"
                   @click="publish(row.id)"
                 >
                   发布
@@ -60,14 +71,56 @@
                   v-if="row.status === 'ENABLED'"
                   class="btn btn-txt btn-sm"
                   type="button"
+                  style="margin-left: 6px"
                   @click="setEnabled(row.id, false)"
                 >
                   停用
+                </button>
+                <button
+                  v-if="row.status === 'DISABLED'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  @click="setEnabled(row.id, true)"
+                >
+                  重新启用
                 </button>
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="showPreview" class="modal-mask" @click.self="showPreview = false">
+      <div class="card" style="width: 520px; padding: 20px">
+        <h3 style="margin: 0 0 12px">预览 · {{ previewTitle }}</h3>
+        <iframe
+          v-if="previewHtml"
+          sandbox=""
+          :srcdoc="previewHtml"
+          title="模板预览"
+          style="width: 100%; height: 220px; border: 1px solid var(--line, #ddd); background: #fff"
+        />
+        <p v-else class="hint">暂无预览</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="showPreview = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showEdit" class="modal-mask" @click.self="showEdit = false">
+      <div class="card" style="width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">编辑公推模板</h3>
+        <label class="fld">模板名称</label>
+        <input v-model="editForm.templateName" class="fld-in" />
+        <label class="fld">预览 HTML</label>
+        <textarea v-model="editForm.previewHtml" class="fld-in" rows="4" />
+        <p v-if="editError" class="hint" style="color: var(--red)">{{ editError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="showEdit = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" @click="submitEdit">保存</button>
+        </div>
       </div>
     </div>
 
@@ -99,15 +152,23 @@ type Row = {
   source: string
   status: string
   usageCount: number
+  previewHtml?: string
 }
 
 const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
+const showEdit = ref(false)
+const showPreview = ref(false)
 const formError = ref('')
+const editError = ref('')
+const previewTitle = ref('')
+const previewHtml = ref('')
+const editingId = ref<number | null>(null)
 const filters = reactive({ templateName: '', status: '' })
 const form = reactive({ templateName: '', previewHtml: '' })
+const editForm = reactive({ templateName: '', previewHtml: '' })
 
 async function loadList() {
   loading.value = true
@@ -157,6 +218,39 @@ async function submitCreate() {
     await loadList()
   } catch {
     formError.value = '网络错误'
+  }
+}
+
+function openPreview(row: Row) {
+  previewTitle.value = row.templateName
+  previewHtml.value = row.previewHtml || ''
+  showPreview.value = true
+}
+
+function openEdit(row: Row) {
+  editingId.value = row.id
+  editForm.templateName = row.templateName
+  editForm.previewHtml = row.previewHtml || ''
+  editError.value = ''
+  showEdit.value = true
+}
+
+async function submitEdit() {
+  if (editingId.value == null) return
+  editError.value = ''
+  try {
+    const res = await http.put(`/content/layout-template/${editingId.value}`, {
+      templateName: editForm.templateName,
+      previewHtml: editForm.previewHtml,
+    })
+    if (res.data.code !== 0) {
+      editError.value = res.data.msg || '保存失败'
+      return
+    }
+    showEdit.value = false
+    await loadList()
+  } catch {
+    editError.value = '网络错误'
   }
 }
 

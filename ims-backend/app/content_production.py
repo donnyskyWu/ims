@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -16,17 +16,19 @@ router = APIRouter(prefix="/content", tags=["content-production"])
 
 
 class ContentSaveBody(BaseModel):
+    """未出现的可选字段保持 None，更新时不覆盖已有正文/文档类型/玩法。"""
+
     model_config = ConfigDict(populate_by_name=True)
     title: str
-    contentType: str = "SHORT_VIDEO"
-    platformType: str = ""
-    body: str = ""
-    layoutHtml: str = ""
-    documentType: str = ""
+    contentType: str | None = None
+    platformType: str | None = None
+    body: str | None = None
+    layoutHtml: str | None = None
+    documentType: str | None = None
     taskId: int | None = None
     ipGroupId: int | None = None
     matchType: int | None = None
-    matchScheme: list[dict] = Field(default_factory=list)
+    matchScheme: list[dict] | None = None
     competitionId: str | None = None
     competitionName: str | None = None
 
@@ -44,8 +46,16 @@ def match_summary(scheme: list) -> str:
 
 
 def apply_match_fields(project: ContentProject, body: ContentSaveBody) -> None:
-    scheme = body.matchScheme or []
-    project.match_type = body.matchType
+    if (
+        body.matchScheme is None
+        and body.matchType is None
+        and body.competitionId is None
+        and body.competitionName is None
+    ):
+        return
+    scheme = list(body.matchScheme) if body.matchScheme is not None else list(project.match_scheme or [])
+    if body.matchType is not None:
+        project.match_type = body.matchType
     project.match_scheme = scheme
     project.match_summary = match_summary(scheme)
     if scheme:

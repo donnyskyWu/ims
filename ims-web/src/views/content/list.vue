@@ -10,14 +10,21 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      契约 GET/POST/PUT <code>/admin-api/ims/content</code> · Football
+      契约 GET/POST/PUT/DELETE <code>/admin-api/ims/content</code> · Football
       <code>GET|POST …/{id}/fb-sync</code>（CONTENT-109）。保存成功即 200，HTTP 失败进
       <router-link to="/ims/content/fb-sync">补偿队列</router-link> · 审核通过后
       <router-link to="/ims/content/publish">发布管理</router-link>（回填/督办）。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="titleKw" placeholder="标题" style="width: 160px" />
-      <input v-model="statusKw" placeholder="状态" style="width: 120px" />
+      <select v-model="statusKw" style="width: 160px">
+        <option value="">全部状态</option>
+        <option value="DRAFT">DRAFT</option>
+        <option value="REJECTED">REJECTED</option>
+        <option value="PENDING_REVIEW">PENDING_REVIEW</option>
+        <option value="PENDING_PUBLISH">PENDING_PUBLISH</option>
+        <option value="PUBLISHED">PUBLISHED</option>
+      </select>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
     </form>
     <div class="tbl-block">
@@ -51,6 +58,15 @@
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
                 <button
+                  v-if="row.contentStatus === 'DRAFT' || row.contentStatus === 'REJECTED'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  @click="removeContent(row)"
+                >
+                  删除
+                </button>
+                <button
                   v-if="row.fbSyncStatus === 'COMPENSATING' || row.fbSyncStatus === 'FAILED'"
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -80,23 +96,26 @@
       <div class="formrow one">
         <div class="fld">
           <label>标题 *</label>
-          <input v-model="form.title" />
+          <input v-model="editTitle" />
         </div>
         <div class="fld">
           <label>内容类型</label>
-          <input v-model="form.contentType" placeholder="SHORT_VIDEO" />
+          <select v-model="editContentType">
+            <option value="SHORT_VIDEO">SHORT_VIDEO</option>
+            <option value="ARTICLE">ARTICLE</option>
+          </select>
         </div>
         <div class="fld">
-          <label>matchType</label>
-          <input v-model.number="form.matchType" type="number" />
+          <label>文档类型</label>
+          <select v-model="editDocType">
+            <option value="COPY">COPY</option>
+            <option value="SCRIPT">SCRIPT</option>
+          </select>
         </div>
-        <div class="fld">
-          <label>matchScheme JSON</label>
-          <textarea v-model="form.matchSchemeJson" rows="5" />
-        </div>
+        <MatchSchemeEditor v-model:match-type="editMatchType" v-model:scheme="editScheme" :seed-key="editorSeed" />
         <div class="fld">
           <label>正文</label>
-          <textarea v-model="form.body" rows="4" />
+          <textarea v-model="editBody" rows="4" placeholder="正文" />
         </div>
       </div>
       <template #footer>
@@ -111,6 +130,7 @@
 import { ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import MatchSchemeEditor, { type MatchSchemeItem } from './MatchSchemeEditor.vue'
 
 const rows = ref<any[]>([])
 const total = ref(0)
@@ -121,13 +141,13 @@ const statusKw = ref('')
 const drawerOpen = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
-const form = ref({
-  title: '',
-  contentType: 'SHORT_VIDEO',
-  matchType: 1,
-  matchSchemeJson: '[]',
-  body: '',
-})
+const editorSeed = ref(0)
+const editTitle = ref('')
+const editContentType = ref('SHORT_VIDEO')
+const editDocType = ref('COPY')
+const editMatchType = ref(1)
+const editScheme = ref<MatchSchemeItem[]>([])
+const editBody = ref('')
 
 async function loadList() {
   loading.value = true
@@ -147,44 +167,48 @@ async function loadList() {
   }
 }
 
+function resetForm() {
+  editTitle.value = ''
+  editContentType.value = 'SHORT_VIDEO'
+  editDocType.value = 'COPY'
+  editMatchType.value = 1
+  editScheme.value = []
+  editBody.value = ''
+}
+
 function openCreate() {
   editingId.value = null
-  form.value = { title: '', contentType: 'SHORT_VIDEO', matchType: 1, matchSchemeJson: '[]', body: '' }
+  resetForm()
+  editorSeed.value += 1
   drawerOpen.value = true
 }
 
 function openEdit(row: any) {
   editingId.value = row.id
-  form.value = {
-    title: row.title,
-    contentType: row.contentType || 'SHORT_VIDEO',
-    matchType: row.matchType || 1,
-    matchSchemeJson: JSON.stringify(row.matchScheme || [], null, 2),
-    body: row.body || '',
-  }
+  editTitle.value = row.title || ''
+  editContentType.value = row.contentType || 'SHORT_VIDEO'
+  editDocType.value = row.documentType || 'COPY'
+  editMatchType.value = row.matchType || 1
+  editScheme.value = Array.isArray(row.matchScheme) ? row.matchScheme : []
+  editBody.value = row.body || ''
+  editorSeed.value += 1
   drawerOpen.value = true
 }
 
 async function saveContent() {
-  if (!form.value.title.trim()) {
+  if (!editTitle.value.trim()) {
     window.alert('请填写标题')
-    return
-  }
-  let scheme: unknown[] = []
-  try {
-    scheme = JSON.parse(form.value.matchSchemeJson || '[]')
-  } catch {
-    window.alert('matchScheme JSON 无效')
     return
   }
   saving.value = true
   try {
     const payload = {
-      title: form.value.title,
-      contentType: form.value.contentType,
-      matchType: form.value.matchType,
-      matchScheme: scheme,
-      body: form.value.body,
+      title: editTitle.value.trim(),
+      contentType: editContentType.value,
+      documentType: editDocType.value,
+      matchType: editMatchType.value,
+      matchScheme: editScheme.value,
+      body: editBody.value,
     }
     if (editingId.value) {
       await http.put(`/content/${editingId.value}`, payload)
@@ -197,6 +221,16 @@ async function saveContent() {
     window.alert(errorMessage(e))
   } finally {
     saving.value = false
+  }
+}
+
+async function removeContent(row: any) {
+  if (!window.confirm(`确认删除「${row.title}」？`)) return
+  try {
+    await http.delete(`/content/${row.id}`)
+    await loadList()
+  } catch (e) {
+    window.alert(errorMessage(e))
   }
 }
 

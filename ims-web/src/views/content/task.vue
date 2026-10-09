@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>我的任务</h1>
-        <div class="sub">任务分页 · 执行 / 完成（CONTENT-103 · ADR-079）</div>
+        <div class="sub">任务分页 · 执行 / 提审 / 完成（CONTENT-103 · ADR-079）</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="loadList">刷新</button>
@@ -19,7 +19,20 @@
     </div>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model.number="ipGroupId" type="number" placeholder="IP 组 id" style="width: 100px" />
-      <input v-model="statusKw" placeholder="状态" style="width: 120px" />
+      <select v-model="statusKw" style="width: 140px">
+        <option value="">全部状态</option>
+        <option value="PENDING">PENDING</option>
+        <option value="IN_PROGRESS">IN_PROGRESS</option>
+        <option value="DONE">DONE</option>
+        <option value="TERMINATED">TERMINATED</option>
+      </select>
+      <input
+        v-if="!onlyMine"
+        v-model.number="assigneeUserId"
+        type="number"
+        placeholder="执行人 id"
+        style="width: 110px"
+      />
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
     </form>
     <div class="tbl-block">
@@ -55,10 +68,21 @@
               <td>
                 <button class="btn btn-pri btn-sm" type="button" @click="goExecute(row.id)">执行</button>
                 <button
+                  v-if="canSubmit(row)"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  @click="submitReview(row)"
+                >
+                  提交审核
+                </button>
+                <button
                   v-if="row.status === 'IN_PROGRESS' || row.status === 'PENDING'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   style="margin-left: 6px"
+                  :disabled="completeDisabled(row)"
+                  :title="completeTitle(row)"
                   @click="quickComplete(row)"
                 >
                   完成
@@ -77,6 +101,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
+import { COMPLETE_GATE_HINT, contentPassesGate } from './content-gate'
 
 const router = useRouter()
 const rows = ref<any[]>([])
@@ -85,7 +110,22 @@ const loading = ref(false)
 const error = ref('')
 const onlyMine = ref(true)
 const ipGroupId = ref<number | undefined>()
+const assigneeUserId = ref<number | undefined>()
 const statusKw = ref('')
+
+function canSubmit(row: any) {
+  const st = row.linkedContent?.status
+  return st === 'DRAFT' || st === 'REJECTED'
+}
+
+function completeDisabled(row: any) {
+  if (row.nodeType !== 'CONTENT_GENERATION') return false
+  return !contentPassesGate(row.linkedContent?.status)
+}
+
+function completeTitle(row: any) {
+  return completeDisabled(row) ? COMPLETE_GATE_HINT : ''
+}
 
 async function loadList() {
   loading.value = true
@@ -97,6 +137,7 @@ async function loadList() {
       onlyMine: onlyMine.value,
     }
     if (ipGroupId.value) params.ipGroupId = ipGroupId.value
+    if (!onlyMine.value && assigneeUserId.value) params.assigneeUserId = assigneeUserId.value
     if (statusKw.value.trim()) params.status = statusKw.value.trim()
     const { data } = await http.get('/content/task/page', { params })
     rows.value = data.data?.list || []
@@ -114,7 +155,19 @@ function goExecute(id: number) {
   router.push(`/ims/content/task/${id}/execute`)
 }
 
+async function submitReview(row: any) {
+  const cid = row.linkedContent?.id
+  if (!cid) return
+  try {
+    await http.post(`/content/${cid}/submit-review`)
+    await loadList()
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
 async function quickComplete(row: any) {
+  if (completeDisabled(row)) return
   const deliverables =
     row.nodeType === 'CONTENT_GENERATION' ? undefined : window.prompt('工作说明（必填）', '') || ''
   if (row.nodeType !== 'CONTENT_GENERATION' && !String(deliverables).trim()) {
