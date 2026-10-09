@@ -33,6 +33,8 @@ router = APIRouter(prefix="/fin", tags=["fin"])
 BJ = timezone(timedelta(hours=8))
 SHARE_TYPES = frozenset({"MANUAL", "ENGINE"})
 ENTRY_STATUSES = frozenset({"DRAFT", "SUBMITTED", "CONFIRMED"})
+SHARE_RESULT_TARGETS = frozenset({"DAREN", "REALNAME", "TEAM"})
+SHARE_RESULT_STATUSES = frozenset({"PENDING_AUDIT", "AUDITED", "PAID_OFF", "REVERSED"})
 AUDIT_ROLES = frozenset({"FINANCE", "BUSINESS"})
 LOCKED_SHARE_STATUSES = frozenset({"AUDITED", "PAID_OFF", "REVERSED"})
 PERIOD_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -1585,6 +1587,7 @@ def share_result_vo(row: FinShareResult) -> dict:
         "auditedBy": row.audited_by or None,
         "auditedAt": iso(row.audited_at) if row.audited_at else None,
         "paidOffAt": iso(row.paid_off_at) if row.paid_off_at else None,
+        "payoffNote": row.payoff_note or "",
         "redEntries": detail.get("redEntries") or [],
         "reverseAudit": detail.get("reverseAudit"),
         "replaced": bool(detail.get("replaced")),
@@ -1793,15 +1796,21 @@ def share_results(
     actor: User = Depends(current_user),
 ):
     page_no, size = page_args(pageNo, pageSize)
+    target = (shareTarget or "").strip()
+    stat = (status or "").strip()
+    if target and target not in SHARE_RESULT_TARGETS:
+        return fail(1001, "分成对象无效")
+    if stat and stat not in SHARE_RESULT_STATUSES:
+        return fail(1001, "分成状态无效")
     tenant_id = tenant_of(actor)
     visible = visible_share_rows(
         db,
         actor,
         request.state.scope,
         tenant_id,
-        session_code=sessionCode,
-        share_target=shareTarget,
-        status=status,
+        session_code=(sessionCode or "").strip(),
+        share_target=target,
+        status=stat,
     )
     total = len(visible)
     start = (page_no - 1) * size
@@ -1887,11 +1896,16 @@ def share_result_payoff(
         return apply_share_reverse(db, actor, row, body.reverseReason or body.payoffNote)
     if row.status == "PAID_OFF":
         return ok(None)
+    if row.status == "REVERSED":
+        return fail(1150, "已冲销不可发放")
     if row.status != "AUDITED":
         return fail(1148, "双审未齐")
+    note = body.payoffNote or ""
+    if len(note) > 256:
+        return fail(1001, "发放备注不超过 256 字")
     row.status = "PAID_OFF"
     row.paid_off_at = utcnow()
-    row.payoff_note = (body.payoffNote or "")[:256]
+    row.payoff_note = note.strip()
     if body.payoffVoucher is not None:
         row.payoff_voucher = {
             "fileName": body.payoffVoucher.fileName,

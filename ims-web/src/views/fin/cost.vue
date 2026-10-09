@@ -25,7 +25,7 @@
           class="btn btn-pri btn-sm"
           type="button"
           data-testid="fin-period-close"
-          :disabled="periodStatus === 'LOCKED'"
+          :disabled="periodStatus === 'LOCKED' || periodBusy || !periodMonthValid"
           @click="closePeriod"
         >
           结账
@@ -33,13 +33,19 @@
         <span class="hint">结账后该月场次录入/核准/重算冻结；锁后更正须 R4 审批</span>
       </div>
       <div
-        v-if="periodStatus === 'LOCKED'"
+        v-if="periodStatus === 'LOCKED' && periodMonthValid"
         data-testid="fin-period-lock-banner"
         class="hint"
         style="color: var(--red); margin-top: 8px"
       >
         财务期间已结账，本期间写操作冻结
+        <span v-if="periodLockedBy || periodLockedAt" data-testid="fin-period-locked-by">
+          · {{ periodLockedBy }} {{ periodLockedAt }}
+        </span>
       </div>
+      <p v-if="periodError" class="hint" data-testid="fin-period-error" style="color: var(--red); margin-top: 8px">
+        {{ periodError }}
+      </p>
     </div>
 
     <div v-if="lastRed.length" data-testid="fin-lock-red-entries" class="hint" style="color: #c0392b; margin-bottom: 8px">
@@ -295,6 +301,11 @@ const lockAdjustTaskId = ref<number | null>(null)
 const lastRed = ref<Array<{ item: string; amount: number }>>([])
 const periodMonth = ref(currentPeriodMonth())
 const periodStatus = ref('OPEN')
+const periodError = ref('')
+const periodBusy = ref(false)
+const periodLockedBy = ref('')
+const periodLockedAt = ref('')
+const periodMonthValid = computed(() => /^\d{4}-(0[1-9]|1[0-2])$/.test(periodMonth.value.trim()))
 const query = reactive({ sessionCode: '', entryStatus: '' })
 
 const sessionLocked = computed(() => sessionFinanceStatus.value === 'LOCKED')
@@ -456,21 +467,38 @@ async function viewDetail(sessionCode: string) {
 
 async function loadPeriod() {
   const month = periodMonth.value.trim()
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return
-  const res = await http.get('/fin/period', { params: { periodMonth: month } })
-  if (res.data?.code === 0) {
-    periodStatus.value = res.data.data?.financeStatus || 'OPEN'
+  if (!periodMonthValid.value) {
+    periodError.value = '期间格式须为 yyyy-MM'
+    return
+  }
+  periodError.value = ''
+  try {
+    const res = await http.get('/fin/period', { params: { periodMonth: month } })
+    const data = res.data?.data || {}
+    periodStatus.value = data.financeStatus || 'OPEN'
+    periodLockedBy.value = data.lockedByName || ''
+    periodLockedAt.value = data.lockedAt || ''
+  } catch (err) {
+    periodError.value = failMsg(err, '期间状态加载失败')
   }
 }
 
 async function closePeriod() {
   const month = periodMonth.value.trim()
+  if (!periodMonthValid.value || periodBusy.value || periodStatus.value === 'LOCKED') return
+  periodBusy.value = true
+  periodError.value = ''
   try {
     const res = await http.post('/fin/period/close', { periodMonth: month })
-    periodStatus.value = res.data?.data?.financeStatus || 'LOCKED'
+    const data = res.data?.data || {}
+    periodStatus.value = data.financeStatus || 'LOCKED'
+    periodLockedBy.value = data.lockedByName || ''
+    periodLockedAt.value = data.lockedAt || ''
     error.value = ''
   } catch (err) {
-    error.value = failMsg(err, '结账失败')
+    periodError.value = failMsg(err, '结账失败')
+  } finally {
+    periodBusy.value = false
   }
 }
 
