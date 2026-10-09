@@ -12,10 +12,20 @@
     <p class="hint" style="margin-bottom: 10px">
       运行时 SSOT：<code>/admin-api/ims/content/**</code> · 保存即启用新版本，无 SOP 审核页。
     </p>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="keyword" placeholder="模板名称" style="width: 160px" />
+    <form class="qbar" data-testid="sop-filters" @submit.prevent="loadList">
+      <input v-model="keyword" data-testid="sop-filter-name" placeholder="模板名称" style="width: 160px" />
+      <select v-model="contentType" data-testid="sop-filter-type" style="width: 140px">
+        <option value="">全部内容类型</option>
+        <option v-for="item in contentTypes" :key="item" :value="item">{{ item }}</option>
+      </select>
+      <select v-model="status" data-testid="sop-filter-status" style="width: 120px">
+        <option value="">全部状态</option>
+        <option value="ENABLED">ENABLED</option>
+        <option value="DISABLED">DISABLED</option>
+      </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="sop-filter-reset" @click="resetFilters">重置</button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -38,7 +48,10 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="8">
-                <div class="empty"><div class="et">{{ error || '暂无 SOP 模板' }}</div></div>
+                <div class="empty" data-testid="sop-list-empty">
+                  <div class="et">{{ error || sopEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ sopEmptyHint }}</div>
+                </div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
@@ -292,6 +305,14 @@ const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const keyword = ref('')
+const contentType = ref('')
+const status = ref('')
+const contentTypes = ['SHORT_VIDEO', 'ARTICLE', 'IMAGE_TEXT', 'LIVE', 'AUDIO']
+const filtering = computed(() => !!(keyword.value.trim() || contentType.value || status.value))
+const sopEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的 SOP' : '暂无 SOP 模板'))
+const sopEmptyHint = computed(() =>
+  filtering.value ? '换内容类型、状态或名称，或重置筛选' : '点「新增模板」，从节点库编排 DAG 后保存即启用',
+)
 const editorOpen = ref(false)
 const saving = ref(false)
 const saveError = ref('')
@@ -442,7 +463,13 @@ async function loadList() {
   error.value = ''
   try {
     const { data } = await http.get('/content/sop/list', {
-      params: { pageNo: 1, pageSize: 50, keyword: keyword.value || undefined },
+      params: {
+        pageNo: 1,
+        pageSize: 50,
+        keyword: keyword.value.trim() || undefined,
+        contentType: contentType.value || undefined,
+        status: status.value || undefined,
+      },
     })
     rows.value = data.data.list
     total.value = data.data.total
@@ -452,6 +479,13 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  keyword.value = ''
+  contentType.value = ''
+  status.value = ''
+  void loadList()
 }
 
 function openCreate() {

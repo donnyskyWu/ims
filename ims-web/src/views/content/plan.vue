@@ -10,8 +10,21 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      创建为草稿（DRAFT）；草稿可「启动」→ IN_PROGRESS；执行中可申请终止 → TERMINATE_PENDING，审批通过后 TERMINATED 并终止关联任务。
+      创建为草稿（DRAFT）；草稿可「启动」→ IN_PROGRESS；执行中可申请终止 → TERMINATE_PENDING，审批通过后 TERMINATED 并终止关联任务。进度按同名计划下未删除任务的完成率。
     </p>
+    <form class="qbar" data-testid="plan-filters" @submit.prevent="loadList">
+      <input v-model="planName" data-testid="plan-filter-name" placeholder="计划名称" style="width: 160px" />
+      <select v-model="status" data-testid="plan-filter-status" style="width: 160px">
+        <option value="">全部状态</option>
+        <option value="DRAFT">DRAFT</option>
+        <option value="IN_PROGRESS">IN_PROGRESS</option>
+        <option value="TERMINATE_PENDING">TERMINATE_PENDING</option>
+        <option value="TERMINATED">TERMINATED</option>
+      </select>
+      <span class="sp"></span>
+      <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="plan-filter-reset" @click="resetFilters">重置</button>
+    </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -22,15 +35,21 @@
               <th>IP 组</th>
               <th>周期</th>
               <th>状态</th>
+              <th>进度</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无计划' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="plan-list-empty">
+                  <div class="et">{{ error || planEmptyTitle }}</div>
+                  <div v-if="!error" class="es">{{ planEmptyHint }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td><b>{{ row.planName }}</b></td>
@@ -38,6 +57,7 @@
               <td>{{ row.ipGroupName || '—' }}</td>
               <td class="num">{{ row.startDate }} ~ {{ row.endDate }}</td>
               <td>{{ row.status }}</td>
+              <td class="num" data-testid="plan-progress">{{ progressText(row) }}</td>
               <td class="acts-inline">
                 <button
                   v-if="row.status === 'DRAFT'"
@@ -136,7 +156,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
@@ -144,6 +164,13 @@ const rows = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
+const planName = ref('')
+const status = ref('')
+const filtering = computed(() => !!(planName.value.trim() || status.value))
+const planEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的计划' : '暂无计划'))
+const planEmptyHint = computed(() =>
+  filtering.value ? '换计划名或状态，或重置筛选' : '点「新增计划」保存草稿；启动后这里显示任务完成率',
+)
 const createOpen = ref(false)
 const saving = ref(false)
 const actingId = ref<number | null>(null)
@@ -195,7 +222,14 @@ async function loadList() {
   loading.value = true
   error.value = ''
   try {
-    const { data } = await http.get('/content/plan', { params: { pageNo: 1, pageSize: 50 } })
+    const { data } = await http.get('/content/plan', {
+      params: {
+        pageNo: 1,
+        pageSize: 50,
+        planName: planName.value.trim() || undefined,
+        status: status.value || undefined,
+      },
+    })
     rows.value = data.data.list
     total.value = data.data.total
   } catch (e) {
@@ -203,6 +237,20 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  planName.value = ''
+  status.value = ''
+  void loadList()
+}
+
+function progressText(row: { taskTotal?: number; taskDone?: number; progressPercent?: number | null }) {
+  const totalTasks = Number(row.taskTotal || 0)
+  if (!totalTasks) return '—'
+  const done = Number(row.taskDone || 0)
+  const percent = row.progressPercent ?? 0
+  return `${done}/${totalTasks} · ${percent}%`
 }
 
 function openCreate() {
