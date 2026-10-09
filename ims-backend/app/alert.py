@@ -336,6 +336,7 @@ def _rules_for(db: Session, rows: list[AlertRecord]) -> dict[int, AlertRule]:
 def rule_list(
     ruleName: str | None = None,
     enabled: bool | None = None,
+    level: str | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
     db: Session = Depends(db_session),
@@ -343,11 +344,16 @@ def rule_list(
 ):
     tenant_id = tenant_of(actor)
     page_no, size = page_args(pageNo, pageSize)
+    level_code, level_error = parse_level(level)
+    if level_error:
+        return fail(1001, level_error)
     stmt = select(AlertRule).where(AlertRule.deleted == 0, AlertRule.tenant_id == tenant_id)
     if ruleName:
         stmt = stmt.where(AlertRule.rule_name.contains(ruleName.strip()))
     if enabled is not None:
         stmt = stmt.where(AlertRule.enabled == (1 if enabled else 0))
+    if level_code is not None:
+        stmt = stmt.where(AlertRule.level == level_code)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         db.scalars(

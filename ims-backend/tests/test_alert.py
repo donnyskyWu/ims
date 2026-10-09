@@ -718,3 +718,53 @@ def test_alert_record_filters_receipt_and_my_alerts():
 
     todos = client.get("/admin-api/ims/home/todos", headers=auth, params={"pageNo": 1, "pageSize": 20})
     assert any(item.get("type") == "ALERT" and item.get("bizId") == alert_no for item in todos.json()["data"]["list"])
+
+
+def test_alert_rule_level_filter_and_empty_ranges():
+    auth = headers()
+    code = f"lvl.{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": code, "ruleName": f"级别筛选 {code}", "level": 2, "enabled": False},
+    )
+    assert created.json()["code"] == 0
+    rule_id = created.json()["data"]["id"]
+
+    missed = client.get(
+        "/admin-api/ims/alert/rule/list",
+        headers=auth,
+        params={"ruleName": code, "level": "L1", "pageNo": 1, "pageSize": 10},
+    )
+    assert missed.json()["code"] == 0
+    assert missed.json()["data"]["total"] == 0
+
+    matched = client.get(
+        "/admin-api/ims/alert/rule/list",
+        headers=auth,
+        params={"ruleName": code, "level": "L2", "pageNo": 1, "pageSize": 10},
+    )
+    assert matched.json()["code"] == 0
+    assert matched.json()["data"]["total"] == 1
+    assert matched.json()["data"]["list"][0]["id"] == rule_id
+
+    bad = client.get("/admin-api/ims/alert/rule/list", headers=auth, params={"level": "L9"})
+    assert bad.json()["code"] == 1001
+
+    delivery = client.get(
+        "/admin-api/ims/alert/check/delivery-stats",
+        headers=auth,
+        params={"dateRange": "2099-01-01,2099-01-02"},
+    )
+    assert delivery.json()["code"] == 0
+    assert delivery.json()["data"]["totalShould"] == 0
+    assert delivery.json()["data"]["deliveryRate"] == 0.0
+
+    stats = client.get(
+        "/admin-api/ims/alert/escalate/response-stats",
+        headers=auth,
+        params={"dateRange": "2099-01-01,2099-01-02"},
+    )
+    assert stats.json()["code"] == 0
+    assert stats.json()["data"]["totalAlerts"] == 0
+    assert stats.json()["data"]["responseRate"] == 0.0

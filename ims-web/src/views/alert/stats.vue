@@ -72,11 +72,23 @@
       <div class="card stat">
         <span class="l">级别分布</span>
         <div class="n" style="font-size: 16px; margin-top: 10px">
-          <span data-testid="alert-stats-l1">L1 {{ overview.byLevel.L1 }}</span>
+          <span data-testid="alert-stats-l1">
+            <router-link data-testid="alert-stats-level-L1" :to="{ path: '/ims/alert/live', query: { level: 'L1' } }">
+              L1 {{ overview.byLevel.L1 }}
+            </router-link>
+          </span>
           ·
-          <span data-testid="alert-stats-l2">L2 {{ overview.byLevel.L2 }}</span>
+          <span data-testid="alert-stats-l2">
+            <router-link data-testid="alert-stats-level-L2" :to="{ path: '/ims/alert/live', query: { level: 'L2' } }">
+              L2 {{ overview.byLevel.L2 }}
+            </router-link>
+          </span>
           ·
-          <span data-testid="alert-stats-l3">L3 {{ overview.byLevel.L3 }}</span>
+          <span data-testid="alert-stats-l3">
+            <router-link data-testid="alert-stats-level-L3" :to="{ path: '/ims/alert/live', query: { level: 'L3' } }">
+              L3 {{ overview.byLevel.L3 }}
+            </router-link>
+          </span>
         </div>
       </div>
     </div>

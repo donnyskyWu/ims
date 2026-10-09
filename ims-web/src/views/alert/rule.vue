@@ -13,15 +13,24 @@
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
       </div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.ruleName" placeholder="规则名称" style="width: 160px" />
-      <select v-model="filters.enabled" style="width: 110px">
+    <form class="qbar" data-testid="alert-rule-filter" @submit.prevent="loadList">
+      <input v-model="filters.ruleName" data-testid="alert-rule-filter-name" placeholder="规则名称" style="width: 160px" />
+      <select v-model="ruleLevel" data-testid="alert-rule-filter-level" style="width: 110px">
+        <option value="">全部级别</option>
+        <option value="L1">L1</option>
+        <option value="L2">L2</option>
+        <option value="L3">L3</option>
+      </select>
+      <select v-model="filters.enabled" data-testid="alert-rule-filter-enabled" style="width: 110px">
         <option value="">全部状态</option>
         <option value="true">已启用</option>
         <option value="false">未启用</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-rule-filter-reset" @click="resetRuleFilters">
+        重置
+      </button>
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -42,7 +51,11 @@
               <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无规则' }}</div></div></td>
+              <td colspan="7">
+                <div class="empty" data-testid="alert-rule-empty">
+                  <div class="et">{{ error || (ruleFilterActive ? '当前筛选条件下暂无规则' : '暂无规则') }}</div>
+                </div>
+              </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.ruleCode }}</td>
@@ -76,6 +89,7 @@
           <input v-model="hitStart" data-testid="alert-hit-start" type="date" />
           <input v-model="hitEnd" data-testid="alert-hit-end" type="date" />
           <button class="btn btn-pri btn-sm" type="submit">查询</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="alert-hit-reset" @click="resetHits">重置</button>
           <span class="sp"></span>
           <button class="btn btn-sec btn-sm" type="button" @click="showHits = false">关闭</button>
         </form>
@@ -178,6 +192,8 @@ const formError = ref('')
 const codeError = ref('')
 const dslError = ref('')
 const filters = reactive({ ruleName: '', enabled: '' })
+const ruleLevel = ref('')
+const ruleFilterActive = computed(() => !!(filters.ruleName.trim() || filters.enabled || ruleLevel.value))
 const form = reactive({
   ruleCode: '',
   ruleName: '',
@@ -237,14 +253,22 @@ function buildTriggerConfig() {
   }
 }
 
+function resetRuleFilters() {
+  filters.ruleName = ''
+  filters.enabled = ''
+  ruleLevel.value = ''
+  loadList()
+}
+
 async function loadList() {
   loading.value = true
   error.value = ''
   try {
     const params: Record<string, unknown> = { pageNo: 1, pageSize: 50 }
-    if (filters.ruleName) params.ruleName = filters.ruleName
+    if (filters.ruleName.trim()) params.ruleName = filters.ruleName.trim()
     if (filters.enabled === 'true') params.enabled = true
     if (filters.enabled === 'false') params.enabled = false
+    if (ruleLevel.value) params.level = ruleLevel.value
     const res = await http.get('/alert/rule/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
@@ -342,6 +366,13 @@ async function run(ruleId: number) {
   } catch {
     toast.value = '网络错误'
   }
+}
+
+function resetHits() {
+  hitStart.value = ''
+  hitEnd.value = ''
+  hitError.value = ''
+  loadHits()
 }
 
 function openHits() {
