@@ -823,6 +823,24 @@
       "parent": "绩效考核",
       "desc": "PERF-003 · IMS 自建考试域"
     },
+    "perfCalc": {
+      "no": "05",
+      "name": "计算与核准",
+      "code": "PERF",
+      "icon": "chart",
+      "page": "计算与核准",
+      "parent": "绩效考核",
+      "desc": "PERF-002 · 月度计算、人工补充、核准发布"
+    },
+    "perfMine": {
+      "no": "05",
+      "name": "我的绩效",
+      "code": "PERF",
+      "icon": "chart",
+      "page": "我的绩效",
+      "parent": "绩效考核",
+      "desc": "PERF-002 · 员工仅可见本人已发布结果"
+    },
     "biReportMgmt": {
       "no": "17b",
       "name": "数据报表",
@@ -1267,6 +1285,8 @@
           "label": "绩效考核",
           "children": [
             "perfMetric",
+            "perfCalc",
+            "perfMine",
             "perfScheme",
             "perfExec",
             "perfResult",

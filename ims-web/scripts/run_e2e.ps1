@@ -138,6 +138,7 @@ from app.s1_lifecycle_seed import ensure_s1_fixtures
 from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
 from app.kuaishou_collect_seed import refresh_kuaishou_collect_seed
 from app.douyin_collect_seed import refresh_douyin_collect_seed
+from app.perf_e2e_seed import refresh_perf_e2e_seed
 db = SessionLocal()
 try:
     admin = db.query(User).filter(User.username == 'admin', User.deleted == 0).first()
@@ -153,6 +154,7 @@ try:
         refresh_train_stat_e2e_seed(db, admin)
         refresh_kuaishou_collect_seed()
         refresh_douyin_collect_seed()
+        refresh_perf_e2e_seed(db, admin)
         db.commit()
 finally:
     db.close()

@@ -128,7 +128,7 @@
       <template v-if="form.dataSource === 'AUTO'">
         <div class="fld">
           <label>取数模块</label>
-          <select v-model="form.module">
+          <select v-model="form.module" data-testid="metric-module">
             <option value="TRAIN">TRAIN</option>
             <option value="MEET">MEET</option>
             <option value="REPORT">REPORT</option>
@@ -139,7 +139,7 @@
         </div>
         <div class="fld">
           <label>指标表达式</label>
-          <input v-model="form.metricExpression" placeholder="finish_rate" />
+          <input v-model="form.metricExpression" data-testid="metric-expression" placeholder="finish_rate" />
         </div>
       </template>
       <div class="fld">

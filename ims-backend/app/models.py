@@ -1273,6 +1273,100 @@ class PerfPositionBind(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PerfPeriod(Base):
+    """绩效月锁定。发布后 finance_status=LOCKED，与财务期间同语义。"""
+
+    __tablename__ = "ims_perf_period"
+    __table_args__ = (UniqueConstraint("tenant_id", "period_month", name="uk_perf_period_month"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="", index=True)
+    finance_status: Mapped[str] = mapped_column(String(16), default="OPEN")
+    locked_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PerfCalcResult(Base):
+    """PERF-002 月度结果。重算新增 version，旧行 is_current=0 留审计。"""
+
+    __tablename__ = "ims_perf_result"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "period_month", "user_id", "version", name="uk_perf_result_ver"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="", index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    user_name: Mapped[str] = mapped_column(String(64), default="")
+    position_code: Mapped[str] = mapped_column(String(32), default="")
+    dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    dept_name: Mapped[str] = mapped_column(String(128), default="")
+    total_score: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    rank_in_dept: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_status: Mapped[str] = mapped_column(String(32), default="CALCULATING", index=True)
+    calc_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    approved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    approve_remark: Mapped[str] = mapped_column(String(512), default="")
+    calc_task_id: Mapped[str] = mapped_column(String(32), default="")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    is_current: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PerfCalcDetail(Base):
+    """指标明细快照。data_status：AUTO / MANUAL / MISSING。"""
+
+    __tablename__ = "ims_perf_result_detail"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    result_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    metric_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    metric_code: Mapped[str] = mapped_column(String(64), default="")
+    metric_name: Mapped[str] = mapped_column(String(128), default="")
+    source_module: Mapped[str] = mapped_column(String(16), default="")
+    metric_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    metric_score: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=0)
+    weight: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    data_status: Mapped[str] = mapped_column(String(16), default="MISSING")
+    supplement_reason: Mapped[str] = mapped_column(String(256), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PerfRank(Base):
+    """发布后的部门排名与分档。grade_level 用 PerfGradeLevel，不用 S–D。"""
+
+    __tablename__ = "ims_perf_rank"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "period_month", "user_id", "version", name="uk_perf_rank_ver"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="", index=True)
+    dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    dept_name: Mapped[str] = mapped_column(String(128), default="")
+    user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    user_name: Mapped[str] = mapped_column(String(64), default="")
+    total_score: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=0)
+    rank_no: Mapped[int] = mapped_column(Integer, default=0)
+    grade_level: Mapped[str] = mapped_column(String(16), default="IMPROVE")
+    alert_status: Mapped[str] = mapped_column(String(16), default="NONE")
+    consecutive_months: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    is_current: Mapped[int] = mapped_column(Integer, default=1)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class AlertRule(Base):
     __tablename__ = "ims_alert_rule"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

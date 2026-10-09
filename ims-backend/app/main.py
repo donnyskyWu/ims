@@ -131,6 +131,7 @@ def seed() -> None:
         from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, refresh_live_fin_e2e_deps
         from app.cert_e2e_seed import refresh_cert_e2e_seed
         from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
+        from app.perf_e2e_seed import refresh_perf_e2e_seed
 
         ensure_acct_schema()
         admin = db.query(User).filter(User.username == "admin", User.deleted == 0).first()
@@ -142,6 +143,7 @@ def seed() -> None:
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
+            refresh_perf_e2e_seed(db, admin)
         from app.air_audit_seed import ensure_air_mcp_audit_fixture
 
         ensure_air_mcp_audit_fixture(db)
