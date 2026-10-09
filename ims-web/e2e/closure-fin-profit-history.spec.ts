@@ -69,7 +69,7 @@ test.describe('fin profit history closure', () => {
     await expect(v1).toContainText('81,400.00')
     await page.screenshot({ path: `${SHOTS}/01-history-v1.png`, fullPage: true })
 
-    await drawer.getByTestId('fin-profit-recalc').click()
+    await drawer.getByTestId('fin-profit-recalc-open').click()
     const dialog = page.getByTestId('fin-profit-recalc-dialog')
     await expect(dialog).toBeVisible()
     await expect(dialog).toContainText('新版本 V2')
@@ -82,7 +82,7 @@ test.describe('fin profit history closure', () => {
     const historyAfter = page.waitForResponse(
       (r) => r.url().includes('/fin/profit/history/') && r.request().method() === 'GET' && r.status() === 200,
     )
-    await page.getByTestId('fin-profit-recalc-confirm').click()
+    await page.getByTestId('fin-profit-recalc-submit').click()
     const recalcBody = (await (await recalcResp).json()) as {
       code: number
       data?: { calcVersion?: number; calcStatus?: string }

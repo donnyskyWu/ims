@@ -322,19 +322,31 @@
           </ol>
         </div>
         <div class="drawer-f">
-          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-profit-recalc" @click="askRecalc">手动触发重算</button>
+          <p v-if="periodLocked" class="hint" data-testid="fin-profit-recalc-locked">财务期间已结账，重算冻结（1142）</p>
+          <p v-if="recalcNote" class="hint" data-testid="fin-profit-recalc-done">{{ recalcNote }}</p>
+          <button
+            class="btn btn-pri btn-sm"
+            type="button"
+            data-testid="fin-profit-recalc-open"
+            :disabled="periodLocked || recalcBusy"
+            :title="periodLocked ? '财务期间已结账，重算冻结（1142）' : '手动触发重算'"
+            @click="askRecalc"
+          >
+            手动触发重算
+          </button>
         </div>
       </div>
     </div>
 
     <div v-if="recalcOpen && detail" class="modal-mask" data-testid="fin-profit-recalc-dialog">
-      <div class="modal-card">
+      <div class="modal-card" data-testid="fin-profit-recalc-confirm">
         <b>确认重算</b>
         <p>重算将生成新版本 V{{ nextVersion }}，旧结果留痕（FIN-P-R3）</p>
+        <p class="hint">重算生成新版本，旧结果留痕（FIN-P-R3）</p>
         <p v-if="recalcError" class="hint" style="color: var(--red)" data-testid="fin-profit-recalc-error">{{ recalcError }}</p>
         <div class="modal-acts">
           <button class="btn btn-sec btn-sm" type="button" :disabled="recalcBusy" @click="recalcOpen = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-profit-recalc-confirm" :disabled="recalcBusy" @click="doRecalc">确认重算</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-profit-recalc-submit" :disabled="recalcBusy" @click="doRecalc">确认重算</button>
         </div>
       </div>
     </div>
@@ -378,6 +390,8 @@ interface ProfitDetail {
   calcVersion: number
   calcStatus: string
   calculatedAt: string
+  financeStatus?: string
+  periodMonth?: string
   calcRuleSnapshot?: { formula?: string; params?: Record<string, number> }
 }
 
@@ -460,6 +474,7 @@ const historyError = ref('')
 const recalcOpen = ref(false)
 const recalcBusy = ref(false)
 const recalcError = ref('')
+const recalcNote = ref('')
 const profitType = ref<ProfitMetric>('NET')
 const query = reactive({ sessionCode: '', platform: '', calcStatus: '', dateFrom: '', dateTo: '' })
 
@@ -470,6 +485,7 @@ const nextVersion = computed(() => {
   if (recalcTarget.value) return Number(recalcTarget.value.calcVersion || 0) + 1
   return Number(detail.value?.calcVersion || 1) + 1
 })
+const periodLocked = computed(() => String(detail.value?.financeStatus || '') === 'LOCKED')
 
 function snapshotParams(row: ProfitDetail | null) {
   return row?.calcRuleSnapshot?.params || {}
@@ -778,6 +794,7 @@ async function loadHistory(sessionCode: string) {
 }
 
 function askRecalc() {
+  if (periodLocked.value || recalcBusy.value) return
   recalcError.value = ''
   recalcOpen.value = true
 }
@@ -788,7 +805,19 @@ async function doRecalc() {
   recalcError.value = ''
   const code = detail.value.sessionCode
   try {
-    await http.post(`/fin/profit/recalc/${code}`)
+    const res = await http.post(`/fin/profit/recalc/${code}`)
+    const body = res.data
+    if (body?.code === 1142) {
+      detail.value = { ...detail.value, financeStatus: 'LOCKED' }
+      recalcError.value = body.msg || '财务期间已结账，重算冻结（1142）'
+      recalcOpen.value = false
+      return
+    }
+    if (body?.code !== 0) {
+      recalcError.value = body?.msg || '重算失败'
+      return
+    }
+    recalcNote.value = String(body.data?.message || '利润已重算')
     recalcOpen.value = false
     await loadList()
     await openDetail(code)
