@@ -69,6 +69,7 @@ class AccountBody(BaseModel):
     authToken: str | None = None
     frequency: str | None = None
     cron: str | None = None
+    clearCredential: bool = False
 
 
 def register(profile: PlatformProfile) -> None:
@@ -314,6 +315,7 @@ def account_public(ops: Session, row: PlatformAccount) -> dict:
         "collectorAccountId": bind.collector_account_id if bind else "",
         "connStatus": bind.conn_status if bind else "",
         "bindStatus": bind.bind_status if bind else "UNBOUND",
+        "lastProbeAt": (bind.last_probe_at or "") if bind else "",
     }
     data.update(follower_public(ops, row))
     data.update(video_snapshot_public(ops, row))
@@ -840,6 +842,16 @@ def execute_task(profile: PlatformProfile, ops: Session, task: CollectTask) -> d
     return result
 
 
+def _reset_probe(ops: Session, row: PlatformAccount) -> None:
+    """凭证变更后健康回到未探活。不调用 Collector。"""
+    bind = _bind_of(ops, row.id)
+    if bind is None:
+        return
+    bind.conn_status = ""
+    bind.last_probe_at = ""
+    bind.updated_at = utcnow()
+
+
 def import_bind(profile: PlatformProfile, ops: Session, row: PlatformAccount, actor: User):
     if not row.platform_account_id:
         return fail(1001, "平台账号 ID 必填")
@@ -890,7 +902,13 @@ def import_bind(profile: PlatformProfile, ops: Session, row: PlatformAccount, ac
 
 def probe_account(profile: PlatformProfile, ops: Session, row: PlatformAccount):
     bind = _bind_of(ops, row.id)
-    if bind is None or bind.bind_status != "BOUND":
+    if profile.key == "douyin":
+        unbound = bind is None or bind.bind_status != "BOUND"
+        if unbound or not (row.cookie_enc or "").strip():
+            data = account_public(ops, row)
+            data["notice"] = "未绑定 Collector，请先导入" if unbound else "凭证未配置，请先保存凭证再测试连接"
+            return ok(data)
+    elif bind is None or bind.bind_status != "BOUND":
         return fail(1001, "未绑定 Collector")
     call = account_health(bind.collector_account_id)
     if call.kind == "cookie":
@@ -1058,13 +1076,18 @@ def build_router(profile: PlatformProfile) -> APIRouter:
             if err := check_ip_group(ops, actor, body.ipGroupId, True):
                 return err
             row.ip_group_id = body.ipGroupId
-        if body.cookie:
+        if profile.key == "douyin" and body.clearCredential and not (body.cookie or "").strip():
+            row.cookie_enc = ""
+            _reset_probe(ops, row)
+        elif body.cookie:
             try:
                 _, old_token = unpack_credential(row.cookie_enc)
             except Exception:
                 old_token = ""
             auth_token = body.authToken if body.authToken is not None else old_token
             _apply_secret(profile, row, body.cookie.strip(), (auth_token or "").strip())
+            if profile.key == "douyin":
+                _reset_probe(ops, row)
         row.updated_at = utcnow()
         task = ensure_task(profile, ops, row, frequency=body.frequency, cron=body.cron)
         return ok({"account": account_public(ops, row), "task": task_public(task)})

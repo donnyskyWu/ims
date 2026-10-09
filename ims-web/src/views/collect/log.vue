@@ -62,7 +62,7 @@
               <td class="mono">{{ row.taskName }}</td>
               <td>{{ row.statusLabel || row.status }}</td>
               <td class="num" style="font-size: 12px">{{ row.startedAt }}</td>
-              <td class="num">{{ (row.durationMs / 1000).toFixed(1) }}s</td>
+              <td class="num">{{ ((Number(row.durationMs) || 0) / 1000).toFixed(1) }}s</td>
               <td class="num">{{ row.recordCount }}</td>
               <td class="num">
                 <span data-testid="log-retry-count">{{ row.retryCount }}</span>
