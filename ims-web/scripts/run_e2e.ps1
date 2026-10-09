@@ -78,6 +78,9 @@ function Start-ImsApi {
         Where-Object { $_ -and $_ -ne 0 } |
         Sort-Object -Unique |
         ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    if (-not $env:IMS_COLLECTOR_BASE_URL) {
+        $env:IMS_COLLECTOR_STUB = "1"
+    }
     Start-Process -FilePath "python" -ArgumentList @("-m", "app.main") `
         -WorkingDirectory $BackendRoot -WindowStyle Hidden | Out-Null
 }
@@ -134,6 +137,7 @@ from app.asset_reverse_e2e_seed import refresh_asset_reverse_e2e_session
 from app.s1_lifecycle_seed import ensure_s1_fixtures
 from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
 from app.kuaishou_collect_seed import refresh_kuaishou_collect_seed
+from app.douyin_collect_seed import refresh_douyin_collect_seed
 db = SessionLocal()
 try:
     admin = db.query(User).filter(User.username == 'admin', User.deleted == 0).first()
@@ -148,6 +152,7 @@ try:
         clear_apply_number_gap(db)
         refresh_train_stat_e2e_seed(db, admin)
         refresh_kuaishou_collect_seed()
+        refresh_douyin_collect_seed()
         db.commit()
 finally:
     db.close()

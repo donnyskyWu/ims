@@ -120,13 +120,13 @@ def list_vo(
 
 
 def _credential_mask(enc: str) -> str:
-    from app.kuaishou_collect import credential_mask
+    from app.internal_collect import credential_mask
 
     return credential_mask(enc)
 
 
 def _health_label(bind: CollectorAccountBind | None) -> str:
-    from app.kuaishou_collect import health_label
+    from app.internal_collect import health_label
 
     return health_label(bind)
 
@@ -451,6 +451,11 @@ def collector_bind_import(
         from app.kuaishou_collect import import_kuaishou_bind
 
         return import_kuaishou_bind(ops, row, actor)
+    if row.platform_type == "DOUYIN":
+        from app.douyin_collect import import_douyin_bind, is_internal_account
+
+        if is_internal_account(row):
+            return import_douyin_bind(ops, row, actor)
     if not row.cookie_enc:
         return fail(1001, "凭证未配置")
     bind = ops.scalar(
@@ -499,6 +504,11 @@ def collector_bind_test(
         from app.kuaishou_collect import probe_kuaishou
 
         return probe_kuaishou(ops, row)
+    if row.platform_type == "DOUYIN":
+        from app.douyin_collect import is_internal_account, probe_douyin
+
+        if is_internal_account(row):
+            return probe_douyin(ops, row)
     if bind is None or bind.bind_status != "BOUND":
         return fail(1001, "未绑定 Collector")
     bind.conn_status = "SUCCESS" if row.cookie_enc else "FAILED"

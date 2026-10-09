@@ -438,6 +438,50 @@ class KuaishouVideo(OpsBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class DouyinVideo(OpsBase):
+    """抖音内部作品。UK：租户 + 平台账号 + video_id（重复采集更新同一行）。"""
+
+    __tablename__ = "oa_douyin_video"
+    __table_args__ = (UniqueConstraint("tenant_id", "account_id", "video_id", name="uk_dy_video"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    video_id: Mapped[str] = mapped_column(String(64), default="")
+    title: Mapped[str] = mapped_column(String(255), default="")
+    cover_url: Mapped[str] = mapped_column(String(512), default="")
+    play_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    like_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    comment_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    share_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    publish_time: Mapped[str] = mapped_column(String(32), default="")
+    duration_sec: Mapped[int] = mapped_column(Integer, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DouyinVideoSnapshot(OpsBase):
+    """抖音作品日快照。同一天重复采集更新同一行。"""
+
+    __tablename__ = "oa_douyin_video_snapshot"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "account_id", "video_id", "stat_date", name="uk_dy_video_snap"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    video_id: Mapped[str] = mapped_column(String(64), default="")
+    stat_date: Mapped[str] = mapped_column(String(10), default="")
+    play_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    like_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    comment_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    share_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    collected_at: Mapped[str] = mapped_column(String(32), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class KuaishouVideoSnapshot(OpsBase):
     """快手作品日快照。同一天重复采集更新同一行。"""
 

@@ -1,7 +1,7 @@
-"""本地 unify-collector 桩。响应形状与真实快手内部作品接口一致。
+"""本地 unify-collector 桩。响应形状与真实内部作品接口一致。
 
 `user_id` / `platform_account_id` / `account_id` 含 `COOKIE_EXPIRED` → Cookie 已失效；
-含 `ENGINE_DOWN` → 浏览器引擎不可用；其余返回两条作品。业务错误用 HTTP 200 + code/message。
+含 `ENGINE_DOWN` → 浏览器引擎不可用；其余返回该平台两条作品。业务错误用 HTTP 200 + code/message。
 """
 
 from __future__ import annotations
@@ -15,12 +15,38 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from app.collector_client import (
     CODE_COOKIE,
     CODE_ENGINE,
+    DOUYIN_VIDEOS_PATH,
     HEALTH_PATH,
     IMPORT_PATH,
-    INTERNAL_VIDEOS_PATH,
+    KUAISHOU_VIDEOS_PATH,
     MSG_COOKIE,
     MSG_ENGINE,
 )
+
+_DOUYIN_VIDEOS = [
+    {
+        "video_id": "dyv-2001",
+        "title": "抖音内部作品甲",
+        "cover_url": "",
+        "play_count": 2100,
+        "like_count": 40,
+        "comment_count": 6,
+        "share_count": 2,
+        "publish_time": "2026-10-03 10:00:00",
+        "duration_sec": 18,
+    },
+    {
+        "video_id": "dyv-2002",
+        "title": "抖音内部作品乙",
+        "cover_url": "",
+        "play_count": 960,
+        "like_count": 18,
+        "comment_count": 2,
+        "share_count": 1,
+        "publish_time": "2026-10-04 11:20:00",
+        "duration_sec": 24,
+    },
+]
 
 _SUCCESS_VIDEOS = [
     {
@@ -57,9 +83,10 @@ def scenario_of(*parts: str) -> str:
     return "ok"
 
 
-def collector_account_id(platform_account_id: str) -> str:
+def collector_account_id(platform_account_id: str, platform: str = "kuaishou") -> str:
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", platform_account_id or "")[:80] or "unknown"
-    return f"acc_kuaishou_{safe}"
+    slug = "douyin" if platform == "douyin" else "kuaishou"
+    return f"acc_{slug}_{safe}"
 
 
 def _business(kind: str) -> tuple[int, str, dict | None]:
@@ -174,10 +201,11 @@ def _handler_factory():
             if path == IMPORT_PATH:
                 platform_account_id = str(body.get("platform_account_id") or "")
                 cookie = str(body.get("cookie") or "")
+                platform = str(body.get("platform") or "kuaishou")
                 if not cookie or not platform_account_id:
                     self._send(200, {"code": 1001, "message": "凭证未配置", "data": None})
                     return
-                collector_id = collector_account_id(platform_account_id)
+                collector_id = collector_account_id(platform_account_id, platform)
                 self._send(
                     200,
                     {
@@ -187,13 +215,14 @@ def _handler_factory():
                     },
                 )
                 return
-            if path == INTERNAL_VIDEOS_PATH:
+            if path in {KUAISHOU_VIDEOS_PATH, DOUYIN_VIDEOS_PATH}:
                 user_id = str(body.get("user_id") or "")
                 cookie = str(body.get("cookie") or "")
                 kind = scenario_of(user_id, cookie)
                 code, message, _ = _business(kind)
                 if kind == "ok":
-                    self._send(200, {"code": 0, "message": "ok", "data": {"videos": _SUCCESS_VIDEOS}})
+                    videos = _DOUYIN_VIDEOS if path == DOUYIN_VIDEOS_PATH else _SUCCESS_VIDEOS
+                    self._send(200, {"code": 0, "message": "ok", "data": {"videos": videos}})
                     return
                 self._send(200, {"code": code, "message": message, "data": None})
                 return

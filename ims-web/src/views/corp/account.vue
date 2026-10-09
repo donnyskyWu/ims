@@ -282,8 +282,51 @@
         </div>
         <div class="fld">
           <label>凭证</label>
-          <div data-testid="ks-tab-mask">{{ detail.credentialMask || (detail.hasCookie ? '已配置（脱敏）' : '未配置') }}</div>
+          <div :data-testid="meta.platform === 'DOUYIN' ? 'dy-tab-mask' : 'ks-tab-mask'">
+            {{ detail.credentialMask || (detail.hasCookie ? '已配置（脱敏）' : '未配置') }}
+          </div>
         </div>
+        <template v-if="meta.platform === 'DOUYIN'">
+          <div class="fld">
+            <label>平台账号 ID</label>
+            <div class="mono" data-testid="dy-tab-platform-id">{{ detail.platformAccountId || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>凭证引用</label>
+            <div class="mono">{{ detail.credentialRef || '—' }}</div>
+          </div>
+          <div class="fld">
+            <label>采集健康</label>
+            <div data-testid="dy-tab-health">{{ detail.healthLabel || '—' }}</div>
+          </div>
+          <p class="hint">
+            定时采集与立即采集见
+            <router-link to="/ims/collect/douyin">抖音内部账号采集</router-link>
+            。
+          </p>
+          <h3 style="margin: 8px 0; font-size: 14px">采集记录</h3>
+          <table data-testid="dy-tab-logs">
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>条数</th>
+                <th>开始时间</th>
+                <th>错误</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!dyLogs.length">
+                <td colspan="4">暂无采集记录</td>
+              </tr>
+              <tr v-for="row in dyLogs" :key="row.id">
+                <td data-testid="dy-tab-log-status">{{ row.statusLabel || row.status }}</td>
+                <td data-testid="dy-tab-log-count">{{ row.recordCount }}</td>
+                <td>{{ row.startedAt }}</td>
+                <td>{{ row.errorSummary || '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
         <template v-if="meta.platform === 'KUAISHOU'">
           <div class="fld">
             <label>平台账号 ID</label>
@@ -674,7 +717,7 @@ const currentUserId = computed(() => Number(userStore.profile?.userId || 0))
 const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: string }> = {
   'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: 'P-M4-008 · WECHAT_OFFICIAL · 08 CORP-A' },
   'wechat-channels': { title: '视频号', platform: 'WECHAT_CHANNELS', sub: 'P-M4-008 · WECHAT_CHANNELS + 采集 Tab · 08 CORP-A' },
-  douyin: { title: '抖音', platform: 'DOUYIN', sub: 'P-M4-008 · DOUYIN + ADR-047 采集 Tab · 08 CORP-A' },
+  douyin: { title: '抖音', platform: 'DOUYIN', sub: 'P-M4-008 · DOUYIN + 内部账号采集 · 08 CORP-A' },
   kuaishou: { title: '快手', platform: 'KUAISHOU', sub: 'P-M4-008 · KUAISHOU + 内部账号采集 · 08 CORP-A' },
   xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: 'P-M4-008 · XIAOHONGSHU · 08 CORP-A' },
 }
@@ -716,6 +759,7 @@ const collectMsg = ref('')
 const collectSummary = ref('—')
 const ksPlatformAccountId = ref('')
 const ksCredential = ref('')
+const dyLogs = ref<Array<Record<string, unknown>>>([])
 
 const timelineEvents = ref<
   { id: number; eventType: string; refNo: string; snapshotSummary: string; eventTime: string }[]
@@ -1077,6 +1121,19 @@ async function loadTimeline(accountId: unknown) {
   }
 }
 
+async function loadDyLogs(accountId: unknown) {
+  if (meta.value.platform !== 'DOUYIN' || !accountId) {
+    dyLogs.value = []
+    return
+  }
+  try {
+    const res = await http.get('/collect/douyin/log/page', { params: { pageNo: 1, pageSize: 10, accountId } })
+    dyLogs.value = res.data?.data?.list || []
+  } catch {
+    dyLogs.value = []
+  }
+}
+
 async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   activeTab.value = tab
   collectMsg.value = ''
@@ -1086,6 +1143,11 @@ async function openDetail(row: Record<string, unknown>, tab = 'basic') {
   ksPlatformAccountId.value = String(data.platformAccountId || '')
   ksCredential.value = ''
   collectSummary.value = String(data.collectBindSummary || '—')
+  if (tab === 'collect') {
+    await loadDyLogs(row.id)
+  } else {
+    dyLogs.value = []
+  }
   try {
     const bindRes = await http.get(`/corp/account/${row.id}/collector-bind`)
     bindInfo.value = bindRes.data?.data as Record<string, unknown>
@@ -1561,6 +1623,9 @@ watch(
 watch(activeTab, (tab) => {
   if (tab === 'timeline' && detail.value?.id) {
     loadTimeline(detail.value.id)
+  }
+  if (tab === 'collect' && detail.value?.id) {
+    loadDyLogs(detail.value.id)
   }
 })
 </script>
