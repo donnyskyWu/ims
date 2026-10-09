@@ -271,7 +271,7 @@ async function openDetail(sessionCode: string, abnormal?: Record<string, unknown
   }
   detail.value = res.data.data
   verifyHint.value = abnormal
-    ? `净利率 ${abnormal.netProfitRate}% 偏离同类均值 ${abnormal.peerAvgRate}% 达 ${abnormal.deviationSigma}σ，请核实成本项`
+    ? `净利率 ${abnormal.netProfitRate}% 偏离同类均值 ${abnormal.peerAvgRate}%，超过 2σ 阈值（当前 ${abnormal.deviationSigma}σ），请核实成本项`
     : ''
   drawerOpen.value = true
 }

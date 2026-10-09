@@ -484,13 +484,13 @@ def abnormal_marks(rows: list[tuple[FinProfit, LiveSession, FinCost | None]]) ->
                     continue
                 deviation = 99.0 if rate >= mean else -99.0
             else:
-                deviation = (rate - mean) / sigma
+                deviation = round((rate - mean) / sigma, 2)
             if abs(deviation) < 2:
                 continue
             found[profit.session_code] = {
                 "peerAvgRate": round(mean, 2),
                 "sigma": round(sigma, 4),
-                "deviationSigma": round(deviation, 2),
+                "deviationSigma": deviation,
                 "abnormalCostItem": dominant_cost_item(cost),
             }
     return found
