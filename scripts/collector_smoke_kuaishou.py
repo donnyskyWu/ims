@@ -15,6 +15,10 @@
 接口：
   GET /api/v1/internal/kuaishou/video-list?account_id=
   GET /api/v1/internal/kuaishou/follower-stats?account_id=
+
+现有 GET 之后可选探活作品统计（不入库；日快照已由作品列表覆盖）：
+  GET /api/v1/internal/kuaishou/video-stats?account_id=
+  列表返回 photo_id / video_id 时一并带上 photo_id。任一已调用接口失败则退出 1。
 """
 
 from __future__ import annotations
@@ -79,6 +83,22 @@ def _kind(http_status: int, body: dict) -> str:
     return "error"
 
 
+def _first_photo_id(body: dict) -> str:
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    videos = data.get("videos") if isinstance(data.get("videos"), list) else []
+    if not videos or not isinstance(videos[0], dict):
+        return ""
+    first = videos[0]
+    return str(first.get("photo_id") or first.get("video_id") or first.get("videoId") or "").strip()
+
+
+def _print_metric_fields(body: dict) -> None:
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    for key in ("play_count", "like_count", "comment_count", "share_count", "collect_count"):
+        if key in data and data[key] is not None:
+            print(f"{key}={data[key]}")
+
+
 def _report(name: str, http_status: int, body: dict, secrets: list[str]) -> str:
     message = str(body.get("message") or body.get("msg") or "")
     code = body.get("code")
@@ -102,6 +122,7 @@ def _report(name: str, http_status: int, body: dict, secrets: list[str]) -> str:
             print(f"first_video_id={videos[0].get('video_id') or ''}")
     if follower_count is not None:
         print(f"follower_count={follower_count}")
+    _print_metric_fields(body)
     return kind
 
 
@@ -121,11 +142,21 @@ def main() -> int:
         ("follower-stats", "/api/v1/internal/kuaishou/follower-stats"),
     ]
     failed = False
+    photo_id = ""
     try:
         for name, path in calls:
             http_status, body = _get(base, token, path, {"account_id": account_id})
+            if name == "video-list":
+                photo_id = _first_photo_id(body)
             if _report(name, http_status, body, secrets) != "ok":
                 failed = True
+        # 日快照已覆盖。stats 只探活；有作品 id 时带上，没有也调用（接口允许空 photo_id）。
+        params = {"account_id": account_id}
+        if photo_id:
+            params["photo_id"] = photo_id
+        http_status, body = _get(base, token, "/api/v1/internal/kuaishou/video-stats", params)
+        if _report("video-stats", http_status, body, secrets) != "ok":
+            failed = True
     except urllib.error.URLError as exc:
         print(f"status=error message=无法连接 Collector ({exc.reason})")
         return 1

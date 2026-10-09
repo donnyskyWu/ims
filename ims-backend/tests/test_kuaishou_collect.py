@@ -120,6 +120,16 @@ def test_collect_idempotent_and_scheduler():
     assert first.json()["data"]["statusLabel"] == "成功"
     assert first.json()["data"]["recordCount"] == 3
     assert first.json()["data"]["durationMs"] >= 0
+    listed = client.get(
+        "/admin-api/ims/collect/kuaishou/account/page", headers=auth, params={"pageNo": 1, "pageSize": 50}
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == account_id)
+    by_video = {item["videoId"]: item for item in row["videoSnapshots"]}
+    assert by_video["ksv-1001"]["playCount"] == 1200
+    assert by_video["ksv-1001"]["likeCount"] == 30
+    assert by_video["ksv-1001"]["commentCount"] == 4
+    assert by_video["ksv-1001"]["shareCount"] == 1
+    assert by_video["ksv-1001"]["statDate"]
     second = client.post(f"/admin-api/ims/collect/kuaishou/account/{account_id}/run", headers=auth)
     assert second.json()["data"]["status"] == "SUCCESS"
     ops = ops_session()
@@ -130,6 +140,17 @@ def test_collect_idempotent_and_scheduler():
         )
         assert videos == 2
         assert snaps == 2
+        snap = ops.scalar(
+            select(KuaishouVideoSnapshot).where(
+                KuaishouVideoSnapshot.account_id == account_id,
+                KuaishouVideoSnapshot.video_id == "ksv-1001",
+                KuaishouVideoSnapshot.deleted == 0,
+            )
+        )
+        assert snap.play_count == 1200
+        assert snap.like_count == 30
+        assert snap.comment_count == 4
+        assert snap.share_count == 1
         daily = ops.scalars(select(KuaishouFollowerDaily).where(KuaishouFollowerDaily.account_id == account_id)).all()
         assert len(daily) == 1
         assert daily[0].follower_count == KUAISHOU_FOLLOWER_COUNT

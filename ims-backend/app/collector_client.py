@@ -10,6 +10,12 @@
 - `GET  /api/v1/internal/kuaishou/video-list?account_id=`
 - `GET  /api/v1/internal/kuaishou/follower-stats?account_id=`
 
+作品统计不在这里调用。核对 collector-api OpenAPI 后，下列接口与作品列表的播放 / 点赞 / 评论 / 转发重复，日快照已覆盖：
+
+- `GET /api/v1/internal/douyin/video-stats`（单条；`stat_date` 恒为空；收藏数列表项里已有）
+- `GET /api/v1/internal/douyin/accounts/{account_id}/videos/stats`（列表合计，无单作品新字段）
+- `GET /api/v1/internal/kuaishou/video-stats`（与 video-list 同源作品管理页；`collect_count` 恒为 0）
+
 鉴权头 `Authorization: Bearer <IMS_COLLECTOR_TOKEN>`，地址 `IMS_COLLECTOR_BASE_URL`。
 业务错误可以是 HTTP 200，正文 `message` 为「Cookie 已失效」或「浏览器引擎不可用」。
 上游若用 4xx/5xx 带同样文案，这里只归类，不向调用方抛未捕获异常。

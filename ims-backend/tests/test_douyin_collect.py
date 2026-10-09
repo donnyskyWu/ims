@@ -125,6 +125,16 @@ def test_collect_idempotent_and_scheduler():
     assert first.json()["data"]["statusLabel"] == "成功"
     assert first.json()["data"]["recordCount"] == 5
     assert first.json()["data"]["errorSummary"] in (None, "")
+    listed = client.get(
+        "/admin-api/ims/collect/douyin/account/page", headers=auth, params={"pageNo": 1, "pageSize": 50}
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == account_id)
+    by_video = {item["videoId"]: item for item in row["videoSnapshots"]}
+    assert by_video["dyv-2001"]["playCount"] == 2100
+    assert by_video["dyv-2001"]["likeCount"] == 40
+    assert by_video["dyv-2001"]["commentCount"] == 6
+    assert by_video["dyv-2001"]["shareCount"] == 2
+    assert by_video["dyv-2001"]["statDate"]
     second = client.post(f"/admin-api/ims/collect/douyin/account/{account_id}/run", headers=auth)
     assert second.json()["data"]["status"] == "SUCCESS"
     ops = ops_session()
@@ -135,6 +145,17 @@ def test_collect_idempotent_and_scheduler():
         )
         assert videos == 2
         assert snaps == 2
+        snap = ops.scalar(
+            select(DouyinVideoSnapshot).where(
+                DouyinVideoSnapshot.account_id == account_id,
+                DouyinVideoSnapshot.video_id == "dyv-2001",
+                DouyinVideoSnapshot.deleted == 0,
+            )
+        )
+        assert snap.play_count == 2100
+        assert snap.like_count == 40
+        assert snap.comment_count == 6
+        assert snap.share_count == 2
         fans = ops.scalar(select(func.count()).select_from(DouyinFollower).where(DouyinFollower.account_id == account_id))
         daily = ops.scalars(select(DouyinFollowerDaily).where(DouyinFollowerDaily.account_id == account_id)).all()
         assert fans == 2

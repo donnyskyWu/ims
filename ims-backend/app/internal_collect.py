@@ -3,6 +3,7 @@
 快手与抖音共用：账号凭证掩码、Collector 绑定、IMS 定时器、幂等写入、采集记录和健康状态。
 平台差异只放在 PlatformProfile（接口、表、source / dataType）。
 同一条定时器先写 FOLLOWER_STATS（契约里有粉丝列表时再写列表），再写作品。
+作品日快照已覆盖：不另调 video-stats / videos/stats，播放、点赞、评论、转发随作品列表写入当日快照。
 """
 
 from __future__ import annotations
@@ -231,6 +232,37 @@ def _bind_of(ops: Session, account_id: int) -> CollectorAccountBind | None:
     )
 
 
+def video_snapshot_public(ops: Session, account: PlatformAccount) -> dict:
+    """最近作品日快照。指标来自作品列表，不是独立的 stats 拉取。"""
+    profile = profile_of(account.platform_type)
+    model = profile.snapshot_model if profile else None
+    if model is None:
+        return {"videoSnapshots": []}
+    rows = ops.scalars(
+        select(model)
+        .where(
+            model.tenant_id == (account.tenant_id or 0),
+            model.account_id == account.id,
+            model.deleted == 0,
+        )
+        .order_by(model.stat_date.desc(), model.id.desc())
+        .limit(20)
+    ).all()
+    return {
+        "videoSnapshots": [
+            {
+                "videoId": row.video_id,
+                "statDate": row.stat_date or "",
+                "playCount": int(row.play_count or 0),
+                "likeCount": int(row.like_count or 0),
+                "commentCount": int(row.comment_count or 0),
+                "shareCount": int(row.share_count or 0),
+            }
+            for row in rows
+        ]
+    }
+
+
 def follower_public(ops: Session, account: PlatformAccount) -> dict:
     empty = {"followerCount": None, "followerStatDate": "", "followerDaily": []}
     profile = profile_of(account.platform_type)
@@ -284,6 +316,7 @@ def account_public(ops: Session, row: PlatformAccount) -> dict:
         "bindStatus": bind.bind_status if bind else "UNBOUND",
     }
     data.update(follower_public(ops, row))
+    data.update(video_snapshot_public(ops, row))
     return data
 
 
@@ -374,6 +407,10 @@ def _int_field(item: dict, *names: str) -> int:
 
 
 def upsert_videos(profile: PlatformProfile, ops: Session, account: PlatformAccount, videos: list[dict]) -> int:
+    """作品列表写入作品行，并按租户 + 账号 + video_id + 统计日幂等更新日快照。
+
+    日快照已覆盖。Collector 的 video-stats、账号视频汇总与列表指标重复，这里不扩展字段、不另开拉取。
+    """
     stat_date = utcnow().strftime("%Y-%m-%d")
     collected_at = utcnow().strftime("%Y-%m-%d %H:%M:%S")
     written = 0

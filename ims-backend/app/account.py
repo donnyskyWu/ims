@@ -336,9 +336,10 @@ def enrich_and_return(row: PlatformAccount, db: Session, ops: Session, bind: Col
     persons = realname_masked(ops, {row.realname_id} if row.realname_id else set())
     holders = user_names(db, {row.holder_user_id} if row.holder_user_id else set())
     data = detail_vo(row, groups, companies, persons, holders, bind)
-    from app.internal_collect import follower_public
+    from app.internal_collect import follower_public, video_snapshot_public
 
     data.update(follower_public(ops, row))
+    data.update(video_snapshot_public(ops, row))
     return data
 
 
