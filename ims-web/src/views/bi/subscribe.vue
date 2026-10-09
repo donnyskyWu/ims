@@ -57,7 +57,7 @@
               <td>{{ row.lastPushAt }}</td>
               <td>
                 <span class="btn-txt btn" @click="toggleSub(row)">{{ row.status === 'ACTIVE' ? '暂停' : '恢复' }}</span>
-                <span v-if="row.status === 'ACTIVE'" class="btn-txt btn" @click="pushNow(row)">立即推送</span>
+                <span v-if="row.status === 'ACTIVE'" class="btn-txt btn" @click="askPush(row)">立即推送</span>
                 <span class="btn-txt btn" @click="viewSnapshot(row)">查看快照</span>
               </td>
             </tr>
@@ -71,6 +71,12 @@
         分享不突破数据权限：链接列表按 BR-212 过滤，仅展示您有权查看的分享行
       </div>
       <div class="acts" style="margin-bottom: 8px">
+        <input
+          v-model="shareKeyword"
+          data-testid="bi-share-keyword"
+          placeholder="报表/创建人"
+          style="width: 160px"
+        />
         <button class="btn btn-pri btn-sm" type="button" @click="openShare">生成分享链接</button>
       </div>
       <div class="tbl-wrap">
@@ -85,7 +91,11 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in shares" :key="row.id">
+            <tr v-if="shareLoading"><td colspan="5"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-else-if="!visibleShares.length">
+              <td colspan="5"><div class="empty" data-testid="bi-share-empty"><div class="et">暂无分享链接</div></div></td>
+            </tr>
+            <tr v-for="row in visibleShares" v-else :key="row.id">
               <td>{{ row.targetName }}</td>
               <td>
                 <span class="tag" :style="approvalStyle(row.approvalStatus)">{{ approvalLabel(row.approvalStatus) }}</span>
@@ -101,10 +111,12 @@
                 <span
                   v-if="row.approvalStatus === 'APPROVED' || row.approvalStatus === 'NOT_REQUIRED'"
                   class="btn-txt btn"
-                  @click="expireShare(row)"
-                >标记过期</span>
+                  data-testid="bi-share-revoke"
+                  @click="askRevoke(row)"
+                >撤销</span>
                 <span v-else-if="row.approvalStatus === 'PENDING'" class="csub">待「分享审批」Tab 处理</span>
                 <span v-else-if="row.approvalStatus === 'EXPIRED'" class="csub">链接已失效</span>
+                <span v-else-if="row.approvalStatus === 'REJECTED'" class="csub">链接已驳回</span>
               </td>
             </tr>
           </tbody>
@@ -205,6 +217,33 @@
       </div>
     </div>
 
+    <div v-if="revokeTarget" class="modal-mask" data-testid="bi-share-revoke-confirm" @click.self="revokeTarget = null">
+      <div class="card" style="width: 420px; padding: 18px">
+        <h3 style="margin: 0 0 10px">确认撤销分享</h3>
+        <p style="margin: 0">撤销「{{ revokeTarget.targetName }}」后链接立即失效，已复制的地址将无法打开。</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="revokeTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-share-revoke-ok" @click="confirmRevoke">
+            确认撤销
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="pushTarget" class="modal-mask" data-testid="bi-push-confirm" @click.self="pushTarget = null">
+      <div class="card" style="width: 420px; padding: 18px">
+        <h3 style="margin: 0 0 10px">确认立即推送</h3>
+        <p style="margin: 0">将推送「{{ pushTarget.subName }}」· {{ pushTarget.reportName }} 的快照。</p>
+        <p class="csub" style="margin: 8px 0 0">未配置钉钉 Webhook 时按本地桩受理，不向真实钉钉外发。</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="pushTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-push-confirm-ok" @click="confirmPush">
+            确认推送
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showShareForm" class="modal-mask" @click.self="showShareForm = false">
       <div class="card" style="width: 420px; padding: 18px">
         <h3 style="margin: 0 0 10px">生成分享链接</h3>
@@ -212,6 +251,9 @@
         <input v-model.number="shareForm.reportId" class="fld-in" type="number" />
         <label class="fld">有效期（天）</label>
         <input v-model.number="shareForm.expireDays" class="fld-in" type="number" min="7" max="30" />
+        <p v-if="shareExpireError" class="hint" data-testid="bi-share-expire-error" style="color: var(--red)">
+          {{ shareExpireError }}
+        </p>
         <label class="fld" style="display: flex; align-items: center; gap: 8px; margin-top: 8px">
           <input v-model="shareForm.sensitive" type="checkbox" />
           含成本/利润等敏感数据（须审批）
@@ -268,14 +310,24 @@ type ShareRow = {
 }
 
 const shares = ref<ShareRow[]>([])
+const shareLoading = ref(false)
+const shareKeyword = ref('')
 const published = ref<Record<string, unknown>[]>([])
 const snapshot = ref<{ subName: string; snapshotAt: string; summary: { gmv: number } } | null>(null)
 const showForm = ref(false)
 const showShareForm = ref(false)
 const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
 const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
+const shareExpireError = ref('')
+const pushTarget = ref<SubRow | null>(null)
+const revokeTarget = ref<ShareRow | null>(null)
 
 const pendingApprovals = computed(() => shares.value.filter((r) => r.approvalStatus === 'PENDING'))
+const visibleShares = computed(() => {
+  const q = shareKeyword.value.trim()
+  if (!q) return shares.value
+  return shares.value.filter((row) => row.targetName.includes(q) || (row.creatorName || '').includes(q))
+})
 
 function switchTab(key: string) {
   tab.value = key
@@ -347,8 +399,13 @@ async function loadSubs() {
 }
 
 async function loadShares() {
-  const res = await http.get('/bi/subscribe/share-link/list', { params: { pageNo: 1, pageSize: 20 } })
-  if (res.data.code === 0) shares.value = res.data.data.list || []
+  shareLoading.value = true
+  try {
+    const res = await http.get('/bi/subscribe/share-link/list', { params: { pageNo: 1, pageSize: 20 } })
+    if (res.data.code === 0) shares.value = res.data.data.list || []
+  } finally {
+    shareLoading.value = false
+  }
 }
 
 async function loadPublished() {
@@ -412,27 +469,42 @@ async function viewSnapshot(row: SubRow) {
   if (res.data.code === 0) snapshot.value = res.data.data
 }
 
-async function pushNow(row: SubRow) {
-  const res = await http.post(`/bi/subscribe/${row.id}/push-now`)
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '推送失败')
-    return
+function askPush(row: SubRow) {
+  pushTarget.value = row
+}
+
+async function confirmPush() {
+  const row = pushTarget.value
+  if (!row) return
+  pushTarget.value = null
+  try {
+    const res = await http.post(`/bi/subscribe/${row.id}/push-now`)
+    snapshot.value = res.data.data.snapshot
+    await loadSubs()
+  } catch (error: unknown) {
+    const msg = error && typeof error === 'object' && 'msg' in error ? String((error as { msg?: string }).msg || '') : ''
+    alert(msg || '推送失败')
   }
-  snapshot.value = res.data.data.snapshot
-  await loadSubs()
 }
 
 function openShare() {
   shareForm.reportId = Number(form.reportId) || shareForm.reportId || 0
   shareForm.sensitive = false
   shareForm.expireDays = 7
+  shareExpireError.value = ''
   showShareForm.value = true
 }
 
 async function submitShare() {
+  shareExpireError.value = ''
   const reportId = Number(shareForm.reportId)
   if (!reportId) {
     alert('请填写报表 ID')
+    return
+  }
+  const days = Number(shareForm.expireDays)
+  if (!Number.isFinite(days) || days < 7 || days > 30) {
+    shareExpireError.value = '1197 分享有效期须为 7~30 天'
     return
   }
   const res = await http.post('/bi/subscribe/share-link', {
@@ -474,13 +546,21 @@ async function rejectShare(row: ShareRow) {
   await loadShares()
 }
 
-async function expireShare(row: ShareRow) {
-  const res = await http.put(`/bi/subscribe/share-approval/${row.id}`, { approvalStatus: 'EXPIRED' })
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '标记失败')
-    return
+function askRevoke(row: ShareRow) {
+  revokeTarget.value = row
+}
+
+async function confirmRevoke() {
+  const row = revokeTarget.value
+  if (!row) return
+  revokeTarget.value = null
+  try {
+    await http.put(`/bi/subscribe/share-approval/${row.id}`, { approvalStatus: 'EXPIRED' })
+    await loadShares()
+  } catch (error: unknown) {
+    const msg = error && typeof error === 'object' && 'msg' in error ? String((error as { msg?: string }).msg || '') : ''
+    alert(msg || '撤销失败')
   }
-  await loadShares()
 }
 
 onMounted(() => {

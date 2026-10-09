@@ -15,6 +15,13 @@
       </div>
     </div>
 
+    <div v-if="shareGate" class="card" data-testid="bi-share-gate" style="margin-top: 12px">
+      <div class="empty"><div class="et">{{ shareGate }}</div></div>
+    </div>
+
+    <template v-else>
+    <p v-if="shareHint" class="hint" data-testid="bi-share-scope-hint">{{ shareHint }}</p>
+
     <div class="qbar" style="flex-wrap: wrap; gap: 8px">
       <b>{{ preview?.reportTitle || '运营日报' }}</b>
       <span class="chip">预览模式</span>
@@ -128,6 +135,7 @@
         </table>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -161,6 +169,8 @@ const filterRestored = ref(false)
 const filterError = ref('')
 const drillReady = ref(false)
 const FILTER_KEY = 'ims.bi.preview.filters'
+const shareGate = ref('')
+const shareHint = ref('')
 const filters = reactive({
   dateFrom: '2026-09-01',
   dateTo: '2026-10-03',
@@ -458,8 +468,27 @@ async function exportDrill(format: 'XLSX' | 'CSV') {
   }
 }
 
+async function openShareToken(token: string): Promise<boolean> {
+  try {
+    const res = await http.get('/bi/subscribe/share-link', { params: { token } })
+    const data = res.data.data || {}
+    shareHint.value = String(data.hint || '按您的数据权限过滤展示')
+    if (data.targetId) filters.reportId = Number(data.targetId)
+    return false
+  } catch (error: unknown) {
+    shareGate.value = errorMessage(error)
+    return true
+  }
+}
+
 onMounted(async () => {
   filterRestored.value = restoreFilters()
+  const raw = route.query.token
+  if (raw !== undefined && raw !== null) {
+    const token = Array.isArray(raw) ? String(raw[0] || '') : String(raw)
+    const blocked = await openShareToken(token)
+    if (blocked) return
+  }
   await loadTree()
   await runPreview()
 })

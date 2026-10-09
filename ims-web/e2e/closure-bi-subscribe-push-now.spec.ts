@@ -56,10 +56,18 @@ test.describe('bi subscribe push-now closure S12', () => {
     await expect(row).toContainText('生效')
     await expect(row).toContainText('未推送')
 
+    await row.getByText('立即推送').click()
+    const confirm = page.getByTestId('bi-push-confirm')
+    await expect(confirm).toContainText('本地桩')
+    await confirm.getByRole('button', { name: '取消' }).click()
+    await expect(confirm).toBeHidden()
+    await expect(row).toContainText('未推送')
+
     const pushResp = page.waitForResponse(
       (r) => r.url().includes('/push-now') && r.request().method() === 'POST' && r.status() === 200,
     )
     await row.getByText('立即推送').click()
+    await page.getByTestId('bi-push-confirm-ok').click()
     const pushBody = (await (await pushResp).json()) as {
       code: number
       data?: { lastPushStatus?: string; snapshot?: { summary?: { gmv: number } } }

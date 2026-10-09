@@ -180,6 +180,88 @@ def test_bi_subscribe_daily_period_alias_without_cron():
     assert invalid.json()["code"] == 1001
 
 
+def test_bi_share_link_empty_revoke_and_expire_edges():
+    auth = headers()
+    empty = client.get("/admin-api/ims/bi/subscribe/share-link", headers=auth, params={"token": "  "})
+    assert empty.json()["code"] == 1001
+    assert "为空" in empty.json()["msg"]
+
+    missing = client.get(
+        "/admin-api/ims/bi/subscribe/share-link", headers=auth, params={"token": "no-such-share-token"}
+    )
+    assert missing.json()["code"] == 1001
+    assert "不存在" in missing.json()["msg"]
+
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "分享边测", "reportType": "REPORT", "category": "内容分析"},
+    )
+    rid = created.json()["data"]["id"]
+
+    short = client.post(
+        "/admin-api/ims/bi/subscribe/share-link",
+        headers=auth,
+        json={"reportId": rid, "sensitive": False, "expireDays": 3},
+    )
+    assert short.json()["code"] == 1197
+    long = client.post(
+        "/admin-api/ims/bi/subscribe/share-link",
+        headers=auth,
+        json={"reportId": rid, "sensitive": False, "expireDays": 31},
+    )
+    assert long.json()["code"] == 1197
+
+    pending = client.post(
+        "/admin-api/ims/bi/subscribe/share-link",
+        headers=auth,
+        json={"reportId": rid, "sensitive": True, "expireDays": 7},
+    )
+    assert pending.json()["code"] == 0
+    pending_token = pending.json()["data"]["linkToken"]
+    gated = client.get("/admin-api/ims/bi/subscribe/share-link", headers=auth, params={"token": pending_token})
+    assert gated.json()["code"] == 1196
+    assert "待审批" in gated.json()["msg"]
+
+    plain = client.post(
+        "/admin-api/ims/bi/subscribe/share-link",
+        headers=auth,
+        json={"reportId": rid, "sensitive": False, "expireDays": 7},
+    )
+    assert plain.json()["code"] == 0
+    assert plain.json()["data"]["approvalStatus"] == "APPROVED"
+    token = plain.json()["data"]["linkToken"]
+    link_id = plain.json()["data"]["id"]
+    opened = client.get("/admin-api/ims/bi/subscribe/share-link", headers=auth, params={"token": token})
+    assert opened.json()["code"] == 0
+    assert opened.json()["data"]["usable"] is True
+    assert "数据权限" in opened.json()["data"]["hint"]
+
+    from app.core import SessionLocal
+    from app.models import BiShareLink
+
+    db = SessionLocal()
+    row = db.get(BiShareLink, link_id)
+    assert row is not None
+    row.expire_at = "2020-01-01T00:00:00+08:00"
+    db.commit()
+    db.close()
+    aged = client.get("/admin-api/ims/bi/subscribe/share-link", headers=auth, params={"token": token})
+    assert aged.json()["code"] == 1001
+    assert "已过期" in aged.json()["msg"]
+
+    revoked = client.put(
+        f"/admin-api/ims/bi/subscribe/share-approval/{link_id}",
+        headers=auth,
+        json={"approvalStatus": "EXPIRED"},
+    )
+    assert revoked.json()["code"] == 0
+    assert revoked.json()["data"]["approvalStatus"] == "EXPIRED"
+    after = client.get("/admin-api/ims/bi/subscribe/share-link", headers=auth, params={"token": token})
+    assert after.json()["code"] == 1001
+    assert "已过期" in after.json()["msg"]
+
+
 def test_bi_report_preview_run_and_drill():
     auth = headers()
     run = client.post(

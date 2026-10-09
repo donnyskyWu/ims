@@ -4,7 +4,7 @@ import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
 /**
  * Checklist **E2E-S12-05 EXPIRED 切片**（acceptance · **纯 UI** · #41）
  * Given: UI 新建报表 + 敏感分享 → 审批通过
- * When: 「分享链接」Tab「标记过期」
+ * When: 「分享链接」Tab「撤销」并确认
  * Then: 行可见「已过期」· 无「复制链接」
  */
 test.describe('bi share expired closure S12', () => {
@@ -84,12 +84,20 @@ test.describe('bi share expired closure S12', () => {
     const approvedRow = page.locator('.tbl-wrap tbody tr', { hasText: reportName })
     await expect(approvedRow).toContainText('已通过', { timeout: 15_000 })
     await expect(approvedRow.getByText('复制链接')).toBeVisible()
-    await expect(approvedRow.getByText('标记过期')).toBeVisible()
+    await expect(approvedRow.getByTestId('bi-share-revoke')).toBeVisible()
+
+    await approvedRow.getByTestId('bi-share-revoke').click()
+    const revokeConfirm = page.getByTestId('bi-share-revoke-confirm')
+    await expect(revokeConfirm).toBeVisible()
+    await revokeConfirm.getByRole('button', { name: '取消' }).click()
+    await expect(revokeConfirm).toBeHidden()
+    await expect(approvedRow.getByText('复制链接')).toBeVisible()
 
     const expireResp = page.waitForResponse(
       (r) => r.url().includes('/share-approval/') && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await approvedRow.getByText('标记过期', { exact: true }).click()
+    await approvedRow.getByTestId('bi-share-revoke').click()
+    await page.getByTestId('bi-share-revoke-ok').click()
     const expireBody = (await (await expireResp).json()) as {
       code: number
       data?: { approvalStatus?: string }
