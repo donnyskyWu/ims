@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
@@ -975,7 +976,14 @@ def review_detail(
         data["layoutHtml"] = sanitize_layout_html(project.layout_html or "")
         data["body"] = project.body or ""
         data["bodyFormat"] = project.body_format or "PLAIN"
-        data["layoutJson"] = project.layout_json or ""
+        raw_layout_json = project.layout_json or ""
+        if raw_layout_json.strip().startswith("{"):
+            try:
+                data["layoutJson"] = json.loads(raw_layout_json)
+            except json.JSONDecodeError:
+                data["layoutJson"] = raw_layout_json
+        else:
+            data["layoutJson"] = raw_layout_json
     data["preview"] = review_preview(ops, project, data["submitterName"])
     data["reviewSteps"] = build_review_steps(db, ops, project, history)
     data["contentPreview"] = build_content_preview(project)

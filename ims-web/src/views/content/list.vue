@@ -167,6 +167,26 @@
           :layout-html="editLayoutHtml"
           @applied="onLayoutApplied"
         />
+        <div v-if="editContentType === 'ARTICLE'" class="fld">
+          <label>排版</label>
+          <p class="hint">AI 语义排版只生成版式，不改写纯文本，也不调用文案生成。</p>
+          <button class="btn btn-sec btn-sm" type="button" :disabled="!canAiLayout" @click="openAiLayout">
+            AI 语义排版
+          </button>
+          <div v-if="aiPanelOpen" class="ai-layout-panel">
+            <p class="hint">按正文语义自动选择决策扫读版或情报分析版。</p>
+            <button class="btn btn-pri btn-sm" type="button" :disabled="aiBusy || !canAiLayout" @click="previewAi">
+              AI 排版预览
+            </button>
+            <template v-if="aiPreview">
+              <pre v-if="aiTab === 'before'" class="layout-viewer">{{ editBody }}</pre>
+              <div v-else class="layout-viewer" v-html="aiPreview.layoutHtml"></div>
+              <p class="hint">已选版式：{{ aiPreview.selectedTemplateName }}</p>
+              <button class="btn btn-pri btn-sm" type="button" :disabled="aiBusy" @click="applyAi">写回版式</button>
+            </template>
+            <p v-if="aiNote" class="hint">{{ aiNote }}</p>
+          </div>
+        </div>
       </div>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
       <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
@@ -194,7 +214,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ContentLayoutPanel from '../../components/ContentLayoutPanel.vue'
 import ContentLayoutPreview from '../../components/ContentLayoutPreview.vue'
@@ -213,6 +233,12 @@ const drawerOpen = ref(false)
 const viewOpen = ref(false)
 const viewRow = ref<any>(null)
 const aiOpen = ref(false)
+const aiPanelOpen = ref(false)
+const aiBusy = ref(false)
+const aiPreview = ref<any>(null)
+const aiNote = ref('')
+const aiTab = ref<'before' | 'after'>('after')
+const canAiLayout = computed(() => editContentType.value === 'ARTICLE' && editBody.value.trim().length > 0)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
 const editingRow = ref<any>(null)
@@ -371,6 +397,9 @@ function openCreate() {
   revokePreviews()
   previewHint.value = '插入图片后在此预览'
   aiOpen.value = false
+  aiPanelOpen.value = false
+  aiPreview.value = null
+  aiNote.value = ''
   drawerOpen.value = true
 }
 
@@ -395,8 +424,59 @@ function openEdit(row: any) {
   editorSeed.value += 1
   uploadError.value = ''
   aiOpen.value = false
+  aiPanelOpen.value = false
+  aiPreview.value = null
+  aiNote.value = ''
   drawerOpen.value = true
   void refreshPreview()
+}
+
+function openAiLayout() {
+  if (!canAiLayout.value) return
+  aiPanelOpen.value = true
+  aiPreview.value = null
+  aiNote.value = ''
+}
+
+async function previewAi() {
+  if (!editingId.value) return
+  aiBusy.value = true
+  aiNote.value = ''
+  try {
+    const { data } = await http.post(`/content/${editingId.value}/typeset/preview`, {
+      mode: 'AUTO',
+      body: editBody.value,
+    })
+    aiPreview.value = data.data
+    aiTab.value = 'after'
+  } catch (e) {
+    window.alert(errorMessage(e))
+  } finally {
+    aiBusy.value = false
+  }
+}
+
+async function applyAi() {
+  if (!editingId.value) return
+  const hasLayout = editBodyFormat.value === 'LAYOUT' || !!editLayoutHtml.value.trim()
+  if (hasLayout && !window.confirm('将覆盖当前版式，正文文字不会改动')) return
+  aiBusy.value = true
+  try {
+    const { data } = await http.post(`/content/${editingId.value}/typeset/apply`, {
+      mode: 'AUTO',
+      body: editBody.value,
+      overwrite: hasLayout,
+    })
+    editLayoutHtml.value = data.data?.layoutHtml || ''
+    editBodyFormat.value = data.data?.bodyFormat || 'LAYOUT'
+    editLayoutJson.value = typeof data.data?.layoutJson === 'string' ? data.data.layoutJson : JSON.stringify(data.data?.layoutJson || '')
+    if (typeof data.data?.body === 'string') editBody.value = data.data.body
+    aiNote.value = 'AI 排版已写回，正文未改动'
+  } catch (e) {
+    window.alert(errorMessage(e))
+  } finally {
+    aiBusy.value = false
+  }
 }
 
 async function openView(row: any) {

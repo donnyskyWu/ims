@@ -1,5 +1,5 @@
 <template>
-  <div class="layout-viewer" :data-testid="testId" @click="keepReadOnly">
+  <div class="layout-viewer" data-readonly="true" :data-testid="testId" @click="keepReadOnly">
     <div
       v-if="html"
       class="layout-viewer-html"

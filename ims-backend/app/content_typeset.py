@@ -225,6 +225,30 @@ def _typeset(db: Session, actor: User, row, req: TypesetReq, *, write: bool):
     return ok(project_vo(row))
 
 
+def _semantic_typeset(db: Session, row, req: TypesetReq, *, write: bool):
+    """mode=AUTO：#125 语义排版。与规则/模板排版共用同一路径，按 mode 分流。"""
+    from app.content_layout_ai import FIDELITY_MSG, OVERWRITE_MSG, LayoutAiError, has_layout, run_typeset
+    from app.content_production import project_vo
+
+    try:
+        if write and has_layout(row) and not req.overwrite:
+            raise LayoutAiError(2031, OVERWRITE_MSG)
+        preview = run_typeset(db, row, req.body, writing=write)
+    except LayoutAiError as exc:
+        return fail(exc.code, exc.msg)
+    if not write:
+        return ok(preview)
+    original_body = row.body
+    row.layout_html = preview["layoutHtml"]
+    row.layout_json = json.dumps(preview["layoutJson"], ensure_ascii=False)
+    row.body_format = "LAYOUT"
+    row.body = original_body
+    if not fidelity_ok(original_body, row.layout_html):
+        return fail(2037, FIDELITY_MSG)
+    db.flush()
+    return ok(project_vo(row))
+
+
 @router.post("/{content_id}/typeset/preview")
 def typeset_preview(
     content_id: int,
@@ -237,6 +261,8 @@ def typeset_preview(
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
+    if (req.mode or "").strip().upper() == "AUTO":
+        return _semantic_typeset(db, row, req, write=False)
     return _typeset(db, actor, row, req, write=False)
 
 
@@ -252,4 +278,6 @@ def typeset_apply(
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
+    if (req.mode or "").strip().upper() == "AUTO":
+        return _semantic_typeset(db, row, req, write=True)
     return _typeset(db, actor, row, req, write=True)
