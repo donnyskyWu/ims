@@ -7,6 +7,8 @@
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建规则</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="alert-hit-open" @click="openHits">命中统计</button>
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/stats">统计总览</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
       </div>
@@ -66,6 +68,61 @@
       </div>
     </div>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
+
+    <div v-if="showHits" class="modal-mask" @click.self="showHits = false">
+      <div class="card hit-modal" data-testid="alert-hit-modal" style="padding: 20px">
+        <h3 style="margin: 0 0 12px">命中统计</h3>
+        <form class="qbar" @submit.prevent="loadHits">
+          <input v-model="hitStart" data-testid="alert-hit-start" type="date" />
+          <input v-model="hitEnd" data-testid="alert-hit-end" type="date" />
+          <button class="btn btn-pri btn-sm" type="submit">查询</button>
+          <span class="sp"></span>
+          <button class="btn btn-sec btn-sm" type="button" @click="showHits = false">关闭</button>
+        </form>
+        <p v-if="hitError" class="hint" style="color: var(--red)">{{ hitError }}</p>
+        <div class="tbl-wrap" style="margin-top: 10px">
+          <table>
+            <thead>
+              <tr>
+                <th>规则</th>
+                <th>预警数</th>
+                <th>响应率</th>
+                <th>误报数</th>
+                <th>最近命中</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!hitRows.length">
+                <td colspan="5"><div class="empty"><div class="et">{{ hitError || '该范围内暂无命中' }}</div></div></td>
+              </tr>
+              <tr v-for="row in hitRows" v-else :key="row.ruleCode" data-testid="alert-hit-row">
+                <td>
+                  <div class="mono">{{ row.ruleCode }}</div>
+                  <div>{{ row.ruleName }}</div>
+                </td>
+                <td class="num" data-testid="alert-hit-count">{{ row.alertCount }}</td>
+                <td class="num" :style="{ color: row.responseRate < 90 ? 'var(--orange, #d97706)' : undefined }">
+                  {{ row.responseRate }}%
+                </td>
+                <td class="num">
+                  {{ row.falseAlarmCount }}
+                  <span
+                    v-if="row.falseAlarmCount >= 5"
+                    data-testid="alert-hit-false-mark"
+                    title="连续误报 ≥5 次建议复核阈值（ALR-S-R3）"
+                    style="color: var(--orange, #d97706); margin-left: 6px"
+                  >
+                    复核阈值
+                  </span>
+                </td>
+                <td class="mono">{{ row.lastHitAt ? row.lastHitAt.slice(0, 16) : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="hint">响应率 &lt; 90% 为橙色（BR-112）。钉钉/短信不在本弹窗外发。</p>
+      </div>
+    </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 520px; padding: 20px">
@@ -132,6 +189,30 @@ const form = reactive({
   enabled: false,
 })
 const toast = ref('')
+const showHits = ref(false)
+const hitRows = ref<HitRow[]>([])
+const hitError = ref('')
+const hitStart = ref('')
+const hitEnd = ref('')
+
+type HitRow = {
+  ruleCode: string
+  ruleName: string
+  alertCount: number
+  responseRate: number
+  falseAlarmCount: number
+  lastHitAt: string
+}
+
+function bjDate(offsetDays = 0) {
+  const now = new Date(Date.now() + offsetDays * 86400000)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now)
+}
 
 const dslTouched = computed(
   () => !!(form.dslSource.trim() || form.dslField.trim() || form.dslOp.trim() || form.dslValue.trim()),
@@ -263,5 +344,50 @@ async function run(ruleId: number) {
   }
 }
 
+function openHits() {
+  hitStart.value = bjDate(-29)
+  hitEnd.value = bjDate(0)
+  showHits.value = true
+  loadHits()
+}
+
+async function loadHits() {
+  hitError.value = ''
+  const params: Record<string, string> = {}
+  if (hitStart.value || hitEnd.value) {
+    if (!hitStart.value || !hitEnd.value) {
+      hitError.value = '请同时填写起止日期'
+      hitRows.value = []
+      return
+    }
+    params.dateRange = `${hitStart.value},${hitEnd.value}`
+  }
+  try {
+    const res = await http.get('/alert/rule/hit-stats', { params })
+    hitRows.value = res.data.data || []
+  } catch (error) {
+    hitError.value = errorMessage(error)
+    hitRows.value = []
+  }
+}
+
 onMounted(loadList)
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.hit-modal {
+  width: 800px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+</style>

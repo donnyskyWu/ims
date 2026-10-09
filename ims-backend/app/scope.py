@@ -356,6 +356,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/alert/dedup", "ims_alert_dedup_policy"),
     ("GET", "/admin-api/ims/alert/history", "ims_alert_record"),
     ("GET", "/admin-api/ims/alert/stats", "ims_alert_record"),
+    ("GET", "/admin-api/ims/alert/escalate", "ims_alert_record"),
     ("GET", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),
     ("POST", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),
     ("PUT", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),

@@ -1038,6 +1038,15 @@
       "parent": "预警中心",
       "desc": "ALERT-002/003 + 处置记录 Tab"
     },
+    "alertEscalate": {
+      "no": "13",
+      "name": "升级中心",
+      "code": "ALERT",
+      "icon": "warn",
+      "page": "升级中心",
+      "parent": "预警中心",
+      "desc": "ALERT-003 · 30 秒轮询待升级清单，钉钉/短信保持本地桩"
+    },
     "alertStats": {
       "no": "13",
       "name": "预警统计",
@@ -1346,6 +1355,7 @@
           "children": [
             "alertRule",
             "alertLive",
+            "alertEscalate",
             "alertStats"
           ]
         }

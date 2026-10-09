@@ -104,6 +104,7 @@ export const IMPLEMENTED: Record<string, string> = {
   effBoard: '/ims/eff?tab=board',
   alertRule: '/ims/alert/rule',
   alertLive: '/ims/alert/live',
+  alertEscalate: '/ims/alert/escalate',
   alertStats: '/ims/alert/stats',
   alertHistory: '/ims/alert/live?tab=history',
   alertDedup: '/ims/alert/live?tab=dedup',
