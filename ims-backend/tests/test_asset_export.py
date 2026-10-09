@@ -327,3 +327,101 @@ def test_reverse_export_xlsx_covers_person_account_and_session():
     assert [row[0] for row in session_rows[2:]] == ["AS-EX-SES"]
     assert session_rows[2][2] == "待审核"
     assert session_rows[2][4] == "AC-EX-74"
+
+
+def test_empty_reverse_xlsx_and_pdf_are_stub_files_and_history_switch_matches_list():
+    """入口存在但没有资产时仍给出可下载的空表/空报告。已归还可从使用人导出里关掉。"""
+    auth = headers()
+    admin_id = _admin_id(auth)
+    empty_account = _account("AC-EX-EMPTY-167", admin_id)
+    listed = client.get(
+        f"/admin-api/ims/asset/reverse/by-account/{empty_account}",
+        headers=auth,
+    ).json()
+    assert listed["code"] == 0, listed
+    assert listed["data"]["list"] == []
+    assert listed["data"]["summary"]["total"] == 0
+
+    exported = client.get(
+        "/admin-api/ims/asset/reverse/export",
+        headers=auth,
+        params={"entryType": "ACCOUNT", "entryId": empty_account},
+    ).json()
+    data, blob, media = _download(auth, exported)
+    assert data["empty"] is True
+    assert data["summary"]["total"] == 0
+    assert media.startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    rows = _xlsx_rows(blob)
+    assert rows[0] == ["汇总", _summary_line(listed["data"]["summary"])]
+    assert rows[1] == ["资产编号", "名称", "状态", "绑定", "账号"]
+    assert rows[2][0] == "暂无绑定资产"
+
+    bare = _person()
+    pdf = client.get(
+        "/admin-api/ims/asset/forward/export/0",
+        headers=auth,
+        params={"realnameId": bare},
+    ).json()
+    pdf_data, pdf_blob, pdf_media = _download(auth, pdf)
+    assert pdf_data["empty"] is True
+    assert pdf_media.startswith("application/pdf")
+    text = _pdf_text(pdf_blob)
+    assert "资产穿透报告" in text
+    assert "实名人 ·" in text
+    assert "暂无资产层级" in text
+    assert "第1层" not in text
+
+    code = "AS-EX-HIST-167"
+    created = _create(auth, code)
+    assert created["code"] == 0, created
+    asset_id = created["data"]["id"]
+    checked = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/checkout",
+        headers=auth,
+        json={"ownerUserId": admin_id, "purpose": "办公领用"},
+    ).json()
+    assert checked["code"] == 0, checked
+    used = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/use",
+        headers=auth,
+        json={"remark": "现场使用"},
+    ).json()
+    assert used["code"] == 0, used
+    returned = client.post(
+        f"/admin-api/ims/asset/ledger/{asset_id}/return",
+        headers=auth,
+        json={"remark": "归还入库"},
+    ).json()
+    assert returned["code"] == 0, returned
+
+    with_history = client.get(
+        f"/admin-api/ims/asset/reverse/by-person/{admin_id}",
+        headers=auth,
+        params={"includeHistory": True, "pageSize": 50},
+    ).json()
+    assert with_history["code"] == 0, with_history
+    assert any(item["assetCode"] == code and item["status"] == "RETURNED" for item in with_history["data"]["list"])
+
+    current_only = client.get(
+        f"/admin-api/ims/asset/reverse/by-person/{admin_id}",
+        headers=auth,
+        params={"includeHistory": False, "pageSize": 50},
+    ).json()
+    assert current_only["code"] == 0, current_only
+    assert all(item["assetCode"] != code for item in current_only["data"]["list"])
+
+    hidden = client.get(
+        "/admin-api/ims/asset/reverse/export",
+        headers=auth,
+        params={"entryType": "PERSON", "entryId": admin_id, "includeHistory": False},
+    ).json()
+    _hidden_data, hidden_blob, _media = _download(auth, hidden)
+    assert all(row[0] != code for row in _xlsx_rows(hidden_blob))
+
+    shown = client.get(
+        "/admin-api/ims/asset/reverse/export",
+        headers=auth,
+        params={"entryType": "PERSON", "entryId": admin_id, "includeHistory": True},
+    ).json()
+    _shown_data, shown_blob, _media = _download(auth, shown)
+    assert any(row[0] == code and row[2] == "已归还" for row in _xlsx_rows(shown_blob))

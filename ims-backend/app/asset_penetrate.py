@@ -898,19 +898,20 @@ def reverse_by_account(
     )
 
 
-def _person_items(db: Session, actor: User, user_id: int) -> tuple[list[dict], dict]:
+def _person_items(db: Session, actor: User, user_id: int, include_history: bool = True) -> tuple[list[dict], dict]:
     owned = select(AssetLedger.id).where(
         AssetLedger.deleted == 0,
         AssetLedger.tenant_id == tenant_of(actor),
         AssetLedger.owner_user_id == user_id,
     )
     asset_ids = set(db.scalars(owned).all())
-    hist = select(AssetLifecycleEvent.asset_id).where(
-        AssetLifecycleEvent.deleted == 0,
-        AssetLifecycleEvent.tenant_id == tenant_of(actor),
-        AssetLifecycleEvent.owner_user_id == user_id,
-    )
-    asset_ids.update(db.scalars(hist).all())
+    if include_history:
+        hist = select(AssetLifecycleEvent.asset_id).where(
+            AssetLifecycleEvent.deleted == 0,
+            AssetLifecycleEvent.tenant_id == tenant_of(actor),
+            AssetLifecycleEvent.owner_user_id == user_id,
+        )
+        asset_ids.update(db.scalars(hist).all())
     if not asset_ids:
         return [], _summary([])
     stmt = select(AssetLedger).where(
@@ -951,8 +952,12 @@ def collect_reverse_export(
     entry_id: int = 0,
     account_no: str = "",
     session_code: str = "",
+    include_history: bool = True,
 ):
-    """反查导出与列表同一入口、同一行。入口不存在 1500，场次编号格式不对 1001。"""
+    """反查导出与列表同一入口、同一行。入口不存在 1500，场次编号格式不对 1001。
+
+    使用人维度的 include_history 与 GET /asset/reverse/by-person 一致：关掉后只留当前责任人，已归还不再出现。
+    """
     kind = (entry_type or "").strip().upper()
     if kind not in {"PERSON", "ACCOUNT", "SESSION"}:
         return None, fail(1001, "入口类型不正确")
@@ -962,7 +967,7 @@ def collect_reverse_export(
         user = db.get(User, entry_id)
         if user is None or user.deleted or (user.tenant_id or 0) != tenant_of(actor):
             return None, fail(1500, "使用人不存在")
-        items, summary = _person_items(db, actor, entry_id)
+        items, summary = _person_items(db, actor, entry_id, include_history=include_history)
         label = f"person:{entry_id}"
     elif kind == "ACCOUNT":
         if entry_id > 0:

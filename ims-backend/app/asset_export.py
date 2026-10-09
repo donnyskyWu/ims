@@ -71,6 +71,8 @@ def reverse_matrix(items: list[dict], summary: dict) -> list[list[str]]:
         ["汇总", summary_text(summary)],
         ["资产编号", "名称", "状态", "绑定", "账号"],
     ]
+    if not items:
+        rows.append(["暂无绑定资产", "", "", "", ""])
     for item in items:
         status = STATUS_LABEL.get(item.get("status") or "", item.get("status") or "")
         bind = BIND_LABEL.get(item.get("bindType") or "", item.get("bindType") or "—")
@@ -205,13 +207,19 @@ def forward_export(
     graph, error = forward_graph(db, actor, asset_id, realnameId, layers)
     if error:
         return error
+    nodes = graph.get("nodes") or []
+    lines = chain_lines(nodes)
+    empty = not any((node.get("layer") or "") != "PERSON" for node in nodes)
+    if empty:
+        lines.append("暂无资产层级")
     try:
-        body = build_pdf(chain_lines(graph.get("nodes") or []))
+        body = build_pdf(lines)
     except Exception:
         return fail(5005, DISK_FAIL)
     payload = issue_export(actor.id, body, PDF_MEDIA, FORWARD_NAME, "pdf")
     if payload is None:
         return fail(5005, DISK_FAIL)
+    payload["empty"] = empty
     return ok(payload)
 
 
@@ -226,10 +234,19 @@ def reverse_export(
     entryId: int = 0,
     accountNo: str = "",
     sessionCode: str = "",
+    includeHistory: bool = True,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    payload, error = collect_reverse_export(db, actor, entryType, entryId, accountNo, sessionCode)
+    payload, error = collect_reverse_export(
+        db,
+        actor,
+        entryType,
+        entryId,
+        accountNo,
+        sessionCode,
+        include_history=includeHistory,
+    )
     if error:
         return error
     try:
@@ -239,4 +256,6 @@ def reverse_export(
     issued = issue_export(actor.id, body, XLSX_MEDIA, REVERSE_NAME, "xlsx")
     if issued is None:
         return fail(5005, DISK_FAIL)
+    issued["empty"] = not payload["items"]
+    issued["summary"] = payload["summary"]
     return ok(issued)
