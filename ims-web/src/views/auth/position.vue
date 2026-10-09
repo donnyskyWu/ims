@@ -9,6 +9,7 @@
     <form class="qbar" data-testid="pos-create" @submit.prevent="create">
       <input v-model="name" data-testid="pos-create-name" placeholder="规则名" style="width: 160px" />
       <input v-model="position" data-testid="pos-create-position" placeholder="钉钉岗位" style="width: 160px" />
+      <input v-model="description" data-testid="pos-create-desc" placeholder="说明（选填，≤200 字）" style="width: 200px" />
       <select v-model="roleId" data-testid="pos-create-role" style="width: 180px">
         <option value="">授予角色</option>
         <option v-for="role in roles" :key="String(role.id)" :value="String(role.id)">
@@ -36,13 +37,14 @@
       <button class="btn btn-sec btn-sm" type="button" data-testid="pos-filter-reset" @click="resetFilters">重置</button>
     </form>
     <p v-if="filterNote" class="hint" data-testid="pos-filter-summary">{{ filterNote }}</p>
-    <p v-if="msg" class="hint" style="margin-bottom: 10px">{{ msg }}</p>
-    <div v-if="confirmId" class="card" style="margin-bottom: 12px">
+    <p v-if="msg" class="hint" data-testid="pos-form-error" style="margin-bottom: 10px">{{ msg }}</p>
+    <div v-if="confirmId" class="card" data-testid="pos-delete-card" style="margin-bottom: 12px">
       <div style="font-weight: 600; margin-bottom: 6px">确认删除</div>
-      <div class="sub">在用用户不为 0 时会拒绝。删除后列表不再显示该版本。</div>
+      <div class="sub">请输入规则名「{{ confirmRuleName }}」后删除。在用人数不为 0 时直接拒绝，不打开本确认。</div>
+      <input v-model="confirmName" data-testid="pos-delete-name" placeholder="输入规则名" style="width: 220px; margin-top: 8px" />
       <div class="acts" style="margin-top: 12px">
-        <button class="btn btn-pri btn-sm" type="button" @click="remove">确认删除</button>
-        <button class="btn btn-sec btn-sm" type="button" @click="confirmId = 0">取消</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="pos-delete-confirm" @click="remove">确认删除</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="closeDelete">取消</button>
       </div>
     </div>
     <div class="tbl-block">
@@ -80,7 +82,7 @@
               <td>{{ row.status === 'ENABLED' ? '启用' : '停用' }}</td>
               <td>
                 <button class="btn btn-txt" type="button" @click="edit(row)">新版本</button>
-                <button class="btn btn-txt" type="button" @click="confirmId = Number(row.id)">删除</button>
+                <button class="btn btn-txt" type="button" data-testid="pos-delete" @click="askRemove(row)">删除</button>
               </td>
             </tr>
           </tbody>
@@ -103,6 +105,7 @@ const ready = ref(false)
 const error = ref('')
 const name = ref('')
 const position = ref('')
+const description = ref('')
 const roleId = ref('')
 const filterKeyword = ref('')
 const filterPosition = ref('')
@@ -115,6 +118,8 @@ const appliedStatus = ref('')
 const msg = ref('')
 const total = ref(0)
 const confirmId = ref(0)
+const confirmName = ref('')
+const confirmRuleName = ref('')
 
 const hasFilters = computed(() => Boolean(appliedKeyword.value || appliedPosition.value || appliedRoleId.value || appliedStatus.value))
 
@@ -148,8 +153,11 @@ async function load() {
   captureFilters()
   const roleRes = await readData('/system/role/list')
   filterRoles.value = asList(roleRes.data)
-  roles.value = filterRoles.value.filter((role) => role.status === 'ENABLED')
-  if (!roleId.value && roles.value.length) roleId.value = String(roles.value[0].id)
+  roles.value = filterRoles.value
+  if (!roleId.value) {
+    const enabled = roles.value.find((role) => role.status === 'ENABLED')
+    if (enabled) roleId.value = String(enabled.id)
+  }
 
   const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
   if (appliedKeyword.value) params.keyword = appliedKeyword.value
@@ -176,20 +184,40 @@ function resetFilters() {
   search()
 }
 
+function formError() {
+  const ruleName = name.value.trim()
+  const pos = position.value.trim()
+  const desc = description.value.trim()
+  if (!ruleName || !pos || !roleId.value) return '请填写规则名、岗位和角色'
+  if ([...ruleName].length > 64) return '规则名不能超过 64 字'
+  if ([...pos].length > 64) return '钉钉岗位不能超过 64 字'
+  if ([...desc].length > 200) return '说明不能超过 200 字'
+  const role = roles.value.find((item) => String(item.id) === roleId.value)
+  if (role?.status === 'PENDING_CONFIG') {
+    return `角色「${role.roleName}」尚未配置权限，用户将无任何权限`
+  }
+  const clash = rows.value.some((row) => row.status === 'ENABLED' && String(row.dingtalkPosition || '') === pos)
+  if (clash) return '该岗位已有启用版本'
+  return ''
+}
+
 async function create() {
   msg.value = ''
-  if (!name.value || !position.value || !roleId.value) {
-    msg.value = '请填写规则名、岗位和角色'
+  const invalid = formError()
+  if (invalid) {
+    msg.value = invalid
     return
   }
   try {
     await http.post('/auth/position/rule', {
-      ruleName: name.value,
-      dingtalkPosition: position.value,
+      ruleName: name.value.trim(),
+      dingtalkPosition: position.value.trim(),
+      description: description.value.trim(),
       grantRoleIds: [Number(roleId.value)],
     })
     name.value = ''
     position.value = ''
+    description.value = ''
     msg.value = '已新建，版本 1'
     await load()
   } catch (e: unknown) {
@@ -214,12 +242,34 @@ async function edit(row: Record<string, unknown>) {
   }
 }
 
+function closeDelete() {
+  confirmId.value = 0
+  confirmName.value = ''
+  confirmRuleName.value = ''
+}
+
+function askRemove(row: Record<string, unknown>) {
+  msg.value = ''
+  if (Number(row.appliedUserCount || 0) > 0) {
+    msg.value = '在用用户非零，不能删除'
+    closeDelete()
+    return
+  }
+  confirmId.value = Number(row.id)
+  confirmRuleName.value = String(row.ruleName || '')
+  confirmName.value = ''
+}
+
 async function remove() {
   msg.value = ''
+  if (confirmName.value.trim() !== confirmRuleName.value) {
+    msg.value = '请输入规则名以确认删除'
+    return
+  }
   try {
     await http.delete(`/auth/position/rule/${confirmId.value}`, { params: { confirmText: 'DELETE' } })
     msg.value = '已删除'
-    confirmId.value = 0
+    closeDelete()
     await load()
   } catch (e: unknown) {
     msg.value = errorMessage(e)

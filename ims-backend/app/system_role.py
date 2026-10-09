@@ -349,6 +349,8 @@ def save_position(role_id: int, body: PositionBody, db: Session = Depends(db_ses
     if role is None:
         return fail(1504, "资源不可用")
     position = (body.dingtalkPosition or "").strip() or None
+    if position and len(position) > 64:
+        return fail(1001, "钉钉岗位不能超过 64 字")
     if position:
         other = db.scalar(
             select(Role).where(Role.dingtalk_position == position, Role.deleted == 0, Role.id != role.id)
@@ -362,9 +364,11 @@ def save_position(role_id: int, body: PositionBody, db: Session = Depends(db_ses
 
 @router.post("/system/role/from-position")
 def from_position(body: FromBody, db: Session = Depends(db_session), _: User = Depends(current_user)):
-    position = body.dingtalkPosition.strip()
+    position = (body.dingtalkPosition or "").strip()
     if not position:
         return fail(1001, "钉钉岗位必填")
+    if len(position) > 64:
+        return fail(1001, "钉钉岗位不能超过 64 字")
     role, created, todo_id = auto_create_role(db, position)
     return ok(
         {
