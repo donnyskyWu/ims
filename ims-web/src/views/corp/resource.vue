@@ -14,7 +14,7 @@
       </div>
     </div>
     <div
-      v-if="kind === 'certificate'"
+      v-if="kind === 'certificate' && digitalReady"
       class="hint"
       :class="{ bad: digitalShort }"
       data-testid="corp-cert-digital-banner"
@@ -561,6 +561,7 @@ const detail = ref<Row | null>(null)
 const viewError = ref('')
 const digitalOpen = ref(false)
 const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
+const digitalReady = ref(false)
 const fileOpen = ref(false)
 const fileError = ref('')
 const filePreview = ref('')
@@ -1277,6 +1278,8 @@ async function loadDigital() {
     digital.digitalizedRate = Number(data.digitalizedRate ?? 1)
   } catch {
     /* 横幅保持上次数字 */
+  } finally {
+    digitalReady.value = true
   }
 }
 
