@@ -1,4 +1,7 @@
-"""预警 ALERT-001 规则 · ALERT-002 检查记录（W9-4 首片，#81 DSL/误报）。"""
+"""预警 ALERT-001 规则 · ALERT-002 检查记录 · #141 命中统计/周报/升级轮询。
+
+钉钉与短信外发保持本地桩：升级时间轴只写接收人角色，不调用外发。
+"""
 
 from __future__ import annotations
 
@@ -634,6 +637,306 @@ def stats_overview(
             "resolvedCount": resolved,
         }
     )
+
+
+# BR-113：一级 30 分钟、二级再 60 分钟。L3 从二级起跳（ALR-E-R2）。
+LEVEL1_TIMEOUT_MINUTES = 30
+LEVEL2_TIMEOUT_MINUTES = 60
+RESPONSE_TARGET = 90.0
+# 本地桩接收人，仅用于时间轴展示，不触发钉钉/短信。
+STUB_RECEIVERS = {
+    1: [{"userId": 0, "userName": "责任人", "roleLabel": "责任人"}],
+    2: [{"userId": 0, "userName": "部门负责人", "roleLabel": "部门负责人"}],
+    3: [
+        {"userId": 0, "userName": "运营总监", "roleLabel": "R4"},
+        {"userId": 0, "userName": "系统管理员", "roleLabel": "R1"},
+    ],
+}
+
+
+def _naive_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def iso_utc(dt: datetime | None) -> str:
+    """库内 naive UTC 转成带 +08:00 的东八区时刻，供前端倒计时解析。"""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def level_label(level: int) -> str:
+    return {1: "L1", 2: "L2", 3: "L3"}.get(level, "L2")
+
+
+def escalation_state(row: AlertRecord, now: datetime) -> tuple[int, datetime | None]:
+    """返回 (currentLevel, nextEscalateAt)。next 为 naive UTC，终级为 None。"""
+    now_naive = _naive_utc(now)
+    occurred = _naive_utc(row.occurred_at or now_naive)
+    elapsed = (now_naive - occurred).total_seconds() / 60.0
+    if elapsed < 0:
+        elapsed = 0.0
+    if (row.level or 0) >= 3:
+        if elapsed < LEVEL2_TIMEOUT_MINUTES:
+            return 2, occurred + timedelta(minutes=LEVEL2_TIMEOUT_MINUTES)
+        return 3, None
+    if elapsed < LEVEL1_TIMEOUT_MINUTES:
+        return 1, occurred + timedelta(minutes=LEVEL1_TIMEOUT_MINUTES)
+    gate = LEVEL1_TIMEOUT_MINUTES + LEVEL2_TIMEOUT_MINUTES
+    if elapsed < gate:
+        return 2, occurred + timedelta(minutes=gate)
+    return 3, None
+
+
+def escalation_at(row: AlertRecord, now: datetime) -> tuple[int, datetime | None]:
+    """未响应按当前时刻；已响应按处置时刻，避免事后把已关闭预警算成仍在升级。"""
+    if row.response_status == 0:
+        return escalation_state(row, now)
+    anchor = row.updated_at or row.occurred_at or now
+    return escalation_state(row, anchor)
+
+
+def week_window(week_start: str | None) -> tuple[datetime | None, datetime | None, list[str], str | None]:
+    """自然周（东八区周一至周日）。返回的起止是 naive UTC，便于和 occurred_at 比较。"""
+    raw = (week_start or "").strip()
+    if raw:
+        try:
+            civil = datetime.strptime(raw[:10], "%Y-%m-%d")
+        except ValueError:
+            return None, None, [], "weekStart 无效"
+    else:
+        civil = datetime.now(BJ).replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
+    start_civil = (civil - timedelta(days=civil.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    end_civil = start_civil + timedelta(days=6)
+    start_utc = start_civil.replace(tzinfo=BJ).astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = end_civil.replace(hour=23, minute=59, second=59, tzinfo=BJ).astimezone(timezone.utc).replace(tzinfo=None)
+    return start_utc, end_utc, [start_civil.strftime("%Y-%m-%d"), end_civil.strftime("%Y-%m-%d")], None
+
+
+def _rules_map(db: Session, ids: set[int]) -> dict[int, AlertRule]:
+    if not ids:
+        return {}
+    return {row.id: row for row in db.scalars(select(AlertRule).where(AlertRule.id.in_(ids))).all()}
+
+
+def _hit_bucket() -> dict[str, Any]:
+    return {
+        "alertCount": 0,
+        "responded": 0,
+        "falseAlarmCount": 0,
+        "delivered": 0,
+        "lastHitAt": None,
+    }
+
+
+def _accumulate(bucket: dict[str, Any], row: AlertRecord) -> None:
+    bucket["alertCount"] += 1
+    if row.response_status in (1, 2, 3):
+        bucket["responded"] += 1
+    if row.response_status == 3:
+        bucket["falseAlarmCount"] += 1
+    if row.push_status == 1:
+        bucket["delivered"] += 1
+    if row.occurred_at is not None and (bucket["lastHitAt"] is None or row.occurred_at > bucket["lastHitAt"]):
+        bucket["lastHitAt"] = row.occurred_at
+
+
+@router.get("/rule/hit-stats")
+def rule_hit_stats(
+    dateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """规则命中统计。误报 ≥5 的复核标记由前端按 falseAlarmCount 展示。"""
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    tenant_id = tenant_of(actor)
+    rows = _overview_rows(db, tenant_id, start, end)
+    rules = _rules_map(db, {row.rule_id for row in rows if row.rule_id})
+    buckets: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        buckets.setdefault(row.rule_id, _hit_bucket())
+        _accumulate(buckets[row.rule_id], row)
+    data = []
+    for rule_id, bucket in buckets.items():
+        rule = rules.get(rule_id)
+        data.append(
+            {
+                "ruleCode": rule.rule_code if rule else "",
+                "ruleName": rule.rule_name if rule else "",
+                "alertCount": bucket["alertCount"],
+                "responseRate": rate_pct(bucket["responded"], bucket["alertCount"]),
+                "falseAlarmCount": bucket["falseAlarmCount"],
+                "lastHitAt": iso(bucket["lastHitAt"]) if bucket["lastHitAt"] else "",
+            }
+        )
+    data.sort(key=lambda item: (-item["alertCount"], item["ruleCode"]))
+    return ok(data)
+
+
+def _suggestion_lines(total: int, response_rate: float, false_by_rule: list[tuple[str, int]]) -> list[str]:
+    if total <= 0:
+        return []
+    notes: list[str] = []
+    if response_rate < RESPONSE_TARGET:
+        notes.append(f"本周响应率 {response_rate}% 低于 90%（BR-112），建议优先处理未响应预警")
+    for code, count in false_by_rule:
+        if count >= 5 and code:
+            notes.append(f"规则 {code} 误报 {count} 次，建议复核阈值（ALR-S-R3）")
+    notes.append("钉钉/短信外发保持本地桩，周报仅在线查看，不实际推送")
+    return notes
+
+
+@router.get("/stats/weekly-report")
+def weekly_report(
+    weekStart: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """在线周报。外发推送不在本接口执行。"""
+    start, end, week_range, error = week_window(weekStart)
+    if error or start is None or end is None:
+        return fail(1001, error or "weekStart 无效")
+    tenant_id = tenant_of(actor)
+    rows = _overview_rows(db, tenant_id, start, end)
+    rules = _rules_map(db, {row.rule_id for row in rows if row.rule_id})
+    buckets: dict[int, dict[str, Any]] = {}
+    responded = 0
+    delivered = 0
+    now = utcnow()
+    escalated = []
+    for row in rows:
+        buckets.setdefault(row.rule_id, _hit_bucket())
+        _accumulate(buckets[row.rule_id], row)
+        if row.response_status in (1, 2, 3):
+            responded += 1
+        if row.push_status == 1:
+            delivered += 1
+        current, _next = escalation_at(row, now)
+        if current >= 2:
+            escalated.append(
+                {
+                    "alertNo": row.alert_no,
+                    "level": level_label(row.level),
+                    "currentLevel": current,
+                }
+            )
+    total = len(rows)
+    top = []
+    false_by_rule: list[tuple[str, int]] = []
+    for rule_id, bucket in buckets.items():
+        rule = rules.get(rule_id)
+        code = rule.rule_code if rule else ""
+        top.append({"ruleCode": code, "alertCount": bucket["alertCount"]})
+        false_by_rule.append((code, bucket["falseAlarmCount"]))
+    top.sort(key=lambda item: (-item["alertCount"], item["ruleCode"]))
+    false_by_rule.sort(key=lambda item: (-item[1], item[0]))
+    escalated.sort(key=lambda item: item["alertNo"])
+    response_rate = rate_pct(responded, total)
+    return ok(
+        {
+            "weekRange": week_range,
+            "totalAlerts": total,
+            "topRules": top[:5],
+            "responseRate": response_rate,
+            "deliveryRate": rate_pct(delivered, total),
+            "escalatedAlerts": escalated,
+            "suggestions": _suggestion_lines(total, response_rate, false_by_rule),
+        }
+    )
+
+
+def _response_minutes(row: AlertRecord) -> float | None:
+    if row.response_status not in (1, 2, 3):
+        return None
+    if row.occurred_at is None or row.updated_at is None:
+        return None
+    delta = (row.updated_at - row.occurred_at).total_seconds() / 60.0
+    return delta if delta > 0 else 0.0
+
+
+@router.get("/escalate/response-stats")
+def escalate_response_stats(
+    dateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    rows = _overview_rows(db, tenant_of(actor), start, end)
+    total = len(rows)
+    responded = 0
+    in_time = 0
+    minutes: list[float] = []
+    by_level = {1: {"total": 0, "responded": 0}, 2: {"total": 0, "responded": 0}, 3: {"total": 0, "responded": 0}}
+    for row in rows:
+        bucket = by_level.get(row.level)
+        if bucket is not None:
+            bucket["total"] += 1
+        taken = _response_minutes(row)
+        if taken is None and row.response_status not in (1, 2, 3):
+            continue
+        if row.response_status in (1, 2, 3):
+            responded += 1
+            if bucket is not None:
+                bucket["responded"] += 1
+            if taken is not None:
+                minutes.append(taken)
+                if taken <= LEVEL1_TIMEOUT_MINUTES:
+                    in_time += 1
+    avg = round(sum(minutes) / len(minutes), 2) if minutes else 0.0
+    return ok(
+        {
+            "totalAlerts": total,
+            "respondedInTime": in_time,
+            "responseRate": rate_pct(responded, total),
+            "avgResponseMinutes": avg,
+            "target": RESPONSE_TARGET,
+            "byLevel": [
+                {
+                    "level": level_label(level),
+                    "responseRate": rate_pct(bucket["responded"], bucket["total"]),
+                    "alertCount": bucket["total"],
+                }
+                for level, bucket in by_level.items()
+            ],
+        }
+    )
+
+
+@router.get("/stats/response-rate")
+def stats_response_rate(
+    dateRange: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    start, end, error = parse_day_range(dateRange)
+    if error:
+        return fail(1001, error)
+    rows = _overview_rows(db, tenant_of(actor), start, end)
+    grouped: dict[str, list[AlertRecord]] = {}
+    for row in rows:
+        if row.occurred_at is None:
+            continue
+        grouped.setdefault(row.occurred_at.strftime("%Y-%m-%d"), []).append(row)
+    trend = []
+    for day in sorted(grouped):
+        day_rows = grouped[day]
+        responded = sum(1 for row in day_rows if row.response_status in (1, 2, 3))
+        trend.append(
+            {
+                "statDate": day,
+                "responseRate": rate_pct(responded, len(day_rows)),
+                "alertCount": len(day_rows),
+            }
+        )
+    return ok(trend)
 
 
 def run_check_impl(rule_id: int, db: Session, actor: User):

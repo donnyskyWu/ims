@@ -3,13 +3,23 @@
     <div class="pg-h">
       <div>
         <h1>升级中心</h1>
-        <div class="sub">ALERT-003 · 一级 30 分钟 / 二级 60 分钟 · L3 从二级起跳 · 钉钉不外发</div>
+        <div class="sub">ALERT-003 · 一级 30 分钟 / 二级 60 分钟 · L3 从二级起跳 · 待升级清单 30 秒轮询</div>
       </div>
       <div class="acts">
-        <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="alert-escalate-refresh" @click="refreshAll">
+          手动刷新
+        </button>
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/stats">统计总览</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/rule">预警规则</router-link>
+        <router-link class="btn btn-sec btn-sm" to="/ims/alert/live">实时预警</router-link>
       </div>
     </div>
+
+    <p class="hint" data-testid="alert-escalate-channel-stub">钉钉/短信外发保持本地桩，不实际发送</p>
+    <p class="hint" data-testid="alert-escalate-poll-state">{{ pollState }}</p>
+    <p v-if="pollHint" class="hint" data-testid="alert-escalate-poll-hint" style="color: var(--orange, #d97706)">
+      {{ pollHint }}
+    </p>
 
     <div class="card" style="margin-bottom: 12px">
       <h3 style="margin: 0 0 12px">升级链路配置</h3>
@@ -51,8 +61,32 @@
       <p v-if="formError" class="hint" style="color: var(--red)" data-testid="alert-escalate-form-error">{{ formError }}</p>
     </div>
 
-    <form class="qbar" @submit.prevent="loadList">
-      <select v-model="levelFilter" data-testid="alert-escalate-level" style="width: 140px">
+    <div v-if="stats" class="g4" style="margin-top: 12px">
+      <div class="card stat">
+        <span class="l">响应率</span>
+        <div class="n" data-testid="alert-escalate-response-rate" :style="{ color: rateColor(stats.responseRate) }">
+          {{ stats.responseRate }}%
+        </div>
+        <div class="d">{{ stats.responseRate >= stats.target ? '达标' : '未达标' }}（BR-112 &gt;{{ stats.target }}%）</div>
+      </div>
+      <div class="card stat">
+        <span class="l">平均响应</span>
+        <div class="n" data-testid="alert-escalate-avg">{{ stats.avgResponseMinutes }}</div>
+        <div class="d">分钟 · 时限内 {{ stats.respondedInTime }} 条</div>
+      </div>
+      <div class="card stat">
+        <span class="l">分级别</span>
+        <div class="n" style="font-size: 16px; margin-top: 10px" data-testid="alert-escalate-by-level">
+          <span v-for="item in stats.byLevel" :key="item.level" :style="{ color: levelColor(item) }">
+            {{ item.level }} {{ item.alertCount ? item.responseRate + '%' : '—' }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <h2 style="font-size: 16px; margin: 16px 0 8px">待升级 / 升级中预警</h2>
+    <form class="qbar" @submit.prevent="refreshPending(false)">
+      <select v-model="levelFilter" data-testid="alert-escalate-level" style="width: 140px" @change="refreshPending(false)">
         <option value="">全部级别</option>
         <option value="1">一级</option>
         <option value="2">二级</option>
@@ -77,29 +111,34 @@
               <th>操作</th>
             </tr>
           </thead>
-          <tbody>
-            <tr v-if="loading">
+          <tbody v-if="loading">
+            <tr>
               <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!rows.length">
+          </tbody>
+          <tbody v-else-if="!rows.length">
+            <tr>
               <td colspan="6"><div class="empty"><div class="et">暂无待升级预警</div></div></td>
             </tr>
-            <tr v-for="row in rows" v-else :key="row.alertNo" :data-testid="`alert-escalate-row-${row.alertNo}`">
+          </tbody>
+          <tbody v-for="row in rows" v-else :key="row.alertNo" :data-testid="`alert-escalate-row-${row.alertNo}`">
+            <tr data-testid="alert-escalate-row">
               <td class="mono">{{ row.alertNo }}</td>
-              <td>{{ row.ruleName }}</td>
+              <td>
+                <div class="mono">{{ row.ruleCode }}</div>
+                <div>{{ row.ruleName }}</div>
+              </td>
               <td>{{ row.level }}</td>
               <td data-testid="alert-escalate-current">{{ levelName(row.currentLevel) }}</td>
-              <td class="mono">{{ nextText(row.nextEscalateAt) }}</td>
+              <td class="mono" data-testid="alert-escalate-next">{{ nextText(row) }}</td>
               <td>
                 <button class="btn btn-txt btn-sm" type="button" data-testid="alert-escalate-timeline" @click="openTimeline(row.alertNo)">
                   时间轴
                 </button>
-                <button
-                  class="btn btn-sec btn-sm"
-                  type="button"
-                  data-testid="alert-escalate-confirm"
-                  @click="confirmStop(row.alertNo)"
-                >
+                <button class="btn btn-txt btn-sm" type="button" data-testid="alert-escalate-detail" @click="openTimeline(row.alertNo)">
+                  详情
+                </button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="alert-escalate-confirm" @click="confirmStop(row.alertNo)">
                   确认
                 </button>
               </td>
@@ -110,40 +149,62 @@
     </div>
     <p v-if="toast" class="hint" data-testid="alert-escalate-toast">{{ toast }}</p>
 
-    <ProtoDrawer :open="timelineOpen" title="升级时间轴" width="640px" @close="timelineOpen = false">
-      <p v-if="timeline" class="hint" data-testid="alert-escalate-timeline-status">
-        {{ timeline.alertNo }} · {{ timeline.alertLevel }} · {{ timeline.responseStatus }}
-        <span v-if="timeline.responseStatus !== 'OPEN'"> · 已响应，升级链停止</span>
-      </p>
-      <div v-if="timeline && !timeline.timeline.length" class="empty"><div class="et">尚未进入下一级</div></div>
-      <ul v-else-if="timeline" style="list-style: none; padding: 0; margin: 0">
-        <li
-          v-for="node in timeline.timeline"
-          :key="node.escalationLevel"
-          class="card"
-          style="margin-bottom: 8px"
-          data-testid="alert-escalate-node"
-        >
-          <strong>{{ levelName(node.escalationLevel) }}</strong>
-          · 距产生 {{ node.elapsedMinutes }} 分钟
-          <div class="hint">
-            {{ receiverText(node.escalatedTo) }}
-          </div>
-          <div class="hint">站内已记录，钉钉不外发</div>
-        </li>
-      </ul>
+    <h2 style="font-size: 16px; margin: 16px 0 8px">响应率趋势</h2>
+    <div v-if="!trend.length" class="empty"><div class="et">暂无趋势</div></div>
+    <div v-else data-testid="alert-escalate-trend">
+      <div v-for="point in trend" :key="point.statDate" class="trend-row">
+        <span class="mono">{{ point.statDate }}</span>
+        <div class="trend-track">
+          <div class="trend-bar" :style="{ width: point.responseRate + '%' }"></div>
+          <div class="trend-target"></div>
+        </div>
+        <span class="num">{{ point.responseRate }}% · {{ point.alertCount }} 条</span>
+      </div>
+      <p class="hint">虚线为目标 90%（BR-112）</p>
+    </div>
+
+    <ProtoDrawer :open="timelineOpen" title="升级时间轴" width="640px" @close="closeTimeline">
+      <div v-if="timeline" data-testid="alert-escalate-timeline-panel">
+        <p class="hint" data-testid="alert-escalate-timeline-status">
+          {{ timeline.alertNo }} · {{ timeline.alertLevel }} · {{ timeline.responseStatus }}
+          <span v-if="timeline.responseStatus !== 'OPEN'"> · 已响应，升级链停止</span>
+        </p>
+        <p class="hint">{{ timeline.channelStub || '钉钉/短信外发保持本地桩，未实际发送' }}</p>
+        <p v-if="timeline.responseStatus !== 'OPEN'" data-testid="alert-escalate-stopped">
+          已响应 · 升级链停止（ALR-E-R3）· {{ timeline.responseStatus }}
+        </p>
+        <div v-if="!timeline.timeline.length" class="empty"><div class="et">尚未进入下一级</div></div>
+        <ul v-else style="list-style: none; padding: 0; margin: 0">
+          <li
+            v-for="node in timeline.timeline"
+            :key="node.escalationLevel + '-' + node.elapsedMinutes + '-' + node.skipped"
+            class="card"
+            style="margin-bottom: 8px"
+            data-testid="alert-escalate-node"
+          >
+            <strong>{{ levelName(node.escalationLevel) }}</strong>
+            · 距产生 {{ node.elapsedMinutes }} 分钟
+            <div v-if="node.skipped" class="hint">{{ node.note }}</div>
+            <div v-else class="hint">{{ receiverText(node.escalatedTo) }}</div>
+            <div class="hint">站内已记录，钉钉不外发，本地桩</div>
+          </li>
+        </ul>
+        <button class="btn btn-sec btn-sm" type="button" @click="closeTimeline">关闭</button>
+      </div>
     </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 
-type Person = { userId: number; userName: string; roleLabel: string }
+type Person = { userId?: number; userName: string; roleLabel: string }
 type Row = {
   alertNo: string
+  ruleCode: string
   ruleName: string
   level: string
   currentLevel: number
@@ -153,14 +214,29 @@ type Node = {
   escalationLevel: number
   escalatedTo: Person[]
   elapsedMinutes: number
+  skipped?: boolean
+  note?: string
 }
 type Timeline = {
   alertNo: string
   alertLevel: string
   responseStatus: string
+  channelStub?: string
   timeline: Node[]
 }
+type Stats = {
+  responseRate: number
+  avgResponseMinutes: number
+  respondedInTime: number
+  target: number
+  byLevel: Array<{ level: string; responseRate: number; alertCount: number }>
+}
+type Trend = { statDate: string; responseRate: number; alertCount: number }
 
+const POLL_MS = 30_000
+const CLOCK_MS = 60_000
+
+const route = useRoute()
 const form = reactive({
   level1TimeoutMinutes: 30,
   level2TimeoutMinutes: 60,
@@ -175,14 +251,38 @@ const rows = ref<Row[]>([])
 const levelFilter = ref('')
 const timelineOpen = ref(false)
 const timeline = ref<Timeline | null>(null)
+const stats = ref<Stats | null>(null)
+const trend = ref<Trend[]>([])
+const pollHint = ref('')
+const failStreak = ref(0)
+const tick = ref(0)
+let pollTimer = 0
+let clockTimer = 0
+
+const imminent = computed(() => rows.value.some((row) => row.currentLevel < 3 && !!row.nextEscalateAt))
+const pollState = computed(() => (imminent.value ? '30 秒轮询中' : '无临近升级，已暂停轮询'))
 
 function levelName(level: number) {
   return ({ 1: '一级', 2: '二级', 3: '三级' } as Record<number, string>)[level] || String(level)
 }
 
-function nextText(value: string) {
-  if (!value) return '终级等待响应'
-  return value.slice(0, 16).replace('T', ' ')
+function rateColor(value: number) {
+  return value >= 90 ? 'var(--green, #15803d)' : 'var(--orange, #d97706)'
+}
+
+function levelColor(item: { responseRate: number; alertCount: number }) {
+  if (!item.alertCount || item.responseRate >= 90) return undefined
+  return 'var(--orange, #d97706)'
+}
+
+function nextText(row: Row) {
+  tick.value
+  if (row.currentLevel >= 3 || !row.nextEscalateAt) return '终级等待响应'
+  const target = new Date(row.nextEscalateAt).getTime()
+  const mins = Math.max(0, Math.ceil((target - Date.now()) / 60000))
+  const hhmm = row.nextEscalateAt.slice(11, 16)
+  const next = row.currentLevel === 1 ? '二级' : '三级'
+  return `${hhmm}（再 ${mins} min → ${next}）`
 }
 
 function receiverText(people: Person[]) {
@@ -203,26 +303,42 @@ async function saveConfig() {
       level3Receivers: { roleCodes: ['R4', 'R1'] },
     })
     savedHint.value = `升级链路已更新：一级 ${form.level1TimeoutMinutes} 分钟，二级 ${form.level2TimeoutMinutes} 分钟`
-    await loadList()
+    await refreshPending(false)
   } catch (err) {
     formError.value = errorMessage(err)
   }
 }
 
-async function loadList() {
-  loading.value = true
-  error.value = ''
+async function refreshPending(silent: boolean) {
+  if (!silent) loading.value = true
   try {
     const params: Record<string, unknown> = { pageNo: 1, pageSize: 50 }
     if (levelFilter.value) params.currentLevel = Number(levelFilter.value)
     const res = await http.get('/alert/escalate/pending', { params })
     rows.value = res.data.data?.list || []
+    failStreak.value = 0
+    pollHint.value = ''
+    if (!silent) error.value = ''
   } catch (err) {
-    error.value = errorMessage(err)
-    rows.value = []
+    if (!silent) {
+      error.value = errorMessage(err)
+      rows.value = []
+      return
+    }
+    failStreak.value += 1
+    if (failStreak.value >= 3) pollHint.value = '连续刷新失败，请手动刷新'
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
+}
+
+async function loadStats() {
+  const [statsRes, trendRes] = await Promise.all([
+    http.get('/alert/escalate/response-stats'),
+    http.get('/alert/stats/response-rate'),
+  ])
+  stats.value = statsRes.data.data
+  trend.value = trendRes.data.data || []
 }
 
 async function openTimeline(alertNo: string) {
@@ -236,19 +352,80 @@ async function openTimeline(alertNo: string) {
   }
 }
 
+function closeTimeline() {
+  timelineOpen.value = false
+}
+
 async function confirmStop(alertNo: string) {
   toast.value = ''
   try {
     const res = await http.put(`/alert/check/${alertNo}/respond`, { response: 'CONFIRM', handleRemark: '升级中心确认' })
     const stopped = res.data.data?.escalationStopped
-    toast.value = stopped
-      ? `响应成功，后续升级已停止（${alertNo}）`
-      : `已确认（${alertNo}）`
-    await loadList()
+    toast.value = stopped ? `响应成功，后续升级已停止（${alertNo}）` : `已确认（${alertNo}）`
+    await refreshPending(false)
   } catch (err) {
     toast.value = errorMessage(err)
   }
 }
 
-onMounted(loadList)
+async function refreshAll() {
+  await refreshPending(false)
+  try {
+    await loadStats()
+  } catch (err) {
+    error.value = errorMessage(err)
+  }
+}
+
+watch(imminent, (active) => {
+  window.clearInterval(pollTimer)
+  pollTimer = 0
+  if (!active) return
+  pollTimer = window.setInterval(() => {
+    void refreshPending(true)
+  }, POLL_MS)
+})
+
+onMounted(async () => {
+  clockTimer = window.setInterval(() => {
+    tick.value += 1
+  }, CLOCK_MS)
+  await refreshAll()
+  const alertNo = String(route.query.alertNo || '')
+  if (alertNo) await openTimeline(alertNo)
+})
+
+onUnmounted(() => {
+  window.clearInterval(pollTimer)
+  window.clearInterval(clockTimer)
+})
 </script>
+
+<style scoped>
+.trend-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 140px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.trend-track {
+  position: relative;
+  height: 10px;
+  background: #f3f4f6;
+  border-radius: 6px;
+}
+.trend-bar {
+  height: 10px;
+  background: #2563eb;
+  border-radius: 6px;
+}
+.trend-target {
+  position: absolute;
+  left: 90%;
+  top: -3px;
+  width: 0;
+  height: 16px;
+  border-left: 1px dashed #d97706;
+}
+</style>

@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -405,3 +405,195 @@ def test_alert_stats_overview_rates_and_range():
     assert data["avgResponseMinutes"] == 12.0
     assert data["respondedCount"] == 1
     assert data["resolvedCount"] == 1
+
+
+def _shift_alert(alert_no: str, occurred: datetime, updated: datetime | None = None) -> None:
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.models import AlertRecord
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(select(AlertRecord).where(AlertRecord.alert_no == alert_no))
+        assert row is not None
+        row.occurred_at = occurred
+        if updated is not None:
+            row.updated_at = updated
+        db.commit()
+    finally:
+        db.close()
+
+
+def _enable_rule(auth: dict, code: str, level: int = 2) -> int:
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": code,
+            "ruleName": code,
+            "thresholdExpr": "delayMinutes>1",
+            "level": level,
+            "enabled": True,
+        },
+    )
+    assert created.json()["code"] == 0
+    return created.json()["data"]["id"]
+
+
+def test_alert_hit_stats_false_alarm_review_mark():
+    auth = headers()
+    code = f"hit.stats.{uuid.uuid4().hex[:8]}"
+    rule_id = _enable_rule(auth, code, level=2)
+    day = datetime(2099, 3, 2, 8, 0, 0)
+    for _ in range(5):
+        alert_no = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+        closed = client.put(
+            f"/admin-api/ims/alert/check/{alert_no}/respond",
+            headers=auth,
+            json={"response": "FALSE_ALARM", "falseAlarmReason": "阈值过紧"},
+        )
+        assert closed.json()["code"] == 0
+        _shift_alert(alert_no, day, day + timedelta(minutes=4))
+
+    listed = client.get(
+        "/admin-api/ims/alert/rule/hit-stats",
+        headers=auth,
+        params={"dateRange": "2099-03-02,2099-03-02"},
+    )
+    assert listed.json()["code"] == 0
+    rows = listed.json()["data"]
+    assert len(rows) == 1
+    assert rows[0]["ruleCode"] == code
+    assert rows[0]["alertCount"] == 5
+    assert rows[0]["falseAlarmCount"] == 5
+    assert rows[0]["responseRate"] == 100.0
+    assert rows[0]["lastHitAt"]
+
+    bad = client.get(
+        "/admin-api/ims/alert/rule/hit-stats",
+        headers=auth,
+        params={"dateRange": "2099-03-03,2099-03-02"},
+    )
+    assert bad.json()["code"] == 1001
+
+
+def test_alert_weekly_report_suggestions_and_empty_week():
+    auth = headers()
+    code = f"weekly.{uuid.uuid4().hex[:8]}"
+    rule_id = _enable_rule(auth, code, level=2)
+    alert_no = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+    _shift_alert(alert_no, datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=45))
+
+    report = client.get("/admin-api/ims/alert/stats/weekly-report", headers=auth)
+    body = report.json()
+    assert body["code"] == 0
+    data = body["data"]
+    assert data["totalAlerts"] == 1
+    assert data["responseRate"] == 0.0
+    assert data["topRules"][0]["ruleCode"] == code
+    assert data["topRules"][0]["alertCount"] == 1
+    assert len(data["weekRange"]) == 2
+    assert data["escalatedAlerts"] == [
+        {"alertNo": alert_no, "level": "L2", "currentLevel": 2},
+    ]
+    joined = " ".join(data["suggestions"])
+    assert "BR-112" in joined
+    assert "本地桩" in joined
+
+    empty = client.get(
+        "/admin-api/ims/alert/stats/weekly-report",
+        headers=auth,
+        params={"weekStart": "2099-06-01"},
+    )
+    assert empty.json()["code"] == 0
+    assert empty.json()["data"]["totalAlerts"] == 0
+    assert empty.json()["data"]["suggestions"] == []
+    assert empty.json()["data"]["escalatedAlerts"] == []
+
+    invalid = client.get(
+        "/admin-api/ims/alert/stats/weekly-report",
+        headers=auth,
+        params={"weekStart": "not-a-date"},
+    )
+    assert invalid.json()["code"] == 1001
+
+
+def test_alert_escalate_pending_levels_and_timeline_stub():
+    auth = headers()
+    normal = _enable_rule(auth, f"esc.n.{uuid.uuid4().hex[:8]}", level=2)
+    severe = _enable_rule(auth, f"esc.s.{uuid.uuid4().hex[:8]}", level=3)
+    fresh = client.post(f"/admin-api/ims/alert/check/run/{normal}", headers=auth).json()["data"]["alertNo"]
+    mid = client.post(f"/admin-api/ims/alert/check/run/{normal}", headers=auth).json()["data"]["alertNo"]
+    late = client.post(f"/admin-api/ims/alert/check/run/{normal}", headers=auth).json()["data"]["alertNo"]
+    jumped = client.post(f"/admin-api/ims/alert/check/run/{severe}", headers=auth).json()["data"]["alertNo"]
+    closed = client.post(f"/admin-api/ims/alert/check/run/{normal}", headers=auth).json()["data"]["alertNo"]
+    done = client.put(
+        f"/admin-api/ims/alert/check/{closed}/respond",
+        headers=auth,
+        json={"response": "RESOLVE", "handleRemark": "已处理"},
+    )
+    assert done.json()["code"] == 0
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    _shift_alert(fresh, now - timedelta(minutes=10))
+    _shift_alert(mid, now - timedelta(minutes=40))
+    _shift_alert(late, now - timedelta(minutes=100))
+    _shift_alert(jumped, now - timedelta(minutes=10))
+
+    pending = client.get(
+        "/admin-api/ims/alert/escalate/pending",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20},
+    )
+    assert pending.json()["code"] == 0
+    rows = {item["alertNo"]: item for item in pending.json()["data"]["list"]}
+    assert closed not in rows
+    assert rows[fresh]["currentLevel"] == 1
+    assert rows[fresh]["nextEscalateAt"]
+    assert rows[mid]["currentLevel"] == 2
+    assert rows[late]["currentLevel"] == 3
+    assert rows[late]["nextEscalateAt"] == ""
+    assert rows[jumped]["currentLevel"] == 2
+
+    nxt = datetime.strptime(rows[fresh]["nextEscalateAt"], "%Y-%m-%dT%H:%M:%S+08:00").replace(
+        tzinfo=timezone(timedelta(hours=8))
+    )
+    remain = (nxt - datetime.now(timezone(timedelta(hours=8)))).total_seconds() / 60.0
+    assert 15 <= remain <= 25
+
+    only_l1 = client.get(
+        "/admin-api/ims/alert/escalate/pending",
+        headers=auth,
+        params={"currentLevel": 1, "pageNo": 1, "pageSize": 20},
+    )
+    l1_nos = [item["alertNo"] for item in only_l1.json()["data"]["list"]]
+    assert l1_nos == [fresh]
+
+    bad_level = client.get("/admin-api/ims/alert/escalate/pending", headers=auth, params={"currentLevel": 9})
+    assert bad_level.json()["code"] == 1001
+
+    timeline = client.get(f"/admin-api/ims/alert/escalate/timeline/{jumped}", headers=auth)
+    assert timeline.json()["code"] == 0
+    nodes = timeline.json()["data"]["timeline"]
+    assert nodes[0]["skipped"] is True
+    assert "ALR-E-R2" in nodes[0]["note"]
+    assert timeline.json()["data"]["channelStub"].find("本地桩") >= 0
+    assert timeline.json()["data"]["responseStatus"] == "OPEN"
+
+    resolved_tl = client.get(f"/admin-api/ims/alert/escalate/timeline/{closed}", headers=auth)
+    assert resolved_tl.json()["data"]["responseStatus"] == "RESOLVED"
+    assert resolved_tl.json()["data"]["nextEscalateAt"] == ""
+
+    missing = client.get("/admin-api/ims/alert/escalate/timeline/AL-MISSING", headers=auth)
+    assert missing.json()["code"] == 1500
+
+    stats = client.get("/admin-api/ims/alert/escalate/response-stats", headers=auth)
+    assert stats.json()["code"] == 0
+    assert stats.json()["data"]["target"] == 90.0
+    assert stats.json()["data"]["totalAlerts"] == 5
+    assert {item["level"] for item in stats.json()["data"]["byLevel"]} == {"L1", "L2", "L3"}
+
+    trend = client.get("/admin-api/ims/alert/stats/response-rate", headers=auth)
+    assert trend.json()["code"] == 0
+    assert sum(item["alertCount"] for item in trend.json()["data"]) == 5

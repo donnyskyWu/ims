@@ -153,7 +153,8 @@ def test_escalate_chain_l3_skip_and_non_target_1166():
 
         early = client.get(f"/admin-api/ims/alert/escalate/timeline/{severe_no}", headers=admin).json()["data"]
         assert early["currentLevel"] == 2
-        assert [node["escalationLevel"] for node in early["timeline"]] == [2]
+        assert early["timeline"][0]["skipped"] is True
+        assert [node["escalationLevel"] for node in early["timeline"] if not node.get("skipped")] == [2]
 
         db = SessionLocal()
         try:
@@ -164,7 +165,7 @@ def test_escalate_chain_l3_skip_and_non_target_1166():
             db.close()
         later = client.get(f"/admin-api/ims/alert/escalate/timeline/{severe_no}", headers=admin).json()["data"]
         assert later["currentLevel"] == 3
-        assert [node["escalationLevel"] for node in later["timeline"]] == [2, 3]
+        assert [node["escalationLevel"] for node in later["timeline"] if not node.get("skipped")] == [2, 3]
 
         outsider = client.put(
             f"/admin-api/ims/alert/check/{severe_no}/respond",

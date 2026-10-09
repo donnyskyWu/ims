@@ -73,10 +73,11 @@ class Step:
 
 
 def iso(dt: datetime | None) -> str:
+    """库内 naive UTC 转成带 +08:00 的东八区时刻，供前端倒计时解析。"""
     if dt is None:
         return ""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
@@ -377,6 +378,18 @@ def timeline_vo(
 ) -> dict:
     nodes = []
     current = current_step(steps, now)
+    alert_level = rule.level if rule is not None else row.level
+    if start_level(alert_level, cfg) > 1:
+        nodes.append(
+            {
+                "escalationLevel": 1,
+                "escalatedTo": [],
+                "escalatedAt": "",
+                "elapsedMinutes": 0,
+                "skipped": True,
+                "note": "跳过（严重级直接二级起跳，ALR-E-R2）",
+            }
+        )
     for step in steps:
         if step.enter_at > now:
             continue
@@ -390,16 +403,21 @@ def timeline_vo(
                 "escalatedTo": [person_vo(user, book.tags.get(user.id, set()), step.level) for user in people],
                 "escalatedAt": iso(step.enter_at),
                 "elapsedMinutes": max(elapsed, 0),
+                "skipped": False,
+                "note": "",
             }
         )
     shown_level = current.level if response_status == "OPEN" else None
+    open_next = iso(current.leave_at) if response_status == "OPEN" and current.leave_at is not None else ""
     return {
         "alertNo": row.alert_no,
-        "alertLevel": level_code(rule.level if rule is not None else row.level),
+        "alertLevel": level_code(alert_level),
         "occurredAt": iso(row.occurred_at),
         "timeline": nodes,
         "currentLevel": shown_level,
+        "nextEscalateAt": open_next,
         "responseStatus": response_status,
+        "channelStub": "钉钉/短信外发保持本地桩，未实际发送",
     }
 
 
