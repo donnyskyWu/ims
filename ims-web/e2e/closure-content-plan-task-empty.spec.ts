@@ -19,13 +19,13 @@ test.describe('content plan and task empty states', () => {
     await loginAdmin(page)
 
     const planLoad = page.waitForResponse(
-      (r) => r.url().includes('/content/plan') && r.request().method() === 'GET' && r.status() === 200,
+      (r) => r.url().includes('/admin-api/') && r.url().includes('/content/plan') && r.request().method() === 'GET' && r.status() === 200,
     )
     await page.goto('/ims/content/plan')
-    await planLoad
+    const planJson = (await (await planLoad).json()) as { data?: { total?: number } }
     await expect(page.locator('h1')).toHaveText('计划管理', { timeout: 15_000 })
-    const planIdle = page.getByTestId('plan-empty')
-    if (await planIdle.isVisible()) {
+    if ((planJson.data?.total ?? 0) === 0) {
+      const planIdle = page.getByTestId('plan-empty')
       await expect(planIdle).toContainText('暂无计划')
       await expect(planIdle).toContainText('新增计划')
       await page.screenshot({ path: `${shotDir}/01-plan-empty.png`, fullPage: true })
@@ -33,7 +33,7 @@ test.describe('content plan and task empty states', () => {
 
     await page.getByTestId('plan-name-filter').fill(missingName)
     const planQuery = page.waitForResponse(
-      (r) => r.url().includes('/content/plan') && r.request().method() === 'GET' && r.status() === 200,
+      (r) => r.url().includes('/admin-api/') && r.url().includes('/content/plan') && r.request().method() === 'GET' && r.status() === 200,
     )
     await page.getByRole('button', { name: '查询' }).click()
     await planQuery
@@ -47,7 +47,7 @@ test.describe('content plan and task empty states', () => {
     await expect(page.getByTestId('plan-name-filter')).toHaveValue('')
 
     const superviseLoad = page.waitForResponse(
-      (r) => r.url().includes('/content/publish/pending') && r.request().method() === 'GET' && r.status() === 200,
+      (r) => r.url().includes('/admin-api/') && r.url().includes('/content/publish/pending') && r.request().method() === 'GET' && r.status() === 200,
     )
     await page.goto('/ims/content/publish')
     await superviseLoad
@@ -56,25 +56,25 @@ test.describe('content plan and task empty states', () => {
     await page.screenshot({ path: `${shotDir}/07-publish-supervise.png`, fullPage: true })
 
     const taskLoad = page.waitForResponse(
-      (r) => r.url().includes('/content/task/page') && r.request().method() === 'GET' && r.status() === 200,
+      (r) => r.url().includes('/admin-api/') && r.url().includes('/content/task/page') && r.request().method() === 'GET' && r.status() === 200,
     )
     await page.goto('/ims/content/task')
-    await taskLoad
+    const mineJson = (await (await taskLoad).json()) as { data?: { total?: number } }
     await expect(page.locator('h1')).toHaveText('我的任务', { timeout: 15_000 })
-    const mineEmpty = page.getByTestId('task-empty')
-    if (await mineEmpty.isVisible()) {
+    if ((mineJson.data?.total ?? 0) === 0) {
+      const mineEmpty = page.getByTestId('task-empty')
       await expect(mineEmpty).toContainText('暂无我的任务')
       await expect(mineEmpty).toContainText('全部任务')
       await page.screenshot({ path: `${shotDir}/03-task-mine-empty.png`, fullPage: true })
     }
 
     const allLoad = page.waitForResponse(
-      (r) => r.url().includes('/content/task/page') && r.request().method() === 'GET' && r.status() === 200,
+      (r) => r.url().includes('/admin-api/') && r.url().includes('/content/task/page') && r.request().method() === 'GET' && r.status() === 200,
     )
     await page.locator('.tab', { hasText: '全部任务' }).click()
-    await allLoad
-    const allEmpty = page.getByTestId('task-empty')
-    if (await allEmpty.isVisible()) {
+    const allJson = (await (await allLoad).json()) as { data?: { total?: number } }
+    if ((allJson.data?.total ?? 0) === 0) {
+      const allEmpty = page.getByTestId('task-empty')
       await expect(allEmpty).toContainText('暂无任务')
       await expect(allEmpty).toContainText('启动计划')
       await page.screenshot({ path: `${shotDir}/04-task-all-empty.png`, fullPage: true })
@@ -82,7 +82,7 @@ test.describe('content plan and task empty states', () => {
 
     await page.getByTestId('task-ip-filter').fill('900000171')
     const taskQuery = page.waitForResponse(
-      (r) => r.url().includes('/content/task/page') && r.request().method() === 'GET' && r.status() === 200,
+      (r) => r.url().includes('/admin-api/') && r.url().includes('/content/task/page') && r.request().method() === 'GET' && r.status() === 200,
     )
     await page.getByRole('button', { name: '查询' }).click()
     await taskQuery

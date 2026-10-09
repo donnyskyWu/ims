@@ -10,14 +10,7 @@
         <router-link class="btn btn-sec btn-sm" to="/ims/content/list">内容管理</router-link>
       </div>
     </div>
-    <div class="hint" data-testid="publish-supervise" style="margin-bottom: 10px">
-      督办：待发布 {{ pendingCount }}
-      <span
-        v-if="overdueCount > 0"
-        data-testid="publish-overdue-count"
-        style="margin-left: 12px; color: var(--red); font-weight: 600"
-      >超计划 24h {{ overdueCount }}</span>
-    </div>
+    <div class="hint" data-testid="publish-supervise" style="margin-bottom: 10px">督办：待发布 {{ pendingCount }}<span v-if="overdueCount > 0" data-testid="publish-overdue-count" style="margin-left: 12px; color: var(--red); font-weight: 600">超计划 24h {{ overdueCount }}</span></div>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.publishNo" placeholder="发布单号" style="width: 140px" />
       <select v-model="filters.publishStatus" style="width: 130px">
