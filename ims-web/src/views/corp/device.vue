@@ -22,14 +22,45 @@
         <option value="">全部状态</option>
         <option v-for="item in phoneStatus" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
-      <select v-else v-model="status" style="width: 120px" data-testid="corp-asset-status-filter">
-        <option value="">全部状态</option>
-        <option v-for="item in assetStatusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
-      </select>
+      <template v-else>
+        <select v-if="kind === 'live'" v-model="assetTypeFilter" style="width: 120px" data-testid="corp-asset-type-filter">
+          <option value="">全部类型</option>
+          <option value="LIVE">直播设备</option>
+          <option value="SHOOT">拍摄设备</option>
+        </select>
+        <select v-model="status" style="width: 120px" data-testid="corp-asset-status-filter">
+          <option value="">全部状态</option>
+          <option v-for="item in assetStatusOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+        <select v-model="ownerFilter" style="width: 140px" data-testid="corp-asset-owner-filter">
+          <option value="">全部责任人</option>
+          <option value="none">未分配</option>
+          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+        </select>
+        <label data-testid="corp-asset-link-gap-filter" style="display: inline-flex; align-items: center; gap: 4px">
+          <input v-model="linkGapOnly" type="checkbox" />
+          仅待补关联
+        </label>
+      </template>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
+      <button
+        v-if="kind !== 'phone'"
+        class="btn btn-sec btn-sm"
+        type="button"
+        data-testid="corp-asset-ledger-export"
+        :disabled="exporting"
+        @click="exportLedger"
+      >
+        导出台账
+      </button>
     </form>
+    <p v-if="kind !== 'phone'" class="hint" data-testid="corp-asset-link-gap-banner">
+      当前筛选范围内待补关联 {{ linkGapTotal }} 台
+      <button class="btn btn-txt" type="button" data-testid="corp-asset-link-gap-entry" @click="showLinkGap">只看这些</button>
+    </p>
+    <p v-if="ledgerExportNote" class="hint" data-testid="corp-asset-ledger-export-note">{{ ledgerExportNote }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -54,8 +85,12 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="String(row.id)">
-              <td v-for="key in meta.keys" :key="key" :data-testid="key === 'status' && kind !== 'phone' ? 'corp-asset-status' : undefined">
-                {{ show(row, key) }}
+              <td v-for="key in meta.keys" :key="key" :data-testid="cellTestId(key)">
+                <template v-if="key === 'bindCount'">
+                  <span>{{ show(row, key) }}</span>
+                  <span v-if="row.linkGap" data-testid="corp-asset-link-gap" style="margin-left: 6px; color: #8b909a">待补关联</span>
+                </template>
+                <template v-else>{{ show(row, key) }}</template>
               </td>
               <td v-if="kind === 'phone'">
                 <button class="btn btn-txt" type="button" @click="openDetail(row)">详情</button>
@@ -478,6 +513,11 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const keyword = ref('')
 const status = ref('')
+const ownerFilter = ref('')
+const assetTypeFilter = ref('')
+const linkGapOnly = ref(false)
+const linkGapTotal = ref(0)
+const ledgerExportNote = ref('')
 const loading = ref(false)
 const error = ref('')
 const detailOpen = ref(false)
@@ -595,9 +635,9 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
     emptyHint: '点「资产登记」或「采购导入」写入台账，再按领用、使用、归还、报废流转。',
-    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。登记时校验实名人、账号、场次：不存在 1500，已停用或场次已取消 1501，归属不对 1001。正向穿透可看场次层和成本层。关联校验扫描已入库的不一致项。',
-    columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
-    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
+    hint: 'GET /corp/device/office/page 读取 assetType=OFFICE。可按责任人、状态和待补关联筛选，并按当前条件导出台账。绑定账号数为 0 或责任人空时标为待补关联。登记时校验实名人、账号、场次：不存在 1500，已停用或场次已取消 1501，归属不对 1001。正向穿透可看场次层和成本层。关联校验扫描已入库的不一致项。',
+    columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人', '绑定账号数'],
+    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName', 'bindCount'],
   },
   live: {
     title: '直播设备管理',
@@ -605,9 +645,9 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有直播设备',
     emptyHint: '登记时类型选直播设备或拍摄设备。流转与办公设备相同。',
-    hint: 'GET /corp/device/live/page 合并 assetType=LIVE 与 SHOOT。',
-    columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人'],
-    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName'],
+    hint: 'GET /corp/device/live/page 合并 assetType=LIVE 与 SHOOT。类型、责任人和待补关联可筛选，导出台账沿用当前条件。',
+    columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人', '绑定账号数'],
+    keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName', 'bindCount'],
   },
   phone: {
     title: '手机设备管理',
@@ -647,10 +687,33 @@ const labels: Record<string, string> = {
   spec: '规格',
   purchaseDate: '采购日期',
   ownerName: '责任人',
+  bindCount: '绑定账号数',
 }
 
 function labelOf(key: string) {
   return labels[key] || key
+}
+
+function cellTestId(key: string) {
+  if (kind.value === 'phone') return undefined
+  if (key === 'status') return 'corp-asset-status'
+  if (key === 'bindCount') return 'corp-asset-bind-count'
+  return undefined
+}
+
+function ledgerQuery(forExport = false): Record<string, string | number> {
+  const query: Record<string, string | number> = {}
+  const text = keyword.value.trim()
+  if (text) query.keyword = text
+  if (status.value) query.status = status.value
+  if (ownerFilter.value === 'none') query.unassigned = 1
+  else if (ownerFilter.value) query.ownerUserId = Number(ownerFilter.value)
+  if (linkGapOnly.value) query.linkGap = 1
+  if (!forExport) return query
+  if (kind.value === 'office') query.assetType = 'OFFICE'
+  else if (assetTypeFilter.value) query.assetType = assetTypeFilter.value
+  else query.assetType = 'LIVE,SHOOT'
+  return query
 }
 
 function statusLabel(value: string) {
@@ -754,13 +817,17 @@ async function load() {
       if (/^[A-Za-z0-9-]+$/.test(text) && !/^\d{11}$/.test(text)) query.deviceNumber = text
       else query.phoneModel = text
     }
-    if (kind.value !== 'phone' && text) query.keyword = text
-    if (status.value) query.status = status.value
+    if (kind.value === 'phone' && status.value) query.status = status.value
+    if (kind.value !== 'phone') {
+      Object.assign(query, ledgerQuery(false))
+      if (kind.value === 'live' && assetTypeFilter.value) query.assetType = assetTypeFilter.value
+    }
     const url = kind.value === 'phone' ? '/corp/device/phone/page' : `/corp/device/${kind.value}/page`
     const res = await http.get(url, { params: query })
-    const data = res.data?.data
+    const data = res.data?.data as { linkGapTotal?: number } | undefined
     rows.value = asList(data)
     total.value = asTotal(data, rows.value.length)
+    linkGapTotal.value = kind.value === 'phone' ? 0 : Number(data?.linkGapTotal || 0)
   } catch (e: unknown) {
     rows.value = []
     total.value = 0
@@ -778,7 +845,56 @@ function search() {
 function reset() {
   keyword.value = ''
   status.value = ''
+  ownerFilter.value = ''
+  assetTypeFilter.value = ''
+  linkGapOnly.value = false
+  ledgerExportNote.value = ''
   search()
+}
+
+function showLinkGap() {
+  linkGapOnly.value = true
+  search()
+}
+
+async function exportLedger() {
+  exporting.value = true
+  ledgerExportNote.value = ''
+  try {
+    const res = await http.get('/asset/ledger/export', { params: { ...ledgerQuery(true), format: 'XLSX' } })
+    const data = (res.data?.data || {}) as { downloadUrl?: string; fileName?: string; message?: string; exported?: number }
+    const downloadUrl = String(data.downloadUrl || '')
+    const fileName = String(data.fileName || 'asset_ledger.xlsx')
+    if (!downloadUrl) {
+      throw { code: 5005, msg: '报告生成失败，请稍后重试或联系管理员' }
+    }
+    const token = localStorage.getItem('ims_access')
+    const fileRes = await fetch(downloadUrl, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!fileRes.ok) {
+      let body: { code?: number; msg?: string } = {}
+      try {
+        body = await fileRes.json()
+      } catch {
+        body = {}
+      }
+      throw body.code ? body : { code: fileRes.status, msg: body.msg || '报告生成失败，请稍后重试或联系管理员' }
+    }
+    const blob = await fileRes.blob()
+    const anchor = document.createElement('a')
+    anchor.href = URL.createObjectURL(blob)
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(anchor.href)
+    ledgerExportNote.value = `${data.message || '台账已按当前筛选导出'} · ${fileName} · ${data.exported ?? 0} 条`
+  } catch (e: unknown) {
+    ledgerExportNote.value = bizError(e)
+  } finally {
+    exporting.value = false
+  }
 }
 
 function goto(page: number) {
@@ -1416,6 +1532,11 @@ function submitScrap() {
 watch(kind, async () => {
   keyword.value = ''
   status.value = ''
+  ownerFilter.value = ''
+  assetTypeFilter.value = ''
+  linkGapOnly.value = false
+  ledgerExportNote.value = ''
+  linkGapTotal.value = 0
   pageNo.value = 1
   detailOpen.value = false
   formOpen.value = false

@@ -2,13 +2,13 @@
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import check_date, check_enum, count_of, page_args, tenant_of, user_names
-from app.models import AssetLedger, AssetLifecycleEvent, User
+from app.models import AssetBind, AssetLedger, AssetLifecycleEvent, User
 
 router = APIRouter()
 
@@ -85,7 +85,14 @@ def _event_vo(row: AssetLifecycleEvent, names: dict[int, str]) -> dict:
     }
 
 
-def ledger_vo(row: AssetLedger, names: dict[int, str], timeline: list[dict] | None = None) -> dict:
+def ledger_vo(
+    row: AssetLedger,
+    names: dict[int, str],
+    timeline: list[dict] | None = None,
+    bind_count: int = 0,
+) -> dict:
+    count = int(bind_count or 0)
+    owner_id = int(row.owner_user_id or 0)
     data = {
         "id": row.id,
         "assetCode": row.asset_code,
@@ -94,10 +101,11 @@ def ledger_vo(row: AssetLedger, names: dict[int, str], timeline: list[dict] | No
         "spec": row.spec,
         "status": row.status,
         "ownerUserId": row.owner_user_id,
-        "ownerName": names.get(row.owner_user_id or 0, "") if row.owner_user_id else "",
+        "ownerName": names.get(owner_id, "") if owner_id else "",
         "purchaseDate": row.purchase_date,
         "purchaseBatchNo": row.purchase_batch_no or "",
-        "bindCount": 0,
+        "bindCount": count,
+        "linkGap": count <= 0 or owner_id <= 0,
         "used": bool(row.used_at),
     }
     if timeline is not None:
@@ -115,7 +123,7 @@ def _detail(db: Session, row: AssetLedger) -> dict:
             ids.add(event.owner_user_id)
     names = user_names(db, ids)
     timeline = [_event_vo(event, names) for event in events]
-    data = ledger_vo(row, names, timeline)
+    data = ledger_vo(row, names, timeline, _bind_counts(db, [row.id]).get(row.id, 0))
     from app.asset_penetrate import holders_of
 
     data["holders"] = holders_of(db, row)
@@ -148,18 +156,70 @@ def _add_event(
     )
 
 
-def list_ledger(
-    db: Session,
+LEDGER_EXPORT_LIMIT = 2000
+LEDGER_STATUS_LABEL = {
+    "PENDING_REVIEW": "待审核",
+    "IN_USE": "在用",
+    "RETURNED": "已归还",
+    "SCRAPPED": "已报废",
+}
+LEDGER_TYPE_LABEL = {
+    "OFFICE": "办公设备",
+    "LIVE": "直播设备",
+    "SHOOT": "拍摄设备",
+    "DIGITAL": "数码设备",
+}
+
+
+def _bind_counts(db: Session, asset_ids: list[int]) -> dict[int, int]:
+    if not asset_ids:
+        return {}
+    stmt = (
+        select(AssetBind.asset_id, func.count(AssetBind.id))
+        .where(
+            AssetBind.asset_id.in_(asset_ids),
+            AssetBind.deleted == 0,
+            AssetBind.bind_status == "ACTIVE",
+            AssetBind.account_id > 0,
+        )
+        .group_by(AssetBind.asset_id)
+    )
+    return {int(asset_id): int(count) for asset_id, count in db.execute(stmt).all()}
+
+
+def _missing_active_bind():
+    active = (
+        select(AssetBind.id)
+        .where(
+            AssetBind.asset_id == AssetLedger.id,
+            AssetBind.deleted == 0,
+            AssetBind.bind_status == "ACTIVE",
+            AssetBind.account_id > 0,
+        )
+        .correlate(AssetLedger)
+        .exists()
+    )
+    return ~active
+
+
+def _link_gap_clause():
+    return or_(
+        AssetLedger.owner_user_id.is_(None),
+        AssetLedger.owner_user_id == 0,
+        _missing_active_bind(),
+    )
+
+
+def _filtered_ledger(
     actor: User,
-    page_no: int,
-    page_size: int,
     asset_type: str = "",
     asset_types: list[str] | None = None,
     asset_code: str = "",
     keyword: str = "",
     status: str = "",
+    owner_user_id: int = 0,
+    unassigned: bool = False,
 ):
-    number, size = page_args(page_no, page_size)
     stmt = select(AssetLedger).where(AssetLedger.deleted == 0, AssetLedger.tenant_id == tenant_of(actor))
     if asset_types:
         stmt = stmt.where(AssetLedger.asset_type.in_(asset_types))
@@ -174,13 +234,94 @@ def list_ledger(
         stmt = stmt.where(or_(AssetLedger.asset_code.like(like), AssetLedger.asset_name.like(like)))
     if status:
         stmt = stmt.where(AssetLedger.status == status)
+    if owner_user_id > 0:
+        stmt = stmt.where(AssetLedger.owner_user_id == owner_user_id)
+    elif unassigned:
+        stmt = stmt.where(or_(AssetLedger.owner_user_id.is_(None), AssetLedger.owner_user_id == 0))
+    return stmt
+
+
+def _ledger_rows(
+    db: Session,
+    actor: User,
+    page_no: int,
+    page_size: int,
+    asset_type: str = "",
+    asset_types: list[str] | None = None,
+    asset_code: str = "",
+    keyword: str = "",
+    status: str = "",
+    owner_user_id: int = 0,
+    unassigned: bool = False,
+    link_gap: bool = False,
+    hard_limit: int | None = None,
+):
+    if owner_user_id < 0:
+        return None, fail(1001, "责任人无效")
+    stmt = _filtered_ledger(
+        actor,
+        asset_type=asset_type,
+        asset_types=asset_types,
+        asset_code=asset_code,
+        keyword=keyword,
+        status=status,
+        owner_user_id=owner_user_id,
+        unassigned=unassigned,
+    )
+    gap_total = count_of(db, stmt.where(_link_gap_clause()))
+    if link_gap:
+        stmt = stmt.where(_link_gap_clause())
     total = count_of(db, stmt)
+    if hard_limit:
+        number, size = 1, hard_limit
+    else:
+        number, size = page_args(page_no, page_size)
     rows = db.scalars(stmt.order_by(AssetLedger.id.desc()).offset((number - 1) * size).limit(size)).all()
+    return (rows, total, gap_total, number, size), None
+
+
+def _vo_list(db: Session, rows: list[AssetLedger]) -> list[dict]:
     names = user_names(db, {row.owner_user_id for row in rows if row.owner_user_id})
+    counts = _bind_counts(db, [row.id for row in rows])
+    return [ledger_vo(row, names, bind_count=counts.get(row.id, 0)) for row in rows]
+
+
+def list_ledger(
+    db: Session,
+    actor: User,
+    page_no: int,
+    page_size: int,
+    asset_type: str = "",
+    asset_types: list[str] | None = None,
+    asset_code: str = "",
+    keyword: str = "",
+    status: str = "",
+    owner_user_id: int = 0,
+    unassigned: bool = False,
+    link_gap: bool = False,
+):
+    found, error = _ledger_rows(
+        db,
+        actor,
+        page_no,
+        page_size,
+        asset_type=asset_type,
+        asset_types=asset_types,
+        asset_code=asset_code,
+        keyword=keyword,
+        status=status,
+        owner_user_id=owner_user_id,
+        unassigned=unassigned,
+        link_gap=link_gap,
+    )
+    if error:
+        return error
+    rows, total, gap_total, number, size = found
     return ok(
         {
-            "list": [ledger_vo(row, names) for row in rows],
+            "list": _vo_list(db, rows),
             "total": total,
+            "linkGapTotal": gap_total,
             "pageNo": number,
             "pageSize": size,
         }
@@ -196,6 +337,16 @@ def _code_taken(db: Session, actor: User, code: str) -> bool:
     return db.scalar(stmt) is not None
 
 
+def _type_args(asset_type: str) -> tuple[str, list[str] | None]:
+    if asset_type == "LIVE,SHOOT":
+        return "", ["LIVE", "SHOOT"]
+    return asset_type, None
+
+
+def _owner_flags(owner_user_id: int, unassigned: int) -> tuple[int, bool]:
+    return owner_user_id, bool(unassigned) and owner_user_id <= 0
+
+
 @router.get("/asset/ledger/page")
 def ledger_page(
     pageNo: int = 1,
@@ -204,14 +355,14 @@ def ledger_page(
     assetType: str = "",
     status: str = "",
     keyword: str = "",
+    ownerUserId: int = 0,
+    unassigned: int = 0,
+    linkGap: int = 0,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    types = None
-    one = assetType
-    if assetType == "LIVE,SHOOT":
-        types = ["LIVE", "SHOOT"]
-        one = ""
+    one, types = _type_args(assetType)
+    owner_id, only_unassigned = _owner_flags(ownerUserId, unassigned)
     return list_ledger(
         db,
         actor,
@@ -222,7 +373,109 @@ def ledger_page(
         asset_code=assetCode,
         keyword=keyword,
         status=status,
+        owner_user_id=owner_id,
+        unassigned=only_unassigned,
+        link_gap=bool(linkGap),
     )
+
+
+def ledger_matrix(items: list[dict]) -> list[list[str]]:
+    rows = [["资产编号", "名称", "类型", "规格", "状态", "责任人", "绑定账号数", "待补关联", "采购日期"]]
+    for item in items:
+        rows.append(
+            [
+                item.get("assetCode") or "",
+                item.get("assetName") or "",
+                LEDGER_TYPE_LABEL.get(item.get("assetType") or "", item.get("assetType") or ""),
+                item.get("spec") or "",
+                LEDGER_STATUS_LABEL.get(item.get("status") or "", item.get("status") or ""),
+                item.get("ownerName") or "未分配",
+                str(item.get("bindCount") or 0),
+                "待补关联" if item.get("linkGap") else "",
+                item.get("purchaseDate") or "",
+            ]
+        )
+    return rows
+
+
+def _csv_bytes(rows: list[list[str]]) -> bytes:
+    import csv
+    from io import StringIO
+
+    buf = StringIO()
+    csv.writer(buf).writerows(rows)
+    return buf.getvalue().encode("utf-8-sig")
+
+
+@router.get("/asset/ledger/export/file")
+def ledger_export_file(token: str, actor: User = Depends(current_user)):
+    from app.asset_export import _file_response
+
+    return _file_response(token, actor)
+
+
+@router.get("/asset/ledger/export")
+def ledger_export(
+    assetCode: str = "",
+    assetType: str = "",
+    status: str = "",
+    keyword: str = "",
+    ownerUserId: int = 0,
+    unassigned: int = 0,
+    linkGap: int = 0,
+    format: str = "XLSX",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    kind = (format or "XLSX").strip().upper()
+    if kind not in {"XLSX", "CSV"}:
+        return fail(1001, "导出格式仅支持 XLSX 或 CSV")
+    one, types = _type_args(assetType)
+    owner_id, only_unassigned = _owner_flags(ownerUserId, unassigned)
+    found, error = _ledger_rows(
+        db,
+        actor,
+        1,
+        10,
+        asset_type=one,
+        asset_types=types,
+        asset_code=assetCode,
+        keyword=keyword,
+        status=status,
+        owner_user_id=owner_id,
+        unassigned=only_unassigned,
+        link_gap=bool(linkGap),
+        hard_limit=LEDGER_EXPORT_LIMIT,
+    )
+    if error:
+        return error
+    rows, total, _gap_total, _number, _size = found
+    items = _vo_list(db, rows)
+    matrix = ledger_matrix(items)
+    from app.asset_export import XLSX_MEDIA, build_xlsx, issue_export
+
+    try:
+        if kind == "CSV":
+            body = _csv_bytes(matrix)
+            media = "text/csv; charset=utf-8"
+            filename = "asset_ledger.csv"
+            file_kind = "csv"
+        else:
+            body = build_xlsx(matrix)
+            media = XLSX_MEDIA
+            filename = "asset_ledger.xlsx"
+            file_kind = "xlsx"
+    except Exception:
+        return fail(5005, "报告生成失败，请稍后重试或联系管理员")
+    message = "台账已按当前筛选导出"
+    if total > len(items):
+        message = f"台账已按当前筛选导出前 {len(items)} 条，共 {total} 条"
+    payload = issue_export(actor.id, body, media, filename, file_kind, route="ledger", message=message)
+    if payload is None:
+        return fail(5005, "报告生成失败，请稍后重试或联系管理员")
+    payload["total"] = total
+    payload["exported"] = len(items)
+    return ok(payload)
 
 
 @router.get("/asset/ledger/{asset_id}")
