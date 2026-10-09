@@ -29,7 +29,14 @@
       {{ poolCounts.RETURNED }} · 已注销 {{ poolCounts.CANCELLED }}
     </p>
     <div data-testid="acct-pool-events">
-      <p v-if="!poolEvents.length" class="hint">最近池动态：暂无</p>
+      <form class="qbar" data-testid="acct-pool-event-filters" @submit.prevent="loadPoolEvents">
+        <select v-model="poolEventType" data-testid="acct-pool-event-type" style="width: 120px" @change="loadPoolEvents">
+          <option value="">全部动态</option>
+          <option v-for="item in timelineTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+      </form>
+      <p v-if="poolEventError" class="hint bad" data-testid="acct-pool-event-error">{{ poolEventError }}</p>
+      <p v-else-if="!poolEvents.length" class="hint" data-testid="acct-pool-event-empty">{{ poolEventEmpty }}</p>
       <ul v-else class="pool-event-list">
         <li v-for="ev in poolEvents" :key="ev.id" data-testid="acct-pool-event">
           <span class="mono">{{ ev.eventTime }}</span>
@@ -577,6 +584,12 @@
       </div>
       <div v-if="detail && activeTab === 'timeline'">
         <div class="acts" style="margin-bottom: 8px">
+          <select v-model="timelineType" data-testid="acct-timeline-type" style="width: 120px" @change="reloadTimeline">
+            <option value="">全部类型</option>
+            <option v-for="item in timelineTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+          <input v-model="timelineFrom" type="date" data-testid="acct-timeline-from" @change="reloadTimeline" />
+          <input v-model="timelineTo" type="date" data-testid="acct-timeline-to" @change="reloadTimeline" />
           <button
             class="btn btn-sec btn-sm"
             type="button"
@@ -589,16 +602,17 @@
         </div>
         <p v-if="timelineExportNote" class="hint" data-testid="acct-timeline-export-note">{{ timelineExportNote }}</p>
         <p v-if="timelineLoading" class="hint">加载时间线…</p>
-        <p v-else-if="timelineError" class="hint">{{ timelineError }}</p>
+        <p v-else-if="timelineRangeHint" class="hint" data-testid="acct-timeline-range-hint">{{ timelineRangeHint }}</p>
+        <p v-else-if="timelineError" class="hint" data-testid="acct-timeline-error">{{ timelineError }}</p>
         <ul v-else-if="timelineEvents.length" class="timeline-list">
-          <li v-for="ev in timelineEvents" :key="ev.id">
+          <li v-for="ev in timelineEvents" :key="ev.id" data-testid="acct-timeline-event">
             <span class="mono">{{ ev.eventTime }}</span>
             <strong>{{ ev.eventType }}</strong>
             {{ ev.snapshotSummary }}
             <span v-if="ev.refNo" class="hint">（{{ ev.refNo }}）</span>
           </li>
         </ul>
-        <p v-else class="hint">暂无领用/归还事件</p>
+        <p v-else class="hint" data-testid="acct-timeline-empty">{{ timelineEmptyText }}</p>
       </div>
       <div v-if="detail && activeTab === 'asset'" class="hint">关联资产需 ASSET 反向穿透接口，契约未在本片实现。</div>
       <template #foot>
@@ -1053,6 +1067,18 @@ const statusOptions = [
   { value: 'CANCELLED', label: '已注销' },
 ]
 
+const timelineTypes = [
+  { value: 'REGISTER', label: '登记' },
+  { value: 'APPLY', label: '领用' },
+  { value: 'TRANSFER', label: '流转' },
+  { value: 'RETURN', label: '归还' },
+  { value: 'RECHARGE', label: '冲话费' },
+  { value: 'FREEZE', label: '冻结' },
+  { value: 'UNFREEZE', label: '解冻' },
+  { value: 'CANCEL', label: '注销' },
+  { value: 'RECYCLE', label: '回收回池' },
+]
+
 const tabs = [
   { id: 'basic', label: '基本信息' },
   { id: 'collect', label: '采集' },
@@ -1271,8 +1297,28 @@ const poolCounts = reactive({
 const poolEvents = ref<
   Array<{ id: number; eventType: string; eventLabel?: string; eventTime: string; snapshotSummary: string }>
 >([])
+const poolEventType = ref('')
+const poolEventError = ref('')
+const timelineType = ref('')
+const timelineFrom = ref('')
+const timelineTo = ref('')
 const timelineExportBusy = ref(false)
 const timelineExportNote = ref('')
+const poolEventEmpty = computed(() => {
+  if (poolEventType.value) return `当前没有「${eventLabel(poolEventType.value)}」动态`
+  return '最近池动态：暂无'
+})
+const timelineRangeHint = computed(() => {
+  const hasFrom = !!timelineFrom.value
+  const hasTo = !!timelineTo.value
+  if (hasFrom !== hasTo) return '请同时填写开始和结束日期'
+  return ''
+})
+const timelineEmptyText = computed(() => {
+  if (timelineType.value) return `当前没有「${eventLabel(timelineType.value)}」事件`
+  if (timelineFrom.value && timelineTo.value) return '该时间范围内没有领用事件'
+  return '暂无领用/归还事件'
+})
 
 const rechargeNeedsVoucher = computed(() => {
   const amount = Number(rechargeForm.amount)
@@ -1436,22 +1482,32 @@ async function load() {
   }
 }
 
+async function loadPoolEvents() {
+  poolEventError.value = ''
+  try {
+    const params: Record<string, unknown> = { pageNo: 1, pageSize: 5 }
+    if (poolEventType.value) params.eventType = poolEventType.value
+    const eventRes = await http.get('/account/timeline/events', { params })
+    poolEvents.value = eventRes.data?.data?.list || []
+  } catch (e: unknown) {
+    poolEvents.value = []
+    poolEventError.value = bizMessage(e)
+  }
+}
+
 async function loadPoolTail() {
   try {
-    const [statusRes, eventRes] = await Promise.all([
-      http.get('/corp/account/status/summary', { params: { platformType: meta.value.platform } }),
-      http.get('/account/timeline/events', { params: { pageNo: 1, pageSize: 5 } }),
-    ])
+    const statusRes = await http.get('/corp/account/status/summary', { params: { platformType: meta.value.platform } })
     const counts = (statusRes.data?.data?.counts || {}) as Record<string, number>
     poolCounts.IN_POOL = Number(counts.IN_POOL || 0)
     poolCounts.IN_USE = Number(counts.IN_USE || 0)
     poolCounts.FROZEN = Number(counts.FROZEN || 0)
     poolCounts.RETURNED = Number(counts.RETURNED || 0)
     poolCounts.CANCELLED = Number(counts.CANCELLED || 0)
-    poolEvents.value = eventRes.data?.data?.list || []
   } catch {
     /* 池状态保持上次数字 */
   }
+  await loadPoolEvents()
 }
 
 function pendingFor(row: Record<string, unknown>) {
@@ -1557,16 +1613,32 @@ function changeSize(ev: Event) {
   load()
 }
 
+function reloadTimeline() {
+  if (detail.value?.id) loadTimeline(detail.value.id)
+}
+
 async function loadTimeline(accountId: unknown) {
   timelineLoading.value = true
   timelineError.value = ''
   timelineEvents.value = []
+  if (timelineRangeHint.value) {
+    timelineLoading.value = false
+    return
+  }
   try {
-    const res = await http.get(`/account/timeline/${accountId}`)
+    const params: Record<string, unknown> = {}
+    if (timelineType.value) params.eventTypes = [timelineType.value]
+    if (timelineFrom.value && timelineTo.value) {
+      params.timeRange = [`${timelineFrom.value} 00:00:00`, `${timelineTo.value} 23:59:59`]
+    }
+    const res = await http.get(`/account/timeline/${accountId}`, {
+      params,
+      paramsSerializer: { indexes: null },
+    })
     const data = res.data?.data as { list: typeof timelineEvents.value }
     timelineEvents.value = data?.list || []
   } catch (e: unknown) {
-    timelineError.value = e instanceof Error ? e.message : '时间线加载失败'
+    timelineError.value = bizMessage(e)
   } finally {
     timelineLoading.value = false
   }
@@ -1599,6 +1671,10 @@ async function loadWxLogs(accountId: unknown) {
 }
 
 async function openDetail(row: Record<string, unknown>, tab = 'basic') {
+  timelineType.value = ''
+  timelineFrom.value = ''
+  timelineTo.value = ''
+  timelineError.value = ''
   activeTab.value = tab
   collectMsg.value = ''
   const res = await http.get(`/corp/account/${row.id}`)
