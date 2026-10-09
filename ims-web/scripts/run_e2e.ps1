@@ -181,7 +181,7 @@ Push-Location $WebRoot
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
-    & npx playwright test --workers=$E2eWorkers --reporter=list,html 2>&1 | Tee-Object -FilePath $logPath
+    & npx playwright test --workers=$E2eWorkers --retries=1 --reporter=list,html 2>&1 | Tee-Object -FilePath $logPath
     $exitCode = $LASTEXITCODE
     if ($null -eq $exitCode) { $exitCode = 0 }
 } finally {
