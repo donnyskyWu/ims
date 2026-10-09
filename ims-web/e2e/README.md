@@ -81,6 +81,7 @@
 | **E2E-S10 问卷组卷/判分/重答 (#79)** | `closure-train-quiz-retake.spec.ts` | 纯 UI · 手工组卷及格分超题数拦截 · 交卷判分 · 不及格重答覆盖为最新成绩 · 及格后 **CONFIRMED** |
 | **E2E-S10 成绩空态/重答入口 (#164)** | `closure-train-quiz-score-empty.spec.ts` | 纯 UI · 未作答「暂无成绩」· 不及格刷新后仍见最新分与「重新作答」· 学习记录「去重答」后再交卷覆盖为 **2** |
 | **E2E-S10 资料版本/周更/任务编辑 (#126)** | `closure-train-material-version.spec.ts` | 纯 UI · 更新资料 V2 且详情留 V1 · 新资料不在未更新清单 · 截止前改任务名学习记录仍在 · 过去截止 **1102** |
+| **E2E-S10 资料预览/问卷边角 (#186)** | `closure-train-material-quiz-tails.spec.ts` | 纯 UI · 分类空态 · 外链格式 · 版本只读预览 · 重复选项拦截 · 未作答题数 |
 | **E2E-S6-02 (#61)** | `closure-corp-cert-expire.spec.ts` | 纯 UI 录入 T−30/T−7/T−0 → 审核 → 扫描 → 黄/红/锁定 · 工作台三条提醒 |
 | **E2E-S6-03 切片 (#55)** | `closure-corp-cert-watermark.spec.ts` | 证件「查看」→ 水印含 admin · 不出原图 |
 | **证件数字化率 / 级别 / 原图 (#127)** | `closure-corp-cert-access.spec.ts` | 纯 UI · 横幅与统计弹窗 · 待审 **1033** · 默认 L1 **1034** · 角色 L2 水印链接 60 秒且禁止下载 · 白名单 L3 明文仍禁止下载 |

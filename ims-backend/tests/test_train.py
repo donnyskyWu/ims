@@ -625,6 +625,7 @@ def test_train_material_new_version_keeps_snapshot_and_weekly_rate():
     assert body["data"]["materialNo"] == original["materialNo"]
     assert body["data"]["versions"][0]["version"] == 1
     assert body["data"]["versions"][0]["title"] == "周更资料原文"
+    assert body["data"]["versions"][0]["materialType"] == "DOC"
     assert body["data"]["versions"][0]["fileKey"] == "train/week-v1.pdf"
 
     third = client.put(
@@ -779,3 +780,70 @@ def test_train_task_edit_before_deadline_keeps_progress():
     )
     assert locked.json()["code"] == 1102
     assert locked.json()["msg"] == "已过截止时间，不能编辑"
+
+
+def test_train_link_preview_snapshot_and_quiz_duplicate_options():
+    auth = headers()
+    cate_id = _leaf_cate(auth)
+    bad = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "坏外链",
+            "cateId": cate_id,
+            "materialType": "LINK",
+            "linkUrl": "notaurl",
+            "publish": True,
+        },
+    )
+    assert bad.json()["code"] == 1001
+    assert bad.json()["msg"] == "linkUrl 须为 http(s) 地址"
+
+    created = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "外链原文",
+            "cateId": cate_id,
+            "materialType": "LINK",
+            "linkUrl": "https://example.com/ims-186-v1",
+            "publish": True,
+        },
+    )
+    original = created.json()
+    assert original["code"] == 0, original
+    assert original["data"]["versions"] == []
+    assert original["data"]["linkUrl"] == "https://example.com/ims-186-v1"
+
+    revised = client.put(
+        f"/admin-api/ims/train/material/{original['data']['id']}",
+        headers=auth,
+        json={
+            "title": "外链修订",
+            "cateId": cate_id,
+            "materialType": "LINK",
+            "linkUrl": "https://example.com/ims-186-v2",
+            "publish": True,
+        },
+    )
+    body = revised.json()
+    assert body["code"] == 0, body
+    assert body["data"]["version"] == 2
+    assert body["data"]["linkUrl"] == "https://example.com/ims-186-v2"
+    snap = body["data"]["versions"][0]
+    assert snap["version"] == 1
+    assert snap["title"] == "外链原文"
+    assert snap["materialType"] == "LINK"
+    assert snap["linkUrl"] == "https://example.com/ims-186-v1"
+    assert snap["fileKey"] in (None, "")
+
+    material_id = _published_material(auth, "重复选项资料")
+    dup = _quiz_task(
+        auth,
+        material_id,
+        "重复选项",
+        [{"question": "只留一个对", "options": ["对", "对"], "answerIndex": 0}],
+        1,
+    )
+    assert dup.json()["code"] == 1001
+    assert dup.json()["msg"] == "选项不能重复"

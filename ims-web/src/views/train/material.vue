@@ -12,25 +12,43 @@
     <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；更新资料生成新版本并留档（TRN-M-R2）。列表可按标题、类型、状态、岗位和分类筛选。</p>
     <div
       class="card weekly-card"
-      :class="{ warn: weekly.weeklyUpdateRate < 100 }"
+      :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
       data-testid="train-weekly-rate"
     >
       <div>
         <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
-        <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
-        <div class="hint">
-          已更新 {{ weekly.updatedCount }} / 应更新 {{ weekly.shouldUpdateCount }}
-          <span v-if="weekly.weeklyUpdateRate < 100"> · 未达 100%，请督办</span>
+        <div v-if="weeklyStatus === 'loading'" class="hint">加载中</div>
+        <div v-else-if="weeklyStatus === 'error'" class="hint" data-testid="train-weekly-error">
+          周更新率加载失败
+          <button class="btn btn-sec btn-sm" type="button" @click="loadWeekly">重试</button>
         </div>
+        <template v-else>
+          <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
+          <div v-if="weekly.shouldUpdateCount === 0" class="hint" data-testid="train-weekly-empty">
+            本周暂无已发布资料
+          </div>
+          <div v-else class="hint">
+            已更新 {{ weekly.updatedCount }} / 应更新 {{ weekly.shouldUpdateCount }}
+            <span v-if="weekly.weeklyUpdateRate < 100"> · 未达 100%，请督办</span>
+          </div>
+        </template>
       </div>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="showUnupdated = true">
+      <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="openUnupdated">
         未更新清单
       </button>
     </div>
     <div class="g2" style="margin-bottom: 12px; align-items: flex-start">
       <div class="card" style="padding: 12px; max-height: 280px; overflow: auto">
         <div style="font-weight: 600; margin-bottom: 8px">分类树</div>
-        <ul v-if="cates.length" class="tree">
+        <div v-if="cateStatus === 'loading'" class="empty"><div class="et">加载分类…</div></div>
+        <div v-else-if="cateStatus === 'error'" class="empty" data-testid="train-cate-empty">
+          <div class="et">分类加载失败</div>
+          <button class="btn btn-sec btn-sm" type="button" @click="loadCates">重试</button>
+        </div>
+        <div v-else-if="!cates.length" class="empty" data-testid="train-cate-empty">
+          <div class="et">暂无分类</div>
+        </div>
+        <ul v-else class="tree">
           <li v-for="root in cates" :key="root.id">
             <span>{{ root.cateName }} <small>({{ root.positionCode }})</small></span>
             <ul>
@@ -48,7 +66,6 @@
             </ul>
           </li>
         </ul>
-        <div v-else class="empty"><div class="et">加载分类…</div></div>
       </div>
       <div style="flex: 1">
         <form class="qbar" data-testid="train-material-filters" @submit.prevent="loadList">
@@ -101,17 +118,19 @@
                 <tr v-else-if="!rows.length">
                   <td colspan="8">
                     <div class="empty" data-testid="train-material-empty">
-                      <div class="et">{{ error || (hasActiveFilters ? '没有符合筛选的资料' : '暂无资料') }}</div>
-                      <div v-if="!error && hasActiveFilters" class="es">调整标题、类型、状态、岗位或分类后再查询</div>
-                      <button
-                        v-if="!error && hasActiveFilters"
-                        class="btn btn-sec btn-sm"
-                        type="button"
-                        data-testid="train-filter-clear-empty"
-                        @click="resetFilters"
-                      >
-                        清除筛选
-                      </button>
+                      <div data-testid="train-list-empty">
+                        <div class="et">{{ error || listEmptyText }}</div>
+                        <div v-if="!error && hasActiveFilters" class="es">调整标题、类型、状态、岗位或分类后再查询</div>
+                        <button
+                          v-if="!error && hasActiveFilters"
+                          class="btn btn-sec btn-sm"
+                          type="button"
+                          data-testid="train-filter-clear-empty"
+                          @click="resetFilters"
+                        >
+                          清除筛选
+                        </button>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -193,7 +212,7 @@
           <input v-model="form.fileKey" class="fld-in" placeholder="直传回执 key" />
         </template>
         <p v-if="editingId" class="hint">将生成新版本 V{{ editingVersion + 1 }}，旧版本留档</p>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-material-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <template v-if="editingId">
@@ -208,18 +227,53 @@
     </div>
 
     <div v-if="detail" class="modal-mask" @click.self="detail = null">
-      <div class="card" style="width: 520px; padding: 20px" data-testid="train-material-detail-drawer">
+      <div class="card detail-card" data-testid="train-material-detail-drawer">
         <h3 style="margin: 0 0 12px">资料详情</h3>
         <p class="mono">{{ detail.materialNo }} · V{{ detail.version || 1 }}</p>
         <p>{{ detail.title }}</p>
         <p class="hint">{{ detail.materialType }} · {{ detail.status }} · {{ detail.uploaderName }}</p>
+        <div data-testid="train-material-preview">
+          <h4 style="margin: 12px 0 8px">预览</h4>
+          <p class="hint">只读预览，历史版本不可修改</p>
+          <template v-if="preview">
+            <p>{{ preview.archived ? '历史' : '当前' }} V{{ preview.version }} · {{ preview.title }}</p>
+            <template v-if="previewKind === 'link'">
+              <p class="mono">{{ preview.linkUrl }}</p>
+              <a class="linkish" :href="preview.linkUrl" target="_blank" rel="noopener">打开外链</a>
+            </template>
+            <template v-else-if="previewKind === 'file'">
+              <p class="mono">文件留档 {{ preview.fileKey }}</p>
+              <p class="hint">本地留档，暂无在线播放地址</p>
+            </template>
+            <div v-else class="empty" data-testid="train-preview-empty"><div class="et">暂无可预览内容</div></div>
+          </template>
+        </div>
         <h4 style="margin: 12px 0 8px">版本历史</h4>
-        <ul v-if="detail.versions?.length" data-testid="train-version-history">
-          <li v-for="item in detail.versions" :key="item.version">
-            V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ item.updatedAt }}
+        <ul data-testid="train-version-history">
+          <li>
+            <button
+              type="button"
+              class="linkish"
+              :class="{ on: previewVersion == null }"
+              data-testid="train-version-current"
+              @click="previewVersion = null"
+            >
+              当前 V{{ detail.version || 1 }} {{ detail.title }}
+            </button>
+          </li>
+          <li v-for="item in detail.versions || []" :key="item.version">
+            <button
+              type="button"
+              class="linkish"
+              :class="{ on: previewVersion === item.version }"
+              data-testid="train-version-archive"
+              @click="previewVersion = item.version"
+            >
+              V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ item.updatedAt }}
+            </button>
           </li>
         </ul>
-        <p v-else class="hint" data-testid="train-version-history">尚无历史版本</p>
+        <p v-if="!detail.versions?.length" class="hint">尚无历史版本</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-pri btn-sm" type="button" @click="detail = null">关闭</button>
         </div>
@@ -239,8 +293,14 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!weekly.unupdatedList.length">
-              <td colspan="4">本周已发布资料都已更新</td>
+            <tr v-if="weeklyStatus !== 'ready'">
+              <td colspan="4">{{ weeklyStatus === 'error' ? '周更新率加载失败' : '加载中' }}</td>
+            </tr>
+            <tr v-else-if="weekly.shouldUpdateCount === 0">
+              <td colspan="4" data-testid="train-unupdated-empty">本周暂无已发布资料</td>
+            </tr>
+            <tr v-else-if="!weekly.unupdatedList.length">
+              <td colspan="4" data-testid="train-unupdated-empty">本周已发布资料都已更新</td>
             </tr>
             <tr v-for="item in weekly.unupdatedList" v-else :key="item.materialNo">
               <td class="mono">{{ item.materialNo }}</td>
@@ -250,6 +310,7 @@
             </tr>
           </tbody>
         </table>
+        <p v-if="copyHint" class="hint" data-testid="train-unupdated-copy-hint">{{ copyHint }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="copyUnupdated">复制清单</button>
           <button class="btn btn-pri btn-sm" type="button" @click="showUnupdated = false">关闭</button>
@@ -275,6 +336,9 @@ type Cate = {
 type VersionItem = {
   version: number
   title: string
+  materialType?: string
+  fileKey?: string
+  linkUrl?: string
   editorName?: string
   updatedAt: string
 }
@@ -304,6 +368,7 @@ type Weekly = {
 
 const route = useRoute()
 const cates = ref<Cate[]>([])
+const cateStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const rows = ref<Row[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -312,8 +377,11 @@ const showForm = ref(false)
 const editingId = ref(0)
 const editingVersion = ref(1)
 const detail = ref<Row | null>(null)
+const previewVersion = ref<number | null>(null)
 const showUnupdated = ref(false)
+const copyHint = ref('')
 const formError = ref('')
+const weeklyStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const weekly = reactive<Weekly>({
   weekStart: '',
   shouldUpdateCount: 0,
@@ -392,9 +460,72 @@ function statusStyle(value: string) {
   return 'background: rgba(142,142,147,.12); color: #6d6d72'
 }
 
+const listEmptyText = computed(() => {
+  const cateOnly =
+    Boolean(filters.cateId) &&
+    !filters.title.trim() &&
+    !filters.materialType &&
+    !filters.status &&
+    !filters.positionCode
+  if (cateOnly) return '该分类暂无资料'
+  if (hasActiveFilters.value) return '没有符合筛选的资料'
+  return '暂无资料'
+})
+
+const preview = computed(() => {
+  const row = detail.value
+  if (!row) return null
+  if (previewVersion.value == null) {
+    return {
+      version: row.version || 1,
+      title: row.title,
+      materialType: row.materialType,
+      fileKey: row.fileKey,
+      linkUrl: row.linkUrl,
+      archived: false,
+    }
+  }
+  const found = (row.versions || []).find((item) => item.version === previewVersion.value)
+  if (!found) return null
+  return {
+    version: found.version,
+    title: found.title,
+    materialType: found.materialType || row.materialType,
+    fileKey: found.fileKey,
+    linkUrl: found.linkUrl,
+    archived: true,
+  }
+})
+
+const previewKind = computed(() => {
+  const item = preview.value
+  if (!item) return 'empty'
+  if (item.materialType === 'LINK') return item.linkUrl?.trim() ? 'link' : 'empty'
+  return item.fileKey?.trim() ? 'file' : 'empty'
+})
+
+function isHttpUrl(value: string) {
+  const text = value.trim()
+  if (!text || /\s/.test(text)) return false
+  const lowered = text.toLowerCase()
+  return (lowered.startsWith('https://') || lowered.startsWith('http://')) && text.length > (lowered.startsWith('https://') ? 8 : 7)
+}
+
 async function loadCates() {
-  const res = await http.get('/train/material/cates')
-  if (res.data.code === 0) cates.value = res.data.data || []
+  cateStatus.value = 'loading'
+  try {
+    const res = await http.get('/train/material/cates')
+    if (res.data.code !== 0) {
+      cates.value = []
+      cateStatus.value = 'error'
+      return
+    }
+    cates.value = res.data.data || []
+    cateStatus.value = 'ready'
+  } catch {
+    cates.value = []
+    cateStatus.value = 'error'
+  }
 }
 
 function pickCate(child: Cate) {
@@ -470,37 +601,52 @@ function openEdit(row: Row) {
 }
 
 function openDetail(row: Row) {
+  previewVersion.value = null
   detail.value = row
 }
 
+function openUnupdated() {
+  copyHint.value = ''
+  showUnupdated.value = true
+}
+
 async function loadWeekly() {
-  const res = await http.get('/train/material/weekly-update-metrics')
-  if (res.data.code !== 0) return
-  const data = res.data.data || {}
-  weekly.weekStart = data.weekStart || ''
-  weekly.shouldUpdateCount = data.shouldUpdateCount || 0
-  weekly.updatedCount = data.updatedCount || 0
-  weekly.weeklyUpdateRate = data.weeklyUpdateRate ?? 100
-  weekly.unupdatedList = data.unupdatedList || []
+  weeklyStatus.value = 'loading'
+  try {
+    const res = await http.get('/train/material/weekly-update-metrics')
+    if (res.data.code !== 0) {
+      weeklyStatus.value = 'error'
+      return
+    }
+    const data = res.data.data || {}
+    weekly.weekStart = data.weekStart || ''
+    weekly.shouldUpdateCount = data.shouldUpdateCount || 0
+    weekly.updatedCount = data.updatedCount || 0
+    weekly.weeklyUpdateRate = data.weeklyUpdateRate ?? 100
+    weekly.unupdatedList = data.unupdatedList || []
+    weeklyStatus.value = 'ready'
+  } catch {
+    weeklyStatus.value = 'error'
+  }
 }
 
 async function copyUnupdated() {
+  if (weeklyStatus.value !== 'ready' || !weekly.unupdatedList.length) {
+    copyHint.value = weekly.shouldUpdateCount === 0 ? '本周暂无已发布资料' : '没有可复制的未更新资料'
+    return
+  }
   const text = weekly.unupdatedList
-    .map((item) => `${item.materialNo}\t${item.title}\t${item.ownerName}\t${item.lastUpdatedAt}`)
+    .map((item) => `${item.materialNo}\t${item.title}\t${item.ownerName || ''}\t${item.lastUpdatedAt}`)
     .join('\n')
   try {
-    await navigator.clipboard.writeText(text || '本周无未更新资料')
+    await navigator.clipboard.writeText(text)
+    copyHint.value = '已复制清单'
   } catch {
-    /* 浏览器拒绝剪贴板时清单仍留在抽屉里 */
+    copyHint.value = '无法写入剪贴板，请从清单中复制'
   }
 }
 
-async function submit(publish: boolean) {
-  formError.value = ''
-  if (!form.title.trim() || !form.cateId) {
-    formError.value = '标题与分类必填'
-    return
-  }
+function materialPayload(publish: boolean) {
   const body: Record<string, unknown> = {
     title: form.title.trim(),
     cateId: form.cateId,
@@ -508,8 +654,22 @@ async function submit(publish: boolean) {
     positionCodes: [],
     publish,
   }
-  if (form.materialType === 'LINK') body.linkUrl = form.linkUrl
-  else body.fileKey = form.fileKey
+  if (form.materialType === 'LINK') body.linkUrl = form.linkUrl.trim()
+  else body.fileKey = form.fileKey.trim()
+  return body
+}
+
+function formInvalid() {
+  if (!form.title.trim() || !form.cateId) return '标题与分类必填'
+  if (form.materialType === 'LINK' && !isHttpUrl(form.linkUrl)) return '外链须为 http(s) 地址'
+  if (form.materialType !== 'LINK' && !form.fileKey.trim()) return 'fileKey 必填'
+  return ''
+}
+
+async function submit(publish: boolean) {
+  formError.value = formInvalid()
+  if (formError.value) return
+  const body = materialPayload(publish)
   let res
   try {
     res = await http.post('/train/material', body)
@@ -528,20 +688,9 @@ async function submit(publish: boolean) {
 }
 
 async function submitUpdate() {
-  formError.value = ''
-  if (!editingId.value || !form.title.trim() || !form.cateId) {
-    formError.value = '标题与分类必填'
-    return
-  }
-  const body: Record<string, unknown> = {
-    title: form.title.trim(),
-    cateId: form.cateId,
-    materialType: form.materialType,
-    positionCodes: [],
-    publish: true,
-  }
-  if (form.materialType === 'LINK') body.linkUrl = form.linkUrl
-  else body.fileKey = form.fileKey
+  formError.value = !editingId.value ? '标题与分类必填' : formInvalid()
+  if (formError.value) return
+  const body = materialPayload(true)
   let res
   try {
     res = await http.put(`/train/material/${editingId.value}`, body)
@@ -623,6 +772,12 @@ onMounted(async () => {
   margin-right: 4px;
   background: rgba(0, 113, 227, 0.1);
   color: var(--blue);
+}
+.detail-card {
+  width: min(720px, 92vw);
+  padding: 20px;
+  max-height: 86vh;
+  overflow: auto;
 }
 .fld {
   display: block;

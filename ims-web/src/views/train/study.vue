@@ -20,13 +20,27 @@
           · 确认状态
           <span :class="confirmStatus === 'CONFIRMED' ? 'ok' : 'pending'">{{ confirmStatusLabel }}</span>
         </div>
+        <p v-if="overdueDays > 0" class="overdue-banner" data-testid="train-study-overdue">
+          本任务已逾期 {{ overdueDays }} 天，补学仍计入完成率统计
+        </p>
       </div>
 
       <div class="card" style="padding: 12px">
         <div style="font-weight: 600; margin-bottom: 8px">资料清单</div>
         <ul v-if="materials.length" class="mat-list">
           <li v-for="m in materials" :key="m.id">
-            <span>{{ m.title }}</span>
+            <div>
+              <div>{{ m.title }}</div>
+              <a
+                v-if="m.materialType === 'LINK' && m.linkUrl"
+                class="hint"
+                :href="m.linkUrl"
+                target="_blank"
+                rel="noopener"
+              >打开外链</a>
+              <div v-else-if="m.fileKey" class="hint mono">文件留档 {{ m.fileKey }}</div>
+              <div v-else class="hint" data-testid="train-study-material-empty">暂无可预览</div>
+            </div>
             <span class="mono">{{ materialPct(m.id) }}%</span>
           </li>
         </ul>
@@ -54,8 +68,12 @@
           <p v-if="latestScore == null" class="hint score-empty" data-testid="train-quiz-score-empty">暂无成绩</p>
           <p v-else class="hint grade-banner" data-testid="train-quiz-score-latest">{{ gradeText }}</p>
           <div v-if="!quiz.length" class="hint" style="color: var(--red)">问卷未配置</div>
+          <p v-else-if="unansweredCount > 0" class="hint" data-testid="train-quiz-unanswered">
+            还有 {{ unansweredCount }} 题未作答
+          </p>
           <div v-for="(q, qi) in quiz" :key="qi" class="quiz-q">
             <div class="q-title">{{ qi + 1 }}. {{ q.question }}</div>
+            <div v-if="!q.options?.length" class="hint" data-testid="train-quiz-option-empty">该题暂无选项</div>
             <label v-for="(opt, oi) in q.options" :key="oi" class="opt">
               <input
                 type="radio"
@@ -130,7 +148,7 @@ type TaskRow = {
   quiz?: QuizPublic[]
 }
 
-type MatRow = { id: number; title: string; materialType: string }
+type MatRow = { id: number; title: string; materialType: string; fileKey?: string; linkUrl?: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -161,8 +179,21 @@ const confirmTypeLabel = computed(() =>
 const quiz = computed(() => task.value?.quiz ?? [])
 
 const quizReady = computed(
-  () => quiz.value.length > 0 && quiz.value.every((_, index) => typeof answers[index] === 'number'),
+  () =>
+    quiz.value.length > 0 &&
+    quiz.value.every((question, index) => question.options?.length > 0 && typeof answers[index] === 'number'),
 )
+
+const unansweredCount = computed(
+  () => quiz.value.filter((question, index) => question.options?.length > 0 && typeof answers[index] !== 'number').length,
+)
+
+const overdueDays = computed(() => {
+  if (!task.value || confirmStatus.value === 'CONFIRMED') return 0
+  const end = Date.parse(task.value.deadline)
+  if (!Number.isFinite(end) || end >= Date.now()) return 0
+  return Math.max(1, Math.ceil((Date.now() - end) / 86_400_000))
+})
 
 const allMaterialsDone = computed(() => {
   if (!task.value?.materialIds?.length) return false
@@ -354,6 +385,11 @@ onMounted(loadTaskAndProgress)
   margin-top: 12px;
   color: var(--green);
   font-weight: 600;
+}
+.overdue-banner {
+  margin: 8px 0 0;
+  color: var(--red);
+  font-size: 13px;
 }
 .quiz-paper {
   margin-top: 16px;
