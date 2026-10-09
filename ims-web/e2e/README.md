@@ -57,6 +57,7 @@
 | **E2E-S4-10 · CORP (#70)** | `closure-corp-account-summary.spec.ts` | 纯 UI · `AC-E2E-SUM` · 2026-04 合计 **¥200.00** / 2 笔 · 账号 / 部门#70070 / 抖音 · 2026-03 **¥50.00** 不进 4 月 |
 | **E2E-S9-切片** | `closure-perf-issue-export.spec.ts` | UI 方案+考核 → 算分/确认 → UI 下发 → 结果页导出 CSV（BOM + ISSUED 行） |
 | **E2E-S9-01/02 (#86)** | `closure-perf-metric-pack.spec.ts` | 纯 UI · 得分规则重叠 **1152** · 重复编码 **1151** · 权重合计 99/101 **1154** · 合计 100 绑定成功 · 启用 COMPETE_SUBMIT_RATE **1153** |
+| **E2E-S9 排名区 (#187)** | `closure-perf-rank-board.spec.ts` | 纯 UI · 未发布空态 · 核准后红榜金/银 · 均分 70.00 · 低于 60 末位预警桩且不外发钉钉 |
 | **E2E-S7-01 · 选题立项** | `closure-content-topic.spec.ts` | 纯 UI 提报选题 → 缺 SOP/计划发布日 **1052** → 选择 SOP+内容要求立项 → **已立项** / 可出任务；落选保持不可出任务 |
 | **E2E-S7 · 选题库 (#136)** | `closure-content-topic-library.spec.ts` | 纯 UI · 来源/编号/提报人筛选与重置 → 详情无项目 → 待评审编辑 → 落选意见保留并复活 → 立项详情草稿链 → 取消 **已取消** |
 | **E2E-S7 · 选题排期甘特 (#140)** | `closure-content-topic-gantt.spec.ts` | 纯 UI 立项两条选题 → 选题计划「排期甘特」按计划发布日打点；区间外不出现 |
