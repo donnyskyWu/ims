@@ -111,14 +111,15 @@ def fin_view(db: Session, actor: User, payload):
 
 class FinCostEntryBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    commissionRate: float = Field(ge=0, le=1)
-    adCost: float = Field(ge=0, default=0)
-    rechargeCost: float = Field(ge=0, default=0)
-    fixedCost: float = Field(ge=0, default=0)
-    sampleCost: float = Field(ge=0, default=0)
+    # 边界在 validate_body 里返回 1001，避免框架 422。
+    commissionRate: float
+    adCost: float = 0
+    rechargeCost: float = 0
+    fixedCost: float = 0
+    sampleCost: float = 0
     shareCostType: str = "MANUAL"
-    shareDaren: float = Field(ge=0, default=0)
-    shareRealname: float = Field(ge=0, default=0)
+    shareDaren: float = 0
+    shareRealname: float = 0
     remark: str = ""
     asDraft: bool = False
 
@@ -289,11 +290,36 @@ def calc_amounts(gmv: float, body: FinCostEntryBody) -> dict[str, float]:
     return {"commissionAmount": commission, "totalCost": total}
 
 
+def _finite(value: float) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and value not in (
+        float("inf"),
+        float("-inf"),
+    )
+
+
+def _at_most_two_decimals(value: float) -> bool:
+    scaled = round(float(value) * 100, 6)
+    return abs(scaled - round(scaled)) < 1e-4
+
+
 def validate_body(body: FinCostEntryBody) -> str | None:
     if body.shareCostType not in SHARE_TYPES:
         return "分成方式无效"
-    if body.shareCostType == "MANUAL" and (body.shareDaren < 0 or body.shareRealname < 0):
-        return "分成金额无效"
+    if not _finite(body.commissionRate) or body.commissionRate <= 0 or body.commissionRate > 1:
+        return "佣金率须大于 0 且不超过 1"
+    amounts = (
+        body.adCost,
+        body.rechargeCost,
+        body.fixedCost,
+        body.sampleCost,
+        body.shareDaren,
+        body.shareRealname,
+    )
+    for amount in amounts:
+        if not _finite(amount) or amount < 0:
+            return "金额不能为负"
+        if not _at_most_two_decimals(amount):
+            return "金额最多两位小数"
     return None
 
 
@@ -1257,12 +1283,13 @@ def period_close(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    """结账 → FinanceStatus.LOCKED。已锁定重复调用幂等返回。"""
+    """结账 → FinanceStatus.LOCKED。已锁定重复调用幂等返回，并标记 repeated。"""
     month = (body.periodMonth or "").strip()
     if not PERIOD_MONTH_RE.match(month):
         return fail(1001, "期间格式须为 yyyy-MM")
     tenant_id = tenant_of(actor)
     row = load_period(db, tenant_id, month)
+    repeated = row is not None and row.finance_status == "LOCKED"
     now = utcnow()
     if row is None:
         row = FinPeriod(
@@ -1282,7 +1309,10 @@ def period_close(
             row.locked_at = now
         row.updated_at = now
     db.flush()
-    return ok(period_vo(db, month, row))
+    payload = period_vo(db, month, row)
+    if repeated:
+        payload["repeated"] = True
+    return ok(payload)
 
 
 @router.post("/cost/{session_code}")
@@ -1430,6 +1460,8 @@ def cost_correction(
     if not clientToken:
         return fail(1001, "clientToken 必填")
     reason = (body.correctionReason or "").strip()
+    if len(reason) > 512:
+        return fail(1001, "更正原因不超过 512 字")
     if not reason:
         return fail(1144, "更正原因必填")
     err = validate_body(body.corrected)
