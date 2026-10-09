@@ -1043,3 +1043,75 @@ def test_review_drawer_preview_steps_and_reject_remark():
     assert data["rejectItems"][0]["reason"] == "标题与正文不符，请先改正文"
     assert data["reviewSteps"][0]["status"] == "DONE"
     assert data["reviewSteps"][0]["remark"] == "标题与正文不符，请先改正文"
+
+
+def test_review_detail_exposes_readonly_match_sessions():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/content",
+        headers=auth,
+        json={
+            "title": "审核场次只读",
+            "matchType": 2,
+            "matchScheme": [
+                {
+                    "matchId": "88001",
+                    "className": "英超",
+                    "homeName": "曼联",
+                    "awayName": "切尔西",
+                    "matchTime": "2026-10-09 20:00",
+                    "mainPlayMethod": "胜平负",
+                    "matchPlays": [{"result": "胜"}],
+                },
+                {
+                    "matchId": "88002",
+                    "className": "西甲",
+                    "homeName": "皇马",
+                    "awayName": "巴萨",
+                    "mainPlayMethod": "让球",
+                    "matchPlays": [],
+                },
+            ],
+        },
+    )
+    assert created.json()["code"] == 0
+    project_id = created.json()["data"]["id"]
+    submit = client.post(f"/admin-api/ims/content/{project_id}/submit-review", headers=auth)
+    assert submit.json()["code"] == 0
+    review_no = submit.json()["data"]["reviewNo"]
+
+    detail = client.get(f"/admin-api/ims/content/review/{review_no}", headers=auth)
+    body = detail.json()
+    assert body["code"] == 0
+    data = body["data"]
+    assert data["matchType"] == 2
+    assert data["matchSummary"] == "2场"
+    assert len(data["matchScheme"]) == 2
+    assert data["matchScheme"][0]["homeName"] == "曼联"
+    assert data["matchScheme"][0]["awayName"] == "切尔西"
+    assert data["matchScheme"][0]["mainPlayMethod"] == "胜平负"
+    assert data["checklist"]
+
+    queue = client.get("/admin-api/ims/content/review/queue", headers=auth, params={"pageSize": 50})
+    row = next(item for item in queue.json()["data"]["list"] if item["reviewNo"] == review_no)
+    assert row["matchSummary"] == "2场"
+    assert "matchScheme" not in row
+
+    legacy = client.post(
+        "/admin-api/ims/content",
+        headers=auth,
+        json={
+            "title": "旧赛事名",
+            "matchScheme": [],
+            "competitionName": "英超 · 阿森纳 vs 切尔西",
+        },
+    )
+    assert legacy.json()["code"] == 0
+    legacy_id = legacy.json()["data"]["id"]
+    legacy_submit = client.post(f"/admin-api/ims/content/{legacy_id}/submit-review", headers=auth)
+    assert legacy_submit.json()["code"] == 0
+    legacy_no = legacy_submit.json()["data"]["reviewNo"]
+    legacy_detail = client.get(f"/admin-api/ims/content/review/{legacy_no}", headers=auth).json()["data"]
+    assert legacy_detail["matchScheme"] == []
+    assert legacy_detail["competitionName"] == "英超 · 阿森纳 vs 切尔西"
+    assert legacy_detail["matchSummary"] == "英超 · 阿森纳 vs 切尔西"

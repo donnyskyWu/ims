@@ -316,9 +316,28 @@ def plan_vo(db: Session, ops: Session, row: ContentPlan) -> dict:
     }
 
 
-def review_vo(db: Session, row: ContentReview) -> dict:
+def review_match_fields(db: Session, project_id: int, *, include_scheme: bool) -> dict:
+    """审核抽屉只读场次：沿用内容项目已有 matchType / matchScheme / matchSummary。"""
+    project = db.get(ContentProject, project_id) if project_id else None
+    if project is None or project.deleted:
+        fields: dict = {"matchType": None, "matchSummary": "", "competitionName": ""}
+        if include_scheme:
+            fields["matchScheme"] = []
+        return fields
+    summary = (project.match_summary or "").strip() or (project.competition_name or "")
+    fields = {
+        "matchType": project.match_type,
+        "matchSummary": summary,
+        "competitionName": project.competition_name or "",
+    }
+    if include_scheme:
+        fields["matchScheme"] = list(project.match_scheme or [])
+    return fields
+
+
+def review_vo(db: Session, row: ContentReview, *, include_scheme: bool = False) -> dict:
     submitter = db.get(User, row.submitter_user_id)
-    return {
+    data = {
         "id": row.id,
         "reviewNo": row.review_no,
         "contentProjectId": row.content_project_id,
@@ -335,6 +354,8 @@ def review_vo(db: Session, row: ContentReview) -> dict:
         "reviewedAt": row.reviewed_at,
         "createdAt": iso(row.created_at),
     }
+    data.update(review_match_fields(db, row.content_project_id, include_scheme=include_scheme))
+    return data
 
 
 _REVIEW_ROLE_LABELS = {
@@ -924,7 +945,7 @@ def review_detail(
     )
     if row is None:
         return fail(1504, "资源不可用")
-    data = review_vo(db, row)
+    data = review_vo(db, row, include_scheme=True)
     checklist = []
     for item in DEFAULT_REVIEW_CHECKLIST:
         passed = None
