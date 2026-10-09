@@ -28,7 +28,7 @@ test.describe('content work task execution and matrix tabs closure', () => {
 
     await loginAdmin(page)
 
-    await createWorkTaskSopViaUi(page, {
+    const { sopId } = await createWorkTaskSopViaUi(page, {
       sopName: `E2E 公推 SOP ${label}`,
       nodeName,
       marketingPlan: 'LIVE_PUBLIC',
@@ -42,6 +42,7 @@ test.describe('content work task execution and matrix tabs closure', () => {
       competitionId,
       competitionName,
       groupNameHint: groupName,
+      sopId,
     })
 
     await page.locator('.tab', { hasText: '任务执行情况' }).click()
