@@ -130,7 +130,7 @@ test.describe('live start yellow red edges', () => {
     await page.screenshot({ path: `${shotDir}/03-red-reregister-prompt.png`, fullPage: true })
 
     await detail.getByTestId('live-reregister-open').click()
-    const edit = page.locator('.drawer.on').filter({ hasText: '重新登记' })
+    const edit = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-code-lock') })
     await expect(edit).toBeVisible()
     await expect(edit.getByTestId('live-session-code-lock')).toHaveValue(sessionCode)
     await edit.locator('label', { hasText: '主题' }).locator('..').locator('input').fill('整改后专场')
@@ -140,7 +140,7 @@ test.describe('live start yellow red edges', () => {
     await edit.getByTestId('live-reregister-save').click()
     expect(((await (await saveResp).json()) as { code: number }).code).toBe(0)
 
-    const next = page.locator('.drawer.on').filter({ hasText: '场次' })
+    const next = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-status') })
     await expect(next).toBeVisible({ timeout: 15_000 })
     await expect(next).toContainText(sessionCode)
     await expect(next.getByTestId('live-session-status')).toContainText('50', { timeout: 15_000 })
