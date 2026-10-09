@@ -51,7 +51,7 @@ test.describe('content AI copy and ComfyUI stub closure', () => {
     await editDrawer.getByRole('button', { name: 'AI 生成文案' }).click()
     await copyResp
     await expect(editDrawer.getByTestId('ai-copy-status')).toContainText('成功', { timeout: 15_000 })
-    await expect(editDrawer.locator('textarea').nth(1)).toContainText('【桩】口播稿 v1')
+    await expect(editDrawer.locator('.fld').filter({ hasText: '正文' }).locator('textarea')).toHaveValue(/【桩】口播稿 v1/)
     await page.screenshot({ path: path.join(SHOTS, '01-ai-copy-success.png'), fullPage: true })
 
     const runResp = page.waitForResponse(
