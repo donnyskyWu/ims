@@ -4,7 +4,7 @@ import json
 import secrets
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from app.models import (
     OrgEvent,
     PositionRule,
     Role,
+    RolePerm,
     Todo,
     User,
     UserDept,
@@ -664,6 +665,10 @@ def org_user_vo(db: Session, mapping: UserMapping) -> dict:
     }
 
 
+def event_payload(event: OrgEvent) -> dict:
+    return read_payload(event.payload_json or "{}")
+
+
 def event_vo(event: OrgEvent) -> dict:
     status = "DEAD_LETTER" if event.dead_letter else event.sync_status
     return {
@@ -674,33 +679,72 @@ def event_vo(event: OrgEvent) -> dict:
         "userId": event.user_id,
         "beforeDept": event.before_dept,
         "afterDept": event.after_dept,
+        "payloadJson": event_payload(event),
         "syncStatus": status,
         "syncedAt": iso(event.synced_at),
+        "createdAt": iso(event.created_at),
         "retryCount": event.retry_count,
         "deadLetter": bool(event.dead_letter),
+        "lastError": event.last_error or "",
     }
+
+
+def can_read_org(db: Session, user: User) -> bool:
+    if is_r1(db, user):
+        return True
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+    if not role_ids:
+        return False
+    found = db.scalar(
+        select(RolePerm.id).where(RolePerm.role_id.in_(role_ids), RolePerm.perm_code == "auth:org:query")
+    )
+    return found is not None
+
+
+def dept_limit(request: Request) -> list[int] | None:
+    """None = 全量。列表 = 查看者自己的部门号，精确匹配，不含下级。"""
+    scope = getattr(request.state, "scope", None)
+    if scope is None or getattr(scope, "kind", "ALL") == "ALL":
+        return None
+    return [int(item) for item in (getattr(scope, "dept_ids", None) or [])]
+
+
+def empty_org_page(page_no: int, size: int):
+    return ok({"list": [], "total": 0, "pageNo": page_no, "pageSize": size, "deptMatch": "EXACT"})
+
+
+def users_in_depts(dept_ids: list[int]):
+    return select(UserDept.user_id).where(UserDept.dept_id.in_(dept_ids))
 
 
 @router.get("/auth/org/users")
 def org_users(
+    request: Request,
     pageNo: int = 1,
     pageSize: int = 10,
     keyword: str = "",
     deptId: int | None = None,
     syncStatus: str = "",
     db: Session = Depends(db_session),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
+    if not can_read_org(db, user):
+        return fail(403, "无操作权限")
     page_no, size = clamp_page(pageNo, pageSize)
+    allowed = dept_limit(request)
+    if allowed is not None and deptId and int(deptId) not in allowed:
+        return empty_org_page(page_no, size)
+    if allowed is not None and not allowed:
+        return empty_org_page(page_no, size)
     stmt = select(UserMapping).where(UserMapping.deleted == 0, UserMapping.tenant_id == 0)
     if keyword:
         stmt = stmt.join(User, User.id == UserMapping.user_id).where(
             or_(User.nickname.like(f"%{keyword}%"), UserMapping.dingtalk_user_id.like(f"%{keyword}%"))
         )
     if deptId:
-        stmt = stmt.where(
-            UserMapping.user_id.in_(select(UserDept.user_id).where(UserDept.dept_id == deptId))
-        )
+        stmt = stmt.where(UserMapping.user_id.in_(users_in_depts([int(deptId)])))
+    elif allowed is not None:
+        stmt = stmt.where(UserMapping.user_id.in_(users_in_depts(allowed)))
     rows = db.scalars(stmt.order_by(UserMapping.id.desc())).all()
     items = []
     for mapping in rows:
@@ -710,21 +754,37 @@ def org_users(
         items.append(item)
     total = len(items)
     start = (page_no - 1) * size
-    return ok({"list": items[start : start + size], "total": total, "pageNo": page_no, "pageSize": size})
+    return ok(
+        {
+            "list": items[start : start + size],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+            "deptMatch": "EXACT",
+        }
+    )
 
 
 @router.get("/auth/org/events")
 def org_events(
+    request: Request,
     pageNo: int = 1,
     pageSize: int = 10,
     eventType: str = "",
     syncStatus: str = "",
     timeRange: list[str] = Query(default=[]),
     db: Session = Depends(db_session),
-    _: User = Depends(current_user),
+    user: User = Depends(current_user),
 ):
+    if not can_read_org(db, user):
+        return fail(403, "无操作权限")
     page_no, size = clamp_page(pageNo, pageSize)
+    allowed = dept_limit(request)
+    if allowed is not None and not allowed:
+        return empty_org_page(page_no, size)
     stmt = select(OrgEvent)
+    if allowed is not None:
+        stmt = stmt.where(OrgEvent.user_id.in_(users_in_depts(allowed)))
     if eventType:
         stmt = stmt.where(OrgEvent.event_type == eventType)
     if syncStatus == "DEAD_LETTER":
@@ -919,3 +979,94 @@ def reconcile(db: Session = Depends(db_session), user: User = Depends(current_us
         )
     )
     return ok({"reconcileTaskId": task_id, "triggeredAt": iso(now)})
+
+
+class ReplayBody(BaseModel):
+    startTime: str = ""
+    endTime: str = ""
+
+
+def parse_moment(value: str) -> datetime | None:
+    text = (value or "").strip().replace("Z", "")
+    if not text:
+        return None
+    if len(text) == 16:
+        text = text + ":00"
+    try:
+        return datetime.fromisoformat(text[:19])
+    except ValueError:
+        return None
+
+
+def report_body(event: OrgEvent | None) -> dict:
+    if event is None:
+        return {
+            "found": False,
+            "reconcileTaskId": "",
+            "triggeredAt": None,
+            "diffCount": 0,
+            "fixedCount": 0,
+            "localUserCount": 0,
+            "failures": [],
+            "source": "local",
+        }
+    payload = event_payload(event)
+    failures = payload.get("failures") if isinstance(payload.get("failures"), list) else []
+    return {
+        "found": True,
+        "reconcileTaskId": event.dingtalk_event_id,
+        "triggeredAt": iso(event.synced_at or event.created_at),
+        "diffCount": int(payload.get("diffCount") or 0),
+        "fixedCount": int(payload.get("fixedCount") or 0),
+        "localUserCount": int(payload.get("localUserCount") or 0),
+        "failures": failures,
+        "source": "local",
+    }
+
+
+@router.get("/callback/dingtalk/reconcile/report")
+def reconcile_report(db: Session = Depends(db_session), user: User = Depends(current_user)):
+    """最近一次本地对账。不拉取钉钉。"""
+    if not is_r1(db, user):
+        return fail(403, "仅 R1 可查看对账报告")
+    event = db.scalar(
+        select(OrgEvent).where(OrgEvent.event_type == "reconcile").order_by(OrgEvent.id.desc()).limit(1)
+    )
+    return ok(report_body(event))
+
+
+@router.post("/callback/dingtalk/retry-queue/replay")
+def replay_failed(body: ReplayBody, db: Session = Depends(db_session), user: User = Depends(current_user)):
+    """按时间重放失败/死信。只走本地队列，不调用钉钉。"""
+    if not is_r1(db, user):
+        return fail(403, "仅 R1 可重放失败事件")
+    start = parse_moment(body.startTime)
+    end = parse_moment(body.endTime)
+    if start is None or end is None:
+        return fail(1001, "请填写开始和结束时间")
+    if end < start:
+        return fail(1001, "结束时间须晚于开始时间")
+    if (end - start).total_seconds() > 7 * 24 * 3600:
+        return fail(1001, "重放区间不能超过 7 天")
+    rows = db.scalars(
+        select(OrgEvent).where(
+            OrgEvent.created_at >= start,
+            OrgEvent.created_at <= end,
+            or_(OrgEvent.dead_letter == 1, OrgEvent.sync_status == "FAILED_RETRY"),
+        )
+    ).all()
+    if not rows:
+        return ok({"replayed": 0, "stillFailed": 0, "source": "local"})
+    for event in rows:
+        event.sync_status = "PENDING"
+        event.dead_letter = 0
+        event.next_retry_at = None
+        event.updated_at = utcnow()
+    db.flush()
+    process_due(db)
+    still = 0
+    for event in rows:
+        db.refresh(event)
+        if event.dead_letter or event.sync_status == "FAILED_RETRY":
+            still += 1
+    return ok({"replayed": len(rows), "stillFailed": still, "source": "local"})
