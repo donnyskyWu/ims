@@ -33,9 +33,11 @@
             <tr v-if="loading">
               <td :colspan="days.length + 1"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!items.length">
+            <tr v-else-if="!items.length && !error">
               <td :colspan="Math.max(days.length + 1, 1)">
-                <div class="empty"><div class="et">{{ emptyText }}</div></div>
+                <div class="empty" data-testid="topic-gantt-empty" :data-reason="emptyReason">
+                  <div class="et">{{ emptyText }}</div>
+                </div>
               </td>
             </tr>
             <tr
@@ -104,7 +106,16 @@ const error = ref('')
 
 const days = computed(() => enumerate(from.value, to.value))
 const conflictCount = computed(() => items.value.filter((item) => item.conflictHint).length)
-const emptyText = computed(() => (days.value.length ? '该区间暂无排期' : '请选择计划发布日区间'))
+const accountFilled = computed(() => String(accountId.value ?? '').trim() !== '')
+const emptyReason = computed(() => {
+  if (!days.value.length) return 'unset'
+  return accountFilled.value ? 'account' : 'range'
+})
+const emptyText = computed(() => {
+  if (!days.value.length) return '请选择计划发布日区间'
+  if (accountFilled.value) return '该账号在此区间暂无排期'
+  return '该区间暂无排期'
+})
 
 function statusLabel(status: string) {
   return STATUS_LABEL[status] || status
