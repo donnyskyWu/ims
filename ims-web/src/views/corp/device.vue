@@ -202,6 +202,8 @@
           <input type="file" accept=".csv,text/csv" data-testid="corp-asset-import-file" @change="onImportFile" />
         </div>
       </div>
+      <p v-if="!importFile && !importResult" class="hint" data-testid="corp-asset-import-empty">尚未选择 CSV 文件</p>
+      <p v-else-if="importFile && !importResult" class="hint" data-testid="corp-asset-import-picked">已选择 {{ importFile.name }}</p>
       <div v-if="importResult" data-testid="corp-asset-import-result">
         <p class="hint" data-testid="corp-asset-import-summary">{{ importSummary(importResult) }}</p>
         <p class="hint">批次 <span data-testid="corp-asset-import-batch">{{ importResult.batchNo }}</span></p>
@@ -219,14 +221,15 @@
           </tbody>
         </table>
       </div>
-      <div v-if="formError" class="hint bad">{{ formError }}</div>
+      <div v-if="formError" class="hint bad" data-testid="corp-asset-import-form-error">{{ formError }}</div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="importOpen = false">关闭</button>
         <button class="btn btn-pri" type="button" data-testid="corp-asset-import-save" :disabled="saving" @click="submitImport">{{ saving ? '导入中…' : '导入入台账' }}</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="assetCreateOpen" title="资产登记" width="480px" @close="assetCreateOpen = false">
-      <div class="formrow one"><div class="fld"><label>资产编号<i class="req">*</i></label><input v-model="assetForm.assetCode" data-testid="corp-asset-code" /></div></div>
+      <div class="formrow one"><div class="fld"><label>资产编号</label><input v-model="assetForm.assetCode" data-testid="corp-asset-code" placeholder="可留空，保存时自动生成" /></div></div>
+      <p class="hint" data-testid="corp-asset-code-hint">编号可留空，保存时自动生成。</p>
       <div class="formrow one"><div class="fld"><label>名称<i class="req">*</i></label><input v-model="assetForm.assetName" data-testid="corp-asset-name" /></div></div>
       <div class="formrow one"><div class="fld"><label>规格</label><input v-model="assetForm.spec" data-testid="corp-asset-spec" /></div></div>
       <div v-if="kind === 'live'" class="formrow one">
@@ -254,6 +257,7 @@
           <input v-model="assetForm.parentAssetCode" data-testid="corp-asset-parent" placeholder="挂到已挂实名人的资产下" />
         </div>
       </div>
+      <p v-if="parentOverridesPerson" class="hint" data-testid="corp-asset-parent-note">已填上级资产，实名人以上级资产为准。</p>
       <div class="formrow one">
         <div class="fld">
           <label>绑定账号</label>
@@ -325,6 +329,11 @@
         <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
         <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
         <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
+        <div class="fld">
+          <label>规格</label>
+          <div v-if="String(assetDetail.spec || '').trim()" data-testid="corp-asset-detail-spec">{{ assetDetail.spec }}</div>
+          <div v-else data-testid="corp-asset-detail-spec-empty">未填规格</div>
+        </div>
         <div class="fld"><label>采购批次</label><div data-testid="corp-asset-detail-batch">{{ assetDetail.purchaseBatchNo || '—' }}</div></div>
       </div>
       <p v-if="assetDetail?.status === 'SCRAPPED'" class="hint" data-testid="corp-asset-terminal">已报废为终态，不能再领用。</p>
@@ -456,7 +465,7 @@
         <thead><tr><th>资产编号</th><th>名称</th><th>状态</th><th>绑定</th><th>账号</th></tr></thead>
         <tbody>
           <tr v-if="!entryRows.length">
-            <td colspan="5">没有绑定资产</td>
+            <td colspan="5" data-testid="asset-entry-empty">{{ entryEmptyText }}</td>
           </tr>
           <tr v-for="item in entryRows" :key="String(item.assetId)" data-testid="asset-entry-row">
             <td data-testid="asset-entry-code">{{ item.assetCode }}</td>
@@ -628,6 +637,15 @@ const entryError = ref('')
 const entrySummary = ref('')
 const entryQueried = ref(false)
 const entryIncludeHistory = ref(true)
+const entryEmptyText = computed(() => {
+  if (entryType.value === 'SESSION') return '该场次没有绑定资产'
+  if (entryType.value === 'PERSON') {
+    return entryIncludeHistory.value
+      ? '该使用人没有绑定资产'
+      : '不含历史已归还，该使用人没有绑定资产'
+  }
+  return '该账号没有绑定资产'
+})
 const SESSION_CODE = /^IMS\d{8}[A-Z]{3}\d{4}$/
 const forwardAssetId = ref(0)
 const forwardSessions = ref<Row[]>([])
@@ -686,6 +704,9 @@ const assetForm = reactive({
   accountNo: '',
   sessionCode: '',
 })
+const parentOverridesPerson = computed(
+  () => Boolean(assetForm.parentAssetCode.trim() && assetForm.realnameId),
+)
 
 const fallbackStatus: Opt[] = [
   { value: 'PENDING_REVIEW', label: '待审核' },
@@ -1191,15 +1212,24 @@ function onImportFile(event: Event) {
 }
 
 async function submitImport() {
-  if (!importFile.value) {
+  const file = importFile.value
+  if (!file) {
     formError.value = '请选择 CSV 文件'
+    return
+  }
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    formError.value = '请上传 CSV 文件'
+    return
+  }
+  if (file.size === 0) {
+    formError.value = '文件为空'
     return
   }
   saving.value = true
   formError.value = ''
   try {
     const body = new FormData()
-    body.append('file', importFile.value)
+    body.append('file', file)
     const res = await http.post('/asset/ledger/import', body)
     importResult.value = (res.data?.data || null) as Row | null
     await load()
@@ -1271,7 +1301,25 @@ async function openAssetDetail(row: Row) {
   }
 }
 
+function registerFormError() {
+  const name = assetForm.assetName.trim()
+  const code = assetForm.assetCode.trim()
+  const spec = assetForm.spec.trim()
+  const session = assetForm.sessionCode.trim().toUpperCase()
+  if (!name) return '资产名称必填'
+  if (name.length > 128) return '资产名称过长'
+  if (code.length > 64) return '资产编号过长'
+  if (spec.length > 128) return '规格过长'
+  if (session && !SESSION_CODE.test(session)) return '场次编号格式不正确'
+  return ''
+}
+
 async function saveAsset() {
+  const blocked = registerFormError()
+  if (blocked) {
+    formError.value = blocked
+    return
+  }
   saving.value = true
   formError.value = ''
   try {
@@ -1279,17 +1327,19 @@ async function saveAsset() {
       assetCode: assetForm.assetCode.trim(),
       assetName: assetForm.assetName.trim(),
       assetType: kind.value === 'live' ? assetForm.assetType : 'OFFICE',
-      spec: assetForm.spec,
+      spec: assetForm.spec.trim(),
       purchaseDate: assetForm.purchaseDate || undefined,
     }
     const parent = assetForm.parentAssetCode.trim()
     if (parent) payload.parentAssetCode = parent
     else if (assetForm.realnameId) payload.realnameId = Number(assetForm.realnameId)
     if (assetForm.accountNo.trim()) payload.accountNo = assetForm.accountNo.trim()
-    if (assetForm.sessionCode.trim()) payload.sessionCode = assetForm.sessionCode.trim()
-    await http.post('/asset/ledger', payload)
+    const session = assetForm.sessionCode.trim().toUpperCase()
+    if (session) payload.sessionCode = session
+    const res = await http.post('/asset/ledger', payload)
+    const created = (res.data?.data || {}) as Row
     assetCreateOpen.value = false
-    keyword.value = assetForm.assetCode.trim()
+    keyword.value = String(created.assetCode || assetForm.assetCode.trim())
     await load()
   } catch (e: unknown) {
     formError.value = bizError(e)

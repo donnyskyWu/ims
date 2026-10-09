@@ -525,6 +525,9 @@ def ledger_create(
         return fail(1001, "资产名称必填")
     if len(name) > 128:
         return fail(1001, "资产名称过长")
+    spec = (body.spec or "").strip()
+    if len(spec) > 128:
+        return fail(1001, "规格过长")
     enum_error = check_enum(db, "dict_asset_type", body.assetType, True)
     if enum_error:
         return enum_error
@@ -557,7 +560,7 @@ def ledger_create(
         asset_code=code,
         asset_name=name,
         asset_type=body.assetType,
-        spec=(body.spec or "")[:128],
+        spec=spec,
         status="PENDING_REVIEW",
         owner_user_id=None,
         purchase_date=body.purchaseDate or "",
