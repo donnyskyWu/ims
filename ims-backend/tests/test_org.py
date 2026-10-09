@@ -49,6 +49,18 @@ def hire(event_id="evt-hire-1", ding="dt-100", mobile="13700001111", dept=3) -> 
     }
 
 
+def mapping_count(db) -> int:
+    """种子里的技能部门映射不算本次事件写入。"""
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(UserMapping)
+            .where(UserMapping.dingtalk_user_id != "dt-e2e-air-dept")
+        )
+        or 0
+    )
+
+
 def consume(now=None) -> None:
     db = SessionLocal()
     try:
@@ -66,7 +78,7 @@ def test_event_is_signed_then_queued_without_writing_user():
     try:
         assert db.scalar(select(func.count()).select_from(OrgEvent)) == 1
         assert db.scalar(select(User).where(User.dingtalk_user_id == "dt-100")) is None
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 0
+        assert mapping_count(db) == 0
     finally:
         db.close()
 
@@ -95,7 +107,7 @@ def test_idempotent_key_writes_one_local_user():
         assert db.scalar(select(func.count()).select_from(OrgEvent)) == 2
         process_due(db)
         db.commit()
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 1
+        assert mapping_count(db) == 1
         user = db.scalar(select(User).where(User.dingtalk_user_id == "dt-100", User.deleted == 0))
         assert user is not None
         assert user.nickname == "新人"
@@ -138,7 +150,7 @@ def test_retry_sixteen_times_then_dead_letter():
         db.refresh(event)
         assert event.retry_count == 16
         assert event.dead_letter == 1
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 0
+        assert mapping_count(db) == 0
     finally:
         db.close()
 
@@ -263,6 +275,6 @@ def test_callback_ack_stays_under_half_second():
     assert p95 < 0.5
     db = SessionLocal()
     try:
-        assert db.scalar(select(func.count()).select_from(UserMapping)) == 0
+        assert mapping_count(db) == 0
     finally:
         db.close()

@@ -221,6 +221,7 @@ def _pin_login(db, user: User) -> None:
 def expire_buffer(db) -> None:
     from datetime import timedelta
 
+    import app.api  # noqa: F401  先装载 api，避免 org_sync 与 api 的环在脚本入口断开
     from app.org_sync import expire_transfer_buffers
 
     user = _subject(db)
