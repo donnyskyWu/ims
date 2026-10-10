@@ -15,7 +15,7 @@
     </div>
     <form class="qbar" data-testid="alert-rule-filter" @submit.prevent="loadList">
       <input v-model="filters.ruleName" data-testid="alert-rule-filter-name" placeholder="规则名称" style="width: 160px" />
-      <select v-model="ruleLevel" data-testid="alert-rule-filter-level" style="width: 110px">
+      <select v-model="filters.level" data-testid="alert-rule-filter-level" style="width: 110px">
         <option value="">全部级别</option>
         <option value="L1">L1</option>
         <option value="L2">L2</option>
@@ -28,7 +28,7 @@
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-rule-filter-reset" @click="resetRuleFilters">
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-rule-filter-reset" @click="resetFilters">
         重置
       </button>
     </form>
@@ -52,9 +52,7 @@
             </tr>
             <tr v-else-if="!rows.length">
               <td colspan="7">
-                <div class="empty" data-testid="alert-rule-empty">
-                  <div class="et">{{ error || (ruleFilterActive ? '当前筛选条件下暂无规则' : '暂无规则') }}</div>
-                </div>
+                <div class="empty" data-testid="alert-rule-empty"><div class="et">{{ ruleEmptyText }}</div></div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
@@ -153,6 +151,11 @@
           <option :value="2">L2 警告</option>
           <option :value="3">L3 严重</option>
         </select>
+        <select v-model.number="form.level" data-testid="alert-rule-form-level" class="fld-in">
+          <option :value="1">L1 提示</option>
+          <option :value="2">L2 警告</option>
+          <option :value="3">L3 严重</option>
+        </select>
         <label class="fld">阈值表达式</label>
         <input v-model="form.thresholdExpr" data-testid="alert-rule-threshold" class="fld-in" placeholder="delayMinutes>30" />
         <p v-if="thresholdError" data-testid="alert-rule-threshold-error" class="hint" style="color: var(--red)">
@@ -203,9 +206,7 @@ const codeError = ref('')
 const nameError = ref('')
 const thresholdError = ref('')
 const dslError = ref('')
-const filters = reactive({ ruleName: '', enabled: '' })
-const ruleLevel = ref('')
-const ruleFilterActive = computed(() => !!(filters.ruleName.trim() || filters.enabled || ruleLevel.value))
+const filters = reactive({ ruleName: '', level: '', enabled: '' })
 const form = reactive({
   ruleCode: '',
   ruleName: '',
@@ -251,6 +252,13 @@ const dslTouched = computed(
   () => !!(form.dslSource.trim() || form.dslField.trim() || form.dslOp.trim() || form.dslValue.trim()),
 )
 
+const ruleFilterOn = computed(
+  () => !!(filters.ruleName.trim() || filters.level || filters.enabled),
+)
+const ruleEmptyText = computed(() =>
+  error.value || (ruleFilterOn.value ? '当前筛选条件下暂无规则。当前筛选下暂无规则' : '暂无规则'),
+)
+
 const dslPreview = computed(() => {
   if (!dslTouched.value) return 'DSL 预览：未填写'
   return `DSL 预览：${JSON.stringify(buildTriggerConfig())}`
@@ -270,22 +278,15 @@ function buildTriggerConfig() {
   }
 }
 
-function resetRuleFilters() {
-  filters.ruleName = ''
-  filters.enabled = ''
-  ruleLevel.value = ''
-  loadList()
-}
-
 async function loadList() {
   loading.value = true
   error.value = ''
   try {
     const params: Record<string, unknown> = { pageNo: 1, pageSize: 50 }
     if (filters.ruleName.trim()) params.ruleName = filters.ruleName.trim()
+    if (filters.level) params.level = filters.level
     if (filters.enabled === 'true') params.enabled = true
     if (filters.enabled === 'false') params.enabled = false
-    if (ruleLevel.value) params.level = ruleLevel.value
     const res = await http.get('/alert/rule/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
@@ -299,6 +300,13 @@ async function loadList() {
   } finally {
     loading.value = false
   }
+}
+
+function resetFilters() {
+  filters.ruleName = ''
+  filters.level = ''
+  filters.enabled = ''
+  loadList()
 }
 
 function resetForm() {

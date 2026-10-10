@@ -106,7 +106,7 @@
           ·
           <span data-testid="alert-stats-l3">
             <router-link data-testid="alert-stats-level-L3" :to="{ path: '/ims/alert/live', query: { level: 'L3' } }">
-              L3 {{ overview.byLevel.L3 }}
+              <span data-testid="alert-stats-l3-link">L3 {{ overview.byLevel.L3 }}</span>
             </router-link>
           </span>
         </div>
@@ -286,7 +286,14 @@
           <tr v-for="row in ranks" :key="row.ruleCode" :data-testid="`alert-rank-${row.ruleCode}`">
             <td class="num">{{ row.rank }}</td>
             <td>
-              <div class="mono">{{ row.ruleCode }}</div>
+              <div class="mono">
+                <router-link
+                  data-testid="alert-rank-link"
+                  :to="{ path: '/ims/alert/live', query: { ruleCode: row.ruleCode } }"
+                >
+                  {{ row.ruleCode }}
+                </router-link>
+              </div>
               <div>{{ row.ruleName }}</div>
             </td>
             <td class="num">{{ row.alertCount }}</td>

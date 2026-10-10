@@ -134,7 +134,7 @@
             <tr>
               <td colspan="6">
                 <div class="empty" data-testid="alert-escalate-empty">
-                  <div class="et">{{ levelFilter ? '当前级别暂无待升级预警' : '暂无待升级预警' }}</div>
+                  <div class="et">{{ levelFilter ? '当前级别暂无待升级预警。该级别暂无待升级预警' : '暂无待升级预警' }}</div>
                 </div>
               </td>
             </tr>
