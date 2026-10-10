@@ -26,7 +26,24 @@
           已送达 {{ delivery?.totalDelivered ?? 0 }} / {{ delivery?.totalShould ?? 0 }} · 目标 &gt;{{ delivery?.target ?? 99 }}%
           · 钉钉/短信本地桩
         </div>
-        <p v-if="delivery && delivery.deliveryRate < (delivery.target || 99)" class="hint" style="color: var(--red)">
+        <form class="qbar" style="margin-top: 8px" @submit.prevent="loadDelivery">
+          <input v-model="deliveryFrom" data-testid="alert-delivery-from" type="date" />
+          <input v-model="deliveryTo" data-testid="alert-delivery-to" type="date" />
+          <button class="btn btn-pri btn-sm" type="submit" data-testid="alert-delivery-apply">刷新送达</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="alert-delivery-reset" @click="resetDelivery">
+            清空
+          </button>
+        </form>
+        <p v-if="deliveryError" class="hint" style="color: var(--red)" data-testid="alert-delivery-error">{{ deliveryError }}</p>
+        <p v-if="delivery && delivery.totalShould === 0" class="hint" data-testid="alert-delivery-empty">
+          当前范围内没有应送达预警，不记未达标
+        </p>
+        <p
+          v-else-if="delivery && delivery.deliveryRate < (delivery.target || 99)"
+          class="hint"
+          style="color: var(--red)"
+          data-testid="alert-delivery-short"
+        >
           未达标（BR-111）
         </p>
         <div v-if="delivery?.failedAlerts?.length" data-testid="alert-delivery-failed">
@@ -221,7 +238,9 @@
     <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="closeDetail">
       <div v-if="detail" data-testid="alert-receipt-drawer">
         <p>{{ detail.content }}</p>
-        <p class="hint">{{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ detail.responseStatus }}</p>
+        <p class="hint" data-testid="alert-receipt-status">
+          {{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ statusText(detail.responseStatus) }}
+        </p>
         <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
         <p v-if="detail.priorityNote" class="hint" data-testid="alert-receipt-priority">{{ detail.priorityNote }}</p>
         <div v-if="detail.receiptEmpty" class="empty" data-testid="alert-receipt-empty">
@@ -249,8 +268,9 @@
           {{ detail.retryNote || '已自动补发 1 次（ALR-P-R2）' }}
         </p>
         <p v-if="detail.sourceJumpUrl" class="hint">
-          <router-link :to="detail.sourceJumpUrl">查看来源</router-link>
+          <router-link data-testid="alert-receipt-source" :to="detail.sourceJumpUrl">查看来源</router-link>
         </p>
+        <p v-else class="hint" data-testid="alert-receipt-source-empty">暂无来源单据</p>
         <button class="btn btn-sec btn-sm" type="button" data-testid="alert-receipt-close" @click="closeDetail">关闭</button>
       </div>
     </ProtoDrawer>
@@ -353,11 +373,21 @@ const falseTarget = ref('')
 const falseReason = ref('')
 const handleRemark = ref('')
 
+const deliveryFrom = ref('')
+const deliveryTo = ref('')
+const deliveryError = ref('')
+
 const PUSH_LABELS: Record<string, string> = {
   PENDING: '待推送',
   DELIVERED: '已送达',
   PARTIAL_FAILED: '部分失败',
   FAILED: '失败',
+}
+const STATUS_TEXT: Record<string, string> = {
+  OPEN: '未响应',
+  CONFIRMED: '已确认',
+  RESOLVED: '已处理',
+  FALSE_ALARM: '误报',
 }
 const CHANNEL_NAMES: Record<string, string> = {
   WORKBENCH: '工作台',
@@ -367,6 +397,11 @@ const CHANNEL_NAMES: Record<string, string> = {
 
 function pushLabel(status: string) {
   return PUSH_LABELS[status] || status || '—'
+}
+
+function statusText(status: string) {
+  const label = STATUS_TEXT[status]
+  return label ? `${label}（${status}）` : status || '—'
 }
 
 function channelName(channel: string) {
@@ -412,6 +447,10 @@ function resetFilters() {
   filters.dateFrom = ''
   filters.dateTo = ''
   filterError.value = ''
+  if (route.query.level) {
+    const nextQuery = tab.value === 'live' ? {} : { tab: tab.value }
+    router.replace({ path: '/ims/alert/live', query: nextQuery })
+  }
   loadList()
 }
 
@@ -420,13 +459,34 @@ async function loadSummary() {
   if (res.data.code === 0) summary.value = res.data.data
 }
 
+async function loadDelivery() {
+  deliveryError.value = ''
+  const params: Record<string, string> = {}
+  if (deliveryFrom.value || deliveryTo.value) {
+    if (!deliveryFrom.value || !deliveryTo.value) {
+      deliveryError.value = '请同时填写送达率起止日期'
+      return
+    }
+    params.dateRange = `${deliveryFrom.value},${deliveryTo.value}`
+  }
+  try {
+    const stats = await http.get('/alert/check/delivery-stats', { params })
+    delivery.value = stats.data.data
+  } catch (err) {
+    deliveryError.value = errorMessage(err)
+  }
+}
+
+function resetDelivery() {
+  deliveryFrom.value = ''
+  deliveryTo.value = ''
+  loadDelivery()
+}
+
 async function loadInbox() {
-  const [mine, stats] = await Promise.all([
-    http.get('/alert/check/my-alerts'),
-    http.get('/alert/check/delivery-stats'),
-  ])
+  const mine = await http.get('/alert/check/my-alerts')
   if (mine.data.code === 0) myAlerts.value = mine.data.data || []
-  if (stats.data.code === 0) delivery.value = stats.data.data
+  await loadDelivery()
 }
 
 async function loadDedup() {
@@ -571,6 +631,8 @@ watch(
 
 onMounted(() => {
   tab.value = tabFromRoute()
+  const level = String(route.query.level || '')
+  if (level === 'L1' || level === 'L2' || level === 'L3') filters.level = level
   if (tab.value === 'dedup') loadDedup()
   else {
     if (tab.value === 'history') loadSummary()

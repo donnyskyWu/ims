@@ -61,13 +61,24 @@
       <p v-if="formError" class="hint" style="color: var(--red)" data-testid="alert-escalate-form-error">{{ formError }}</p>
     </div>
 
+    <form class="qbar" data-testid="alert-escalate-stats-filter" @submit.prevent="loadStats">
+      <input v-model="statsFrom" data-testid="alert-escalate-stats-from" type="date" />
+      <input v-model="statsTo" data-testid="alert-escalate-stats-to" type="date" />
+      <span class="sp"></span>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="alert-escalate-stats-apply">刷新统计</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-escalate-stats-reset" @click="resetStatsRange">
+        重置
+      </button>
+    </form>
+    <p v-if="statsError" class="hint" style="color: var(--red)" data-testid="alert-escalate-stats-error">{{ statsError }}</p>
+
     <div v-if="stats" class="g4" style="margin-top: 12px">
       <div class="card stat">
         <span class="l">响应率</span>
         <div class="n" data-testid="alert-escalate-response-rate" :style="{ color: rateColor(stats.responseRate) }">
           {{ stats.responseRate }}%
         </div>
-        <div class="d">{{ stats.responseRate >= stats.target ? '达标' : '未达标' }}（BR-112 &gt;{{ stats.target }}%）</div>
+        <div class="d" data-testid="alert-escalate-rate-hint">{{ rateHint }}</div>
       </div>
       <div class="card stat">
         <span class="l">平均响应</span>
@@ -94,6 +105,9 @@
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">刷新</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="alert-escalate-level-reset" @click="resetLevel">
+        重置
+      </button>
     </form>
 
     <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
@@ -118,7 +132,11 @@
           </tbody>
           <tbody v-else-if="!rows.length">
             <tr>
-              <td colspan="6"><div class="empty"><div class="et">暂无待升级预警</div></div></td>
+              <td colspan="6">
+                <div class="empty" data-testid="alert-escalate-empty">
+                  <div class="et">{{ levelFilter ? '当前级别暂无待升级预警' : '暂无待升级预警' }}</div>
+                </div>
+              </td>
             </tr>
           </tbody>
           <tbody v-for="row in rows" v-else :key="row.alertNo" :data-testid="`alert-escalate-row-${row.alertNo}`">
@@ -150,7 +168,7 @@
     <p v-if="toast" class="hint" data-testid="alert-escalate-toast">{{ toast }}</p>
 
     <h2 style="font-size: 16px; margin: 16px 0 8px">响应率趋势</h2>
-    <div v-if="!trend.length" class="empty"><div class="et">暂无趋势</div></div>
+    <div v-if="!trend.length" class="empty" data-testid="alert-escalate-trend-empty"><div class="et">暂无趋势</div></div>
     <div v-else data-testid="alert-escalate-trend">
       <div v-for="point in trend" :key="point.statDate" class="trend-row">
         <span class="mono">{{ point.statDate }}</span>
@@ -225,6 +243,7 @@ type Timeline = {
   timeline: Node[]
 }
 type Stats = {
+  totalAlerts: number
   responseRate: number
   avgResponseMinutes: number
   respondedInTime: number
@@ -249,6 +268,9 @@ const toast = ref('')
 const loading = ref(false)
 const rows = ref<Row[]>([])
 const levelFilter = ref('')
+const statsFrom = ref('')
+const statsTo = ref('')
+const statsError = ref('')
 const timelineOpen = ref(false)
 const timeline = ref<Timeline | null>(null)
 const stats = ref<Stats | null>(null)
@@ -261,12 +283,19 @@ let clockTimer = 0
 
 const imminent = computed(() => rows.value.some((row) => row.currentLevel < 3 && !!row.nextEscalateAt))
 const pollState = computed(() => (imminent.value ? '30 秒轮询中' : '无临近升级，已暂停轮询'))
+const rateHint = computed(() => {
+  if (!stats.value) return ''
+  if (stats.value.totalAlerts === 0) return '当前没有预警样本，不记未达标'
+  const mark = stats.value.responseRate >= stats.value.target ? '达标' : '未达标'
+  return `${mark}（BR-112 >${stats.value.target}%）`
+})
 
 function levelName(level: number) {
   return ({ 1: '一级', 2: '二级', 3: '三级' } as Record<number, string>)[level] || String(level)
 }
 
 function rateColor(value: number) {
+  if (!stats.value || stats.value.totalAlerts === 0) return 'inherit'
   return value >= 90 ? 'var(--green, #15803d)' : 'var(--orange, #d97706)'
 }
 
@@ -309,6 +338,11 @@ async function saveConfig() {
   }
 }
 
+function resetLevel() {
+  levelFilter.value = ''
+  refreshPending(false)
+}
+
 async function refreshPending(silent: boolean) {
   if (!silent) loading.value = true
   try {
@@ -333,12 +367,31 @@ async function refreshPending(silent: boolean) {
 }
 
 async function loadStats() {
-  const [statsRes, trendRes] = await Promise.all([
-    http.get('/alert/escalate/response-stats'),
-    http.get('/alert/stats/response-rate'),
-  ])
-  stats.value = statsRes.data.data
-  trend.value = trendRes.data.data || []
+  statsError.value = ''
+  const params: Record<string, string> = {}
+  if (statsFrom.value || statsTo.value) {
+    if (!statsFrom.value || !statsTo.value) {
+      statsError.value = '请同时填写起止日期'
+      return
+    }
+    params.dateRange = `${statsFrom.value},${statsTo.value}`
+  }
+  try {
+    const [statsRes, trendRes] = await Promise.all([
+      http.get('/alert/escalate/response-stats', { params }),
+      http.get('/alert/stats/response-rate', { params }),
+    ])
+    stats.value = statsRes.data.data
+    trend.value = trendRes.data.data || []
+  } catch (err) {
+    statsError.value = errorMessage(err)
+  }
+}
+
+function resetStatsRange() {
+  statsFrom.value = ''
+  statsTo.value = ''
+  loadStats()
 }
 
 async function openTimeline(alertNo: string) {
