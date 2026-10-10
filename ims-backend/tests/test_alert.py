@@ -890,6 +890,8 @@ def test_alert_channel_receipt_empty_and_local_stub():
     assert by_code["DINGTALK"]["outbound"] is False
     assert by_code["SMS"]["empty"] is True and by_code["SMS"]["success"] is False
     assert by_code["SMS"]["outbound"] is False
+    assert by_code["SMS"]["statusNote"] == "未触发，不外发"
+    assert by_code["DINGTALK"]["statusNote"] == "本地桩已记账，不外发"
 
     overview = client.get(
         "/admin-api/ims/alert/stats/overview",
@@ -906,11 +908,15 @@ def test_alert_channel_receipt_empty_and_local_stub():
     fallback_codes = {item["channel"]: item for item in fallback["pushChannels"]}
     assert fallback_codes["SMS"]["success"] is True and fallback_codes["SMS"]["empty"] is False
     assert fallback_codes["DINGTALK"]["success"] is False
+    assert fallback_codes["DINGTALK"]["statusNote"] == "失败，已改记短信兜底"
+    assert fallback_codes["SMS"]["statusNote"] == "兜底已记账，不外发"
+    assert fallback["retryNote"] == "钉钉未送达，已改记短信兜底 1 次（不外发）"
     assert all(item["outbound"] is False for item in fallback["pushChannels"])
 
     _set_push(alert_no, 3)
     failed = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth).json()["data"]
     assert "ALR-P-R2" in failed["retryNote"]
+    assert all(item["statusNote"] == "补发后仍失败" for item in failed["pushChannels"])
     assert all(item["outbound"] is False for item in failed["pushChannels"])
 
     missing = client.get("/admin-api/ims/alert/check/AL-NO-SUCH", headers=auth)
