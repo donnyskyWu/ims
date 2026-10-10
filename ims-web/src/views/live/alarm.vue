@@ -224,6 +224,10 @@
           </tbody>
         </table>
       </div>
+      <div v-if="!stats" class="empty" data-testid="live-alarm-stats-missing">
+        <div class="et">{{ statsMissingTitle }}</div>
+        <button v-if="error" class="btn btn-sec btn-sm" type="button" data-testid="live-alarm-stats-retry" @click="loadStats">重试</button>
+      </div>
     </template>
 
     <div v-if="ruleOpen" class="drawer-mask" @click.self="ruleOpen = false">
@@ -233,7 +237,10 @@
           <button type="button" class="btn btn-sec btn-sm" @click="ruleOpen = false">关闭</button>
         </div>
         <p class="hint">保存后立即参与下一次命中扫描（ALM-R4）。通知只记站内。</p>
-        <label class="fld"><span>规则名</span><input v-model="ruleForm.ruleName" data-testid="live-alarm-rule-name" maxlength="64" /></label>
+        <label class="fld">
+          <span>规则名</span>
+          <input v-model="ruleForm.ruleName" data-testid="live-alarm-rule-name" maxlength="64" :style="ruleNameBad ? 'border-color: var(--red)' : ''" />
+        </label>
         <label class="fld">
           <span>类型</span>
           <select v-model="ruleForm.ruleType" data-testid="live-alarm-rule-type">
@@ -302,7 +309,16 @@
           <input v-model="handleForm.handleRemark" maxlength="512" data-testid="live-alarm-handle-remark" />
           <p class="hint" data-testid="live-alarm-remark-hint">{{ remarkHint }}</p>
         </label>
-        <p v-if="handleError" class="hint bad">{{ handleError }}</p>
+        <p v-if="handleError" class="hint bad" data-testid="live-alarm-handle-error">{{ handleError }}</p>
+        <button
+          v-if="handleStale"
+          class="btn btn-sec btn-sm"
+          type="button"
+          data-testid="live-alarm-handle-refresh"
+          @click="refreshHandled"
+        >
+          刷新告警
+        </button>
         <div class="drawer-f">
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-handle-submit" @click="submitHandle">提交处置</button>
         </div>
@@ -451,6 +467,9 @@ const handleForm = reactive({ handleStatus: 'HANDLED', handleRemark: '' })
 const deleteOpen = ref(false)
 const deleting = ref<RuleRow | null>(null)
 const deleteText = ref('')
+const handleStale = computed(() => handleError.value.includes('请刷新'))
+const ruleNameBad = computed(() => /规则名|ruleName/.test(ruleError.value))
+const statsMissingTitle = computed(() => (error.value ? '统计没有加载出来' : '统计加载中'))
 
 function stubText(row: AlarmRow) {
   const channels = row.notifyChannels || []
@@ -608,6 +627,10 @@ function rulePayload() {
 
 async function saveRule() {
   ruleError.value = ''
+  if (!ruleForm.ruleName.trim()) {
+    ruleError.value = '规则名必填'
+    return
+  }
   try {
     if (editingId.value) await http.put(`/live/alarm/rule/${editingId.value}`, rulePayload())
     else await http.post('/live/alarm/rule', rulePayload())
@@ -664,6 +687,12 @@ function openDetail(row: AlarmRow) {
   active.value = row
   detailOpen.value = true
   handleOpen.value = false
+}
+
+async function refreshHandled() {
+  handleOpen.value = false
+  handleError.value = ''
+  await loadRecords()
 }
 
 async function submitHandle() {
