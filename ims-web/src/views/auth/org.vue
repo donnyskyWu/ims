@@ -95,8 +95,8 @@
       </div>
     </div>
     <div class="tabs">
-      <div class="tab" :class="{ on: tab === 'users' }" @click="tab = 'users'">人员列表</div>
-      <div class="tab" :class="{ on: tab === 'events' }" @click="tab = 'events'">同步事件</div>
+      <div class="tab" :class="{ on: tab === 'users' }" data-testid="org-tab-users" @click="tab = 'users'">人员列表</div>
+      <div class="tab" :class="{ on: tab === 'events' }" data-testid="org-tab-events" @click="tab = 'events'">同步事件</div>
     </div>
     <template v-if="tab === 'users'">
     <div class="card" data-testid="org-dept-tree" style="margin-bottom: 12px">
@@ -130,7 +130,7 @@
       </div>
     </div>
     <div class="tbl-block">
-      <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchUsers">
+      <form class="qbar" style="margin-bottom: 10px" data-testid="org-user-filters" @submit.prevent="searchUsers">
         <input v-model="keyword" data-testid="org-user-keyword" placeholder="姓名 / 钉钉用户" style="width: 180px" />
         <select v-model="syncStatus" data-testid="org-sync-status" style="width: 140px">
           <option value="">全部同步状态</option>
@@ -139,11 +139,19 @@
           <option value="FAILED_RETRY">失败重试</option>
           <option value="DEAD_LETTER">死信</option>
         </select>
+        <select v-model="syncStatus" data-testid="org-user-sync" style="width: 140px">
+          <option value="">全部同步状态</option>
+          <option value="PENDING">待处理</option>
+          <option value="SUCCESS">成功</option>
+          <option value="FAILED">失败</option>
+        </select>
         <input v-model="deptIdText" data-testid="org-dept-id" placeholder="部门编号" style="width: 120px" />
         <button class="btn btn-pri btn-sm" type="submit" data-testid="org-user-search">查询</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="org-user-reset" @click="resetUsers">重置</button>
         <span class="sub" data-testid="org-dept-exact">精确匹配该部门，不含下级</span>
       </form>
+      <p class="sub" data-testid="org-user-sync-hint" style="margin: 0 0 8px">失败状态包含失败重试和死信。</p>
+      <p v-if="userFilterNote" class="hint" data-testid="org-user-filter-note">{{ userFilterNote }}</p>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -193,7 +201,7 @@
     </div>
     </template>
     <div v-else class="tbl-block">
-      <form class="qbar" style="margin-bottom: 10px" @submit.prevent="searchEvents">
+      <form class="qbar" style="margin-bottom: 10px" data-testid="org-event-filters" @submit.prevent="searchEvents">
         <select v-model="eventType" data-testid="org-event-type" style="width: 140px">
           <option value="">全部类型</option>
           <option value="hire">入职</option>
@@ -209,9 +217,20 @@
           <option value="FAILED_RETRY">失败重试</option>
           <option value="DEAD_LETTER">死信</option>
         </select>
+        <select v-model="eventSyncStatus" data-testid="org-event-sync" style="width: 140px">
+          <option value="">全部状态</option>
+          <option value="PENDING">待处理</option>
+          <option value="SUCCESS">成功</option>
+          <option value="FAILED_RETRY">失败重试</option>
+          <option value="DEAD_LETTER">死信</option>
+        </select>
+        <input v-model="eventFrom" data-testid="org-event-from" type="date" />
+        <input v-model="eventTo" data-testid="org-event-to" type="date" />
         <button class="btn btn-pri btn-sm" type="submit" data-testid="org-event-search">查询</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="org-event-reset" @click="resetEvents">重置</button>
       </form>
+      <p v-if="eventHint" class="hint bad" data-testid="org-event-hint">{{ eventHint }}</p>
+      <p v-else-if="eventFilterNote" class="hint" data-testid="org-event-filter-note">{{ eventFilterNote }}</p>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -330,7 +349,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
-import { asList, readData } from '../../api/read'
+import { asList, asTotal, readData } from '../../api/read'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const metrics = reactive<{ delayMillis?: number; level?: string; avgSyncDelayMinutes?: number; successRate?: number }>({})
@@ -348,6 +367,16 @@ const msg = ref('')
 const confirming = ref(false)
 const tab = ref<'users' | 'events'>('users')
 const keyword = ref('')
+const appliedKeyword = ref('')
+const appliedSync = ref('')
+const appliedDeptId = ref<number | null>(null)
+const eventFrom = ref('')
+const eventTo = ref('')
+const appliedEventType = ref('')
+const appliedEventSync = ref('')
+const appliedEventFrom = ref('')
+const appliedEventTo = ref('')
+const eventHint = ref('')
 const deptQuery = ref('')
 const deptCatalog = ref<Record<string, unknown>[]>([])
 const deptReady = ref(false)
@@ -375,15 +404,17 @@ const replayMsg = ref('')
 const userEmptyTitle = computed(() => {
   if (userError.value) return userError.value
   if (invalidDept.value) return '部门编号须为数字'
+  if (keyword.value.trim()) return '没有匹配的人员'
   if (syncStatus.value) return '没有该同步状态的人员'
   if (deptIdText.value.trim() || selectedDeptId.value) return '该部门没有已同步人员'
-  if (keyword.value.trim()) return '没有匹配的人员'
   return '没有已同步人员'
 })
 
 const userEmptyHint = computed(() => {
+  if (keyword.value.trim() || (syncStatus.value && !deptIdText.value.trim() && !selectedDeptId.value)) {
+    return '换姓名、部门或同步状态后再查。'
+  }
   if (invalidDept.value || deptIdText.value.trim() || selectedDeptId.value) return '只包含这个部门本身，不含下级部门。'
-  if (syncStatus.value || keyword.value.trim()) return '换一个状态或姓名后再查。重置会回到全部人员。'
   return '人员来自验签后的组织事件，列表只展示接口返回的行。'
 })
 
@@ -419,6 +450,24 @@ const visibleDeptNodes = computed(() => {
   return deptNodes.value.filter((node) => node.name.includes(query) || String(node.id).includes(query))
 })
 
+const userFilterNote = computed(() => {
+  const bits: string[] = []
+  if (appliedDeptId.value) bits.push('当前部门')
+  if (appliedKeyword.value) bits.push(`姓名「${appliedKeyword.value}」`)
+  if (appliedSync.value) bits.push(`同步状态「${syncOptionLabel(appliedSync.value)}」`)
+  if (!bits.length) return ''
+  return `人员列表按${bits.join('、')}筛选。`
+})
+
+const eventFilterNote = computed(() => {
+  const bits: string[] = []
+  if (appliedEventType.value) bits.push(`类型「${eventLabel(appliedEventType.value)}」`)
+  if (appliedEventSync.value) bits.push(`状态「${eventSyncLabel(appliedEventSync.value)}」`)
+  if (appliedEventFrom.value && appliedEventTo.value) bits.push(`${appliedEventFrom.value} 至 ${appliedEventTo.value}`)
+  if (!bits.length) return ''
+  return `同步事件按${bits.join('、')}筛选。`
+})
+
 const diff = computed(() => {
   const value = detail.value?.permissionDiff
   if (!value || typeof value !== 'object') return null
@@ -445,12 +494,12 @@ const delayStyle = computed(() => {
 
 const eventEmptyTitle = computed(() => {
   if (eventError.value) return eventError.value
-  if (eventType.value || eventSyncStatus.value) return '没有符合条件的同步事件'
+  if (eventType.value || eventSyncStatus.value || eventFrom.value || eventTo.value) return '没有符合条件的同步事件'
   return '没有同步事件'
 })
 
 const eventEmptyHint = computed(() => {
-  if (eventType.value || eventSyncStatus.value) return '换一个类型或状态后再查。'
+  if (eventType.value || eventSyncStatus.value || eventFrom.value || eventTo.value) return '换事件类型、状态或日期区间后再查。'
   return '对账成功后，这里会出现对账记录。'
 })
 
@@ -525,6 +574,14 @@ function timeline(row: Record<string, unknown>) {
   return steps.join(' → ')
 }
 
+function syncOptionLabel(value: string) {
+  return { PENDING: '待处理', SUCCESS: '成功', FAILED: '失败', FAILED_RETRY: '失败重试', DEAD_LETTER: '死信' }[value] || value
+}
+
+function eventSyncLabel(value: string) {
+  return { PENDING: '待处理', SUCCESS: '成功', FAILED: '失败', FAILED_RETRY: '失败重试', DEAD_LETTER: '死信' }[value] || value
+}
+
 function deptChange(row: Record<string, unknown>) {
   const before = text(row.beforeDept)
   const after = text(row.afterDept)
@@ -536,7 +593,30 @@ function percent(value: number) {
   return `${Math.round(value * 1000) / 10}%`
 }
 
+function captureUserFilters() {
+  appliedKeyword.value = keyword.value.trim()
+  appliedSync.value = syncStatus.value
+  const deptText = deptIdText.value.trim()
+  appliedDeptId.value = /^\d+$/.test(deptText) ? Number(deptText) : selectedDeptId.value
+}
+
+function captureEventFilters() {
+  appliedEventType.value = eventType.value
+  appliedEventSync.value = eventSyncStatus.value
+  appliedEventFrom.value = eventFrom.value
+  appliedEventTo.value = eventTo.value
+}
+
+function eventRangeError() {
+  const from = eventFrom.value
+  const to = eventTo.value
+  if ((from && !to) || (!from && to)) return '请同时填写开始和结束日期'
+  if (from && to && from > to) return '结束日期不能早于开始日期'
+  return ''
+}
+
 async function load() {
+  captureUserFilters()
   const metricRes = await readData('/auth/org/sync-metrics')
   metricReady.value = true
   metricError.value = metricRes.error
@@ -555,21 +635,45 @@ async function load() {
   userReady.value = true
   userError.value = userRes.error
   users.value = asList(userRes.data)
-  userTotal.value = userRes.data && typeof userRes.data === 'object' && typeof (userRes.data as { total?: unknown }).total === 'number'
-    ? (userRes.data as { total: number }).total
-    : users.value.length
+  userTotal.value = asTotal(userRes.data, users.value.length)
+  await loadEvents()
+  await loadReport()
+}
 
-  const eventParams: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
-  if (eventType.value) eventParams.eventType = eventType.value
-  if (eventSyncStatus.value) eventParams.syncStatus = eventSyncStatus.value
-  const eventRes = await readData('/auth/org/events', eventParams)
-  eventReady.value = true
-  eventError.value = eventRes.error
-  events.value = asList(eventRes.data)
-  total.value = eventRes.data && typeof eventRes.data === 'object' && typeof (eventRes.data as { total?: unknown }).total === 'number'
-    ? (eventRes.data as { total: number }).total
-    : events.value.length
+async function loadEvents() {
+  captureEventFilters()
+  const rangeError = eventRangeError()
+  if (rangeError) {
+    eventHint.value = rangeError
+    eventReady.value = true
+    return
+  }
+  eventHint.value = ''
+  const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
+  if (eventType.value) params.eventType = eventType.value
+  if (eventSyncStatus.value) params.syncStatus = eventSyncStatus.value
+  if (eventFrom.value && eventTo.value) {
+    params.timeRange = [`${eventFrom.value} 00:00:00`, `${eventTo.value} 23:59:59`]
+  }
+  try {
+    const res = await http.get('/auth/org/events', {
+      params,
+      paramsSerializer: { indexes: null },
+    })
+    const data = res.data?.data
+    eventError.value = ''
+    events.value = asList(data)
+    total.value = asTotal(data, events.value.length)
+  } catch (error) {
+    eventError.value = errorMessage(error)
+    events.value = []
+    total.value = 0
+  } finally {
+    eventReady.value = true
+  }
+}
 
+async function loadReport() {
   const reportRes = await readData('/callback/dingtalk/reconcile/report')
   reportReady.value = true
   if (reportRes.error) {
@@ -598,6 +702,35 @@ function searchUsers() {
   load()
 }
 
+function resetUsers() {
+  keyword.value = ''
+  syncStatus.value = ''
+  deptIdText.value = ''
+  invalidDept.value = false
+  selectedDeptId.value = null
+  deptQuery.value = ''
+  searchUsers()
+}
+
+function searchEvents() {
+  if (eventRangeError()) {
+    eventHint.value = eventRangeError()
+    return
+  }
+  eventReady.value = false
+  loadEvents()
+}
+
+function resetEvents() {
+  eventType.value = ''
+  eventSyncStatus.value = ''
+  eventFrom.value = ''
+  eventTo.value = ''
+  eventHint.value = ''
+  eventReady.value = false
+  loadEvents()
+}
+
 function clearDept() {
   selectedDeptId.value = null
   deptQuery.value = ''
@@ -607,26 +740,6 @@ function clearDept() {
 function pickDept(id: number) {
   selectedDeptId.value = selectedDeptId.value === id ? null : id
   searchUsers()
-}
-
-function resetUsers() {
-  keyword.value = ''
-  syncStatus.value = ''
-  deptIdText.value = ''
-  invalidDept.value = false
-  selectedDeptId.value = null
-  searchUsers()
-}
-
-function searchEvents() {
-  eventReady.value = false
-  load()
-}
-
-function resetEvents() {
-  eventType.value = ''
-  eventSyncStatus.value = ''
-  searchEvents()
 }
 
 function openUser(row: Record<string, unknown>) {
