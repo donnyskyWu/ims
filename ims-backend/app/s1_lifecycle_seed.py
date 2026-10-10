@@ -26,6 +26,7 @@ from app.models import (
     User,
     UserDept,
     UserRole,
+    WorkMessage,
 )
 from app.ops_db import ops_session
 from app.ops_models import Company, IpGroup, PlatformAccount
@@ -173,6 +174,12 @@ def reset_s1_subject(db) -> None:
     db.execute(delete(UserRole).where(UserRole.user_id == user.id))
     db.execute(delete(UserDept).where(UserDept.user_id == user.id))
     db.execute(delete(Todo).where(Todo.ref_type == "org_resign", Todo.ref_id == user.id))
+    db.execute(
+        delete(WorkMessage).where(
+            WorkMessage.user_id == user.id,
+            WorkMessage.ref_type == "org_transfer_buffer",
+        )
+    )
     user.status = "ENABLED"
     certs = db.scalars(select(CertArchive).where(CertArchive.holder_name == NICKNAME, CertArchive.deleted == 0)).all()
     cert_ids = [row.id for row in certs]
@@ -222,8 +229,27 @@ def _pin_login(db, user: User) -> None:
         user.mobile = MOBILE
 
 
+def expire_buffer(db) -> None:
+    from datetime import timedelta
+
+    import app.api  # noqa: F401  先装载 api，避免 org_sync 与 api 的环在脚本入口断开
+    from app.org_sync import expire_transfer_buffers
+
+    user = _subject(db)
+    if user is None:
+        raise RuntimeError("没有可到期的调岗人员")
+    from app.models import UserMapping
+
+    mapping = db.scalar(
+        select(UserMapping).where(UserMapping.user_id == user.id, UserMapping.deleted == 0)
+    )
+    if mapping is None or mapping.buffer_until is None:
+        raise RuntimeError("没有待到期的调岗缓冲")
+    expire_transfer_buffers(db, mapping.buffer_until + timedelta(seconds=1))
+
+
 def deliver(phase: str) -> dict:
-    if phase not in EVENT_IDS and phase != "fixtures":
+    if phase not in EVENT_IDS and phase not in ("fixtures", "expire-buffer"):
         raise SystemExit(f"unknown phase {phase}")
     db = SessionLocal()
     try:
@@ -231,7 +257,9 @@ def deliver(phase: str) -> dict:
         if phase == "fixtures":
             db.commit()
             return {"phase": phase}
-        if phase == "hire":
+        if phase == "expire-buffer":
+            expire_buffer(db)
+        elif phase == "hire":
             reset_s1_subject(db)
             admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
             if admin is not None:

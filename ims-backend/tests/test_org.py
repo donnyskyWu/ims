@@ -51,8 +51,13 @@ def hire(event_id="evt-hire-1", ding="dt-100", mobile="13700001111", dept=3) -> 
 
 def event_mappings(db) -> int:
     """启动种子里的技能部门映射不计入本文件的入职事件断言。"""
-    return db.scalar(
-        select(func.count()).select_from(UserMapping).where(UserMapping.dingtalk_user_id != "dt-e2e-air-dept")
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(UserMapping)
+            .where(UserMapping.dingtalk_user_id != "dt-e2e-air-dept")
+        )
+        or 0
     )
 
 

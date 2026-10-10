@@ -25,6 +25,7 @@ from app.models import (
     UserDept,
     UserMapping,
     UserRole,
+    WorkMessage,
 )
 
 router = APIRouter()
@@ -292,6 +293,100 @@ def write_event_result(event: OrgEvent, position: str, diff: dict | None, dept_n
     event.payload_json = json.dumps(stored, ensure_ascii=False)
 
 
+def ensure_buffer_message(db: Session, user: User, title: str, content: str) -> None:
+    existing = db.scalar(
+        select(WorkMessage).where(
+            WorkMessage.user_id == user.id,
+            WorkMessage.ref_type == "org_transfer_buffer",
+            WorkMessage.ref_id == user.id,
+            WorkMessage.title == title,
+        )
+    )
+    if existing is not None:
+        return
+    db.add(
+        WorkMessage(
+            user_id=user.id,
+            title=title[:128],
+            content=content[:512],
+            channel="IN_APP",
+            read_flag=0,
+            source_module="auth",
+            ref_type="org_transfer_buffer",
+            ref_id=user.id,
+            tenant_id=0,
+        )
+    )
+
+
+def latest_transfer_event(db: Session, user_id: int) -> OrgEvent | None:
+    return db.scalar(
+        select(OrgEvent)
+        .where(
+            OrgEvent.user_id == user_id,
+            OrgEvent.event_type == "transfer",
+            OrgEvent.sync_status == "SUCCESS",
+        )
+        .order_by(OrgEvent.id.desc())
+    )
+
+
+def expire_transfer_buffers(db: Session, now: datetime) -> int:
+    """ORG-R3：缓冲到期后只保留新岗位供给角色，并给本人一条工作台消息。"""
+    mappings = db.scalars(
+        select(UserMapping).where(
+            UserMapping.deleted == 0,
+            UserMapping.buffer_until.is_not(None),
+            UserMapping.buffer_until <= now,
+        )
+    ).all()
+    expired = 0
+    for mapping in mappings:
+        user = db.get(User, mapping.user_id)
+        event = latest_transfer_event(db, mapping.user_id) if user is not None else None
+        diff = stored_json(event).get("permissionDiff") if event is not None else None
+        if not isinstance(diff, dict):
+            diff = {}
+        before_position = str(diff.get("beforePosition") or "")
+        after_position = str(diff.get("afterPosition") or "")
+        position_changed = bool(after_position) and after_position != before_position
+        removed: list[str] = []
+        if user is not None and position_changed:
+            rule = enabled_position_rule(db, after_position)
+            keep_ids = {int(item) for item in (rule.grant_role_ids or [])} if rule is not None else set()
+            added_names = {str(name) for name in (diff.get("addedRoleNames") or [])}
+            retained_names = [str(name) for name in (diff.get("retainedRoleNames") or [])]
+            for role_id in user_role_ids(db, user.id):
+                role = db.get(Role, role_id)
+                if role is None or role.deleted:
+                    continue
+                if role_id in keep_ids or role.role_name in added_names:
+                    continue
+                if role.role_name not in retained_names:
+                    continue
+                db.execute(
+                    delete(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id)
+                )
+                removed.append(role.role_name)
+            kept = [name for name in retained_names if name not in removed]
+            diff["removedRoleNames"] = removed
+            diff["retainedRoleNames"] = kept
+            diff["summary"] = "24 小时缓冲结束，已切换为新岗位角色"
+            stored = stored_json(event)
+            stored["permissionDiff"] = diff
+            event.payload_json = json.dumps(stored, ensure_ascii=False)
+            removed_text = "、".join(removed) if removed else "无"
+            ensure_buffer_message(
+                db,
+                user,
+                "调岗缓冲已结束",
+                f"已切换为岗位「{after_position}」，移除角色：{removed_text}",
+            )
+        mapping.buffer_until = None
+        expired += 1
+    return expired
+
+
 def ensure_return_todo(db: Session, user: User) -> None:
     existing = db.scalar(
         select(Todo).where(
@@ -494,6 +589,15 @@ def apply_event(db: Session, event: OrgEvent, now: datetime) -> None:
     event.next_retry_at = None
     event.last_error = ""
     event.updated_at = now
+    if event.event_type == "transfer" and buffer_until is not None and diff is not None:
+        if "24 小时" in str(diff.get("summary") or ""):
+            label = position or before_position or "新岗位"
+            ensure_buffer_message(
+                db,
+                user,
+                "调岗权限缓冲",
+                f"原角色保留至 {iso(buffer_until)}，之后切换为新岗位「{label}」",
+            )
 
 
 def fail_event(event: OrgEvent, now: datetime, message: str) -> None:
@@ -530,6 +634,7 @@ def process_due(db: Session, now: datetime | None = None) -> int:
         except Exception as exc:
             nested.rollback()
             fail_event(event, moment, str(exc))
+    expire_transfer_buffers(db, moment)
     return len(rows)
 
 
