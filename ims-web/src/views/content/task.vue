@@ -71,8 +71,8 @@
               <td>{{ row.status }}</td>
               <td>
                 {{ row.linkedContent?.status || '—' }}
-                <span v-if="row.linkedContent?.aiGenerateStatus"> · 文案{{ row.linkedContent.aiGenerateStatus }}</span>
-                <span v-if="row.linkedContent?.videoJobStatus"> · 视频{{ row.linkedContent.videoJobStatus }}</span>
+                <span v-if="row.linkedContent?.aiGenerateStatus"> · 文案{{ mediaStatusLabel(row.linkedContent.aiGenerateStatus, 'copy') }}</span>
+                <span v-if="row.linkedContent?.videoJobStatus"> · 视频{{ mediaStatusLabel(row.linkedContent.videoJobStatus, 'video') }}</span>
               </td>
               <td>
                 <button class="btn btn-pri btn-sm" type="button" @click="goExecute(row.id)">执行</button>
@@ -138,6 +138,26 @@ const taskEmptyHint = computed(() => {
   if (onlyMine.value) return '切换「全部任务」查看其他执行人，或先启动计划、确认工作任务。'
   return '启动计划，或在工作任务登记确认出任务后，节点会出现在这里。'
 })
+
+function mediaStatusLabel(status: string, kind: 'copy' | 'video') {
+  const copy: Record<string, string> = {
+    QUEUED: '生成中',
+    GENERATING: '生成中',
+    GENERATED: '已生成',
+    SUCCESS: '成功',
+    FAILED: '失败',
+  }
+  const video: Record<string, string> = {
+    WAITING: '待生成',
+    GENERATING: '生成中',
+    PENDING_FINAL_REVIEW: '待终审',
+    REVIEW_PASSED: '终审通过',
+    REVIEW_REJECTED: '终审打回',
+    FAILED: '失败',
+  }
+  const map = kind === 'copy' ? copy : video
+  return map[status] || status
+}
 
 function canSubmit(row: any) {
   const st = row.linkedContent?.status

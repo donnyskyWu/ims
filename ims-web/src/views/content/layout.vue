@@ -128,10 +128,10 @@
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">编辑公推模板</h3>
         <label class="fld">模板名称</label>
-        <input v-model="editForm.templateName" class="fld-in" />
+        <input v-model="editForm.templateName" class="fld-in" data-testid="layout-edit-name" />
         <label class="fld">预览 HTML</label>
         <textarea v-model="editForm.previewHtml" class="fld-in" rows="4" />
-        <p v-if="editError" class="hint" style="color: var(--red)">{{ editError }}</p>
+        <p v-if="editError" class="hint bad" data-testid="layout-edit-name-error">{{ editError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showEdit = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitEdit">保存</button>
@@ -143,10 +143,10 @@
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">新建公推模板</h3>
         <label class="fld">模板名称</label>
-        <input v-model="form.templateName" class="fld-in" />
+        <input v-model="form.templateName" class="fld-in" data-testid="layout-create-name" />
         <label class="fld">预览 HTML（可选）</label>
         <textarea v-model="form.previewHtml" class="fld-in" rows="3" />
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" class="hint bad" data-testid="layout-name-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存</button>
@@ -233,9 +233,13 @@ function openCreate() {
 
 async function submitCreate() {
   formError.value = ''
+  if (!form.templateName.trim()) {
+    formError.value = '请填写模板名称'
+    return
+  }
   try {
     const res = await http.post('/content/layout-template', {
-      templateName: form.templateName,
+      templateName: form.templateName.trim(),
       previewHtml: form.previewHtml,
     })
     if (res.data.code !== 0) {
@@ -266,9 +270,13 @@ function openEdit(row: Row) {
 async function submitEdit() {
   if (editingId.value == null) return
   editError.value = ''
+  if (!editForm.templateName.trim()) {
+    editError.value = '请填写模板名称'
+    return
+  }
   try {
     const res = await http.put(`/content/layout-template/${editingId.value}`, {
-      templateName: editForm.templateName,
+      templateName: editForm.templateName.trim(),
       previewHtml: editForm.previewHtml,
     })
     if (res.data.code !== 0) {

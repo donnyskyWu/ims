@@ -31,7 +31,7 @@ test.describe('content plan and task empty states', () => {
       await page.screenshot({ path: `${shotDir}/01-plan-empty.png`, fullPage: true })
     }
 
-    await page.getByTestId('plan-name-filter').fill(missingName)
+    await page.getByTestId('plan-filter-name').fill(missingName)
     const planQuery = page.waitForResponse(
       (r) => r.url().includes('/admin-api/') && r.url().includes('/content/plan') && r.request().method() === 'GET' && r.status() === 200,
     )
@@ -39,12 +39,12 @@ test.describe('content plan and task empty states', () => {
     await planQuery
     const planEmpty = page.getByTestId('plan-empty')
     await expect(planEmpty).toBeVisible()
-    await expect(planEmpty).toContainText('没有符合条件的计划')
-    await expect(planEmpty).toContainText('换个计划名或状态后再查')
+    await expect(planEmpty).toContainText('没有符合筛选的计划')
+    await expect(planEmpty).toContainText('换计划名或状态')
     await page.screenshot({ path: `${shotDir}/02-plan-filter-empty.png`, fullPage: true })
 
     await page.getByRole('button', { name: '重置' }).click()
-    await expect(page.getByTestId('plan-name-filter')).toHaveValue('')
+    await expect(page.getByTestId('plan-filter-name')).toHaveValue('')
 
     const superviseLoad = page.waitForResponse(
       (r) => r.url().includes('/admin-api/') && r.url().includes('/content/publish/pending') && r.request().method() === 'GET' && r.status() === 200,
