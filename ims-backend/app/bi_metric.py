@@ -194,6 +194,34 @@ def metric_delete(metric_id: int, db: Session = Depends(db_session), actor: User
     return ok({"id": metric_id})
 
 
+ANALYSIS_FROM = "2026-09-01"
+ANALYSIS_TO = "2026-09-30"
+
+
+def analysis_day(raw: str) -> str | None:
+    text = (raw or "").strip()[:10]
+    if not text:
+        return ""
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return text
+
+
+def analysis_window(date_start: str, date_end: str) -> tuple[str, str, str] | tuple[None, None, str]:
+    """返回 (起, 止, '')；日期边错误时前两项为 None，第三项为提示。"""
+    start = analysis_day(date_start)
+    end = analysis_day(date_end)
+    if start is None or end is None:
+        return None, None, "日期格式应为 yyyy-MM-dd"
+    if bool(start) != bool(end):
+        return None, None, "请同时填写开始和结束日期"
+    if start and end and start > end:
+        return None, None, "开始日期不能晚于结束日期"
+    return start, end, ""
+
+
 def mock_series(metric: BiMetric, date_start: str, date_end: str) -> list[dict]:
     base = 80.0 + (hash(metric.metric_code) % 40)
     return [
@@ -243,26 +271,46 @@ def metric_analysis_run(
 ):
     if not body.metricIds:
         return fail(1001, "请至少选择一个指标")
+    start, end, date_error = analysis_window(body.dateStart, body.dateEnd)
+    if date_error:
+        return fail(1001, date_error)
+    view = body.view.strip().upper() or "DETAIL"
+    if view not in {"DETAIL", "TREND"}:
+        return fail(1001, "view 无效")
+    outside = bool(start and end and (end < ANALYSIS_FROM or start > ANALYSIS_TO))
     tenant_id = tenant_of(actor)
-    rows_out: list[dict] = []
-    series: list[dict] = []
+    found: list[BiMetric] = []
     for mid in body.metricIds:
         row = db.get(BiMetric, mid)
         if row is None or row.deleted or row.tenant_id != tenant_id:
             return fail(1504, "资源不可用")
         if row.status != "ENABLED":
             return fail(1001, f"指标 {row.metric_name} 未启用")
+        found.append(row)
+    if outside:
+        return ok(
+            {
+                "view": view,
+                "rows": [],
+                "series": [],
+                "note": "",
+                "empty": True,
+                "emptyReason": "当前日期下暂无分析数据",
+            }
+        )
+    rows_out: list[dict] = []
+    series: list[dict] = []
+    for row in found:
         rows_out.append(analyze_metric_row(row, body.dateStart, body.dateEnd, body.ipGroupId))
         series.append({"metricCode": row.metric_code, "points": mock_series(row, body.dateStart, body.dateEnd)})
-    view = body.view.strip().upper() or "DETAIL"
-    if view not in {"DETAIL", "TREND"}:
-        return fail(1001, "view 无效")
     return ok(
         {
             "view": view,
             "rows": rows_out,
             "series": series if view == "TREND" else [],
             "note": "分析占位 · 未接 DW",
+            "empty": False,
+            "emptyReason": "",
         }
     )
 

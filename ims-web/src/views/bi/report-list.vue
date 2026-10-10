@@ -16,7 +16,7 @@
     </div>
 
     <div class="qbar">
-      <input v-model="filters.keyword" placeholder="名称/编号" style="width: 140px" />
+      <input v-model="filters.keyword" data-testid="bi-report-keyword" placeholder="名称/编号" style="width: 140px" />
       <select v-model="filters.reportType" style="width: 110px">
         <option value="">全部类型</option>
         <option value="REPORT">报表</option>
@@ -27,7 +27,7 @@
         <option v-for="c in categories" :key="c.code" :value="c.name">{{ c.name }}</option>
       </select>
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="button" @click="loadList">查询</button>
+      <button class="btn btn-pri btn-sm" type="button" data-testid="bi-report-search" @click="loadList">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="viewMode = viewMode === 'card' ? 'table' : 'card'">
         {{ viewMode === 'card' ? '列表' : '卡片' }}
       </button>
@@ -44,7 +44,7 @@
         <button class="btn btn-sec btn-sm" type="button" style="margin-top: 10px" @click="openDesigner(row.id)">编辑设计</button>
       </div>
       <div v-if="!loading && !rows.length" class="card" style="grid-column: 1 / -1">
-        <div class="empty"><div class="et">暂无报表，点击新建</div></div>
+        <div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div>
       </div>
     </div>
 
@@ -64,7 +64,7 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="7"><div class="empty"><div class="et">加载中</div></div></td></tr>
-            <tr v-else-if="!rows.length"><td colspan="7"><div class="empty"><div class="et">暂无报表</div></div></td></tr>
+            <tr v-else-if="!rows.length"><td colspan="7"><div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div></td></tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.reportNo }}</td>
               <td>{{ row.reportName }}</td>
@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -144,6 +144,8 @@ const viewMode = ref<'card' | 'table'>('card')
 const showForm = ref(false)
 const formError = ref('')
 const filters = reactive({ keyword: '', reportType: '', category: '' })
+const listFiltered = ref(false)
+const emptyText = computed(() => (listFiltered.value ? '当前筛选下暂无报表' : '暂无报表，点击新建'))
 const form = reactive({ reportName: '', reportType: 'REPORT', category: '内容分析' })
 
 async function loadCategories() {
@@ -163,7 +165,10 @@ async function loadList() {
         pageSize: 50,
       },
     })
-    if (res.data.code === 0) rows.value = res.data.data.list || []
+    if (res.data.code === 0) {
+      rows.value = res.data.data.list || []
+      listFiltered.value = Boolean(filters.keyword.trim() || filters.reportType || filters.category)
+    }
   } finally {
     loading.value = false
   }

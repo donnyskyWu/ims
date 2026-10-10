@@ -25,6 +25,22 @@ DEFAULT_WIDGETS = [
 ]
 
 
+def widgets_of(layout: dict) -> list:
+    raw = layout.get("comps")
+    if isinstance(raw, list):
+        return raw
+    return list(DEFAULT_WIDGETS)
+
+
+def widget_flags(widgets: list) -> dict:
+    empty = len(widgets) == 0
+    return {
+        "widgets": widgets,
+        "empty": empty,
+        "emptyReason": "暂无组件" if empty else "",
+    }
+
+
 def seed_screens(db: Session, tenant_id: int, creator_id: int) -> None:
     count = int(
         db.scalar(
@@ -118,12 +134,13 @@ def screen_detail(
         return fail(1008, "无权查看该报表")
     names = user_names(db, [row.creator_id])
     layout = parse_layout(row.layout_json)
+    widgets = widgets_of(layout)
     return ok(
         {
             **report_def_vo(row, names),
             "theme": layout.get("theme", "dark"),
-            "widgets": layout.get("comps", DEFAULT_WIDGETS),
             "previewUrl": f"/ims/bi/screen/{row.id}/view",
+            **widget_flags(widgets),
         }
     )
 
@@ -142,12 +159,12 @@ def screen_preview_runtime(
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
     layout = parse_layout(row.layout_json)
-    widgets = layout.get("comps", DEFAULT_WIDGETS)
+    widgets = widgets_of(layout)
     return ok(
         {
             "reportId": row.id,
             "reportName": row.report_name,
             "refreshedAt": iso(row.updated_at),
-            "widgets": widgets,
+            **widget_flags(widgets),
         }
     )

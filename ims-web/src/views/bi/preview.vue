@@ -258,7 +258,14 @@ async function runPreview(options?: { user?: boolean }) {
   if (options?.user) filterRestored.value = false
   filterError.value = ''
   deniedEmpty.value = false
-  if (filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo) {
+  const from = filters.dateFrom
+  const to = filters.dateTo
+  if ((from && !to) || (!from && to)) {
+    filterError.value = '请同时填写开始和结束日期'
+    persistFilters()
+    return
+  }
+  if (from && to && from > to) {
     filterError.value = '开始日期不能晚于结束日期'
     persistFilters()
     return
