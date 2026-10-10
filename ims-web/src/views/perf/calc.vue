@@ -8,7 +8,7 @@
       <div class="acts">
         <label>
           周期
-          <input v-model="period" data-testid="perf-period" type="month" @change="loadList" />
+          <input v-model="period" data-testid="perf-period" type="month" @change="onPeriod" />
         </label>
         <button class="btn btn-sec btn-sm" type="button" data-testid="perf-run-open" @click="openRun">
           手动触发计算
@@ -25,6 +25,22 @@
       计算中 {{ counts.CALCULATING }} | 待人工补充 {{ counts.PENDING_MANUAL }} | 待核准
       {{ counts.PENDING_APPROVE }} | 已发布 {{ counts.PUBLISHED }}
     </div>
+    <form class="qbar" @submit.prevent>
+      <select v-model="deptFilter" data-testid="perf-calc-dept" style="width: 140px">
+        <option value="">全部部门</option>
+        <option v-for="dept in deptOptions" :key="dept.id" :value="String(dept.id)">{{ dept.name }}</option>
+      </select>
+      <select v-model="statusFilter" data-testid="perf-calc-status" style="width: 140px">
+        <option value="">全部状态</option>
+        <option value="CALCULATING">计算中</option>
+        <option value="PENDING_MANUAL">待人工</option>
+        <option value="PENDING_APPROVE">待核准</option>
+        <option value="PUBLISHED">已发布</option>
+      </select>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="perf-calc-reset" @click="resetBoardFilters">
+        重置
+      </button>
+    </form>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -45,14 +61,26 @@
             <tr v-if="loading">
               <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
-            <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">本周期还没有计算结果</div></div></td>
+            <tr v-else-if="!visibleRows.length">
+              <td colspan="8">
+                <div class="empty" data-testid="perf-calc-empty"><div class="et">{{ emptyText }}</div></div>
+              </td>
             </tr>
-            <tr v-for="row in rows" v-else :key="row.id" :data-testid="`perf-row-${row.userName}`">
+            <tr v-for="row in visibleRows" v-else :key="row.id" :data-testid="`perf-row-${row.userName}`">
               <td>{{ row.userName }}</td>
               <td>{{ row.deptName }}</td>
               <td class="mono">{{ row.positionCode }}</td>
-              <td class="num">{{ scoreText(row.totalScore) }}</td>
+              <td class="num">
+                {{ scoreText(row.totalScore) }}
+                <span
+                  v-if="row.resultStatus === 'PENDING_MANUAL' && row.missingCount"
+                  data-testid="perf-calc-missing"
+                  :title="`含 ${row.missingCount} 项缺项按 0 分计入（PER-C-R1）`"
+                  style="color: #c46a00"
+                >
+                  · 含 {{ row.missingCount }} 项缺项按 0 分计入
+                </span>
+              </td>
               <td>
                 <span class="tag" :data-testid="`perf-grade-${row.userName}`">{{ gradeText(row.gradeLevel) }}</span>
               </td>
@@ -224,6 +252,7 @@ type Row = {
   userId: number
   userName: string
   positionCode: string
+  deptId: number
   deptName: string
   totalScore: number | null
   rankInDept: number | null
@@ -237,6 +266,8 @@ type Row = {
 }
 
 const period = ref(previousMonth())
+const deptFilter = ref('')
+const statusFilter = ref('')
 const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -266,6 +297,30 @@ const counts = computed(() => {
 })
 const manualRows = computed(() => rows.value.filter((row) => row.resultStatus === 'PENDING_MANUAL'))
 const missingDetails = computed(() => (active.value?.details || []).filter((item) => item.dataStatus === 'MISSING'))
+const deptOptions = computed(() => {
+  const map = new Map<number, string>()
+  for (const row of rows.value) {
+    if (!row.deptId) continue
+    map.set(row.deptId, row.deptName || `部门 ${row.deptId}`)
+  }
+  return [...map.entries()].map(([id, name]) => ({ id, name }))
+})
+const visibleRows = computed(() =>
+  rows.value.filter((row) => {
+    if (deptFilter.value && String(row.deptId) !== deptFilter.value) return false
+    if (statusFilter.value && row.resultStatus !== statusFilter.value) return false
+    return true
+  }),
+)
+const emptyText = computed(() => {
+  if (error.value) return error.value
+  const deptOn = !!deptFilter.value
+  const statusOn = !!statusFilter.value
+  if (!deptOn && !statusOn) return '本周期还没有计算结果'
+  if (deptOn && !statusOn) return '当前部门没有计算结果'
+  if (!deptOn && statusOn) return '当前状态没有计算结果'
+  return '当前筛选没有计算结果'
+})
 
 function previousMonth() {
   const now = new Date()
@@ -302,18 +357,32 @@ function rejectText(err: unknown) {
   return '请求失败'
 }
 
+let calcSeq = 0
 async function loadList() {
+  const seq = ++calcSeq
   loading.value = true
   error.value = ''
   try {
     const res = await http.get(`/perf/calc/${period.value}`, { params: { pageNo: 1, pageSize: 100 } })
+    if (seq !== calcSeq) return
     rows.value = res.data.data.list || []
   } catch (err) {
+    if (seq !== calcSeq) return
     error.value = rejectText(err)
     rows.value = []
   } finally {
-    loading.value = false
+    if (seq === calcSeq) loading.value = false
   }
+}
+
+function resetBoardFilters() {
+  deptFilter.value = ''
+  statusFilter.value = ''
+}
+
+function onPeriod() {
+  resetBoardFilters()
+  loadList()
 }
 
 function openRun() {
@@ -331,6 +400,7 @@ async function runCalc() {
     toast.value = data.message || `已创建计算任务（${data.targetUserCount ?? 0} 人）`
     period.value = runPeriod.value
     runOpen.value = false
+    resetBoardFilters()
     await loadList()
   } catch (err) {
     runError.value = rejectText(err)

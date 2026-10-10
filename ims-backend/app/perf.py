@@ -739,19 +739,25 @@ def issue_execution(
 
 
 def ensure_exam_questions(db: Session, tenant_id: int, actor_id: int) -> None:
-    count = db.scalar(
-        select(func.count())
-        .select_from(ExamQuestion)
+    rows = db.scalars(
+        select(ExamQuestion)
         .where(ExamQuestion.deleted == 0, ExamQuestion.tenant_id == tenant_id)
-    )
-    if not count:
-        _insert_exam_question_seeds(db, tenant_id, actor_id)
+        .order_by(ExamQuestion.id.asc())
+    ).all()
+    seen: set[str] = set()
+    for row in rows:
+        key = (row.question_no or "").strip()
+        if not key or key in seen:
+            row.deleted = 1
+            continue
+        seen.add(key)
+    _insert_exam_question_seeds(db, tenant_id, actor_id, seen)
     from app.exam_paper import backfill_question_answers
 
     backfill_question_answers(db, tenant_id)
 
 
-def _insert_exam_question_seeds(db: Session, tenant_id: int, actor_id: int) -> None:
+def _insert_exam_question_seeds(db: Session, tenant_id: int, actor_id: int, seen: set[str] | None = None) -> None:
     seeds = [
         ("EQ-001", "直播开场 15 分钟的留存红线是？", "LIVE_RULE", "SINGLE", 10, 6),
         ("EQ-002", "以下哪些行为属于平台高危违规（多选）？", "LIVE_RULE", "MULTIPLE", 10, 5),
@@ -764,7 +770,10 @@ def _insert_exam_question_seeds(db: Session, tenant_id: int, actor_id: int) -> N
         ("EQ-009", "数据上报的截止时间是每日几点前？", "COMPLIANCE", "SINGLE", 10, 9),
         ("EQ-010", "外协人员可以访问公司数据看板。（判断）", "COMPLIANCE", "JUDGE", 5, 3),
     ]
+    present = seen or set()
     for qno, stem, domain, qtype, score, refs in seeds:
+        if qno in present:
+            continue
         db.add(
             ExamQuestion(
                 question_no=qno,
