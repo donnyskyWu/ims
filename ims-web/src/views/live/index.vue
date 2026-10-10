@@ -28,6 +28,22 @@
     </div>
     <form v-if="view === 'sessions'" class="qbar" @submit.prevent="loadList">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 160px" />
+      <input
+        v-model="query.accountId"
+        inputmode="numeric"
+        data-testid="live-filter-account"
+        placeholder="账号 id"
+        aria-label="账号 id"
+        style="width: 110px"
+      />
+      <input
+        v-model="query.responsibleUserId"
+        inputmode="numeric"
+        data-testid="live-filter-owner"
+        placeholder="责任人 id"
+        aria-label="责任人 id"
+        style="width: 120px"
+      />
       <select v-model="query.sessionStatus" style="width: 100px">
         <option value="">全部状态</option>
         <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
@@ -56,6 +72,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetQuery">重置</button>
     </form>
+    <p v-if="view === 'sessions' && dateRangeHint" class="hint" data-testid="live-filter-date-hint">{{ dateRangeHint }}</p>
     <div v-if="view === 'sessions'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -88,7 +105,7 @@
               <td colspan="9">
                 <div class="empty" data-testid="live-sessions-empty">
                   <div class="et">暂无场次</div>
-                  <div class="es">登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。</div>
+                  <div class="es" data-testid="live-sessions-empty-hint">{{ sessionsEmptyHint }}</div>
                 </div>
               </td>
             </tr>
@@ -149,12 +166,21 @@
         </div>
       </div>
       <form class="qbar" @submit.prevent="loadPending">
+        <input
+          v-model="pendingOwner"
+          inputmode="numeric"
+          data-testid="live-pending-owner"
+          placeholder="责任人 id"
+          aria-label="待录入责任人"
+          style="width: 120px"
+        />
         <label class="hint">
           <input v-model="overdueOnly" type="checkbox" data-testid="live-overdue-only" />
           仅看超过 24 小时
         </label>
         <span class="sp"></span>
         <button class="btn btn-pri btn-sm" type="submit" data-testid="live-pending-query">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="live-pending-reset" @click="resetPending">重置</button>
       </form>
       <div class="tbl-wrap">
         <table>
@@ -383,6 +409,10 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '下播与 GMV'" class="tbl-block" style="margin-top: 12px">
+        <div v-if="!reportLoaded" class="empty" data-testid="live-report-loading">
+          <div class="et">加载中</div>
+        </div>
+        <template v-else>
         <div v-if="!report" class="empty" data-testid="live-report-empty" style="padding: 12px 0">
           <div class="et">待录入</div>
           <div class="es">下播九项还没提交。缺字段返回 1046，提交后只能走更正单。</div>
@@ -456,6 +486,7 @@
           <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
           <button v-if="correcting" class="btn btn-pri btn-sm" type="button" data-testid="live-report-correction-submit" @click="submitCorrection">提交更正单</button>
         </div>
+        </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
         <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
@@ -520,6 +551,8 @@ const correctionTrace = ref<any>(null)
 const correctionSlips = ref<any[]>([])
 const query = reactive({
   sessionCode: '',
+  accountId: '',
+  responsibleUserId: '',
   sessionStatus: '',
   platform: '',
   riskLevel: '',
@@ -527,6 +560,7 @@ const query = reactive({
   timeFrom: '',
   timeTo: '',
 })
+const pendingOwner = ref('')
 const statusOptions = [
   { value: 'PENDING_RISK_CHECK', label: '待风控' },
   { value: 'APPROVED', label: '已放行' },
@@ -568,6 +602,8 @@ const detailOpen = ref(false)
 const detail = ref<any>(null)
 const metrics = ref<any>(null)
 const report = ref<any>(null)
+const reportLoaded = ref(false)
+let detailTicket = 0
 const alarms = ref<any[]>([])
 const tab = ref('基本信息')
 const tabs = ['基本信息', '直播数据', '风控登记', '下播与 GMV', '关联']
@@ -595,12 +631,16 @@ const supplementGaps = computed(() => {
   if (!String(sup.supplementReason || '').trim()) gaps.push('reason')
   return gaps
 })
-const pendingEmptyTitle = computed(() => (overdueOnly.value ? '暂无超过 24 小时的待录入' : '暂无待录入场次'))
-const pendingEmptyHint = computed(() =>
-  overdueOnly.value
-    ? '取消「仅看超过 24 小时」可看未超时的待录入场次。'
-    : '下播后 24 小时未提交会标红，并写入站内待办。钉钉与短信只留本地桩，不外发。',
-)
+const pendingEmptyTitle = computed(() => {
+  if (positiveId(pendingOwner.value)) return '该责任人暂无待录入'
+  if (overdueOnly.value) return '暂无超过 24 小时的待录入'
+  return '暂无待录入场次'
+})
+const pendingEmptyHint = computed(() => {
+  if (positiveId(pendingOwner.value)) return '换一个责任人，或清空后再查全部待录入。'
+  if (overdueOnly.value) return '取消「仅看超过 24 小时」可看未超时的待录入场次。'
+  return '下播后 24 小时未提交会标红，并写入站内待办。钉钉与短信只留本地桩，不外发。'
+})
 
 function supplementGap(key: string) {
   return supplementGaps.value.includes(key)
@@ -711,6 +751,35 @@ function fieldMissing(key: string) {
 const detailTitle = computed(() => (detail.value ? `场次 ${detail.value.sessionCode}` : '场次详情'))
 const overdueCards = computed(() => pendingRows.value.filter((row) => row.overdue))
 
+function positiveId(value: unknown) {
+  const text = String(value ?? '').trim()
+  if (!/^[1-9]\d*$/.test(text)) return null
+  return Number(text)
+}
+
+const dateRangeHint = computed(() => {
+  const from = query.timeFrom.trim()
+  const to = query.timeTo.trim()
+  if ((from && !to) || (!from && to)) return '开播起止要一起选，只填一侧不会收窄日期。'
+  return ''
+})
+
+const sessionsEmptyHint = computed(() => {
+  const narrowed =
+    query.sessionCode.trim() ||
+    positiveId(query.accountId) ||
+    positiveId(query.responsibleUserId) ||
+    query.sessionStatus ||
+    query.platform ||
+    query.riskLevel ||
+    query.isSupplement ||
+    query.timeFrom ||
+    query.timeTo
+  return narrowed
+    ? '没有符合当前账号、责任人或筛选条件的场次。'
+    : '登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。'
+})
+
 function ledgerQueryParams(withPage: boolean) {
   const params = new URLSearchParams()
   if (withPage) {
@@ -719,6 +788,10 @@ function ledgerQueryParams(withPage: boolean) {
   }
   const sessionCode = query.sessionCode.trim()
   if (sessionCode) params.set('sessionCode', sessionCode)
+  const accountId = positiveId(query.accountId)
+  if (accountId) params.set('accountId', String(accountId))
+  const ownerId = positiveId(query.responsibleUserId)
+  if (ownerId) params.set('responsibleUserId', String(ownerId))
   if (query.sessionStatus) params.set('sessionStatus', query.sessionStatus)
   if (query.platform) params.set('platform', query.platform)
   if (query.riskLevel) params.set('riskLevel', query.riskLevel)
@@ -762,6 +835,8 @@ async function loadList() {
 
 function resetQuery() {
   query.sessionCode = ''
+  query.accountId = ''
+  query.responsibleUserId = ''
   query.sessionStatus = ''
   query.platform = ''
   query.riskLevel = ''
@@ -1003,6 +1078,8 @@ const showSupplementApprove = computed(
 )
 
 async function openDetail(row: any) {
+  const ticket = ++detailTicket
+  reportLoaded.value = false
   detailOpen.value = true
   tab.value = '基本信息'
   cancelForm.value = false
@@ -1014,12 +1091,18 @@ async function openDetail(row: any) {
   correctionReason.value = ''
   correctionTrace.value = null
   const code = row.sessionCode
-  detail.value = await apiGet(`/live/sessions/${code}`)
-  metrics.value = detail.value.metricsSnapshot || (await apiGet(`/live/sessions/${code}/metrics`))
-  report.value = detail.value.report || (await apiGet(`/live/report/${code}`))
+  const session = await apiGet(`/live/sessions/${code}`)
+  if (ticket !== detailTicket) return
+  detail.value = session
+  metrics.value = session.metricsSnapshot || (await apiGet(`/live/sessions/${code}/metrics`))
+  if (ticket !== detailTicket) return
+  report.value = session.report || (await apiGet(`/live/report/${code}`))
+  if (ticket !== detailTicket) return
   applyReport(report.value)
   bindCorrections(Array.isArray(detail.value?.corrections) ? detail.value : report.value)
+  reportLoaded.value = true
   const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
+  if (ticket !== detailTicket) return
   alarms.value = alarmRes.list || []
 }
 
@@ -1028,16 +1111,24 @@ async function openPending() {
   await loadPending()
 }
 
+function resetPending() {
+  pendingOwner.value = ''
+  overdueOnly.value = false
+  loadPending()
+}
+
 async function loadPending() {
   pendingLoading.value = true
   pendingHint.value = ''
   pendingError.value = ''
   try {
+    const ownerId = positiveId(pendingOwner.value)
     const res = await http.get('/live/report/pending', {
       params: {
         pageNo: 1,
         pageSize: 20,
         overdueOnly: overdueOnly.value ? true : undefined,
+        responsibleUserId: ownerId || undefined,
       },
     })
     const data = res.data.data || {}
@@ -1065,11 +1156,6 @@ async function switchTab(name: string) {
   const code = detail.value.sessionCode
   if (name === '直播数据') {
     metrics.value = await apiGet(`/live/sessions/${code}/metrics`)
-  }
-  if (name === '下播与 GMV' && !report.value) {
-    report.value = await apiGet(`/live/report/${code}`)
-    applyReport(report.value)
-    bindCorrections(report.value?.corrections ? report.value : detail.value)
   }
   if (name === '关联') {
     const alarmRes = await apiGet('/live/alarm/records', { sessionCode: code, pageNo: 1, pageSize: 10 })
