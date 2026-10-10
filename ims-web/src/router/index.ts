@@ -83,6 +83,7 @@ const router = createRouter({
         { path: 'air/cfg', component: () => import('../views/air/cfg.vue') },
         { path: 'perf/metric', component: () => import('../views/perf/metric.vue') },
         { path: 'perf/calc', component: () => import('../views/perf/calc.vue') },
+        { path: 'perf/rank', component: () => import('../views/perf/rank.vue') },
         { path: 'perf/mine', component: () => import('../views/perf/mine.vue') },
         { path: 'perf/scheme', component: () => import('../views/perf/scheme.vue') },
         { path: 'perf/execution', component: () => import('../views/perf/execution.vue') },

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -928,6 +929,12 @@ class MetricBindItem(BaseModel):
     weightOverride: float | None = Field(default=None, ge=0, le=100)
 
 
+class TestFetchBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    metricId: int
+    testPeriod: str
+
+
 class PositionBindBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     positionCode: str
@@ -1073,14 +1080,24 @@ def metric_vo(row: PerfMetric) -> dict:
 
 
 def ensure_compete_metric(db: Session, tenant_id: int, actor_id: int) -> PerfMetric:
-    row = db.scalar(
-        select(PerfMetric).where(
-            PerfMetric.deleted == 0,
-            PerfMetric.tenant_id == tenant_id,
-            PerfMetric.metric_code == COMPETE_CODE,
-        )
+    rows = list(
+        db.scalars(
+            select(PerfMetric)
+            .where(
+                PerfMetric.deleted == 0,
+                PerfMetric.tenant_id == tenant_id,
+                PerfMetric.metric_code == COMPETE_CODE,
+            )
+            .order_by(PerfMetric.id.asc())
+        ).all()
     )
-    if row is not None:
+    if rows:
+        row = rows[0]
+        for extra in rows[1:]:
+            extra.deleted = 1
+            extra.updated_at = utcnow()
+        if len(rows) > 1:
+            db.flush()
         if row.status != "DISABLED":
             row.status = "DISABLED"
         if not row.enable_note:
@@ -1154,6 +1171,112 @@ def metric_list(
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(PerfMetric.id.asc()).offset((page_no - 1) * size).limit(size)).all()
     return paged([metric_vo(row) for row in rows], int(total or 0), page_no, size)
+
+
+AUTO_FETCH_PAIRS = frozenset(
+    {
+        ("TRAIN", "finish_rate"),
+        ("MEET", "on_time_rate"),
+        ("REPORT", "on_time_rate"),
+        ("LIVE", "gmv"),
+        ("LIVE", "session_count"),
+    }
+)
+
+
+def coverage_payload(rows: list[PerfMetric]) -> dict:
+    enabled = [row for row in rows if row.status == "ENABLED"]
+    auto_rows = [row for row in enabled if (row.data_source or "").upper() in {"AUTO", "EXAM"}]
+    manual = [
+        {"metricCode": row.metric_code, "metricName": row.metric_name}
+        for row in enabled
+        if (row.data_source or "").upper() not in {"AUTO", "EXAM"}
+    ]
+    manual.sort(key=lambda item: item["metricCode"])
+    enabled_count = len(enabled)
+    auto_count = len(auto_rows)
+    if enabled_count == 0:
+        rate = 0.0
+    else:
+        rate = float(q2(Decimal(auto_count) * Decimal(100) / Decimal(enabled_count)))
+    return {
+        "enabledMetricCount": enabled_count,
+        "autoMetricCount": auto_count,
+        "autoCoverageRate": rate,
+        "manualMetrics": manual,
+    }
+
+
+def probe_fetch(db: Session, actor: User, metric: PerfMetric, period: str) -> tuple[bool, float | None, str]:
+    if metric.status != "ENABLED":
+        return False, None, "指标已禁用，不能试取数"
+    source = (metric.data_source or "").upper()
+    if source == "MANUAL":
+        return False, None, "手工指标不支持自动取数"
+    if source == "EXAM":
+        return True, 0.0, ""
+    if source != "AUTO":
+        return False, None, "取数来源无效"
+    config = metric.source_config or {}
+    module = str(config.get("module") or "").upper()
+    expression = str(config.get("metricExpression") or "")
+    if module == "FIN":
+        return False, None, "财务取数本期未接入本地试取"
+    if (module, expression) not in AUTO_FETCH_PAIRS:
+        return False, None, "指标表达式无法取数"
+    from app.perf_calc import fetch_auto
+
+    value = fetch_auto(db, metric.tenant_id, actor.id, period, module, expression)
+    if value is None:
+        return True, None, "本期无样本数据，取数通道可用"
+    return True, float(value), ""
+
+
+@router.get("/metric/auto-coverage")
+def metric_auto_coverage(
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    from app.perf_calc import can_view_coverage, role_tags
+
+    if not can_view_coverage(role_tags(db, actor)):
+        return fail(403, "仅超管或运营总监可查看自动取数覆盖率")
+    tenant_id = tenant_of(actor)
+    ensure_compete_metric(db, tenant_id, actor.id)
+    rows = db.scalars(
+        select(PerfMetric).where(PerfMetric.deleted == 0, PerfMetric.tenant_id == tenant_id)
+    ).all()
+    return ok(coverage_payload(list(rows)))
+
+
+@router.post("/metric/test-fetch")
+def metric_test_fetch(
+    body: TestFetchBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    from app.perf_calc import can_test_fetch, role_tags
+
+    if not can_test_fetch(role_tags(db, actor)):
+        return fail(403, "仅超管、运营总监或财务可试取数")
+    period = body.testPeriod.strip()
+    from app.perf_calc import period_ok
+
+    if not period_ok(period):
+        return fail(1001, "绩效月格式须为 yyyy-MM")
+    tenant_id = tenant_of(actor)
+    metric = find_metric(db, tenant_id, body.metricId)
+    if metric is None:
+        return fail(1500, "指标不存在")
+    started = time.perf_counter()
+    fetchable, sample, reason = probe_fetch(db, actor, metric, period)
+    elapsed = int((time.perf_counter() - started) * 1000)
+    data: dict = {"fetchable": fetchable, "elapsedMs": elapsed}
+    if sample is not None:
+        data["sampleValue"] = sample
+    if reason:
+        data["errorReason"] = reason
+    return ok(data)
 
 
 @router.post("/metric")

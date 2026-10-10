@@ -850,6 +850,15 @@
       "parent": "绩效考核",
       "desc": "PERF-002 · 月度计算、人工补充、核准发布"
     },
+    "perfRank": {
+      "no": "05",
+      "name": "排名与预警",
+      "code": "PERF",
+      "icon": "chart",
+      "page": "排名与预警",
+      "parent": "绩效考核",
+      "desc": "PERF-004 · /ims/perf/rank · 排名看板、预警处置、重点辅导"
+    },
     "perfMine": {
       "no": "05",
       "name": "我的绩效",
@@ -1333,6 +1342,7 @@
           "children": [
             "perfMetric",
             "perfCalc",
+            "perfRank",
             "perfMine",
             "perfScheme",
             "perfExec",
