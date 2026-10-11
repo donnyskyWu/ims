@@ -17,16 +17,11 @@ from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_de
 from app.bi_drill import guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import BiReportDef, User
+from app.models import BiReportCategory, BiReportDef, User
 
 router = APIRouter(prefix="/bi/report", tags=["bi-report"])
 
 BJ = timezone(timedelta(hours=8))
-
-REPORT_CATEGORIES = [
-    {"code": "content", "name": "内容分析", "children": ["作品表现", "账号经营"]},
-    {"code": "finance", "name": "经营财务", "children": ["成本效率", "ROI"]},
-]
 
 
 class ReportCreateBody(BaseModel):
@@ -306,11 +301,90 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "category": row.category,
         "subCategory": row.sub_category,
         "status": row.status,
+        "shareScope": row.share_scope or "PRIVATE",
+        "metricNote": row.metric_note or "",
+        "version": int(row.version_no or 1),
+        "compCount": len(layout.get("comps") or []) if isinstance(layout.get("comps"), list) else 0,
         "layoutMode": layout.get("layoutMode", "FREE"),
         "comps": layout.get("comps", []),
         "creatorName": names.get(row.creator_id, ""),
         "updatedAt": iso(row.updated_at),
     }
+
+
+DEFAULT_CATEGORY_TREE = [
+    ("运营", ["日报", "周报", "大屏"]),
+    ("内容", []),
+    ("财务", []),
+    ("未分类", []),
+]
+
+
+def ensure_categories(db: Session, tenant_id: int) -> None:
+    count = db.scalar(
+        select(func.count())
+        .select_from(BiReportCategory)
+        .where(BiReportCategory.deleted == 0, BiReportCategory.tenant_id == tenant_id)
+    )
+    if int(count or 0) > 0:
+        return
+    now = utcnow()
+    for index, (name, children) in enumerate(DEFAULT_CATEGORY_TREE):
+        parent = BiReportCategory(
+            name=name,
+            parent_id=0,
+            sort_no=index,
+            protected=1 if name == "未分类" else 0,
+            tenant_id=tenant_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(parent)
+        db.flush()
+        for child_index, child in enumerate(children):
+            db.add(
+                BiReportCategory(
+                    name=child,
+                    parent_id=parent.id,
+                    sort_no=child_index,
+                    protected=0,
+                    tenant_id=tenant_id,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+    db.flush()
+
+
+def category_rows(db: Session, tenant_id: int) -> list[BiReportCategory]:
+    ensure_categories(db, tenant_id)
+    return list(
+        db.scalars(
+            select(BiReportCategory)
+            .where(BiReportCategory.deleted == 0, BiReportCategory.tenant_id == tenant_id)
+            .order_by(BiReportCategory.sort_no, BiReportCategory.id)
+        ).all()
+    )
+
+
+def category_payload(db: Session, tenant_id: int) -> list[dict]:
+    rows = category_rows(db, tenant_id)
+    nodes: list[dict] = []
+    for top in rows:
+        if top.parent_id:
+            continue
+        children = [row for row in rows if row.parent_id == top.id]
+        nodes.append(
+            {
+                "id": top.id,
+                "code": top.name,
+                "name": top.name,
+                "parentId": 0,
+                "protected": bool(top.protected),
+                "children": [{"id": child.id, "name": child.name, "parentId": top.id} for child in children],
+            }
+        )
+    return nodes
 
 STANDARD_REPORTS = [
     {
@@ -393,9 +467,150 @@ def report_catalog(_: User = Depends(current_user)):
     return ok({"reports": STANDARD_REPORTS})
 
 
+class CategoryBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    action: str = "add"
+    name: str = ""
+    parentId: int = 0
+    id: int = 0
+
+
+class ImportBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    template: dict | None = None
+
+
 @router.get("/categories")
-def report_categories(_: User = Depends(current_user)):
-    return ok({"categories": REPORT_CATEGORIES})
+def report_categories(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    return ok({"categories": category_payload(db, tenant_of(actor))})
+
+
+@router.post("/category")
+def report_category_save(body: CategoryBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    rows = category_rows(db, tenant_id)
+    action = body.action.strip().lower() or "add"
+    if action == "add":
+        name = body.name.strip()
+        if not name:
+            return fail(1001, "分类名称必填")
+        parent_id = int(body.parentId or 0)
+        if parent_id:
+            parent = next((row for row in rows if row.id == parent_id), None)
+            if parent is None:
+                return fail(1001, "上级分类不存在")
+            if parent.parent_id:
+                return fail(1001, "分类最多两级")
+        if any(row.parent_id == parent_id and row.name == name for row in rows):
+            return fail(1001, "同级分类名称已存在")
+        now = utcnow()
+        db.add(
+            BiReportCategory(
+                name=name,
+                parent_id=parent_id,
+                sort_no=len(rows) + 1,
+                protected=0,
+                tenant_id=tenant_id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.flush()
+        return ok({"categories": category_payload(db, tenant_id)})
+    if action == "rename":
+        name = body.name.strip()
+        if not name:
+            return fail(1001, "分类名称必填")
+        row = next((item for item in rows if item.id == body.id), None)
+        if row is None:
+            return fail(1001, "分类不存在")
+        if row.protected or row.name == "未分类":
+            return fail(1001, "未分类不能改名")
+        row.name = name
+        row.updated_at = utcnow()
+        return ok({"categories": category_payload(db, tenant_id)})
+    if action == "delete":
+        row = next((item for item in rows if item.id == body.id), None)
+        if row is None:
+            return fail(1001, "分类不存在")
+        if row.protected or row.name == "未分类":
+            return fail(1001, "未分类不能删除")
+        doomed = [row, *[item for item in rows if item.parent_id == row.id]]
+        names = {item.name for item in doomed}
+        reports = list(
+            db.scalars(
+                select(BiReportDef).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id)
+            ).all()
+        )
+        moved = 0
+        now = utcnow()
+        for report in reports:
+            if report.category in names or report.sub_category in names:
+                report.category = "未分类"
+                report.sub_category = ""
+                report.updated_at = now
+                moved += 1
+        for item in doomed:
+            item.deleted = 1
+            item.updated_at = now
+        return ok({"categories": category_payload(db, tenant_id), "moved": moved})
+    return fail(1001, "分类操作无效")
+
+
+@router.post("/import")
+def report_import(body: ImportBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    template = body.template if isinstance(body.template, dict) else None
+    if template is None:
+        return fail(1001, "文件格式不正确")
+    name = str(template.get("reportName") or template.get("name") or "").strip()
+    raw_comps = template.get("comps") if isinstance(template.get("comps"), list) else template.get("components")
+    if not name or not isinstance(raw_comps, list):
+        return fail(1001, "文件格式不正确")
+    known = {item["code"] for item in DATASETS}
+    warnings: list[dict] = []
+    refs: list[str] = []
+    for comp in raw_comps:
+        if not isinstance(comp, dict):
+            return fail(1001, "文件格式不正确")
+        dataset = str(comp.get("dataset") or "").strip()
+        if dataset:
+            refs.append(dataset)
+            if dataset not in known:
+                warnings.append({"key": dataset, "message": f"数据源 {dataset} 需重新配置"})
+    now = utcnow()
+    rtype = str(template.get("reportType") or "REPORT").strip().upper()
+    if rtype not in {"REPORT", "DASHBOARD"}:
+        rtype = "REPORT"
+    layout = {"layoutMode": template.get("layoutMode") or "FREE", "comps": raw_comps}
+    row = BiReportDef(
+        report_no=next_report_no(db, tenant_id),
+        report_name=name,
+        report_type=rtype,
+        category=str(template.get("category") or "未分类").strip() or "未分类",
+        sub_category=str(template.get("subCategory") or "").strip(),
+        status="DRAFT",
+        share_scope="PRIVATE",
+        metric_note=str(template.get("metricNote") or ""),
+        version_no=1,
+        layout_json=json.dumps(layout, ensure_ascii=False),
+        creator_id=actor.id,
+        dept_id=primary_dept_id(db, actor.id, tenant_id),
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return ok(
+        {
+            "reportId": row.id,
+            "formatOk": True,
+            "componentCount": len(raw_comps),
+            "datasetRefs": refs,
+            "warnings": warnings,
+        }
+    )
 
 
 @router.get("/datasets")
@@ -409,6 +624,8 @@ def report_manage_list(
     keyword: str | None = None,
     reportType: str | None = None,
     category: str | None = None,
+    subCategory: str | None = None,
+    shareScope: str | None = None,
     status: str | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
@@ -429,8 +646,12 @@ def report_manage_list(
         q = q.where((BiReportDef.report_name.like(kw)) | (BiReportDef.report_no.like(kw)))
     if reportType:
         q = q.where(BiReportDef.report_type == reportType.strip().upper())
-    if category:
+    if subCategory:
+        q = q.where(BiReportDef.sub_category == subCategory.strip())
+    elif category:
         q = q.where(BiReportDef.category == category.strip())
+    if shareScope:
+        q = q.where(BiReportDef.share_scope == shareScope.strip().upper())
     if status:
         q = q.where(BiReportDef.status == status.strip().upper())
     page_no, size = page_args(pageNo, pageSize)

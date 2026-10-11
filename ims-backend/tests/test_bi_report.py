@@ -46,4 +46,79 @@ def test_bi_report_manage_create_list():
 
     cats = client.get("/admin-api/ims/bi/report/categories", headers=auth)
     assert cats.json()["code"] == 0
-    assert cats.json()["data"]["categories"]
+    names = [item["name"] for item in cats.json()["data"]["categories"]]
+    assert "运营" in names
+    assert "未分类" in names
+
+
+def test_bi_report_category_import_and_filters():
+    auth = headers()
+    empty = client.post("/admin-api/ims/bi/report/category", headers=auth, json={"action": "add", "name": "  ", "parentId": 0})
+    assert empty.json()["code"] == 1001
+
+    added = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "add", "name": "TC分类", "parentId": 0},
+    )
+    assert added.json()["code"] == 0
+    parent = next(item for item in added.json()["data"]["categories"] if item["name"] == "TC分类")
+    child = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "add", "name": "TC子类", "parentId": parent["id"]},
+    )
+    assert child.json()["code"] == 0
+    child_row = next(
+        item
+        for cat in child.json()["data"]["categories"]
+        if cat["name"] == "TC分类"
+        for item in cat["children"]
+        if item["name"] == "TC子类"
+    )
+    grandchild = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "add", "name": "TC三级", "parentId": child_row["id"]},
+    )
+    assert grandchild.json()["code"] == 1001
+
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "分类下报表", "reportType": "REPORT", "category": "TC分类", "subCategory": "TC子类"},
+    )
+    assert created.json()["code"] == 0
+    rid = created.json()["data"]["id"]
+
+    listed = client.get(
+        "/admin-api/ims/bi/report/list",
+        headers=auth,
+        params={"subCategory": "TC子类", "shareScope": "PRIVATE", "status": "DRAFT"},
+    )
+    assert any(row["id"] == rid for row in listed.json()["data"]["list"])
+
+    removed = client.post("/admin-api/ims/bi/report/category", headers=auth, json={"action": "delete", "id": parent["id"]})
+    assert removed.json()["code"] == 0
+    assert all(item["name"] != "TC分类" for item in removed.json()["data"]["categories"])
+    moved = client.get("/admin-api/ims/bi/report/list", headers=auth, params={"keyword": "分类下报表"})
+    hit = next(row for row in moved.json()["data"]["list"] if row["id"] == rid)
+    assert hit["category"] == "未分类"
+
+    bad = client.post("/admin-api/ims/bi/report/import", headers=auth, json={"template": {"reportName": ""}})
+    assert bad.json()["code"] == 1001
+    imported = client.post(
+        "/admin-api/ims/bi/report/import",
+        headers=auth,
+        json={
+            "template": {
+                "reportName": "导入日报",
+                "comps": [{"id": "c1", "type": "KPI", "title": "GMV", "dataset": "MISSING_DS"}],
+            }
+        },
+    )
+    body = imported.json()
+    assert body["code"] == 0
+    assert body["data"]["formatOk"] is True
+    assert body["data"]["componentCount"] == 1
+    assert body["data"]["warnings"]
