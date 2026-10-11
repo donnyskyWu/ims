@@ -1642,6 +1642,7 @@ class BiReportDef(Base):
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")
     share_scope: Mapped[str] = mapped_column(String(16), default="PRIVATE")
     metric_note: Mapped[str] = mapped_column(String(512), default="")
+    report_version: Mapped[int] = mapped_column(Integer, default=1)
     layout_json: Mapped[str] = mapped_column(Text, default="{}")
     creator_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)

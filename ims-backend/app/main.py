@@ -241,6 +241,8 @@ def ensure_bi_report_scope_column() -> None:
         alters.append("ADD COLUMN share_scope VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'")
     if "metric_note" not in cols:
         alters.append("ADD COLUMN metric_note VARCHAR(512) NOT NULL DEFAULT ''")
+    if "report_version" not in cols:
+        alters.append("ADD COLUMN report_version INT NOT NULL DEFAULT 1")
     if not alters:
         return
     with engine.begin() as conn:

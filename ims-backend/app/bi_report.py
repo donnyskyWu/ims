@@ -58,6 +58,7 @@ class ReportUpdateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     reportName: str = ""
     layoutJson: dict | None = None
+    keepVersion: bool = False
 
 
 class ReportQueryBody(BaseModel):
@@ -359,6 +360,7 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "status": row.status,
         "shareScope": row.share_scope or "PRIVATE",
         "metricNote": row.metric_note or "",
+        "version": int(row.report_version or 1),
         "layoutMode": layout.get("layoutMode", "FREE"),
         "comps": layout.get("comps", []),
         "creatorName": names.get(row.creator_id, ""),
@@ -761,6 +763,7 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
         status="DRAFT",
         share_scope=scope,
         metric_note=(body.metricNote or "").strip()[:512],
+        report_version=1,
         layout_json="{}",
         creator_id=actor.id,
         dept_id=primary_dept_id(db, actor.id, tenant_id),
@@ -812,6 +815,8 @@ def report_design_save(
         if "layoutMode" not in layout:
             layout = {**layout, "layoutMode": "FREE"}
         row.layout_json = json.dumps(layout, ensure_ascii=False)
+        if row.status == "PUBLISHED" and not body.keepVersion:
+            row.report_version = int(row.report_version or 1) + 1
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
     return ok(report_def_vo(row, names))
@@ -830,7 +835,12 @@ def report_design_publish(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    republish = row.status == "PUBLISHED"
     row.status = "PUBLISHED"
+    if republish:
+        row.report_version = int(row.report_version or 1) + 1
+    elif not row.report_version:
+        row.report_version = 1
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
     vo = report_def_vo(row, names)

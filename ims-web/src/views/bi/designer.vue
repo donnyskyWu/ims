@@ -659,13 +659,14 @@ async function loadReport() {
   }
 }
 
-async function saveLayout() {
+async function saveLayout(keepVersion = false) {
   if (!reportId.value) return
   saving.value = true
   try {
     const res = await http.put(`/bi/report/${reportId.value}`, {
       reportName: report.value?.reportName,
       layoutJson: { layoutMode: layoutMode.value || 'FREE', comps: comps.value },
+      keepVersion,
     })
     if (res.data.code !== 0) {
       previewMsg.value = res.data.msg || '保存失败'
@@ -694,7 +695,8 @@ async function openDrill() {
 }
 
 async function publish() {
-  await saveLayout()
+  const again = report.value?.status === 'PUBLISHED'
+  await saveLayout(again)
   if (previewMsg.value !== '已保存') return
   try {
     const res = await http.post(`/bi/report/${reportId.value}/publish`)

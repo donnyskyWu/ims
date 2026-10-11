@@ -133,3 +133,28 @@ def test_bi_design_bind_metric_rejects_illegal_field():
         },
     )
     assert bad_expr.json()["code"] == 1192
+
+
+def test_bi_publish_keeps_v1_then_bumps():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "版本报表", "reportType": "REPORT", "category": "日报"},
+    )
+    body = created.json()["data"]
+    rid = body["id"]
+    assert body["version"] == 1
+    assert body["status"] == "DRAFT"
+    first = client.post(f"/admin-api/ims/bi/report/{rid}/publish", headers=auth)
+    assert first.json()["code"] == 0
+    assert first.json()["data"]["status"] == "PUBLISHED"
+    assert first.json()["data"]["version"] == 1
+    second = client.post(f"/admin-api/ims/bi/report/{rid}/publish", headers=auth)
+    assert second.json()["data"]["version"] == 2
+    saved = client.put(
+        f"/admin-api/ims/bi/report/{rid}",
+        headers=auth,
+        json={"layoutJson": {"layoutMode": "FREE", "comps": []}},
+    )
+    assert saved.json()["data"]["version"] == 3
