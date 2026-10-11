@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>流程管理</h1>
-        <div class="sub">FLOW-002/004 · 发起 · 超时督办/BR-115 · 14 FLOW</div>
+        <div class="sub">发起与超时督办</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openStart">发起流程</button>

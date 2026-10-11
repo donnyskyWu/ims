@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>全链路数据看板</h1>
-        <div class="sub">DC-003 · /ims/dc/dashboard · 经营总览 / 链路健康度 / 维度下钻</div>
+        <div class="sub">经营总览、链路健康度与维度下钻</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="dc-dash-manage" @click="openManage">看板管理</button>

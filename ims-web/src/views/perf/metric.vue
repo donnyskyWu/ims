@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>指标配置</h1>
-        <div class="sub">PERF-001 · /admin-api/ims/perf/metric · 岗位指标集权重合计须为 100%</div>
+        <div class="sub">岗位指标集权重合计须为 100%</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="metric-create-open" @click="openCreate">

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>自定义查询</h1>
-        <div class="sub">FR-M6-005 · 只读消费 COLLECT 元数据 · /ims/bi/query</div>
+        <div class="sub">只读使用采集元数据</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goMetadata">元数据维护</button>

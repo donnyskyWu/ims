@@ -23,5 +23,5 @@ import { mods } from '../../nav/menu'
 const route = useRoute()
 const mod = computed(() => mods[String(route.params.modId || '')])
 const title = computed(() => mod.value?.page || mod.value?.name || '建设中')
-const sub = computed(() => mod.value?.desc || '菜单已保留，接口尚未提供')
+const sub = computed(() => '功能尚未开放')
 </script>

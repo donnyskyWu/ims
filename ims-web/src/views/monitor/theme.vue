@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>作品监测</h1>
-        <div class="sub">IP 主题/行业 · oa_external_account/work · 18 MON</div>
+        <div class="sub">IP 主题与行业</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/int/work')">内部作品</button>

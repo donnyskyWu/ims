@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>消息通知</h1>
-        <div class="sub">SYS-007 · 站内信 + 钉钉 · 同一租户、事件、业务键只送一次</div>
+        <div class="sub">站内信与钉钉 · 同一事件只发送一次</div>
       </div>
     </div>
     <form class="qbar" @submit.prevent="search">

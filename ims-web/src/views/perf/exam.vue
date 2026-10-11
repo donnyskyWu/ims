@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>在线考试</h1>
-        <div class="sub">PERF-003 · 随机组卷与补考</div>
+        <div class="sub">随机组卷与补考</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">创建试卷</button>

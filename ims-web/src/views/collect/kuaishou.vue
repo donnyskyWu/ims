@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>快手内部账号采集</h1>
-        <div class="sub">C1/C3/C4 · 同一 IMS 定时器采集作品、作品日快照与粉丝日统计</div>
+        <div class="sub">同一套定时任务采集作品、作品日快照与粉丝日统计</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goTasks">采集任务</button>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>消息中心</h1>
-        <div class="sub">AUTH-004 · 站内与钉钉消息</div>
+        <div class="sub">站内与钉钉消息</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="readAll">全部已读</button>

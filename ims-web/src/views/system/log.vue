@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>操作/登录日志</h1>
-        <div class="sub">SYS-006 · 仅 IMS 新操作 · 登录成败写入登录日志</div>
+        <div class="sub">只记录本系统的新操作 · 登录成败写入登录日志</div>
       </div>
     </div>
     <div class="tabs">

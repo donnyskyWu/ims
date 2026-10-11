@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>计划管理</h1>
-        <div class="sub">计划向导 / 计划列表（CONTENT-102 · P-M2-011）</div>
+        <div class="sub">计划向导与计划列表</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新增计划</button>

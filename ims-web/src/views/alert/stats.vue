@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>预警统计</h1>
-        <div class="sub">ALERT-004 · 健康度 · 规则排行 · 合并记录 · 通道本地桩</div>
+        <div class="sub">健康度、规则排行、合并记录与通道留痕</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>
@@ -155,7 +155,7 @@
       <div class="pg-h" style="margin-bottom: 8px">
         <div>
           <h2 style="margin: 0; font-size: 16px">预警周报</h2>
-          <div class="sub">GET /alert/stats/weekly-report · 在线查看，周一汇总口径</div>
+          <div class="sub">在线查看，周一汇总口径</div>
         </div>
         <select v-model="weekStart" data-testid="alert-weekly-week" @change="loadWeekly">
           <option v-for="week in weeks" :key="week" :value="week">{{ week }} 起</option>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>系统参数</h1>
-        <div class="sub">SYS-005 · key 不改名 · 未知 key 返回 1213</div>
+        <div class="sub">参数名不可修改</div>
       </div>
     </div>
     <p v-if="error" class="hint bad">{{ error }}</p>

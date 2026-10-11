@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>实时预警</h1>
-        <div class="sub">ALERT-002 · 记录筛选 · 推送回执（钉钉/短信为本地桩）</div>
+        <div class="sub">记录筛选 · 推送回执只在本系统留痕</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>

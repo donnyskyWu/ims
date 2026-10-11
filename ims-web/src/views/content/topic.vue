@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>选题计划</h1>
-        <div class="sub">选题库：筛选、详情、待评审编辑、落选复活与排期甘特（CONTENT-002 · TOP-R1 / TOP-R3）</div>
+        <div class="sub">选题库：筛选、详情、待评审编辑、落选复活与排期甘特</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" data-testid="topic-create-open" @click="openCreate">提报选题</button>

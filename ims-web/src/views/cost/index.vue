@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>账号成本与 ROI</h1>
-        <div class="sub">采购/过程成本；营收来自 Football 订单 WebAPI · 08b COST</div>
+        <div class="sub">采购与过程成本；营收来自订单</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec" type="button" disabled>导出</button>

@@ -218,7 +218,7 @@
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">冲话费记录</h2>
-          <div class="sub">GET /account/recharge/list · 账号填本平台完整编号或昵称 · 核对状态 / 充值月份 / 渠道 · 月份留空则不过滤 · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
+          <div class="sub">账号填本平台完整编号或昵称 · 可按核对状态、充值月份、渠道筛选 · 月份留空则不过滤 · 金额超过 5000 须凭证 · 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
         </div>
       </div>
       <p v-if="rcR1Due" class="hint" data-testid="acct-rc-r1">请于 5 日前完成上月核对</p>
@@ -363,7 +363,7 @@
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">成本汇总报表</h2>
-          <div class="sub">GET /account/recharge/summary · 期间按月过滤 · 维度：账号 / 部门 / 平台 · 关键字只筛当前表 · 合计与导出仍为整月 · 可导出 xlsx / csv</div>
+          <div class="sub">期间按月过滤 · 维度：账号、部门、平台 · 关键字只筛当前表 · 合计与导出仍为整月 · 可导出表格</div>
         </div>
       </div>
       <form class="qbar" data-testid="acct-summary-filters" @submit.prevent="loadSummary">
@@ -1342,11 +1342,11 @@ const userStore = useUserStore()
 const currentUserId = computed(() => Number(userStore.profile?.userId || 0))
 
 const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: string }> = {
-  'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: 'P-M4-008 · WECHAT_OFFICIAL · 08 CORP-A' },
-  'wechat-channels': { title: '视频号', platform: 'WECHAT_CHANNELS', sub: 'P-M4-008 · WECHAT_CHANNELS + 采集 Tab · 08 CORP-A' },
-  douyin: { title: '抖音', platform: 'DOUYIN', sub: 'P-M4-008 · DOUYIN + 内部账号采集 · 08 CORP-A' },
-  kuaishou: { title: '快手', platform: 'KUAISHOU', sub: 'P-M4-008 · KUAISHOU + 内部账号采集 · 08 CORP-A' },
-  xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: 'P-M4-008 · XIAOHONGSHU · 08 CORP-A' },
+  'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: '公众号账号台账' },
+  'wechat-channels': { title: '视频号', platform: 'WECHAT_CHANNELS', sub: '视频号账号台账与采集' },
+  douyin: { title: '抖音', platform: 'DOUYIN', sub: '抖音账号台账与采集' },
+  kuaishou: { title: '快手', platform: 'KUAISHOU', sub: '快手账号台账与采集' },
+  xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: '小红书账号台账' },
 }
 
 const meta = computed(() => {

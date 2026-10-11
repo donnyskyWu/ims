@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>IP 组运营</h1>
-        <div class="sub">大组小组、成员岗位、作者与账号绑定 · 19a IPG</div>
+        <div class="sub">大组小组、成员岗位、作者与账号绑定</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec" type="button" disabled>导出</button>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>视频号内部账号采集</h1>
-        <div class="sub">C5 · 同一 IMS 定时器先采粉丝日统计，再采作品列表</div>
+        <div class="sub">同一套定时任务先采粉丝日统计，再采作品列表</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goTasks">采集任务</button>

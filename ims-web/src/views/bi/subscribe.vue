@@ -4,8 +4,7 @@
       <div>
         <h1>订阅与分享</h1>
         <div class="sub">
-          BI-003 · 隐藏路由 /ims/bi/report/subscribe · go(biShare) · 钉钉 Webhook：系统参数
-          <code>bi.dingtalk.webhook.url</code> 或 env <code>IMS_BI_DINGTALK_WEBHOOK_URL</code>
+          订阅推送与分享 · 钉钉通知地址在系统参数中配置
         </div>
       </div>
       <div class="acts">

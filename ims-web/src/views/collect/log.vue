@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>采集日志</h1>
-        <div class="sub">UX-M10 P-M10-003 · typeResults 详情 · 16 COLLECT</div>
+        <div class="sub">采集日志详情</div>
       </div>
       <div class="acts">
         <span v-if="successRate24h != null" class="chip" data-testid="collect-health-rate">近 24h 成功率 {{ successRate24h }}%</span>

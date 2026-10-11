@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>发布管理</h1>
-        <div class="sub">CONTENT-006 · 发布单 / 回填 / 督办（PUB-R2）</div>
+        <div class="sub">发布单、回填与督办</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建发布单</button>

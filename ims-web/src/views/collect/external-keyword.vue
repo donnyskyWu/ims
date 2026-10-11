@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>竞品关键字配置</h1>
-        <div class="sub">UX-M8 §3.3 · 开启采集后进入外部统一任务成员 · 16 COLLECT</div>
+        <div class="sub">开启采集后进入外部统一任务</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="kw-create" @click="openCreate">新增关键词</button>

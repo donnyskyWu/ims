@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内部作品</h1>
-        <div class="sub">Tab：全部/爆款/低分 · internal-content · 18b INT</div>
+        <div class="sub">全部、爆款、低分</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/collect/threshold')">阈值规则</button>

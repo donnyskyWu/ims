@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>竞品库</h1>
-        <div class="sub">V3 COMP-003 · BR-202 审核入库 · /ims/comp/library · 18a COMP</div>
+        <div class="sub">审核后入库</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/comp/work')">竞品作品监测</button>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>岗位-角色供给规则</h1>
-        <div class="sub">AUTH-003 · 只挂角色，权限明细在角色页</div>
+        <div class="sub">只挂角色，权限明细在角色页</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="pos-create-open" @click="openCreate">新建规则</button>

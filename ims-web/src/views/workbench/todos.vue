@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>待办中心</h1>
-        <div class="sub">AUTH-004 · 按类型、状态和标题筛选</div>
+        <div class="sub">按类型、状态和标题筛选</div>
       </div>
       <router-link class="btn btn-sec btn-sm" to="/ims/workbench">工作台首页</router-link>
     </div>

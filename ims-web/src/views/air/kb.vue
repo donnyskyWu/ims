@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>知识库</h1>
-        <div class="sub">AIR · 分类树 + 入库审批（无检索）· 20 AIR</div>
+        <div class="sub">分类树与入库审批</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="toggleAudit">

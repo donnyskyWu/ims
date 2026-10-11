@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>指标管理</h1>
-        <div class="sub">FR-M6-001 · /ims/bi/metric · 17a BI0</div>
+        <div class="sub">指标定义</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建指标</button>

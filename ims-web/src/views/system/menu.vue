@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>菜单</h1>
-        <div class="sub">SYS-003 · GET /system/menu/tree · 权限码兼容 ops:*</div>
+        <div class="sub">菜单树</div>
       </div>
     </div>
     <form class="qbar" data-testid="menu-filters" style="margin-bottom: 10px" @submit.prevent>

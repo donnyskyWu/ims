@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>我的绩效</h1>
-        <div class="sub">只显示本人已发布结果。发布前不可见（1157）。</div>
+        <div class="sub">只显示本人已发布结果。发布前不可见。</div>
       </div>
       <label>
         周期

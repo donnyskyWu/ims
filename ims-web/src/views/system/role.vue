@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>角色权限</h1>
-        <div class="sub">SYS-002 · 角色=权限唯一载体 · 菜单 + 功能点 R/W/D + 数据范围 + 钉钉岗位</div>
+        <div class="sub">角色是权限的唯一载体 · 菜单、功能点、数据范围与钉钉岗位</div>
       </div>
       <div class="acts">
         <input v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />

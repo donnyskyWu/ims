@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内容管理</h1>
-        <div class="sub">内容 CRUD · 玩法 matchScheme（CONTENT-106）</div>
+        <div class="sub">内容维护与玩法方案</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新增内容</button>

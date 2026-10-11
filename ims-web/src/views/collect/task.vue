@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>采集任务</h1>
-        <div class="sub">UX-M10 P-M10-001/002 · Channel-A/B/C/D · 16 COLLECT</div>
+        <div class="sub">多渠道采集任务</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="ensureUnified">确保统一任务</button>

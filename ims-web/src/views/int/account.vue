@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内部账号</h1>
-        <div class="sub">Tab：全部/高粉/低粉 · oa_internal_account · 18b INT</div>
+        <div class="sub">全部、高粉、低粉</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/collect/threshold')">阈值规则</button>

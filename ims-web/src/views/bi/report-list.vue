@@ -4,7 +4,7 @@
       <div>
         <h1>报表管理</h1>
         <div class="sub">
-          报表/大屏统一目录 · /ims/bi/report/list · BI-001 首片 · 列表按 BR-212 行级过滤（创建者 ∩ 查看者）
+          报表与大屏统一目录 · 列表只显示本人创建或被授权查看的报表
         </div>
       </div>
       <div class="acts">

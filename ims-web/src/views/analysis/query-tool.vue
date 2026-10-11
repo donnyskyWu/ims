@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>查询工具</h1>
-        <div class="sub">QT-001 · /ims/analysis/query-tool · DRILL|TRACE · 17c QT</div>
+        <div class="sub">下钻与追溯</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/collect/metadata">元数据维护</router-link>

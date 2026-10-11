@@ -962,7 +962,7 @@ const specs: Record<string, {
 }> = {
   company: {
     title: '公司管理',
-    sub: 'CORP-R · 只查询 · GET /corp/resource/company/page',
+    sub: '只查询公司信息',
     placeholder: '公司名称',
     empty: '没有公司',
     emptyHint: '契约只有分页和详情，这里不能新建。',
@@ -977,7 +977,7 @@ const specs: Record<string, {
   },
   realname: {
     title: '实名人管理',
-    sub: 'CORP-R · 姓名、证件号、手机由接口脱敏',
+    sub: '姓名、证件号、手机脱敏展示',
     placeholder: '姓名',
     empty: '没有实名人',
     emptyHint: '契约只有分页和详情。',
@@ -992,7 +992,7 @@ const specs: Record<string, {
   },
   'sim-card': {
     title: '手机卡管理',
-    sub: 'CORP-R · 号码脱敏 · 归属人只选本地用户',
+    sub: '号码脱敏 · 归属人只选本地用户',
     placeholder: '完整手机号',
     empty: '没有手机卡',
     emptyHint: '可以新建。号码和 ICCID 只以脱敏值返回。',
@@ -1004,7 +1004,7 @@ const specs: Record<string, {
   },
   certificate: {
     title: '证件管理',
-    sub: 'CORP-R · 索引分页 · 数字化率 · 到期预警 · 分级原图',
+    sub: '分页检索 · 数字化率 · 到期预警 · 分级原图',
     placeholder: '持有人',
     empty: '没有证件档案',
     emptyHint: '可以录入。审核生效后参与到期扫描。',

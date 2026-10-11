@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>工作任务登记</h1>
-        <div class="sub">作者×赛事矩阵 · 确认出任务/撤回（CONTENT-104/105）</div>
+        <div class="sub">作者与赛事矩阵 · 确认出任务或撤回</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="loadSheet">刷新登记表</button>

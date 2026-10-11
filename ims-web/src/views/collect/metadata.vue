@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>元数据维护</h1>
-        <div class="sub">UX-M8 §4 · COLLECT P4m · BI0 只读消费 entity/{code}/fields</div>
+        <div class="sub">只读查看采集字段</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="metadata-create-btn" @click="openCreate">

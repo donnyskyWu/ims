@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>分成单管理</h1>
-        <div class="sub">FIN-003 · 财务审 + 业务审 → 发放 · 负向调整在发放接口红冲（1150 / 1144）· #90</div>
+        <div class="sub">财务审与业务审通过后发放 · 负向调整在发放时红冲</div>
       </div>
     </div>
 

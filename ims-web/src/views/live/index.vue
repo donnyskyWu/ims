@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>直播管理</h1>
-        <div class="sub">场次中心：列表→详情 Tab（数据/风控/下播） · 10 LIVE</div>
+        <div class="sub">场次中心：从列表进入详情（数据、风控、下播）</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec" to="/ims/live/alarm" data-testid="live-alarm-link">风险告警</router-link>

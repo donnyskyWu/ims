@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>Football 补偿队列</h1>
-        <div class="sub">CONTENT-109/110 · BR-303 写失败进 outbox，IMS 保存不回滚</div>
+        <div class="sub">同步失败进入待发送队列，保存不回滚</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec" to="/ims/content/list">返回内容管理</router-link>

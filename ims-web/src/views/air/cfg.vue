@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>模型与提示词</h1>
-        <div class="sub">OPS M8 收编 · 禁止两套 Key · /ims/air/cfg</div>
+        <div class="sub">密钥配置 · 禁止同时使用两套密钥</div>
       </div>
     </div>
 

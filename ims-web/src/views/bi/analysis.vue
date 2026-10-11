@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>指标分析</h1>
-        <div class="sub">FR-M6-001 分析视图 · /ims/bi/analysis · 17a BI0</div>
+        <div class="sub">分析视图</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/metric">指标管理</router-link>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>专家库</h1>
-        <div class="sub">专家包组装（Prompt+技能）与授权 · /ims/air/expert</div>
+        <div class="sub">专家包组装与授权</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="air-expert-create" @click="openCreate">新增专家</button>

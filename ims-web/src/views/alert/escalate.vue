@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>升级中心</h1>
-        <div class="sub">ALERT-003 · 一级 30 分钟 / 二级 60 分钟 · L3 从二级起跳 · 待升级清单 30 秒轮询</div>
+        <div class="sub">一级 30 分钟，二级 60 分钟 · 三级从二级起算 · 待升级清单每 30 秒刷新</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="alert-escalate-refresh" @click="refreshAll">

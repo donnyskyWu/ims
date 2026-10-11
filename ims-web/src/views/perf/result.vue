@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>考核结果</h1>
-        <div class="sub">FR-M3-003 · GET /perf/result/list · GET /perf/result/export · 05 PERF</div>
+        <div class="sub">结果列表与导出</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" data-testid="perf-result-export" @click="exportCsv">导出 CSV</button>
@@ -16,7 +16,7 @@
     <section data-testid="perf-rank-board" style="margin-bottom: 16px">
       <div class="pg-h" style="margin-bottom: 8px">
         <div>
-          <div class="sub">PERF-004 排名区 · {{ gradeLine }}</div>
+          <div class="sub">排名 · {{ gradeLine }}</div>
           <p class="hint">V2 排名不含竞品分析维度（BR-110）。</p>
         </div>
         <div class="acts">

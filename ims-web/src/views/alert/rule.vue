@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>预警规则</h1>
-        <div class="sub">ALERT-001 · 试跑 POST /alert/rule/{id}/trial · 13 ALERT</div>
+        <div class="sub">规则试跑</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建规则</button>

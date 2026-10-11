@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>穿透性能监控</h1>
-        <div class="sub">DC-001 · /ims/dc/trace/perf · GET /dc/trace/perf-metrics · BR-205</div>
+        <div class="sub">链路性能</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/dc/trace">返回穿透查询</router-link>

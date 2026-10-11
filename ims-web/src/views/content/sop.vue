@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>SOP 管理</h1>
-        <div class="sub">SOP 模板列表与节点编排（CONTENT-100 · SOP 免审）</div>
+        <div class="sub">SOP 模板列表与节点编排（免审）</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新增模板</button>

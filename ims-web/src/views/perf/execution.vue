@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>执行考核</h1>
-        <div class="sub">FR-M3-002 · /ims/perf/execution · GET/POST /perf/execution · 05 PERF</div>
+        <div class="sub">考核执行</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/perf/scheme">考核方案</router-link>

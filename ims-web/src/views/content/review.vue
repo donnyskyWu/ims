@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内容审核</h1>
-        <div class="sub">审核队列与结论（CONTENT-005 · 未审不可发布 G1）</div>
+        <div class="sub">审核队列与结论（未审不可发布）</div>
       </div>
       <div class="acts">
         <span class="csub">一次通过率 {{ stats.firstPassRate != null ? (stats.firstPassRate * 100).toFixed(1) : '—' }}%</span>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>直播风险告警</h1>
-        <div class="sub">LIVE-003 · 规则命中、处置与 30 分钟升级桩 · 钉钉/短信只记本地桩</div>
+        <div class="sub">规则命中、处置与 30 分钟升级 · 钉钉和短信只在本系统留痕</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/live/sessions">返回场次</router-link>

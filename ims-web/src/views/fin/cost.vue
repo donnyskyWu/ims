@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>成本核算</h1>
-        <div class="sub">FIN-001 · 场次成本录入 · 期间结账后写操作冻结（1142）</div>
+        <div class="sub">场次成本录入 · 期间结账后不可再改</div>
       </div>
     </div>
 

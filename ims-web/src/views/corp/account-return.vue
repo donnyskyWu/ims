@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>离职归还</h1>
-        <div class="sub">ACCT-003 · 归还单未闭环时关闭权限返回 1024</div>
+        <div class="sub">归还单未完成时不能关闭权限</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" data-testid="return-generate-open" @click="openGenerate">手动补建</button>

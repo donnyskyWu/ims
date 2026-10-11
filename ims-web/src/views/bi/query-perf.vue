@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>查询性能监控</h1>
-        <div class="sub">BI-002 · /ims/bi/query/perf · GET /bi/query/perf-stats · BR-204 / V3-B6 · 无菜单</div>
+        <div class="sub">查询性能统计</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/preview">返回预览与下钻</router-link>

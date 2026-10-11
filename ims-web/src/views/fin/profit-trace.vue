@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>利润反查</h1>
-        <div class="sub">DC-002 · 利润列表 / 聚合下钻 / 异常清单 · GET /dc/profit-trace/*</div>
+        <div class="sub">利润列表、聚合下钻与异常清单</div>
       </div>
     </div>
 

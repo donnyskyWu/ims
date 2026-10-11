@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>绩效计算与核准</h1>
-        <div class="sub">PERF-002 · 月度计算 → 人工补充 → 核准发布。分档为优秀 / 合格 / 待改进。</div>
+        <div class="sub">月度计算、人工补充，然后核准发布。分档为优秀、合格、待改进。</div>
       </div>
       <div class="acts">
         <label>

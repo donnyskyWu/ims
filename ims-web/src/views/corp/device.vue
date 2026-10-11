@@ -740,7 +740,7 @@ const specs: Record<string, {
 }> = {
   office: {
     title: '办公设备管理',
-    sub: 'CORP-D · 采购导入 → 领用 → 使用 → 归还 → 报废 · 实名人穿透',
+    sub: '采购导入、领用、使用、归还、报废 · 可查看实名人',
     placeholder: '资产编号 / 名称',
     empty: '没有办公设备',
     emptyHint: '点「资产登记」或「采购导入」写入台账，再按领用、使用、归还、报废流转。',
@@ -750,7 +750,7 @@ const specs: Record<string, {
   },
   live: {
     title: '直播设备管理',
-    sub: 'CORP-D · 直播与拍摄设备同一台账',
+    sub: '直播与拍摄设备同一台账',
     placeholder: '资产编号 / 名称',
     empty: '没有直播设备',
     emptyHint: '登记时类型选直播设备或拍摄设备。流转与办公设备相同。',
@@ -760,7 +760,7 @@ const specs: Record<string, {
   },
   phone: {
     title: '手机设备管理',
-    sub: 'MASTER-003 · 保管人只选本地用户 · 号码脱敏',
+    sub: '保管人只选本地用户 · 号码脱敏',
     placeholder: '设备编号 / 型号',
     empty: '没有手机',
     emptyHint: '可以新建。列表不显示实名人，手机资产没有这一列。',

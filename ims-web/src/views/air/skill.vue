@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>技能库</h1>
-        <div class="sub">AI 技能登记、审核、授权 · /ims/air/skill</div>
+        <div class="sub">AI 技能登记、审核与授权</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-create" @click="openCreate">新增技能</button>

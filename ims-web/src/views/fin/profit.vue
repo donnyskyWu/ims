@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>利润核算</h1>
-        <div class="sub">FIN-002 · 利润列表 · 三级口径排序 · 异常净利率（2σ）· 11 FIN（场次财务，非账号 COST）</div>
+        <div class="sub">利润列表 · 按三级口径排序 · 标出异常净利率</div>
       </div>
     </div>
 

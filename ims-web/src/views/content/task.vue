@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>我的任务</h1>
-        <div class="sub">任务分页 · 执行 / 提审 / 完成（CONTENT-103 · ADR-079）</div>
+        <div class="sub">任务列表 · 执行、提审、完成</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="loadList">刷新</button>

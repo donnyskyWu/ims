@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>大屏配置</h1>
-        <div class="sub">bi0Screen 隐藏路由 · reportType=DASHBOARD · 只读首片</div>
+        <div class="sub">只读查看大屏首页</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/list">报表管理</router-link>

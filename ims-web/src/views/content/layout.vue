@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>公推模板库</h1>
-        <div class="sub">CONTENT-107 · /content/layout-template · 15 CONTENT</div>
+        <div class="sub">版式模板</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建模板</button>
