@@ -3,10 +3,11 @@ import os
 os.environ["IMS_DB"] = "ims_test"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core import SessionLocal
 from app.main import app
-from app.models import Role, RoleMenu, RolePerm, UserRole
+from app.models import Menu, Role, RoleMenu, RolePerm, UserRole
 from app.scope import refresh_user_scope
 
 
@@ -109,6 +110,47 @@ def test_multi_role_union_and_write_level():
     assert admin_access["admin"] is True
     assert admin_access["fullCatalog"] is True
     assert client.get("/admin-api/ims/system/menu/tree", headers=admin).json()["code"] == 0
+
+
+def grant_codes(user_id: int, key: str, codes: list[str], scope: str = "SELF") -> None:
+    db = SessionLocal()
+    try:
+        role = Role(role_name=key, role_key=key, data_scope=scope, status="ENABLED", source="MANUAL")
+        db.add(role)
+        db.flush()
+        for code in codes:
+            menu = db.scalar(select(Menu).where(Menu.perm_code == code, Menu.deleted == 0))
+            assert menu is not None, code
+            db.add(RoleMenu(role_id=role.id, menu_id=menu.id, perm_code=code, tenant_id=0))
+            db.add(RolePerm(role_id=role.id, module_code="system", perm_code=code, perm_level="R", tenant_id=0))
+        db.add(UserRole(user_id=user_id, role_id=role.id, tenant_id=0))
+        db.commit()
+        refresh_user_scope(db, user_id)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_user_add_edit_can_load_form_deps_without_role_or_org_menu():
+    headers = login()
+    user_id = create_user(headers, "formdeps", "13622220011")
+    grant_codes(user_id, "perm-user-form", ["system:user:query", "system:user:add", "system:user:edit"], scope="SELF")
+    token = login("formdeps", "Pass@123")
+    access = client.get("/admin-api/ims/auth/access", headers=token).json()["data"]
+    assert "system:user:add" in access["permCodes"]
+    assert "system:user:edit" in access["permCodes"]
+    assert "system:role:query" not in access["permCodes"]
+    assert "auth:org:query" not in access["permCodes"]
+    assert "/ims/system/role" not in access["routes"]
+    assert "/ims/auth/org" not in access["routes"]
+    roles = client.get("/admin-api/ims/system/role/list", headers=token)
+    assert roles.status_code == 200 and roles.json()["code"] == 0, roles.json()
+    org = client.get("/admin-api/ims/auth/org/users", headers=token, params={"pageNo": 1, "pageSize": 100})
+    assert org.status_code == 200 and org.json()["code"] == 0, org.json()
+    blocked = client.get("/admin-api/ims/system/menu/tree", headers=token)
+    assert blocked.status_code == 403 and blocked.json()["code"] == 403
+    events = client.get("/admin-api/ims/auth/org/events", headers=token)
+    assert events.status_code == 403 and events.json()["code"] == 403
 
 
 def test_reader_cannot_open_unrelated_system_api():

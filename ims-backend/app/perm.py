@@ -56,6 +56,20 @@ def allows(levels: dict[str, str], code: str, method: str) -> bool:
     return bool(levels.get(buttons["add"]) or levels.get(buttons["edit"]))
 
 
+# 用户新增/编辑表单要读角色和部门，但不因此放出角色管理或组织菜单。
+USER_FORM_READS = (
+    "/admin-api/ims/system/role/list",
+    "/admin-api/ims/auth/org/users",
+)
+
+
+def holds_user_form(levels: dict[str, str]) -> bool:
+    if levels.get("system:user:add") or levels.get("system:user:edit"):
+        return True
+    letters = letters_of(levels.get("system:user:query", ""))
+    return "W" in letters or "D" in letters
+
+
 def deny_perm():
     from app.api import AuthError
 
@@ -135,6 +149,8 @@ def enforce_function(db: Session, request, user: User) -> None:
     if is_admin(db, user):
         return
     levels = level_map(db, user)
+    if request.method in ("GET", "HEAD") and path in USER_FORM_READS and holds_user_form(levels):
+        return
     code = match_code(path)
     if code is None:
         deny_perm()

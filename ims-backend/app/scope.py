@@ -535,6 +535,12 @@ def gate(db: Session, request, user: User) -> None:
     if any(path.startswith(prefix) for prefix in WHITELIST_PREFIXES):
         request.state.scope = None
         return
+    if request.method in ("GET", "HEAD"):
+        from app.perm import USER_FORM_READS, holds_user_form, level_map
+
+        if path in USER_FORM_READS and holds_user_form(level_map(db, user)):
+            request.state.scope = None
+            return
     table = match_table(request.method, path)
     if table is None or table not in SPECS:
         deny()

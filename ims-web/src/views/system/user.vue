@@ -6,7 +6,7 @@
         <div class="sub">SYS-001 · 手机号由接口脱敏 · GET /system/user/page</div>
       </div>
       <div class="acts">
-        <button v-if="canWriteUser" class="btn btn-pri" type="button" data-testid="sys-user-create-open" @click="openCreate">新建用户</button>
+        <button v-if="canAddUser" class="btn btn-pri" type="button" data-testid="sys-user-create-open" @click="openCreate">新建用户</button>
       </div>
     </div>
     <form class="qbar" @submit.prevent="search">
@@ -66,7 +66,7 @@
                 </span>
               </td>
               <td>
-                <button v-if="canWriteUser" class="btn btn-txt" type="button" data-testid="sys-user-edit" @click="openEdit(row)">编辑</button>
+                <button v-if="canEditUser" class="btn btn-txt" type="button" data-testid="sys-user-edit" @click="openEdit(row)">编辑</button>
               </td>
             </tr>
           </tbody>
@@ -181,7 +181,8 @@ const formError = ref('')
 const roleOptions = ref<RoleOption[]>([])
 const deptOptions = ref<DeptOption[]>([])
 const user = useUserStore()
-const canWriteUser = computed(() => user.canWrite('system:user:query'))
+const canAddUser = computed(() => user.hasPerm('system:user:add') || user.canWrite('system:user:query'))
+const canEditUser = computed(() => user.hasPerm('system:user:edit') || user.canWrite('system:user:query'))
 const form = reactive({
   username: '',
   nickname: '',
