@@ -1,6 +1,14 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, loginAs, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  loginAs,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * #82 · 纯 UI
@@ -143,7 +151,9 @@ test.describe('live ledger export and finance report', () => {
 
     const detail = page.locator('.drawer.on').filter({ hasText: '场次' })
     await expect(detail).toBeVisible({ timeout: 15_000 })
+    await confirmLiveSessionEnd(page, detail)
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
+    await fillLiveReportFields(detail)
     await detail.getByTestId('live-cost-type').selectOption('GIFT')
     await detail.getByTestId('live-cost-amount').fill('-1')
     const badResp = page.waitForResponse(

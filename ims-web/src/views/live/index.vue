@@ -491,18 +491,23 @@
           · 时长 <span data-testid="live-report-duration">{{ reportDurationText }}</span>
         </p>
         <div class="formrow one">
-          <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
-          <div class="fld"><label>GMV</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" :style="fieldMissing('orderCount') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" :style="fieldMissing('viewerCount') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" :style="fieldMissing('peakOnline') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" :style="fieldMissing('newFans') ? 'border-color: var(--red)' : ''" /></div>
-          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('refundAmount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际开始 *</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际结束 *</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>GMV *</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>订单数 *</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" :style="fieldMissing('orderCount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld">
+            <label>客单价</label>
+            <div data-testid="live-report-live-aov">{{ liveAov }}</div>
+          </div>
+          <div v-if="showOpsFields" class="fld"><label>观看人数 *</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" :style="fieldMissing('viewerCount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>峰值在线 *</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" :style="fieldMissing('peakOnline') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>涨粉 *</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" :style="fieldMissing('newFans') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>退款 *</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('refundAmount') ? 'border-color: var(--red)' : ''" /></div>
           <div class="fld">
-            <label>投放成本</label>
+            <label>投放成本 *</label>
             <input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" :style="fieldMissing('adCost') ? 'border-color: var(--red)' : ''" />
             <p class="hint" data-testid="live-ad-cost-hint">投放成本将关联冲话费记录核对。</p>
+            <p class="hint">ROAS <span data-testid="live-report-live-roas">{{ liveRoas }}</span></p>
           </div>
           <div v-if="showCostEditor" class="fld">
             <label>成本明细</label>
@@ -737,15 +742,15 @@ const alarms = ref<any[]>([])
 const tab = ref('基本信息')
 const tabs = ['基本信息', '直播数据', '风控登记', '下播与 GMV', '关联']
 const reportForm = reactive({
-  actualStart: '2026-10-06T20:00:00+08:00',
-  actualEnd: '2026-10-06T22:00:00+08:00',
-  gmv: '1000',
-  orderCount: '10',
-  viewerCount: '500',
-  peakOnline: '80',
-  newFans: '20',
-  refundAmount: '0',
-  adCost: '100',
+  actualStart: '',
+  actualEnd: '',
+  gmv: '',
+  orderCount: '',
+  viewerCount: '',
+  peakOnline: '',
+  newFans: '',
+  refundAmount: '',
+  adCost: '',
 })
 const costLines = ref<{ costType: string; amount: unknown; remark?: string }[]>([])
 const costDraft = reactive({ costType: 'GIFT', amount: '' })
@@ -831,16 +836,30 @@ function costLabel(kind: string) {
 }
 
 function resetReportForm() {
-  reportForm.actualStart = '2026-10-06T20:00:00+08:00'
-  reportForm.actualEnd = '2026-10-06T22:00:00+08:00'
-  reportForm.gmv = '1000'
-  reportForm.orderCount = '10'
-  reportForm.viewerCount = '500'
-  reportForm.peakOnline = '80'
-  reportForm.newFans = '20'
-  reportForm.refundAmount = '0'
-  reportForm.adCost = '100'
+  reportForm.actualStart = ''
+  reportForm.actualEnd = ''
+  reportForm.gmv = ''
+  reportForm.orderCount = ''
+  reportForm.viewerCount = ''
+  reportForm.peakOnline = ''
+  reportForm.newFans = ''
+  reportForm.refundAmount = ''
+  reportForm.adCost = ''
 }
+
+const liveAov = computed(() => {
+  const gmv = Number(reportForm.gmv)
+  const orders = Number(reportForm.orderCount)
+  if (reportForm.gmv === '' || reportForm.orderCount === '' || !Number.isFinite(gmv) || !Number.isFinite(orders) || orders <= 0) return '—'
+  return (gmv / orders).toFixed(2)
+})
+
+const liveRoas = computed(() => {
+  const gmv = Number(reportForm.gmv)
+  const ad = Number(reportForm.adCost)
+  if (reportForm.gmv === '' || reportForm.adCost === '' || reportForm.adCost === '***' || !Number.isFinite(gmv) || !Number.isFinite(ad) || ad <= 0) return '—'
+  return (gmv / ad).toFixed(2)
+})
 
 function applyReport(data: Record<string, unknown> | null) {
   if (!data) {

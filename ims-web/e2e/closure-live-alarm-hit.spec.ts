@@ -36,6 +36,7 @@ test.describe('live alarm hit handle closure', () => {
     await drawer.getByTestId('live-alarm-rule-metric').selectOption('viewer_count')
     await drawer.getByTestId('live-alarm-rule-op').selectOption('LT')
     await drawer.getByTestId('live-alarm-rule-threshold').fill('1000')
+    await drawer.getByTestId('live-alarm-rule-notify').fill('1')
     await drawer.getByTestId('live-alarm-rule-level').selectOption('2')
 
     const saveResp = page.waitForResponse(

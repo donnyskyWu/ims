@@ -1,6 +1,13 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * Checklist E2E-S2-06/07/08（#80 · 纯 UI）
@@ -34,6 +41,7 @@ async function openReportTab(
 
   const detail = page.locator('.drawer').filter({ hasText: '场次' })
   await expect(detail).toBeVisible({ timeout: 15_000 })
+  await confirmLiveSessionEnd(page, detail)
   const reportLoad = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
     { timeout: 15_000 },
@@ -42,7 +50,11 @@ async function openReportTab(
   await reportLoad.catch(() => null)
   const gmv = detail.getByTestId('live-report-gmv')
   await expect(gmv).toBeVisible()
-  await expect(gmv).toHaveValue('1000', { timeout: 5_000 })
+  await expect(gmv).toHaveValue('')
+  await expect(detail.getByText('GMV *', { exact: true })).toBeVisible()
+  await expect(detail.getByTestId('live-report-live-aov')).toHaveText('—')
+  await expect(detail.getByTestId('live-report-live-roas')).toHaveText('—')
+  await fillLiveReportFields(detail, { 'live-report-gmv': '' })
   return { detail, sessionCode: sessionCode! }
 }
 
@@ -70,6 +82,8 @@ test.describe('live report end ledger closure', () => {
     await page.screenshot({ path: `${shotDir}/01-missing-1046.png`, fullPage: true })
 
     await detail.getByTestId('live-report-gmv').fill('88000')
+    await expect(detail.getByTestId('live-report-live-aov')).toHaveText('8800.00')
+    await expect(detail.getByTestId('live-report-live-roas')).toHaveText('880.00')
     const submitResp = page.waitForResponse(
       (r) =>
         /\/live\/report\/IMS/.test(r.url()) &&

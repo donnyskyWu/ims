@@ -658,7 +658,41 @@ async function fillAfterReportReset(field: Locator, value: string) {
   throw new Error(`下播字段未保持为 ${value}，当前 ${last}`)
 }
 
-/** 开播登记抽屉：按名称下拉选账号 / 实名人 / 手机，不再手填数字 id。 */
+/** 已放行场次：确认开播后再确认下播，等到状态变成已下播。 */
+export async function confirmLiveSessionEnd(page: Page, detail: Locator) {
+  await detail.locator('.tab', { hasText: '风控登记' }).click()
+  const startResp = page.waitForResponse(
+    (r) => r.url().includes('/start') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await detail.getByTestId('live-start-btn').click()
+  expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
+  await detail.getByTestId('live-end-btn').click()
+  const endResp = page.waitForResponse(
+    (r) => r.url().includes('/end') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await page.getByTestId('live-end-confirm').click()
+  expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
+  await expect(detail.getByTestId('live-session-status')).toContainText('ENDED')
+}
+
+export async function fillLiveReportFields(detail: Locator, patch: Record<string, string> = {}) {
+  const values: Record<string, string> = {
+    'live-report-start': '2026-10-20T20:00:00+08:00',
+    'live-report-end': '2026-10-20T22:00:00+08:00',
+    'live-report-gmv': '1000',
+    'live-report-orders': '10',
+    'live-report-viewers': '500',
+    'live-report-peak': '80',
+    'live-report-fans': '20',
+    'live-report-refund': '0',
+    'live-report-ad': '100',
+    ...patch,
+  }
+  for (const [id, value] of Object.entries(values)) {
+    await detail.getByTestId(id).fill(value)
+  }
+}
+
 export async function fillLiveRegisterDrawer(
   drawer: Locator,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
@@ -752,6 +786,7 @@ export async function registerLiveSessionConfirmedReportViaUi(
   )
   await page.getByTestId('live-end-confirm').click()
   expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
+  await expect(detailDrawer.getByTestId('live-session-status')).toContainText('ENDED')
 
   const reportLoad = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
@@ -762,12 +797,13 @@ export async function registerLiveSessionConfirmedReportViaUi(
   const gmvInput = detailDrawer.getByTestId('live-report-gmv')
   const refundInput = detailDrawer.getByTestId('live-report-refund')
   await expect(gmvInput).toBeVisible()
-  if (opts?.actualStart) {
-    await detailDrawer.getByTestId('live-report-start').fill(opts.actualStart)
-  }
-  if (opts?.actualEnd) {
-    await detailDrawer.getByTestId('live-report-end').fill(opts.actualEnd)
-  }
+  await detailDrawer.getByTestId('live-report-start').fill(opts?.actualStart || '2026-10-20T20:00:00+08:00')
+  await detailDrawer.getByTestId('live-report-end').fill(opts?.actualEnd || '2026-10-20T22:00:00+08:00')
+  await detailDrawer.getByTestId('live-report-orders').fill('10')
+  await detailDrawer.getByTestId('live-report-viewers').fill('500')
+  await detailDrawer.getByTestId('live-report-peak').fill('80')
+  await detailDrawer.getByTestId('live-report-fans').fill('20')
+  await detailDrawer.getByTestId('live-report-ad').fill('100')
   await fillAfterReportReset(gmvInput, String(gmv))
   await fillAfterReportReset(refundInput, String(refundAmount))
 

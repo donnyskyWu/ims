@@ -73,6 +73,7 @@ test.describe('live alarm 30 minute escalate stub', () => {
     await page.getByTestId('live-alarm-rule-name').fill('场观骤降热更新')
     await page.getByTestId('live-alarm-rule-threshold').fill('30')
     await page.getByTestId('live-alarm-rule-window').fill('5')
+    await page.getByTestId('live-alarm-rule-notify').fill('1')
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/live/alarm/rule') && r.request().method() === 'POST',
     )

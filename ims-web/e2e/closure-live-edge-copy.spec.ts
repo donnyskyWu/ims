@@ -1,6 +1,13 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * #219 · 下播 UV/时长与冲话费提示、待录入起止、告警空态与处置说明。
@@ -72,6 +79,7 @@ test.describe('live report alarm pending edge copy', () => {
     const ruleDrawer = page.getByTestId('live-alarm-rule-drawer')
     await ruleDrawer.getByTestId('live-alarm-rule-name').fill(`窗口非法 ${Date.now()}`)
     await ruleDrawer.getByTestId('live-alarm-rule-window').fill('0')
+    await ruleDrawer.getByTestId('live-alarm-rule-notify').fill('1')
     await ruleDrawer.getByTestId('live-alarm-rule-save').click()
     await expect(page.getByTestId('live-alarm-rule-error')).toContainText('1009')
     await expect(page.getByTestId('live-alarm-rule-window')).toHaveCSS('border-color', 'rgb(255, 59, 48)')
@@ -79,9 +87,15 @@ test.describe('live report alarm pending edge copy', () => {
 
     const topic = `E2E 边角 ${Date.now()}`
     const { detail, sessionCode } = await registerSession(page, topic)
+    await confirmLiveSessionEnd(page, detail)
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
+    await expect(detail.getByTestId('live-report-uv')).toHaveText('—')
+    await expect(detail.getByTestId('live-report-duration')).toHaveText('—')
+    await fillLiveReportFields(detail)
     await expect(detail.getByTestId('live-report-uv')).toHaveText('2.00')
     await expect(detail.getByTestId('live-report-duration')).toHaveText('120 分钟')
+    await expect(detail.getByTestId('live-report-live-aov')).toHaveText('100.00')
+    await expect(detail.getByTestId('live-report-live-roas')).toHaveText('10.00')
     await expect(detail.getByTestId('live-ad-cost-hint')).toContainText('冲话费')
     await detail.getByTestId('live-report-viewers').fill('0')
     await expect(detail.getByTestId('live-report-uv')).toHaveText('—')
@@ -93,14 +107,12 @@ test.describe('live report alarm pending edge copy', () => {
     await expect(detail.getByTestId('live-related-alarm-empty')).toContainText('本场次还没有风险命中')
     await page.screenshot({ path: `${shotDir}/07-related-empty.png`, fullPage: true })
 
-    await detail.locator('.tab', { hasText: '风控登记' }).click()
-    await detail.getByTestId('live-start-btn').click()
-    await expect(page.getByText('已确认开播')).toBeVisible()
     await page.locator('.drawer.on .dr-x').click()
     await page.getByTestId('live-view-pending').click()
     const mine = page.getByTestId('live-pending-row').filter({ hasText: sessionCode })
     await expect(mine).toBeVisible({ timeout: 15_000 })
-    await expect(mine.getByTestId('live-pending-unrecorded')).toHaveText('待录入')
+    await expect(mine.getByTestId('live-pending-range')).toBeVisible()
+    await expect(mine.getByTestId('live-pending-overdue')).toHaveCount(0)
     const recorded = page.getByTestId('live-pending-row').filter({ hasText: 'E2E超时督办' })
     await expect(recorded.getByTestId('live-pending-range')).toContainText('120 分钟')
     await page.screenshot({ path: `${shotDir}/08-pending-range.png`, fullPage: true })

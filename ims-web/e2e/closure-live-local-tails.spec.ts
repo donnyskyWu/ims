@@ -1,6 +1,13 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * #197 · 纯 UI
@@ -91,16 +98,18 @@ test.describe('live local risk report tails', () => {
     expect(regBody.code).toBe(0)
     const detail = page.locator('.drawer.on')
     await expect(detail).toBeVisible({ timeout: 15_000 })
-    const openReport = page.waitForResponse(
-      (r) => /\/live\/report\/IMS/.test(r.url()) && r.request().method() === 'GET' && r.status() === 200,
-    )
+    await confirmLiveSessionEnd(page, detail)
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
-    await openReport
     await expect(detail.getByTestId('live-report-draft')).toBeVisible()
+    await expect(detail.getByTestId('live-report-duration')).toHaveText('—')
+    await fillLiveReportFields(detail, {
+      'live-report-orders': '0',
+      'live-report-ad': '0',
+      'live-report-gmv': '80',
+    })
     await expect(detail.getByTestId('live-report-duration')).toContainText('120 分钟')
-    await detail.getByTestId('live-report-orders').fill('0')
-    await detail.getByTestId('live-report-ad').fill('0')
-    await detail.getByTestId('live-report-gmv').fill('80')
+    await expect(detail.getByTestId('live-report-live-aov')).toHaveText('—')
+    await expect(detail.getByTestId('live-report-live-roas')).toHaveText('—')
     const draftResp = page.waitForResponse(
       (r) => /\/live\/report\/IMS/.test(r.url()) && !r.url().includes('/correction') && r.request().method() === 'PUT',
     )
@@ -118,7 +127,7 @@ test.describe('live local risk report tails', () => {
     await expect(detail.getByTestId('live-report-roas')).toHaveText('—')
     await expect(detail.getByTestId('live-cost-empty')).toContainText('暂无成本明细')
     await detail.locator('.tab', { hasText: '风控登记' }).click()
-    await expect(detail.getByTestId('live-session-status')).toContainText('APPROVED')
+    await expect(detail.getByTestId('live-session-status')).toContainText('ENDED')
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
     await page.screenshot({ path: `${shotDir}/04-draft-zero.png`, fullPage: true })
 
