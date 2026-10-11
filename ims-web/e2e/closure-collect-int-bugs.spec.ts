@@ -49,6 +49,7 @@ test.describe('采集与内部分析 BUG-B012–B028', () => {
     await page.getByTestId('acct-form-id').fill(`tb_comp_${stamp}`)
     await page.getByTestId('acct-save').click()
     await expect(page.getByTestId('acct-form-msg')).toContainText('已存在')
+    await page.locator('.drawer.on').getByRole('button', { name: '取消' }).click()
 
     await page.getByTestId('acct-import-open').click()
     await page.getByTestId('acct-import-submit').click()
