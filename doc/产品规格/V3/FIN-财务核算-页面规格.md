@@ -409,7 +409,7 @@ type ProfitDimension = 'ACCOUNT' | 'IP_GROUP' | 'DAREN' | 'OWNER';
 - 路由路径：`/ims/fin/share/rule`
 - 页面级别：一级菜单页（规则列表 + 规则设计抽屉 + 阶梯配置器 + 试算抽屉）
 - 依赖模块：V1 账号/IP 组字典（scope 范围选择）、PERF（无）、BigDecimal 试算
-- 权限矩阵引用（PRD 4.2 FIN-003）：R1 R/W/D（全量）、R3 R/W/D（全量主责）、R4 R/W（审批视角）
+- 权限矩阵引用（PRD 4.2 FIN-003）：R1 R/W/D（全量）、R3 R/W/D（全量主责）、R4 R/W（审批视角）、R9 R（查询列表）
 
 ### 2. ASCII 页面布局
 ```
@@ -499,7 +499,7 @@ type RateType = 'FIXED' | 'LADDER';                       // 固定/阶梯
 ### 4. 交互流程
 
 #### 4.1 页面加载
-骨架屏 → `GET /fin/share/rules`；失败重试。
+骨架屏 → `GET /fin/share/rules`。有查询权限的角色（含 R9）加载列表；无权限时展示中文提示（如「无数据权限」），不展示 `ERR_BAD_REQUEST`。失败重试。
 
 #### 4.2 核心操作流程
 **A. 创建/编辑规则（R3 主责）**

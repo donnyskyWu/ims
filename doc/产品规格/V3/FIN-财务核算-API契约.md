@@ -22,7 +22,7 @@
 | 10 | POST | `/admin-api/ims/fin/profit/recalc/{sessionCode}` | 手动触发重算（新版本） | R3/R1 |
 | 11 | GET | `/admin-api/ims/fin/profit/abnormal` | 异常净利率清单（2σ 偏离） | R1/R3/R4/R9 |
 | 12 | GET | `/admin-api/ims/fin/profit/history/{sessionCode}` | 重算版本历史 | R1/R3/R4 |
-| 13 | GET | `/admin-api/ims/fin/share/rules` | 分成规则列表（分页） | R1/R3/R4 |
+| 13 | GET | `/admin-api/ims/fin/share/rules` | 分成规则列表（分页） | 具备查询权限的角色（含 R1/R3/R4/R9） |
 | 14 | POST | `/admin-api/ims/fin/share/rule` | 创建分成规则 | R3（主责） |
 | 15 | PUT | `/admin-api/ims/fin/share/rule/{id}` | 编辑规则（生成新版本） | R3 |
 | 16 | DELETE | `/admin-api/ims/fin/share/rule/{id}` | 停用规则 | R3/R1 |
@@ -210,6 +210,8 @@ interface FinProfitVO {
 #### 2.3.1 GET /admin-api/ims/fin/share/rules — 规则列表（分页）
 
 **请求**（Query）：`PageParam` + `{ shareTarget?: 'DAREN' | 'REALNAME' | 'TEAM'; status?: 'ENABLED' | 'DISABLED' }`
+
+具备分成规则查询权限的角色（含 R9）可读取列表。创建、编辑、停用、启用、试算仍须维护权限；无维护权限时 `code=1008`、`msg` 为「无分成规则维护权限」。无查询权限时返回「无数据权限」。页面只展示中文 `msg`，不展示 `ERR_BAD_REQUEST` 等传输层错误码。
 
 **响应** `data`：`PageResult<FinShareRuleVO>`
 

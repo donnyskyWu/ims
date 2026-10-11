@@ -361,7 +361,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Scope = { platforms?: string[]; accountIds?: number[]; ipGroupIds?: number[] }
 type Ladder = { min: number; max: number | null; rate: number }
@@ -728,9 +728,7 @@ function buildPayload(confirmConflict: boolean) {
 }
 
 function errText(err: unknown) {
-  const body = err as ApiErr
-  if (body?.code) return `${body.code} ${body.msg || ''}`.trim()
-  return '请求失败'
+  return errorMessage(err)
 }
 
 async function loadList() {

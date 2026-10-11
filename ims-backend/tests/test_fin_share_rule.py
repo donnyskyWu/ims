@@ -511,3 +511,26 @@ def test_fin_share_rule_enable_conflict_needs_confirm():
     assert forced.json()["code"] == 0
     assert forced.json()["data"]["status"] == "ENABLED"
     assert forced.json()["data"]["version"] == version
+
+
+def _login(username: str) -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"}).json()["data"][
+        "accessToken"
+    ]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_r9_query_lists_share_rules_write_stays_chinese():
+    analyst = _login("e2e_fin_r9")
+    listed = client.get("/admin-api/ims/fin/share/rules", headers=analyst)
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["code"] == 0
+    assert isinstance(body["data"]["list"], list)
+
+    denied = client.post("/admin-api/ims/fin/share/rule", headers=analyst, json=rule_body())
+    assert denied.status_code == 403
+    payload = denied.json()
+    assert payload["code"] == 1008
+    assert payload["msg"] == "无分成规则维护权限"
+    assert "ERR_" not in payload["msg"]

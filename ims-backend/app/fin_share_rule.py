@@ -446,9 +446,7 @@ def share_rules(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    denied = reject_writer(db, actor)
-    if denied is not None:
-        return denied
+    # 查询权限由 scope 门禁放行。只读角色（含 R9）要能打开列表；写操作仍走 reject_writer。
     tenant_id = tenant_of(actor)
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(FinShareRule).where(FinShareRule.deleted == 0, FinShareRule.tenant_id == tenant_id)
