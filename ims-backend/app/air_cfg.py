@@ -218,16 +218,25 @@ def model_update(
     row = db.get(AirModelConfig, model_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1001, "配置不存在")
+    vendor = body.vendor.strip() or row.vendor
+    endpoint = body.endpointUrl.strip()
+    vendor_changed = vendor != (row.vendor or "")
+    endpoint_changed = bool(endpoint) and endpoint != (row.endpoint_url or "")
+    key_changed = False
     if body.displayName.strip():
         row.display_name = body.displayName.strip()
-    row.vendor = body.vendor.strip() or row.vendor
+    row.vendor = vendor
     row.model_name = body.modelName.strip() or row.model_name
     row.use_case = body.useCase.strip() or row.use_case
-    row.endpoint_url = body.endpointUrl.strip()
+    if endpoint:
+        row.endpoint_url = endpoint
     if body.apiKey.strip():
-        row.api_key_mask = mask_secret(body.apiKey)
+        masked = mask_secret(body.apiKey)
+        key_changed = masked != (row.api_key_mask or "")
+        row.api_key_mask = masked
     row.is_default = 1 if body.isDefault else row.is_default
-    row.status = body.status.strip() or row.status
+    if key_changed or vendor_changed or endpoint_changed:
+        row.status = "DISCONNECTED"
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
     return ok(model_vo(row, names))

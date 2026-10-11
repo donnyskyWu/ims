@@ -35,9 +35,20 @@ def test_air_cfg_model_prompt_crud():
     updated = client.put(
         f"/admin-api/ims/air/cfg/model/{mid}",
         headers=auth,
-        json={"vendor": "GPT", "modelName": "gpt-4o", "endpointUrl": "https://api.openai.com/v1", "status": "CONNECTED"},
+        json={
+            "vendor": "GPT",
+            "modelName": "gpt-4o",
+            "endpointUrl": "https://api.openai.com/v1",
+            "apiKey": "sk-crud-4242",
+            "status": "CONNECTED",
+        },
     )
     assert updated.json()["code"] == 0
+    assert updated.json()["data"]["modelName"] == "gpt-4o"
+    assert updated.json()["data"]["status"] == "DISCONNECTED"
+    connected = client.post(f"/admin-api/ims/air/cfg/model/{mid}/test", headers=auth)
+    assert connected.json()["code"] == 0
+    assert connected.json()["data"]["status"] == "CONNECTED"
 
     prompts = client.get("/admin-api/ims/air/cfg/prompt/page", headers=auth)
     assert prompts.json()["code"] == 0
@@ -103,6 +114,44 @@ def test_air_cfg_model_test_is_stub():
     jingcai_test = client.post(f"/admin-api/ims/air/cfg/model/{jingcai_id}/test", headers=auth)
     assert jingcai_test.json()["code"] == 0
     assert jingcai_test.json()["data"]["status"] == "CONNECTED"
+
+    ignored = client.put(
+        f"/admin-api/ims/air/cfg/model/{mid}",
+        headers=auth,
+        json={"vendor": "自建网关", "modelName": "gpt-4o-mini", "status": "CONNECTED"},
+    )
+    assert ignored.json()["code"] == 0
+    assert ignored.json()["data"]["status"] == "CONNECTED"
+
+    vendor_reset = client.put(
+        f"/admin-api/ims/air/cfg/model/{mid}",
+        headers=auth,
+        json={"vendor": "OpenAI 兼容", "modelName": "gpt-4o-mini", "status": "CONNECTED"},
+    )
+    assert vendor_reset.json()["data"]["status"] == "DISCONNECTED"
+    client.put(
+        f"/admin-api/ims/air/cfg/model/{mid}",
+        headers=auth,
+        json={"vendor": "自建网关", "modelName": "gpt-4o-mini"},
+    )
+    again = client.post(f"/admin-api/ims/air/cfg/model/{mid}/test", headers=auth)
+    assert again.json()["data"]["status"] == "CONNECTED"
+
+    address_reset = client.put(
+        f"/admin-api/ims/air/cfg/model/{mid}",
+        headers=auth,
+        json={"vendor": "自建网关", "modelName": "gpt-4o-mini", "endpointUrl": "https://gateway.example/v1", "status": "CONNECTED"},
+    )
+    assert address_reset.json()["data"]["status"] == "DISCONNECTED"
+    client.post(f"/admin-api/ims/air/cfg/model/{mid}/test", headers=auth)
+
+    key_reset = client.put(
+        f"/admin-api/ims/air/cfg/model/{mid}",
+        headers=auth,
+        json={"vendor": "自建网关", "modelName": "gpt-4o-mini", "apiKey": "sk-next-9876", "status": "CONNECTED"},
+    )
+    assert key_reset.json()["data"]["status"] == "DISCONNECTED"
+    assert key_reset.json()["data"]["apiKeyMask"] == "****9876"
 
 
 def test_air_cfg_key_and_audit_page():

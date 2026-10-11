@@ -590,7 +590,7 @@
           <input v-model="modelForm.isDefault" type="checkbox" />
           设为默认
         </label>
-        <p class="hint">新建后为 DISCONNECTED。Football jingcai 使用环境变量，不在本页保存明文 Key。连通测试不访问第三方。</p>
+        <p class="hint">连接状态只由「测试」更新。修改供应商、API Key 或地址后会重置为 DISCONNECTED。Football jingcai 使用环境变量，不在本页保存明文 Key。连通测试不访问第三方。</p>
         <p v-if="formError" class="hint" style="color: var(--red)" data-testid="air-model-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showModel = false">取消</button>
