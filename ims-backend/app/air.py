@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -1332,12 +1334,31 @@ def kb_doc_download(
     reason = download_block_reason(db, actor, row)
     if reason:
         return fail(1001, reason)
-    return ok(
-        {
-            "docId": row.id,
-            "fileKey": row.file_key,
-            "contentType": row.content_type,
-            "downloadUrl": f"/admin-api/ims/air/kb/files/{row.file_key.lstrip('/')}",
-            "stub": True,
-        }
-    )
+    payload, media, filename = doc_download_bytes(row)
+    return Response(content=payload, media_type=media, headers={"Content-Disposition": content_disposition(filename)})
+
+
+def download_filename(row: AirKbDoc) -> str:
+    raw = (row.file_key or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if raw and "." in raw and not raw.lower().startswith("http"):
+        return raw[:180]
+    title = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (row.title or "document"))[:80] or "document"
+    ext = "url" if (row.source_type or "") == "URL" else "txt"
+    return f"{title}.{ext}"
+
+
+def content_disposition(filename: str) -> str:
+    ascii_name = "".join(ch if 32 <= ord(ch) < 127 and ch not in {'"', "\\"} else "_" for ch in filename) or "download.bin"
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def doc_download_bytes(row: AirKbDoc) -> tuple[bytes, str, str]:
+    filename = download_filename(row)
+    text = row.body or ""
+    if text:
+        media = (row.content_type or "text/plain").split(";")[0].strip() or "text/plain"
+        if not media.startswith("text/") and media not in {"application/json", "application/xml"}:
+            media = "text/plain"
+        return text.encode("utf-8"), f"{media}; charset=utf-8", filename
+    note = f"{row.title or filename}\n{row.file_key or ''}\n"
+    return note.encode("utf-8"), "text/plain; charset=utf-8", filename

@@ -41,6 +41,8 @@ def test_air_kb_upload_page_download_stub():
 
     blocked = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
     assert blocked.json()["code"] == 1001
+    assert blocked.json()["msg"] == "未发布文档不可下载"
+    assert "attachment" not in blocked.headers.get("content-disposition", "")
 
     audit = client.post(
         "/admin-api/ims/air/kb/doc/audit",
@@ -59,9 +61,10 @@ def test_air_kb_upload_page_download_stub():
     assert libs.json()["data"]["list"][0]["kbName"]
 
     dl = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
-    assert dl.json()["code"] == 0
-    assert dl.json()["data"]["stub"] is True
-    assert "policy.pdf" in dl.json()["data"]["fileKey"]
+    assert dl.status_code == 200
+    assert "attachment" in dl.headers["content-disposition"]
+    assert "policy.pdf" in dl.headers["content-disposition"]
+    assert b"policy.pdf" in dl.content
 
 
 def test_air_kb_audit_reject_requires_note():

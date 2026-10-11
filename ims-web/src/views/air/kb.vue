@@ -94,7 +94,8 @@
                   <td>{{ docStatusLabel(row.auditStatus) }}</td>
                   <td>
                     <button class="btn btn-sec btn-sm" type="button" @click="openDoc(row)">详情</button>
-                    <button v-if="row.auditStatus === 'PUBLISHED'" class="btn btn-sec btn-sm" type="button" @click="downloadDoc(row.id)">下载</button>
+                    <button v-if="row.auditStatus === 'PENDING'" class="btn btn-pri btn-sm" type="button" data-testid="air-kb-doc-audit" @click="publishDoc(row)">审批通过</button>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="air-kb-download" @click="downloadDoc(row.id)">下载</button>
                   </td>
                 </tr>
               </tbody>
@@ -358,6 +359,7 @@
           <b>{{ doc.title }}</b>
           <div class="hint">{{ docStatusLabel(doc.auditStatus) }} · {{ doc.secretLabel || '继承库密级' }} · {{ doc.sourceLabel }}</div>
           <button class="btn btn-sec btn-sm" type="button" @click="browseDoc = doc">浏览</button>
+          <button v-if="doc.auditStatus === 'PENDING'" class="btn btn-pri btn-sm" type="button" data-testid="air-kb-doc-audit" @click="publishDoc(doc)">审批通过</button>
           <button class="btn btn-sec btn-sm" type="button" data-testid="air-kb-download" @click="downloadDoc(doc.id)">下载</button>
         </div>
         <p v-if="browseDoc" class="hint" data-testid="air-kb-browse">{{ browseDoc.body || browseDoc.fileKey || '暂无正文' }}</p>
@@ -980,11 +982,67 @@ function openDoc(row: DocRow) {
   }
 }
 
+function filenameFromDisposition(header: string | undefined, fallback: string) {
+  const raw = header || ''
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(raw)
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1])
+    } catch {
+      /* 使用后备文件名 */
+    }
+  }
+  const plain = /filename="([^"]+)"/i.exec(raw)
+  return plain?.[1] || fallback
+}
+
+async function readBlobMessage(blob: Blob) {
+  try {
+    const text = await blob.text()
+    const body = JSON.parse(text) as { msg?: string }
+    return body.msg || '下载失败'
+  } catch {
+    return '下载失败'
+  }
+}
+
+async function publishDoc(doc: DocRow) {
+  try {
+    await http.post('/air/kb/doc/audit', { docId: doc.id, approve: true })
+    say('审批通过，资料已发布，可以下载')
+    if (detail.value?.id) await openDetail(detail.value.id)
+    else if (selectedCateId.value) await loadDocs()
+    else doc.auditStatus = 'PUBLISHED'
+  } catch (err) {
+    say(errorMessage(err))
+  }
+}
+
 async function downloadDoc(id: number) {
   try {
-    const res = await http.get(`/air/kb/doc/${id}/download`)
-    say(`可下载：${res.data.data.fileKey}`)
+    const res = await http.get(`/air/kb/doc/${id}/download`, { responseType: 'blob' })
+    const type = String(res.headers?.['content-type'] || (res.data as Blob).type || '')
+    if (type.includes('json')) {
+      say(await readBlobMessage(res.data as Blob))
+      return
+    }
+    const blob = res.data as Blob
+    const name = filenameFromDisposition(String(res.headers?.['content-disposition'] || ''), `kb-doc-${id}.txt`)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = name
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    say(`已开始下载 ${name}`)
   } catch (err) {
+    const data = (err as { response?: { data?: Blob } })?.response?.data
+    if (data instanceof Blob) {
+      say(await readBlobMessage(data))
+      return
+    }
     say(errorMessage(err))
   }
 }

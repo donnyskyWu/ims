@@ -254,8 +254,8 @@ def test_kb_download_respects_publish_and_secret():
     internal_id = internal.json()["data"]["docIds"][0]
     client.post("/admin-api/ims/air/kb/doc/audit", headers=auth, json={"docId": internal_id, "approve": True})
     opened = client.get(f"/admin-api/ims/air/kb/doc/{internal_id}/download", headers=reader)
-    assert opened.json()["code"] == 0
-    assert opened.json()["data"]["stub"] is True
+    assert opened.status_code == 200
+    assert "attachment" in opened.headers["content-disposition"]
 
     secret = client.post(
         "/admin-api/ims/air/kb/doc/upload",
@@ -270,9 +270,41 @@ def test_kb_download_respects_publish_and_secret():
     audited = client.post("/admin-api/ims/air/kb/doc/audit", headers=auth, json={"docId": doc_id, "approve": True})
     assert audited.json()["code"] == 0
     allowed = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=reader)
-    assert allowed.json()["code"] == 0
+    assert allowed.status_code == 200
+    assert "attachment" in allowed.headers["content-disposition"]
     blocked = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=peer)
     assert blocked.json()["code"] == 1001
     assert blocked.json()["msg"] == "当前密级无权下载"
+    assert "attachment" not in blocked.headers.get("content-disposition", "")
     admin_dl = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
-    assert admin_dl.json()["code"] == 0
+    assert admin_dl.status_code == 200
+    assert "attachment" in admin_dl.headers["content-disposition"]
+
+
+def test_kb_doc_download_content_disposition():
+    auth = headers()
+    up = client.post(
+        "/admin-api/ims/air/kb/doc/upload",
+        headers=auth,
+        json={
+            "title": "TC下载正文",
+            "fileKey": "kb/c065/body.txt",
+            "content": "hello-c065-body",
+            "contentType": "text/plain",
+        },
+    )
+    assert up.json()["code"] == 0
+    doc_id = up.json()["data"]["docIds"][0]
+    pending = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
+    assert pending.json()["code"] == 1001
+    assert pending.json()["msg"] == "未发布文档不可下载"
+    missing = client.get("/admin-api/ims/air/kb/doc/99999999/download", headers=auth)
+    assert missing.json()["code"] == 1004
+    audited = client.post("/admin-api/ims/air/kb/doc/audit", headers=auth, json={"docId": doc_id, "approve": True})
+    assert audited.json()["code"] == 0
+    downloaded = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
+    assert downloaded.status_code == 200
+    disposition = downloaded.headers["content-disposition"]
+    assert disposition.startswith("attachment;")
+    assert "body.txt" in disposition
+    assert downloaded.content == "hello-c065-body".encode()
