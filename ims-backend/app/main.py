@@ -99,10 +99,11 @@ def _ensure_e2e_author(db) -> None:
 
 
 def seed() -> None:
-    # 改名先落库。采集等后续种子抛错时，这一段不能跟着主事务回滚。
-    from app.role_matrix import commit_e2e_legacy_roles
+    # 改名和验收账号密码先落库。采集等后续种子抛错时，这两段不能跟着主事务回滚。
+    from app.role_matrix import commit_e2e_legacy_roles, commit_seed_passwords
 
     commit_e2e_legacy_roles()
+    commit_seed_passwords()
     db = SessionLocal()
     try:
         if db.get(User, 1) is None and db.query(User).filter(User.username == "admin").first() is None:
@@ -546,9 +547,10 @@ def init_db() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    from app.role_matrix import commit_e2e_legacy_roles
+    from app.role_matrix import commit_e2e_legacy_roles, commit_seed_passwords
 
     commit_e2e_legacy_roles()
+    commit_seed_passwords()
     yield
 
 

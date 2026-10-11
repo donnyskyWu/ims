@@ -224,6 +224,10 @@ def login(body: LoginBody, db: Session = Depends(db_session)):
         record(False, 1001, "登录已锁定")
         return fail(1001, "登录已锁定，请 15 分钟后再试")
     user = db.scalar(select(User).where(User.username == body.username, User.deleted == 0))
+    if user is not None and user.status == "ENABLED":
+        from app.role_matrix import restore_seed_password
+
+        restore_seed_password(user, body.password)
     if user is None or user.status != "ENABLED" or not verify_password(body.password, user.password_hash):
         mark_fail(db, body.username)
         record(False, 1006, "用户名或密码错误", user if user and user.status == "ENABLED" else None)

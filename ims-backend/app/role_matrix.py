@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.menu_catalog import CATALOG, LEGACY_CODES
 from app.models import Menu, Role, RoleMenu, RolePerm, User, UserRole
-from app.security import hash_password
+from app.security import hash_password, password_hash_usable
 
 STANDARD_KEYS = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11")
 
@@ -22,6 +22,10 @@ ACCOUNTS = (
     ("tc_r10", "外协人员", "R10", "13900001010"),
     ("tc_r11", "AI 资产管理员", "R11", "13900001011"),
 )
+
+SEED_PASSWORD = "Admin@123"
+# 标准验收账号。哈希为空或不是 pbkdf2 时补回 SEED_PASSWORD，避免登录接口 500。
+SEED_LOGIN_USERS = {username for username, _nickname, _role_key, _mobile in ACCOUNTS} | {"admin"}
 
 
 def _pack(*pairs: tuple[str, tuple[str, ...]]) -> dict[str, str]:
@@ -423,6 +427,37 @@ def _backfill_full_clones(db: Session) -> None:
             _grant_missing(db, role, levels)
 
 
+def restore_seed_password(user: User, password: str) -> None:
+    """验收账号哈希缺失时，用种子密码补上。空哈希进 verify_password 会抛 TypeError，登录变成 500。"""
+    if user.username not in SEED_LOGIN_USERS or password != SEED_PASSWORD:
+        return
+    if password_hash_usable(user.password_hash):
+        return
+    user.password_hash = hash_password(SEED_PASSWORD)
+
+
+def repair_seed_passwords(db: Session) -> None:
+    users = db.scalars(select(User).where(User.username.in_(SEED_LOGIN_USERS), User.deleted == 0)).all()
+    for user in users:
+        restore_seed_password(user, SEED_PASSWORD)
+
+
+def commit_seed_passwords() -> None:
+    """单独提交。后面的种子失败回滚时，验收账号仍能用种子密码登录。"""
+    from sqlalchemy import inspect
+
+    from app.core import SessionLocal, engine
+
+    if "ims_sys_user" not in set(inspect(engine).get_table_names()):
+        return
+    db = SessionLocal()
+    try:
+        repair_seed_passwords(db)
+        db.commit()
+    finally:
+        db.close()
+
+
 def _ensure_accounts(db: Session) -> None:
     from app.scope import refresh_user_scope
 
@@ -437,7 +472,7 @@ def _ensure_accounts(db: Session) -> None:
                 username=username,
                 nickname=nickname,
                 mobile=mobile,
-                password_hash=hash_password("Admin@123"),
+                password_hash=hash_password(SEED_PASSWORD),
                 status="ENABLED",
                 tenant_id=0,
             )
@@ -447,6 +482,8 @@ def _ensure_accounts(db: Session) -> None:
             user.status = "ENABLED"
             if not user.nickname:
                 user.nickname = nickname
+            if not password_hash_usable(user.password_hash):
+                user.password_hash = hash_password(SEED_PASSWORD)
         links = list(db.scalars(select(UserRole).where(UserRole.user_id == user.id)).all())
         keep = None
         for link in links:
