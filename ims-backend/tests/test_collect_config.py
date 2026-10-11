@@ -96,23 +96,41 @@ def test_metadata_entity_fields_and_bi0_read():
     auth = headers()
     unmapped = client.get("/admin-api/ims/collect/metadata/unmapped-tables", headers=auth)
     assert unmapped.json()["code"] == 0
-    assert any(t["tableName"] == "oa_platform_account" for t in unmapped.json()["data"]["list"])
+    table_list = unmapped.json()["data"]["list"]
+    assert any(t["tableName"] == "ims_sys_user" for t in table_list)
+    assert len(table_list) > 2
+
+    bad_cols = client.get(
+        "/admin-api/ims/collect/metadata/table-columns",
+        headers=auth,
+        params={"tableName": "ims_sys_user;drop"},
+    )
+    assert bad_cols.json()["code"] == 1001
 
     cols = client.get(
         "/admin-api/ims/collect/metadata/table-columns",
         headers=auth,
-        params={"tableName": "oa_platform_account"},
+        params={"tableName": "ims_sys_user"},
     )
     assert cols.json()["code"] == 0
     assert len(cols.json()["data"]["list"]) > 0
+    assert any(c["columnName"] == "username" for c in cols.json()["data"]["list"])
+
+    missing_table = client.get(
+        "/admin-api/ims/collect/metadata/table-columns",
+        headers=auth,
+        params={"tableName": "ims_table_not_exists_xyz"},
+    )
+    assert missing_table.json()["code"] == 0
+    assert missing_table.json()["data"]["list"] == []
 
     created = client.post(
         "/admin-api/ims/collect/metadata/create",
         headers=auth,
         json={
-            "entityCode": "PLATFORM_ACCOUNT",
-            "entityName": "平台账号",
-            "tableName": "oa_platform_account",
+            "entityCode": "SYS_USER_META",
+            "entityName": "系统用户",
+            "tableName": "ims_sys_user",
             "status": "ENABLED",
         },
     )
@@ -125,9 +143,9 @@ def test_metadata_entity_fields_and_bi0_read():
         json={
             "fields": [
                 {
-                    "fieldCode": "account_no",
-                    "columnName": "account_no",
-                    "displayName": "账号编号",
+                    "fieldCode": "username",
+                    "columnName": "username",
+                    "displayName": "登录名",
                     "queryConditionType": "LIKE",
                 }
             ]
@@ -136,9 +154,12 @@ def test_metadata_entity_fields_and_bi0_read():
     assert saved.json()["code"] == 0
     assert len(saved.json()["data"]["fields"]) == 1
 
-    read = client.get("/admin-api/ims/collect/metadata/entity/PLATFORM_ACCOUNT/fields", headers=auth)
+    read = client.get("/admin-api/ims/collect/metadata/entity/SYS_USER_META/fields", headers=auth)
     assert read.json()["code"] == 0
-    assert read.json()["data"]["entityCode"] == "PLATFORM_ACCOUNT"
+    assert read.json()["data"]["entityCode"] == "SYS_USER_META"
+
+    remapped = client.get("/admin-api/ims/collect/metadata/unmapped-tables", headers=auth)
+    assert all(t["tableName"] != "ims_sys_user" for t in remapped.json()["data"]["list"])
 
     missing = client.get("/admin-api/ims/collect/metadata/entity/UNKNOWN/fields", headers=auth)
     assert missing.json()["code"] == 1261

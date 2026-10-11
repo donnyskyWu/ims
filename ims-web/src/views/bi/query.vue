@@ -17,86 +17,214 @@
     <template v-if="tab === 'builder'">
       <div class="card bi0-config-card">
         <div class="bi0-config-hd">
-          <div class="collapse-h"><span class="caret">▼</span><h3>查询配置</h3></div>
+          <div
+            class="collapse-h"
+            :class="{ collapsed: !configOpen }"
+            data-testid="bi-query-config-toggle"
+            @click="configOpen = !configOpen"
+          >
+            <span class="caret">▼</span><h3>查询配置</h3>
+          </div>
           <div class="rowline">
             <button class="btn btn-pri btn-sm" type="button" :disabled="running" @click="runAdhoc">执行查询</button>
             <button class="btn btn-sec btn-sm" type="button" @click="saveDraft">保存为我的查询</button>
           </div>
         </div>
-        <div class="bi0-config-body">
+        <div v-show="configOpen" class="bi0-config-body">
           <div class="bi0-qb-root qb-layout">
-            <div class="qb-form">
-              <div class="qb-row">
-                <label>数据源</label>
-                <select v-model="builder.entityCode" style="width: 280px" @change="loadFields">
-                  <option value="">请选择已映射实体</option>
-                  <option v-for="e in entities" :key="e.entityCode" :value="e.entityCode">
-                    {{ e.entityName }}（{{ e.entityCode }}）
-                  </option>
-                </select>
+            <div class="qb-form bi0-form-panel">
+              <div class="bi0-form-grid">
+                <label class="fld wide">
+                  <span>数据源 <em class="req">*</em></span>
+                  <select
+                    v-model="builder.entityCode"
+                    data-testid="bi-query-entity"
+                    @change="loadFields"
+                  >
+                    <option value="">请选择已映射实体</option>
+                    <option v-for="e in entities" :key="e.entityCode" :value="e.entityCode">
+                      {{ e.entityName }}（{{ e.entityCode }}）
+                    </option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>行数上限</span>
+                  <input
+                    v-model.number="builder.limit"
+                    data-testid="bi-query-limit"
+                    type="number"
+                    min="1"
+                    max="1000"
+                  />
+                </label>
+                <label class="fld">
+                  <span>统计日期（起）</span>
+                  <input v-model="builder.dateFrom" data-testid="bi-query-from" type="date" />
+                </label>
+                <label class="fld">
+                  <span>统计日期（止）</span>
+                  <input v-model="builder.dateTo" data-testid="bi-query-to" type="date" />
+                </label>
+                <label class="fld wide">
+                  <span>条件值</span>
+                  <input
+                    v-model="builder.condValue"
+                    data-testid="bi-query-cond"
+                    placeholder="可选，精确匹配首个展示字段"
+                  />
+                </label>
               </div>
-              <div v-if="fieldHint" class="hint">{{ fieldHint }}</div>
               <div class="qb-row">
                 <label>展示字段</label>
-                <div class="qb-chips">
-                  <label v-for="f in fields" :key="f.fieldCode" class="chip" style="cursor: pointer">
-                    <input v-model="builder.selectFields" type="checkbox" :value="f.fieldCode" />
-                    {{ f.displayName }} ({{ f.fieldCode }})
-                  </label>
+                <div class="qb-chips" data-testid="bi-query-select-fields">
+                  <span
+                    v-for="f in fields"
+                    :key="f.fieldCode"
+                    class="chip field-chip"
+                    :class="{ off: !builder.selectFields.includes(f.fieldCode) }"
+                    @click="toggleSelectField(f.fieldCode)"
+                  >
+                    {{ f.displayName }}
+                  </span>
+                  <span v-if="fields.length" class="qb-val-muted">多选 · displayFields</span>
+                  <span v-else class="qb-val-muted">先选数据源</span>
                 </div>
               </div>
-              <div class="qb-row">
-                <label>行数上限</label>
-                <input v-model.number="builder.limit" data-testid="bi-query-limit" type="number" min="1" max="1000" style="width: 100px" />
-              </div>
-              <div class="qb-row">
-                <label>统计日期</label>
-                <input v-model="builder.dateFrom" data-testid="bi-query-from" type="date" />
-                <span class="csub">至</span>
-                <input v-model="builder.dateTo" data-testid="bi-query-to" type="date" />
-              </div>
-              <div class="qb-row">
-                <label>条件值</label>
-                <input
-                  v-model="builder.condValue"
-                  data-testid="bi-query-cond"
-                  placeholder="可选，精确匹配首个展示字段"
-                  style="width: 240px"
-                />
-              </div>
-              <p v-if="formError" class="hint" data-testid="bi-query-form-error" style="color: var(--red)">{{ formError }}</p>
+              <p v-if="fieldHint" class="hint bi0-field-hint">{{ fieldHint }}</p>
+              <p v-if="formError" class="hint bad" data-testid="bi-query-form-error">{{ formError }}</p>
               <div class="qb-cond-hd"><b>SQL 预览</b></div>
-              <textarea class="code-edit" readonly rows="4" :value="previewSql" />
+              <textarea class="code-edit fld-sql" readonly rows="4" :value="previewSql" />
             </div>
             <div class="qb-side">
               <div class="qb-side-hd">可选字段（只读 · entity/fields）</div>
-              <div v-for="f in fields" :key="'s' + f.fieldCode" class="fi mono">{{ f.displayName }}</div>
+              <div
+                v-for="f in fields"
+                :key="'s' + f.fieldCode"
+                class="fi"
+                @click="toggleSelectField(f.fieldCode)"
+              >
+                {{ f.displayName }}
+                <br /><span class="mono" style="font-size: 10px; color: var(--text2)">{{ f.fieldCode }}</span>
+              </div>
               <p v-if="!fields.length" class="hint">先选数据源；未映射请去元数据维护</p>
             </div>
           </div>
         </div>
       </div>
-      <div v-if="result && !result.rows.length" class="card bi0-result-card">
+      <div v-if="result && result.empty" class="card bi0-result-card">
         <div class="empty" data-testid="bi-query-result-empty">
           <div class="et">{{ result.emptyReason || '当前条件下暂无数据' }}</div>
         </div>
       </div>
       <div v-else-if="result" class="card bi0-result-card">
-        <div class="bi0-result-hd"><div class="collapse-h"><b>查询结果</b> · 共 {{ result.total }} 行</div></div>
-        <div class="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th v-for="c in result.columns" :key="c">{{ c }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(row, idx) in result.rows" :key="idx">
-                <td v-for="c in result.columns" :key="c">{{ row[c] }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="hd-row bi0-result-hd">
+          <div>
+            <b>查询结果</b>
+            <span class="csub" style="margin-left: 8px">
+              共 {{ result.total }} 行
+              <template v-if="result.queryCostMs != null"> · {{ result.queryCostMs }} ms</template>
+            </span>
+          </div>
         </div>
+        <div class="tabs bi0-result-tabs">
+          <div
+            class="tab"
+            :class="{ on: resultTab === 'list' }"
+            data-testid="bi-query-result-tab-list"
+            @click="resultTab = 'list'"
+          >
+            结果列表
+          </div>
+          <div
+            class="tab"
+            :class="{ on: resultTab === 'chart' }"
+            data-testid="bi-query-result-tab-chart"
+            @click="resultTab = 'chart'"
+          >
+            图表展示
+          </div>
+        </div>
+        <template v-if="resultTab === 'list'">
+          <div class="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th v-for="c in result.columns" :key="c">{{ columnLabel(c) }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, idx) in result.rows" :key="idx">
+                  <td v-for="c in result.columns" :key="c">{{ row[c] }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="result.total > 0" class="pager" data-testid="bi-query-result-pager">
+            <span class="pg-total">共 {{ result.total }} 条</span>
+            <select class="pg-size" :value="resultPageSize" @change="changeResultPageSize">
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+            </select>
+            <span>条/页</span>
+            <span class="pg-sp"></span>
+            <span class="pg-n" :class="{ dis: resultPageNo <= 1 }" @click="gotoResultPage(resultPageNo - 1)">‹</span>
+            <span
+              v-for="n in resultPageList"
+              :key="n"
+              class="pg-n"
+              :class="{ on: n === resultPageNo }"
+              @click="gotoResultPage(n)"
+            >
+              {{ n }}
+            </span>
+            <span class="pg-n" :class="{ dis: resultPageNo >= resultPageCount }" @click="gotoResultPage(resultPageNo + 1)">
+              ›
+            </span>
+          </div>
+        </template>
+        <template v-else>
+          <div class="bi0-chart-pane">
+            <div class="bi0-chart-bar">
+              <div class="bi0-chart-type-row">
+                <span class="csub bi0-chart-lbl">图表类型</span>
+                <div class="pills bi0-chart-pills" data-testid="bi-query-chart-type">
+                  <label
+                    v-for="opt in chartTypeOptions"
+                    :key="opt.value"
+                    class="pill"
+                    :class="{ on: chartType === opt.value }"
+                  >
+                    <input v-model="chartType" type="radio" :value="opt.value" />
+                    <span>{{ opt.label }}</span>
+                  </label>
+                </div>
+              </div>
+              <div class="bi0-chart-axis-grid">
+                <label class="fld">
+                  <span>X 轴</span>
+                  <select v-model="chartXCol" class="bi0-chart-qctl" data-testid="bi-query-chart-x">
+                    <option v-for="c in result.columns" :key="'x' + c" :value="c">{{ columnLabel(c) }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>Y 轴</span>
+                  <select v-model="chartYCol" class="bi0-chart-qctl" data-testid="bi-query-chart-y">
+                    <option v-if="!numericColumnOptions.length" disabled value="">暂无数值字段</option>
+                    <option v-for="c in numericColumnOptions" :key="'y' + c" :value="c">{{ columnLabel(c) }}</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div v-if="chartSeries.length" class="bi0-chart-stage" data-testid="bi-query-chart-stage" v-html="chartSvg" />
+            <div v-else class="bi0-chart-ph">
+              <span>{{ chartEmptyHint }}</span>
+            </div>
+            <p class="hint bi0-chart-foot">
+              图表基于当前页查询结果前 24 行生成；切换图表类型或轴字段即时重绘，无需重新执行查询。
+            </p>
+          </div>
+        </template>
       </div>
     </template>
 
@@ -104,15 +232,21 @@
       <div class="card bi0-mine-card">
         <div class="bi0-mine-hd"><h3>已保存查询</h3></div>
         <div class="bi0-mine-body">
-          <div class="qbar">
-            <input v-model="mineFilter.queryName" data-testid="bi-query-name" placeholder="名称" />
-            <select v-model="mineFilter.status" data-testid="bi-query-status">
-              <option value="">全部状态</option>
-              <option value="DRAFT">DRAFT</option>
-              <option value="PUBLISHED">PUBLISHED</option>
-            </select>
-            <button class="btn btn-sec btn-sm" type="button" data-testid="bi-query-mine-search" @click="loadMine">查询</button>
-          </div>
+          <form class="qbar bi0-mine-qbar" @submit.prevent="loadMine">
+            <label class="fld qbar-fld">
+              <span class="sr-only">名称</span>
+              <input v-model="mineFilter.queryName" data-testid="bi-query-name" placeholder="查询名称" />
+            </label>
+            <label class="fld qbar-fld qbar-fld--status">
+              <span class="sr-only">状态</span>
+              <select v-model="mineFilter.status" data-testid="bi-query-status">
+                <option value="">全部状态</option>
+                <option value="DRAFT">草稿</option>
+                <option value="PUBLISHED">已发布</option>
+              </select>
+            </label>
+            <button class="btn btn-sec btn-sm" type="submit" data-testid="bi-query-mine-search">查询</button>
+          </form>
           <div class="tbl-wrap">
             <table>
               <thead>
@@ -160,9 +294,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import {
+  bi0SvgBars,
+  bi0SvgLine,
+  bi0SvgPie,
+  parseNumeric,
+  truncateLabel,
+  type ChartPoint,
+} from './query-chart'
 
 type FieldVo = { fieldCode: string; displayName: string; columnName: string; queryConditionType?: string }
 type EntityOpt = { entityCode: string; entityName: string }
@@ -178,6 +320,10 @@ type QueryResult = {
   columns: string[]
   rows: Record<string, unknown>[]
   total: number
+  pageNo?: number
+  pageSize?: number
+  queryCostMs?: number
+  empty?: boolean
   sql?: string
   emptyReason?: string
 }
@@ -192,6 +338,20 @@ const formError = ref('')
 const running = ref(false)
 const result = ref<QueryResult | null>(null)
 const previewSql = ref('SELECT … FROM …（执行后展示实际 SQL）')
+const configOpen = ref(true)
+const resultTab = ref<'list' | 'chart'>('list')
+const resultPageNo = ref(1)
+const resultPageSize = ref(20)
+const lastRunQueryId = ref<string | null>(null)
+const chartTypeOptions = [
+  { value: 'bar' as const, label: '柱状图' },
+  { value: 'line' as const, label: '折线图' },
+  { value: 'pie' as const, label: '饼图' },
+]
+const chartType = ref<'bar' | 'line' | 'pie'>('bar')
+const chartXCol = ref('')
+const chartYCol = ref('')
+const resultFieldMap = ref<Record<string, string>>({})
 
 const builder = reactive({
   entityCode: '',
@@ -207,6 +367,86 @@ const appliedMine = reactive({ queryName: '', status: '' })
 const mineRows = ref<QueryRow[]>([])
 const mineEmptyText = computed(() =>
   appliedMine.queryName || appliedMine.status ? '当前筛选下暂无查询' : '暂无保存的查询',
+)
+
+const resultPageCount = computed(() =>
+  result.value ? Math.max(1, Math.ceil(result.value.total / resultPageSize.value)) : 1,
+)
+
+const resultPageList = computed(() => {
+  const count = resultPageCount.value
+  const cur = resultPageNo.value
+  const end = Math.min(count, Math.max(cur + 2, 5))
+  const start = Math.max(1, end - 4)
+  const list: number[] = []
+  for (let n = start; n <= end; n += 1) list.push(n)
+  return list
+})
+
+const numericColumnOptions = computed(() => {
+  if (!result.value?.rows.length) return result.value?.columns ?? []
+  return (result.value.columns ?? []).filter((c) =>
+    result.value!.rows.some((row) => parseNumeric(row[c]) !== 0 || String(row[c] ?? '').match(/\d/)),
+  )
+})
+
+const chartSeries = computed((): ChartPoint[] => {
+  if (!result.value?.rows.length || !chartXCol.value || !chartYCol.value) return []
+  return result.value.rows.slice(0, 24).map((row, idx) => ({
+    k: truncateLabel(String(row[chartXCol.value] ?? `#${idx + 1}`)),
+    v: Math.max(0, parseNumeric(row[chartYCol.value])),
+  }))
+})
+
+const chartSvg = computed(() => {
+  const series = chartSeries.value
+  if (!series.length) return ''
+  if (chartType.value === 'pie') return bi0SvgPie(series)
+  if (chartType.value === 'line') return bi0SvgLine(series)
+  return bi0SvgBars(series)
+})
+
+const chartEmptyHint = computed(() => {
+  if (!numericColumnOptions.value.length) return '结果中未识别到数值列，请调整展示字段或执行聚合查询'
+  if (!chartYCol.value) return '请选择含数值的 Y 轴字段'
+  if (!chartXCol.value) return '请选择 X 轴维度字段'
+  return '当前轴字段组合暂无可绘制的数据'
+})
+
+function columnLabel(code: string): string {
+  return resultFieldMap.value[code] || fields.value.find((f) => f.fieldCode === code)?.displayName || code
+}
+
+function toggleSelectField(code: string) {
+  const set = new Set(builder.selectFields)
+  if (set.has(code)) {
+    if (set.size <= 1) return
+    set.delete(code)
+  } else {
+    set.add(code)
+  }
+  builder.selectFields = [...set]
+}
+
+function syncResultFieldMap() {
+  const map: Record<string, string> = {}
+  for (const f of fields.value) map[f.fieldCode] = f.displayName
+  resultFieldMap.value = map
+}
+
+function resetChartAxes(cols: string[]) {
+  chartXCol.value = cols[0] ?? ''
+  const numeric = cols.filter((c) =>
+    (result.value?.rows ?? []).some((row) => String(row[c] ?? '').match(/\d/)),
+  )
+  chartYCol.value = numeric[numeric.length - 1] ?? cols[1] ?? cols[0] ?? ''
+}
+
+watch(
+  () => result.value?.columns,
+  (cols) => {
+    if (cols?.length) resetChartAxes(cols)
+  },
 )
 
 function rejectedCode(error: unknown): number {
@@ -271,6 +511,7 @@ async function loadFields() {
     const res = await http.get(`/collect/metadata/entity/${builder.entityCode}/fields`)
     fields.value = res.data.data?.fields || []
     builder.selectFields = fields.value.slice(0, 2).map((f) => f.fieldCode)
+    syncResultFieldMap()
   } catch (error: unknown) {
     if (rejectedCode(error) === 1261) {
       fieldHint.value = '实体未映射（1261）· 请点击右上角「元数据维护」完成 COLLECT P4m 映射'
@@ -297,10 +538,22 @@ async function ensureSaved(name: string) {
   }
 }
 
+async function fetchRunResult(queryId: string, pageNo = resultPageNo.value, pageSize = resultPageSize.value) {
+  const run = await http.post(`/bi/query/${queryId}/run`, { pageNo, pageSize })
+  result.value = run.data.data
+  previewSql.value = run.data.data.sql || previewSql.value
+  resultPageNo.value = run.data.data.pageNo ?? pageNo
+  resultPageSize.value = run.data.data.pageSize ?? pageSize
+  lastRunQueryId.value = queryId
+  if (run.data.data.columns?.length) resetChartAxes(run.data.data.columns)
+}
+
 async function runAdhoc() {
   formError.value = ''
   toast.value = ''
   result.value = null
+  resultPageNo.value = 1
+  resultTab.value = 'list'
   const dates = dateEdge()
   if (dates) {
     formError.value = dates
@@ -323,9 +576,8 @@ async function runAdhoc() {
   try {
     const id = await ensureSaved(`临时查询 ${new Date().toLocaleTimeString()}`)
     if (!id) return
-    const run = await http.post(`/bi/query/${id}/run`, {})
-    result.value = run.data.data
-    previewSql.value = run.data.data.sql || previewSql.value
+    syncResultFieldMap()
+    await fetchRunResult(id, 1, resultPageSize.value)
   } catch (error: unknown) {
     formError.value = errorMessage(error)
   } finally {
@@ -368,12 +620,47 @@ function switchMine() {
   loadMine()
 }
 
+async function gotoResultPage(page: number) {
+  if (!lastRunQueryId.value || page < 1 || page > resultPageCount.value || page === resultPageNo.value) return
+  running.value = true
+  try {
+    await fetchRunResult(lastRunQueryId.value, page, resultPageSize.value)
+  } catch (error: unknown) {
+    formError.value = errorMessage(error)
+  } finally {
+    running.value = false
+  }
+}
+
+async function changeResultPageSize(ev: Event) {
+  const size = Number((ev.target as HTMLSelectElement).value)
+  if (!lastRunQueryId.value || !size) return
+  resultPageSize.value = size
+  resultPageNo.value = 1
+  running.value = true
+  try {
+    await fetchRunResult(lastRunQueryId.value, 1, size)
+  } catch (error: unknown) {
+    formError.value = errorMessage(error)
+  } finally {
+    running.value = false
+  }
+}
+
 async function runSaved(id: string) {
   try {
-    const run = await http.post(`/bi/query/${id}/run`, {})
+    const detail = await http.get(`/bi/query/${id}`)
+    const entityCode = detail.data.data?.entityCode as string | undefined
+    if (entityCode && entityCode !== builder.entityCode) {
+      builder.entityCode = entityCode
+      await loadFields()
+    } else {
+      syncResultFieldMap()
+    }
     tab.value = 'builder'
-    result.value = run.data.data
-    previewSql.value = run.data.data.sql || previewSql.value
+    resultPageNo.value = 1
+    resultTab.value = 'list'
+    await fetchRunResult(id, 1, resultPageSize.value)
     toast.value = '已加载结果'
   } catch (error: unknown) {
     toast.value = errorMessage(error)
@@ -398,3 +685,56 @@ onMounted(() => {
   loadEntities()
 })
 </script>
+
+<style scoped>
+.bi0-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+}
+.bi0-form-grid .fld.wide {
+  grid-column: 1 / -1;
+}
+.bi0-form-panel .fld > span {
+  display: block;
+}
+.bi0-field-hint {
+  margin: 4px 0 0;
+}
+.hint.bad {
+  color: var(--red);
+  margin-top: 10px;
+}
+.fld-sql {
+  width: 100%;
+  min-height: 88px;
+  margin-top: 0;
+}
+.bi0-mine-qbar {
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.bi0-mine-qbar .qbar-fld {
+  margin: 0;
+  min-width: 160px;
+}
+.bi0-mine-qbar .qbar-fld--status {
+  min-width: 130px;
+}
+.bi0-mine-qbar .fld input,
+.bi0-mine-qbar .fld select {
+  width: 100%;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+</style>

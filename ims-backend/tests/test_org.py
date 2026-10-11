@@ -2,6 +2,7 @@ import json
 import os
 import time
 from datetime import timedelta
+from unittest.mock import patch
 
 os.environ["IMS_DB"] = "ims_test"
 
@@ -365,6 +366,36 @@ def test_org_lists_filter_sync_status_and_misses_stay_empty():
         params={"eventType": "resign", "syncStatus": "SUCCESS", "pageSize": 20},
     )
     assert empty_events.json()["data"]["total"] == 0
+
+
+def test_sync_from_dingtalk_persists_audit_event():
+    token = login()
+    snapshot = {
+        "departments": [{"deptId": 1, "name": "根"}],
+        "users": [
+            {
+                "userid": "dt-sync-1",
+                "name": "同步甲",
+                "mobile": "13700009901",
+                "unionid": "union-sync-1",
+                "deptIds": [1],
+            }
+        ],
+        "meta": {"authorizedRootDeptIds": [1]},
+    }
+    with patch("app.org_sync.pull_org_directory", return_value=(snapshot, None)):
+        res = client.post("/admin-api/ims/auth/org/sync-from-dingtalk", headers=auth(token), json={})
+    body = res.json()
+    assert body["code"] == 0
+    assert body["data"]["usersCreated"] == 1
+    task_id = body["data"]["syncTaskId"]
+    assert task_id.startswith("dt-")
+    events = client.get("/admin-api/ims/auth/org/events", headers=auth(token)).json()["data"]
+    matched = [row for row in events["list"] if row["dingtalkEventId"] == task_id]
+    assert matched
+    assert matched[0]["eventType"] == "dingtalk_sync"
+    assert matched[0]["syncStatus"] == "SUCCESS"
+    assert matched[0]["payloadJson"]["usersCreated"] == 1
 
 
 def test_callback_ack_stays_under_half_second():

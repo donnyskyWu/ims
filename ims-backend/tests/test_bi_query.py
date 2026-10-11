@@ -21,33 +21,33 @@ def headers() -> dict:
 
 
 def seed_platform_account_entity(auth: dict) -> None:
-    client.post(
+    created = client.post(
         "/admin-api/ims/collect/metadata/create",
         headers=auth,
         json={
-            "entityCode": "PLATFORM_ACCOUNT",
-            "entityName": "平台账号",
-            "tableName": "oa_platform_account",
+            "entityCode": "SYS_ROLE_BI",
+            "entityName": "系统角色",
+            "tableName": "ims_sys_role",
             "status": "ENABLED",
         },
     )
-    listed = client.get("/admin-api/ims/collect/metadata/list", headers=auth)
-    entity_id = listed.json()["data"]["list"][0]["id"]
+    assert created.json()["code"] == 0
+    entity_id = created.json()["data"]["id"]
     client.put(
         f"/admin-api/ims/collect/metadata/{entity_id}/fields",
         headers=auth,
         json={
             "fields": [
                 {
-                    "fieldCode": "account_no",
-                    "columnName": "account_no",
-                    "displayName": "账号编号",
+                    "fieldCode": "role_key",
+                    "columnName": "role_key",
+                    "displayName": "角色标识",
                     "queryConditionType": "LIKE",
                 },
                 {
-                    "fieldCode": "platform_type",
-                    "columnName": "platform_type",
-                    "displayName": "平台",
+                    "fieldCode": "role_name",
+                    "columnName": "role_name",
+                    "displayName": "角色名称",
                     "queryConditionType": "EQ",
                 },
             ]
@@ -64,10 +64,10 @@ def test_bi_query_run_mapped_entity():
         headers=auth,
         json={
             "queryName": "账号探查",
-            "entityCode": "PLATFORM_ACCOUNT",
+            "entityCode": "SYS_ROLE_BI",
             "config": {
-                "selectFields": ["account_no", "platform_type"],
-                "conditions": [{"fieldCode": "platform_type", "operator": "EQ", "value": "DOUYIN"}],
+                "selectFields": ["role_key", "role_name"],
+                "conditions": [{"fieldCode": "role_key", "operator": "LIKE", "value": "admin"}],
                 "limit": 50,
             },
         },
@@ -76,9 +76,69 @@ def test_bi_query_run_mapped_entity():
     qid = saved.json()["data"]["id"]
     run = client.post(f"/admin-api/ims/bi/query/{qid}/run", headers=auth)
     assert run.json()["code"] == 0
-    assert run.json()["data"]["columns"] == ["account_no", "platform_type"]
+    assert run.json()["data"]["columns"] == ["role_key", "role_name"]
     assert "sql" in run.json()["data"]
-    assert "`account_no`" in run.json()["data"]["sql"]
+    assert "`ims_sys_role`" in run.json()["data"]["sql"]
+
+
+def seed_sys_user_entity(auth: dict) -> None:
+    created = client.post(
+        "/admin-api/ims/collect/metadata/create",
+        headers=auth,
+        json={
+            "entityCode": "SYS_USER",
+            "entityName": "系统用户",
+            "tableName": "ims_sys_user",
+            "status": "ENABLED",
+        },
+    )
+    assert created.json()["code"] == 0
+    entity_id = created.json()["data"]["id"]
+    client.put(
+        f"/admin-api/ims/collect/metadata/{entity_id}/fields",
+        headers=auth,
+        json={
+            "fields": [
+                {
+                    "fieldCode": "username",
+                    "columnName": "username",
+                    "displayName": "登录名",
+                    "queryConditionType": "LIKE",
+                },
+                {
+                    "fieldCode": "nickname",
+                    "columnName": "nickname",
+                    "displayName": "昵称",
+                    "queryConditionType": "EQ",
+                },
+            ]
+        },
+    )
+
+
+def test_bi_query_run_ims_sys_user():
+    auth = headers()
+    seed_sys_user_entity(auth)
+    saved = client.post(
+        "/admin-api/ims/bi/query",
+        headers=auth,
+        json={
+            "queryName": "用户探查",
+            "entityCode": "SYS_USER",
+            "config": {
+                "selectFields": ["username", "nickname"],
+                "conditions": [{"fieldCode": "username", "operator": "EQ", "value": "admin"}],
+                "limit": 20,
+            },
+        },
+    )
+    assert saved.json()["code"] == 0
+    qid = saved.json()["data"]["id"]
+    run = client.post(f"/admin-api/ims/bi/query/{qid}/run", headers=auth)
+    assert run.json()["code"] == 0, run.json()
+    assert run.json()["data"]["columns"] == ["username", "nickname"]
+    assert "`ims_sys_user`" in run.json()["data"]["sql"]
+    assert len(run.json()["data"]["rows"]) >= 1
 
 
 def test_bi_query_unmapped_entity_1261():
@@ -95,6 +155,38 @@ def test_bi_query_unmapped_entity_1261():
     assert bad.json()["code"] == 1261
 
 
+def test_bi_query_run_pagination_and_cost():
+    auth = headers()
+    seed_sys_user_entity(auth)
+    saved = client.post(
+        "/admin-api/ims/bi/query",
+        headers=auth,
+        json={
+            "queryName": "分页探查",
+            "entityCode": "SYS_USER",
+            "config": {
+                "selectFields": ["username", "nickname"],
+                "conditions": [],
+                "limit": 50,
+            },
+        },
+    )
+    assert saved.json()["code"] == 0
+    qid = saved.json()["data"]["id"]
+    run = client.post(
+        f"/admin-api/ims/bi/query/{qid}/run",
+        headers=auth,
+        json={"pageNo": 1, "pageSize": 1},
+    )
+    assert run.json()["code"] == 0, run.json()
+    data = run.json()["data"]
+    assert data["pageNo"] == 1
+    assert data["pageSize"] == 1
+    assert "queryCostMs" in data
+    assert len(data["rows"]) <= 1
+    assert data["total"] >= len(data["rows"])
+
+
 def test_bi_query_save_and_publish():
     auth = headers()
     seed_platform_account_entity(auth)
@@ -103,8 +195,8 @@ def test_bi_query_save_and_publish():
         headers=auth,
         json={
             "queryName": "发布用例",
-            "entityCode": "PLATFORM_ACCOUNT",
-            "config": {"selectFields": ["account_no"], "limit": 10},
+            "entityCode": "SYS_ROLE_BI",
+            "config": {"selectFields": ["role_key"], "limit": 10},
         },
     )
     qid = saved.json()["data"]["id"]

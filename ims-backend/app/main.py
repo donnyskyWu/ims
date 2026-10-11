@@ -479,9 +479,26 @@ def ensure_live_alarm_merge_column() -> None:
             conn.execute(text(f"ALTER TABLE ims_live_alarm_record {clause}"))
 
 
+def ensure_user_mapping_position_column() -> None:
+    """已有库补钉钉岗位（通讯录 title）。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_auth_user_mapping" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_auth_user_mapping")}
+    if "dingtalk_position" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE ims_auth_user_mapping ADD COLUMN dingtalk_position VARCHAR(64) NOT NULL DEFAULT ''")
+        )
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()

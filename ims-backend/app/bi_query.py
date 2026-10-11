@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -61,6 +62,12 @@ class QueryUpdateBody(BaseModel):
     config: QueryConfigBody | None = None
 
 
+class QueryRunBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    pageNo: int = 1
+    pageSize: int = 20
+
+
 def query_vo(row: BiCustomQuery, creator_name: str = "") -> dict:
     try:
         config = json.loads(row.config_json or "{}")
@@ -103,6 +110,14 @@ def load_entity_bundle(
 
 def field_map(fields: list[MetadataField]) -> dict[str, MetadataField]:
     return {f.field_code: f for f in fields}
+
+
+def read_db_kind(table_name: str) -> str:
+    """COLLECT P4m 映射 IMS 物理表；legacy oa_* 仍在 ops 库。"""
+    name = table_name.strip()
+    if name.startswith("oa_"):
+        return "ops"
+    return "ims"
 
 
 def build_preview_sql(
@@ -172,24 +187,37 @@ def build_preview_sql(
 
 
 def execute_query(
+    ims: Session,
     ops: Session,
     entity: MetadataEntity,
     fields: list[MetadataField],
     config: QueryConfigBody,
     tenant_id: int,
+    page_no: int = 1,
+    page_size: int = 20,
 ) -> tuple[dict | None, dict | None]:
     sql, params = build_preview_sql(entity.table_name, fields, config, tenant_id)
     if sql is None:
         return None, params
-    rows = ops.execute(text(sql), params).mappings().all()
+    db = ops if read_db_kind(entity.table_name) == "ops" else ims
+    t0 = time.perf_counter()
+    rows = db.execute(text(sql), params).mappings().all()
     columns = config.selectFields or [f.field_code for f in fields]
     data_rows = [{c: row.get(c) for c in columns} for row in rows]
-    empty = len(data_rows) == 0
+    total = len(data_rows)
+    empty = total == 0
+    pg_no, pg_size = page_args(page_no, page_size)
+    start = (pg_no - 1) * pg_size
+    page_rows = data_rows[start : start + pg_size]
+    cost_ms = int((time.perf_counter() - t0) * 1000)
     return {
         "sql": sql,
         "columns": columns,
-        "rows": data_rows,
-        "total": len(data_rows),
+        "rows": page_rows,
+        "total": total,
+        "pageNo": pg_no,
+        "pageSize": pg_size,
+        "queryCostMs": cost_ms,
         "empty": empty,
         "emptyReason": "当前条件下暂无数据" if empty else "",
     }, None
@@ -296,6 +324,7 @@ def query_update(
 @router.post("/{query_id}/run")
 def query_run(
     query_id: int,
+    body: QueryRunBody | None = None,
     ims: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
@@ -311,7 +340,17 @@ def query_run(
         config = QueryConfigBody.model_validate(json.loads(row.config_json or "{}"))
     except Exception:
         return fail(1001, "查询配置无效")
-    result, run_err = execute_query(ops, entity, fields, config, tenant_of(actor))
+    run_body = body or QueryRunBody()
+    result, run_err = execute_query(
+        ims,
+        ops,
+        entity,
+        fields,
+        config,
+        tenant_of(actor),
+        page_no=run_body.pageNo,
+        page_size=run_body.pageSize,
+    )
     if run_err:
         return run_err
     return ok(result)

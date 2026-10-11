@@ -1,28 +1,24 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.account import COLLECT_PLATFORMS
 from app.api import current_user, db_session, fail, ok
-from app.core import utcnow
+from app.core import IMS_DB, utcnow
 from app.corp import check_enum, count_of, ops_db, page_args, paged, tenant_of, visible
 from app.models import MetadataEntity, MetadataField, User
-from app.ops_db import OpsBase
 from app.ops_models import CollectConfig, CollectKeyword, PlatformAccount, ThresholdConfig
 
 router = APIRouter()
 
-KNOWN_OPS_TABLES: dict[str, str] = {
-    "oa_platform_account": "平台账号",
-    "oa_collect_log": "采集日志",
-    "oa_collect_task": "采集任务",
-}
+_IDENT = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 class ExternalAccountBody(BaseModel):
@@ -563,6 +559,105 @@ def load_metadata_entity(ims: Session, actor: User, entity_id: int) -> MetadataE
     return row
 
 
+def valid_sql_identifier(name: str) -> bool:
+    return bool(_IDENT.match(name))
+
+
+def suggest_entity_code(table_name: str) -> str:
+    stem = table_name
+    for prefix in ("ims_", "oa_"):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix) :]
+            break
+    return stem.upper() if stem else table_name.upper()
+
+
+def suggest_entity_name(table_name: str, table_comment: str) -> str:
+    comment = (table_comment or "").strip()
+    if comment:
+        return comment
+    stem = table_name
+    for prefix in ("ims_", "oa_"):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix) :]
+            break
+    return stem or table_name
+
+
+def ims_catalog_schema() -> str:
+    """Physical metadata always reads IMS catalog (not ops / not connection default)."""
+    name = (IMS_DB or "ims").strip()
+    if not valid_sql_identifier(name):
+        return "ims"
+    return name
+
+
+def list_ims_physical_tables(ims: Session) -> list[tuple[str, str]]:
+    schema = ims_catalog_schema()
+    rows = ims.execute(
+        text(
+            """
+            SELECT TABLE_NAME, COALESCE(TABLE_COMMENT, '')
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = :schema
+              AND TABLE_TYPE = 'BASE TABLE'
+            ORDER BY TABLE_NAME
+            """
+        ),
+        {"schema": schema},
+    ).all()
+    out: list[tuple[str, str]] = []
+    for table_name, comment in rows:
+        name = str(table_name)
+        if valid_sql_identifier(name):
+            out.append((name, str(comment or "")))
+    return out
+
+
+def ims_table_exists(ims: Session, table_name: str) -> bool:
+    if not valid_sql_identifier(table_name):
+        return False
+    count = ims.scalar(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = :schema
+              AND TABLE_TYPE = 'BASE TABLE'
+              AND TABLE_NAME = :table_name
+            """
+        ),
+        {"schema": ims_catalog_schema(), "table_name": table_name},
+    )
+    return int(count or 0) > 0
+
+
+def list_ims_table_columns(ims: Session, table_name: str) -> list[dict[str, Any]]:
+    rows = ims.execute(
+        text(
+            """
+            SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = :schema
+              AND TABLE_NAME = :table_name
+            ORDER BY ORDINAL_POSITION
+            """
+        ),
+        {"schema": ims_catalog_schema(), "table_name": table_name},
+    ).all()
+    cols: list[dict[str, Any]] = []
+    for column_name, data_type, nullable, ordinal in rows:
+        cols.append(
+            {
+                "columnName": str(column_name),
+                "dataType": str(data_type),
+                "nullable": str(nullable) == "YES",
+                "sortOrder": int(ordinal) - 1,
+            }
+        )
+    return cols
+
+
 @router.get("/metadata/list")
 def metadata_list(
     pageNo: int = 1,
@@ -608,39 +703,35 @@ def metadata_unmapped(
         ).all()
     )
     tables = []
-    for table_name, comment in KNOWN_OPS_TABLES.items():
-        if table_name not in mapped:
-            code = table_name.replace("oa_", "").upper()
-            tables.append(
-                {
-                    "tableName": table_name,
-                    "tableComment": comment,
-                    "suggestedEntityCode": code,
-                    "suggestedEntityName": comment,
-                }
-            )
+    for table_name, comment in list_ims_physical_tables(ims):
+        if table_name in mapped:
+            continue
+        tables.append(
+            {
+                "tableName": table_name,
+                "tableComment": comment,
+                "suggestedEntityCode": suggest_entity_code(table_name),
+                "suggestedEntityName": suggest_entity_name(table_name, comment),
+            }
+        )
     return ok({"list": tables})
 
 
 @router.get("/metadata/table-columns")
-def metadata_table_columns(tableName: str = ""):
+def metadata_table_columns(
+    tableName: str = "",
+    ims: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    del actor
     if not tableName.strip():
         return fail(1001, "tableName 必填")
     name = tableName.strip()
-    if name not in OpsBase.metadata.tables:
+    if not valid_sql_identifier(name):
+        return fail(1001, "非法表名")
+    if not ims_table_exists(ims, name):
         return ok({"list": []})
-    table = OpsBase.metadata.tables[name]
-    cols = []
-    for idx, col in enumerate(table.columns):
-        cols.append(
-            {
-                "columnName": col.name,
-                "dataType": str(col.type),
-                "nullable": col.nullable,
-                "sortOrder": idx,
-            }
-        )
-    return ok({"list": cols})
+    return ok({"list": list_ims_table_columns(ims, name)})
 
 
 @router.post("/metadata/create")
@@ -651,6 +742,11 @@ def metadata_create(
 ):
     if not body.entityCode.strip() or not body.tableName.strip():
         return fail(1001, "必填项缺失")
+    table_name = body.tableName.strip()
+    if not valid_sql_identifier(table_name):
+        return fail(1001, "非法表名")
+    if not ims_table_exists(ims, table_name):
+        return fail(1001, "物理表不存在")
     tenant_id = tenant_of(actor)
     dup = ims.scalar(
         select(MetadataEntity.id).where(
@@ -664,7 +760,7 @@ def metadata_create(
     row = MetadataEntity(
         entity_code=body.entityCode.strip(),
         entity_name=body.entityName.strip() or body.entityCode.strip(),
-        table_name=body.tableName.strip(),
+        table_name=table_name,
         status=body.status,
         tenant_id=tenant_id,
     )

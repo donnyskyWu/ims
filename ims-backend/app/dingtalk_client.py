@@ -332,6 +332,7 @@ def pull_org_directory() -> tuple[dict[str, Any] | None, str | None]:
         parsed_depts = [int(x) for x in dept_id_list if str(x).isdigit()]
         if not parsed_depts:
             parsed_depts = sorted(dept_ids)
+        title = str(detail.get("title") or detail.get("position") or "").strip()
         users.append(
             {
                 "userid": str(detail.get("userid") or uid),
@@ -339,6 +340,7 @@ def pull_org_directory() -> tuple[dict[str, Any] | None, str | None]:
                 "mobile": str(detail.get("mobile") or ""),
                 "unionid": str(detail.get("unionid") or ""),
                 "deptIds": parsed_depts,
+                "title": title,
             }
         )
 

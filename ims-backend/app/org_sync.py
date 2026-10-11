@@ -31,6 +31,7 @@ from app.models import (
 router = APIRouter()
 
 EVENT_TYPES = ("hire", "transfer", "resign", "dept_change")
+AUDIT_EVENT_TYPES = ("reconcile", "dingtalk_sync")
 MAX_RETRY = 16
 BACKOFF_SECONDS = (60, 300, 900, 3600)
 DEAD_LETTER_ALERT = "ims.org.dead_letter"
@@ -197,7 +198,9 @@ def find_user(db: Session, ding_id: str, mobile: str, user_id: int | None) -> Us
 
 
 def payload_position(payload: dict) -> str:
-    return str(payload.get("dingtalkPosition") or payload.get("position") or "").strip()[:64]
+    return str(
+        payload.get("dingtalkPosition") or payload.get("position") or payload.get("title") or ""
+    ).strip()[:64]
 
 
 def stored_json(event: OrgEvent) -> dict:
@@ -206,6 +209,40 @@ def stored_json(event: OrgEvent) -> dict:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def collect_synced_positions(db: Session) -> list[str]:
+    """组织同步事件、钉钉映射、角色绑定与已有供给规则中的钉钉岗位名（去重排序）。"""
+    seen: set[str] = set()
+    for event in db.scalars(select(OrgEvent)).all():
+        payload = read_payload(event.payload_json)
+        pos = payload_position(payload)
+        if pos:
+            seen.add(pos)
+        applied = str(stored_json(event).get("appliedPosition") or "").strip()
+        if applied:
+            seen.add(applied[:64])
+    for pos in db.scalars(
+        select(UserMapping.dingtalk_position).where(
+            UserMapping.deleted == 0,
+            UserMapping.dingtalk_position.is_not(None),
+            UserMapping.dingtalk_position != "",
+        )
+    ).all():
+        text = str(pos or "").strip()
+        if text:
+            seen.add(text[:64])
+    for pos in db.scalars(
+        select(Role.dingtalk_position).where(Role.deleted == 0, Role.dingtalk_position.is_not(None))
+    ).all():
+        text = str(pos or "").strip()
+        if text:
+            seen.add(text[:64])
+    for pos in db.scalars(select(PositionRule.dingtalk_position).where(PositionRule.deleted == 0)).all():
+        text = str(pos or "").strip()
+        if text:
+            seen.add(text[:64])
+    return sorted(seen)
 
 
 def enabled_position_rule(db: Session, position: str) -> PositionRule | None:
@@ -480,6 +517,7 @@ def upsert_mapping(
     now: datetime,
     buffer_until: datetime | None,
     keep_previous: bool,
+    dingtalk_position: str = "",
 ) -> UserMapping:
     mapping = db.scalar(
         select(UserMapping).where(
@@ -488,6 +526,7 @@ def upsert_mapping(
             UserMapping.deleted == 0,
         )
     )
+    position = (dingtalk_position or "").strip()[:64]
     if mapping is None:
         mapping = UserMapping(
             user_id=user.id,
@@ -498,6 +537,7 @@ def upsert_mapping(
             sync_status="SUCCESS",
             last_sync_time=now,
             buffer_until=buffer_until,
+            dingtalk_position=position,
             tenant_id=0,
         )
         db.add(mapping)
@@ -510,6 +550,8 @@ def upsert_mapping(
         mapping.sync_status = "SUCCESS"
         mapping.last_sync_time = now
         mapping.buffer_until = buffer_until
+        if position:
+            mapping.dingtalk_position = position
     db.flush()
     return mapping
 
@@ -547,6 +589,7 @@ def apply_event(db: Session, event: OrgEvent, now: datetime) -> None:
     else:
         raise ValueError("未知事件类型")
     buffer_until = now + timedelta(hours=24) if event.event_type == "transfer" else None
+    event_position = payload_position(payload)
     upsert_mapping(
         db,
         user,
@@ -558,6 +601,7 @@ def apply_event(db: Session, event: OrgEvent, now: datetime) -> None:
         now,
         buffer_until,
         keep_previous=event.event_type == "transfer",
+        dingtalk_position=event_position,
     )
     if dept_ids:
         replace_depts(db, user.id, dept_ids)
@@ -749,6 +793,8 @@ def org_user_vo(db: Session, mapping: UserMapping) -> dict:
         position = str(stored_json(event).get("appliedPosition") or "") or payload_position(payload)
     if not position and user is not None:
         position = previous_applied_position(db, user.id)
+    if not position:
+        position = str(mapping.dingtalk_position or "").strip()[:64]
     return {
         "userId": mapping.user_id,
         "nickname": user.nickname if user else "",
@@ -836,6 +882,12 @@ def users_in_depts(dept_ids: list[int]):
     return select(UserDept.user_id).where(UserDept.dept_id.in_(dept_ids))
 
 
+@router.get("/auth/org/positions")
+def org_positions(db: Session = Depends(db_session), _: User = Depends(current_user)):
+    """钉钉岗位字典：来自组织同步事件与已维护绑定，供供给规则下拉。"""
+    return ok({"list": collect_synced_positions(db)})
+
+
 @router.get("/auth/org/users")
 def org_users(
     request: Request,
@@ -903,7 +955,12 @@ def org_events(
         return empty_org_page(page_no, size)
     stmt = select(OrgEvent)
     if allowed is not None:
-        stmt = stmt.where(OrgEvent.user_id.in_(users_in_depts(allowed)))
+        stmt = stmt.where(
+            or_(
+                OrgEvent.user_id.in_(users_in_depts(allowed)),
+                OrgEvent.event_type.in_(AUDIT_EVENT_TYPES),
+            )
+        )
     if eventType:
         stmt = stmt.where(OrgEvent.event_type == eventType)
     if syncStatus == "DEAD_LETTER":
@@ -982,6 +1039,7 @@ def apply_pull_user(db: Session, row: dict, now: datetime) -> str:
     nickname = str(row.get("name") or "").strip()
     union_id = str(row.get("unionid") or "").strip()
     dept_ids = [int(x) for x in (row.get("deptIds") or []) if str(x).isdigit()]
+    dingtalk_position = str(row.get("title") or row.get("dingtalkPosition") or "").strip()[:64]
     user = find_user(db, ding_id, mobile, None)
     created = user is None
     if user is None:
@@ -1005,10 +1063,30 @@ def apply_pull_user(db: Session, row: dict, now: datetime) -> str:
         now,
         buffer_until=None,
         keep_previous=False,
+        dingtalk_position=dingtalk_position,
     )
     if dept_ids:
         replace_depts(db, user.id, dept_ids)
     return "created" if created else "updated"
+
+
+def persist_audit_event(db: Session, *, event_type: str, task_id: str, payload: dict) -> None:
+    now = utcnow()
+    db.add(
+        OrgEvent(
+            dingtalk_event_id=task_id,
+            event_type=event_type,
+            idempotency_key=f"{task_id}|{event_type}",
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            sync_status="SUCCESS",
+            retry_count=0,
+            dead_letter=0,
+            tenant_id=0,
+            created_at=now,
+            updated_at=now,
+            synced_at=now,
+        )
+    )
 
 
 @router.post("/auth/org/sync-from-dingtalk")
@@ -1069,6 +1147,14 @@ def sync_from_dingtalk(db: Session = Depends(db_session), user: User = Depends(c
     if meta.get("partialScope"):
         payload["partialScope"] = True
         payload["authScopeHint"] = meta.get("authScopeHint")
+    task_id = "dt-" + secrets.token_hex(8)
+    persist_audit_event(
+        db,
+        event_type="dingtalk_sync",
+        task_id=task_id,
+        payload={"kind": "dingtalk_sync", "source": "dingtalk", **payload},
+    )
+    payload["syncTaskId"] = task_id
     return ok(payload)
 
 
@@ -1079,23 +1165,11 @@ def reconcile(db: Session = Depends(db_session), user: User = Depends(current_us
     now = utcnow()
     task_id = "rc-" + secrets.token_hex(8)
     local_users = db.scalar(select(func.count()).select_from(UserMapping).where(UserMapping.deleted == 0)) or 0
-    db.add(
-        OrgEvent(
-            dingtalk_event_id=task_id,
-            event_type="reconcile",
-            idempotency_key=f"{task_id}|reconcile",
-            payload_json=json.dumps(
-                {"kind": "reconcile", "localUserCount": local_users, "source": "local"},
-                ensure_ascii=False,
-            ),
-            sync_status="SUCCESS",
-            retry_count=0,
-            dead_letter=0,
-            tenant_id=0,
-            created_at=now,
-            updated_at=now,
-            synced_at=now,
-        )
+    persist_audit_event(
+        db,
+        event_type="reconcile",
+        task_id=task_id,
+        payload={"kind": "reconcile", "localUserCount": local_users, "source": "local"},
     )
     return ok({"reconcileTaskId": task_id, "triggeredAt": iso(now)})
 

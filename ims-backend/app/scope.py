@@ -153,6 +153,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/system/operate-log", "ims_sys_operate_log"),
     ("GET", "/admin-api/ims/system/login-log", "ims_sys_login_log"),
     ("GET", "/admin-api/ims/system/notify", "ims_sys_notify"),
+    ("GET", "/admin-api/ims/auth/org/positions", "ims_auth_user_mapping"),
     ("GET", "/admin-api/ims/auth/org/users", "ims_auth_user_mapping"),
     ("GET", "/admin-api/ims/auth/org/events", "ims_auth_org_event_view"),
     ("GET", "/admin-api/ims/auth/org/sync-metrics", "ims_auth_org_event"),

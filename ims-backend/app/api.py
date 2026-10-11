@@ -4,11 +4,11 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core import SessionLocal, mask_mobile, utcnow
-from app.models import AuthSession, SsoState, User
+from app.models import AuthSession, Role, SsoState, User, UserDept, UserMapping, UserRole
 from app.security import decode, hash_password, issue_tokens, locked, mark_fail, mark_ok, verify_password
 
 router = APIRouter()
@@ -97,17 +97,103 @@ class UserBody(BaseModel):
     status: str | None = None
     dingtalkUserId: str | None = None
     userId: int | None = None
+    roleIds: list[int] | None = None
+    deptIds: list[int] | None = None
 
 
-def user_vo(user: User) -> dict:
+def normalize_id_list(raw: list | None) -> list[int] | None:
+    if raw is None:
+        return None
+    ids: list[int] = []
+    for item in raw:
+        if str(item).isdigit():
+            ids.append(int(item))
+    return ids
+
+
+def user_dept_snapshot(db: Session, user_id: int, tenant_id: int) -> tuple[list[int], list[str]]:
+    from app.org_sync import dept_names_of, latest_person_event, read_payload
+
+    dept_ids = sorted(
+        {
+            int(row)
+            for row in db.scalars(
+                select(UserDept.dept_id).where(UserDept.user_id == user_id, UserDept.tenant_id == tenant_id)
+            ).all()
+        }
+    )
+    mapping = db.scalar(select(UserMapping).where(UserMapping.user_id == user_id, UserMapping.deleted == 0))
+    names: list[str] = []
+    if mapping is not None:
+        event = latest_person_event(db, user_id)
+        payload = read_payload(event.payload_json) if event and event.payload_json else {}
+        if not payload.get("deptIds") and mapping.dept_ids:
+            payload = {"deptIds": list(mapping.dept_ids or []), "deptNames": []}
+        names = dept_names_of(payload, event)
+        if not dept_ids and mapping.dept_ids:
+            dept_ids = sorted({int(item) for item in mapping.dept_ids if str(item).isdigit()})
+    if dept_ids and not names:
+        names = [f"部门 {dept_id}" for dept_id in dept_ids]
+    elif len(names) < len(dept_ids):
+        names = list(names) + [f"部门 {dept_id}" for dept_id in dept_ids[len(names) :]]
+    return dept_ids, names
+
+
+def user_vo(db: Session, user: User, *, mobile_full: bool = False) -> dict:
+    tenant_id = user.tenant_id or 0
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+    role_names: list[str] = []
+    if role_ids:
+        role_names = list(
+            db.scalars(select(Role.role_name).where(Role.id.in_(role_ids), Role.deleted == 0).order_by(Role.id)).all()
+        )
+    dept_ids, dept_names = user_dept_snapshot(db, user.id, tenant_id)
     return {
         "id": str(user.id),
         "username": user.username,
         "nickname": user.nickname,
-        "mobile": mask_mobile(user.mobile),
+        "mobile": user.mobile if mobile_full else mask_mobile(user.mobile),
         "status": user.status,
         "dingtalkUserId": user.dingtalk_user_id,
+        "roleIds": role_ids,
+        "roleNames": role_names,
+        "deptIds": dept_ids,
+        "deptNames": dept_names,
     }
+
+
+def replace_user_roles(db: Session, user: User, role_ids: list[int]) -> bool:
+    tenant_id = user.tenant_id or 0
+    unique = sorted(set(role_ids))
+    if unique:
+        found = list(
+            db.scalars(
+                select(Role.id).where(Role.id.in_(unique), Role.deleted == 0, Role.tenant_id == tenant_id)
+            ).all()
+        )
+        if len(found) != len(unique):
+            return False
+    db.execute(delete(UserRole).where(UserRole.user_id == user.id))
+    for role_id in unique:
+        db.add(UserRole(user_id=user.id, role_id=role_id, tenant_id=tenant_id))
+    from app.scope import refresh_user_scope
+
+    refresh_user_scope(db, user.id)
+    return True
+
+
+def replace_user_depts(db: Session, user: User, dept_ids: list[int]) -> None:
+    tenant_id = user.tenant_id or 0
+    unique = sorted({dept_id for dept_id in dept_ids if dept_id > 0})
+    db.execute(delete(UserDept).where(UserDept.user_id == user.id))
+    for dept_id in unique:
+        db.add(UserDept(user_id=user.id, dept_id=dept_id, tenant_id=tenant_id))
+    mapping = db.scalar(select(UserMapping).where(UserMapping.user_id == user.id, UserMapping.deleted == 0))
+    if mapping is not None:
+        mapping.dept_ids = unique
+    from app.scope import refresh_user_scope
+
+    refresh_user_scope(db, user.id)
 
 
 @router.get("/health")
@@ -239,7 +325,22 @@ def user_page(
         stmt = stmt.where(User.status == status)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(User.id).offset((page_no - 1) * size).limit(size)).all()
-    return ok({"list": [user_vo(row) for row in rows], "total": total, "pageNo": page_no, "pageSize": size})
+    return ok({"list": [user_vo(db, row) for row in rows], "total": total, "pageNo": page_no, "pageSize": size})
+
+
+@router.get("/system/user/{user_id}")
+def user_detail(
+    request: Request,
+    user_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    from app.scope import user_visible
+
+    user = db.get(User, user_id)
+    if user is None or user.deleted or not user_visible(db, actor, request.state.scope, user):
+        return fail(1504, "资源不可用")
+    return ok(user_vo(db, user, mobile_full=True))
 
 
 @router.post("/system/user")
@@ -262,7 +363,13 @@ def user_create(body: UserBody, db: Session = Depends(db_session), actor: User =
     )
     db.add(user)
     db.flush()
-    return ok(user_vo(user))
+    role_ids = normalize_id_list(body.roleIds)
+    if role_ids is not None and not replace_user_roles(db, user, role_ids):
+        return fail(1504, "资源不可用")
+    dept_ids = normalize_id_list(body.deptIds)
+    if dept_ids is not None:
+        replace_user_depts(db, user, dept_ids)
+    return ok(user_vo(db, user, mobile_full=True))
 
 
 @router.put("/system/user/{user_id}")
@@ -289,7 +396,13 @@ def user_update(request: Request, user_id: int, body: UserBody, db: Session = De
         user.dingtalk_user_id = body.dingtalkUserId
     if body.password:
         user.password_hash = hash_password(body.password)
-    return ok(user_vo(user))
+    role_ids = normalize_id_list(body.roleIds)
+    if role_ids is not None and not replace_user_roles(db, user, role_ids):
+        return fail(1504, "资源不可用")
+    dept_ids = normalize_id_list(body.deptIds)
+    if dept_ids is not None:
+        replace_user_depts(db, user, dept_ids)
+    return ok(user_vo(db, user, mobile_full=True))
 
 
 from app.account import router as account_router

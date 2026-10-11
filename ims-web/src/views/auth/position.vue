@@ -5,23 +5,22 @@
         <h1>岗位-角色供给规则</h1>
         <div class="sub">AUTH-003 · 只挂角色，权限明细在角色页</div>
       </div>
+      <div class="acts">
+        <button class="btn btn-pri btn-sm" type="button" data-testid="pos-create-open" @click="openCreate">新建规则</button>
+      </div>
     </div>
-    <form class="qbar" data-testid="pos-create" @submit.prevent="create">
-      <input v-model="name" data-testid="pos-create-name" placeholder="规则名" style="width: 160px" />
-      <input v-model="position" data-testid="pos-create-position" placeholder="钉钉岗位" style="width: 160px" />
-      <input v-model="description" data-testid="pos-create-desc" placeholder="说明（选填，≤200 字）" style="width: 200px" />
-      <select v-model="roleId" data-testid="pos-create-role" style="width: 180px">
-        <option value="">授予角色</option>
-        <option v-for="role in roles" :key="String(role.id)" :value="String(role.id)">
-          {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
-        </option>
-      </select>
-      <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit" data-testid="pos-create-submit">新建</button>
-    </form>
     <form class="qbar" data-testid="pos-filters" @submit.prevent="search">
       <input v-model="filterKeyword" data-testid="pos-filter-keyword" placeholder="规则名 / 岗位" style="width: 160px" />
-      <input v-model="filterPosition" data-testid="pos-filter-position" placeholder="钉钉岗位（精确）" style="width: 160px" />
+      <input
+        v-model="filterPosition"
+        data-testid="pos-filter-position"
+        list="pos-filter-position-list"
+        placeholder="钉钉岗位（精确）"
+        style="width: 160px"
+      />
+      <datalist id="pos-filter-position-list">
+        <option v-for="pos in positionOptions" :key="'f-' + pos" :value="pos" />
+      </datalist>
       <select v-model="filterRoleId" data-testid="pos-filter-role" style="width: 180px">
         <option value="">全部角色</option>
         <option v-for="role in filterRoles" :key="String(role.id)" :value="String(role.id)">
@@ -37,7 +36,7 @@
       <button class="btn btn-sec btn-sm" type="button" data-testid="pos-filter-reset" @click="resetFilters">重置</button>
     </form>
     <p v-if="filterNote" class="hint" data-testid="pos-filter-summary">{{ filterNote }}</p>
-    <p v-if="msg" class="hint" data-testid="pos-form-error" style="margin-bottom: 10px">{{ msg }}</p>
+    <p v-if="msg && !drawerOpen" class="hint" data-testid="pos-form-error" style="margin-bottom: 10px">{{ msg }}</p>
     <div v-if="confirmId" class="card" data-testid="pos-delete-card" style="margin-bottom: 12px">
       <div style="font-weight: 600; margin-bottom: 6px">确认删除</div>
       <div class="sub">请输入规则名「{{ confirmRuleName }}」后删除。在用人数不为 0 时直接拒绝，不打开本确认。</div>
@@ -81,7 +80,7 @@
               <td class="num">{{ cell(row, ['appliedUserCount']) }}</td>
               <td>{{ row.status === 'ENABLED' ? '启用' : '停用' }}</td>
               <td>
-                <button class="btn btn-txt" type="button" @click="edit(row)">新版本</button>
+                <button class="btn btn-txt" type="button" data-testid="pos-edit" @click="openEdit(row)">编辑</button>
                 <button class="btn btn-txt" type="button" data-testid="pos-delete" @click="askRemove(row)">删除</button>
               </td>
             </tr>
@@ -90,6 +89,54 @@
       </div>
       <div class="pager"><span class="pg-total">共 {{ total }} 条</span></div>
     </div>
+
+    <ProtoDrawer
+      :open="drawerOpen"
+      :title="editingId ? `编辑供给规则 · v${editingVersion}` : '新建供给规则'"
+      width="560px"
+      @close="closeDrawer"
+    >
+      <p v-if="editingId" class="hint">保存后将生成 v{{ editingVersion + 1 }}；已套用用户权限不变。</p>
+      <div class="fld">
+        <label>规则名称 <span class="req">*</span></label>
+        <input v-model="name" data-testid="pos-create-name" maxlength="64" placeholder="≤64 字" />
+      </div>
+      <div class="fld">
+        <label>钉钉岗位 <span class="req">*</span></label>
+        <input
+          v-model="position"
+          data-testid="pos-create-position"
+          list="pos-create-position-list"
+          placeholder="组织同步后可下拉选择"
+          :readonly="Boolean(editingId)"
+        />
+        <datalist id="pos-create-position-list">
+          <option v-for="pos in drawerPositionOptions" :key="pos" :value="pos" />
+        </datalist>
+        <p v-if="!positionOptions.length" class="hint">暂无岗位字典，请先在「组织架构同步」完成钉钉同步或手输岗位名。</p>
+      </div>
+      <div class="fld">
+        <label>说明</label>
+        <textarea v-model="description" data-testid="pos-create-desc" rows="3" placeholder="选填，≤200 字" />
+      </div>
+      <div class="fld">
+        <label>授予角色 <span class="req">*</span></label>
+        <p class="hint">权限由角色决定；本规则不配置权限明细。</p>
+        <select v-model="roleId" data-testid="pos-create-role">
+          <option value="">请选择角色</option>
+          <option v-for="role in roles" :key="String(role.id)" :value="String(role.id)">
+            {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
+          </option>
+        </select>
+      </div>
+      <p v-if="msg && drawerOpen" class="hint" data-testid="pos-form-error">{{ msg }}</p>
+      <template #footer>
+        <button class="btn btn-sec btn-sm" type="button" @click="closeDrawer">取消</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="pos-create-submit" @click="saveDrawer">
+          {{ editingId ? '保存为新版本' : '保存' }}
+        </button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -97,12 +144,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal, cell, readData } from '../../api/read'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const rows = ref<Record<string, unknown>[]>([])
 const roles = ref<Record<string, unknown>[]>([])
 const filterRoles = ref<Record<string, unknown>[]>([])
+const positionOptions = ref<string[]>([])
 const ready = ref(false)
 const error = ref('')
+const drawerOpen = ref(false)
+const editingId = ref(0)
+const editingVersion = ref(1)
 const name = ref('')
 const position = ref('')
 const description = ref('')
@@ -122,6 +174,13 @@ const confirmName = ref('')
 const confirmRuleName = ref('')
 
 const hasFilters = computed(() => Boolean(appliedKeyword.value || appliedPosition.value || appliedRoleId.value || appliedStatus.value))
+
+const drawerPositionOptions = computed(() => {
+  const set = new Set(positionOptions.value)
+  const cur = position.value.trim()
+  if (cur) set.add(cur)
+  return [...set].sort()
+})
 
 const filterNote = computed(() => {
   const bits: string[] = []
@@ -149,15 +208,56 @@ function captureFilters() {
   appliedStatus.value = filterStatus.value
 }
 
+function resetDrawerForm() {
+  name.value = ''
+  position.value = ''
+  description.value = ''
+  roleId.value = ''
+  editingId.value = 0
+  editingVersion.value = 1
+  msg.value = ''
+}
+
+async function openCreate() {
+  resetDrawerForm()
+  drawerOpen.value = true
+  await loadPositions()
+}
+
+function openEdit(row: Record<string, unknown>) {
+  resetDrawerForm()
+  editingId.value = Number(row.id)
+  editingVersion.value = Number(row.version || 1)
+  name.value = String(row.ruleName || '')
+  position.value = String(row.dingtalkPosition || '')
+  description.value = String(row.description || '')
+  const grants = Array.isArray(row.grantRoles) ? row.grantRoles : []
+  const first = grants[0] as { roleId?: number } | undefined
+  roleId.value = first?.roleId ? String(first.roleId) : ''
+  drawerOpen.value = true
+}
+
+function closeDrawer() {
+  drawerOpen.value = false
+  msg.value = ''
+}
+
+async function loadPositions() {
+  const res = await readData('/auth/org/positions')
+  const raw = asList(res.data)
+  const fromStrings =
+    raw.length && typeof raw[0] !== 'object'
+      ? raw.map((item) => String(item))
+      : ((res.data as { list?: unknown[] } | null)?.list || []).map((item) => String(item))
+  positionOptions.value = fromStrings.filter(Boolean)
+}
+
 async function load() {
   captureFilters()
+  await loadPositions()
   const roleRes = await readData('/system/role/list')
   filterRoles.value = asList(roleRes.data)
   roles.value = filterRoles.value
-  if (!roleId.value) {
-    const enabled = roles.value.find((role) => role.status === 'ENABLED')
-    if (enabled) roleId.value = String(enabled.id)
-  }
 
   const params: Record<string, unknown> = { pageNo: 1, pageSize: 20 }
   if (appliedKeyword.value) params.keyword = appliedKeyword.value
@@ -196,46 +296,36 @@ function formError() {
   if (role?.status === 'PENDING_CONFIG') {
     return `角色「${role.roleName}」尚未配置权限，用户将无任何权限`
   }
-  const clash = rows.value.some((row) => row.status === 'ENABLED' && String(row.dingtalkPosition || '') === pos)
-  if (clash) return '该岗位已有启用版本'
+  if (!editingId.value) {
+    const clash = rows.value.some((row) => row.status === 'ENABLED' && String(row.dingtalkPosition || '') === pos)
+    if (clash) return '该岗位已有启用版本'
+  }
   return ''
 }
 
-async function create() {
+async function saveDrawer() {
   msg.value = ''
   const invalid = formError()
   if (invalid) {
     msg.value = invalid
     return
   }
-  try {
-    await http.post('/auth/position/rule', {
-      ruleName: name.value.trim(),
-      dingtalkPosition: position.value.trim(),
-      description: description.value.trim(),
-      grantRoleIds: [Number(roleId.value)],
-    })
-    name.value = ''
-    position.value = ''
-    description.value = ''
-    msg.value = '已新建，版本 1'
-    await load()
-  } catch (e: unknown) {
-    msg.value = errorMessage(e)
+  const grantRoleIds = [Number(roleId.value)]
+  const body = {
+    ruleName: name.value.trim(),
+    dingtalkPosition: position.value.trim(),
+    description: description.value.trim(),
+    grantRoleIds,
   }
-}
-
-async function edit(row: Record<string, unknown>) {
-  msg.value = ''
-  const grants = Array.isArray(row.grantRoles) ? row.grantRoles : []
-  const ids = grants.map((item) => Number((item as { roleId?: number }).roleId)).filter((id) => id)
   try {
-    await http.put(`/auth/position/rule/${row.id}`, {
-      ruleName: row.ruleName,
-      dingtalkPosition: row.dingtalkPosition,
-      grantRoleIds: ids,
-    })
-    msg.value = '已生成新版本，已套用用户未改'
+    const wasEdit = editingId.value
+    if (wasEdit) {
+      await http.put(`/auth/position/rule/${wasEdit}`, body)
+    } else {
+      await http.post('/auth/position/rule', body)
+    }
+    closeDrawer()
+    msg.value = wasEdit ? '已生成新版本，已套用用户未改' : '已新建，版本 1'
     await load()
   } catch (e: unknown) {
     msg.value = errorMessage(e)

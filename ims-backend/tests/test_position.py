@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from app.core import Base, SessionLocal, engine
 from app.main import app, init_db
-from app.models import PositionRule, RolePerm, User, UserRole
+from app.models import PositionRule, RolePerm, User, UserMapping, UserRole
 
 
 client = TestClient(app)
@@ -29,6 +29,53 @@ def admin_role_id(token: str) -> int:
         if row["status"] == "ENABLED":
             return row["id"]
     raise AssertionError("no enabled role")
+
+
+def test_org_positions_includes_dingtalk_mapping_title():
+    token = login()
+    headers = auth(token)
+    db = SessionLocal()
+    try:
+        user = User(
+            username="pos_map_user",
+            nickname="岗位映射",
+            mobile="13700001111",
+            password_hash="x",
+            dingtalk_user_id="ding_pos_map",
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            UserMapping(
+                user_id=user.id,
+                dingtalk_user_id="ding_pos_map",
+                dept_ids=[1],
+                sync_status="SUCCESS",
+                dingtalk_position="同步岗位乙",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    res = client.get("/admin-api/ims/auth/org/positions", headers=headers)
+    assert res.json()["code"] == 0
+    assert "同步岗位乙" in res.json()["data"]["list"]
+
+
+def test_org_positions_lists_synced_and_bound():
+    token = login()
+    headers = auth(token)
+    role_id = admin_role_id(token)
+    client.post(
+        "/admin-api/ims/auth/position/rule",
+        headers=headers,
+        json={"ruleName": "岗位字典测", "dingtalkPosition": "字典岗甲", "grantRoleIds": [role_id]},
+    )
+    res = client.get("/admin-api/ims/auth/org/positions", headers=headers)
+    assert res.json()["code"] == 0
+    names = res.json()["data"]["list"]
+    assert "字典岗甲" in names
+    assert names == sorted(names)
 
 
 def test_rule_version_does_not_change_applied_users():

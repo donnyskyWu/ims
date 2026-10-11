@@ -10,7 +10,7 @@
           class="btn btn-sec"
           type="button"
           data-testid="org-replay-open"
-          :disabled="!canManage"
+          :disabled="!canManage || actionBusy"
           :title="canManage ? '' : '无操作权限'"
           @click="replayOpen = true"
         >
@@ -20,7 +20,7 @@
           class="btn btn-sec"
           type="button"
           data-testid="org-local-reconcile"
-          :disabled="!canManage"
+          :disabled="!canManage || actionBusy"
           :title="canManage ? '' : '无操作权限'"
           @click="localConfirm = true"
         >
@@ -30,7 +30,7 @@
           class="btn btn-pri"
           type="button"
           data-testid="org-dingtalk-sync"
-          :disabled="!canManage"
+          :disabled="!canManage || actionBusy"
           :title="canManage ? '' : '无操作权限'"
           @click="confirming = true"
         >
@@ -39,22 +39,38 @@
       </div>
     </div>
     <div v-if="confirming" class="card" style="margin-bottom: 12px">
-      <div style="font-weight: 600; margin-bottom: 6px">确认全量对账</div>
-      <div class="sub">只核对本系统已经同步的人员，并写入一条对账事件。</div>
+      <div style="font-weight: 600; margin-bottom: 6px">确认从钉钉全量同步</div>
+      <div class="sub">将拉取钉钉全量部门与人员并写入本地映射，预计 1～3 分钟。需已配置 dingtalk 凭证与通讯录授权范围。</div>
       <div class="acts" style="margin-top: 12px">
-        <button class="btn btn-pri btn-sm" type="button" @click="reconcile">确认执行</button>
-        <button class="btn btn-sec btn-sm" type="button" @click="confirming = false">取消</button>
+        <button
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="org-dingtalk-confirm"
+          :disabled="actionBusy"
+          @click="confirmDingtalkSync"
+        >
+          {{ actionBusy ? '同步中…' : '确认执行' }}
+        </button>
+        <button class="btn btn-sec btn-sm" type="button" :disabled="actionBusy" @click="confirming = false">取消</button>
       </div>
     </div>
     <div v-if="localConfirm" class="card" style="margin-bottom: 12px">
       <div style="font-weight: 600; margin-bottom: 6px">确认本地对账</div>
       <div class="sub">只核对本系统已经同步的人员，写入一条对账事件。不拉取钉钉通讯录。</div>
       <div class="acts" style="margin-top: 12px">
-        <button class="btn btn-pri btn-sm" type="button" data-testid="org-local-confirm" @click="localReconcile">确认执行</button>
-        <button class="btn btn-sec btn-sm" type="button" @click="localConfirm = false">取消</button>
+        <button
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="org-local-confirm"
+          :disabled="actionBusy"
+          @click="localReconcile"
+        >
+          {{ actionBusy ? '对账中…' : '确认执行' }}
+        </button>
+        <button class="btn btn-sec btn-sm" type="button" :disabled="actionBusy" @click="localConfirm = false">取消</button>
       </div>
     </div>
-    <p v-if="msg" class="hint" style="margin-bottom: 10px">{{ msg }}</p>
+    <p v-if="msg" class="hint" :class="{ bad: msgIsError }" data-testid="org-action-toast" style="margin-bottom: 10px">{{ msg }}</p>
     <div class="g4">
       <div class="card stat">
         <span class="l">同步延迟</span>
@@ -211,6 +227,7 @@
           <option value="resign">离职</option>
           <option value="dept_change">部门变更</option>
           <option value="reconcile">对账</option>
+          <option value="dingtalk_sync">钉钉全量</option>
         </select>
         <select v-model="eventSyncStatus" data-testid="org-event-status" style="width: 140px">
           <option value="">全部同步状态</option>
@@ -368,6 +385,8 @@ const eventReady = ref(false)
 const eventError = ref('')
 const total = ref(0)
 const msg = ref('')
+const msgIsError = ref(false)
+const actionBusy = ref(false)
 const confirming = ref(false)
 const tab = ref<'users' | 'events'>('users')
 const keyword = ref('')
@@ -587,6 +606,7 @@ function eventLabel(value: unknown) {
     resign: '离职',
     dept_change: '部门变更',
     reconcile: '对账',
+    dingtalk_sync: '钉钉全量',
   }
   return map[String(value)] || text(value)
 }
@@ -779,16 +799,34 @@ function openEvent(row: Record<string, unknown>) {
   eventOpen.value = true
 }
 
+function setActionToast(text: string, isError = false) {
+  msg.value = text
+  msgIsError.value = isError
+}
+
+function clearEventFilters() {
+  eventType.value = ''
+  eventSyncStatus.value = ''
+  eventFrom.value = ''
+  eventTo.value = ''
+  eventHint.value = ''
+}
+
 async function localReconcile() {
-  msg.value = ''
+  if (actionBusy.value) return
+  setActionToast('')
+  actionBusy.value = true
   try {
     await http.post('/auth/org/reconcile', {})
-    msg.value = '已写入本地对账，未拉取钉钉。'
+    setActionToast('已写入本地对账，未拉取钉钉。')
     localConfirm.value = false
+    clearEventFilters()
     tab.value = 'events'
     await load()
   } catch (error) {
-    msg.value = errorMessage(error)
+    setActionToast(errorMessage(error), true)
+  } finally {
+    actionBusy.value = false
   }
 }
 
@@ -809,24 +847,31 @@ async function submitReplay() {
   }
 }
 
-async function reconcile() {
-  msg.value = ''
+async function confirmDingtalkSync() {
+  if (actionBusy.value) return
+  setActionToast('正在从钉钉拉取通讯录…')
+  actionBusy.value = true
   try {
-    const res = await http.post('/auth/org/sync-from-dingtalk', {})
+    const res = await http.post('/auth/org/sync-from-dingtalk', {}, { timeout: 120_000 })
     const d = res.data?.data as {
       departmentsFetched?: number
       usersCreated?: number
       usersUpdated?: number
       usersFailed?: number
+      authScopeHint?: string
     } | undefined
-    msg.value = d
+    const summary = d
       ? `同步完成：部门 ${d.departmentsFetched ?? 0} · 新增 ${d.usersCreated ?? 0} · 更新 ${d.usersUpdated ?? 0}${d.usersFailed ? ` · 失败 ${d.usersFailed}` : ''}`
       : '同步完成'
+    setActionToast(summary)
     confirming.value = false
-    tab.value = 'users'
+    clearEventFilters()
+    tab.value = 'events'
     await Promise.all([load(), loadDeptTree()])
   } catch (error) {
-    msg.value = errorMessage(error)
+    setActionToast(errorMessage(error), true)
+  } finally {
+    actionBusy.value = false
   }
 }
 

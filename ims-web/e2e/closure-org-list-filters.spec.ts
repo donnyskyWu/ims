@@ -98,12 +98,23 @@ async function filterOrgEvents(page: Page) {
 }
 
 async function filterPositionRules(page: Page, ruleName: string, position: string) {
+  await page.goto('/ims/system/role')
+  await expect(page.locator('h1')).toHaveText('角色权限', { timeout: 15_000 })
+  await page.getByTestId('role-position-input').fill(position)
+  const roleCreated = page.waitForResponse(
+    (r) => r.url().includes('/system/role/from-position') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await page.getByRole('button', { name: '从岗位生成角色' }).click()
+  await roleCreated
+
   await page.goto('/ims/auth/position')
   await expect(page.locator('h1')).toHaveText('岗位-角色供给规则', { timeout: 15_000 })
+  await page.getByTestId('pos-create-open').click()
   await expect(page.getByTestId('pos-create-role').locator('option', { hasText: '系统管理员' })).toHaveCount(1)
   await expect(page.locator('.tbl-wrap')).not.toContainText('加载中')
   await page.getByTestId('pos-create-name').fill(ruleName)
-  await page.getByTestId('pos-create-position').fill(position)
+  await page.getByTestId('pos-create-position').selectOption(position)
+  await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员' })
   const created = page.waitForResponse(
     (r) => r.url().includes('/auth/position/rule') && r.request().method() === 'POST' && r.status() === 200,
   )
@@ -116,7 +127,7 @@ async function filterPositionRules(page: Page, ruleName: string, position: strin
   await expect(page.getByTestId('pos-rule-row').filter({ hasText: ruleName })).toBeVisible()
 
   await page.getByTestId('pos-filter-keyword').fill(ruleName)
-  await page.getByTestId('pos-filter-position').fill(position)
+  await page.getByTestId('pos-filter-position').selectOption(position)
   await page.getByTestId('pos-filter-status').selectOption('ENABLED')
   const matched = page.waitForResponse(
     (r) =>
