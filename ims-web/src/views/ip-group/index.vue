@@ -5,9 +5,6 @@
         <h1>IP 组运营</h1>
         <div class="sub">大组小组、成员岗位、作者与账号绑定 · 19a IPG</div>
       </div>
-      <div class="acts">
-        <button class="btn btn-sec" type="button" disabled>导出</button>
-      </div>
     </div>
     <p v-if="msg" class="hint" data-testid="ipg-toast" style="margin-bottom: 10px">{{ msg }}</p>
     <div class="ipg-split">
