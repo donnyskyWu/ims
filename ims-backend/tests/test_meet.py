@@ -724,6 +724,13 @@ def test_meet_daily_duplicate_echoes_1111_and_locks_body():
         params={"onlyMine": True, "reportType": "OPS", "reviewState": "PENDING", "pageSize": 20},
     )
     assert any(row["reportDate"] == day and row["fieldCompleteness"] >= 0 for row in listed.json()["data"]["list"])
+    unknown = client.get(
+        "/admin-api/ims/meet/daily/list",
+        headers=auth,
+        params={"onlyMine": True, "reviewState": "RETURNED", "pageSize": 20},
+    )
+    assert unknown.json()["code"] == 0
+    assert any(row["reportDate"] == day for row in unknown.json()["data"]["list"])
 
 
 def test_meet_minutes_bucket_today_and_ended():

@@ -26,7 +26,6 @@
         <option value="">全部审阅</option>
         <option value="PENDING">待审阅</option>
         <option value="REVIEWED">已审阅</option>
-        <option value="RETURNED">已退回</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -153,7 +152,6 @@ function displayStatus(row: DailyRow) {
 function reviewLabel(state?: string) {
   if (state === 'PENDING') return '待审阅'
   if (state === 'REVIEWED') return '已审阅'
-  if (state === 'RETURNED') return '已退回'
   return '—'
 }
 

@@ -34,7 +34,7 @@
       <div class="card stat">
         <span class="l">审阅完成率</span>
         <div class="n">{{ summary.reviewDoneRate }}%</div>
-        <div class="d">待审 {{ summary.pendingReviewCount }} / 退回 {{ summary.returnedCount }}</div>
+        <div class="d">待审 {{ summary.pendingReviewCount }}</div>
       </div>
     </div>
     <div v-if="summary" class="card" style="padding: 12px; margin-bottom: 12px" data-testid="daily-trend">
@@ -45,7 +45,7 @@
           {{ point.date.slice(5) }}
         </text>
       </svg>
-      <p class="hint">应提交人次按本周已出现的提交人 × 已过工作日估算，未扣请假和节假日。退回份数当前没有退回状态，固定为 0。</p>
+      <p class="hint">应提交人次按本周已出现的提交人 × 已过工作日估算，未扣请假和节假日。</p>
     </div>
 
     <div class="tabs" style="margin-bottom: 8px">
@@ -124,7 +124,6 @@ type Summary = {
   fieldCompletenessAvg?: number
   reviewDoneRate?: number
   pendingReviewCount?: number
-  returnedCount?: number
   dateFrom: string
   dateTo: string
   byDept: { deptId: number; deptName: string; onTimeRate: number; submitRate: number }[]

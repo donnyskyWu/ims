@@ -501,8 +501,6 @@ def _daily_list_query(
         stmt = stmt.where(MeetDailyReport.submit_status == "SUBMITTED")
     elif reviewState == "REVIEWED":
         stmt = stmt.where(MeetDailyReport.submit_status == "READ")
-    elif reviewState == "RETURNED":
-        stmt = stmt.where(MeetDailyReport.id < 0)
     if dateFrom:
         stmt = stmt.where(MeetDailyReport.report_date >= dateFrom[:10])
     if dateTo:
@@ -744,7 +742,6 @@ def stat_on_time_rate(
             "fieldCompletenessAvg": completeness_avg,
             "reviewDoneRate": rate_pct(reviewed, pending_review + reviewed),
             "pendingReviewCount": pending_review,
-            "returnedCount": 0,
             "byDept": by_dept,
             "byPerson": by_person,
             "trend": trend,
