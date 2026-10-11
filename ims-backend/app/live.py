@@ -1403,6 +1403,41 @@ def filter_sessions(
     return stmt.order_by(LiveSession.id.desc())
 
 
+def session_board(db: Session, actor: User, scope) -> dict:
+    """列表上方四张卡：今日待开播、直播中、24 小时内待录入、本月已核准 GMV。"""
+    now = datetime.now(BJ)
+    today = now.strftime("%Y-%m-%d")
+    month = now.strftime("%Y-%m")
+    rows = db.scalars(restrict_sessions(select(LiveSession), actor, scope)).all()
+    today_pending = 0
+    live_count = 0
+    entry_due = 0
+    month_gmv = 0.0
+    for row in rows:
+        if row.session_status == "LIVE":
+            live_count += 1
+        planned = parse_iso(row.plan_start_time)
+        if row.session_status == "APPROVED" and planned is not None:
+            if planned.astimezone(BJ).strftime("%Y-%m-%d") == today:
+                today_pending += 1
+        report = load_report(db, row.session_code)
+        if row.session_status == "ENDED" and (
+            report is None or report.entry_status not in ("SUBMITTED", "CONFIRMED")
+        ):
+            if hours_since(ended_moment(row), now) < OVERDUE_HOURS:
+                entry_due += 1
+        if report is not None and report.entry_status == "CONFIRMED":
+            anchor = parse_iso(row.actual_start or report.actual_start or row.plan_start_time)
+            if anchor is not None and anchor.astimezone(BJ).strftime("%Y-%m") == month:
+                month_gmv += float(report.gmv or 0)
+    return {
+        "todayPendingStart": today_pending,
+        "liveCount": live_count,
+        "entryDue24h": entry_due,
+        "monthConfirmedGmv": round(month_gmv, 2),
+    }
+
+
 @router.get("/sessions/list")
 def sessions_list(
     request: Request,
@@ -1445,7 +1480,15 @@ def sessions_list(
         if report is not None:
             item["reportSummary"] = shape_summary(summary_of(report_payload(db, report)), view)
         out.append(item)
-    return paged(out, total, page_no, size)
+    return ok(
+        {
+            "list": out,
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+            "stats": session_board(db, actor, request.state.scope),
+        }
+    )
 
 
 @router.get("/sessions/{session_code}")

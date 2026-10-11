@@ -20,6 +20,12 @@
     <p v-if="exportError" class="hint bad" data-testid="live-export-error">{{ exportError }}</p>
     <p v-if="slowQueryHint" class="hint" data-testid="live-slow-query">{{ slowQueryHint }}</p>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
+    <div v-if="view === 'sessions'" class="g4" data-testid="live-stat-cards">
+      <div class="card stat"><span class="l">今日待开播</span><div class="n" data-testid="live-stat-today">{{ stats.todayPendingStart }}</div></div>
+      <div class="card stat"><span class="l">直播中</span><div class="n" data-testid="live-stat-live">{{ stats.liveCount }}</div></div>
+      <div class="card stat"><span class="l">待录入(24h)</span><div class="n" data-testid="live-stat-entry">{{ stats.entryDue24h }}</div></div>
+      <div class="card stat"><span class="l">本月 GMV(已核准)</span><div class="n" data-testid="live-stat-gmv">{{ stats.monthConfirmedGmv }}</div></div>
+    </div>
     <div class="tabs">
       <div class="tab" :class="{ on: view === 'sessions' }" data-testid="live-view-sessions" @click="view = 'sessions'">场次列表</div>
       <div class="tab" :class="{ on: view === 'pending' }" data-testid="live-view-pending" @click="openPending">
@@ -27,25 +33,17 @@
         <span v-if="overdueCount" data-testid="live-pending-count" style="color: var(--red)">({{ overdueCount }})</span>
       </div>
     </div>
-    <form v-if="view === 'sessions'" class="qbar" @submit.prevent="loadList">
+    <form v-if="view === 'sessions'" class="qbar" @submit.prevent="searchList">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 160px" />
-      <input
-        v-model="query.accountId"
-        inputmode="numeric"
-        data-testid="live-filter-account"
-        placeholder="账号 id"
-        aria-label="账号 id"
-        style="width: 110px"
-      />
-      <input
-        v-model="query.responsibleUserId"
-        inputmode="numeric"
-        data-testid="live-filter-owner"
-        placeholder="责任人 id"
-        aria-label="责任人 id"
-        style="width: 120px"
-      />
-      <select v-model="query.sessionStatus" style="width: 100px">
+      <select v-model="query.accountId" data-testid="live-filter-account" aria-label="直播账号" style="width: 160px">
+        <option value="">全部账号</option>
+        <option v-for="item in regOptions.accounts" :key="item.id" :value="String(item.id)">{{ item.accountName }}</option>
+      </select>
+      <select v-model="query.responsibleUserId" data-testid="live-filter-owner" aria-label="责任人" style="width: 140px">
+        <option value="">全部责任人</option>
+        <option v-for="item in regOptions.users" :key="item.id" :value="String(item.id)">{{ item.nickname || item.username }}</option>
+      </select>
+      <select v-model="query.sessionStatus" data-testid="live-filter-status" style="width: 100px">
         <option value="">全部状态</option>
         <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
       </select>
@@ -149,8 +147,13 @@
           </tbody>
         </table>
       </div>
-      <div class="pager">
+      <div class="pager" data-testid="live-session-pager">
         <span class="pg-total">共 {{ total }} 条</span>
+        <span class="pg-size">20 条/页</span>
+        <span class="pg-sp"></span>
+        <span class="pg-n" :class="{ dis: pageNo <= 1 }" data-testid="live-page-prev" @click="gotoPage(pageNo - 1)">‹</span>
+        <span class="pg-n on">{{ pageNo }}</span>
+        <span class="pg-n" :class="{ dis: pageNo >= pageCount }" data-testid="live-page-next" @click="gotoPage(pageNo + 1)">›</span>
       </div>
     </div>
     <div v-else class="tbl-block" data-testid="live-pending-panel">
@@ -668,6 +671,15 @@ const query = reactive({
   timeTo: '',
 })
 const pendingOwner = ref('')
+const pageNo = ref(1)
+const pageSize = 20
+const stats = reactive({
+  todayPendingStart: 0,
+  liveCount: 0,
+  entryDue24h: 0,
+  monthConfirmedGmv: 0,
+})
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const statusOptions = [
   { value: 'PENDING_RISK_CHECK', label: '待风控' },
   { value: 'APPROVED', label: '已放行' },
@@ -972,8 +984,8 @@ const sessionsEmptyHint = computed(() => {
 function ledgerQueryParams(withPage: boolean) {
   const params = new URLSearchParams()
   if (withPage) {
-    params.set('pageNo', '1')
-    params.set('pageSize', '20')
+    params.set('pageNo', String(pageNo.value))
+    params.set('pageSize', String(pageSize))
   }
   const sessionCode = query.sessionCode.trim()
   if (sessionCode) params.set('sessionCode', sessionCode)
@@ -1015,6 +1027,11 @@ async function loadList() {
     const res = await apiGet(`/live/sessions/list?${ledgerQueryParams(true).toString()}`)
     rows.value = res.list || []
     total.value = res.total || 0
+    const board = res.stats || {}
+    stats.todayPendingStart = Number(board.todayPendingStart || 0)
+    stats.liveCount = Number(board.liveCount || 0)
+    stats.entryDue24h = Number(board.entryDue24h || 0)
+    stats.monthConfirmedGmv = Number(board.monthConfirmedGmv || 0)
   } catch (e: unknown) {
     error.value = errorMessage(e)
     rows.value = []
@@ -1027,7 +1044,19 @@ async function loadList() {
   }
 }
 
+function searchList() {
+  pageNo.value = 1
+  loadList()
+}
+
+function gotoPage(page: number) {
+  if (page < 1 || page > pageCount.value || page === pageNo.value) return
+  pageNo.value = page
+  loadList()
+}
+
 function resetQuery() {
+  pageNo.value = 1
   query.sessionCode = ''
   query.accountId = ''
   query.responsibleUserId = ''
@@ -1784,6 +1813,7 @@ async function confirmReport() {
 onMounted(async () => {
   const code = typeof route.query.sessionCode === 'string' ? route.query.sessionCode.trim() : ''
   if (code) query.sessionCode = code
+  await loadRegOptions().catch(() => null)
   await loadList()
   if (code) await openDetail({ sessionCode: code })
 })
