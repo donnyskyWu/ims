@@ -280,8 +280,7 @@ def ensure_menus(db: Session) -> None:
             row.menu_type = menu_type
             row.perm_code = perm
             row.sort = sort
-            if route:
-                row.route = route
+            row.route = route
             row.deleted = 0
         by_perm[perm] = row
         id_of[perm] = row.id

@@ -93,6 +93,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Ico from '../components/Ico.vue'
 import MessageBell from '../components/MessageBell.vue'
+import { folderEntry } from '../nav/folderEntry'
 import { codeLabel, crumbOf, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
 import { useUserStore } from '../stores/user'
 
@@ -166,6 +167,16 @@ function toggleGroup(name: string) {
   closedGroups.value = { ...closedGroups.value, [name]: !closedGroups.value[name] }
 }
 function toggleSub(id: string) {
+  const folder = visibleGroups.value
+    .flatMap((group) => group.items)
+    .find((item) => item.kind === 'folder' && item.id === id)
+  const childIds = folder && folder.kind === 'folder' ? folder.children.map((child) => child.id) : []
+  const entry = folderEntry(childIds, currentId.value)
+  if (entry) {
+    closedSubs.value = { ...closedSubs.value, [id]: false }
+    go(entry)
+    return
+  }
   closedSubs.value = { ...closedSubs.value, [id]: !closedSubs.value[id] }
 }
 function go(id: string) {
