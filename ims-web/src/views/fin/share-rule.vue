@@ -169,11 +169,11 @@
           <div v-if="fieldErrors.rateType" class="ferr">{{ fieldErrors.rateType }}</div>
         </label>
         <label v-if="form.rateType === 'FIXED'" class="fld">
-          <span>比例或阶梯<i class="req">*</i></span>
+          <span>比例（%）<i class="req">*</i></span>
           <input v-model="form.fixedPercent" data-testid="fin-share-rule-fixed-rate" inputmode="decimal" :class="{ err: fieldErrors.rate }" />
           <div v-if="fieldErrors.rate" class="ferr">{{ fieldErrors.rate }}</div>
         </label>
-        <div v-else>
+        <div v-else-if="form.rateType === 'LADDER'">
           <div v-for="(ladder, index) in form.ladders" :key="index" class="acts" style="gap: 8px; margin-bottom: 8px">
             <label class="fld" style="flex: 1">
               <span>下限</span>
@@ -360,7 +360,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { http } from '../../api/http'
 
 type Scope = { platforms?: string[]; accountIds?: number[]; ipGroupIds?: number[] }
@@ -484,21 +484,23 @@ function sumParts(rowsIn: RuleRow[], extra?: { scope: Scope; baseType: string; s
   if (extra && Number.isFinite(extra.rate)) {
     consider(extra.scope, extra.baseType, extra.shareTarget, extra.priority, extra.rate)
   }
-  const parts: string[] = []
+  const parts: { key: string; text: string }[] = []
   for (const [key, bucket] of groups) {
     const basis = [...bucket.values()].reduce((acc, row) => acc + Math.round(row.rate * 10000), 0)
-    const [rawScope, baseType] = key.split('|')
+    const splitAt = key.lastIndexOf('|')
+    const rawScope = key.slice(0, splitAt)
+    const baseType = key.slice(splitAt + 1)
     const parsed = JSON.parse(rawScope) as Scope
     const percent = (basis / 100).toFixed(2)
     const remain = basis < 10000 ? '，剩余归公司' : ''
-    parts.push(`${scopeLabel(parsed)} · ${baseLabel(baseType)} ${percent}%${remain}`)
+    parts.push({ key, text: `${scopeLabel(parsed)} · ${baseLabel(baseType)} ${percent}%${remain}` })
   }
   return parts
 }
 
 const sumText = computed(() => {
   const parts = sumParts(rows.value)
-  return parts.length ? parts.join('；') : '暂无'
+  return parts.length ? parts.map((item) => item.text).join('；') : '暂无'
 })
 
 const draftSumText = computed(() => {
@@ -507,15 +509,17 @@ const draftSumText = computed(() => {
   }
   const rate = Number(form.fixedPercent) / 100
   if (!Number.isFinite(rate)) return '同一基数合计不足 100% 时，剩余归公司'
+  const scope = { platforms: form.platforms, accountIds: form.accountIds, ipGroupIds: form.ipGroups }
   const parts = sumParts(rows.value.filter((row) => editingId.value == null || row.id !== editingId.value), {
-    scope: { platforms: form.platforms, accountIds: form.accountIds, ipGroupIds: form.ipGroups },
+    scope,
     baseType: form.baseType,
     shareTarget: form.shareTarget,
     priority: Number(form.priority || 0),
     rate,
   })
-  const current = parts.find((item) => item.includes(baseLabel(form.baseType)))
-  return current || '同一基数合计不足 100% 时，剩余归公司'
+  const currentKey = `${scopeKey(scope)}|${form.baseType}`
+  const current = parts.find((item) => item.key === currentKey)
+  return current?.text || '同一基数合计不足 100% 时，剩余归公司'
 })
 
 function scopeKey(scope: Scope | undefined) {
@@ -553,11 +557,8 @@ function rateTitle(row: RuleRow) {
 }
 
 function scopeSummary(scope: Scope | undefined) {
-  const platforms = scope?.platforms?.length || 0
-  const accounts = scope?.accountIds?.length || 0
-  const groups = scope?.ipGroupIds?.length || 0
-  if (!platforms && !accounts && !groups) return '全部'
-  return `平台×${platforms}+账号×${accounts}+IP组×${groups}`
+  const text = scopeLabel(scope)
+  return text === '全范围' ? '全部' : text
 }
 
 function scopeTitle(scope: Scope | undefined) {
@@ -595,6 +596,11 @@ function clearFieldErrors() {
   fieldErrors.rate = ''
   fieldErrors.priority = ''
   fieldErrors.from = ''
+}
+
+function syncFormError() {
+  const messages = Object.values(fieldErrors).filter(Boolean)
+  formError.value = messages.length ? messages.join('；') : ''
 }
 
 function resetForm() {
@@ -637,6 +643,37 @@ function rateOutOfRange(raw: string) {
   const value = Number(raw)
   return !Number.isFinite(value) || value <= 0 || value > 100
 }
+
+watch(
+  () => [
+    form.ruleName,
+    form.shareTarget,
+    form.baseType,
+    form.rateType,
+    form.fixedPercent,
+    form.priority,
+    form.effectiveFrom,
+    form.ladders.map((row) => `${row.min}|${row.max}|${row.rate}`).join(';'),
+  ],
+  () => {
+    if (fieldErrors.name && form.ruleName.trim()) fieldErrors.name = ''
+    if (fieldErrors.target && form.shareTarget) fieldErrors.target = ''
+    if (fieldErrors.base && form.baseType) fieldErrors.base = ''
+    if (fieldErrors.rateType && form.rateType) fieldErrors.rateType = ''
+    if (fieldErrors.priority && form.priority.trim()) fieldErrors.priority = ''
+    if (fieldErrors.from && form.effectiveFrom) fieldErrors.from = ''
+    if (fieldErrors.rate) {
+      if (form.rateType === 'FIXED' && form.fixedPercent.trim() !== '' && !rateOutOfRange(form.fixedPercent)) {
+        fieldErrors.rate = ''
+      } else if (form.rateType === 'LADDER') {
+        const incomplete = !form.ladders.length || form.ladders.some((row) => row.min.trim() === '' || row.rate.trim() === '')
+        const badRate = form.ladders.some((row) => row.rate.trim() !== '' && rateOutOfRange(row.rate))
+        if (!incomplete && !badRate) fieldErrors.rate = ''
+      }
+    }
+    if (Object.values(fieldErrors).some(Boolean) || formError.value) syncFormError()
+  },
+)
 
 function validateForm() {
   clearFieldErrors()

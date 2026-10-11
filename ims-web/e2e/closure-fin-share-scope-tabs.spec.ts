@@ -55,7 +55,8 @@ test.describe('fin share scope and aggregate tabs', () => {
     expect(createdBody.data?.scope?.ipGroupIds).toHaveLength(2)
 
     const row = page.locator('tbody tr', { hasText: ruleName })
-    await expect(row.getByTestId('fin-share-rule-scope')).toContainText('IP组×2')
+    await expect(row.getByTestId('fin-share-rule-scope')).toContainText(groupA)
+    await expect(row.getByTestId('fin-share-rule-scope')).toContainText(groupB)
     await expect(row.getByTestId('fin-share-rule-scope')).toHaveAttribute('title', new RegExp(groupA))
     await expect(row.getByTestId('fin-share-rule-scope')).toHaveAttribute('title', new RegExp(groupB))
     await page.screenshot({ path: `${shotDir}/01-rule-ip-group.png`, fullPage: true })
@@ -82,7 +83,8 @@ test.describe('fin share scope and aggregate tabs', () => {
     expect(editedBody.data?.version).toBe(2)
     expect(editedBody.data?.scope?.ipGroupIds).toHaveLength(2)
     const editedRow = page.locator('tbody tr', { hasText: editedName })
-    await expect(editedRow.getByTestId('fin-share-rule-scope')).toContainText('IP组×2')
+    await expect(editedRow.getByTestId('fin-share-rule-scope')).toContainText(groupA)
+    await expect(editedRow.getByTestId('fin-share-rule-scope')).toContainText(groupB)
     await page.screenshot({ path: `${shotDir}/02-rule-ip-group-edited.png`, fullPage: true })
 
     await editedRow.getByTestId('fin-share-rule-simulate').click()
