@@ -9,6 +9,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -2106,23 +2107,45 @@ class ConfirmBody(BaseModel):
     answers: list[dict] | None = None
 
 
-@router.put("/task/{task_id}/progress")
-def report_progress(
-    task_id: int,
-    body: ProgressBody,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
+STUDY_DENIED = "仅被指派人可学习本任务"
+
+
+def open_assignee(db: Session, actor: User, task_id: int, denied_code: int, denied_msg: str):
     tenant_id = tenant_of(actor)
     task = db.get(TrainTask, task_id)
     if task is None or task.deleted or task.tenant_id != tenant_id:
-        return fail(1500, "任务不存在")
+        return None, None, fail(1500, "任务不存在")
+    record = record_for_user(db, tenant_id, task_id, actor.id)
+    if record is None:
+        return None, None, fail(denied_code, denied_msg)
+    return task, record, None
+
+
+def published_study_materials(db: Session, task: TrainTask) -> list[dict]:
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    items: list[dict] = []
+    for mid in material_ids:
+        mat = db.get(TrainMaterial, int(mid))
+        if mat is None or mat.deleted or mat.tenant_id != task.tenant_id or mat.status != "PUBLISHED":
+            continue
+        items.append(
+            {
+                "id": mat.id,
+                "title": mat.title,
+                "materialType": mat.material_type,
+                "fileKey": mat.file_key,
+                "linkUrl": mat.link_url,
+                "requiredMinutes": int(mat.required_minutes or 1),
+                "status": mat.status,
+            }
+        )
+    return items
+
+
+def apply_progress(db: Session, task: TrainTask, record: TrainTaskRecord, body: ProgressBody):
     material_ids = task.material_ids if isinstance(task.material_ids, list) else []
     if body.materialId not in material_ids:
         return fail(1101, "资料不存在或未发布")
-    record = record_for_user(db, tenant_id, task_id, actor.id)
-    if record is None:
-        return fail(1105, "非被指派人无权上报进度")
     if record.confirm_status == 1:
         return ok(progress_vo(db, task, record, body.materialId))
 
@@ -2144,20 +2167,13 @@ def report_progress(
     return ok(progress_vo(db, task, record, body.materialId))
 
 
-@router.post("/task/{task_id}/confirm")
-def confirm_task(
-    task_id: int,
-    body: ConfirmBody | None = None,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
+def apply_confirm(
+    db: Session,
+    actor: User,
+    task: TrainTask,
+    record: TrainTaskRecord,
+    body: ConfirmBody | None,
 ):
-    tenant_id = tenant_of(actor)
-    task = db.get(TrainTask, task_id)
-    if task is None or task.deleted or task.tenant_id != tenant_id:
-        return fail(1500, "任务不存在")
-    record = record_for_user(db, tenant_id, task_id, actor.id)
-    if record is None:
-        return fail(1105, "非被指派人无权上报进度")
     if record.confirm_status == 1:
         return ok(confirm_payload(task, record))
 
@@ -2188,9 +2204,121 @@ def confirm_task(
     record.progress = 100
     record.finished_at = now
     record.updated_at = now
-    close_study_todo(db, tenant_id, actor.id, task.id)
+    close_study_todo(db, tenant_of(actor), actor.id, task.id)
     db.flush()
     return ok(confirm_payload(task, record))
+
+
+@router.get("/study/{task_id}")
+def study_detail(
+    task_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    return ok(
+        {
+            "task": task_vo(db, task),
+            "materials": published_study_materials(db, task),
+            "progress": progress_vo(db, task, record),
+        }
+    )
+
+
+@router.get("/study/{task_id}/material/{material_id}/file")
+def study_material_file(
+    task_id: int,
+    material_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, _record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    if material_id not in material_ids:
+        return fail(1101, "资料不存在或未发布")
+    mat = db.get(TrainMaterial, material_id)
+    if mat is None or mat.deleted or mat.tenant_id != task.tenant_id or mat.status != "PUBLISHED":
+        return fail(1101, "资料不存在或未发布")
+    key = (mat.file_key or "").strip()
+    if not key or ".." in key.split("/") or "\\" in key or key.startswith("/"):
+        return fail(1504, "资源不可用")
+    stored = db.scalar(
+        select(ImsFile).where(
+            ImsFile.file_key == key,
+            ImsFile.deleted == 0,
+            ImsFile.tenant_id == task.tenant_id,
+        )
+    )
+    if stored is None:
+        return fail(1504, "资源不可用")
+    try:
+        path = storage.path_for(key)
+    except ValueError:
+        return fail(1504, "资源不可用")
+    if not path.is_file():
+        return fail(1504, "资源不可用")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return fail(5005, "文件读取失败")
+    media = stored.content_type or FILE_MEDIA.get(file_ext(key), "application/octet-stream")
+    return Response(content=data, media_type=media)
+
+
+@router.put("/study/{task_id}/progress")
+def study_progress(
+    task_id: int,
+    body: ProgressBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    return apply_progress(db, task, record, body)
+
+
+@router.post("/study/{task_id}/confirm")
+def study_confirm(
+    task_id: int,
+    body: ConfirmBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    return apply_confirm(db, actor, task, record, body)
+
+
+@router.put("/task/{task_id}/progress")
+def report_progress(
+    task_id: int,
+    body: ProgressBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 1105, "非被指派人无权上报进度")
+    if err is not None:
+        return err
+    return apply_progress(db, task, record, body)
+
+
+@router.post("/task/{task_id}/confirm")
+def confirm_task(
+    task_id: int,
+    body: ConfirmBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 1105, "非被指派人无权上报进度")
+    if err is not None:
+        return err
+    return apply_confirm(db, actor, task, record, body)
 
 
 @router.get("/task/records")

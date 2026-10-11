@@ -14,7 +14,10 @@ from sqlalchemy import select
 from app.core import SessionLocal, utcnow
 from app.main import app
 from app.models import (
+    Menu,
     OrgEvent,
+    Role,
+    RoleMenu,
     Todo,
     TrainMaterial,
     TrainMaterialCate,
@@ -25,6 +28,7 @@ from app.models import (
     UserMapping,
     UserRole,
 )
+from app.security import hash_password
 
 client = TestClient(app)
 
@@ -655,6 +659,101 @@ def _peer_headers() -> dict:
     logged = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"})
     token = logged.json()["data"]["accessToken"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _dept_learner(nickname: str) -> tuple[dict, int]:
+    """部门数据范围、只有工作台菜单，没有培训菜单。对应 tc_r6 这类被指派人。"""
+    username = f"r6_{uuid.uuid4().hex[:8]}"
+    db = SessionLocal()
+    try:
+        user = User(
+            username=username,
+            nickname=nickname,
+            mobile=f"136{uuid.uuid4().int % 10**8:08d}",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+        role = Role(
+            role_name=nickname,
+            role_key=f"r6_{uuid.uuid4().hex[:10]}",
+            data_scope="DEPT",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        menu = db.scalar(select(Menu).where(Menu.deleted == 0, Menu.route == "/ims/workbench"))
+        assert menu is not None
+        db.add(
+            RoleMenu(
+                role_id=role.id,
+                menu_id=menu.id,
+                perm_code=menu.perm_code or "auth:workbench:query",
+                tenant_id=0,
+            )
+        )
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+        user_id = int(user.id)
+    finally:
+        db.close()
+    logged = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"})
+    token = logged.json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}, user_id
+
+
+def test_train_study_assignee_reads_own_task_stranger_forbidden():
+    auth = headers()
+    assignee_auth, assignee_id = _dept_learner("内容运营")
+    stranger_auth, _stranger_id = _dept_learner("旁听")
+    material_id = _published_material(auth, f"学习中心资料 {uuid.uuid4().hex[:6]}")
+    name = f"指派学习 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [assignee_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "QUIZ",
+            "quiz": SAMPLE_QUIZ,
+            "passScore": 60,
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=assignee_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    task = opened_body["data"]["task"]
+    assert task["id"] == task_id
+    assert task["confirmType"] == "QUIZ"
+    assert task["quiz"][0]["question"] == "开播前要确认什么"
+    assert "answerIndex" not in task["quiz"][0]
+    assert any(item["id"] == material_id for item in opened_body["data"]["materials"])
+    assert opened_body["data"]["progress"]["userId"] == assignee_id
+    assert opened_body["data"]["progress"]["confirmStatus"] == "NOT_CONFIRMED"
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+
+    admin_denied = client.get(f"/admin-api/ims/train/study/{task_id}", headers=auth)
+    admin_body = admin_denied.json()
+    assert admin_denied.status_code == 403, admin_body
+    assert admin_body["code"] == 403
+    assert admin_body["msg"] == "仅被指派人可学习本任务"
 
 
 SAMPLE_QUIZ = [

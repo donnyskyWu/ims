@@ -10,7 +10,12 @@
       </div>
     </div>
 
-    <p v-if="loadError" class="hint" style="color: var(--red)">{{ loadError }}</p>
+    <p v-if="loadError" class="hint" data-testid="train-study-load-error" style="color: var(--red)">{{ loadError }}</p>
+    <p v-if="notAssignee && !task" style="margin-top: 8px">
+      <router-link class="btn btn-sec btn-sm" to="/ims/workbench" data-testid="train-study-back-workbench">
+        返回工作台
+      </router-link>
+    </p>
     <div v-else-if="task" class="g2">
       <div class="card head">
         <div style="font-weight: 600; font-size: 16px">{{ task.taskName }}</div>
@@ -212,7 +217,6 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
-import { useUserStore } from '../../stores/user'
 
 type QuizPublic = { question: string; options: string[] }
 
@@ -394,10 +398,19 @@ const hiddenMaterialCount = computed(() => {
   return ids.filter((id) => !visible.has(id)).length
 })
 
+function failureCode(err: unknown): number {
+  if (!err || typeof err !== 'object') return Number.NaN
+  const direct = (err as { code?: unknown }).code
+  if (typeof direct === 'number') return direct
+  const response = (err as { response?: { status?: number; data?: { code?: unknown } } }).response
+  if (typeof response?.data?.code === 'number') return response.data.code
+  if (response?.status === 403) return 403
+  return Number.NaN
+}
+
 function noteActionFailure(err: unknown, fallback: string) {
-  const code =
-    err && typeof err === 'object' && 'code' in err ? Number((err as { code?: unknown }).code) : Number.NaN
-  if (code === 1105) {
+  const code = failureCode(err)
+  if (code === 1105 || code === 403) {
     notAssignee.value = true
     actionError.value = '仅被指派人可学习本任务'
     return
@@ -430,65 +443,47 @@ function parseMatProgress(raw: Record<string, number> | undefined) {
 
 async function loadTaskAndProgress() {
   loadError.value = ''
-  const listRes = await http.get('/train/task/list', { params: { pageNo: 1, pageSize: 100 } })
-  if (listRes.data.code !== 0) {
-    loadError.value = listRes.data.msg || '任务加载失败'
-    return
-  }
-  const found = (listRes.data.data.list || []).find((r: TaskRow) => r.id === taskId.value)
-  if (!found) {
-    loadError.value = '任务不存在或无权查看'
-    return
-  }
-  task.value = found
-  activeMaterialId.value = found.materialIds[0] ?? 0
-  answers.splice(0, answers.length, ...((found.quiz || []).map(() => null)))
-
-  materials.value = await loadVisibleMaterials(found.materialIds || [])
-
-  const userStore = useUserStore()
-  const uid = Number(userStore.profile?.userId || 0)
-  const recParams: Record<string, number> = { taskId: taskId.value, pageNo: 1, pageSize: 1 }
-  if (uid > 0) recParams.userId = uid
-  const recRes = await http.get('/train/task/records', { params: recParams })
-  if (recRes.data.code === 0 && recRes.data.data.list?.length) {
-    const rec = recRes.data.data.list[0]
-    materialProgress.value = parseMatProgress(rec.materialProgress)
-    materialSeconds.value = parseMatProgress(rec.materialSeconds)
-    progressPct.value = rec.progress ?? 0
-    studySeconds.value = Number(rec.studySeconds || 0)
-    confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
-    if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
-      passedScore.value = rec.confirmScore
-      latestScore.value = rec.confirmScore
-    } else if (found.confirmType === 'QUIZ' && rec.confirmScore != null) {
-      latestScore.value = rec.confirmScore
-      gradeText.value = failGradeText(rec.confirmScore, found.passScore ?? 0)
+  notAssignee.value = false
+  try {
+    const res = await http.get(`/train/study/${taskId.value}`)
+    const data = res.data.data || {}
+    const found = data.task as TaskRow | undefined
+    if (!found) {
+      task.value = null
+      loadError.value = '任务不存在或无权查看'
+      return
     }
-  }
-}
+    task.value = found
+    activeMaterialId.value = found.materialIds[0] ?? 0
+    answers.splice(0, answers.length, ...((found.quiz || []).map(() => null)))
+    materials.value = (data.materials || []) as MatRow[]
 
-async function loadVisibleMaterials(ids: number[]) {
-  const wanted = new Set(ids)
-  if (!wanted.size) return [] as MatRow[]
-  const found: MatRow[] = []
-  let page = 1
-  let total = 0
-  let seen = 0
-  do {
-    const matRes = await http.get('/train/material/list', {
-      params: { status: 'PUBLISHED', pageNo: page, pageSize: 100 },
-    })
-    const list = (matRes.data.data?.list || []) as MatRow[]
-    total = Number(matRes.data.data?.total || 0)
-    for (const item of list) {
-      if (wanted.has(item.id)) found.push(item)
+    const rec = data.progress
+    if (rec) {
+      materialProgress.value = parseMatProgress(rec.materialProgress)
+      materialSeconds.value = parseMatProgress(rec.materialSeconds)
+      progressPct.value = rec.progress ?? 0
+      studySeconds.value = Number(rec.studySeconds || 0)
+      confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
+      if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
+        passedScore.value = rec.confirmScore
+        latestScore.value = rec.confirmScore
+      } else if (found.confirmType === 'QUIZ' && rec.confirmScore != null) {
+        latestScore.value = rec.confirmScore
+        gradeText.value = failGradeText(rec.confirmScore, found.passScore ?? 0)
+      }
     }
-    seen += list.length
-    page += 1
-    if (found.length >= wanted.size || !list.length) break
-  } while (seen < total && page <= 8)
-  return found
+  } catch (err) {
+    task.value = null
+    const code = failureCode(err)
+    if (code === 403 || code === 1105) {
+      notAssignee.value = true
+      loadError.value = '仅被指派人可学习本任务'
+      return
+    }
+    const msg = errorMessage(err)
+    loadError.value = msg === '加载失败' ? '任务加载失败' : msg
+  }
 }
 
 async function submitQuiz() {
@@ -497,7 +492,7 @@ async function submitQuiz() {
   gradeText.value = ''
   busy.value = true
   try {
-    const res = await http.post(`/train/task/${taskId.value}/confirm`, {
+    const res = await http.post(`/train/study/${taskId.value}/confirm`, {
       answers: quiz.value.map((_, index) => ({
         questionIndex: index,
         answerIndex: answers[index],
@@ -543,7 +538,7 @@ function syncLocalProgress() {
 
 async function pushProgress(materialId: number, seconds: number) {
   try {
-    const res = await http.put(`/train/task/${taskId.value}/progress`, {
+    const res = await http.put(`/train/study/${taskId.value}/progress`, {
       materialId,
       watchedSeconds: seconds,
       heartbeatAt: new Date().toISOString(),
@@ -612,7 +607,7 @@ async function loadPreview() {
   const key = previewKey.value
   try {
     const token = localStorage.getItem('ims_access')
-    const res = await fetch(`/admin-api/ims/file/${item.fileKey}`, {
+    const res = await fetch(`/admin-api/ims/train/study/${taskId.value}/material/${item.id}/file`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     const mime = res.headers.get('content-type') || ''
@@ -638,7 +633,7 @@ async function confirmComplete() {
   busy.value = true
   try {
     await flushStudy()
-    const res = await http.post(`/train/task/${taskId.value}/confirm`, {})
+    const res = await http.post(`/train/study/${taskId.value}/confirm`, {})
     if (res.data.code !== 0) {
       actionError.value = res.data.msg || '确认失败'
       return
