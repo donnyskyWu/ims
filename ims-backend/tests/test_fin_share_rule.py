@@ -150,50 +150,59 @@ def test_fin_share_rule_crud_version_disable_keeps_share_result():
 
 def test_fin_share_rule_1146_sum_boundary_and_1147_conflict():
     auth = headers()
-    single = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=0.2, ruleName="单对象"))
+    scope = {"platforms": ["JD"], "accountIds": [84111], "ipGroupIds": []}
+
+    def body(**overrides):
+        return rule_body(scope=scope, **overrides)
+
+    single = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=0.2, ruleName="单对象"))
     assert single.json()["code"] == 0
     assert client.delete(f"/admin-api/ims/fin/share/rule/{single.json()['data']['id']}", headers=auth).json()["code"] == 0
 
-    assert client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=0)).json()["code"] == 1146
-    assert client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=1.0001)).json()["code"] == 1146
-    edge = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=1, ruleName="整额", shareTarget="TEAM"))
+    zero = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=0))
+    assert zero.json()["code"] == 1146
+    assert zero.json()["msg"] == "分成比例须在 0~100% 之间"
+    over = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=1.0001))
+    assert over.json()["code"] == 1146
+    assert over.json()["msg"] == "分成比例须在 0~100% 之间"
+    edge = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=1, ruleName="整额", shareTarget="TEAM"))
     assert edge.json()["code"] == 0
     assert client.delete(f"/admin-api/ims/fin/share/rule/{edge.json()['data']['id']}", headers=auth).json()["code"] == 0
 
-    base = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=0.6))
+    base = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=0.6))
     assert base.json()["code"] == 0
     low = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="差一", shareTarget="REALNAME", fixedRate=0.3999, priority=9),
+        json=body(ruleName="差一", shareTarget="REALNAME", fixedRate=0.3999, priority=9),
     )
-    assert low.json()["code"] == 1146
-    assert "0.9999" in low.json()["msg"]
+    assert low.json()["code"] == 0
     high = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="超一", shareTarget="REALNAME", fixedRate=0.4001, priority=9),
+        json=body(ruleName="超一", shareTarget="REALNAME", fixedRate=0.4001, priority=9),
     )
     assert high.json()["code"] == 1146
     assert "1.0001" in high.json()["msg"]
+    assert client.delete(f"/admin-api/ims/fin/share/rule/{low.json()['data']['id']}", headers=auth).json()["code"] == 0
     exact = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="实名人四成", shareTarget="REALNAME", fixedRate=0.4, priority=9),
+        json=body(ruleName="实名人四成", shareTarget="REALNAME", fixedRate=0.4, priority=9),
     )
     assert exact.json()["code"] == 0
 
     clash = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="达人冲突", fixedRate=0.6, priority=30),
+        json=body(ruleName="达人冲突", fixedRate=0.6, priority=30),
     )
     assert clash.json()["code"] == 1147
     assert base.json()["data"]["id"] in clash.json()["data"]["conflictRuleIds"]
     forced = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="达人冲突", fixedRate=0.6, priority=30, confirmConflict=True),
+        json=body(ruleName="达人冲突", fixedRate=0.6, priority=30, confirmConflict=True),
     )
     assert forced.json()["code"] == 0
     assert forced.json()["data"]["priority"] == 30
@@ -223,6 +232,7 @@ def test_fin_share_rule_1146_sum_boundary_and_1147_conflict():
         json=ladder_body(ladderConfig=[{"min": 0, "max": None, "rate": 1.2}]),
     )
     assert bad_rate.json()["code"] == 1146
+    assert bad_rate.json()["msg"] == "分成比例须在 0~100% 之间"
     gap = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
@@ -331,3 +341,61 @@ def test_fin_share_rule_ip_group_scope_roundtrip_and_distinct():
     )
     assert other.json()["code"] == 0
     assert other.json()["data"]["scope"]["ipGroupIds"] == [88009]
+
+
+def test_fin_share_rule_sum_is_per_base_and_shortfall_allowed():
+    auth = headers()
+    scope = {"platforms": ["WX"], "accountIds": [85021], "ipGroupIds": []}
+    daren = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="毛利达人一成",
+            shareTarget="DAREN",
+            baseType="GROSS_PROFIT",
+            fixedRate=0.1,
+            priority=10,
+            scope=scope,
+        ),
+    )
+    assert daren.json()["code"] == 0
+    realname = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="GMV实名人",
+            shareTarget="REALNAME",
+            baseType="GMV",
+            fixedRate=0.02,
+            priority=10,
+            scope=scope,
+        ),
+    )
+    assert realname.json()["code"] == 0
+    over = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="毛利超额",
+            shareTarget="REALNAME",
+            baseType="GROSS_PROFIT",
+            fixedRate=0.95,
+            priority=12,
+            scope=scope,
+        ),
+    )
+    assert over.json()["code"] == 1146
+    assert "1.0500" in over.json()["msg"]
+    short = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="毛利团队两成",
+            shareTarget="TEAM",
+            baseType="GROSS_PROFIT",
+            fixedRate=0.2,
+            priority=8,
+            scope=scope,
+        ),
+    )
+    assert short.json()["code"] == 0

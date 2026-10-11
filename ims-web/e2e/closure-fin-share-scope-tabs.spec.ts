@@ -17,27 +17,33 @@ test.describe('fin share scope and aggregate tabs', () => {
     test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     const stamp = Date.now()
-    const accountId = stamp
+    const groupA = `E2E组A${stamp}`
+    const groupB = `E2E组B${stamp}`
     const ruleName = `E2E组范围${stamp}`
     const editedName = `E2E组范围修订${stamp}`
 
     await loginAdmin(page)
+    await createIpGroup(page, groupA)
+    await createIpGroup(page, groupB)
     await page.goto('/ims/fin/share/rule')
     await expect(page.locator('h1')).toHaveText('分成规则', { timeout: 15_000 })
 
     await page.getByTestId('fin-share-rule-create').click()
-    const emptyResp = page.waitForResponse(
-      (r) => r.url().includes('/fin/share/rule') && !r.url().includes('/simulate') && r.request().method() === 'POST',
-    )
+    let posted = false
+    const mark = (request: { url: () => string; method: () => string }) => {
+      if (request.url().includes('/fin/share/rule') && request.method() === 'POST' && !request.url().includes('/simulate')) {
+        posted = true
+      }
+    }
+    page.on('request', mark)
     await page.getByTestId('fin-share-rule-save').click()
-    const emptyBody = (await (await emptyResp).json()) as ApiBody
-    expect(emptyBody.code).toBe(1001)
-    await expect(page.getByTestId('fin-share-rule-error')).toContainText('规则名称必填')
+    await expect(page.getByTestId('fin-share-rule-error')).toContainText('必填项，请填写')
+    expect(posted).toBe(false)
+    page.off('request', mark)
 
     await fillFixed(page, {
       name: ruleName,
-      accountId,
-      groups: '88001,88002',
+      groups: [groupA, groupB],
       priority: Math.floor(stamp / 1000) % 100000,
     })
     const created = page.waitForResponse(
@@ -46,12 +52,12 @@ test.describe('fin share scope and aggregate tabs', () => {
     await page.getByTestId('fin-share-rule-save').click()
     const createdBody = (await (await created).json()) as ApiBody
     expect(createdBody.code).toBe(0)
-    expect(createdBody.data?.scope?.ipGroupIds).toEqual([88001, 88002])
+    expect(createdBody.data?.scope?.ipGroupIds).toHaveLength(2)
 
     const row = page.locator('tbody tr', { hasText: ruleName })
     await expect(row.getByTestId('fin-share-rule-scope')).toContainText('IP组×2')
-    await expect(row.getByTestId('fin-share-rule-scope')).toHaveAttribute('title', /88001/)
-    await expect(row.getByTestId('fin-share-rule-scope')).toHaveAttribute('title', /88002/)
+    await expect(row.getByTestId('fin-share-rule-scope')).toHaveAttribute('title', new RegExp(groupA))
+    await expect(row.getByTestId('fin-share-rule-scope')).toHaveAttribute('title', new RegExp(groupB))
     await page.screenshot({ path: `${shotDir}/01-rule-ip-group.png`, fullPage: true })
 
     await page.getByTestId('fin-share-rule-filter-status').selectOption('DISABLED')
@@ -61,7 +67,11 @@ test.describe('fin share scope and aggregate tabs', () => {
     await expect(page.locator('tbody tr', { hasText: ruleName })).toBeVisible()
 
     await row.getByRole('button', { name: '编辑' }).click()
-    await expect(page.getByTestId('fin-share-rule-groups')).toHaveValue('88001,88002')
+    await page.getByTestId('fin-share-rule-group-search').fill(String(stamp))
+    const listed = page.waitForResponse((r) => r.url().includes('/ip-group/list'))
+    await page.getByTestId('fin-share-rule-group-search').press('Enter')
+    await listed
+    await expect(page.getByTestId('fin-share-rule-groups').locator('.pill.on')).toHaveCount(2)
     await page.getByTestId('fin-share-rule-name').fill(editedName)
     const edited = page.waitForResponse(
       (r) => /\/fin\/share\/rule\/\d+/.test(r.url()) && r.request().method() === 'PUT',
@@ -70,7 +80,7 @@ test.describe('fin share scope and aggregate tabs', () => {
     const editedBody = (await (await edited).json()) as ApiBody
     expect(editedBody.code).toBe(0)
     expect(editedBody.data?.version).toBe(2)
-    expect(editedBody.data?.scope?.ipGroupIds).toEqual([88001, 88002])
+    expect(editedBody.data?.scope?.ipGroupIds).toHaveLength(2)
     const editedRow = page.locator('tbody tr', { hasText: editedName })
     await expect(editedRow.getByTestId('fin-share-rule-scope')).toContainText('IP组×2')
     await page.screenshot({ path: `${shotDir}/02-rule-ip-group-edited.png`, fullPage: true })
@@ -88,11 +98,9 @@ test.describe('fin share scope and aggregate tabs', () => {
     await expect(page.getByTestId('fin-share-rule-ladder-min')).toHaveCount(2)
     await page.getByTestId('fin-share-rule-ladder-remove').first().click()
     await expect(page.getByTestId('fin-share-rule-ladder-min')).toHaveCount(1)
-    await page.getByTestId('fin-share-rule-groups').fill('0')
     await page.getByTestId('fin-share-rule-name').fill(`E2E非法组${stamp}`)
     await page.getByTestId('fin-share-rule-save').click()
-    await expect(page.getByTestId('fin-share-rule-error')).toContainText('1001')
-    await expect(page.getByTestId('fin-share-rule-error')).toContainText('适用范围编号非法')
+    await expect(page.getByTestId('fin-share-rule-error')).toContainText('必填项，请填写')
     await expect(page.getByTestId('fin-share-rule-drawer')).toBeVisible()
     await page.screenshot({ path: `${shotDir}/03-rule-bad-group.png`, fullPage: true })
 
@@ -151,9 +159,29 @@ test.describe('fin share scope and aggregate tabs', () => {
   })
 })
 
+async function createIpGroup(page: Page, name: string) {
+  await page.goto('/ims/ip-group')
+  await page.getByRole('button', { name: '+ 新建大组' }).click()
+  const panel = page.locator('.drawer-panel')
+  await panel.locator('input').first().fill(name)
+  const created = page.waitForResponse((r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST')
+  await panel.getByRole('button', { name: '确定' }).click()
+  expect(((await (await created).json()) as ApiBody).code).toBe(0)
+  await expect(page.getByText('已创建 IP 组')).toBeVisible()
+}
+
+async function selectGroup(page: Page, groupName: string) {
+  const search = page.getByTestId('fin-share-rule-group-search')
+  await search.fill(groupName)
+  const listed = page.waitForResponse((r) => r.url().includes('/ip-group/list'))
+  await search.press('Enter')
+  await listed
+  await page.getByTestId('fin-share-rule-groups').getByText(groupName, { exact: true }).click()
+}
+
 async function fillFixed(
   page: Page,
-  opts: { name: string; accountId: number; groups: string; priority: number },
+  opts: { name: string; groups: string[]; priority: number },
 ) {
   const drawer = page.getByTestId('fin-share-rule-drawer')
   await expect(drawer).toBeVisible()
@@ -162,8 +190,7 @@ async function fillFixed(
   await drawer.getByTestId('fin-share-rule-base').selectOption('NET_PROFIT')
   await drawer.getByTestId('fin-share-rule-rate-type').selectOption('FIXED')
   await drawer.getByTestId('fin-share-rule-fixed-rate').fill('100')
-  await drawer.getByTestId('fin-share-rule-accounts').fill(String(opts.accountId))
-  await drawer.getByTestId('fin-share-rule-groups').fill(opts.groups)
+  for (const groupName of opts.groups) await selectGroup(page, groupName)
   await drawer.getByTestId('fin-share-rule-priority').fill(String(opts.priority))
   await drawer.getByTestId('fin-share-rule-from').fill('2026-10-08')
 }

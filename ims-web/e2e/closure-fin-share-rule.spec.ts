@@ -9,8 +9,8 @@ type ApiBody = { code: number; msg?: string; data?: { id?: number; version?: num
 
 /**
  * #84 FIN-003 分成规则（纯 UI）
- * 创建固定比例 → 1146 合计 0.9999 → 补齐 1.0000 → 编辑版本 +1
- * → 试算 → 1147 冲突确认 → 停用 → 阶梯重叠 1146 → 阶梯逐档试算
+ * 创建固定比例 → 同基数不足 100% 可保存且提示剩余归公司 → 超过 100% 为 1146
+ * → 编辑版本 +1 → 试算 → 1147 冲突确认 → 停用 → 阶梯重叠 1146 → 阶梯逐档试算
  */
 test.describe('fin share rule closure', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
@@ -19,15 +19,17 @@ test.describe('fin share rule closure', () => {
     test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     const stamp = Date.now()
-    const accountId = stamp
     const priorityBase = Math.floor(stamp / 1000)
+    const groupName = `E2E分成${stamp}`
     const darenName = `E2E达人${stamp}`
     const darenEdited = `E2E达人修订${stamp}`
     const realnameName = `E2E实名${stamp}`
+    const overName = `E2E超额${stamp}`
     const clashName = `E2E冲突${stamp}`
     const ladderName = `E2E阶梯${stamp}`
 
     await loginAdmin(page)
+    await createIpGroup(page, groupName)
     await page.goto('/ims/fin/share/rule')
     await expect(page.locator('h1')).toHaveText('分成规则', { timeout: 15_000 })
 
@@ -35,7 +37,7 @@ test.describe('fin share rule closure', () => {
       name: darenName,
       target: 'DAREN',
       percent: '60',
-      accountId,
+      groupName,
       priority: priorityBase,
     })
     await expect(page.locator('tbody tr', { hasText: darenName })).toContainText('启用')
@@ -45,28 +47,37 @@ test.describe('fin share rule closure', () => {
     await fillCommon(page, {
       name: realnameName,
       target: 'REALNAME',
-      accountId,
+      groupName,
       priority: priorityBase + 1,
     })
     await page.getByTestId('fin-share-rule-fixed-rate').fill('39.99')
     const lowResp = page.waitForResponse(
-      (r) => r.url().includes('/fin/share/rule') && r.request().method() === 'POST',
+      (r) => r.url().includes('/fin/share/rule') && r.request().method() === 'POST' && !r.url().includes('/simulate'),
     )
     await page.getByTestId('fin-share-rule-save').click()
     const lowBody = (await (await lowResp).json()) as ApiBody
-    expect(lowBody.code).toBe(1146)
-    await expect(page.getByTestId('fin-share-rule-error')).toContainText('1146')
-    await expect(page.getByTestId('fin-share-rule-error')).toContainText('0.9999')
-    await page.screenshot({ path: `${shotDir}/02-error-1146-sum.png`, fullPage: true })
+    expect(lowBody.code).toBe(0)
+    await expect(page.getByTestId('fin-share-rule-sum')).toContainText('剩余归公司')
+    await page.screenshot({ path: `${shotDir}/02-sum-shortfall.png`, fullPage: true })
 
-    await page.getByTestId('fin-share-rule-fixed-rate').fill('40')
-    const exactResp = page.waitForResponse(
-      (r) => r.url().includes('/fin/share/rule') && r.request().method() === 'POST',
+    await page.getByTestId('fin-share-rule-create').click()
+    await fillCommon(page, {
+      name: overName,
+      target: 'REALNAME',
+      groupName,
+      priority: priorityBase + 2,
+    })
+    await page.getByTestId('fin-share-rule-fixed-rate').fill('40.01')
+    const highResp = page.waitForResponse(
+      (r) => r.url().includes('/fin/share/rule') && r.request().method() === 'POST' && !r.url().includes('/simulate'),
     )
     await page.getByTestId('fin-share-rule-save').click()
-    expect(((await (await exactResp).json()) as ApiBody).code).toBe(0)
-    await expect(page.getByTestId('fin-share-rule-sum')).toContainText('1.0000')
-    await expect(page.getByTestId('fin-share-rule-sum')).toContainText(`账号#${accountId}`)
+    const highBody = (await (await highResp).json()) as ApiBody
+    expect(highBody.code).toBe(1146)
+    await expect(page.getByTestId('fin-share-rule-error')).toContainText('1146')
+    await expect(page.getByTestId('fin-share-rule-error')).toContainText('1.0001')
+    await page.screenshot({ path: `${shotDir}/02-error-1146-sum.png`, fullPage: true })
+    await page.getByTestId('fin-share-rule-drawer').getByRole('button', { name: '关闭' }).click()
 
     const darenRow = page.locator('tbody tr', { hasText: darenName })
     await darenRow.getByRole('button', { name: '编辑' }).click()
@@ -97,8 +108,8 @@ test.describe('fin share rule closure', () => {
     await fillCommon(page, {
       name: clashName,
       target: 'DAREN',
-      accountId,
-      priority: priorityBase + 2,
+      groupName,
+      priority: priorityBase + 3,
     })
     await page.getByTestId('fin-share-rule-fixed-rate').fill('60')
     const clashResp = page.waitForResponse(
@@ -131,8 +142,8 @@ test.describe('fin share rule closure', () => {
     await fillCommon(page, {
       name: ladderName,
       target: 'TEAM',
-      accountId,
-      priority: priorityBase + 3,
+      groupName,
+      priority: priorityBase + 4,
     })
     await page.getByTestId('fin-share-rule-rate-type').selectOption('LADDER')
     const mins = page.getByTestId('fin-share-rule-ladder-min')
@@ -177,9 +188,29 @@ test.describe('fin share rule closure', () => {
   })
 })
 
+async function createIpGroup(page: Page, name: string) {
+  await page.goto('/ims/ip-group')
+  await page.getByRole('button', { name: '+ 新建大组' }).click()
+  const panel = page.locator('.drawer-panel')
+  await panel.locator('input').first().fill(name)
+  const created = page.waitForResponse((r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST')
+  await panel.getByRole('button', { name: '确定' }).click()
+  expect(((await (await created).json()) as ApiBody).code).toBe(0)
+  await expect(page.getByText('已创建 IP 组')).toBeVisible()
+}
+
+async function selectGroup(page: Page, groupName: string) {
+  const search = page.getByTestId('fin-share-rule-group-search')
+  await search.fill(groupName)
+  const listed = page.waitForResponse((r) => r.url().includes('/ip-group/list'))
+  await search.press('Enter')
+  await listed
+  await page.getByTestId('fin-share-rule-groups').getByText(groupName, { exact: true }).click()
+}
+
 async function fillCommon(
   page: Page,
-  opts: { name: string; target: string; accountId: number; priority: number },
+  opts: { name: string; target: string; groupName: string; priority: number },
 ) {
   const drawer = page.getByTestId('fin-share-rule-drawer')
   await expect(drawer).toBeVisible()
@@ -187,14 +218,14 @@ async function fillCommon(
   await drawer.getByTestId('fin-share-rule-target').selectOption(opts.target)
   await drawer.getByTestId('fin-share-rule-base').selectOption('NET_PROFIT')
   await drawer.getByTestId('fin-share-rule-rate-type').selectOption('FIXED')
-  await drawer.getByTestId('fin-share-rule-accounts').fill(String(opts.accountId))
+  await selectGroup(page, opts.groupName)
   await drawer.getByTestId('fin-share-rule-priority').fill(String(opts.priority))
   await drawer.getByTestId('fin-share-rule-from').fill('2026-10-08')
 }
 
 async function saveFixed(
   page: Page,
-  opts: { name: string; target: string; percent: string; accountId: number; priority: number },
+  opts: { name: string; target: string; percent: string; groupName: string; priority: number },
 ) {
   await page.getByTestId('fin-share-rule-create').click()
   await fillCommon(page, opts)

@@ -2,7 +2,7 @@
 
 > **模块范围**：11 财务核算（V3，第 28~33 周先行批次，由 V2 移入）——FIN-001 单场成本录入、FIN-002 利润自动计算、FIN-003 分成规则引擎、FIN-004 利润看板。消费 V1 直播台账（`ims_live_session`/下播数据/投放汇总），不新建直播上游台账。
 > **权威依据**：《IMS第二期PRD-V2.md》5.16~5.19；BR-107~BR-109；V2-E1~E4 财务精度约束。
-> **全局约定**：响应包裹 `{code, msg, data}`；分页 `{pageNo, pageSize}` / `{list, total, pageNo, pageSize}`；枚举/错误码引用《全局开发规范.md》第 3/4 章；字段 camelCase（`session_code → sessionCode`、`share_daren → shareDaren`）。**财务口径强制**：金额 DECIMAL(12,2)（单位元、两位小数）；比例 DECIMAL(5,4)；BigDecimal 全链路（V2-E1）；`sessionCode` 引用 V1 19 位 IMS 编码（`IMS+yyyyMMdd+3 位平台码+4 位序列`，BR-011 修正口径）；多对象分成比例求和校验 = 1.0000（V2-E2）；红冲+蓝补更正模式（V2-E3）；金额变更幂等（clientToken 请求头）。周次波浪号格式。
+> **全局约定**：响应包裹 `{code, msg, data}`；分页 `{pageNo, pageSize}` / `{list, total, pageNo, pageSize}`；枚举/错误码引用《全局开发规范.md》第 3/4 章；字段 camelCase（`session_code → sessionCode`、`share_daren → shareDaren`）。**财务口径强制**：金额 DECIMAL(12,2)（单位元、两位小数）；比例 DECIMAL(5,4)；BigDecimal 全链路（V2-E1）；`sessionCode` 引用 V1 19 位 IMS 编码（`IMS+yyyyMMdd+3 位平台码+4 位序列`，BR-011 修正口径）；同一范围同一基数分成比例合计超过 1 拦截，不足归公司（V2-E2）；红冲+蓝补更正模式（V2-E3）；金额变更幂等（clientToken 请求头）。周次波浪号格式。
 
 ---
 
@@ -227,7 +227,7 @@ interface FinShareRuleVO {
 
 **请求**：`Omit<FinShareRuleVO, 'id' | 'version' | 'status'>` → **响应** `data`：`FinShareRuleVO`。
 
-**错误码**：1146（规则参数非法：fixedRate 超出 (0,1] 或阶梯区间重叠/比例非法）、1147（同范围同对象优先级冲突须显式确认）。**校验**：同一场次多分成对象比例求和 ≤ 1.0000，多对象集合求和必须 = 1.0000（V2-E2）。
+**错误码**：1146（规则参数非法：比例须在 0~100% 之间，或阶梯区间重叠）、1147（同范围同对象优先级冲突须显式确认）。**校验**：同一范围且同一基数的固定比例，多对象合计超过 1 时拦截（1146）；合计不足 1 不拦截，剩余归公司。不同基数不互相求和。存储仍为 DECIMAL (0, 1]。
 
 #### 2.3.3 PUT /admin-api/ims/fin/share/rule/{id} — 编辑规则（新版本）
 
@@ -365,7 +365,7 @@ PENDING_AUDIT ──财务审（R3）+业务审（R4）双审通过──▶ AUD
 | FIN-B-R2 | 下钻最深到场次明细 | 2.4.3 drillToSession |
 | FIN-B-R3 | 看板数据权限同角色矩阵 | 2.4.x 服务端过滤 |
 | V2-E1 | 金额 DECIMAL(12,2)、BigDecimal 全链路（禁 float/double） | 全模块 |
-| V2-E2 | 分成比例 DECIMAL(5,4)，多对象求和 = 1.0000 | 2.3.2 校验 |
+| V2-E2 | 分成比例 DECIMAL(5,4)。同一范围同一基数合计超过 1 拦截；不足 1 剩余归公司；不同基数不求和 | 2.3.2 校验 |
 | V2-E3 | 更正红冲+蓝补（不做物理修改） | 2.1.6 / 2.3.8 |
 | V2-E4 | 金额写接口 clientToken 幂等 | 2.1.2 / 2.1.6 请求头 |
 
