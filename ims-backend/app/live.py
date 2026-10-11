@@ -392,10 +392,25 @@ def airtime_blocked(ops: Session, actor: User, account: PlatformAccount) -> bool
 
 def device_outcome(db: Session, ops: Session, actor: User, device_ids) -> str:
     refs = device_refs_from(device_ids)
-    if not validate_devices(db, ops, actor, refs):
+    if not refs:
         return "WARN"
+    resolved: list[tuple[dict, str | None]] = []
     for ref in refs:
-        if not ref_accepts(db, ops, actor, ref):
+        kind = ref.get("kind") or device_kind(db, ops, actor, int(ref["id"]))
+        if not kind:
+            return "WARN"
+        resolved.append((ref, kind))
+    for ref, kind in resolved:
+        device_id = int(ref["id"])
+        if kind == "PHONE":
+            phone = ops.get(Phone, device_id)
+            if phone is None or phone.deleted or phone.status != "IN_USE":
+                return "FAIL"
+        elif kind == "ASSET":
+            asset = load_asset(db, actor, device_id)
+            if asset is None or asset.asset_type not in LIVE_ASSET_TYPES or asset.status != "IN_USE":
+                return "FAIL"
+        else:
             return "FAIL"
     return "PASS"
 
