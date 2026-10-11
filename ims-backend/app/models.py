@@ -1562,6 +1562,8 @@ class AlertRecord(Base):
     source_ref_id: Mapped[int] = mapped_column(BigInteger, default=0)
     level: Mapped[int] = mapped_column(Integer, default=2)
     content: Mapped[str] = mapped_column(String(512), default="")
+    object_label: Mapped[str] = mapped_column(String(128), default="")
+    merged_count: Mapped[int] = mapped_column(Integer, default=1)
     push_status: Mapped[int] = mapped_column(Integer, default=1)
     response_status: Mapped[int] = mapped_column(Integer, default=0)
     occurred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)

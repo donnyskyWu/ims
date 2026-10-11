@@ -361,6 +361,7 @@
     <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="closeDetail">
       <div v-if="detail" data-testid="alert-receipt-drawer">
         <p>{{ detail.content }}</p>
+        <p v-if="detail.objectLabel" class="hint" data-testid="alert-receipt-object">对象：{{ detail.objectLabel }}</p>
         <p class="hint" data-testid="alert-receipt-status">
           {{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ statusText(detail.responseStatus) }}
         </p>

@@ -18,7 +18,7 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.alert_escalate import router as escalate_router
-from app.models import AlertDedupPolicy, AlertRecord, AlertRule, User
+from app.models import AlertDedupPolicy, AlertRecord, AlertRule, CertArchive, LiveSession, User, WorkMessage
 
 router = APIRouter(prefix="/alert", tags=["alert"])
 router.include_router(escalate_router)
@@ -1438,6 +1438,142 @@ def stats_merge_logs(
     return paged(logs[offset : offset + size], len(logs), page_no, size)
 
 
+def _rule_text(rule: AlertRule) -> str:
+    module = getattr(rule, "source_module", None) or ""
+    return f"{rule.rule_code or ''} {rule.rule_name or ''} {rule.threshold_expr or ''} {module}"
+
+
+def _is_cert_rule(rule: AlertRule) -> bool:
+    text = _rule_text(rule)
+    upper = text.upper()
+    return "CERT" in upper or "DAYS_LEFT" in upper or "证件" in text
+
+
+def _is_live_session_rule(rule: AlertRule) -> bool:
+    """直播场次对象。不把「直播数据延迟」这类采集延迟规则当成场次。"""
+    text = _rule_text(rule)
+    upper = text.upper()
+    module = getattr(rule, "source_module", None) or ""
+    return "LIVE_RISK" in upper or "直播风险" in text or module == "直播管理"
+
+
+def _days_limit(expr: str) -> int:
+    matched = re.search(r"days_left\s*(?:<=|<)\s*(\d+)", expr or "", re.IGNORECASE)
+    if matched:
+        return int(matched.group(1))
+    return 30
+
+
+def _parse_ymd(value: str) -> datetime | None:
+    text = (value or "").strip()
+    if len(text) < 10:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def resolve_trial_object(db: Session, rule: AlertRule, tenant_id: int) -> tuple[str, int, str, int]:
+    """试跑命中对象。无匹配时保持手工来源，避免把无对象的重复试跑写成同一条。"""
+    if _is_cert_rule(rule):
+        limit = _days_limit(rule.threshold_expr)
+        today = datetime.now(BJ).date()
+        rows = db.scalars(
+            select(CertArchive).where(
+                CertArchive.deleted == 0,
+                CertArchive.tenant_id == tenant_id,
+                CertArchive.status.in_(("EFFECTIVE", "EXPIRING", "EXPIRED")),
+            )
+        ).all()
+        best: CertArchive | None = None
+        best_days: int | None = None
+        for cert in rows:
+            parsed = _parse_ymd(cert.expire_date)
+            if parsed is None:
+                continue
+            days = (parsed.date() - today).days
+            if days > limit:
+                continue
+            if best is None or best_days is None or days < best_days:
+                best = cert
+                best_days = days
+        if best is not None:
+            holder = (best.holder_name or "").strip() or f"证件#{best.id}"
+            kind = (best.cert_type or "").strip() or "证件"
+            holder_id = int(best.holder_user_id or 0)
+            return "CERT", int(best.id), f"{holder} · {kind}"[:128], holder_id
+    if _is_live_session_rule(rule):
+        session = db.scalar(
+            select(LiveSession)
+            .where(LiveSession.deleted == 0, LiveSession.tenant_id == tenant_id)
+            .order_by(LiveSession.id.desc())
+        )
+        if session is not None:
+            topic = (session.topic or session.session_code or f"场次#{session.id}").strip()
+            who = (session.realname_name or "").strip()
+            label = f"{who} · {topic}" if who else topic
+            return "SESSION", int(session.id), label[:128], int(session.responsible_user_id or 0)
+    return "MANUAL", 0, "", 0
+
+
+def absorb_open_duplicate(
+    db: Session,
+    rule: AlertRule,
+    tenant_id: int,
+    ref_type: str,
+    ref_id: int,
+    now: datetime,
+) -> AlertRecord | None:
+    """BR-114：同规则 + 同对象、30 分钟内未终态的预警合并为一条，不二次推送。source_ref_id=0 不合并。"""
+    if not ref_id:
+        return None
+    window_start = now - timedelta(minutes=MERGE_WINDOW_MINUTES)
+    return db.scalar(
+        select(AlertRecord)
+        .where(
+            AlertRecord.deleted == 0,
+            AlertRecord.tenant_id == tenant_id,
+            AlertRecord.rule_id == rule.id,
+            AlertRecord.source_ref_type == ref_type,
+            AlertRecord.source_ref_id == ref_id,
+            AlertRecord.response_status.notin_(tuple(TERMINAL_STATUS)),
+            AlertRecord.occurred_at.is_not(None),
+            AlertRecord.occurred_at >= window_start,
+        )
+        .order_by(AlertRecord.id.asc())
+    )
+
+
+def notify_alert_inbox(db: Session, actor: User, rule: AlertRule, row: AlertRecord, extra_user_id: int = 0) -> None:
+    """站内通知写入消息中心。钉钉/短信保持回执桩，不写第三方消息。"""
+    tenant_id = tenant_of(actor)
+    user_ids = {int(actor.id)}
+    if rule.created_by:
+        user_ids.add(int(rule.created_by))
+    if extra_user_id:
+        user_ids.add(int(extra_user_id))
+    title = f"预警 {row.alert_no}：{rule.rule_name}"[:128]
+    content = (row.object_label or row.content or "")[:512]
+    for user_id in sorted(user_ids):
+        user = db.get(User, user_id)
+        if user is None or user.deleted or (user.tenant_id or 0) != tenant_id or user.status != "ENABLED":
+            continue
+        db.add(
+            WorkMessage(
+                user_id=user.id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="ALERT",
+                ref_type="alert",
+                ref_id=row.id,
+                tenant_id=tenant_id,
+            )
+        )
+
+
 def run_check_impl(rule_id: int, db: Session, actor: User):
     tenant_id = tenant_of(actor)
     rule = db.get(AlertRule, rule_id)
@@ -1446,13 +1582,30 @@ def run_check_impl(rule_id: int, db: Session, actor: User):
     if not rule.enabled:
         return fail(1001, "规则未启用")
     now = utcnow()
+    ref_type, ref_id, label, extra_user = resolve_trial_object(db, rule, tenant_id)
+    existing = absorb_open_duplicate(db, rule, tenant_id, ref_type, ref_id, now)
+    if existing is not None:
+        count = int(existing.merged_count or 1) + 1
+        existing.merged_count = count
+        base = re.sub(r" · 命中 ×\d+$", "", existing.content or "")
+        existing.content = f"{base} · 命中 ×{count}"[:512]
+        existing.updated_at = now
+        rule.hit_count = (rule.hit_count or 0) + 1
+        rule.updated_at = now
+        return ok(record_vo(existing, rule))
+    expr = rule.threshold_expr or "条件扫描"
+    content = f"手动触发：{rule.rule_name}（{expr}）"
+    if label:
+        content = f"{content} · 对象：{label}"
     row = AlertRecord(
         alert_no=next_alert_no(db, tenant_id),
         rule_id=rule.id,
-        source_ref_type="MANUAL",
-        source_ref_id=0,
+        source_ref_type=ref_type,
+        source_ref_id=ref_id,
+        object_label=label,
+        merged_count=1,
         level=rule.level,
-        content=f"手动触发：{rule.rule_name}（{rule.threshold_expr or '条件扫描'}）",
+        content=content[:512],
         push_status=1,
         response_status=0,
         occurred_at=now,
@@ -1462,6 +1615,8 @@ def run_check_impl(rule_id: int, db: Session, actor: User):
     rule.hit_count = (rule.hit_count or 0) + 1
     rule.updated_at = now
     db.flush()
+    if row.push_status == 1:
+        notify_alert_inbox(db, actor, rule, row, extra_user)
     return ok(record_vo(row, rule))
 
 
