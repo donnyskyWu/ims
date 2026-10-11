@@ -18,7 +18,7 @@
         </div>
         <div class="ipg-tree-search">
           <div class="ico">
-            <input v-model="treeKeyword" placeholder="搜索组名" />
+            <input v-model="treeKeyword" data-testid="ipg-search" placeholder="搜索组名" />
           </div>
         </div>
         <div class="ipg-tree-body">
@@ -44,7 +44,7 @@
         </div>
       </div>
       <div class="ipg-detail-panel card">
-        <div v-if="!selectedId" class="ipg-empty-detail">请从左侧选择 IP 组</div>
+        <div v-if="!selectedId" class="ipg-empty-detail" data-testid="ipg-empty">请从左侧选择 IP 组</div>
         <template v-else-if="detail">
           <div class="ipg-detail-hd">
             <div class="rowline" style="justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px">
@@ -117,8 +117,8 @@
                     <tr v-if="!members.length"><td colspan="5"><div class="empty"><div class="et">暂无成员</div></div></td></tr>
                     <tr v-for="m in members" :key="m.id" data-testid="ipg-member-row">
                       <td>{{ m.userName }}</td>
-                      <td>{{ m.position }}</td>
-                      <td>{{ m.relationType }}</td>
+                      <td data-testid="ipg-member-position-cell">{{ positionText(m) }}</td>
+                      <td data-testid="ipg-member-relation-cell">{{ relationText(m) }}</td>
                       <td>{{ m.isLeader ? '是' : '否' }}</td>
                       <td>
                         <button class="btn-txt btn" type="button" data-testid="ipg-member-edit" @click="openEditMember(m)">编辑</button>
@@ -433,6 +433,18 @@ function filterUsers(keyword: string) {
   if (!key) return users.value
   return users.value.filter((user) => `${user.nickname} ${user.username}`.toLowerCase().includes(key))
 }
+function positionText(member: { position?: string; positionName?: string }) {
+  if (member.positionName && member.positionName !== member.position) return member.positionName
+  const found = positions.value.find((item) => item.dictValue === member.position)
+  return found?.dictLabel || member.positionName || member.position || '—'
+}
+
+function relationText(member: { relationType?: string; relationTypeName?: string }) {
+  if (member.relationType === 'PRIMARY' || member.relationTypeName === '主职') return '主职'
+  if (member.relationType === 'PART_TIME' || member.relationTypeName === '兼职') return '兼职'
+  return member.relationTypeName || member.relationType || '—'
+}
+
 function levelText(level?: string) {
   if (!level) return '未分级'
   const found = levels.value.find((item) => item.dictValue === level)

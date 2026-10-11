@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of, user_names, visible
-from app.models import User
+from app.models import DictData, User
 from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, IpGroupMember, PlatformAccount
 
 router = APIRouter(prefix="/ip-group", tags=["ip-group"])
@@ -118,6 +118,13 @@ def clean_level(db: Session, level: str | None):
 
 
 RELATION_TYPES = {"PRIMARY": "主职", "PART_TIME": "兼职"}
+
+
+def position_labels(db: Session) -> dict[str, str]:
+    rows = db.scalars(
+        select(DictData).where(DictData.dict_type == "dict_position", DictData.deleted == 0, DictData.status == "ENABLED")
+    ).all()
+    return {row.dict_value: row.dict_label for row in rows}
 
 
 def clean_position(db: Session, position: str | None, required: bool):
@@ -578,6 +585,7 @@ def ip_group_members(
         )
     ).all()
     names = user_names(db, {m.user_id for m in members})
+    labels = position_labels(db)
     return ok(
         [
             {
@@ -585,7 +593,9 @@ def ip_group_members(
                 "userId": m.user_id,
                 "userName": names.get(m.user_id, ""),
                 "position": m.position,
+                "positionName": labels.get(m.position, m.position),
                 "relationType": m.relation_type,
+                "relationTypeName": RELATION_TYPES.get(m.relation_type, m.relation_type),
                 "isLeader": m.is_leader == 1,
             }
             for m in members

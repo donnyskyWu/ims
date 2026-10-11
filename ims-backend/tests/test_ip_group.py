@@ -286,7 +286,9 @@ def test_ip_group_member_user_position_and_count():
     row = members.json()["data"][0]
     assert row["userName"] == "管理员"
     assert row["position"] == "EDITOR"
+    assert row["positionName"] == "编辑"
     assert row["relationType"] == "PRIMARY"
+    assert row["relationTypeName"] == "主职"
     tree = client.get("/admin-api/ims/ip-group/tree", headers=auth).json()["data"]
     parent = next(item for item in tree if item["id"] == big_id)
     node = next(child for child in parent["children"] if child["id"] == gid)
@@ -322,7 +324,9 @@ def test_ip_group_member_edit_and_remove():
     assert saved.json()["code"] == 0
     row = client.get(f"/admin-api/ims/ip-group/{gid}/members", headers=auth).json()["data"][0]
     assert row["position"] == "LIVE_OPS"
+    assert row["positionName"] == "直播运营"
     assert row["relationType"] == "PART_TIME"
+    assert row["relationTypeName"] == "兼职"
     removed = client.delete(f"/admin-api/ims/ip-group/{gid}/members/{member_id}", headers=auth)
     assert removed.json()["code"] == 0
     assert client.get(f"/admin-api/ims/ip-group/{gid}/members", headers=auth).json()["data"] == []
