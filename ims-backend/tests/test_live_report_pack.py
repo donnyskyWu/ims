@@ -304,7 +304,7 @@ def test_overdue_pending_hints_1048_and_creates_supervision_once():
             )
         ).all()
         assert len(alarms) == 1
-        assert "1048" in alarms[0].alarm_content
+        assert alarms[0].alarm_content.startswith("下播超时督办：")
     finally:
         db.close()
 
