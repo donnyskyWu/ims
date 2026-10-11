@@ -58,9 +58,10 @@
                   </span>
                 </div>
                 <h2>{{ detail.groupName }}</h2>
-                <div class="ipg-detail-meta">
+                <div class="ipg-detail-meta" data-testid="ipg-meta">
                   <span>组长：{{ detail.leaderUserName || '—' }}</span>
                   <span>上级：{{ parentName || '—' }}</span>
+                  <span>创建于 {{ detail.createdAt || '—' }}</span>
                 </div>
               </div>
               <div class="acts">
@@ -81,14 +82,26 @@
             </div>
             <table v-if="tab === '基本信息'" class="ipg-info-grid" data-testid="ipg-basic">
               <tbody>
-                <tr><td class="lbl">组名</td><td>{{ detail.groupName }}</td></tr>
-                <tr><td class="lbl">组类型</td><td>{{ detail.groupType === 'BIG' ? '大组' : '小组' }}</td></tr>
-                <tr><td class="lbl">组长</td><td>{{ detail.leaderUserName || '—' }}</td></tr>
-                <tr><td class="lbl">等级</td><td>{{ levelText(detail.level) }}</td></tr>
-                <tr><td class="lbl">状态</td><td>{{ detail.status === 1 ? '启用' : '停用' }}</td></tr>
-                <tr><td class="lbl">排序</td><td data-testid="ipg-sort">{{ detail.sortOrder ?? 0 }}</td></tr>
-                <tr><td class="lbl">备注</td><td data-testid="ipg-remark">{{ detail.remark || '—' }}</td></tr>
-                <tr><td class="lbl">更新时间</td><td data-testid="ipg-updated">{{ detail.updatedAt || '—' }}</td></tr>
+                <tr>
+                  <td class="lbl">组名</td><td>{{ detail.groupName }}</td>
+                  <td class="lbl">组类型</td><td>{{ detail.groupType === 'BIG' ? '大组' : '小组' }}</td>
+                </tr>
+                <tr>
+                  <td class="lbl">上级组</td><td>{{ parentName || '—' }}</td>
+                  <td class="lbl">组长</td><td>{{ detail.leaderUserName || '—' }}</td>
+                </tr>
+                <tr>
+                  <td class="lbl">等级</td><td>{{ levelText(detail.level) }}</td>
+                  <td class="lbl">状态</td><td data-testid="ipg-status">{{ detail.status === 1 ? '启用' : '停用' }}</td>
+                </tr>
+                <tr>
+                  <td class="lbl">排序</td><td data-testid="ipg-sort">{{ detail.sortOrder ?? 0 }}</td>
+                  <td class="lbl">备注</td><td data-testid="ipg-remark">{{ detail.remark || '—' }}</td>
+                </tr>
+                <tr>
+                  <td class="lbl">创建时间</td><td data-testid="ipg-created">{{ detail.createdAt || '—' }}</td>
+                  <td class="lbl">更新时间</td><td data-testid="ipg-updated">{{ detail.updatedAt || '—' }}</td>
+                </tr>
               </tbody>
             </table>
             <div v-else-if="tab === '成员管理'" class="tbl-block">
