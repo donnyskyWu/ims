@@ -273,17 +273,13 @@ def ensure_bi_report_scope_column() -> None:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE ims_bi_report_publish {', '.join(pub_alters)}"))
 
-    index_names = {item.get("name") for item in insp.get_indexes("ims_bi_report_def")}
+    from app.bi_report import repair_duplicate_report_nos
+
+    repair_duplicate_report_nos()
+    index_names = {item.get("name") for item in inspect(engine).get_indexes("ims_bi_report_def")}
     if "uk_bi_report_no" not in index_names:
         with engine.begin() as conn:
-            dupes = conn.execute(
-                text(
-                    "SELECT tenant_id, report_no FROM ims_bi_report_def "
-                    "GROUP BY tenant_id, report_no HAVING COUNT(*) > 1 LIMIT 1"
-                )
-            ).first()
-            if dupes is None:
-                conn.execute(text("CREATE UNIQUE INDEX uk_bi_report_no ON ims_bi_report_def (tenant_id, report_no)"))
+            conn.execute(text("CREATE UNIQUE INDEX uk_bi_report_no ON ims_bi_report_def (tenant_id, report_no)"))
 
 
 def ensure_bi_br212_columns() -> None:

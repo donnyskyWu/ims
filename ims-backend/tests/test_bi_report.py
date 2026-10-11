@@ -457,3 +457,88 @@ def test_bi_import_report_no_uses_max_existing():
     assert fresh != made[0]["reportNo"]
     top = max(int(item["reportNo"].split("-")[1]) for item in made)
     assert int(fresh.split("-")[1]) == top + 1
+
+
+def test_bi_report_no_startup_repair_is_idempotent(caplog):
+    """BUG-C083：启动时把重复编号改成 max+1，再建立唯一索引。跑两次结果不变。"""
+    import logging
+
+    from sqlalchemy import inspect, text
+
+    from app.core import SessionLocal, engine, utcnow
+    from app.main import ensure_bi_report_scope_column
+    from app.models import BiReportDef
+
+    def index_names() -> set[str]:
+        return {item.get("name") for item in inspect(engine).get_indexes("ims_bi_report_def")}
+
+    if "uk_bi_report_no" in index_names():
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE ims_bi_report_def DROP INDEX uk_bi_report_no"))
+
+    now = utcnow()
+    db = SessionLocal()
+    try:
+        first = BiReportDef(
+            report_no="RPT-9099",
+            report_name="重复编号保留",
+            report_type="REPORT",
+            category="日报",
+            tenant_id=0,
+            creator_id=1,
+            created_at=now,
+            updated_at=now,
+        )
+        second = BiReportDef(
+            report_no="RPT-9099",
+            report_name="重复编号改号",
+            report_type="REPORT",
+            category="日报",
+            tenant_id=0,
+            creator_id=1,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(first)
+        db.add(second)
+        db.commit()
+        keep_id, move_id = first.id, second.id
+    finally:
+        db.close()
+
+    caplog.set_level(logging.INFO, logger="app.bi_report")
+    ensure_bi_report_scope_column()
+    text_log = caplog.text
+    assert f"tenant=0 report_id={move_id} old=RPT-9099 new=" in text_log
+    assert f"report_id={keep_id} old=" not in text_log
+
+    db = SessionLocal()
+    try:
+        kept = db.get(BiReportDef, keep_id)
+        moved = db.get(BiReportDef, move_id)
+        assert kept is not None and moved is not None
+        assert kept.report_no == "RPT-9099"
+        assert moved.report_no != "RPT-9099"
+        assert moved.report_no.startswith("RPT-")
+        new_no = moved.report_no
+        dupes = db.execute(
+            text(
+                "SELECT report_no FROM ims_bi_report_def WHERE tenant_id = 0 "
+                "GROUP BY report_no HAVING COUNT(*) > 1"
+            )
+        ).all()
+        assert dupes == []
+    finally:
+        db.close()
+    assert "uk_bi_report_no" in index_names()
+
+    caplog.clear()
+    ensure_bi_report_scope_column()
+    assert "报表编号去重" not in caplog.text
+    db = SessionLocal()
+    try:
+        assert db.get(BiReportDef, keep_id).report_no == "RPT-9099"
+        assert db.get(BiReportDef, move_id).report_no == new_no
+    finally:
+        db.close()
+    assert "uk_bi_report_no" in index_names()

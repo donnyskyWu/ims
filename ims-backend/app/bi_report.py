@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from app.corp import page_args, paged, tenant_of, user_names
 from app.models import BiReportCategory, BiReportDef, BiReportPublish, User
 
 router = APIRouter(prefix="/bi/report", tags=["bi-report"])
+logger = logging.getLogger(__name__)
 
 BJ = timezone(timedelta(hours=8))
 
@@ -409,6 +411,72 @@ def next_report_no(db: Session, tenant_id: int) -> str:
         if candidate not in taken:
             return candidate
         seq += 1
+
+
+def repair_duplicate_report_nos() -> list[dict]:
+    """同一租户同一编号只留最早一行，其余改成当前最大号 +1。不删数据，可重复执行。"""
+    from sqlalchemy import text
+
+    from app.core import engine
+
+    logs: list[dict] = []
+    with engine.begin() as conn:
+        groups = conn.execute(
+            text(
+                "SELECT tenant_id, report_no FROM ims_bi_report_def "
+                "GROUP BY tenant_id, report_no HAVING COUNT(*) > 1 "
+                "ORDER BY tenant_id, report_no"
+            )
+        ).all()
+        for tenant_id, report_no in groups:
+            rows = conn.execute(
+                text(
+                    "SELECT id FROM ims_bi_report_def "
+                    "WHERE tenant_id = :tenant AND report_no = :no "
+                    "ORDER BY id ASC FOR UPDATE"
+                ),
+                {"tenant": tenant_id, "no": report_no},
+            ).all()
+            for (report_id,) in rows[1:]:
+                new_no = _next_free_report_no(conn, int(tenant_id))
+                conn.execute(
+                    text("UPDATE ims_bi_report_def SET report_no = :new WHERE id = :id"),
+                    {"new": new_no, "id": report_id},
+                )
+                entry = {
+                    "tenantId": int(tenant_id),
+                    "reportId": int(report_id),
+                    "oldNo": report_no,
+                    "newNo": new_no,
+                }
+                logs.append(entry)
+                logger.info(
+                    "报表编号去重 tenant=%s report_id=%s old=%s new=%s",
+                    entry["tenantId"],
+                    entry["reportId"],
+                    entry["oldNo"],
+                    entry["newNo"],
+                )
+    return logs
+
+
+def _next_free_report_no(conn, tenant_id: int) -> str:
+    from sqlalchemy import text
+
+    numbers = conn.execute(
+        text("SELECT report_no FROM ims_bi_report_def WHERE tenant_id = :tenant"),
+        {"tenant": tenant_id},
+    ).all()
+    taken = {(item[0] or "").strip() for item in numbers}
+    max_n = 0
+    for item in taken:
+        matched = _REPORT_NO.fullmatch(item)
+        if matched:
+            max_n = max(max_n, int(matched.group(1)))
+    seq = max_n + 1
+    while f"RPT-{seq:04d}" in taken:
+        seq += 1
+    return f"RPT-{seq:04d}"
 
 
 def has_report_edit_perm(db: Session, actor: User) -> bool:
