@@ -5,8 +5,9 @@
         <h1>组织人效</h1>
         <div class="sub">EFF · 页内 Tab 归属/盘点/看板 · /ims/eff</div>
       </div>
-      <div v-if="tab === 'relation'" class="acts">
-        <button class="btn btn-pri btn-sm" type="button" @click="openCreate">建立归属</button>
+      <div class="acts">
+        <button v-if="tab === 'board'" class="btn btn-sec btn-sm" type="button" data-testid="eff-export-month" @click="exportMonth">导出月报</button>
+        <button v-if="tab === 'relation'" class="btn btn-pri btn-sm" type="button" @click="openCreate">建立归属</button>
       </div>
     </div>
 
@@ -84,13 +85,87 @@
     </template>
 
     <template v-else>
+      <p class="hint" style="margin: 8px 0">IP 组维护在日常运营 · IP 组。人均指标按当月直播报告与内容作品、除以已建主归属人数；没有台账时显示「—」。</p>
+      <p v-if="boardError" class="hint" style="color: var(--red)" data-testid="eff-board-error">{{ boardError }}</p>
       <div v-if="board" class="g4" style="margin-top: 12px">
-        <div class="card stat"><span class="l">人均 GMV</span><div class="n">¥{{ (board.avgGmvPerCap / 10000).toFixed(1) }} 万</div></div>
-        <div class="card stat"><span class="l">人均场次/月</span><div class="n">{{ board.avgSessionsPerMonth }}</div></div>
-        <div class="card stat"><span class="l">人均作品/月</span><div class="n">{{ board.avgWorksPerMonth }}</div></div>
-        <div class="card stat"><span class="l">产能利用率</span><div class="n">{{ board.capacityUtilization }}%</div><div class="d">分摊&gt;100% {{ board.overShareUserCount }} 人 · 仅统计兼职合计</div></div>
+        <div class="card stat" data-testid="eff-card-gmv"><span class="l">人均 GMV</span><div class="n">{{ moneyText(board.avgGmvPerCap) }}</div></div>
+        <div class="card stat"><span class="l">人均场次/月</span><div class="n">{{ plainText(board.avgSessionsPerMonth) }}</div><div class="d">直播人员口径</div></div>
+        <div class="card stat"><span class="l">人均作品/月</span><div class="n">{{ plainText(board.avgWorksPerMonth) }}</div><div class="d">内容作品口径</div></div>
+        <div class="card stat"><span class="l">产能利用率</span><div class="n">{{ pctText(board.capacityUtilization) }}</div><div class="d">分摊&gt;100% {{ board.overShareUserCount }} 人 · 仅统计兼职合计</div></div>
+      </div>
+      <div v-if="board" class="card" data-testid="eff-board-chart" style="margin-top: 12px; padding: 12px">
+        <b style="font-size: 13px">主归属 GMV</b>
+        <div v-if="!chartBars.length" class="hint" data-testid="eff-chart-empty">—</div>
+        <div v-for="bar in chartBars" :key="bar.label" class="rowline" style="margin-top: 8px">
+          <span style="width: 140px">{{ bar.label }}</span>
+          <span class="pg" style="width: 160px"><i :style="{ width: bar.width }"></i></span>
+          <span class="num">{{ moneyText(bar.gmv) }}</span>
+        </div>
+      </div>
+      <form v-if="board" class="qbar" style="margin-top: 12px" @submit.prevent="loadBoard">
+        <input v-model="boardFilters.keyword" placeholder="姓名" style="width: 120px" data-testid="eff-filter-name" />
+        <select v-model="boardFilters.dept" style="width: 140px" data-testid="eff-filter-dept">
+          <option value="">全部部门</option>
+          <option v-for="name in board.depts" :key="name" :value="name">{{ name }}</option>
+        </select>
+        <select v-model="boardFilters.shareStatus" style="width: 120px" data-testid="eff-filter-share">
+          <option value="">分摊状态</option>
+          <option value="NORMAL">正常</option>
+          <option value="OVER">超 100%</option>
+        </select>
+        <span class="sp"></span>
+        <button class="btn btn-pri btn-sm" type="submit">查询</button>
+        <button class="btn btn-sec btn-sm" type="button" @click="resetBoard">重置</button>
+      </form>
+      <p v-if="boardToast" class="hint" data-testid="eff-board-toast">{{ boardToast }}</p>
+      <div v-if="board" class="tbl-block" style="margin-top: 8px">
+        <div class="tbl-wrap">
+          <table data-testid="eff-person-table">
+            <thead>
+              <tr>
+                <th>姓名</th>
+                <th>部门</th>
+                <th>主归属</th>
+                <th>兼职归属</th>
+                <th>主归属工时占比</th>
+                <th>分摊合计</th>
+                <th>人效得分</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!board.people.length"><td colspan="8"><div class="empty"><div class="et">暂无人员</div></div></td></tr>
+              <tr v-for="row in board.people" :key="row.userId" data-testid="eff-person-row">
+                <td>{{ row.userName }}</td>
+                <td>{{ row.deptName || '—' }}</td>
+                <td>{{ row.primaryName || '—' }}</td>
+                <td>{{ row.partTimeNames.length ? row.partTimeNames.join('、') : '—' }}</td>
+                <td class="num">{{ pctText(row.primaryShare) }}</td>
+                <td class="num" :style="row.overShare ? 'color: var(--red)' : ''">{{ row.shareTotal }}%{{ row.overShare ? ' ⚠' : '' }}</td>
+                <td class="num">{{ plainText(row.score) }}</td>
+                <td><button class="btn btn-sec btn-sm" type="button" data-testid="eff-person-view" @click="openPerson(row)">查看</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </template>
+
+    <div v-if="person" class="modal-mask" data-testid="eff-person-drawer" @click.self="person = null">
+      <div class="card" style="width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">{{ person.userName }}</h3>
+        <p class="hint">部门 {{ person.deptName || '—' }}</p>
+        <p class="hint">主归属 {{ person.primaryName || '—' }}</p>
+        <p class="hint">兼职归属 {{ person.partTimeNames.length ? person.partTimeNames.join('、') : '—' }}</p>
+        <p class="hint">主归属工时占比 {{ pctText(person.primaryShare) }}</p>
+        <p class="hint">分摊合计 {{ person.shareTotal }}%（仅统计兼职合计）</p>
+        <p class="hint">人效得分 {{ plainText(person.score) }}</p>
+        <p class="hint" data-testid="eff-person-comment">评价 {{ person.comment || '—' }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="person = null">关闭</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
@@ -117,9 +192,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Relation = {
   id: number
@@ -138,7 +213,38 @@ const tab = ref('board')
 const relations = ref<Relation[]>([])
 const loading = ref(false)
 const coverage = ref<{ enabledUserCount: number; coveredUserCount: number; coverageRate: number; canPublish: boolean } | null>(null)
-const board = ref<Record<string, number> | null>(null)
+type PersonRow = {
+  userId: number
+  userName: string
+  deptName: string
+  primaryName: string
+  partTimeNames: string[]
+  primaryShare: number | null
+  partTimeSum: number
+  shareTotal: number
+  score: number | null
+  comment: string
+  overShare: boolean
+  attributedGmv: number | null
+}
+
+type Board = {
+  periodMonth: string
+  avgGmvPerCap: number | null
+  avgSessionsPerMonth: number | null
+  avgWorksPerMonth: number | null
+  capacityUtilization: number | null
+  overShareUserCount: number
+  people: PersonRow[]
+  depts: string[]
+  chart: { label: string; gmv: number }[]
+}
+
+const board = ref<Board | null>(null)
+const boardError = ref('')
+const boardToast = ref('')
+const boardFilters = reactive({ keyword: '', dept: '', shareStatus: '' })
+const person = ref<PersonRow | null>(null)
 const inventory = ref<{
   period: string
   coverageRate: number
@@ -194,9 +300,98 @@ async function loadRelations() {
   }
 }
 
+function moneyText(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  return `¥${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 2 })}`
+}
+
+function plainText(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  return String(value)
+}
+
+function pctText(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—'
+  return `${value}%`
+}
+
+const chartBars = computed(() => {
+  const rows = board.value?.chart || []
+  const max = Math.max(0, ...rows.map((item) => item.gmv))
+  return rows.map((item) => ({
+    ...item,
+    width: max > 0 ? `${Math.max(4, Math.round((item.gmv / max) * 100))}%` : '0%',
+  }))
+})
+
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`
+}
+
+function exportMonth() {
+  boardToast.value = ''
+  const data = board.value
+  if (!data) {
+    boardToast.value = '看板尚未加载'
+    return
+  }
+  const lines = [
+    ['周期', data.periodMonth].map(csvCell).join(','),
+    ['人均GMV', moneyText(data.avgGmvPerCap)].map(csvCell).join(','),
+    ['人均场次/月', plainText(data.avgSessionsPerMonth)].map(csvCell).join(','),
+    ['人均作品/月', plainText(data.avgWorksPerMonth)].map(csvCell).join(','),
+    ['产能利用率', pctText(data.capacityUtilization)].map(csvCell).join(','),
+    '',
+    ['姓名', '部门', '主归属', '兼职归属', '主归属工时占比', '分摊合计', '人效得分', '评价'].map(csvCell).join(','),
+    ...data.people.map((row) =>
+      [
+        row.userName,
+        row.deptName || '—',
+        row.primaryName || '—',
+        row.partTimeNames.join('、') || '—',
+        pctText(row.primaryShare),
+        `${row.shareTotal}%`,
+        plainText(row.score),
+        row.comment || '—',
+      ]
+        .map(csvCell)
+        .join(','),
+    ),
+  ]
+  const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `组织人效月报-${data.periodMonth}.csv`
+  link.click()
+  URL.revokeObjectURL(link.href)
+  boardToast.value = '月报已导出'
+}
+
+function openPerson(row: PersonRow) {
+  person.value = row
+}
+
+function resetBoard() {
+  boardFilters.keyword = ''
+  boardFilters.dept = ''
+  boardFilters.shareStatus = ''
+  loadBoard()
+}
+
 async function loadBoard() {
-  const res = await http.get('/eff/metrics/board')
-  if (res.data.code === 0) board.value = res.data.data
+  boardError.value = ''
+  try {
+    const res = await http.get('/eff/metrics/board', {
+      params: {
+        keyword: boardFilters.keyword || undefined,
+        dept: boardFilters.dept || undefined,
+        shareStatus: boardFilters.shareStatus || undefined,
+      },
+    })
+    if (res.data.code === 0) board.value = res.data.data
+  } catch (error) {
+    boardError.value = errorMessage(error)
+  }
 }
 
 async function loadInventory() {
