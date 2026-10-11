@@ -187,3 +187,65 @@ def test_profit_trace_shows_bound_device_name_and_code():
     assert f"AST-{phone_id}" not in {item["assetCode"] for item in assets.values()}
     assert f"AST-{asset_id}" not in {item["assetCode"] for item in assets.values()}
     assert body["data"]["chain"]["profit"]["netProfit"] == 81400.0
+
+
+def test_tagged_asset_is_not_replaced_by_a_phone_with_the_same_id():
+    auth = headers()
+    account_id, person_id, phone_id, _asset_id = seed()
+    ops = ops_session()
+    try:
+        decoy = Phone(
+            phone_enc=encrypt_text("13600003399"),
+            phone_sha256=uuid.uuid4().hex,
+            phone_code="E2E-FIN-PHONE",
+            phone_model="iPhone 15",
+            status="IN_USE",
+            keeper_id=1,
+            tenant_id=0,
+        )
+        ops.add(decoy)
+        ops.commit()
+        decoy_id = decoy.id
+    finally:
+        ops.close()
+    db = SessionLocal()
+    try:
+        db.add(
+            AssetLedger(
+                id=decoy_id,
+                asset_code="TC-LIVE-A",
+                asset_name="TC-直播设备A",
+                asset_type="LIVE",
+                status="IN_USE",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    created = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={
+            "accountId": account_id,
+            "realnamePersonId": person_id,
+            "responsibleUserId": 1,
+            "deviceAssetIds": [
+                {"kind": "PHONE", "id": phone_id},
+                {"kind": "ASSET", "id": decoy_id},
+            ],
+            "platform": "DOUYIN",
+            "topic": "设备绑定专场",
+            "planStartTime": "2026-10-20T20:00:00+08:00",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    code = created.json()["data"]["sessionCode"]
+    detail = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
+    by_kind = {item["kind"]: item for item in detail["boundDevices"]}
+    assert by_kind["ASSET"]["assetName"] == "TC-直播设备A"
+    assert by_kind["ASSET"]["assetCode"] == "TC-LIVE-A"
+    assert by_kind["PHONE"]["assetName"] == "绑定手机"
+    assert "iPhone 15" not in {item["assetName"] for item in detail["boundDevices"]}
+    timeline = client.get(f"/admin-api/ims/asset/ledger/{decoy_id}", headers=auth).json()["data"]["timeline"]
+    assert any(item["eventType"] == "BIND_SESSION" and code in item["remark"] for item in timeline)

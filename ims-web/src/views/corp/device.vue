@@ -1836,6 +1836,8 @@ watch(kind, async () => {
 })
 
 onMounted(async () => {
+  const preset = String(route.query.keyword || '').trim()
+  if (preset) keyword.value = preset
   if (kind.value === 'phone') {
     try {
       await preparePhone()

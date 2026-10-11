@@ -191,13 +191,71 @@ def device_kind(db: Session, ops: Session, actor: User, device_id: int) -> str |
     return "ASSET"
 
 
-def bind_session_assets(db: Session, ops: Session, actor: User, session: LiveSession, device_ids: list[int]) -> None:
+def device_refs_from(raw) -> list[dict]:
+    """场次设备。带 kind 时按登记时的手机/资产区分，避免两个库的编号撞车。"""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    refs: list[dict] = []
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            refs.append({"kind": "", "id": item})
+            continue
+        if isinstance(item, str) and item.isdigit():
+            refs.append({"kind": "", "id": int(item)})
+            continue
+        if isinstance(item, dict):
+            kind = str(item.get("kind") or "").upper()
+            if kind not in {"PHONE", "ASSET"}:
+                kind = ""
+            try:
+                device_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            refs.append({"kind": kind, "id": device_id})
+    return refs
+
+
+def dump_device_refs(raw) -> str:
+    refs = device_refs_from(raw)
+    if refs and all(ref["kind"] for ref in refs):
+        return json.dumps(refs, ensure_ascii=False)
+    return json.dumps([ref["id"] for ref in refs])
+
+
+def ref_is_asset(db: Session, ops: Session, actor: User, ref: dict) -> bool:
+    if ref.get("kind") == "ASSET":
+        return load_asset(db, actor, int(ref["id"])) is not None
+    if ref.get("kind") == "PHONE":
+        return False
+    return device_kind(db, ops, actor, int(ref["id"])) == "ASSET"
+
+
+def ref_accepts(db: Session, ops: Session, actor: User, ref: dict) -> bool:
+    device_id = int(ref["id"])
+    kind = ref.get("kind") or ""
+    if kind == "PHONE":
+        phone = ops.get(Phone, device_id)
+        return bool(visible(phone, actor) and phone.status == "IN_USE")
+    if kind == "ASSET":
+        asset = load_asset(db, actor, device_id)
+        return asset is not None and asset.asset_type in LIVE_ASSET_TYPES and asset.status == "IN_USE"
+    return device_kind(db, ops, actor, device_id) is not None
+
+
+def bind_session_assets(db: Session, ops: Session, actor: User, session: LiveSession, device_ids) -> None:
     """在用直播/拍摄资产写入流转时间线。手机不进资产台账。"""
     remark = f"绑定场次 {session.session_code}"[:256]
-    for device_id in device_ids:
-        if device_kind(db, ops, actor, device_id) != "ASSET":
+    for ref in device_refs_from(device_ids):
+        if not ref_is_asset(db, ops, actor, ref):
             continue
-        asset = load_asset(db, actor, device_id)
+        asset = load_asset(db, actor, int(ref["id"]))
         if asset is None:
             continue
         db.add(
@@ -214,13 +272,16 @@ def bind_session_assets(db: Session, ops: Session, actor: User, session: LiveSes
         )
 
 
-def bound_devices(db: Session, ops: Session, actor: User, device_ids: list[int]) -> list[dict]:
+def bound_devices(db: Session, ops: Session, actor: User, device_ids) -> list[dict]:
     rows: list[dict] = []
-    for device_id in device_ids:
-        kind = device_kind(db, ops, actor, device_id)
+    for ref in device_refs_from(device_ids):
+        device_id = int(ref["id"])
+        kind = ref.get("kind") or device_kind(db, ops, actor, device_id)
         if kind == "ASSET":
             asset = load_asset(db, actor, device_id)
             if asset is None:
+                continue
+            if not ref.get("kind") and (asset.asset_type not in LIVE_ASSET_TYPES or asset.status != "IN_USE"):
                 continue
             rows.append(
                 {
@@ -235,12 +296,12 @@ def bound_devices(db: Session, ops: Session, actor: User, device_ids: list[int])
             phone = ops.get(Phone, device_id)
             if not visible(phone, actor):
                 continue
-            label = phone.phone_code or phone.device_number or phone.phone_model or f"手机#{phone.id}"
+            label = phone.phone_model or phone.phone_code or phone.device_number or f"手机#{phone.id}"
             rows.append(
                 {
                     "id": phone.id,
                     "kind": "PHONE",
-                    "assetCode": phone.phone_code or "",
+                    "assetCode": phone.phone_code or phone.device_number or "",
                     "assetName": label,
                     "assetType": "PHONE",
                 }
@@ -248,10 +309,11 @@ def bound_devices(db: Session, ops: Session, actor: User, device_ids: list[int])
     return rows
 
 
-def validate_devices(db: Session, ops: Session, actor: User, device_ids: list[int]) -> bool:
-    if not device_ids:
+def validate_devices(db: Session, ops: Session, actor: User, device_ids) -> bool:
+    refs = device_refs_from(device_ids)
+    if not refs:
         return False
-    return all(device_kind(db, ops, actor, device_id) is not None for device_id in device_ids)
+    return all(ref_accepts(db, ops, actor, ref) for ref in refs)
 
 
 USABLE_CERT_STATUS = frozenset({"EFFECTIVE", "EXPIRING"})
@@ -315,16 +377,12 @@ def airtime_blocked(ops: Session, actor: User, account: PlatformAccount) -> bool
     return (sim.status or "") != "IN_USE"
 
 
-def device_outcome(db: Session, ops: Session, actor: User, device_ids: list[int]) -> str:
-    if not validate_devices(db, ops, actor, device_ids):
+def device_outcome(db: Session, ops: Session, actor: User, device_ids) -> str:
+    refs = device_refs_from(device_ids)
+    if not validate_devices(db, ops, actor, refs):
         return "WARN"
-    for device_id in device_ids:
-        kind = device_kind(db, ops, actor, device_id)
-        if kind == "PHONE":
-            phone = ops.get(Phone, device_id)
-            if phone is None or phone.deleted or phone.status != "IN_USE":
-                return "FAIL"
-        elif kind != "ASSET":
+    for ref in refs:
+        if not ref_accepts(db, ops, actor, ref):
             return "FAIL"
     return "PASS"
 
@@ -811,7 +869,7 @@ class LiveCreateBody(BaseModel):
     accountId: int
     realnamePersonId: int
     responsibleUserId: int
-    deviceAssetIds: list[int] = Field(default_factory=list)
+    deviceAssetIds: list = Field(default_factory=list)
     platform: str
     topic: str
     planStartTime: str
@@ -1599,7 +1657,7 @@ def sessions_detail(
     data["corrections"] = [
         shape_correction(correction_vo(item), view) for item in correction_rows(db, session_code)
     ]
-    data["boundDevices"] = bound_devices(db, ops, actor, json.loads(row.device_asset_ids or "[]"))
+    data["boundDevices"] = bound_devices(db, ops, actor, row.device_asset_ids or "[]")
     return ok(data)
 
 
@@ -1867,7 +1925,7 @@ def register_create(
         realname_person_id=body.realnamePersonId,
         realname_name=person.real_name,
         responsible_user_id=body.responsibleUserId,
-        device_asset_ids=json.dumps(body.deviceAssetIds),
+        device_asset_ids=dump_device_refs(body.deviceAssetIds),
         platform=body.platform,
         topic=body.topic,
         plan_start_time=body.planStartTime,
@@ -1965,7 +2023,7 @@ def register_update(
     row.realname_person_id = body.realnamePersonId
     row.realname_name = person.real_name
     row.responsible_user_id = body.responsibleUserId
-    row.device_asset_ids = json.dumps(body.deviceAssetIds)
+    row.device_asset_ids = dump_device_refs(body.deviceAssetIds)
     row.platform = body.platform
     row.topic = body.topic
     row.plan_start_time = body.planStartTime
@@ -1997,7 +2055,7 @@ def risk_check(
     blocked = locked_cert_fail(db, actor, person)
     if blocked is not None:
         return blocked
-    device_ids = json.loads(row.device_asset_ids or "[]")
+    device_ids = device_refs_from(row.device_asset_ids or "[]")
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, device_ids)
     apply_risk(db, row, score, level, checks, release=risk_release_allowed(row))
     db.flush()
@@ -2498,7 +2556,7 @@ def ledger_supplement(
         realname_person_id=create.realnamePersonId,
         realname_name=person.real_name,
         responsible_user_id=create.responsibleUserId,
-        device_asset_ids=json.dumps(create.deviceAssetIds),
+        device_asset_ids=dump_device_refs(create.deviceAssetIds),
         platform=create.platform,
         topic=create.topic,
         plan_start_time=create.planStartTime,

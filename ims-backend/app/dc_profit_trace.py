@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import mask_name, utcnow
-from app.corp import ops_db, page_args, tenant_of, user_names, visible
+from app.corp import ops_db, page_args, tenant_of, user_names
 from app.fin import (
     abnormal_marks,
     collect_visible_profits,
@@ -21,9 +21,8 @@ from app.fin import (
     operating_profit,
     parse_day_range,
 )
-from app.live import LIVE_ASSET_TYPES, get_session, iso, load_asset
+from app.live import bound_devices, device_refs_from, get_session, iso
 from app.models import FinCost, FinProfit, LiveSession, User, UserDept
-from app.ops_models import Phone
 
 router = APIRouter(prefix="/dc/profit-trace", tags=["dc-profit-trace"])
 
@@ -98,21 +97,16 @@ def aggregate_dimension(
 
 
 def chain_bound_assets(db: Session, ops: Session, actor: User, raw_ids: str) -> list[dict]:
-    """反查链路只展示场次 device_asset_ids 里实际绑定的手机和直播/拍摄设备。"""
+    """反查链路只展示场次实际绑定的手机和直播/拍摄设备。"""
     rows: list[dict] = []
-    for device_id in parse_asset_ids(raw_ids):
-        phone = ops.get(Phone, device_id)
-        if visible(phone, actor):
-            code = (phone.phone_code or phone.device_number or "").strip()
-            name = (phone.phone_model or "").strip() or code or f"手机#{phone.id}"
-            rows.append({"assetId": phone.id, "assetCode": code, "assetName": name})
-            continue
-        asset = load_asset(db, actor, device_id)
-        if asset is None or asset.asset_type not in LIVE_ASSET_TYPES:
-            continue
-        code = (asset.asset_code or "").strip()
-        name = (asset.asset_name or "").strip() or code
-        rows.append({"assetId": asset.id, "assetCode": code, "assetName": name})
+    for item in bound_devices(db, ops, actor, device_refs_from(raw_ids)):
+        rows.append(
+            {
+                "assetId": item["id"],
+                "assetCode": item.get("assetCode") or "",
+                "assetName": item.get("assetName") or "",
+            }
+        )
     return rows
 
 
@@ -131,6 +125,11 @@ def parse_asset_ids(raw: str) -> list[int]:
             ids.append(item)
         elif isinstance(item, str) and item.isdigit():
             ids.append(int(item))
+        elif isinstance(item, dict):
+            try:
+                ids.append(int(item.get("id")))
+            except (TypeError, ValueError):
+                continue
     return ids
 
 

@@ -376,6 +376,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
@@ -424,6 +425,7 @@ const statsEmpty = computed(() => {
   if (!levels) return false
   return Number(levels['1'] || 0) + Number(levels['2'] || 0) + Number(levels['3'] || 0) === 0
 })
+const route = useRoute()
 const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '', timeFrom: '', timeTo: '' })
 const ruleFilters = reactive({ keyword: '', ruleType: '', status: '' })
 const unhandledCount = computed(() => Number(stats.value?.byHandleStatus?.UNHANDLED || 0))
@@ -747,6 +749,8 @@ async function submitHandle() {
 }
 
 onMounted(async () => {
+  const sessionCode = String(route.query.sessionCode || '').trim()
+  if (sessionCode) filters.sessionCode = sessionCode
   await loadRules()
   await loadRecords()
   await loadStats()

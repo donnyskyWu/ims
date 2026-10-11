@@ -613,12 +613,16 @@
         <h3 style="margin: 0 0 8px">绑定设备</h3>
         <ul v-if="detail.boundDevices?.length" data-testid="live-bound-devices">
           <li v-for="item in detail.boundDevices" :key="`${item.kind}-${item.id}`">
-            <router-link v-if="item.kind === 'ASSET'" :to="'/ims/corp/device/live'">{{ item.assetName }}（{{ item.assetCode }}）</router-link>
-            <span v-else>{{ item.assetName }}</span>
+            <router-link :to="deviceLink(item)">{{ item.assetName }}<template v-if="item.assetCode && item.assetCode !== item.assetName">（{{ item.assetCode }}）</template></router-link>
           </li>
         </ul>
         <p v-else class="hint" data-testid="live-bound-empty">暂无绑定设备</p>
         <p class="hint" data-testid="live-related-alarm-title">告警摘要</p>
+        <router-link
+          class="btn btn-sec btn-sm"
+          data-testid="live-view-alarms"
+          :to="{ path: '/ims/live/alarm', query: { sessionCode: detail.sessionCode } }"
+        >查看告警</router-link>
         <table v-if="alarms.length">
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
           <tbody>
@@ -1119,6 +1123,12 @@ function roomStatusLabel(status: unknown) {
   return map[String(status ?? '')] || '—'
 }
 
+function deviceLink(item: { kind?: string; assetCode?: string; assetName?: string }) {
+  const keyword = item.assetCode || item.assetName || ''
+  if (item.kind === 'PHONE') return { path: '/ims/corp/device/phone', query: keyword ? { keyword } : {} }
+  return { path: '/ims/corp/device/live', query: keyword ? { keyword } : {} }
+}
+
 function syncLabel(v: string | undefined) {
   const map: Record<string, string> = {
     UNLINKED: '未关联',
@@ -1440,10 +1450,23 @@ async function openEdit() {
   reg.accountId = current.accountId ? String(current.accountId) : ''
   reg.realnamePersonId = current.realnamePersonId ? String(current.realnamePersonId) : ''
   reg.responsibleUserId = current.responsibleUserId ? String(current.responsibleUserId) : ''
-  const ids = (current.deviceAssetIds || []) as number[]
-  const phoneHit = ids.find((id) => regOptions.phones.some((item) => item.id === id))
-  reg.phoneId = phoneHit ? String(phoneHit) : ''
-  reg.deviceIds = ids.filter((id) => regOptions.devices.some((item) => item.id === id))
+  const raw = (current.deviceAssetIds || []) as Array<number | { kind?: string; id?: number }>
+  const phones: number[] = []
+  const assets: number[] = []
+  for (const item of raw) {
+    if (item && typeof item === 'object') {
+      const id = Number(item.id)
+      if (!id) continue
+      if (String(item.kind || '').toUpperCase() === 'ASSET') assets.push(id)
+      else phones.push(id)
+    } else if (Number(item)) {
+      const id = Number(item)
+      if (regOptions.devices.some((row) => row.id === id)) assets.push(id)
+      else phones.push(id)
+    }
+  }
+  reg.phoneId = phones.length ? String(phones[0]) : ''
+  reg.deviceIds = assets
   reg.platform = current.platform || ''
   reg.topic = current.topic || ''
   reg.planStartTime = isoToLocal(current.planStartTime || '') || defaultPlanLocal()
@@ -1460,7 +1483,12 @@ async function submitRegister() {
     return
   }
   try {
-    const deviceAssetIds = [Number(reg.phoneId), ...reg.deviceIds.filter((id) => id !== Number(reg.phoneId))]
+    const deviceAssetIds = [
+      { kind: 'PHONE', id: Number(reg.phoneId) },
+      ...reg.deviceIds
+        .filter((id) => id !== Number(reg.phoneId))
+        .map((id) => ({ kind: 'ASSET', id })),
+    ]
     const body = {
       accountId: Number(reg.accountId),
       realnamePersonId: Number(reg.realnamePersonId),
