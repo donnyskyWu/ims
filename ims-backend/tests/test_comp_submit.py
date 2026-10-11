@@ -169,6 +169,67 @@ def test_two_level_audit_stores_and_subscribes():
     assert len(final_body["data"]["auditRounds"]) == 2
 
 
+def test_final_approve_succeeds_on_first_call_from_clean_seq():
+    """序号表为空时，终审通过的第一次请求就要入库。"""
+    from sqlalchemy import func, select, text
+
+    from app.core import engine
+    from app.models import CompAnalysis, CompAssetSeq
+
+    seed_roles()
+    r6 = headers("tc_r6")
+    created = client.post(
+        "/admin-api/ims/comp/analysis",
+        headers=r6,
+        json={**BODY, "compName": "TC终审首点"},
+    ).json()
+    assert created["code"] == 0, created
+    no = created["data"]["analysisNo"]
+    first = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r8"),
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    assert first.json()["code"] == 0, first.json()
+
+    db = SessionLocal()
+    try:
+        assert (db.scalar(select(func.count()).select_from(CompAssetSeq)) or 0) == 0
+    finally:
+        db.close()
+
+    turned_on = False
+    try:
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("SET GLOBAL innodb_snapshot_isolation=ON"))
+        turned_on = True
+        engine.dispose()
+
+        final = client.put(
+            f"/admin-api/ims/comp/audit/{no}",
+            headers=headers("tc_r4"),
+            json={"auditLevel": "FINAL", "conclusion": "STORED"},
+        )
+        final_body = final.json()
+        assert final.status_code == 200
+        assert final_body["code"] == 0, final_body
+        assert final_body["data"]["newStatus"] == "STORED"
+        assert str(final_body["data"]["mergeInfo"]["assetNo"]).startswith("CP")
+
+        db = SessionLocal()
+        try:
+            row = db.scalar(select(CompAnalysis).where(CompAnalysis.analysis_no == no))
+            assert row is not None
+            assert row.submit_status == "STORED"
+        finally:
+            db.close()
+    finally:
+        if turned_on:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text("SET GLOBAL innodb_snapshot_isolation=OFF"))
+            engine.dispose()
+
+
 def test_reject_requires_reason_and_resubmit_keeps_timeline():
     seed_roles()
     r6 = headers("tc_r6")

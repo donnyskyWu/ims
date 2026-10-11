@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -58,8 +58,7 @@ def _used_seq(db: Session, tenant_id: int, prefix: str) -> int:
 
 def _ensure_seq_row(tenant_id: int, day: str) -> None:
     """用短事务建序号行。并发插入冲突或死锁时重试，不碰调用方事务。"""
-    from sqlalchemy.exc import OperationalError
-
+    last: Exception | None = None
     for _ in range(5):
         db = SessionLocal()
         try:
@@ -76,41 +75,70 @@ def _ensure_seq_row(tenant_id: int, day: str) -> None:
             return
         except IntegrityError:
             db.rollback()
+            return
         except OperationalError as exc:
             db.rollback()
+            last = exc
             if "1213" not in str(exc):
                 raise
         finally:
             db.close()
+    raise RuntimeError("竞品单号序号行不存在") from last
 
 
-def _lock_day_seq(db: Session, tenant_id: int, day: str) -> CompAssetSeq:
+def _lock_fresh_seq(tenant_id: int, day: str) -> tuple[Session, CompAssetSeq]:
+    """在尚未读过库的新事务里锁序号行。
+
+    审核请求往往已经做过一致性读。若把序号行插在另一连接再在原事务里
+    SELECT FOR UPDATE，MariaDB（innodb_snapshot_isolation）会报 1020，
+    整单回滚；序号行却已提交，于是第二次点击才成功。
+    """
     stmt = (
         select(CompAssetSeq)
         .where(CompAssetSeq.tenant_id == tenant_id, CompAssetSeq.biz_date == day)
         .with_for_update()
     )
-    _ensure_seq_row(tenant_id, day)
-    row = db.scalar(stmt)
-    if row is None:
+    last: Exception | None = None
+    for _ in range(5):
         _ensure_seq_row(tenant_id, day)
-        row = db.scalar(stmt)
-    if row is None:
-        raise RuntimeError("竞品单号序号行不存在")
-    return row
+        db = SessionLocal()
+        try:
+            row = db.scalar(stmt)
+            if row is not None:
+                return db, row
+            db.rollback()
+        except OperationalError as exc:
+            db.rollback()
+            last = exc
+            message = str(exc)
+            if "1020" not in message and "1213" not in message:
+                db.close()
+                raise
+        db.close()
+    raise RuntimeError("竞品单号序号行不存在") from last
 
 
 def next_asset_no(db: Session, tenant_id: int) -> str:
-    """锁当日序号行后取下一个空号。已有单号（含软删）只参与占号，不会被改写。"""
+    """锁当日序号行后取下一个空号。已有单号（含软删）只参与占号，不会被改写。
+
+    序号在独立事务里递增并提交，避免调用方已打开的快照看不到新建序号行。
+    """
     day = datetime.now(BJ).strftime("%Y%m%d")
     prefix = f"CP{day}"
-    row = _lock_day_seq(db, tenant_id, day)
-    floor = _used_seq(db, tenant_id, prefix)
-    if int(row.seq_val or 0) < floor:
-        row.seq_val = floor
-    row.seq_val = int(row.seq_val or 0) + 1
-    db.flush()
-    return f"{prefix}{int(row.seq_val):03d}"
+    alloc, row = _lock_fresh_seq(tenant_id, day)
+    try:
+        floor = max(_used_seq(alloc, tenant_id, prefix), _used_seq(db, tenant_id, prefix))
+        if int(row.seq_val or 0) < floor:
+            row.seq_val = floor
+        row.seq_val = int(row.seq_val or 0) + 1
+        number = f"{prefix}{int(row.seq_val):03d}"
+        alloc.commit()
+        return number
+    except Exception:
+        alloc.rollback()
+        raise
+    finally:
+        alloc.close()
 
 
 def assign_and_flush(db: Session, row: CompAsset) -> str:
