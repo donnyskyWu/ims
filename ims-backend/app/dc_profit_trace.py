@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import mask_name, utcnow
-from app.corp import ops_db, page_args, tenant_of, user_names
+from app.corp import ops_db, page_args, tenant_of, user_names, visible
 from app.fin import (
     abnormal_marks,
     collect_visible_profits,
@@ -21,8 +21,9 @@ from app.fin import (
     operating_profit,
     parse_day_range,
 )
-from app.live import get_session, iso
+from app.live import LIVE_ASSET_TYPES, get_session, iso, load_asset
 from app.models import FinCost, FinProfit, LiveSession, User, UserDept
+from app.ops_models import Phone
 
 router = APIRouter(prefix="/dc/profit-trace", tags=["dc-profit-trace"])
 
@@ -94,6 +95,25 @@ def aggregate_dimension(
     from app.fin_dashboard import dimension_of
 
     return dimension_of(session, aggregate_by, accounts, groups, names)
+
+
+def chain_bound_assets(db: Session, ops: Session, actor: User, raw_ids: str) -> list[dict]:
+    """反查链路只展示场次 device_asset_ids 里实际绑定的手机和直播/拍摄设备。"""
+    rows: list[dict] = []
+    for device_id in parse_asset_ids(raw_ids):
+        phone = ops.get(Phone, device_id)
+        if visible(phone, actor):
+            code = (phone.phone_code or phone.device_number or "").strip()
+            name = (phone.phone_model or "").strip() or code or f"手机#{phone.id}"
+            rows.append({"assetId": phone.id, "assetCode": code, "assetName": name})
+            continue
+        asset = load_asset(db, actor, device_id)
+        if asset is None or asset.asset_type not in LIVE_ASSET_TYPES:
+            continue
+        code = (asset.asset_code or "").strip()
+        name = (asset.asset_name or "").strip() or code
+        rows.append({"assetId": asset.id, "assetCode": code, "assetName": name})
+    return rows
 
 
 def parse_asset_ids(raw: str) -> list[int]:
@@ -363,6 +383,7 @@ def profit_trace_chain(
     request: Request,
     session_code: str,
     db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
     started = time.perf_counter()
@@ -376,8 +397,7 @@ def profit_trace_chain(
         return fail(1145, "该场次成本未核准，利润未计算")
     masked = request.state.scope is not None and request.state.scope.kind == "SELF"
     names = user_names(db, [session.responsible_user_id])
-    asset_ids = parse_asset_ids(session.device_asset_ids or "[]")
-    assets = [{"assetId": aid, "assetCode": f"AST-{aid}"} for aid in asset_ids]
+    assets = chain_bound_assets(db, ops, actor, session.device_asset_ids or "[]")
     live_date = (session.actual_start or session.plan_start_time or "")[:10]
     elapsed = round((time.perf_counter() - started) * 1000, 1)
     return ok(

@@ -358,7 +358,7 @@ interface DcProfitTraceChainResp {
     profit: DcProfitTraceVO;
     session: { sessionCode: string; sessionTitle: string; liveDate: string; platform: PlatformType };
     account: { accountId: number; accountNo: string; nickname: string };
-    assets: Array<{ assetId: number; assetCode: string }>;
+    assets: Array<{ assetId: number; assetCode: string; assetName: string }>;
     responsibleUser: { userId: number; userName: string };
     realnamePersons: Array<{ userId: number; userName: string; roleType: string }>;
     costDetail: Array<{ costItem: string; amount: number | null }>;
