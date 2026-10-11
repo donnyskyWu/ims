@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { http } from '../api/http'
 import { useUserStore } from '../stores/user'
 
 const router = createRouter({
@@ -48,7 +49,7 @@ const router = createRouter({
         { path: 'bi/query/perf', component: () => import('../views/bi/query-perf.vue') },
         { path: 'bi/query', component: () => import('../views/bi/query.vue') },
         { path: 'bi/report/list', component: () => import('../views/bi/report-list.vue') },
-        { path: 'bi/report/designer', component: () => import('../views/bi/designer.vue') },
+        { path: 'bi/report/designer', meta: { editPerm: 'bi:report:edit' }, component: () => import('../views/bi/designer.vue') },
         { path: 'bi/report', component: () => import('../views/bi/report.vue') },
         { path: 'bi/metric', component: () => import('../views/bi/metric.vue') },
         { path: 'bi/analysis', component: () => import('../views/bi/analysis.vue') },
@@ -128,12 +129,27 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const user = useUserStore()
   if (to.path !== '/login' && !user.accessToken) {
     return '/login'
   }
-  return true
+  const editPerm = typeof to.meta.editPerm === 'string' ? to.meta.editPerm : ''
+  if (!editPerm) return true
+  if (user.profile?.username === 'admin' || user.hasPerm(editPerm)) return true
+  try {
+    const res = await http.get('/bi/report/edit-perm')
+    const data = res.data.data as { allowed?: boolean; granted?: boolean; permCode?: string }
+    if (data?.granted && data.permCode) user.permCodes = [...new Set([...user.permCodes, data.permCode])]
+    if (data?.allowed) return true
+  } catch {
+    return '/login'
+  }
+  const reportId = to.query.reportId
+  if (typeof reportId === 'string' && reportId) {
+    return { path: '/ims/bi/report/preview', query: { reportId } }
+  }
+  return '/ims/bi/report/list'
 })
 
 export default router

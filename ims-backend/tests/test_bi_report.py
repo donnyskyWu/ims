@@ -342,11 +342,35 @@ def test_bi_publish_config_grants_tc_r6_and_card_actions():
         headers=viewer_headers,
         json={"reportName": "越权改名", "keepVersion": True},
     )
-    assert denied_save.json()["code"] == 1008
+    assert denied_save.status_code == 403
+    assert denied_save.json()["code"] == 403
     denied_export = client.get(f"/admin-api/ims/bi/report/{rid}/export", headers=viewer_headers)
     assert denied_export.json()["code"] == 1008
     denied_delete = client.delete(f"/admin-api/ims/bi/report/{rid}", headers=viewer_headers)
-    assert denied_delete.json()["code"] == 1008
+    assert denied_delete.status_code == 403
+    assert denied_delete.json()["code"] == 403
+    viewer_perm = client.get("/admin-api/ims/bi/report/edit-perm", headers=viewer_headers)
+    assert viewer_perm.json()["data"]["allowed"] is False
+    assert viewer_perm.json()["data"]["permCode"] == "bi:report:edit"
+    admin_perm = client.get("/admin-api/ims/bi/report/edit-perm", headers=auth)
+    assert admin_perm.json()["data"]["allowed"] is True
+    menu_pub = client.post(
+        f"/admin-api/ims/bi/report/{rid}/publish",
+        headers=auth,
+        json={
+            "dests": ["MENU"],
+            "menuName": "只读菜单",
+            "shareScope": "SPECIFIED",
+            "opPerm": "READONLY",
+            "viewerIds": [viewer_id],
+        },
+    )
+    assert menu_pub.json()["code"] == 0
+    menus = client.get("/admin-api/ims/bi/report/published-menus", headers=viewer_headers)
+    side = next(item for item in menus.json()["data"]["list"] if item["menuName"] == "只读菜单")
+    assert side["canDesign"] is False
+    assert "/preview" in side["path"]
+    assert "designer" not in side["path"]
 
 
 def test_bi_republish_menu_access_and_version():
@@ -399,3 +423,4 @@ def test_bi_republish_menu_access_and_version():
     detail = client.get(f"/admin-api/ims/bi/report/{rid}", headers=auth)
     assert detail.json()["data"]["shareScope"] == "ALL"
     assert detail.json()["data"]["publishDest"] == "CENTER,MENU"
+

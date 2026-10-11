@@ -388,12 +388,30 @@ def iso(dt: datetime | None) -> str:
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
+REPORT_EDIT_PERM = "bi:report:edit"
+
+
 def next_report_no(db: Session, tenant_id: int) -> str:
     count = db.scalar(
         select(func.count()).select_from(BiReportDef).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id)
     )
     seq = int(count or 0) + 1
     return f"RPT-{seq:04d}"
+
+
+def has_report_edit_perm(db: Session, actor: User) -> bool:
+    """内置 admin 在权限种子补齐前仍可编辑。其余用户必须持有 bi:report:edit。"""
+    if (actor.username or "") == "admin":
+        return True
+    from app.system_role import user_perm_codes
+
+    return REPORT_EDIT_PERM in set(user_perm_codes(db, actor.id))
+
+
+def reject_report_write(db: Session, row: BiReportDef, actor: User, action: str):
+    if not has_report_edit_perm(db, actor) or mutation_denied(row, actor, action):
+        return fail(403, "无报表编辑权限")
+    return None
 
 
 def parse_layout(raw: str) -> dict:
@@ -990,6 +1008,14 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
     return ok(report_def_vo(row, names, actor))
 
 
+@router.get("/edit-perm")
+def report_edit_perm(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    from app.system_role import user_perm_codes
+
+    granted = REPORT_EDIT_PERM in set(user_perm_codes(db, actor.id))
+    return ok({"permCode": REPORT_EDIT_PERM, "granted": granted, "allowed": has_report_edit_perm(db, actor)})
+
+
 @router.get("/published-menus")
 def published_menus(
     request: Request,
@@ -1014,11 +1040,17 @@ def published_menus(
     for row in rows:
         if not report_row_visible(db, row, actor, request.state.scope):
             continue
+        can_design = report_caps(row, actor)["canEdit"] and has_report_edit_perm(db, actor)
         items.append(
             {
                 "reportId": row.id,
                 "menuName": row.menu_name,
-                "path": f"/ims/bi/report/designer?reportId={row.id}",
+                "canDesign": can_design,
+                "path": (
+                    f"/ims/bi/report/designer?reportId={row.id}"
+                    if can_design
+                    else f"/ims/bi/report/preview?reportId={row.id}"
+                ),
             }
         )
     return ok({"list": items})
@@ -1055,9 +1087,9 @@ def report_design_save(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
-    denied = mutation_denied(row, actor, "edit")
+    denied = reject_report_write(db, row, actor, "edit")
     if denied:
-        return fail(1008, denied)
+        return denied
     if body.reportName.strip():
         row.report_name = body.reportName.strip()
     if body.layoutJson is not None:
@@ -1189,9 +1221,9 @@ def report_delete(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
-    denied = mutation_denied(row, actor, "delete")
+    denied = reject_report_write(db, row, actor, "delete")
     if denied:
-        return fail(1008, denied)
+        return denied
     row.deleted = 1
     row.updated_at = utcnow()
     return ok({"id": row.id, "deleted": True})
@@ -1239,9 +1271,9 @@ def report_design_publish(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
-    denied = mutation_denied(row, actor, "publish")
+    denied = reject_report_write(db, row, actor, "publish")
     if denied:
-        return fail(1008, denied)
+        return denied
     cfg = body or PublishBody()
     raw_dests = [str(item).strip().upper() for item in (cfg.dests or []) if str(item).strip()]
     if not raw_dests:

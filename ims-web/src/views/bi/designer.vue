@@ -14,9 +14,9 @@
         <button class="btn btn-sm" type="button" data-testid="bi-free-layout" :class="layoutMode === 'FREE' ? 'btn-pri' : 'btn-sec'" @click="useFreeLayout">自由布局</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-device-preview" @click="deviceOpen = !deviceOpen">终端预览</button>
         <button class="btn btn-sec btn-sm" type="button" @click="runPreview">运行预览</button>
-        <button class="btn btn-pri btn-sm" type="button" :disabled="saving" data-testid="bi-save" @click="saveLayout()">保存草稿</button>
+        <button v-if="canWrite" v-perm="'bi:report:edit'" class="btn btn-pri btn-sm" type="button" :disabled="saving" data-testid="bi-save" @click="saveLayout()">保存草稿</button>
         <button class="btn btn-pri btn-sm" type="button" data-testid="bi-open-drill" @click="openDrill">预览下钻</button>
-        <button class="btn btn-pri btn-sm" type="button" data-testid="bi-publish" @click="openPublish()">保存并发布</button>
+        <button v-if="canWrite" v-perm="'bi:report:edit'" class="btn btn-pri btn-sm" type="button" data-testid="bi-publish" @click="openPublish()">保存并发布</button>
       </div>
     </div>
 
@@ -225,7 +225,7 @@
             <input v-model="selected.linkTarget" class="fld-in" placeholder="目标组件 id" @focus="armSnapshot" @input="dirty = true" />
           </template>
 
-          <button class="btn btn-sec btn-sm" type="button" style="margin-top: 12px" @click="removeSelected">删除组件</button>
+          <button v-if="canWrite" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" style="margin-top: 12px" data-testid="bi-comp-delete" @click="removeSelected">删除组件</button>
         </template>
         <div v-else class="csub" style="margin-top: 12px">选中画布组件以编辑。未选中时这里是报表级属性（名称 / 自由布局）。</div>
       </div>
@@ -360,6 +360,7 @@ type ReportVo = {
   accessType?: string
   expireDays?: number
   hasPassword?: boolean
+  canEdit?: boolean
 }
 
 type Viewer = { id: number; username: string; nickname?: string }
@@ -425,6 +426,8 @@ const pendingComp = ref<CompMeta | null>(null)
 let html5Handled = false
 let droppedOnCanvas = false
 const report = ref<ReportVo | null>(null)
+const editAllowed = ref(false)
+const canWrite = computed(() => editAllowed.value && report.value?.canEdit !== false)
 const comps = ref<Comp[]>([])
 const datasets = ref<Dataset[]>([])
 const compLib = ref<CompMeta[]>([])
@@ -822,6 +825,12 @@ async function loadReport() {
     return
   }
   report.value = res.data.data
+  try {
+    const perm = await http.get('/bi/report/edit-perm')
+    editAllowed.value = Boolean(perm.data.data?.allowed)
+  } catch {
+    editAllowed.value = false
+  }
   layoutMode.value = res.data.data.layoutMode || 'FREE'
   comps.value = ((res.data.data.comps || []) as Comp[]).map((item) => ({
     dimension: '',

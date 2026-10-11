@@ -93,10 +93,25 @@
             <div class="csub" style="margin-top: 6px">{{ row.category }} / {{ row.subCategory || '—' }}</div>
             <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ statusText(row.status) }} · v{{ row.version || 1 }}</div>
             <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }} · {{ scopeText(row.shareScope) }} · {{ opText(row.opPerm) }} · {{ rowPermText(row.rowPerm) }}</div>
-            <div class="rowline" style="margin-top: 10px; gap: 8px; flex-wrap: wrap">
+            <div class="rowline" style="margin-top: 10px; gap: 8px; flex-wrap: wrap; position: relative">
               <button v-if="row.canPublish !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
               <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-edit" @click="openDesigner(row.id)">编辑设计</button>
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="openMore(row)">更多</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click.stop="toggleMore(row)">更多</button>
+              <div v-if="moreRow?.id === row.id" data-testid="bi-more-menu" style="position: absolute; z-index: 30; right: 0; top: calc(100% + 4px); min-width: 220px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 8px" @click.stop>
+                <p class="csub" data-testid="bi-more-type">类型：{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</p>
+                <p class="csub" data-testid="bi-more-dataset">数据源：{{ row.dataset || '—' }}</p>
+                <p class="csub" data-testid="bi-more-status">状态：{{ statusText(row.status) }}</p>
+                <p class="csub" data-testid="bi-more-count">组件数：{{ row.compCount ?? 0 }}</p>
+                <p class="csub" data-testid="bi-more-tags">标签：{{ (row.tags || []).join('、') || '—' }}</p>
+                <div class="rowline" style="margin-top: 8px; gap: 6px; flex-wrap: wrap">
+                  <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-design" @click="openDesigner(row.id)">进入设计器</button>
+                  <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-share" @click="openShare(row)">分享设置</button>
+                  <button v-if="row.canCopy !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(row)">复制</button>
+                  <button v-if="row.canDelete !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(row)">删除</button>
+                  <button v-if="row.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(row)">导出模板 JSON</button>
+                  <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(row)">发布管理</button>
+                </div>
+              </div>
             </div>
           </div>
           <div v-if="!loading && !rows.length" class="card" style="grid-column: 1 / -1">
@@ -132,10 +147,16 @@
               <td>{{ statusText(row.status) }}</td>
               <td>v{{ row.version || 1 }}</td>
               <td class="csub">{{ formatShanghai(row.updatedAt) }}</td>
-                  <td>
+                  <td style="position: relative">
                     <button v-if="row.canPublish !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
                     <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button>
-                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="openMore(row)">更多</button>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click.stop="toggleMore(row)">更多</button>
+                    <div v-if="moreRow?.id === row.id" data-testid="bi-more-menu" style="position: absolute; z-index: 30; right: 0; top: calc(100% + 4px); min-width: 220px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 8px" @click.stop>
+                      <button v-if="row.canCopy !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(row)">复制</button>
+                      <button v-if="row.canDelete !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(row)">删除</button>
+                      <button v-if="row.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(row)">导出模板 JSON</button>
+                      <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(row)">发布管理</button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -156,29 +177,6 @@
       </div>
     </div>
 
-    <div v-if="moreRow" class="modal-mask" data-testid="bi-more-drawer" @click.self="moreRow = null">
-      <div class="card" style="width: 480px; padding: 18px">
-        <h3 style="margin: 0 0 8px">更多 · {{ moreRow.reportName }}</h3>
-        <p class="csub" data-testid="bi-more-type">类型：{{ moreRow.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</p>
-        <p class="csub" data-testid="bi-more-dataset">数据源：{{ moreRow.dataset || '—' }}</p>
-        <p class="csub" data-testid="bi-more-status">状态：{{ statusText(moreRow.status) }}</p>
-        <p class="csub" data-testid="bi-more-count">组件数：{{ moreRow.compCount ?? 0 }}</p>
-        <p class="csub" data-testid="bi-more-tags">标签：{{ (moreRow.tags || []).join('、') || '—' }}</p>
-        <p class="csub">分享：{{ scopeText(moreRow.shareScope) }} · {{ opText(moreRow.opPerm) }}</p>
-        <div class="rowline" style="margin-top: 12px; gap: 8px; flex-wrap: wrap">
-          <button v-if="moreRow.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-design" @click="openDesigner(moreRow.id)">进入设计器</button>
-          <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-share" @click="openShare(moreRow)">分享设置</button>
-          <button v-if="moreRow.canCopy !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(moreRow)">复制</button>
-          <button v-if="moreRow.canDelete !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(moreRow)">删除</button>
-          <button v-if="moreRow.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(moreRow)">导出模板 JSON</button>
-          <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(moreRow)">发布管理</button>
-        </div>
-        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
-          <button class="btn btn-sec btn-sm" type="button" @click="moreRow = null">关闭</button>
-        </div>
-      </div>
-    </div>
-
     <div v-if="publishManage" class="modal-mask" data-testid="bi-publish-manage" @click.self="publishManage = null">
       <div class="card" style="width: 560px; padding: 18px; max-height: 80vh; overflow: auto">
         <h3 style="margin: 0 0 8px">发布管理 · {{ publishManage.reportName }} · v{{ publishManage.version || 1 }}</h3>
@@ -187,7 +185,9 @@
           {{ destText(item.dest) }} · {{ accessText(item.accessType) }} · {{ scopeText(item.shareScope) }} · {{ opText(item.opPerm) }} · {{ rowPermText(item.rowPerm) }}
           · 有效期 {{ item.expireDays || 7 }} 天 · 密码 {{ item.hasPassword ? '••••••' : '无' }} · 快照 v{{ item.snapshotVersion }}
           <span v-if="item.menuName"> · 菜单 {{ item.menuName }}</span>
+          <button v-if="item.shareUrl" class="btn btn-sec btn-sm" type="button" style="margin-left: 8px" data-testid="bi-publish-copy-link" @click="copyPublishLink(item)">复制链接</button>
         </div>
+        <p v-if="copyToast" class="hint" data-testid="bi-copy-link-toast">{{ copyToast }}</p>
         <div v-if="publishManage.canPublish !== false" style="margin-top: 14px" data-testid="bi-list-publish">
           <label class="fld">发布去向</label>
           <label class="csub" style="display: block; margin-top: 6px"><input v-model="listPublish.dests" type="checkbox" value="CENTER" /> 发布到报表中心</label>
@@ -351,7 +351,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -397,6 +397,7 @@ type PublishRecord = {
   accessType?: string
   expireDays?: number
   hasPassword?: boolean
+  shareUrl?: string
 }
 
 type Viewer = { id: number; username: string; nickname?: string }
@@ -426,6 +427,7 @@ const deleteTarget = ref<Row | null>(null)
 const publishManage = ref<Row | null>(null)
 const publishRows = ref<PublishRecord[]>([])
 const publishError = ref('')
+const copyToast = ref('')
 const viewers = ref<Viewer[]>([])
 const listPublish = reactive({
   dests: ['CENTER'] as string[],
@@ -528,8 +530,32 @@ function scopeText(value?: string) {
   return '私有'
 }
 
-function openMore(row: Row) {
-  moreRow.value = row
+function toggleMore(row: Row) {
+  moreRow.value = moreRow.value?.id === row.id ? null : row
+}
+
+function closeMore() {
+  moreRow.value = null
+}
+
+async function copyPublishLink(item: PublishRecord) {
+  const raw = (item.shareUrl || '').trim()
+  if (!raw) {
+    copyToast.value = '尚未发布'
+    return
+  }
+  const url = raw.startsWith('http') ? raw : `${window.location.origin}${raw}`
+  try {
+    await navigator.clipboard.writeText(url)
+  } catch {
+    const input = document.createElement('textarea')
+    input.value = url
+    document.body.appendChild(input)
+    input.select()
+    document.execCommand('copy')
+    input.remove()
+  }
+  copyToast.value = '已复制链接'
 }
 
 function openShare(row: Row) {
@@ -567,6 +593,7 @@ async function loadViewers() {
 async function openListPublish(row: Row) {
   moreRow.value = null
   publishError.value = ''
+  copyToast.value = ''
   fillListPublish(row)
   publishManage.value = row
   publishRows.value = []
@@ -901,7 +928,11 @@ watch(
 )
 
 onMounted(async () => {
+  document.addEventListener('click', closeMore)
   await loadCategories()
   await loadList()
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMore)
 })
 </script>
