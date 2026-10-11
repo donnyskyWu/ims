@@ -50,7 +50,7 @@
               <td data-testid="review-queue-match">{{ row.matchSummary || '—' }}</td>
               <td>{{ row.submitterName }}</td>
               <td class="num">{{ row.reviewRound }}</td>
-              <td class="num" style="font-size: 12px">{{ row.createdAt }}</td>
+              <td class="num" style="font-size: 12px" data-testid="review-submitted-at">{{ formatSubmittedAt(row.createdAt) }}</td>
               <td><button class="btn btn-pri btn-sm" type="button" @click="openReview(row)">审核</button></td>
             </tr>
           </tbody>
@@ -274,6 +274,11 @@ function playLabel(item: any) {
   const bits = plays.map((play: any) => play?.result).filter(Boolean)
   if (main && bits.length) return `${main} · ${bits.join('、')}`
   return main || bits.join('、') || '—'
+}
+
+function formatSubmittedAt(value?: string) {
+  if (!value) return '—'
+  return value.replace('T', ' ').slice(0, 16)
 }
 
 function formatMatchTime(value: unknown) {
