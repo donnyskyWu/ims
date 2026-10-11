@@ -927,6 +927,7 @@ class MeetDailyReport(Base):
     user_name: Mapped[str] = mapped_column(String(64), default="")
     dept_name: Mapped[str] = mapped_column(String(128), default="")
     report_date: Mapped[str] = mapped_column(String(10), default="")
+    report_type: Mapped[str] = mapped_column(String(32), default="")
     content_done: Mapped[str] = mapped_column(Text, default="")
     content_plan: Mapped[str] = mapped_column(Text, default="")
     content_issue: Mapped[str] = mapped_column(Text, default="")

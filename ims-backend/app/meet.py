@@ -17,6 +17,26 @@ from app.scope import DataScope, dept_ids_of
 
 router = APIRouter(prefix="/meet", tags=["meet"])
 
+
+def ensure_meet_columns() -> None:
+    """已有库补会议/日报列。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    from app.core import engine
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    alters: list[tuple[str, str, str]] = []
+    if "ims_meet_daily_report" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_meet_daily_report")}
+        if "report_type" not in cols:
+            alters.append(("ims_meet_daily_report", "report_type", "VARCHAR(32) NOT NULL DEFAULT ''"))
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for table, column, ddl in alters:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
 BJ = timezone(timedelta(hours=8))
 DATE_RE = __import__("re").compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -29,9 +49,19 @@ class DailyReviewBody(BaseModel):
     followUpItems: list[dict] | None = None
 
 
+REPORT_TYPES = {
+    "LIVE": "直播",
+    "SHORT_VIDEO": "短视频",
+    "OPS": "运营",
+    "ADMIN": "行政",
+}
+REPORT_TYPE_BY_LABEL = {label: key for key, label in REPORT_TYPES.items()}
+
+
 class DailySubmitBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     reportDate: str
+    reportType: str = ""
     contentDone: str = ""
     contentPlan: str = ""
     contentIssue: str = ""
@@ -66,10 +96,29 @@ def calc_on_time(report_date: str, submitted_at: datetime) -> bool:
     return at.astimezone(BJ) <= deadline
 
 
+def normalize_report_type(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if text in REPORT_TYPES:
+        return text
+    return REPORT_TYPE_BY_LABEL.get(text, "")
+
+
+def is_friday(report_date: str) -> bool:
+    try:
+        return datetime.strptime(report_date, "%Y-%m-%d").weekday() == 4
+    except ValueError:
+        return False
+
+
 def daily_vo(row: MeetDailyReport) -> dict:
+    report_type = row.report_type or ""
     return {
         "id": row.id,
         "reportDate": row.report_date,
+        "reportType": report_type,
+        "reportTypeLabel": REPORT_TYPES.get(report_type, report_type),
         "userId": row.user_id,
         "userName": row.user_name,
         "deptName": row.dept_name,
@@ -89,19 +138,20 @@ def daily_vo(row: MeetDailyReport) -> dict:
 def validate_submit_body(body: DailySubmitBody, *, require_content: bool) -> str | None:
     if not DATE_RE.match(body.reportDate or ""):
         return "reportDate 格式须为 yyyy-MM-dd"
+    if (body.reportType or "").strip() and not normalize_report_type(body.reportType):
+        return "日报类型无效"
+    body.reportType = normalize_report_type(body.reportType)
     if require_content:
-        for field, label in (
-            (body.contentDone, "今日完成"),
-            (body.contentPlan, "明日计划"),
-            (body.contentIssue, "问题与风险"),
-        ):
-            if not (field or "").strip():
-                return f"{label} 必填"
+        if not (body.contentDone or "").strip():
+            return "必填项，请填写"
+        if is_friday(body.reportDate) and not (body.weekSummary or "").strip():
+            return "必填项，请填写"
     return None
 
 
 def apply_body(row: MeetDailyReport, body: DailySubmitBody, *, allow_main: bool) -> None:
     if allow_main:
+        row.report_type = normalize_report_type(body.reportType)
         row.content_done = body.contentDone or ""
         row.content_plan = body.contentPlan or ""
         row.content_issue = body.contentIssue or ""
@@ -242,20 +292,22 @@ def upsert_daily(db: Session, actor: User, body: DailySubmitBody):
 @router.get("/daily/template")
 def daily_template(_: User = Depends(current_user)):
     weekday = datetime.now(BJ).weekday()
+    friday = weekday == 4
     return ok(
         {
             "sections": [
                 {"key": "done", "label": "今日完成", "required": True},
-                {"key": "plan", "label": "明日计划", "required": True},
-                {"key": "issue", "label": "问题与风险", "required": True},
+                {"key": "plan", "label": "明日计划", "required": False},
+                {"key": "issue", "label": "问题与风险", "required": False},
                 *(
                     [{"key": "weekly", "label": "周小结", "required": True}]
-                    if weekday == 4
+                    if friday
                     else []
                 ),
             ],
+            "reportTypes": [{"value": key, "label": label} for key, label in REPORT_TYPES.items()],
             "extraFields": [],
-            "weekSummaryEnabled": weekday == 4,
+            "weekSummaryEnabled": friday,
             "deadlineTime": "22:00",
         }
     )

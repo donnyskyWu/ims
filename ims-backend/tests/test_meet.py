@@ -66,6 +66,49 @@ def test_meet_daily_template_and_submit():
     assert mine.json()["data"]["total"] >= 1
 
 
+def test_meet_daily_direct_submit_without_draft():
+    auth = headers()
+    tpl = client.get("/admin-api/ims/meet/daily/template", headers=auth)
+    sections = {item["key"]: item["required"] for item in tpl.json()["data"]["sections"]}
+    assert sections["done"] is True
+    assert sections["plan"] is False
+    assert sections["issue"] is False
+    assert any(item["value"] == "SHORT_VIDEO" for item in tpl.json()["data"]["reportTypes"])
+
+    empty = client.post(
+        "/admin-api/ims/meet/daily/submit",
+        headers=auth,
+        json={"reportDate": "2026-09-01", "asDraft": False},
+    )
+    assert empty.json()["code"] == 1001
+    assert "必填" in empty.json()["msg"]
+
+    day = "2026-09-02"
+    created = client.post(
+        "/admin-api/ims/meet/daily/submit",
+        headers=auth,
+        json={
+            "reportDate": day,
+            "reportType": "短视频",
+            "contentDone": "直接提交",
+            "asDraft": False,
+        },
+    )
+    body = created.json()
+    assert body["code"] in (0, 1111)
+    if body["code"] == 0:
+        assert body["data"]["submitStatus"] == "SUBMITTED"
+        assert body["data"]["reportType"] == "SHORT_VIDEO"
+        assert body["data"]["contentPlan"] == ""
+
+    friday = client.post(
+        "/admin-api/ims/meet/daily/submit",
+        headers=auth,
+        json={"reportDate": "2026-10-09", "contentDone": "周五", "asDraft": False},
+    )
+    assert friday.json()["code"] == 1001
+
+
 def test_meet_daily_1112_after_submitted():
     auth = headers()
     day = (datetime.now(BJ) - timedelta(days=1)).strftime("%Y-%m-%d")

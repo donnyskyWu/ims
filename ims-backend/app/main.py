@@ -517,6 +517,9 @@ def init_db() -> None:
 
     ensure_ops()
     ensure_content_typeset_columns()
+    from app.meet import ensure_meet_columns
+
+    ensure_meet_columns()
     seed()
 
 
