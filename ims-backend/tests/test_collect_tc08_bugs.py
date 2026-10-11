@@ -227,6 +227,20 @@ def test_threshold_rejects_text_and_negative_and_saves_override_fields():
     )
     assert override.json()["code"] == 0
     assert override.json()["data"]["overrideValue"] == "15"
+    assert override.json()["data"]["overrideAccountName"] == "神鱼体育"
+    listed = client.get(
+        "/admin-api/ims/collect/threshold/list",
+        headers=auth,
+        params={"thresholdCategory": "OVERRIDE"},
+    )
+    matched = [
+        item
+        for item in listed.json()["data"]["list"]
+        if str(item.get("overrideAccountId")) == str(account_id)
+    ]
+    assert matched
+    assert matched[0]["overrideAccountName"] == "神鱼体育"
+    assert str(account_id) not in matched[0]["overrideAccountName"]
 
 
 def test_ensure_unified_reports_existing_task():

@@ -55,6 +55,21 @@ test.describe('采集与内部分析 BUG-B012–B028', () => {
     await page.getByTestId('acct-import-submit').click()
     await expect(page.getByTestId('field-error')).toContainText('请先选择文件')
 
+    await page.goto('/ims/collect/threshold')
+    await page.getByTestId('threshold-tab-OVERRIDE').click()
+    await page.getByTestId('threshold-create').click()
+    const overrideAccount = page.getByTestId('threshold-account')
+    await expect.poll(async () => overrideAccount.locator('option').count()).toBeGreaterThan(1)
+    const optionLabel = (await overrideAccount.locator('option').nth(1).innerText()).trim()
+    const accountName = optionLabel.split('（')[0].trim()
+    await overrideAccount.selectOption({ index: 1 })
+    await page.getByTestId('threshold-override').fill('5000')
+    await page.getByTestId('threshold-save').click()
+    await expect(page.getByTestId('app-toast')).toContainText('采集配置已保存')
+    const summary = page.getByTestId('threshold-summary').filter({ hasText: '5000' }).first()
+    await expect(summary).toContainText(accountName)
+    await expect(summary).not.toContainText(/账号 \d+/)
+
     await page.goto('/ims/int/work')
     const intLow = page.waitForResponse(
       (r) => r.url().includes('/int-analysis/work/page') && r.url().includes('LOW_SCORE'),

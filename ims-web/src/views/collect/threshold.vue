@@ -42,7 +42,7 @@
             <tr v-for="row in rows" v-else :key="row.id">
               <td>{{ row.ruleName || row.metricName || '—' }}</td>
               <td>{{ platformLabel(String(row.platformType || '')) || '全部' }}</td>
-              <td style="font-size: 12px">{{ summaryOf(row) }}</td>
+              <td style="font-size: 12px" data-testid="threshold-summary">{{ summaryOf(row) }}</td>
               <td>{{ row.status }}</td>
               <td>
                 <button class="btn-txt btn" type="button" @click="remove(row)">删除</button>
@@ -192,7 +192,10 @@ function summaryOf(row: Record<string, unknown>) {
   }
   if (activeCategory.value === 'FANS') return `低${row.lowFans} / 高${row.highFans}`
   if (activeCategory.value === 'WORK') return `爆${row.hotValue} / 低${row.lowValue}`
-  return `账号 ${row.overrideAccountId || '—'} · ${row.overrideValue || '—'}`
+  const fromApi = String(row.overrideAccountName || '').trim()
+  const known = accounts.value.find((item) => item.id === String(row.overrideAccountId || ''))
+  const name = fromApi || known?.nickname || '—'
+  return `账号 ${name} · ${row.overrideValue || '—'}`
 }
 
 async function loadList() {

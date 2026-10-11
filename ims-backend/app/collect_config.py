@@ -220,10 +220,42 @@ def threshold_payload(body: ThresholdBody) -> dict[str, Any]:
     return data
 
 
-def threshold_vo(row: ThresholdConfig) -> dict:
+def account_display_name(acct: PlatformAccount | None) -> str:
+    if acct is None or acct.deleted:
+        return ""
+    return (acct.account_name or "").strip() or (acct.account_no or "").strip()
+
+
+def override_account_names(ops: Session, rows: list[ThresholdConfig]) -> dict[int, str]:
+    ids: set[int] = set()
+    for row in rows:
+        if row.threshold_category != "OVERRIDE":
+            continue
+        try:
+            payload = json.loads(row.payload_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        raw = payload.get("overrideAccountId") if isinstance(payload, dict) else None
+        if raw in (None, ""):
+            continue
+        try:
+            ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return {}
+    found = ops.scalars(
+        select(PlatformAccount).where(PlatformAccount.id.in_(ids), PlatformAccount.deleted == 0)
+    ).all()
+    return {int(item.id): account_display_name(item) for item in found}
+
+
+def threshold_vo(row: ThresholdConfig, account_names: dict[int, str] | None = None) -> dict:
     try:
         payload = json.loads(row.payload_json or "{}")
     except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
         payload = {}
     base = {
         "id": str(row.id),
@@ -232,6 +264,13 @@ def threshold_vo(row: ThresholdConfig) -> dict:
         "status": row.status,
     }
     base.update(payload)
+    if row.threshold_category == "OVERRIDE":
+        raw = payload.get("overrideAccountId")
+        try:
+            account_id = int(raw) if raw not in (None, "") else 0
+        except (TypeError, ValueError):
+            account_id = 0
+        base["overrideAccountName"] = (account_names or {}).get(account_id, "")
     return base
 
 
@@ -825,8 +864,9 @@ def threshold_list(
     )
     if platformType:
         stmt = stmt.where(ThresholdConfig.platform_type == platformType)
-    rows = ops.scalars(stmt.order_by(ThresholdConfig.id.desc())).all()
-    return ok({"list": [threshold_vo(row) for row in rows]})
+    rows = list(ops.scalars(stmt.order_by(ThresholdConfig.id.desc())).all())
+    names = override_account_names(ops, rows)
+    return ok({"list": [threshold_vo(row, names) for row in rows]})
 
 
 @router.post("/threshold")
@@ -842,10 +882,12 @@ def threshold_create(
         return err
     if err := validate_threshold(body):
         return err
+    names: dict[int, str] = {}
     if body.thresholdCategory == "OVERRIDE" and body.overrideAccountId:
         acct = ops.get(PlatformAccount, body.overrideAccountId)
         if not visible(acct, actor):
             return fail(1501, "账号不可用")
+        names[int(acct.id)] = account_display_name(acct)
     row = ThresholdConfig(
         threshold_category=body.thresholdCategory,
         platform_type=body.platformType,
@@ -855,7 +897,7 @@ def threshold_create(
     )
     ops.add(row)
     ops.flush()
-    return ok(threshold_vo(row))
+    return ok(threshold_vo(row, names))
 
 
 @router.put("/threshold/{threshold_id}")
@@ -873,16 +915,18 @@ def threshold_update(
         return err
     if err := validate_threshold(body):
         return err
+    names: dict[int, str] = {}
     if body.thresholdCategory == "OVERRIDE" and body.overrideAccountId:
         acct = ops.get(PlatformAccount, body.overrideAccountId)
         if not visible(acct, actor):
             return fail(1501, "账号不可用")
+        names[int(acct.id)] = account_display_name(acct)
     row.threshold_category = body.thresholdCategory
     row.platform_type = body.platformType
     row.payload_json = json.dumps(threshold_payload(body), ensure_ascii=False)
     row.status = body.status
     row.updated_at = utcnow()
-    return ok(threshold_vo(row))
+    return ok(threshold_vo(row, names))
 
 
 @router.delete("/threshold/{threshold_id}")
