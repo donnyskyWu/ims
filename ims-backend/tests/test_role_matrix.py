@@ -353,3 +353,88 @@ def test_eff_relation_perms_seed_and_login():
     r5 = client.get("/admin-api/ims/auth/access", headers=login("tc_r5")).json()["data"]
     assert EFF_RELATION_QUERY not in r5["permCodes"]
     assert EFF_RELATION_DELETE not in r5["permCodes"]
+
+
+def test_b063_comp_submit_and_first_review_are_allowed():
+    from starlette.requests import Request
+
+    from app.api import AuthError
+    from app.models import Menu, User
+    from app.perm import enforce_function
+
+    for key in ("R5", "R6"):
+        codes = grants_for(key)
+        assert codes["menu:comp:query"] == "R"
+        assert codes["menu:comp:add"] == "R"
+        assert codes["menu:comp:edit"] == "R"
+        assert "menu:comp:remove" not in codes
+    reviewer = grants_for("R8")
+    assert reviewer["menu:comp:query"] == "R"
+    assert reviewer["menu:comp:edit"] == "R"
+    assert "menu:comp:add" not in reviewer
+    assert "menu:comp:remove" not in reviewer
+    director = grants_for("R4")
+    assert director["menu:comp:query"] == "RW"
+    assert "menu:comp:add" in director
+    assert "menu:comp:edit" in director
+
+    tree = client.get("/admin-api/ims/system/menu/tree", headers=login()).json()["data"]
+
+    def walk(nodes):
+        for node in nodes:
+            yield node
+            yield from walk(node.get("children") or [])
+
+    names = {node["permCode"]: node["name"] for node in walk(tree) if node.get("permCode")}
+    assert names["menu:comp:add"] == "竞品库·新增"
+    assert names["menu:comp:edit"] == "竞品库·编辑"
+
+    db = SessionLocal()
+    try:
+        for code in ("menu:comp:add", "menu:comp:edit"):
+            menu = db.scalar(select(Menu).where(Menu.perm_code == code, Menu.deleted == 0))
+            assert menu is not None and menu.menu_type == "BUTTON"
+
+        def request(method: str, path: str) -> Request:
+            return Request(
+                {
+                    "type": "http",
+                    "asgi": {"version": "3.0"},
+                    "http_version": "1.1",
+                    "method": method,
+                    "scheme": "http",
+                    "path": path,
+                    "raw_path": path.encode(),
+                    "query_string": b"",
+                    "headers": [],
+                    "client": ("127.0.0.1", 123),
+                    "server": ("test", 80),
+                }
+            )
+
+        submitter = db.scalar(select(User).where(User.username == "tc_r6", User.deleted == 0))
+        auditor = db.scalar(select(User).where(User.username == "tc_r8", User.deleted == 0))
+        assert submitter is not None and auditor is not None
+        try:
+            enforce_function(db, request("POST", "/admin-api/ims/comp/analysis"), submitter)
+            enforce_function(db, request("PUT", "/admin-api/ims/comp/analysis/CA-1"), submitter)
+            enforce_function(db, request("PUT", "/admin-api/ims/comp/audit/CA-1"), auditor)
+        except AuthError as exc:
+            raise AssertionError(exc.msg) from exc
+    finally:
+        db.close()
+
+    posted = client.post("/admin-api/ims/comp/analysis", headers=login("tc_r6"), json={})
+    assert posted.status_code != 403
+    if posted.headers.get("content-type", "").startswith("application/json"):
+        assert posted.json().get("code") != 403
+    audited = client.put("/admin-api/ims/comp/audit/CA-1", headers=login("tc_r8"), json={"conclusion": "APPROVE"})
+    assert audited.status_code != 403
+    if audited.headers.get("content-type", "").startswith("application/json"):
+        assert audited.json().get("code") != 403
+    r6 = client.get("/admin-api/ims/auth/access", headers=login("tc_r6")).json()["data"]
+    assert "menu:comp:add" in r6["permCodes"]
+    assert "menu:comp:edit" in r6["permCodes"]
+    r8 = client.get("/admin-api/ims/auth/access", headers=login("tc_r8")).json()["data"]
+    assert "menu:comp:edit" in r8["permCodes"]
+    assert "menu:comp:add" not in r8["permCodes"]

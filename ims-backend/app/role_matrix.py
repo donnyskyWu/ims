@@ -186,6 +186,7 @@ def grants_for(role_key: str) -> dict[str, str]:
         if "D" in level:
             put(_button(perm, "remove"), "R")
     _apply_eff_relation(role_key, levels)
+    _apply_comp_review(role_key, levels)
     return levels
 
 
@@ -206,6 +207,15 @@ def _apply_eff_relation(role_key: str, levels: dict[str, str]) -> None:
         levels[EFF_RELATION_UPDATE] = "R"
     if role_key == "R1":
         levels[EFF_RELATION_DELETE] = "R"
+
+
+def _apply_comp_review(role_key: str, levels: dict[str, str]) -> None:
+    """竞品提交与初审走按钮码。页面码保持 R，避免 W 连带放行删除。"""
+    if role_key in {"R5", "R6"}:
+        levels["menu:comp:add"] = "R"
+        levels["menu:comp:edit"] = "R"
+    elif role_key == "R8":
+        levels["menu:comp:edit"] = "R"
 
 
 def l1_names(role_key: str) -> list[str]:
