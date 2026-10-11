@@ -171,7 +171,8 @@ test.describe('content TC-07 P1', () => {
     await contentDrawer.getByRole('button', { name: '保存' }).click()
     await expect(contentDrawer.getByTestId('content-title-error')).toHaveText('必填项，请填写')
     await contentDrawer.getByTestId('content-submit-review').click()
-    await expect(contentDrawer.getByTestId('content-submit-hint')).toHaveText('请先保存内容')
+    await expect(contentDrawer.getByTestId('content-title-error')).toHaveText('必填项，请填写')
+    await expect(contentDrawer.getByTestId('content-submit-hint')).toHaveCount(0)
 
     await contentDrawer.getByTestId('content-edit-title').fill(contentTitle)
     const saveResp = page.waitForResponse(
@@ -191,6 +192,27 @@ test.describe('content TC-07 P1', () => {
     await contentRow.getByTestId('content-row-check').check()
     await page.getByTestId('content-batch-delete').click()
     await expect(page.locator('tr', { hasText: contentTitle })).toHaveCount(0)
+
+    const reviewTitle = `${contentTitle} 直提`
+    await page.getByTestId('content-create').click()
+    const submitDrawer = page.locator('.drawer.on').filter({ hasText: '新增内容' })
+    await submitDrawer.getByTestId('content-edit-title').fill(reviewTitle)
+    const directCreate = page.waitForResponse(
+      (r) => r.url().endsWith('/content') && r.request().method() === 'POST' && r.status() === 200,
+    )
+    const directReview = page.waitForResponse(
+      (r) => r.url().includes('/submit-review') && r.request().method() === 'POST' && r.status() === 200,
+    )
+    await submitDrawer.getByTestId('content-submit-review').click()
+    expect(((await (await directCreate).json()) as { code: number }).code).toBe(0)
+    const reviewBody = (await (await directReview).json()) as { code: number; data?: { reviewNo?: string } }
+    expect(reviewBody.code).toBe(0)
+    expect(reviewBody.data?.reviewNo).toBeTruthy()
+    await expect(page.getByTestId('content-action-note')).toContainText('已提交审核')
+    await expect(page.getByTestId('content-action-note')).toContainText(reviewBody.data?.reviewNo || '')
+    const submittedRow = page.locator('tr', { hasText: reviewTitle }).first()
+    await expect(submittedRow).toContainText('待一级审核', { timeout: 15_000 })
+    await expect(submittedRow.getByRole('button', { name: '提审' })).toHaveCount(0)
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })

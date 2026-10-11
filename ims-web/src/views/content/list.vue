@@ -67,6 +67,7 @@
     </div>
     <p v-if="batchMsg" class="hint" :class="{ bad: batchWarn }" data-testid="content-batch-msg">{{ batchMsg }}</p>
     <p v-if="exportNote" class="hint" data-testid="content-export-note">{{ exportNote }}</p>
+    <p v-if="actionNote" class="hint" data-testid="content-action-note">{{ actionNote }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
@@ -271,7 +272,7 @@
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
-        <button class="btn btn-sec" type="button" data-testid="content-submit-review" @click="submitFromDrawer">提交审核</button>
+        <button class="btn btn-sec" type="button" data-testid="content-submit-review" :disabled="saving" @click="submitFromDrawer">提交审核</button>
       </template>
     </ProtoDrawer>
 
@@ -368,6 +369,7 @@ function showBatch(message: string, warn: boolean) {
   }, 3000)
 }
 const exportNote = ref('')
+const actionNote = ref('')
 const editContentType = ref('SHORT_VIDEO')
 const editPlatform = ref('')
 const editDocType = ref('COPY')
@@ -800,18 +802,58 @@ async function batchTransfer() {
   }
 }
 
+function contentPayload() {
+  return {
+    title: editTitle.value.trim(),
+    contentType: editContentType.value,
+    platformType: editPlatform.value,
+    documentType: editDocType.value,
+    matchType: editMatchType.value,
+    matchScheme: editScheme.value,
+    body: editBody.value,
+    layoutHtml: editLayoutHtml.value,
+    layoutJson: editLayoutJson.value,
+    bodyFormat: editBodyFormat.value,
+    layoutTemplateId: editLayoutTemplateId.value,
+  }
+}
+
+async function persistContent() {
+  const payload = contentPayload()
+  if (editingId.value) {
+    await http.put(`/content/${editingId.value}`, payload)
+    return editingId.value
+  }
+  const { data } = await http.post('/content', payload)
+  const id = Number(data.data?.id || 0)
+  if (id) editingId.value = id
+  return id
+}
+
 async function submitFromDrawer() {
+  titleError.value = ''
   submitHint.value = ''
-  if (!editingId.value) {
-    submitHint.value = '请先保存内容'
+  if (!editTitle.value.trim()) {
+    titleError.value = '必填项，请填写'
     return
   }
+  saving.value = true
   try {
-    await http.post(`/content/${editingId.value}/submit-review`)
+    const id = await persistContent()
+    if (!id) {
+      submitHint.value = '保存失败'
+      return
+    }
+    const { data } = await http.post(`/content/${id}/submit-review`)
+    const reviewNo = data.data?.reviewNo
+    actionNote.value = reviewNo ? `已提交审核 ${reviewNo}` : '已提交审核'
     drawerOpen.value = false
+    editingRow.value = null
     await loadList()
   } catch (e) {
     submitHint.value = errorMessage(e)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -824,24 +866,7 @@ async function saveContent() {
   }
   saving.value = true
   try {
-    const payload = {
-      title: editTitle.value.trim(),
-      contentType: editContentType.value,
-      platformType: editPlatform.value,
-      documentType: editDocType.value,
-      matchType: editMatchType.value,
-      matchScheme: editScheme.value,
-      body: editBody.value,
-      layoutHtml: editLayoutHtml.value,
-      layoutJson: editLayoutJson.value,
-      bodyFormat: editBodyFormat.value,
-      layoutTemplateId: editLayoutTemplateId.value,
-    }
-    if (editingId.value) {
-      await http.put(`/content/${editingId.value}`, payload)
-    } else {
-      await http.post('/content', payload)
-    }
+    await persistContent()
     drawerOpen.value = false
     editingRow.value = null
     await loadList()
