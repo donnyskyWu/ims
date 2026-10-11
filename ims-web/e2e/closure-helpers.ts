@@ -488,17 +488,16 @@ export async function registerWorkTaskRowViaUi(
   expect((confirmBody.data?.generatedTaskCount ?? 0) >= 1).toBeTruthy()
 }
 
-/** TRAIN 资料库 · 发布 DOC 资料（纯 UI） */
+/** TRAIN 资料库 · 发布 DOC 资料（纯 UI · 岗位多选 + 本地文件） */
 export async function createTrainMaterialViaUi(
   page: Page,
   opts: { title: string },
 ): Promise<{ materialId: number }> {
   await page.goto('/ims/train/material')
   await expect(page.locator('h1')).toHaveText('培训资料库', { timeout: 15_000 })
-
-  const firstCate = page.locator('.tree button.linkish').first()
-  await expect(firstCate).toBeVisible({ timeout: 15_000 })
-  await firstCate.click()
+  await expect(page.getByTestId('train-position-node').filter({ hasText: '全员通用' })).toBeVisible({
+    timeout: 15_000,
+  })
 
   await page.getByRole('button', { name: '上传资料' }).click()
   const modal = page.locator('.modal-mask .card').filter({ hasText: '上传资料' })
@@ -507,9 +506,30 @@ export async function createTrainMaterialViaUi(
     .locator('label.fld', { hasText: '标题' })
     .locator('xpath=following-sibling::input[1]')
     .fill(opts.title)
+  await modal
+    .getByTestId('train-form-positions')
+    .locator('label')
+    .filter({ hasText: '全员通用' })
+    .locator('input')
+    .check()
+
+  const fileResp = page.waitForResponse(
+    (r) => r.url().includes('/train/material/file') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await modal.getByTestId('train-material-file').setInputFiles({
+    name: 'train-e2e.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n'),
+  })
+  const uploaded = (await (await fileResp).json()) as { code: number }
+  expect(uploaded.code).toBe(0)
 
   const createResp = page.waitForResponse(
-    (r) => r.url().includes('/train/material') && r.request().method() === 'POST' && r.status() === 200,
+    (r) =>
+      r.url().includes('/train/material') &&
+      !r.url().includes('/train/material/file') &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
   )
   await modal.getByRole('button', { name: '发布' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: { id?: number } }

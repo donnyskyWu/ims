@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
+from app.content_file import file_url, storage
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.bi_br212 import primary_dept_id
 from app.models import (
+    DictData,
+    ImsFile,
     Todo,
     TrainMaterial,
     TrainMaterialCate,
@@ -35,12 +39,27 @@ CONFIRM_TYPES = frozenset({"DURATION", "QUIZ"})
 TASK_STATUSES = frozenset({"IN_PROGRESS", "FINISHED"})
 TRAIN_TODO = "train_study"
 TRAIN_REF = "train_task"
+ALL_STAFF = "全员通用"
+DOC_EXTS = frozenset({"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"})
+VIDEO_EXTS = frozenset({"mp4", "mov"})
+MAX_MATERIAL_BYTES = 20 * 1024 * 1024
+FILE_MEDIA = {
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "mp4": "video/mp4",
+    "mov": "video/quicktime",
+}
 
 
 class MaterialBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     title: str
-    cateId: int
+    cateId: int = 0
     materialType: str = "DOC"
     fileKey: str = ""
     linkUrl: str = ""
@@ -217,6 +236,50 @@ def resolved_position_codes(body: MaterialBody, cate: TrainMaterialCate) -> list
     return [fallback] if fallback else []
 
 
+def file_ext(name: str) -> str:
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if "." not in base:
+        return ""
+    return base.rsplit(".", 1)[-1].lower()
+
+
+def allowed_exts(material_type: str) -> frozenset[str]:
+    if material_type == "VIDEO":
+        return VIDEO_EXTS
+    if material_type == "DOC":
+        return DOC_EXTS
+    return frozenset()
+
+
+def file_type_error(material_type: str, file_key: str):
+    ext = file_ext(file_key)
+    if ext not in allowed_exts(material_type):
+        return fail(1001, "类型不支持")
+    return None
+
+
+def resolve_cate(db: Session, tenant_id: int, cate_id: int):
+    ensure_default_cates(db, tenant_id)
+    if cate_id:
+        cate = db.get(TrainMaterialCate, cate_id)
+        if cate is None or cate.deleted or cate.tenant_id != tenant_id:
+            return fail(1101, "分类不存在")
+        return cate
+    child = db.scalar(
+        select(TrainMaterialCate)
+        .where(
+            TrainMaterialCate.deleted == 0,
+            TrainMaterialCate.tenant_id == tenant_id,
+            TrainMaterialCate.parent_id.is_not(None),
+        )
+        .order_by(TrainMaterialCate.id.asc())
+        .limit(1)
+    )
+    if child is None:
+        return fail(1101, "分类不存在")
+    return child
+
+
 def is_http_url(value: str) -> bool:
     text = value.strip()
     if not text or any(ch.isspace() for ch in text):
@@ -236,9 +299,9 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
         return fail(1001, "标题不超过 128 字")
     if body.materialType not in MATERIAL_TYPES:
         return fail(1001, "materialType 无效")
-    cate = db.get(TrainMaterialCate, body.cateId)
-    if cate is None or cate.deleted or cate.tenant_id != tenant_id:
-        return fail(1101, "分类不存在")
+    cate = resolve_cate(db, tenant_id, body.cateId)
+    if not isinstance(cate, TrainMaterialCate):
+        return cate
     if body.materialType == "LINK":
         if not body.linkUrl.strip():
             return fail(1001, "linkUrl 必填")
@@ -246,6 +309,10 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
             return fail(1001, "linkUrl 须为 http(s) 地址")
     elif not body.fileKey.strip():
         return fail(1001, "fileKey 必填")
+    else:
+        rejected = file_type_error(body.materialType, body.fileKey)
+        if rejected:
+            return rejected
     if not resolved_position_codes(body, cate):
         return fail(1001, "岗位必填")
     return cate
@@ -273,7 +340,7 @@ def archive_material(db: Session, row: TrainMaterial) -> None:
 def apply_material_fields(row: TrainMaterial, body: MaterialBody, cate: TrainMaterialCate, actor: User) -> None:
     codes = resolved_position_codes(body, cate)
     row.title = body.title.strip()
-    row.cate_id = body.cateId
+    row.cate_id = cate.id
     row.material_type = body.materialType
     row.file_key = body.fileKey.strip()
     row.link_url = body.linkUrl.strip()
@@ -311,6 +378,115 @@ def material_cates(
     return ok(cate_tree_vo(db, tenant_id))
 
 
+def position_catalog(db: Session, tenant_id: int) -> list[dict]:
+    """钉钉岗位字典 + 全员通用 + 资料上已有岗位。数量只计已发布。"""
+    ensure_default_cates(db, tenant_id)
+    labels: dict[str, str] = {ALL_STAFF: ALL_STAFF}
+    roots = list(
+        db.scalars(
+            select(TrainMaterialCate).where(
+                TrainMaterialCate.deleted == 0,
+                TrainMaterialCate.tenant_id == tenant_id,
+                TrainMaterialCate.parent_id.is_(None),
+            )
+        ).all()
+    )
+    for root in roots:
+        code = (root.position_code or "").strip()
+        if code:
+            labels[code] = (root.cate_name or code).strip() or code
+    for label in db.scalars(
+        select(DictData.dict_label).where(
+            DictData.deleted == 0,
+            DictData.status == "ENABLED",
+            DictData.dict_type == "dict_position",
+        )
+    ).all():
+        text = str(label or "").strip()
+        if not text or text in labels or text in labels.values():
+            continue
+        labels[text] = text
+    from app.org_sync import collect_synced_positions
+
+    for name in collect_synced_positions(db):
+        text = (name or "").strip()
+        if not text or text in labels or text in labels.values():
+            continue
+        labels[text] = text
+    counts: dict[str, int] = {code: 0 for code in labels}
+    rows = list(
+        db.scalars(
+            select(TrainMaterial).where(TrainMaterial.deleted == 0, TrainMaterial.tenant_id == tenant_id)
+        ).all()
+    )
+    for row in rows:
+        codes = row.position_codes if isinstance(row.position_codes, list) else []
+        for raw in codes:
+            code = str(raw).strip()
+            if not code:
+                continue
+            labels.setdefault(code, code)
+            if row.status == "PUBLISHED":
+                counts[code] = counts.get(code, 0) + 1
+    ordered = [ALL_STAFF] + sorted(code for code in labels if code != ALL_STAFF)
+    return [
+        {"code": code, "name": labels[code], "materialCount": int(counts.get(code, 0))}
+        for code in ordered
+    ]
+
+
+@router.get("/material/positions")
+def material_positions(
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    return ok(position_catalog(db, tenant_of(actor)))
+
+
+@router.post("/material/file")
+def upload_material_file(
+    file: UploadFile | None = File(default=None),
+    materialType: str = Form(default="DOC"),
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    kind = (materialType or "DOC").strip()
+    if kind not in {"DOC", "VIDEO"}:
+        return fail(1001, "materialType 无效")
+    if file is None or not (file.filename or "").strip():
+        return fail(1001, "请选择文件")
+    name = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].replace("\x00", "").strip()[:200]
+    ext = file_ext(name)
+    if ext not in allowed_exts(kind):
+        return fail(1001, "类型不支持")
+    raw = file.file.read(MAX_MATERIAL_BYTES + 1)
+    if not raw:
+        return fail(1001, "文件为空")
+    if len(raw) > MAX_MATERIAL_BYTES:
+        return fail(5005, "文件超过大小限制")
+    tenant_id = tenant_of(actor)
+    try:
+        file_key = storage.save("material", tenant_id, ext, raw)
+    except OSError:
+        return fail(5005, "文件上传失败，请重试")
+    db.add(
+        ImsFile(
+            file_name=name,
+            file_key=file_key,
+            file_size=len(raw),
+            content_type=FILE_MEDIA.get(ext, "application/octet-stream"),
+            scene="material",
+            sha256=hashlib.sha256(raw).hexdigest(),
+            creator=actor.id,
+            deleted=0,
+            tenant_id=tenant_id,
+            created_at=utcnow(),
+        )
+    )
+    db.flush()
+    return ok({"fileKey": file_key, "fileUrl": file_url(file_key), "fileName": name, "sizeBytes": len(raw)})
+
+
 @router.post("/material")
 def create_material(
     body: MaterialBody,
@@ -324,7 +500,7 @@ def create_material(
     row = TrainMaterial(
         material_no=next_material_no(db, tenant_id),
         title=body.title.strip(),
-        cate_id=body.cateId,
+        cate_id=cate.id,
         material_type=body.materialType,
         file_key=body.fileKey.strip(),
         link_url=body.linkUrl.strip(),
@@ -370,9 +546,9 @@ def material_list(
         stmt = stmt.where(TrainMaterial.status == status)
     if positionCode and positionCode.strip():
         code = positionCode.strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", code):
+        if len(code) > 64 or any(ch in code for ch in '"\\\x00%_'):
             return fail(1001, "positionCode 无效")
-        stmt = stmt.where(func.json_contains(TrainMaterial.position_codes, f'"{code}"'))
+        stmt = stmt.where(func.json_search(TrainMaterial.position_codes, "one", code).is_not(None))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         db.scalars(

@@ -179,6 +179,92 @@ def test_train_material_list_filters_type_status_position_and_empty():
     assert bad_pos.json()["code"] == 1001
 
 
+def test_train_material_file_whitelist_and_position_catalog():
+    auth = headers()
+    rejected = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "非法扩展名",
+            "materialType": "DOC",
+            "fileKey": "TB-bad.exe",
+            "positionCodes": ["全员通用"],
+            "publish": False,
+        },
+    )
+    rejected_body = rejected.json()
+    assert rejected_body["code"] == 1001, rejected_body
+    assert rejected_body["msg"] == "类型不支持"
+
+    catalog = client.get("/admin-api/ims/train/material/positions", headers=auth)
+    catalog_body = catalog.json()
+    assert catalog_body["code"] == 0, catalog_body
+    codes = [row["code"] for row in catalog_body["data"]]
+    assert "全员通用" in codes
+    assert any(row["name"] == "直播运营" and row["code"] == "R5" for row in catalog_body["data"])
+    assert any(row["code"] == "编导" for row in catalog_body["data"])
+
+    uploaded = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "DOC"},
+        files={"file": ("note.pdf", b"%PDF-1.4 demo", "application/pdf")},
+    )
+    uploaded_body = uploaded.json()
+    assert uploaded_body["code"] == 0, uploaded_body
+    assert uploaded_body["data"]["fileKey"]
+    assert uploaded_body["data"]["fileName"] == "note.pdf"
+
+    exe = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "DOC"},
+        files={"file": ("TB-bad.exe", b"MZ", "application/octet-stream")},
+    )
+    assert exe.json()["code"] == 1001
+    assert exe.json()["msg"] == "类型不支持"
+
+    video = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "VIDEO"},
+        files={"file": ("clip.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    assert video.json()["code"] == 1001
+    assert video.json()["msg"] == "类型不支持"
+
+    oversized = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "DOC"},
+        files={"file": ("big.pdf", b"x" * (20 * 1024 * 1024 + 1), "application/pdf")},
+    )
+    assert oversized.json()["code"] == 5005
+
+    saved = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "岗位多选资料",
+            "materialType": "DOC",
+            "fileKey": uploaded_body["data"]["fileKey"],
+            "positionCodes": ["主播组", "全员通用"],
+            "publish": True,
+        },
+    )
+    saved_body = saved.json()
+    assert saved_body["code"] == 0, saved_body
+    assert saved_body["data"]["positionCodes"] == ["主播组", "全员通用"]
+
+    listed = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"positionCode": "全员通用", "title": "岗位多选资料", "pageNo": 1, "pageSize": 10},
+    )
+    assert listed.json()["code"] == 0
+    assert any(row["id"] == saved_body["data"]["id"] for row in listed.json()["data"]["list"])
+
+
 def test_train_task_create_and_list():
     auth = headers()
     cates = client.get("/admin-api/ims/train/material/cates", headers=auth)

@@ -9,7 +9,7 @@
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；更新资料生成新版本并留档（TRN-M-R2）。列表可按标题、类型、状态、岗位和分类筛选。</p>
+    <p class="hint" style="margin-bottom: 8px">左侧按岗位查看资料；更新资料生成新版本并留档。列表可按标题、类型、状态和岗位筛选。</p>
     <div
       class="card weekly-card"
       :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
@@ -39,31 +39,26 @@
     </div>
     <div class="g2" style="margin-bottom: 12px; align-items: flex-start">
       <div class="card" style="padding: 12px; max-height: 280px; overflow: auto">
-        <div style="font-weight: 600; margin-bottom: 8px">分类树</div>
-        <div v-if="cateStatus === 'loading'" class="empty"><div class="et">加载分类…</div></div>
-        <div v-else-if="cateStatus === 'error'" class="empty" data-testid="train-cate-empty">
-          <div class="et">分类加载失败</div>
-          <button class="btn btn-sec btn-sm" type="button" @click="loadCates">重试</button>
+        <div style="font-weight: 600; margin-bottom: 8px">岗位</div>
+        <div v-if="positionStatus === 'loading'" class="empty"><div class="et">加载岗位…</div></div>
+        <div v-else-if="positionStatus === 'error'" class="empty" data-testid="train-cate-empty">
+          <div class="et">岗位加载失败</div>
+          <button class="btn btn-sec btn-sm" type="button" @click="loadPositions">重试</button>
         </div>
-        <div v-else-if="!cates.length" class="empty" data-testid="train-cate-empty">
-          <div class="et">暂无分类</div>
+        <div v-else-if="!positions.length" class="empty" data-testid="train-cate-empty">
+          <div class="et">暂无岗位</div>
         </div>
         <ul v-else class="tree">
-          <li v-for="root in cates" :key="root.id">
-            <span>{{ root.cateName }} <small>({{ root.positionCode }})</small></span>
-            <ul>
-              <li v-for="child in root.children" :key="child.id">
-                <button
-                  type="button"
-                  class="linkish"
-                  :class="{ on: filters.cateId === child.id }"
-                  data-testid="train-cate-node"
-                  @click="pickCate(child)"
-                >
-                  {{ child.cateName }} · {{ child.materialCount }}
-                </button>
-              </li>
-            </ul>
+          <li v-for="item in positions" :key="item.code">
+            <button
+              type="button"
+              class="linkish"
+              :class="{ on: filters.positionCode === item.code }"
+              data-testid="train-position-node"
+              @click="pickPosition(item)"
+            >
+              {{ item.name }} · {{ item.materialCount }}
+            </button>
           </li>
         </ul>
       </div>
@@ -147,7 +142,7 @@
                         class="tag pos-tag"
                         data-testid="train-material-position"
                       >
-                        {{ code }}
+                        {{ positionName(code) }}
                       </span>
                       <span v-if="(row.positionCodes || []).length > 3" class="hint">+{{ (row.positionCodes || []).length - 3 }}</span>
                     </template>
@@ -188,36 +183,50 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 400px; padding: 20px">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto">
         <h3 style="margin: 0 0 12px">{{ editingId ? '更新资料' : '上传资料' }}</h3>
-        <label class="fld">分类 ID</label>
-        <input v-model.number="form.cateId" type="number" class="fld-in" />
-        <p v-if="formPositionCode" class="hint" data-testid="train-material-position-hint">
-          关联岗位 {{ formPositionCode }}，发布后该岗位学员可见；存草稿则学员不可见
-        </p>
-        <p v-else-if="Number(form.cateId) > 0" class="hint" data-testid="train-material-position-missing">该分类未关联岗位</p>
-        <label class="fld">标题</label>
-        <input v-model="form.title" class="fld-in" />
+        <label class="fld">标题<span class="req">*</span></label>
+        <input v-model="form.title" class="fld-in" data-testid="train-form-title" />
+        <p v-if="fieldErrors.title" class="hint err" data-testid="train-form-title-error">{{ fieldErrors.title }}</p>
         <label class="fld">类型</label>
-        <select v-model="form.materialType" class="fld-in" data-testid="train-form-type">
+        <select v-model="form.materialType" class="fld-in" data-testid="train-form-type" @change="onTypeChange">
           <option value="DOC">文档</option>
           <option value="VIDEO">视频</option>
           <option value="LINK">外链</option>
         </select>
-        <label v-if="form.materialType === 'LINK'" class="fld">外链</label>
-        <input
-          v-if="form.materialType === 'LINK'"
-          v-model="form.linkUrl"
-          class="fld-in"
-          data-testid="train-form-link"
-          placeholder="https://"
-        />
+        <label class="fld">关联岗位<span class="req">*</span></label>
+        <div class="mat-pick" data-testid="train-form-positions">
+          <label v-for="item in positions" :key="item.code" class="mat-opt">
+            <input v-model="form.positionCodes" type="checkbox" :value="item.code" />
+            {{ item.name }}
+          </label>
+        </div>
+        <p v-if="!positions.length" class="hint">岗位字典为空时仍可选「全员通用」</p>
+        <p v-if="fieldErrors.position" class="hint err" data-testid="train-form-position-error">{{ fieldErrors.position }}</p>
+        <template v-if="form.materialType === 'LINK'">
+          <label class="fld">链接<span class="req">*</span></label>
+          <input
+            v-model="form.linkUrl"
+            class="fld-in"
+            data-testid="train-form-link"
+            placeholder="https://"
+          />
+          <p v-if="fieldErrors.link" class="hint err">{{ fieldErrors.link }}</p>
+        </template>
         <template v-else>
-          <label class="fld">fileKey</label>
-          <input v-model="form.fileKey" class="fld-in" placeholder="直传回执 key" />
+          <label class="fld">文件<span class="req">*</span></label>
+          <input
+            type="file"
+            data-testid="train-material-file"
+            :accept="fileAccept"
+            @change="onPickFile"
+          />
+          <p v-if="pickedName" class="hint">已选择 {{ pickedName }}</p>
+          <p class="hint">文档：pdf、doc、docx、ppt、pptx、xls、xlsx；视频：mp4、mov。其他类型（含 exe）不支持。</p>
+          <p v-if="fieldErrors.file" class="hint err" data-testid="train-form-file-error">{{ fieldErrors.file }}</p>
         </template>
         <p v-if="editingId" class="hint">将生成新版本 V{{ editingVersion + 1 }}，旧版本留档</p>
-        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-material-form-error">{{ formError }}</p>
+        <p v-if="formError" class="hint err" data-testid="train-material-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <template v-if="editingId">
@@ -394,9 +403,16 @@ type Weekly = {
   unupdatedList: Array<{ materialNo: string; title: string; lastUpdatedAt: string; ownerName: string }>
 }
 
+const DOC_EXTS = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx']
+const VIDEO_EXTS = ['mp4', 'mov']
+
+type PositionOpt = { code: string; name: string; materialCount: number }
+
 const route = useRoute()
 const cates = ref<Cate[]>([])
 const cateStatus = ref<'loading' | 'ready' | 'error'>('loading')
+const positions = ref<PositionOpt[]>([])
+const positionStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const rows = ref<Row[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -432,19 +448,19 @@ const form = reactive({
   cateId: 0,
   title: '',
   materialType: 'DOC',
-  fileKey: 'demo/file.pdf',
+  fileKey: '',
   linkUrl: '',
+  positionCodes: [] as string[],
 })
+const fieldErrors = reactive({ title: '', position: '', file: '', link: '' })
+const pickedName = ref('')
+const fileAccept = computed(() =>
+  (form.materialType === 'VIDEO' ? VIDEO_EXTS : DOC_EXTS).map((ext) => `.${ext}`).join(','),
+)
 
-const positionOptions = computed(() => {
-  const seen = new Map<string, string>()
-  for (const root of cates.value) {
-    const code = (root.positionCode || '').trim()
-    if (!code || seen.has(code)) continue
-    seen.set(code, root.cateName ? `${root.cateName} · ${code}` : code)
-  }
-  return [...seen.entries()].map(([code, label]) => ({ code, label }))
-})
+const positionOptions = computed(() =>
+  positions.value.map((item) => ({ code: item.code, label: item.name })),
+)
 
 const selectedCateName = computed(() => {
   if (!filters.cateId) return ''
@@ -473,7 +489,7 @@ const filterSummary = computed(() => {
   if (filters.title.trim()) parts.push(`标题「${filters.title.trim()}」`)
   if (filters.materialType) parts.push(typeLabel(filters.materialType))
   if (filters.status) parts.push(statusLabel(filters.status))
-  if (filters.positionCode) parts.push(`岗位 ${filters.positionCode}`)
+  if (filters.positionCode) parts.push(`岗位 ${positionName(filters.positionCode)}`)
   if (selectedCateName.value) parts.push(`分类 ${selectedCateName.value}`)
   return parts.join(' · ')
 })
@@ -483,6 +499,10 @@ function typeLabel(value: string) {
   if (value === 'VIDEO') return '视频'
   if (value === 'LINK') return '外链'
   return value || '—'
+}
+
+function positionName(code: string) {
+  return positions.value.find((item) => item.code === code)?.name || code
 }
 
 function statusLabel(value: string) {
@@ -579,10 +599,27 @@ async function loadCates() {
   }
 }
 
-function pickCate(child: Cate) {
-  filters.cateId = child.id
-  form.cateId = child.id
+function pickPosition(item: PositionOpt) {
+  filters.positionCode = filters.positionCode === item.code ? '' : item.code
+  filters.cateId = 0
   loadList()
+}
+
+async function loadPositions() {
+  positionStatus.value = 'loading'
+  try {
+    const res = await http.get('/train/material/positions')
+    if (res.data.code !== 0) {
+      positions.value = []
+      positionStatus.value = 'error'
+      return
+    }
+    positions.value = res.data.data || []
+    positionStatus.value = 'ready'
+  } catch {
+    positions.value = []
+    positionStatus.value = 'error'
+  }
 }
 
 async function loadList() {
@@ -625,16 +662,24 @@ function resetFilters() {
   loadList()
 }
 
+function clearFieldErrors() {
+  fieldErrors.title = ''
+  fieldErrors.position = ''
+  fieldErrors.file = ''
+  fieldErrors.link = ''
+}
+
 function openCreate() {
   editingId.value = 0
   editingVersion.value = 1
   form.title = ''
   form.materialType = 'DOC'
-  form.fileKey = 'demo/file.pdf'
+  form.fileKey = ''
   form.linkUrl = ''
-  if (!form.cateId && cates.value[0]?.children?.[0]) {
-    form.cateId = cates.value[0].children[0].id
-  }
+  form.positionCodes = []
+  form.cateId = 0
+  pickedName.value = ''
+  clearFieldErrors()
   formError.value = ''
   showForm.value = true
 }
@@ -642,13 +687,61 @@ function openCreate() {
 function openEdit(row: Row) {
   editingId.value = row.id
   editingVersion.value = row.version || 1
-  form.cateId = row.cateId || form.cateId
+  form.cateId = row.cateId || 0
   form.title = row.title
   form.materialType = row.materialType || 'DOC'
-  form.fileKey = row.fileKey || 'demo/file.pdf'
+  form.fileKey = row.fileKey || ''
   form.linkUrl = row.linkUrl || ''
+  form.positionCodes = [...(row.positionCodes || [])]
+  pickedName.value = row.fileKey ? '已有文件' : ''
+  clearFieldErrors()
   formError.value = ''
   showForm.value = true
+}
+
+function onTypeChange() {
+  form.fileKey = ''
+  pickedName.value = ''
+  fieldErrors.file = ''
+  fieldErrors.link = ''
+}
+
+function extOf(name: string) {
+  const base = name.split(/[/\\]/).pop() || ''
+  const dot = base.lastIndexOf('.')
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+async function onPickFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  fieldErrors.file = ''
+  form.fileKey = ''
+  pickedName.value = ''
+  if (!file) return
+  const ext = extOf(file.name)
+  const allowed = form.materialType === 'VIDEO' ? VIDEO_EXTS : DOC_EXTS
+  if (!allowed.includes(ext)) {
+    fieldErrors.file = '类型不支持'
+    input.value = ''
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    fieldErrors.file = '文件超过大小限制'
+    input.value = ''
+    return
+  }
+  const body = new FormData()
+  body.append('file', file)
+  body.append('materialType', form.materialType)
+  try {
+    const res = await http.post('/train/material/file', body)
+    form.fileKey = res.data.data.fileKey || ''
+    pickedName.value = res.data.data.fileName || file.name
+  } catch (err) {
+    fieldErrors.file = errorMessage(err)
+    input.value = ''
+  }
 }
 
 function openDetail(row: Row) {
@@ -702,7 +795,7 @@ function materialPayload(publish: boolean) {
     title: form.title.trim(),
     cateId: form.cateId,
     materialType: form.materialType,
-    positionCodes: formPositionCode.value ? [formPositionCode.value] : [],
+    positionCodes: [...form.positionCodes],
     publish,
   }
   if (form.materialType === 'LINK') body.linkUrl = form.linkUrl.trim()
@@ -711,14 +804,33 @@ function materialPayload(publish: boolean) {
 }
 
 function formInvalid() {
+  clearFieldErrors()
+  let bad = false
   const title = form.title.trim()
-  if (!title || !form.cateId) return '标题与分类必填'
-  if (title.length > 128) return '标题不超过 128 字'
-  const cate = findCate(form.cateId)
-  if (cate && !formPositionCode.value) return '请选择已关联岗位的分类'
-  if (form.materialType === 'LINK' && !isHttpUrl(form.linkUrl)) return '外链须为 http(s) 地址'
-  if (form.materialType !== 'LINK' && !form.fileKey.trim()) return 'fileKey 必填'
-  return ''
+  if (!title) {
+    fieldErrors.title = '必填项，请填写'
+    bad = true
+  } else if (title.length > 128) {
+    fieldErrors.title = '标题不超过 128 字'
+    bad = true
+  }
+  if (!form.positionCodes.length) {
+    fieldErrors.position = '必填项，请填写'
+    bad = true
+  }
+  if (form.materialType === 'LINK') {
+    if (!form.linkUrl.trim()) {
+      fieldErrors.link = '必填项，请填写'
+      bad = true
+    } else if (!isHttpUrl(form.linkUrl)) {
+      fieldErrors.link = '外链须为 http(s) 地址'
+      bad = true
+    }
+  } else if (!form.fileKey.trim()) {
+    fieldErrors.file = fieldErrors.file || '必填项，请填写'
+    bad = true
+  }
+  return bad ? '请完善必填项' : ''
 }
 
 async function submit(publish: boolean) {
@@ -738,12 +850,13 @@ async function submit(publish: boolean) {
   }
   showForm.value = false
   await loadCates()
+  await loadPositions()
   await loadList()
   await loadWeekly()
 }
 
 async function submitUpdate() {
-  formError.value = !editingId.value ? '标题与分类必填' : formInvalid()
+  formError.value = formInvalid()
   if (formError.value) return
   const body = materialPayload(true)
   let res
@@ -760,6 +873,7 @@ async function submitUpdate() {
   showForm.value = false
   editingId.value = 0
   await loadCates()
+  await loadPositions()
   await loadList()
   await loadWeekly()
 }
@@ -827,6 +941,7 @@ onMounted(async () => {
   const title = typeof rawTitle === 'string' ? rawTitle : ''
   if (title) filters.title = title
   await loadCates()
+  await loadPositions()
   await loadList()
   await loadWeekly()
   const rawId = route.query.materialId
@@ -879,6 +994,29 @@ onMounted(async () => {
   margin-right: 4px;
   background: rgba(0, 113, 227, 0.1);
   color: var(--blue);
+}
+.req {
+  color: var(--red);
+  margin-left: 2px;
+}
+.hint.err {
+  color: var(--red);
+}
+.mat-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--line, #e5e5ea);
+  border-radius: 8px;
+  padding: 8px;
+}
+.mat-opt {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
 }
 .detail-card {
   width: min(720px, 92vw);
