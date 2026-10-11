@@ -125,11 +125,14 @@ test.describe('content TC-07 P1', () => {
     const pasted = (await (await pasteResp).json()) as { code: number; data?: { template?: { status?: string } } }
     expect(pasted.code).toBe(0)
     expect(pasted.data?.template?.status).toBe('DRAFT')
-    const imported = page.locator('tr', { hasText: layoutName }).first()
+    const templateTable = page.getByTestId('layout-template-table')
+    const imported = templateTable.locator('tr', { hasText: layoutName }).first()
     await expect(imported).toContainText('DRAFT')
     await expect(imported).toContainText('IMPORT')
+    await expect(page.getByTestId('layout-toast')).toHaveText('导入成功')
+    await expect(page.getByTestId('layout-import-jobs')).toContainText(layoutName)
 
-    const preset = page.locator('tr', { hasText: 'PRESET' }).first()
+    const preset = templateTable.locator('tr', { hasText: 'PRESET' }).first()
     await expect(preset.getByRole('button', { name: '编辑' })).toHaveCount(0)
     await expect(preset.getByTestId('layout-delete')).toHaveCount(0)
     const presetName = (await preset.getByTestId('layout-name').innerText()).trim()
@@ -142,7 +145,9 @@ test.describe('content TC-07 P1', () => {
     await expect(copyRow).toContainText('DRAFT')
 
     await imported.getByTestId('layout-delete').click()
-    await expect(page.locator('tr', { hasText: layoutName })).toHaveCount(0)
+    await page.getByTestId('layout-delete-ok').click()
+    await expect(page.getByTestId('layout-toast')).toHaveText('删除成功')
+    await expect(templateTable.locator('tr', { hasText: layoutName })).toHaveCount(0)
 
     await page.goto('/ims/content/list')
     await expect(page.locator('h1')).toHaveText('内容管理', { timeout: 15_000 })

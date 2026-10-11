@@ -1593,6 +1593,24 @@ class ContentLayoutTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class ContentLayoutImportJob(Base):
+    """公推模板导入任务。关掉向导后仍可在列表查看。"""
+
+    __tablename__ = "ims_content_layout_import_job"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_no: Mapped[str] = mapped_column(String(32), default="", index=True)
+    channel: Mapped[str] = mapped_column(String(16), default="")
+    status: Mapped[str] = mapped_column(String(16), default="SUCCESS")
+    template_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    template_name: Mapped[str] = mapped_column(String(128), default="")
+    message: Mapped[str] = mapped_column(String(256), default="")
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class PerfRecord(Base):
     __tablename__ = "ims_perf_record"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

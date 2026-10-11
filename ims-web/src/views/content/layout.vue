@@ -31,7 +31,7 @@
     </form>
     <div class="tbl-block">
       <div class="tbl-wrap">
-        <table>
+        <table data-testid="layout-template-table">
           <thead>
             <tr>
               <th>模板名称</th>
@@ -136,6 +136,50 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div class="tbl-block" data-testid="layout-import-jobs" style="margin-top: 16px">
+      <h2 style="margin: 0 0 8px; font-size: 14px">导入任务</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>任务号</th>
+              <th>方式</th>
+              <th>模板</th>
+              <th>状态</th>
+              <th>说明</th>
+              <th>时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!jobs.length">
+              <td colspan="6"><div class="empty"><div class="et">暂无导入任务</div></div></td>
+            </tr>
+            <tr v-for="job in jobs" v-else :key="job.jobId">
+              <td class="mono">{{ job.jobId }}</td>
+              <td>{{ channelLabel(job.channel) }}</td>
+              <td>{{ job.templateName || '—' }}</td>
+              <td>{{ job.status === 'SUCCESS' ? '成功' : job.status === 'FAILED' ? '失败' : job.status }}</td>
+              <td>{{ job.message || '—' }}</td>
+              <td class="mono">{{ formatTime(job.createdAt) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p v-if="toast" class="layout-toast" data-testid="layout-toast">{{ toast }}</p>
+
+    <div v-if="pendingDelete" class="modal-mask" data-testid="layout-delete-confirm" @click.self="pendingDelete = null">
+      <div class="card" style="width: 380px; padding: 20px">
+        <h3 style="margin: 0 0 8px">删除模板</h3>
+        <p>删除草稿模板「{{ pendingDelete.templateName }}」？</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="pendingDelete = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="layout-delete-ok" @click="confirmDelete">确定</button>
+        </div>
       </div>
     </div>
 
@@ -319,7 +363,34 @@ const layoutEmptyHint = computed(() =>
   filtering.value ? '换名称、状态或来源，或重置筛选' : '点「新建模板」。预览 HTML 留空时，预览窗会说明版式还没写',
 )
 const form = reactive({ templateName: '', previewHtml: '', tags: '' })
+const jobs = ref<{ jobId: string; channel: string; status: string; templateName: string; message: string; createdAt: string }[]>([])
+const toast = ref('')
+const pendingDelete = ref<Row | null>(null)
+let toastTimer = 0
+
+const channelLabels: Record<string, string> = { url: '公众号链接', mhtml: 'MHTML', html: '粘贴 HTML' }
+
+function channelLabel(channel: string) {
+  return channelLabels[channel] || channel || '—'
+}
+
+function showToast(message: string) {
+  toast.value = message
+  window.clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => {
+    toast.value = ''
+  }, 3000)
+}
 const editForm = reactive({ templateName: '', previewHtml: '' })
+
+async function loadJobs() {
+  try {
+    const res = await http.get('/content/layout-template/import-job/list')
+    jobs.value = res.data.data?.list || []
+  } catch {
+    jobs.value = []
+  }
+}
 
 async function loadList() {
   loading.value = true
@@ -454,17 +525,24 @@ async function copyTemplate(row: Row) {
   }
 }
 
-async function removeTemplate(row: Row) {
-  if (!window.confirm(`删除草稿模板「${row.templateName}」？`)) return
+function removeTemplate(row: Row) {
+  pendingDelete.value = row
+}
+
+async function confirmDelete() {
+  const row = pendingDelete.value
+  if (!row) return
   try {
     const res = await http.delete(`/content/layout-template/${row.id}`)
     if (res.data.code !== 0) {
-      window.alert(res.data.msg || '删除失败')
+      showToast(res.data.msg || '删除失败')
       return
     }
+    pendingDelete.value = null
+    showToast('删除成功')
     await loadList()
   } catch (e) {
-    window.alert(errorMessage(e))
+    showToast(errorMessage(e))
   }
 }
 
@@ -509,36 +587,52 @@ async function submitImport() {
       data.append('file', importFile.value)
       if (importName.value.trim()) data.append('templateName', importName.value.trim())
       if (importOverrideId.value.trim()) data.append('overrideId', importOverrideId.value.trim())
-      const res = await http.post('/content/layout-template/import-mhtml', data)
-      const jobId = res.data.data?.jobId
-      importResult.value = jobId ? `导入任务已创建 · jobId=${jobId}` : '已生成草稿模板'
+      await http.post('/content/layout-template/import-mhtml', data)
+      showToast('导入成功')
       showImport.value = false
       await loadList()
+      await loadJobs()
       return
     }
     if (!importName.value.trim() || !importHtml.value.trim()) {
       importError.value = '必填项，请填写'
       return
     }
-    const res = await http.post('/content/layout-template/import-paste', {
+    await http.post('/content/layout-template/import-paste', {
       templateName: importName.value.trim(),
       html: importHtml.value,
     })
-    const jobId = res.data.data?.jobId
-    importResult.value = jobId ? `导入任务已创建 · jobId=${jobId}` : '已生成草稿模板'
+    showToast('导入成功')
     showImport.value = false
     await loadList()
+    await loadJobs()
   } catch (e) {
     importError.value = errorMessage(e)
+    await loadJobs()
   }
 }
 
-onMounted(loadList)
+onMounted(() => {
+  void loadList()
+  void loadJobs()
+})
 </script>
 
 <style scoped>
 .req {
   color: #d92d20;
   margin-left: 2px;
+}
+.layout-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1400;
+  background: #111;
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
 }
 </style>

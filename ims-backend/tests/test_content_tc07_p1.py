@@ -209,6 +209,37 @@ def test_b004_layout_import_wizard():
     assert mhtml.json()["data"]["template"]["source"] == "IMPORT"
 
 
+def test_b058_import_job_stays_visible():
+    auth = headers()
+    blocked = client.post(
+        "/admin-api/ims/content/layout-template/import-url",
+        headers=auth,
+        json={"url": "https://mp.weixin.qq.com/s/job", "templateName": "TC07 链接任务"},
+    )
+    assert blocked.json()["code"] == 1500
+    failed_jobs = client.get("/admin-api/ims/content/layout-template/import-job/list", headers=auth)
+    failed = failed_jobs.json()["data"]["list"]
+    assert any(item["status"] == "FAILED" and item["channel"] == "url" and item["templateName"] == "TC07 链接任务" for item in failed)
+    leaked = client.get(
+        "/admin-api/ims/content/layout-template/list",
+        headers=auth,
+        params={"templateName": "TC07 链接任务"},
+    )
+    assert leaked.json()["data"]["list"] == []
+
+    pasted = client.post(
+        "/admin-api/ims/content/layout-template/import-paste",
+        headers=auth,
+        json={"templateName": "TC07 任务模板", "html": "<p>任务</p>"},
+    )
+    job_id = pasted.json()["data"]["jobId"]
+    jobs = client.get("/admin-api/ims/content/layout-template/import-job/list", headers=auth).json()["data"]["list"]
+    hit = next(item for item in jobs if item["jobId"] == job_id)
+    assert hit["status"] == "SUCCESS"
+    assert hit["channel"] == "html"
+    assert hit["templateName"] == "TC07 任务模板"
+
+
 def test_b005_preset_copy_and_draft_delete():
     auth = headers()
     listed = client.get(

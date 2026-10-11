@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
-from app.models import ContentLayoutTemplate, User
+from app.models import ContentLayoutImportJob, ContentLayoutTemplate, User
 
 router = APIRouter(prefix="/content/layout-template", tags=["content-layout"])
 
@@ -46,6 +46,45 @@ class ImportPasteBody(BaseModel):
 
 def new_job_id() -> str:
     return f"IMP{secrets.token_hex(4)}"
+
+
+def record_job(
+    db: Session,
+    actor: User,
+    *,
+    channel: str,
+    status: str,
+    template_id: int = 0,
+    template_name: str = "",
+    message: str = "",
+) -> str:
+    job_no = new_job_id()
+    db.add(
+        ContentLayoutImportJob(
+            job_no=job_no,
+            channel=channel,
+            status=status,
+            template_id=template_id or 0,
+            template_name=(template_name or "")[:128],
+            message=(message or "")[:256],
+            created_by=actor.id,
+            tenant_id=tenant_of(actor),
+        )
+    )
+    db.flush()
+    return job_no
+
+
+def job_vo(row: ContentLayoutImportJob) -> dict:
+    return {
+        "jobId": row.job_no,
+        "channel": row.channel,
+        "status": row.status,
+        "templateId": row.template_id or None,
+        "templateName": row.template_name,
+        "message": row.message,
+        "createdAt": iso(row.created_at),
+    }
 
 
 def load_layout(db: Session, template_id: int, tenant_id: int) -> ContentLayoutTemplate | None:
@@ -277,18 +316,41 @@ def enable_layout(
     return ok(layout_vo(row, creator_name(db, row.created_by)))
 
 
+@router.get("/import-job/list")
+def import_job_list(
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    rows = db.scalars(
+        select(ContentLayoutImportJob)
+        .where(ContentLayoutImportJob.deleted == 0, ContentLayoutImportJob.tenant_id == tenant_id)
+        .order_by(ContentLayoutImportJob.id.desc())
+        .limit(50)
+    ).all()
+    return ok({"list": [job_vo(row) for row in rows]})
+
+
 @router.post("/import-url")
 def import_layout_url(
     body: ImportUrlBody,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    """公众号链接抓取桩：反爬不可用时不落库，提示改走 MHTML / HTML。"""
-    del db, actor
+    """公众号链接抓取桩：不生成模板，失败任务仍可在列表查看。"""
     url = (body.url or "").strip()
     if not url:
         return fail(1001, "必填项，请填写")
-    return fail(1500, "公众号链接抓取失败，请改用 MHTML 或粘贴 HTML")
+    message = "公众号链接抓取失败，请改用 MHTML 或粘贴 HTML"
+    job_no = record_job(
+        db,
+        actor,
+        channel="url",
+        status="FAILED",
+        template_name=(body.templateName or "").strip(),
+        message=message,
+    )
+    return fail(1500, message, {"jobId": job_no, "status": "FAILED"})
 
 
 @router.post("/import-paste")
@@ -302,7 +364,16 @@ def import_layout_paste(
     if not name or not raw:
         return fail(1001, "必填项，请填写")
     row = new_import_template(db, actor, name=name, preview_html=raw)
-    return ok({"jobId": new_job_id(), "template": layout_vo(row, creator_name(db, row.created_by))})
+    job_no = record_job(
+        db,
+        actor,
+        channel="html",
+        status="SUCCESS",
+        template_id=row.id,
+        template_name=row.template_name,
+        message="导入成功",
+    )
+    return ok({"jobId": job_no, "template": layout_vo(row, creator_name(db, row.created_by))})
 
 
 @router.post("/import-mhtml")
@@ -338,7 +409,16 @@ async def import_layout_mhtml(
         db.flush()
     else:
         row = new_import_template(db, actor, name=name, preview_html=preview)
-    return ok({"jobId": new_job_id(), "template": layout_vo(row, creator_name(db, row.created_by))})
+    job_no = record_job(
+        db,
+        actor,
+        channel="mhtml",
+        status="SUCCESS",
+        template_id=row.id,
+        template_name=row.template_name,
+        message="导入成功",
+    )
+    return ok({"jobId": job_no, "template": layout_vo(row, creator_name(db, row.created_by))})
 
 
 @router.post("/{template_id}/copy")
