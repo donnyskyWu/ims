@@ -281,3 +281,205 @@ def test_report_stat_complete_rate_after_approve():
     )
     assert trend.json()["code"] == 0
     assert any(row["statPeriod"] == period for row in trend.json()["data"])
+
+
+def test_report_template_expr_rejects_delete_and_drop():
+    auth = headers()
+    base = {
+        "templateName": "表达式拦截",
+        "fieldsSchema": [
+            {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            {"fieldKey": "orders", "fieldLabel": "订单数", "fieldType": "INTEGER", "required": False},
+        ],
+    }
+    deleted = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            **base,
+            "templateName": "DELETE 拦截",
+            "fieldsSchema": base["fieldsSchema"]
+            + [
+                {
+                    "fieldKey": "rule_del",
+                    "fieldLabel": "非法勾稽",
+                    "fieldType": "CROSS_RULE",
+                    "crossCheck": {"expression": "DELETE FROM tb_x", "errorMsg": "不平"},
+                }
+            ],
+        },
+    )
+    assert deleted.json()["code"] == 1192
+    assert "非法表达式" in deleted.json()["msg"]
+
+    dropped = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            **base,
+            "templateName": "DROP 拦截",
+            "fieldsSchema": [
+                {
+                    "fieldKey": "gmv",
+                    "fieldLabel": "GMV",
+                    "fieldType": "NUMBER",
+                    "required": True,
+                    "validateExpr": "DROP TABLE tb_x",
+                }
+            ],
+        },
+    )
+    assert dropped.json()["code"] == 1192
+
+    missing = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            **base,
+            "templateName": "未知字段",
+            "fieldsSchema": base["fieldsSchema"]
+            + [
+                {
+                    "fieldKey": "rule_miss",
+                    "fieldLabel": "未知字段",
+                    "fieldType": "CROSS_RULE",
+                    "crossCheck": {"expression": "detail_sum == summary", "errorMsg": "不平"},
+                }
+            ],
+        },
+    )
+    assert missing.json()["code"] == 1121
+
+    ok_res = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            **base,
+            "templateName": "合法勾稽",
+            "fieldsSchema": base["fieldsSchema"]
+            + [
+                {
+                    "fieldKey": "rule_ok",
+                    "fieldLabel": "明细合计",
+                    "fieldType": "CROSS_RULE",
+                    "crossCheck": {"expression": "gmv == orders", "errorMsg": "明细合计不平"},
+                }
+            ],
+        },
+    )
+    body = ok_res.json()
+    assert body["code"] == 0
+    assert body["data"]["fieldCount"] == 2
+    template_id = body["data"]["id"]
+
+    preview_bad = client.post(
+        f"/admin-api/ims/report/template/{template_id}/preview",
+        headers=auth,
+        json={"sampleData": {"gmv": 10, "orders": 3}},
+    )
+    assert preview_bad.json()["code"] == 0
+    assert preview_bad.json()["data"]["validationResult"]["passed"] is False
+
+    preview_ok = client.post(
+        f"/admin-api/ims/report/template/{template_id}/preview",
+        headers=auth,
+        json={"sampleData": {"gmv": 4, "orders": 4}},
+    )
+    assert preview_ok.json()["data"]["validationResult"]["passed"] is True
+
+
+def test_report_submit_rejects_stored_illegal_expression():
+    auth = headers()
+    author_id, account_id, _ = seed_author_accounts()
+    template_id = create_enabled_template(auth)
+    from app.core import SessionLocal
+    from app.models import ReportTemplate
+
+    db = SessionLocal()
+    try:
+        row = db.get(ReportTemplate, template_id)
+        fields = list(row.fields_schema or [])
+        fields.append(
+            {
+                "fieldKey": "rule_stored",
+                "fieldLabel": "库存非法式",
+                "fieldType": "CROSS_RULE",
+                "crossCheck": {"expression": "DROP TABLE tb_x", "errorMsg": "拒绝"},
+            }
+        )
+        row.fields_schema = fields
+        db.commit()
+    finally:
+        db.close()
+
+    blocked = client.post(
+        "/admin-api/ims/report/submit",
+        headers=auth,
+        json={
+            "templateId": template_id,
+            "period": "2026-10-12",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"metric_value": 1},
+            "asDraft": False,
+        },
+    )
+    assert blocked.json()["code"] == 1192
+
+    preview = client.post(
+        f"/admin-api/ims/report/template/{template_id}/preview",
+        headers=auth,
+        json={"sampleData": {"metric_value": 1}},
+    )
+    assert preview.json()["code"] == 1192
+
+
+def test_report_assignees_create_fill_todos_only_for_selected_users():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "填报人待办",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "MONEY", "required": True, "range": {"min": 0}},
+            ],
+            "assignees": [],
+        },
+    )
+    assert created.json()["code"] == 0
+    template_id = created.json()["data"]["id"]
+    admin_id = created.json()["data"]["createdBy"]
+    updated = client.put(
+        f"/admin-api/ims/report/template/{template_id}",
+        headers=auth,
+        json={
+            "templateName": "填报人待办",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "MONEY", "required": True, "range": {"min": 0}},
+            ],
+            "assignees": [{"assignType": "USER", "targetIds": [admin_id]}],
+            "status": "ENABLED",
+            "periodType": "DAILY",
+            "deadlineRule": "18:00",
+            "businessLine": "BUSINESS",
+        },
+    )
+    assert updated.json()["code"] == 0
+    assert updated.json()["data"]["version"] >= 2
+
+    from app.core import SessionLocal
+    from app.models import Todo
+
+    db = SessionLocal()
+    try:
+        rows = list(
+            db.query(Todo)
+            .filter(Todo.ref_type == "report_template", Todo.ref_id == template_id, Todo.task_type == "report_fill")
+            .all()
+        )
+    finally:
+        db.close()
+    pending = [row for row in rows if row.status == "PENDING"]
+    assert [row.assignee_user_id for row in pending] == [admin_id]
+    assert any("填报待办" in row.title for row in pending)

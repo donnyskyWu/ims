@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
@@ -12,8 +13,9 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
-from app.models import ReportAudit, ReportSubmission, ReportTemplate, User
+from app.models import ReportAudit, ReportSubmission, ReportTemplate, Todo, User
 from app.ops_models import AuthorUser, IpGroupAnchorRel, PlatformAccount
+from app.report_expr import ExprError, check_expression, evaluate_expression
 
 router = APIRouter(prefix="/report", tags=["report"])
 
@@ -34,6 +36,7 @@ class FieldSchemaItem(BaseModel):
     required: bool = False
     range: dict | None = None
     options: list[str] | None = None
+    validateExpr: str | None = None
     crossCheck: dict | None = None
 
 
@@ -65,15 +68,73 @@ def iso(dt: datetime | None) -> str:
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
-def validate_fields_schema(fields: list[FieldSchemaItem]) -> dict | None:
-    keys = {item.fieldKey for item in fields if item.fieldKey}
+def is_rule_field(item) -> bool:
+    if isinstance(item, dict):
+        return item.get("fieldType") == "CROSS_RULE"
+    return getattr(item, "fieldType", "") == "CROSS_RULE"
+
+
+def business_fields(fields: list) -> list:
+    return [item for item in fields if not is_rule_field(item)]
+
+
+def field_key_of(item) -> str:
+    if isinstance(item, dict):
+        return str(item.get("fieldKey") or "")
+    return str(getattr(item, "fieldKey", "") or "")
+
+
+def schema_field_keys(fields: list) -> set[str]:
+    return {field_key_of(item) for item in business_fields(fields) if field_key_of(item)}
+
+
+def cross_check_of(item) -> dict | None:
+    raw = item.get("crossCheck") if isinstance(item, dict) else getattr(item, "crossCheck", None)
+    return raw if isinstance(raw, dict) else None
+
+
+def validate_expr_of(item) -> str:
+    raw = item.get("validateExpr") if isinstance(item, dict) else getattr(item, "validateExpr", None)
+    return str(raw or "").strip()
+
+
+def guard_expression(expr: str, allowed: set[str], bind_name: str | None = None):
+    try:
+        check_expression(expr, allowed, bind_name=bind_name)
+    except ExprError as exc:
+        return fail(exc.code, exc.msg)
+    return None
+
+
+def validate_fields_schema(fields: list[FieldSchemaItem]):
+    keys = schema_field_keys(fields)
+    seen: set[str] = set()
+    for item in business_fields(fields):
+        key = field_key_of(item)
+        if not key:
+            return fail(1001, "字段键必填")
+        if key in seen:
+            return fail(1001, f"字段键重复：{key}")
+        seen.add(key)
+        if not (item.fieldLabel or "").strip():
+            return fail(1001, "字段名称必填")
     for item in fields:
-        cc = item.crossCheck
+        expr = validate_expr_of(item)
+        if expr:
+            err = guard_expression(expr, keys, bind_name=field_key_of(item) or None)
+            if err:
+                return err
+        cc = cross_check_of(item)
         if not cc:
             continue
-        target = cc.get("targetFieldKey") if isinstance(cc, dict) else None
+        target = cc.get("targetFieldKey")
         if target and target not in keys:
             return fail(1121, "勾稽规则引用了不存在的字段")
+        expression = str(cc.get("expression") or "").strip()
+        if expression:
+            err = guard_expression(expression, keys)
+            if err:
+                return err
     return None
 
 
@@ -100,7 +161,7 @@ def template_vo(row: ReportTemplate) -> dict:
         "templateNo": row.template_no,
         "templateName": row.template_name,
         "fieldsSchema": fields,
-        "fieldCount": len(fields),
+        "fieldCount": len(business_fields(fields)),
         "periodType": row.period_type,
         "deadlineRule": row.deadline_rule,
         "assignees": row.assignees if isinstance(row.assignees, list) else [],
@@ -124,6 +185,53 @@ def apply_body(row: ReportTemplate, body: TemplateBody) -> None:
     row.business_line = body.businessLine
     row.dept_name = body.deptName.strip()
     row.updated_at = utcnow()
+
+
+def sync_fill_todos(db: Session, template: ReportTemplate) -> None:
+    """被指定的填报人出现待办；从名单移除的人不再保留待处理待办。"""
+    user_ids: set[int] = set()
+    assignees = template.assignees if isinstance(template.assignees, list) else []
+    for item in assignees:
+        if not isinstance(item, dict) or str(item.get("assignType") or "USER").upper() != "USER":
+            continue
+        for raw in item.get("targetIds") or []:
+            try:
+                uid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if uid > 0:
+                user_ids.add(uid)
+    existing = list(
+        db.scalars(
+            select(Todo).where(
+                Todo.ref_type == "report_template",
+                Todo.ref_id == template.id,
+                Todo.task_type == "report_fill",
+                Todo.status == "PENDING",
+            )
+        ).all()
+    )
+    have = {row.assignee_user_id for row in existing}
+    title = f"填报待办 · {template.template_name}"
+    for uid in user_ids - have:
+        user = db.get(User, uid)
+        if user is None or user.deleted:
+            continue
+        db.add(
+            Todo(
+                assignee_user_id=uid,
+                task_type="report_fill",
+                ref_type="report_template",
+                ref_id=template.id,
+                title=title,
+                content="请按上报模板完成填报",
+                status="PENDING",
+                tenant_id=template.tenant_id or 0,
+            )
+        )
+    for row in existing:
+        if row.assignee_user_id not in user_ids:
+            row.status = "DONE"
 
 
 @router.post("/template")
@@ -151,6 +259,8 @@ def create_template(
     )
     apply_body(row, body)
     db.add(row)
+    db.flush()
+    sync_fill_todos(db, row)
     db.flush()
     return ok(template_vo(row))
 
@@ -210,6 +320,7 @@ def update_template(
         return fail(1500, "模板不存在")
     apply_body(row, body)
     row.version = (row.version or 1) + 1
+    sync_fill_todos(db, row)
     db.flush()
     return ok(template_vo(row))
 
@@ -226,7 +337,50 @@ def disable_template(
     row.status = "DISABLED"
     row.updated_at = utcnow()
     db.flush()
-    return ok(None)
+    return ok({"id": row.id, "status": row.status, "templateName": row.template_name})
+
+
+class PreviewBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    version: int | None = None
+    sampleData: dict = Field(default_factory=dict)
+
+
+@router.post("/template/{template_id}/preview")
+def preview_template(
+    template_id: int,
+    body: PreviewBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """校验环节：重新检查已保存的表达式，并用样例数据跑字段/勾稽规则。"""
+    row = db.get(ReportTemplate, template_id)
+    if row is None or row.deleted or row.tenant_id != tenant_of(actor):
+        return fail(1500, "模板不存在")
+    fields = row.fields_schema if isinstance(row.fields_schema, list) else []
+    parsed: list[FieldSchemaItem] = []
+    for item in fields:
+        if isinstance(item, dict) and item.get("fieldKey"):
+            parsed.append(FieldSchemaItem.model_validate(item))
+    err = validate_fields_schema(parsed)
+    if err:
+        return err
+    rendered = business_fields(fields)
+    checked = validate_submission_data(fields, body.sampleData or {}, strict=bool(body.sampleData))
+    if checked is not None:
+        payload = json.loads(checked.body)
+        if payload.get("code") == 1192:
+            return checked
+        errors = (payload.get("data") or {}).get("errors") or [
+            {"fieldKey": "", "errorMsg": payload.get("msg") or "勾稽校验失败"}
+        ]
+        return ok(
+            {
+                "renderedFields": rendered,
+                "validationResult": {"passed": False, "errors": errors},
+            }
+        )
+    return ok({"renderedFields": rendered, "validationResult": {"passed": True, "errors": []}})
 
 
 class AttachmentItem(BaseModel):
@@ -281,32 +435,101 @@ def validate_author_account(ops: Session, actor: User, author_id: int, account_i
     return None
 
 
+def _num(value):
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _cmp(left, right, op: str) -> bool:
+    if op == "EQ":
+        return left == right
+    left_n, right_n = _num(left), _num(right)
+    if left_n is None or right_n is None:
+        return False
+    if op == "LTE":
+        return left_n <= right_n
+    if op == "GTE":
+        return left_n >= right_n
+    return left == right
+
+
 def validate_submission_data(fields: list, data: dict, strict: bool):
     if not strict:
         return None
-    keys = set()
-    for item in fields:
+    keys = schema_field_keys(fields)
+    errors: list[dict] = []
+    for item in business_fields(fields):
         if not isinstance(item, dict):
             continue
         key = item.get("fieldKey")
-        if key:
-            keys.add(key)
-        if item.get("required") and (data.get(key) is None or data.get(key) == ""):
-            return fail(1001, f"字段 {key} 必填")
+        if not key:
+            continue
+        value = data.get(key)
+        if item.get("required") and (value is None or value == ""):
+            errors.append({"fieldKey": key, "errorMsg": f"字段 {key} 必填"})
+            continue
+        if value is None or value == "":
+            continue
+        rng = item.get("range") if isinstance(item.get("range"), dict) else {}
+        ftype = str(item.get("fieldType") or "TEXT")
+        if ftype in {"NUMBER", "INTEGER", "MONEY"}:
+            num = _num(value)
+            if num is None:
+                errors.append({"fieldKey": key, "errorMsg": "须为数值"})
+            else:
+                if ftype == "INTEGER" and num != int(num):
+                    errors.append({"fieldKey": key, "errorMsg": "须为整数"})
+                if rng.get("min") is not None and num < float(rng["min"]):
+                    errors.append({"fieldKey": key, "errorMsg": f"须 ≥ {rng['min']}"})
+                if rng.get("max") is not None and num > float(rng["max"]):
+                    errors.append({"fieldKey": key, "errorMsg": f"须 ≤ {rng['max']}"})
+        if ftype == "TEXT" and rng.get("maxLength") is not None and len(str(value)) > int(rng["maxLength"]):
+            errors.append({"fieldKey": key, "errorMsg": f"不超过 {rng['maxLength']} 字"})
+        vexpr = validate_expr_of(item)
+        if vexpr:
+            try:
+                result = evaluate_expression(vexpr, data, keys, bind_name=key)
+            except ExprError as exc:
+                if exc.code == 1192:
+                    return fail(1192, "非法表达式，拒绝执行")
+                errors.append({"fieldKey": key, "errorMsg": exc.msg})
+            else:
+                if result is not True:
+                    errors.append({"fieldKey": key, "errorMsg": "字段校验未通过"})
     for item in fields:
         if not isinstance(item, dict):
             continue
-        cc = item.get("crossCheck")
-        if not cc or not isinstance(cc, dict):
+        cc = cross_check_of(item)
+        if not cc:
+            continue
+        expression = str(cc.get("expression") or "").strip()
+        anchor = item.get("fieldKey") or ""
+        if expression:
+            try:
+                result = evaluate_expression(expression, data, keys)
+            except ExprError as exc:
+                if exc.code == 1192:
+                    return fail(1192, "非法表达式，拒绝执行")
+                return fail(exc.code, exc.msg)
+            if result is not True:
+                errors.append({"fieldKey": anchor, "errorMsg": cc.get("errorMsg") or "勾稽校验失败"})
             continue
         target = cc.get("targetFieldKey")
         op = cc.get("operator", "EQ")
-        if not target or target not in keys:
+        if not target or target not in keys or is_rule_field(item):
             continue
-        left = data.get(item.get("fieldKey"))
-        right = data.get(target)
-        if op == "EQ" and left != right:
-            return fail(1122, cc.get("errorMsg") or "勾稽校验失败")
+        if not _cmp(data.get(item.get("fieldKey")), data.get(target), op):
+            errors.append({"fieldKey": anchor, "errorMsg": cc.get("errorMsg") or "勾稽校验失败"})
+    if errors:
+        return fail(1122, errors[0]["errorMsg"], data={"errors": errors})
     return None
 
 
