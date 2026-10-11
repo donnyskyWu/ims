@@ -20,7 +20,13 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await page.getByTestId('comp-conclusion').fill('可借鉴选题节奏')
   await page.getByTestId('comp-submit').click()
   await expect(page.getByTestId('comp-lib-note')).toContainText('待初审')
+  await expect(page.locator('.drawer.on').filter({ hasText: '仅可采集公开数据' })).toHaveCount(0)
   await expect(page.locator('.comp-card', { hasText: name })).toBeVisible()
+  await page.getByTestId('comp-add').click()
+  await expect(page.getByTestId('comp-name')).toHaveValue('')
+  await expect(page.getByTestId('comp-source')).toHaveValue('')
+  await expect(page.getByTestId('comp-conclusion')).toHaveValue('')
+  await page.locator('.drawer.on').getByRole('button', { name: '取消' }).click()
 
   await page.getByText('悦跑圈').click()
   await expect(page.getByTestId('comp-monitor-chip')).toBeVisible()

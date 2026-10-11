@@ -480,7 +480,7 @@ function resetFilters() {
   loadList()
 }
 
-function openCreate() {
+function resetCreateForm() {
   createForm.compName = ''
   createForm.platform = ''
   createForm.homepageUrl = ''
@@ -491,6 +491,10 @@ function openCreate() {
   mergeHint.value = ''
   formError.value = ''
   for (const key of Object.keys(fieldErrors)) delete fieldErrors[key]
+}
+
+function openCreate() {
+  resetCreateForm()
   showCreate.value = true
 }
 
@@ -538,12 +542,17 @@ async function submitCreate() {
       dimensionData: { ...createForm.dimensionData },
       conclusion: createForm.conclusion.trim(),
     })
-    const data = res.data.data
-    note.value = `已提交审核：${data.compName}（${data.analysisNo}），状态「${data.auditStatusLabel}」`
+    const data = res.data.data || {}
+    const compName = String(data.compName || '')
+    const analysisNo = String(data.analysisNo || '')
+    const auditStatusLabel = String(data.auditStatusLabel || '待初审')
+    resetCreateForm()
     showCreate.value = false
+    note.value = `已提交审核：${compName}（${analysisNo}），状态「${auditStatusLabel}」`
     await loadList()
   } catch (e: unknown) {
-    formError.value = apiMessage(e, '提交失败')
+    if (showCreate.value) formError.value = apiMessage(e, '提交失败')
+    else note.value = note.value || apiMessage(e, '已提交，列表刷新失败')
   } finally {
     creating.value = false
   }
