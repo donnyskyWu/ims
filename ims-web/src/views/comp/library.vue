@@ -621,7 +621,7 @@ function validateCreate() {
   if (!createForm.dataSource.trim() || !hasDimension || !createForm.conclusion.trim()) {
     formError.value = '来源、维度字段、结论均须明确'
   }
-  if (!createForm.dataSource.trim()) fieldErrors.dataSource = '请填写数据来源'
+  if (!createForm.dataSource.trim()) fieldErrors.dataSource = '数据来源必填（仅可采集公开数据）'
   if (!hasDimension) fieldErrors.dimension = '请填写维度字段'
   if (!createForm.conclusion.trim()) fieldErrors.conclusion = '请填写结论与可借鉴点'
   return Object.keys(fieldErrors).length === 0

@@ -555,7 +555,7 @@
       "icon": "db",
       "page": "竞品库",
       "parent": "竞品分析",
-      "desc": "V3 COMP-003 · BR-202 审核入库 · /ims/comp-analysis/library"
+      "desc": "审核入库后的竞品档案"
     },
     "mon": {
       "no": "18",

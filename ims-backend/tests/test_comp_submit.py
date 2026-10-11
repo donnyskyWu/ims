@@ -112,7 +112,11 @@ def test_submit_requires_data_source_then_enters_first_audit():
     seed_roles()
     auth = headers("tc_r6")
     missing = client.post("/admin-api/ims/comp/analysis", headers=auth, json={**BODY, "dataSource": ""})
-    assert missing.json()["code"] == 1171
+    missing_body = missing.json()
+    assert missing_body["code"] == 1171
+    assert missing_body["msg"] == "数据来源必填（仅可采集公开数据）"
+    assert "1171" not in missing_body["msg"]
+    assert "BR-202" not in missing_body["msg"]
 
     created = client.post("/admin-api/ims/comp/analysis", headers=auth, json=BODY)
     body = created.json()

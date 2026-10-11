@@ -10,7 +10,7 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await expect(page.getByTestId('comp-name')).toBeVisible()
   await page.getByTestId('comp-submit').click()
   await expect(page.getByText('必填项，请填写').first()).toBeVisible()
-  await expect(page.getByText('1171 数据来源必填')).toBeVisible()
+  await expect(page.getByText('数据来源必填（仅可采集公开数据）')).toBeVisible()
 
   const name = `E2E竞品${Date.now().toString().slice(-6)}`
   await page.getByTestId('comp-name').fill(name)
