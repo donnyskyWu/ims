@@ -105,7 +105,7 @@
 
     <ProtoDrawer :open="manualOpen" title="手工补录" width="420px" @close="manualOpen = false">
       <form class="qbar" style="flex-direction: column; align-items: stretch; gap: 10px" @submit.prevent="submitManualFill">
-        <label>任务 id<input v-model.number="manual.taskId" type="number" required style="width: 100%" /></label>
+        <label>任务 id<input v-model.number="manual.taskId" type="number" style="width: 100%" /></label>
         <label>账号 id（可选）<input v-model.number="manual.accountId" type="number" style="width: 100%" /></label>
         <label>补录条数<input v-model.number="manual.recordCount" type="number" min="1" style="width: 100%" /></label>
         <label>数据类型<input v-model="manual.dataType" placeholder="WORK" style="width: 100%" /></label>
@@ -232,7 +232,7 @@ function openManualFill() {
 
 async function submitManualFill() {
   if (!manual.taskId) {
-    manualMsg.value = '请填写任务 id'
+    manualMsg.value = '必填项，请填写'
     return
   }
   manualSaving.value = true

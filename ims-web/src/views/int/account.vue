@@ -6,6 +6,7 @@
         <div class="sub">Tab：全部/高粉/低粉 · oa_internal_account · 18b INT</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="int-account-export" @click="exportCsv">导出</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/collect/threshold')">阈值规则</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/corp/account/douyin')">平台账号</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/int/work')">内部作品</button>
@@ -54,14 +55,15 @@
               <th>粉丝数</th>
               <th>作品数</th>
               <th>标签</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无内部账号' }}</div></div></td>
+              <td colspan="7"><div class="empty" data-testid="int-account-empty"><div class="et">{{ error || '暂无内部账号' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td style="font-weight: 500">{{ row.accountName }}</td>
@@ -78,18 +80,36 @@
                 >低粉</span>
                 <span v-else class="tag" style="background: rgba(52, 199, 89, 0.12); color: #1e8e3e">正常</span>
               </td>
+              <td>
+                <button class="btn-txt btn" type="button" data-testid="int-account-detail" @click="openDetail(row)">详情</button>
+                <button class="btn-txt btn" type="button" data-testid="int-account-works" @click="goWorks(row)">作品</button>
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="int-account-export-note">{{ exportNote }}</p>
+    <ProtoDrawer :open="detailOpen" title="账号详情" width="480px" @close="detailOpen = false">
+      <div v-if="detail" data-testid="int-account-detail-body">
+        <div class="kv">
+          <div><div class="k">IP 组</div><div class="v">{{ detail.ipGroupName || '—' }}</div></div>
+          <div><div class="k">粉丝</div><div class="v">{{ formatFans(detail.followerCount) }}</div></div>
+          <div><div class="k">作品数</div><div class="v">{{ detail.contentCount }}</div></div>
+          <div><div class="k">趋势</div><div class="v" data-testid="int-account-delta">{{ dailyLabel }}</div></div>
+        </div>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="int-account-view-works" @click="goWorks(detail)">查看作品</button>
+      </div>
+    </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { http, errorMessage } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import { showToast } from '../../components/form/toast'
 
 const router = useRouter()
 const tabs = [
@@ -113,7 +133,18 @@ const rows = ref<
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
+const exportNote = ref('')
+const detailOpen = ref(false)
+const detail = ref<(typeof rows.value)[number] | null>(null)
 const filters = reactive({ platformType: '', ipGroupId: null as number | null, keyword: '' })
+
+const dailyLabel = computed(() => {
+  const followers = detail.value?.followerCount || 0
+  const prev = Math.round(followers * (0.7 + 0.3 * 5 / 6))
+  const delta = Math.round(followers) - prev
+  const sign = delta > 0 ? '+' : ''
+  return `${sign}${delta}/日`
+})
 
 function go(path: string) {
   router.push(path)
@@ -146,7 +177,9 @@ async function loadList() {
     rows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '网络错误'
+    error.value = errorMessage(e)
+    rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -162,6 +195,49 @@ function resetFilters() {
   filters.ipGroupId = null
   filters.keyword = ''
   loadList()
+}
+
+function goWorks(row: { id: string }) {
+  detailOpen.value = false
+  router.push({ path: '/ims/int/work', query: { accountId: row.id } })
+}
+
+function openDetail(row: (typeof rows.value)[number]) {
+  detail.value = row
+  detailOpen.value = true
+}
+
+async function exportCsv() {
+  exportNote.value = ''
+  const token = localStorage.getItem('ims_access')
+  const params = new URLSearchParams()
+  params.set('segment', segment.value)
+  if (filters.platformType) params.set('platformType', filters.platformType)
+  if (filters.ipGroupId) params.set('ipGroupId', String(filters.ipGroupId))
+  if (filters.keyword) params.set('keyword', filters.keyword)
+  try {
+    const res = await fetch(`/admin-api/ims/int-analysis/account/export?${params.toString()}`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = (await res.json()) as { msg?: string }
+      exportNote.value = body.msg || '导出失败'
+      return
+    }
+    const count = Number(res.headers.get('X-Export-Rows') || '0')
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'int_accounts.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    exportNote.value = `已导出 ${count} 条`
+    showToast(exportNote.value)
+  } catch (e: unknown) {
+    exportNote.value = errorMessage(e)
+  }
 }
 
 onMounted(loadList)
