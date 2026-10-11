@@ -184,6 +184,7 @@ def test_recycle_returned_account_to_pool_and_export_voucher():
     download = export_body["data"]["downloadUrl"]
     file_res = client.get(download, headers=auth)
     assert file_res.status_code == 200
+    assert "pdf" in file_res.headers.get("content-type", "")
     assert file_res.content.startswith(b"%PDF")
     assert "回收回池" in file_res.content.decode("latin1", errors="ignore") or len(file_res.content) > 200
 
@@ -228,3 +229,41 @@ def test_register_cjk_skips_unreadable_font_and_still_builds_pdf(monkeypatch, tm
     )
     body = build_pdf(["账号交接凭证", "已归还"])
     assert body.startswith(b"%PDF")
+
+
+def test_handover_export_without_system_font_still_returns_pdf(monkeypatch):
+    """本机没有中文字体文件时，也要吐出 PDF，不能对每个账号都 5005。"""
+    from reportlab.pdfbase import pdfmetrics
+
+    from app import acct_pool
+
+    pdfmetrics._fonts.pop("IMS-CJK", None)
+    monkeypatch.setattr(acct_pool, "FONT_CANDIDATES", ())
+    auth = headers()
+    account_id = make_account(f"AC-PY-CID-{uuid.uuid4().hex[:8]}")
+    exported = client.get(f"/admin-api/ims/account/timeline/{account_id}/export", headers=auth)
+    body = exported.json()
+    assert body["code"] == 0, body
+    file_res = client.get(body["data"]["downloadUrl"], headers=auth)
+    assert file_res.status_code == 200
+    assert file_res.headers["content-type"].startswith("application/pdf")
+    assert file_res.content.startswith(b"%PDF")
+    assert len(file_res.content) > 200
+
+
+def test_handover_export_disk_failure_still_returns_pdf(monkeypatch):
+    from pathlib import Path
+
+    auth = headers()
+    account_id = make_account(f"AC-PY-DISK-{uuid.uuid4().hex[:8]}")
+
+    def boom(self, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_bytes", boom)
+    exported = client.get(f"/admin-api/ims/account/timeline/{account_id}/export", headers=auth)
+    body = exported.json()
+    assert body["code"] == 0, body
+    file_res = client.get(body["data"]["downloadUrl"], headers=auth)
+    assert file_res.headers["content-type"].startswith("application/pdf")
+    assert file_res.content.startswith(b"%PDF")

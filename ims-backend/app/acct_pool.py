@@ -102,8 +102,19 @@ def purge_exports(now: float) -> None:
         _EXPORTS.pop(key, None)
 
 
+def _cid_font() -> str:
+    """系统里没有可用的中文字体文件时，用 reportlab 自带的 CID 字库画中文。"""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+    name = "STSong-Light"
+    if name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(UnicodeCIDFont(name))
+    return name
+
+
 def register_cjk() -> str:
-    """登记一个能画中文的字体。某个候选文件打不开就试下一个。
+    """登记一个能画中文的字体。某个候选文件打不开就试下一个，最后退到 CID。
 
     reportlab 对坏字体抛 TTFError，它不是 OSError。以前这里一抛就变成 HTTP 500。
     """
@@ -121,7 +132,7 @@ def register_cjk() -> str:
             logger.warning("skip unreadable cjk font %s", path, exc_info=True)
             continue
         return "IMS-CJK"
-    raise FileNotFoundError("cjk font")
+    return _cid_font()
 
 
 def _wrap(text: str, width: int = 36) -> list[str]:
@@ -131,10 +142,9 @@ def _wrap(text: str, width: int = 36) -> list[str]:
     return [body[index : index + width] for index in range(0, len(body), width)]
 
 
-def build_pdf(lines: list[str]) -> bytes:
+def _render_pdf(lines: list[str], font: str) -> bytes:
     from reportlab.pdfgen import canvas
 
-    font = register_cjk()
     buf = BytesIO()
     pdf = canvas.Canvas(buf, pagesize=(595, 842))
     pdf.setTitle("账号交接凭证")
@@ -150,6 +160,18 @@ def build_pdf(lines: list[str]) -> bytes:
             y -= 18
     pdf.save()
     return buf.getvalue()
+
+
+def build_pdf(lines: list[str]) -> bytes:
+    """先用本机字体。画不出来就改用 CID，保证还能吐出 PDF 字节。"""
+    try:
+        body = _render_pdf(lines, register_cjk())
+    except Exception:
+        logger.exception("handover pdf font draw failed, retry cid")
+        body = _render_pdf(lines, _cid_font())
+    if not body.startswith(b"%PDF"):
+        raise ValueError("pdf bytes")
+    return body
 
 
 def event_vo(row: AccountTimelineEvent, names: dict[int, str]) -> dict:
@@ -387,21 +409,21 @@ def export_timeline(
         names = user_names(db, summary_user_ids(events))
         try:
             body = build_pdf(voucher_lines(account, events, names))
-            folder = file_root() / "account" / datetime.now().strftime("%Y%m")
-            folder.mkdir(parents=True, exist_ok=True)
         except Exception:
-            # TTFError / PDFError 不是 OSError。不接住的话 FastAPI 回 HTTP 500，页面上看不到 5005。
+            # 字体和 PDF 库的异常都不是 OSError。不接住的话 FastAPI 回 HTTP 500。
             logger.exception("handover pdf failed account_id=%s", account_id)
             return fail(5005, "交接凭证生成失败，请稍后重试")
         now = time.time()
         purge_exports(now)
         token = secrets.token_urlsafe(24)
         filename = f"handover_{account.account_no or account.id}.pdf"
-        path = folder / f"{token}.pdf"
+        # 下载走内存里的正文。磁盘只是留底，写失败不能把已经生成的 PDF 变成 5005。
         try:
-            path.write_bytes(body)
+            folder = file_root() / "account" / datetime.now().strftime("%Y%m")
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{token}.pdf").write_bytes(body)
         except OSError:
-            return fail(5005, "交接凭证生成失败，请稍后重试")
+            logger.exception("handover pdf disk write failed account_id=%s", account_id)
         _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, filename, actor.id)
         return ok(
             {
