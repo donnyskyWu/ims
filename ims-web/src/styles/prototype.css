@@ -380,6 +380,7 @@ table.wt-matrix .plat-tag{display:inline-block;margin:0 2px}
 .screen-dark .stat .n{color:#f0f6fc}
 .screen-dark .card{background:rgba(255,255,255,.04);box-shadow:none;border:1px solid #30363d}
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px}
+.g5{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:16px}
 .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .stat{display:flex;flex-direction:column}
 .stat .l{font-size:12px;color:var(--text2)}
@@ -681,7 +682,7 @@ body{margin:0}
 .hint.bad{color:var(--red)}
 @media (max-width:1023px){
   .content{padding:16px}
-  .g4,.g3,.g2,.g2r{grid-template-columns:1fr}
+  .g4,.g5,.g3,.g2,.g2r{grid-template-columns:1fr}
   .pg-h h1{font-size:22px}
   .search{display:none}
   .qbar{flex-wrap:wrap;overflow:visible}

@@ -173,11 +173,12 @@
                 </table>
               </div>
             </div>
-            <div v-else class="g4" style="margin-top: 12px">
-              <div class="card stat"><span class="l">粉丝</span><div class="n">{{ stats.followerCount ?? 0 }}</div></div>
-              <div class="card stat"><span class="l">作品</span><div class="n">{{ stats.contentCount ?? 0 }}</div></div>
-              <div class="card stat"><span class="l">账号</span><div class="n">{{ stats.accountCount ?? 0 }}</div></div>
-              <div class="card stat"><span class="l">ROI</span><div class="n">{{ stats.roiAvg ?? 0 }}</div></div>
+            <div v-else class="g5" style="margin-top: 12px" data-testid="ipg-stats">
+              <div class="card stat" data-testid="ipg-stat-follower"><span class="l">粉丝</span><div class="n">{{ stats.followerCount ?? 0 }}</div></div>
+              <div class="card stat" data-testid="ipg-stat-content"><span class="l">作品</span><div class="n">{{ stats.contentCount ?? 0 }}</div></div>
+              <div class="card stat" data-testid="ipg-stat-account"><span class="l">账号</span><div class="n">{{ stats.accountCount ?? 0 }}</div></div>
+              <div class="card stat" data-testid="ipg-stat-internal"><span class="l">内部内容</span><div class="n">{{ stats.internalContentCount ?? 0 }}</div></div>
+              <div class="card stat" data-testid="ipg-stat-roi"><span class="l">ROI</span><div class="n">{{ roiText() }}</div></div>
             </div>
           </div>
         </template>
@@ -360,7 +361,14 @@ const tabs = ['基本信息', '成员管理', '账号绑定', '关联作者', '�
 const members = ref<any[]>([])
 const accounts = ref<any[]>([])
 const anchors = ref<any[]>([])
-const stats = ref<Record<string, number>>({})
+const stats = ref<{
+  followerCount?: number
+  contentCount?: number
+  accountCount?: number
+  internalContentCount?: number
+  roiAvg?: number | null
+  revenueDelayed?: boolean
+}>({})
 const confirming = ref<{ title: string; message: string; run: () => void } | null>(null)
 const bindAccountId = ref<number | undefined>()
 const bindAuthorId = ref<number | undefined>()
@@ -461,6 +469,12 @@ function relationText(member: { relationType?: string; relationTypeName?: string
   if (member.relationType === 'PRIMARY' || member.relationTypeName === '主职') return '主职'
   if (member.relationType === 'PART_TIME' || member.relationTypeName === '兼职') return '兼职'
   return member.relationTypeName || member.relationType || '—'
+}
+
+function roiText() {
+  if (stats.value.revenueDelayed) return '营收延迟'
+  if (stats.value.roiAvg === null || stats.value.roiAvg === undefined) return '—'
+  return String(stats.value.roiAvg)
 }
 
 function levelText(level?: string) {

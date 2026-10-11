@@ -11,7 +11,17 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import DictData, User
-from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, IpGroupMember, PlatformAccount
+from app.football_client import sum_revenue
+from app.ops_models import (
+    AccountCost,
+    AuthorUser,
+    InternalAccount,
+    InternalContent,
+    IpGroup,
+    IpGroupAnchorRel,
+    IpGroupMember,
+    PlatformAccount,
+)
 
 router = APIRouter(prefix="/ip-group", tags=["ip-group"])
 BJ = timezone(timedelta(hours=8))
@@ -871,6 +881,88 @@ def ip_group_bind_anchors(
     return ok(True)
 
 
+def _sum_int(ops: Session, column, *where) -> int:
+    value = ops.scalar(select(func.coalesce(func.sum(column), 0)).where(*where))
+    return int(value or 0)
+
+
+def group_stats(ops: Session, group_id: int, tenant_id: int) -> dict:
+    """BR-M1-004：当前组加上全部下级组，计数与成本按子项相加。"""
+    ids = descendant_ids(ops, group_id, tenant_id)
+    ids.add(group_id)
+    id_list = list(ids)
+    account_where = (
+        PlatformAccount.deleted == 0,
+        PlatformAccount.tenant_id == tenant_id,
+        PlatformAccount.ip_group_id.in_(id_list),
+    )
+    account_rows = ops.scalars(select(PlatformAccount).where(*account_where)).all()
+    account_ids = [row.id for row in account_rows]
+    cost_total = 0.0
+    if account_ids:
+        cost_total = round(
+            float(
+                ops.scalar(
+                    select(func.coalesce(func.sum(AccountCost.amount), 0)).where(
+                        AccountCost.deleted == 0,
+                        AccountCost.tenant_id == tenant_id,
+                        AccountCost.account_id.in_(account_ids),
+                    )
+                )
+                or 0
+            ),
+            2,
+        )
+    revenue_delayed = False
+    revenue_total = 0.0
+    seen_authors: set[str] = set()
+    end = utcnow().date()
+    start = end - timedelta(days=29)
+    for account in account_rows:
+        author_key = str(account.author_user_id) if account.author_user_id else str(account.id)
+        if author_key in seen_authors:
+            continue
+        seen_authors.add(author_key)
+        revenue, err = sum_revenue(
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            author_id=author_key,
+        )
+        if err:
+            revenue_delayed = True
+            break
+        revenue_total = round(revenue_total + float(revenue or 0), 2)
+    roi_avg = None
+    revenue_out: float | None = None if revenue_delayed else revenue_total
+    if revenue_out is not None and cost_total > 0:
+        roi_avg = round(revenue_out / cost_total, 2)
+    internal_where = (
+        InternalAccount.deleted == 0,
+        InternalAccount.tenant_id == tenant_id,
+        InternalAccount.ip_group_id.in_(id_list),
+    )
+    content_where = (
+        InternalContent.deleted == 0,
+        InternalContent.tenant_id == tenant_id,
+        InternalContent.ip_group_id.in_(id_list),
+    )
+    return {
+        "ipGroupId": group_id,
+        "followerCount": _sum_int(ops, InternalAccount.follower_count, *internal_where),
+        "contentCount": _sum_int(ops, InternalAccount.content_count, *internal_where),
+        "accountCount": len(account_rows),
+        "internalContentCount": int(
+            ops.scalar(select(func.count()).select_from(InternalContent).where(*content_where)) or 0
+        ),
+        "roiAvg": roi_avg,
+        "costTotal": cost_total,
+        "revenueTotal": revenue_out,
+        "revenueDelayed": revenue_delayed,
+        "last7DaysTrend": [],
+        "last30DaysTrend": [],
+    }
+
+
 @router.get("/{group_id}/stats")
 def ip_group_stats(
     group_id: int,
@@ -882,18 +974,4 @@ def ip_group_stats(
     row = ensure_group_access(request, db, actor, group_id, ops)
     if row is None:
         return fail(1504, "资源不可用")
-    cnt = counts_for(ops, [group_id], tenant_of(actor)).get(group_id, {})
-    return ok(
-        {
-            "ipGroupId": group_id,
-            "followerCount": 0,
-            "contentCount": 0,
-            "accountCount": cnt.get("accountCount", 0),
-            "internalContentCount": 0,
-            "roiAvg": 0,
-            "costTotal": 0,
-            "revenueTotal": 0,
-            "last7DaysTrend": [],
-            "last30DaysTrend": [],
-        }
-    )
+    return ok(group_stats(ops, group_id, tenant_of(actor)))

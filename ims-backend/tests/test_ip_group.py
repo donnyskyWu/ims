@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.core import Base, engine
 from app.main import app, init_db
 from app.ops_db import OpsBase, ops_engine, ops_session
-from app.ops_models import AuthorUser, IpGroup, PlatformAccount
+from app.ops_models import AccountCost, AuthorUser, InternalAccount, InternalContent, IpGroup, PlatformAccount
 
 
 client = TestClient(app)
@@ -334,6 +334,130 @@ def test_ip_group_member_edit_and_remove():
     parent = next(item for item in tree if item["id"] == big_id)
     node = next(child for child in parent["children"] if child["id"] == gid)
     assert node["memberCount"] == 0
+
+
+def test_ip_group_stats_roll_up_children_and_blank_roi(monkeypatch):
+    auth = headers()
+    big_id = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "统计大组", "groupType": "BIG"},
+    ).json()["data"]
+    left_id = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "统计一组", "groupType": "SMALL", "parentId": big_id},
+    ).json()["data"]
+    right_id = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "统计二组", "groupType": "SMALL", "parentId": big_id},
+    ).json()["data"]
+    other_id = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "统计旁组", "groupType": "BIG"},
+    ).json()["data"]
+    empty_id = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "统计空组", "groupType": "BIG"},
+    ).json()["data"]
+
+    ops = ops_session()
+    try:
+        ops.add_all(
+            [
+                InternalAccount(
+                    account_identifier="stat-a",
+                    account_name="统计账号A",
+                    platform_type="DOUYIN",
+                    ip_group_id=left_id,
+                    follower_count=10,
+                    content_count=2,
+                    tenant_id=0,
+                ),
+                InternalAccount(
+                    account_identifier="stat-b",
+                    account_name="统计账号B",
+                    platform_type="DOUYIN",
+                    ip_group_id=right_id,
+                    follower_count=7,
+                    content_count=4,
+                    tenant_id=0,
+                ),
+                InternalAccount(
+                    account_identifier="stat-other",
+                    account_name="旁组账号",
+                    platform_type="DOUYIN",
+                    ip_group_id=other_id,
+                    follower_count=100,
+                    content_count=50,
+                    tenant_id=0,
+                ),
+                InternalContent(title="内部A1", ip_group_id=left_id, tenant_id=0),
+                InternalContent(title="内部A2", ip_group_id=left_id, tenant_id=0),
+                InternalContent(title="内部B1", ip_group_id=right_id, tenant_id=0),
+                InternalContent(title="旁组内容", ip_group_id=other_id, tenant_id=0),
+            ]
+        )
+        left_account = PlatformAccount(
+            account_no="STAT-A",
+            account_name="平台A",
+            platform_type="DOUYIN",
+            ip_group_id=left_id,
+            tenant_id=0,
+        )
+        right_account = PlatformAccount(
+            account_no="STAT-B",
+            account_name="平台B",
+            platform_type="KUAISHOU",
+            ip_group_id=right_id,
+            tenant_id=0,
+        )
+        ops.add_all([left_account, right_account])
+        ops.flush()
+        ops.add(AccountCost(account_id=left_account.id, amount=10, tenant_id=0))
+        ops.commit()
+    finally:
+        ops.close()
+
+    def fake_revenue(**kwargs):
+        return 20.0, None
+
+    monkeypatch.setattr("app.ip_group.sum_revenue", fake_revenue)
+    big = client.get(f"/admin-api/ims/ip-group/{big_id}/stats", headers=auth).json()["data"]
+    assert big["followerCount"] == 17
+    assert big["contentCount"] == 6
+    assert big["accountCount"] == 2
+    assert big["internalContentCount"] == 3
+    assert big["costTotal"] == 10
+    assert big["revenueTotal"] == 40
+    assert big["roiAvg"] == 4
+    assert big["revenueDelayed"] is False
+
+    left = client.get(f"/admin-api/ims/ip-group/{left_id}/stats", headers=auth).json()["data"]
+    assert left["followerCount"] == 10
+    assert left["contentCount"] == 2
+    assert left["accountCount"] == 1
+    assert left["internalContentCount"] == 2
+    assert left["roiAvg"] == 2
+
+    empty = client.get(f"/admin-api/ims/ip-group/{empty_id}/stats", headers=auth).json()["data"]
+    assert empty["followerCount"] == 0
+    assert empty["contentCount"] == 0
+    assert empty["accountCount"] == 0
+    assert empty["internalContentCount"] == 0
+    assert empty["costTotal"] == 0
+    assert empty["revenueTotal"] == 0
+    assert empty["roiAvg"] is None
+    assert empty["revenueDelayed"] is False
+
+    monkeypatch.setattr("app.ip_group.sum_revenue", lambda **kwargs: (None, "timeout"))
+    delayed = client.get(f"/admin-api/ims/ip-group/{left_id}/stats", headers=auth).json()["data"]
+    assert delayed["revenueDelayed"] is True
+    assert delayed["revenueTotal"] is None
+    assert delayed["roiAvg"] is None
 
 
 def test_ip_group_delete_guard_and_duplicate_name():

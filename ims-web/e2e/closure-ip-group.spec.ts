@@ -111,6 +111,13 @@ test.describe('IP 组 BUG-014～021 / BUG-024～026', () => {
     await expect(page.getByTestId('ipg-toast')).toContainText('状态已更新为「启用」')
     await expect(page.getByTestId('ipg-status')).toHaveText('启用')
 
+    await page.locator('.tab', { hasText: '统计' }).click()
+    await expect(page.getByTestId('ipg-stat-follower')).toContainText('粉丝')
+    await expect(page.getByTestId('ipg-stat-content')).toContainText('作品')
+    await expect(page.getByTestId('ipg-stat-account')).toContainText('账号')
+    await expect(page.getByTestId('ipg-stat-internal')).toContainText('内部内容')
+    await expect(page.getByTestId('ipg-stat-roi').locator('.n')).toHaveText('—')
+
     await page.getByTestId('ipg-delete').click()
     await expect(page.getByTestId('ipg-confirm-text')).toContainText(smallName)
     await page.getByTestId('ipg-confirm-cancel').click()
