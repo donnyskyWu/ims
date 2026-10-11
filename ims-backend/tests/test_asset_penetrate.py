@@ -179,3 +179,31 @@ def test_reverse_holders_distinguish_three_asset_states():
     assert by_code["AS-PY-SCR"] == "SCRAPPED"
     assert listed["data"]["summary"] == {"total": 3, "inUse": 1, "returned": 1, "scrapped": 1}
     assert in_use and returned and scrapped
+
+
+def test_forward_chain_layers_are_independent_and_cost_is_read_only():
+    auth = headers()
+    created = _create(auth, "AS-CHAIN-1", assetType="LIVE", assetName="直播灯")
+    assert created["code"] == 0, created
+    asset_id = created["data"]["id"]
+    first = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L1"}).json()
+    assert first["code"] == 0, first
+    assert first["data"]["asset"]["assetCode"] == "AS-CHAIN-1"
+    assert first["data"]["asset"]["assetType"] == "LIVE"
+    assert "accounts" not in first["data"]
+    accounts = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L2"}).json()
+    assert accounts["data"]["accounts"] == []
+    people = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L3"}).json()
+    assert people["data"]["persons"] == []
+    sessions = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L4"}).json()
+    assert sessions["data"]["sessions"] == []
+    cost = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L5"}).json()
+    assert cost["data"]["cost"]["totalCost"] == 0
+    assert cost["data"]["cost"]["totalRevenue"] == 0
+    assert cost["data"]["cost"]["costMasked"] is False
+    assert cost["data"]["cost"]["sessionCount"] == 0
+    blocked = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L6"}).json()
+    assert blocked["code"] == 1013
+    assert blocked["msg"] == "穿透层级超限"
+    missing = client.get("/admin-api/ims/asset/forward/chain/99999999", headers=auth, params={"layer": "L1"}).json()
+    assert missing["code"] == 1011

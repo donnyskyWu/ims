@@ -418,6 +418,108 @@ def forward_detail(
     )
 
 
+def _chain_layer(layer: str):
+    token = (layer or "").strip().upper()
+    if not token:
+        return ""
+    if token not in LAYER_TOKENS:
+        return None
+    return token
+
+
+def _account_name(actor: User, account_id: int) -> str:
+    if not account_id:
+        return ""
+    ops = ops_session()
+    try:
+        row = ops.get(PlatformAccount, account_id)
+        if row is None or row.deleted or (row.tenant_id or 0) != tenant_of(actor):
+            return ""
+        return row.account_name or row.account_no or ""
+    finally:
+        ops.close()
+
+
+def chain_accounts(db: Session, actor: User, asset_id: int) -> list[dict]:
+    rows = bind_accounts_of(db, actor, asset_id)
+    for row in rows:
+        row["nickname"] = _account_name(actor, int(row.get("accountId") or 0))
+    return rows
+
+
+def chain_persons(actor: User, accounts: list[dict]) -> list[dict]:
+    people = []
+    seen: set[int] = set()
+    for account in accounts:
+        person_id = int(account.get("verifiedPersonId") or 0)
+        if not person_id or person_id in seen:
+            continue
+        seen.add(person_id)
+        brief = _person_brief(_realname(actor, person_id), person_id)
+        people.append(
+            {
+                "personId": person_id,
+                "personName": brief["nickname"],
+                "idCardMasked": brief["idCardMasked"],
+                "accountId": account.get("accountId"),
+            }
+        )
+    return people
+
+
+def chain_summary(db: Session, actor: User, asset_id: int) -> dict:
+    """L5 只读财务汇总。金额来自既有利润/下播报告，不改计算。"""
+    summary = finance_of(db, actor, asset_id)
+    summary["sessionCount"] = len(bound_sessions_of(db, actor, asset_id))
+    return summary
+
+
+def chain_payload(db: Session, actor: User, row: AssetLedger, layer: str) -> dict:
+    names = user_names(db, {row.owner_user_id} if row.owner_user_id else set())
+    accounts = chain_accounts(db, actor, row.id) if layer in ("", "L1", "L2", "L3") else []
+    asset = {
+        "assetId": row.id,
+        "assetCode": row.asset_code,
+        "assetName": row.asset_name,
+        "assetType": row.asset_type,
+        "spec": row.spec or "",
+        "status": row.status,
+        "ownerPersonName": names.get(int(row.owner_user_id or 0), "") if row.owner_user_id else "",
+        "purchaseDate": row.purchase_date or "",
+        "bindCount": len(accounts),
+    }
+    payload: dict = {"layer": layer or "ALL"}
+    if layer in ("", "L1"):
+        payload["asset"] = asset
+    if layer in ("", "L2"):
+        payload["accounts"] = accounts
+    if layer in ("", "L3"):
+        payload["persons"] = chain_persons(actor, accounts)
+    if layer in ("", "L4"):
+        payload["sessions"] = bound_sessions_of(db, actor, row.id)
+    if layer in ("", "L5"):
+        payload["cost"] = chain_summary(db, actor, row.id)
+    return payload
+
+
+@router.get("/asset/forward/chain/{asset_id}")
+def forward_chain(
+    asset_id: int,
+    layer: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """ASSET-001 正向链路。按层读取，不走实名人资产层级，也不改财务计算。"""
+    token = _chain_layer(layer)
+    if token is None:
+        return fail(1013, "穿透层级超限")
+    row, missing = _missing(db, actor, asset_id)
+    if missing:
+        return missing
+    _audit(db, actor, "chain", asset_id, 0, [{"layer": token or "ALL"}])
+    return ok(chain_payload(db, actor, row, token))
+
+
 def _clock(value) -> str:
     if value is None:
         return ""

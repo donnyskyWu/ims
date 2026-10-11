@@ -130,6 +130,7 @@
                 <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-return-btn" @click="openReturn(row)">归还</button>
                 <button v-if="row.status === 'RETURNED'" class="btn btn-txt" type="button" data-testid="corp-asset-scrap-btn" @click="openScrap(row)">报废</button>
                 <button class="btn btn-txt" type="button" data-testid="corp-asset-detail-btn" @click="openAssetDetail(row)">详情</button>
+                <button v-if="kind === 'live'" class="btn btn-txt" type="button" data-testid="corp-asset-chain-btn" @click="openChain(row)">正向穿透</button>
                 <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">正向穿透</button>
                 <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-reverse-btn" @click="openReverse(row)">反向穿透</button>
               </td>
@@ -363,6 +364,88 @@
       </table>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="assetDetailOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="chainOpen" title="正向穿透" width="90%" @close="chainOpen = false">
+      <div data-testid="corp-asset-chain">
+        <section data-testid="corp-asset-chain-l1">
+          <p v-if="chainState.L1.loading" class="hint">资产信息加载中</p>
+          <p v-else-if="chainState.L1.error" class="hint bad" data-testid="corp-asset-chain-l1-error">
+            {{ chainState.L1.error }}
+            <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l1" @click="loadChainLayer('L1')">重试</button>
+          </p>
+          <div v-else-if="chainAsset" class="formrow one">
+            <div class="fld"><label>编号</label><div>{{ chainAsset.assetCode }}</div></div>
+            <div class="fld"><label>名称</label><div>{{ chainAsset.assetName }}</div></div>
+            <div class="fld"><label>类型</label><div>{{ typeLabel(String(chainAsset.assetType || '')) }}</div></div>
+            <div class="fld"><label>规格</label><div>{{ chainAsset.spec || '—' }}</div></div>
+            <div class="fld"><label>状态</label><div>{{ statusLabel(String(chainAsset.status || '')) }}</div></div>
+            <div class="fld"><label>责任人</label><div>{{ chainAsset.ownerPersonName || '—' }}</div></div>
+            <div class="fld"><label>采购日期</label><div>{{ chainAsset.purchaseDate || '—' }}</div></div>
+          </div>
+        </section>
+        <div class="acts" style="margin: 8px 0">
+          <button class="btn btn-sm" :class="chainTab === 'layers' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="corp-asset-chain-tab-layers" @click="chainTab = 'layers'">层级视图</button>
+          <button class="btn btn-sm" :class="chainTab === 'graph' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="corp-asset-chain-tab-graph" @click="chainTab = 'graph'">关系图</button>
+        </div>
+        <div v-if="chainTab === 'layers'">
+          <section data-testid="corp-asset-chain-accounts">
+            <p class="hint">绑定账号</p>
+            <p v-if="chainState.L2.loading" class="hint">账号加载中</p>
+            <p v-else-if="chainState.L2.error" class="hint bad">
+              {{ chainState.L2.error }}
+              <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l2" @click="loadChainLayer('L2')">重试</button>
+            </p>
+            <p v-else-if="!chainAccounts.length" class="hint">没有绑定账号</p>
+            <p v-for="item in chainAccounts" v-else :key="String(item.accountId)">{{ item.nickname || item.accountNo }} · {{ item.platform || '—' }}</p>
+          </section>
+          <section data-testid="corp-asset-chain-persons">
+            <p class="hint">实名人</p>
+            <p v-if="chainState.L3.loading" class="hint">实名人加载中</p>
+            <p v-else-if="chainState.L3.error" class="hint bad">
+              {{ chainState.L3.error }}
+              <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l3" @click="loadChainLayer('L3')">重试</button>
+            </p>
+            <p v-else-if="!chainPersons.length" class="hint">没有实名人</p>
+            <p v-for="item in chainPersons" v-else :key="String(item.personId)">{{ item.personName }} · {{ item.idCardMasked || '—' }}</p>
+          </section>
+          <section data-testid="corp-asset-chain-sessions">
+            <p class="hint">使用场次</p>
+            <p v-if="chainState.L4.loading" class="hint">场次加载中</p>
+            <p v-else-if="chainState.L4.error" class="hint bad">
+              {{ chainState.L4.error }}
+              <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l4" @click="loadChainLayer('L4')">重试</button>
+            </p>
+            <p v-else-if="!chainSessions.length" class="hint">没有使用场次</p>
+            <p v-for="item in chainSessions" v-else :key="String(item.sessionId)">{{ item.sessionCode || item.title || '场次' }}</p>
+          </section>
+        </div>
+        <ol v-else data-testid="corp-asset-chain-graph">
+          <li>资产 · {{ chainAsset?.assetCode || '—' }} {{ chainAsset?.assetName || '' }}</li>
+          <li v-for="item in chainAccounts" :key="'a' + String(item.accountId)">账号 · {{ item.nickname || item.accountNo }}</li>
+          <li v-if="!chainAccounts.length">账号 · 没有绑定账号</li>
+          <li v-for="item in chainPersons" :key="'p' + String(item.personId)">实名人 · {{ item.personName }}</li>
+          <li v-if="!chainPersons.length">实名人 · 没有实名人</li>
+          <li v-for="item in chainSessions" :key="'s' + String(item.sessionId)">场次 · {{ item.sessionCode || item.title }}</li>
+          <li v-if="!chainSessions.length">场次 · 没有使用场次</li>
+          <li>成本 · {{ chainCostText }}</li>
+        </ol>
+        <section data-testid="corp-asset-chain-cost">
+          <p class="hint">成本汇总</p>
+          <p v-if="chainState.L5.loading" class="hint">成本加载中</p>
+          <p v-else-if="chainState.L5.error" class="hint bad">
+            {{ chainState.L5.error }}
+            <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l5" @click="loadChainLayer('L5')">重试</button>
+          </p>
+          <p v-else class="hint">
+            成本 <span data-testid="corp-asset-chain-cost-amount">{{ chainCostText }}</span>
+            · 收入 <span data-testid="corp-asset-chain-revenue">{{ chainRevenueText }}</span>
+            · 场次 {{ chainCost?.sessionCount || 0 }}
+          </p>
+        </section>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="chainOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer v-if="kind === 'office'" :open="forwardOpen" title="正向穿透" width="560px" @close="forwardOpen = false">
@@ -646,6 +729,22 @@ const returnOpen = ref(false)
 const scrapOpen = ref(false)
 const assetDetailOpen = ref(false)
 const forwardOpen = ref(false)
+const chainOpen = ref(false)
+const chainTab = ref<'layers' | 'graph'>('layers')
+const chainAssetId = ref(0)
+type ChainLayer = { loading: boolean; error: string }
+const chainState = ref<Record<string, ChainLayer>>({
+  L1: { loading: false, error: '' },
+  L2: { loading: false, error: '' },
+  L3: { loading: false, error: '' },
+  L4: { loading: false, error: '' },
+  L5: { loading: false, error: '' },
+})
+const chainAsset = ref<Row | null>(null)
+const chainAccounts = ref<Row[]>([])
+const chainPersons = ref<Row[]>([])
+const chainSessions = ref<Row[]>([])
+const chainCost = ref<Row | null>(null)
 const reverseOpen = ref(false)
 const forwardRealnameId = ref('')
 const forwardNodes = ref<Row[]>([])
@@ -1149,9 +1248,46 @@ function closeAssetDrawers() {
   returnOpen.value = false
   scrapOpen.value = false
   forwardOpen.value = false
+  chainOpen.value = false
   reverseOpen.value = false
   entryOpen.value = false
   verifyOpen.value = false
+}
+
+const chainCostText = computed(() => {
+  if (!chainCost.value) return '—'
+  if (chainCost.value.costMasked) return '¥****'
+  return `¥${money(chainCost.value.totalCost)}`
+})
+const chainRevenueText = computed(() => (chainCost.value ? `¥${money(chainCost.value.totalRevenue)}` : '—'))
+
+async function loadChainLayer(layer: 'L1' | 'L2' | 'L3' | 'L4' | 'L5') {
+  if (!chainAssetId.value) return
+  chainState.value[layer] = { loading: true, error: '' }
+  try {
+    const res = await http.get(`/asset/forward/chain/${chainAssetId.value}`, { params: { layer } })
+    const data = (res.data?.data || {}) as Row
+    if (layer === 'L1') chainAsset.value = (data.asset as Row) || null
+    if (layer === 'L2') chainAccounts.value = (data.accounts as Row[]) || []
+    if (layer === 'L3') chainPersons.value = (data.persons as Row[]) || []
+    if (layer === 'L4') chainSessions.value = (data.sessions as Row[]) || []
+    if (layer === 'L5') chainCost.value = (data.cost as Row) || null
+    chainState.value[layer] = { loading: false, error: '' }
+  } catch (e: unknown) {
+    chainState.value[layer] = { loading: false, error: errorMessage(e) }
+  }
+}
+
+function openChain(row: Row) {
+  chainAssetId.value = Number(row.id)
+  chainTab.value = 'layers'
+  chainAsset.value = null
+  chainAccounts.value = []
+  chainPersons.value = []
+  chainSessions.value = []
+  chainCost.value = null
+  chainOpen.value = true
+  void Promise.all([loadChainLayer('L1'), loadChainLayer('L2'), loadChainLayer('L3'), loadChainLayer('L4'), loadChainLayer('L5')])
 }
 
 function money(value: unknown) {
