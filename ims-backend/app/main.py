@@ -419,6 +419,20 @@ def ensure_air_skill_audit_columns() -> None:
         conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''"))
 
 
+def ensure_air_expert_grant_columns() -> None:
+    """已有库补专家授权全员可见。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_expert_grant" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_expert_grant")}
+    if "all_staff" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_air_expert_grant ADD COLUMN all_staff INT NOT NULL DEFAULT 0"))
+
+
 def ensure_air_skill_form_columns() -> None:
     """已有库补技能能力说明与提示词模板。"""
     from sqlalchemy import inspect, text
@@ -583,6 +597,7 @@ def init_db() -> None:
     ensure_air_kb_library_columns()
     ensure_air_skill_audit_columns()
     ensure_air_skill_form_columns()
+    ensure_air_expert_grant_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     from app.ops_db import ensure_ops

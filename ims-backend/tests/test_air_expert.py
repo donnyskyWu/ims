@@ -92,3 +92,12 @@ def test_air_expert_create_page_grant():
     assert grant.json()["data"]["syncEventId"].startswith("air-evt-")
     again = client.get(f"/admin-api/ims/air/expert/{expert_id}", headers=auth)
     assert any(item["grantType"] == "PERSON" and item["status"] == "ACTIVE" for item in again.json()["data"]["grants"])
+
+    everyone = client.post(
+        "/admin-api/ims/air/expert/grant",
+        headers=auth,
+        json={"expertId": expert_id, "allStaff": True, "expireAt": "2027-03-31"},
+    )
+    assert everyone.json()["code"] == 0
+    assert everyone.json()["data"]["allStaff"] is True
+    assert everyone.json()["data"]["grantName"] == "全员"

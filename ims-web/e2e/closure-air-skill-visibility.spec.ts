@@ -64,6 +64,7 @@ test.describe('air skill visibility closure S8', () => {
     await row.getByTestId('air-skill-grant').click()
     const drawer = page.getByTestId('air-skill-grant-form')
     await expect(drawer).toBeVisible()
+    await drawer.getByTestId('air-grant-expire').fill('2027-03-31')
 
     await drawer.getByTestId('air-grant-type').selectOption('PERSON')
     await drawer.getByTestId('air-grant-user-search').fill('e2e_author')

@@ -193,6 +193,8 @@
             <button class="btn btn-sec btn-sm" type="button" data-testid="air-grant-dept-find" @click="searchDepts">查找</button>
           </div>
         </template>
+        <label class="fld">授权有效期 <i class="req">*</i></label>
+        <input v-model="grantForm.expireAt" class="fld-in" type="date" data-testid="air-grant-expire" />
         <label v-if="!grantForm.allStaff" class="fld">授权对象</label>
         <select v-if="!grantForm.allStaff" v-model="grantForm.grantId" class="fld-in" data-testid="air-grant-target">
           <option value="">请选择</option>
@@ -292,7 +294,7 @@ const auditError = ref('')
 const grantSkill = ref<Row | null>(null)
 const grants = ref<GrantRow[]>([])
 const grantError = ref('')
-const grantForm = reactive({ grantType: 'DEPT', grantId: '', allStaff: false })
+const grantForm = reactive({ grantType: 'DEPT', grantId: '', allStaff: false, expireAt: '' })
 const targetOptions = ref<Option[]>([])
 const userKeyword = ref('')
 const deptKeyword = ref('')
@@ -489,6 +491,7 @@ async function openGrant(row: Row) {
   grantForm.grantType = 'DEPT'
   grantForm.grantId = ''
   grantForm.allStaff = false
+  grantForm.expireAt = ''
   userKeyword.value = ''
   deptKeyword.value = ''
   targetOptions.value = []
@@ -552,6 +555,10 @@ async function searchDepts() {
 async function submitGrant() {
   if (!grantSkill.value) return
   grantError.value = ''
+  if (!grantForm.expireAt) {
+    grantError.value = '必填项，请填写'
+    return
+  }
   if (!grantForm.allStaff && !grantForm.grantId) {
     grantError.value = '请选择授权对象'
     return
@@ -562,6 +569,7 @@ async function submitGrant() {
       grantType: grantForm.grantType,
       grantId: grantForm.allStaff ? 0 : Number(grantForm.grantId),
       allStaff: grantForm.allStaff,
+      expireAt: grantForm.expireAt,
     })
     grantForm.grantId = ''
     grantForm.allStaff = false

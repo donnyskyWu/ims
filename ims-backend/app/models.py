@@ -1887,6 +1887,7 @@ class AirExpertGrant(Base):
     grant_type: Mapped[str] = mapped_column(String(16), default="")
     grant_id_ref: Mapped[int] = mapped_column(BigInteger, default=0)
     grant_name: Mapped[str] = mapped_column(String(128), default="")
+    all_staff: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
     expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     granted_by: Mapped[int] = mapped_column(BigInteger, default=0)

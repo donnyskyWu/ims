@@ -122,6 +122,7 @@ test.describe('air expert assemble and audit closure S8', () => {
     await card.getByTestId('air-expert-grant').click()
     const drawer = page.getByTestId('air-expert-grant-form')
     await expect(drawer).toBeVisible()
+    await drawer.getByTestId('air-expert-grant-expire').fill('2027-03-31')
 
     await drawer.getByTestId('air-expert-grant-type').selectOption('PERSON')
     await drawer.getByTestId('air-expert-grant-user-search').fill('admin')

@@ -47,6 +47,7 @@ class ExpertGrantBody(BaseModel):
     grantType: str = ""
     grantId: int = 0
     expireAt: str = ""
+    allStaff: bool = False
     roleTemplateId: int | None = None
 
 
@@ -221,6 +222,7 @@ def expert_grant_vo(row: AirExpertGrant) -> dict:
         "grantType": row.grant_type,
         "grantObjId": row.grant_id_ref,
         "grantName": row.grant_name,
+        "allStaff": bool(row.all_staff),
         "expireAt": iso(row.expire_at) if row.expire_at else "",
         "status": row.status,
     }
@@ -454,30 +456,51 @@ def expert_grant(body: ExpertGrantBody, db: Session = Depends(db_session), actor
         expire_at = parse_expire(body.expireAt)
         if expire_at is None:
             return fail(1001, "有效期格式应为 YYYY-MM-DD")
-    grant_type = body.grantType.strip().upper()
-    if grant_type not in GRANT_TYPES:
-        return fail(1001, "授权类型仅支持 DEPT、ROLE、PERSON")
-    grant_name, error = resolve_grant_target(db, tenant_id, grant_type, body.grantId)
-    if error:
-        return fail(1001, error)
-    exists = db.scalar(
-        select(AirExpertGrant).where(
-            AirExpertGrant.expert_id == row.id,
-            AirExpertGrant.deleted == 0,
-            AirExpertGrant.tenant_id == tenant_id,
-            AirExpertGrant.status == "ACTIVE",
-            AirExpertGrant.grant_type == grant_type,
-            AirExpertGrant.grant_id_ref == body.grantId,
+    if body.allStaff:
+        exists = db.scalar(
+            select(AirExpertGrant).where(
+                AirExpertGrant.expert_id == row.id,
+                AirExpertGrant.deleted == 0,
+                AirExpertGrant.tenant_id == tenant_id,
+                AirExpertGrant.status == "ACTIVE",
+                AirExpertGrant.all_staff == 1,
+            )
         )
-    )
-    if exists is not None:
-        return fail(1001, "授权已存在")
+        if exists is not None:
+            return fail(1001, "授权已存在")
+        grant_type = ""
+        grant_id = 0
+        grant_name = "全员"
+        all_staff = 1
+    else:
+        grant_type = body.grantType.strip().upper()
+        if grant_type not in GRANT_TYPES:
+            return fail(1001, "授权类型仅支持 DEPT、ROLE、PERSON")
+        grant_name, error = resolve_grant_target(db, tenant_id, grant_type, body.grantId)
+        if error:
+            return fail(1001, error)
+        grant_id = body.grantId
+        all_staff = 0
+        exists = db.scalar(
+            select(AirExpertGrant).where(
+                AirExpertGrant.expert_id == row.id,
+                AirExpertGrant.deleted == 0,
+                AirExpertGrant.tenant_id == tenant_id,
+                AirExpertGrant.status == "ACTIVE",
+                AirExpertGrant.all_staff == 0,
+                AirExpertGrant.grant_type == grant_type,
+                AirExpertGrant.grant_id_ref == grant_id,
+            )
+        )
+        if exists is not None:
+            return fail(1001, "授权已存在")
     now = utcnow()
     grant = AirExpertGrant(
         expert_id=row.id,
         grant_type=grant_type,
-        grant_id_ref=body.grantId,
+        grant_id_ref=grant_id,
         grant_name=grant_name or "",
+        all_staff=all_staff,
         status="ACTIVE",
         expire_at=expire_at,
         granted_by=actor.id,
@@ -493,7 +516,8 @@ def expert_grant(body: ExpertGrantBody, db: Session = Depends(db_session), actor
         "expertId": row.id,
         "grantId": grant.id,
         "grantType": grant_type,
-        "grantIdRef": body.grantId,
+        "grantIdRef": grant_id,
+        "allStaff": bool(all_staff),
     }
     if body.roleTemplateId:
         payload["roleTemplateId"] = body.roleTemplateId
