@@ -765,7 +765,20 @@ function linePoints(comp: Comp) {
     .join(' ')
 }
 
+function calcLooksIllegal(expr: string) {
+  const text = expr.trim()
+  if (!text) return false
+  return text.split('(').length !== text.split(')').length
+}
+
 async function refreshComp(comp: Comp) {
+  const calc = String(comp.calcExpression || '')
+  if (calcLooksIllegal(calc)) {
+    const text = '计算字段表达式非法'
+    bindError.value = text
+    previewById.value = { ...previewById.value, [comp.id]: { columns: [], rows: [], error: text } }
+    return
+  }
   try {
     const res = await http.post('/bi/report/query', {
       reportId: reportId.value,
@@ -779,7 +792,7 @@ async function refreshComp(comp: Comp) {
     bindError.value = ''
   } catch (err) {
     const body = err as { code?: number; msg?: string }
-    const text = body.code === 1191 ? '字段引用非法（1191）' : body.code === 1192 ? '计算字段表达式非法（1192）' : body.msg || '查询失败'
+    const text = body.code === 1191 ? '字段引用非法（1191）' : body.code === 1192 ? '计算字段表达式非法' : body.msg || '查询失败'
     if (body.code === 1191 || body.code === 1192) bindError.value = text
     previewById.value = { ...previewById.value, [comp.id]: { columns: [], rows: [], error: text } }
   }

@@ -161,6 +161,17 @@ def test_bi_design_bind_metric_rejects_illegal_field():
         },
     )
     assert bad_expr.json()["code"] == 1192
+    missing_paren = client.post(
+        "/admin-api/ims/bi/report/query",
+        headers=auth,
+        json={
+            "reportId": rid,
+            "compId": "c1",
+            "components": [{"id": "c1", "type": "KPI", "dataset": "METRIC_LIB", "calcExpression": "SUM(gmv"}],
+        },
+    )
+    assert missing_paren.json()["code"] == 1192
+    assert "计算字段表达式非法" in missing_paren.json()["msg"]
 
 
 def test_bi_publish_keeps_v1_then_bumps():

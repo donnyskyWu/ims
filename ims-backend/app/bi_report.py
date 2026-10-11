@@ -279,6 +279,8 @@ def expr_error(expr: str, fields: dict[str, dict]) -> int | None:
     text = (expr or "").strip()
     if not text:
         return None
+    if text.count("(") != text.count(")"):
+        return 1192
     if not re.fullmatch(r"[0-9A-Za-z_+\-*/().,\s]+", text):
         return 1192
     calls = list(_CALL.finditer(text))
@@ -294,7 +296,14 @@ def expr_error(expr: str, fields: dict[str, dict]) -> int | None:
     stripped = _CALL.sub("0", text)
     if _IDENT.search(stripped):
         return 1192
-    if not re.fullmatch(r"[0-9+\-*/().\s]+", stripped):
+    compact = re.sub(r"\s+", "", stripped)
+    if not compact or not re.fullmatch(r"[0-9+\-*/().]+", compact):
+        return 1192
+    if re.search(r"[+\-*/.]$", compact) or re.search(r"^[+*/.]", compact):
+        return 1192
+    try:
+        eval(compact, {"__builtins__": {}}, {})  # noqa: S307 — 括号与四则运算是否能算出数
+    except Exception:
         return 1192
     return None
 
