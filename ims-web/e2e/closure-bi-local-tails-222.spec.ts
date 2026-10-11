@@ -127,7 +127,7 @@ test.describe('bi local tails 222', () => {
     await subModal.getByTestId('bi-sub-name').fill(`E2E 订阅 ${label}`)
     await subModal.getByTestId('bi-sub-save').click()
     await expect(subModal.getByTestId('bi-sub-form-error')).toContainText('请填写报表 ID')
-    await subModal.getByTestId('bi-sub-report').fill(String(reportId))
+    await subModal.getByTestId('bi-sub-report').selectOption(String(reportId))
     await subModal.getByTestId('bi-sub-save').click()
     await expect(page.getByTestId('bi-sub-created')).toContainText('订阅成功，下次推送')
     await page.screenshot({ path: `${shotDir}/10-subscribe-created.png` })

@@ -73,10 +73,21 @@ class SubscribeBody(BaseModel):
 class SubscribeUpdateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     subName: str | None = None
+    reportId: int | None = None
     period: str | None = None
     pushTime: str | None = None
     channels: str | None = None
     status: str | None = None
+
+
+CHANNEL_OK = {"SITE", "SITE+DING", "MAIL"}
+
+
+def canon_channel(raw: str) -> str | None:
+    text = (raw or "").strip().upper()
+    if text in CHANNEL_OK:
+        return text
+    return None
 
 
 class ShareLinkBody(BaseModel):
@@ -389,6 +400,9 @@ def subscribe_create(
         return fail(1001, "周期无效")
     if not push_clock_ok(body.pushTime):
         return fail(1001, "推送时刻应为 HH:mm")
+    channel = canon_channel(body.channels) if (body.channels or "").strip() else "SITE+DING"
+    if channel is None:
+        return fail(1001, "推送渠道无效")
     now = utcnow()
     row = BiSubscription(
         sub_name=name,
@@ -397,7 +411,7 @@ def subscribe_create(
         report_name=report.report_name,
         period=period,
         push_time=body.pushTime.strip() or "09:00",
-        channels=body.channels.strip() or "SITE+DING",
+        channels=channel,
         status="ACTIVE",
         subscriber_user_id=actor.id,
         tenant_id=tenant_id,
@@ -424,6 +438,12 @@ def subscribe_update(
         return fail(1201, "无权修改他人订阅")
     if body.subName is not None and body.subName.strip():
         row.sub_name = body.subName.strip()
+    if body.reportId is not None:
+        report = db.get(BiReportDef, int(body.reportId))
+        if report is None or report.deleted or report.tenant_id != tenant_id:
+            return fail(1001, "报表不存在")
+        row.report_id = report.id
+        row.report_name = report.report_name
     if body.period is not None:
         p = canon_period(body.period)
         if p is None:
@@ -434,7 +454,10 @@ def subscribe_update(
             return fail(1001, "推送时刻应为 HH:mm")
         row.push_time = body.pushTime.strip() or "09:00"
     if body.channels is not None:
-        row.channels = body.channels.strip()
+        channel = canon_channel(body.channels)
+        if channel is None:
+            return fail(1001, "推送渠道无效")
+        row.channels = channel
     if body.status is not None:
         st = body.status.strip().upper()
         if st not in SUB_STATUSES:

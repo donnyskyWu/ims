@@ -50,7 +50,7 @@
                 <div class="csub" data-testid="bi-sub-next-push">下次 {{ row.nextPushAt || '不调度' }}</div>
               </td>
               <td>{{ row.reportName }}</td>
-              <td>{{ row.channels }}</td>
+              <td>{{ channelLabel(row.channels) }}</td>
               <td><span class="tag" :style="subStatusStyle(row.status)"><span class="dot"></span>{{ row.status === 'ACTIVE' ? '生效' : '暂停' }}</span></td>
               <td>
                 <span class="tag" :style="pushStatusStyle(row.lastPushStatus)">{{ pushStatusLabel(row.lastPushStatus) }}</span>
@@ -58,7 +58,8 @@
               <td>{{ row.lastPushAt }}</td>
               <td data-testid="bi-sub-next">{{ row.nextPushAt || '—' }}</td>
               <td>
-                <span class="btn-txt btn" @click="toggleSub(row)">{{ row.status === 'ACTIVE' ? '暂停' : '恢复' }}</span>
+                <span class="btn-txt btn" data-testid="bi-sub-edit" @click="openEdit(row)">编辑</span>
+                <span class="btn-txt btn" data-testid="bi-sub-pause" @click="askToggle(row)">{{ row.status === 'ACTIVE' ? '暂停' : '恢复' }}</span>
                 <span v-if="row.status === 'ACTIVE'" class="btn-txt btn" @click="askPush(row)">立即推送</span>
                 <span class="btn-txt btn" data-testid="bi-sub-snapshot-open" @click="viewSnapshot(row)">查看快照</span>
                 <span class="btn-txt btn" data-testid="bi-sub-cancel" @click="cancelSub(row)">取消</span>
@@ -208,16 +209,25 @@
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 400px; padding: 18px">
-        <h3 style="margin: 0 0 10px">新建订阅</h3>
+        <h3 style="margin: 0 0 10px">{{ editingId ? '编辑订阅' : '新建订阅' }}</h3>
         <label class="fld">名称</label>
         <input v-model="form.subName" class="fld-in" data-testid="bi-sub-name" />
-        <label class="fld">报表 ID</label>
-        <input v-model.number="form.reportId" class="fld-in" data-testid="bi-sub-report" type="number" />
+        <label class="fld">报表</label>
+        <select v-model="form.reportId" class="fld-in" data-testid="bi-sub-report">
+          <option value="">请选择报表</option>
+          <option v-for="item in reportOptions" :key="item.id" :value="String(item.id)">{{ item.reportName }}</option>
+        </select>
         <label class="fld">周期</label>
         <select v-model="form.period" class="fld-in" data-testid="bi-sub-period">
           <option value="DAILY">每日</option>
           <option value="WEEKLY">每周</option>
           <option value="MONTHLY">每月</option>
+        </select>
+        <label class="fld">推送渠道</label>
+        <select v-model="form.channels" class="fld-in" data-testid="bi-sub-channel">
+          <option value="SITE">站内</option>
+          <option value="SITE+DING">站内+钉钉</option>
+          <option value="MAIL">邮件</option>
         </select>
         <label class="fld">推送时刻</label>
         <input v-model="form.pushTime" class="fld-in" data-testid="bi-sub-push-time" placeholder="09:00" />
@@ -240,6 +250,19 @@
           <button class="btn btn-pri btn-sm" type="button" data-testid="bi-share-revoke-ok" @click="confirmRevoke">
             确认撤销
           </button>
+        </div>
+      </div>
+    </div>
+
+    <p v-if="statusToast" class="hint" data-testid="bi-sub-toast">{{ statusToast }}</p>
+
+    <div v-if="statusTarget" class="modal-mask" data-testid="bi-sub-status-confirm" @click.self="statusTarget = null">
+      <div class="card" style="width: 420px; padding: 18px">
+        <h3 style="margin: 0 0 10px">{{ statusTarget.status === 'ACTIVE' ? '确认暂停' : '确认恢复' }}</h3>
+        <p style="margin: 0">{{ statusTarget.status === 'ACTIVE' ? '暂停' : '恢复' }}订阅「{{ statusTarget.subName }}」？</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="statusTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-sub-status-ok" @click="confirmToggle">确认</button>
         </div>
       </div>
     </div>
@@ -316,6 +339,7 @@ type SubRow = {
   period: string
   pushTime: string
   nextPushAt?: string
+  reportId: number
   reportName: string
   channels: string
   status: string
@@ -358,7 +382,11 @@ const snapshot = ref<{
 } | null>(null)
 const showForm = ref(false)
 const showShareForm = ref(false)
-const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
+const form = reactive({ subName: '', reportId: '', period: 'DAILY', pushTime: '09:00', channels: 'SITE+DING' })
+const reportOptions = ref<{ id: number; reportName: string }[]>([])
+const editingId = ref(0)
+const statusTarget = ref<SubRow | null>(null)
+const statusToast = ref('')
 const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
 const shareExpireError = ref('')
 const formError = ref('')
@@ -508,9 +536,41 @@ function loadTab() {
   else loadPublished()
 }
 
-function openCreate() {
+function channelLabel(value: string) {
+  if (value === 'SITE') return '站内'
+  if (value === 'MAIL') return '邮件'
+  if (value === 'SITE+DING') return '站内+钉钉'
+  return value || '—'
+}
+
+async function loadReportOptions() {
+  const res = await http.get('/bi/report/list', { params: { pageNo: 1, pageSize: 50 } })
+  reportOptions.value = res.data.data?.list || []
+}
+
+async function openCreate() {
   formError.value = ''
   pushTimeError.value = ''
+  editingId.value = 0
+  form.subName = ''
+  form.reportId = ''
+  form.period = 'DAILY'
+  form.pushTime = '09:00'
+  form.channels = 'SITE+DING'
+  await loadReportOptions()
+  showForm.value = true
+}
+
+async function openEdit(row: SubRow) {
+  formError.value = ''
+  pushTimeError.value = ''
+  editingId.value = row.id
+  form.subName = row.subName
+  form.reportId = String(row.reportId || '')
+  form.period = row.period === 'DAY' ? 'DAILY' : row.period === 'WEEK' ? 'WEEKLY' : row.period === 'MONTH' ? 'MONTHLY' : row.period
+  form.pushTime = row.pushTime || '09:00'
+  form.channels = row.channels || 'SITE+DING'
+  await loadReportOptions()
   showForm.value = true
 }
 
@@ -522,7 +582,7 @@ async function submitSub() {
     return
   }
   if (!Number(form.reportId)) {
-    formError.value = '请填写报表 ID'
+    formError.value = '请选择报表'
     return
   }
   if (!pushClockOk(form.pushTime)) {
@@ -530,14 +590,22 @@ async function submitSub() {
     return
   }
   try {
-    const res = await http.post('/bi/subscribe', {
-      ...form,
+    const payload = {
       subName: form.subName.trim(),
-    })
+      reportId: Number(form.reportId),
+      period: form.period,
+      pushTime: form.pushTime,
+      channels: form.channels,
+    }
+    const res = editingId.value
+      ? await http.put(`/bi/subscribe/${editingId.value}`, payload)
+      : await http.post('/bi/subscribe', payload)
     if (res.data.code === 0) {
       const next = String(res.data.data?.nextPushAt || '').trim()
-      createdHint.value = `订阅成功，下次推送 ${next || '不调度'}`
+      createdHint.value = editingId.value ? '订阅已保存' : `订阅成功，下次推送 ${next || '不调度'}`
+      statusToast.value = editingId.value ? '订阅已保存' : ''
       showForm.value = false
+      editingId.value = 0
       await loadSubs()
     }
   } catch (error: unknown) {
@@ -545,10 +613,22 @@ async function submitSub() {
   }
 }
 
-async function toggleSub(row: SubRow) {
+function askToggle(row: SubRow) {
+  statusTarget.value = row
+}
+
+async function confirmToggle() {
+  const row = statusTarget.value
+  if (!row) return
   const status = row.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
-  await http.put(`/bi/subscribe/${row.id}`, { status })
-  await loadSubs()
+  statusTarget.value = null
+  try {
+    await http.put(`/bi/subscribe/${row.id}`, { status })
+    statusToast.value = status === 'PAUSED' ? '已暂停' : '已恢复'
+    await loadSubs()
+  } catch (error: unknown) {
+    statusToast.value = errorMessage(error)
+  }
 }
 
 async function viewSnapshot(row: SubRow) {

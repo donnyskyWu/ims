@@ -43,7 +43,7 @@ test.describe('bi subscribe push-now closure S12', () => {
     const subModal = page.locator('.modal-mask .card').filter({ hasText: '新建订阅' })
     await expect(subModal).toBeVisible()
     await subModal.locator('input.fld-in').first().fill(subName)
-    await subModal.locator('input[type="number"]').fill(String(reportId))
+    await subModal.getByTestId('bi-sub-report').selectOption(String(reportId))
     const createSubResp = page.waitForResponse(
       (r) => r.url().includes('/bi/subscribe') && r.request().method() === 'POST' && r.status() === 200,
     )

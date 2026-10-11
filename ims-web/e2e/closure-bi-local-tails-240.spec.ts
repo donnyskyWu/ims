@@ -88,7 +88,7 @@ test.describe('bi local tails 240', () => {
     await page.getByRole('button', { name: '订阅推送' }).click()
     const subModal = page.locator('.modal-mask .card').filter({ hasText: '新建订阅' })
     await subModal.locator('input.fld-in').first().fill(`时刻 ${label}`)
-    await subModal.locator('input[type="number"]').fill(String(reportId))
+    await subModal.getByTestId('bi-sub-report').selectOption(String(reportId))
     await subModal.getByTestId('bi-sub-push-time').fill('25:99')
     await subModal.getByRole('button', { name: '保存' }).click()
     await expect(subModal.getByTestId('bi-sub-push-error')).toContainText('推送时刻应为 HH:mm')
