@@ -265,7 +265,26 @@ def test_reject_requires_reason_and_resubmit_keeps_timeline():
     again_body = again.json()
     assert again_body["code"] == 0, again_body
     assert again_body["data"]["auditStatus"] == "PENDING_FIRST"
-    assert len(again_body["data"]["auditRounds"]) == 1
+    assert again_body["data"]["rejectReason"] == ""
+    rounds = again_body["data"]["auditRounds"]
+    assert len(rounds) == 2
+    assert rounds[0]["conclusion"] == "REJECTED"
+    assert rounds[0]["rejectReason"] == "来源不可追溯"
+    assert rounds[1]["auditLevel"] == "RESUBMIT"
+    assert rounds[1]["conclusion"] == "RESUBMITTED"
+
+    detail_after = client.get(f"/admin-api/ims/comp/analysis/{no}", headers=r6).json()
+    assert detail_after["data"]["rejectReason"] == ""
+    assert detail_after["data"]["auditRounds"][0]["rejectReason"] == "来源不可追溯"
+
+    records = client.get(
+        "/admin-api/ims/comp/audit/records",
+        headers=r6,
+        params={"analysisNo": no},
+    ).json()
+    listed = records["data"]["list"]
+    assert any(item["auditLevel"] == "RESUBMIT" for item in listed)
+    assert any(item["conclusion"] == "REJECTED" and item["rejectReason"] == "来源不可追溯" for item in listed)
 
 
 def test_self_audit_blocked_and_merge_preview():

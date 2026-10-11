@@ -618,6 +618,20 @@ def resubmit_analysis(
     row.submitted_at = now
     row.is_on_time = 1 if on_time(period, now) else 0
     row.updated_at = now
+    append_round(
+        row,
+        {
+            "round": len(list(row.audit_rounds or [])) + 1,
+            "auditLevel": "RESUBMIT",
+            "conclusion": "RESUBMITTED",
+            "rejectReason": "",
+            "rejectReasonTags": [],
+            "auditorUserId": actor.id,
+            "auditorName": actor.nickname or actor.username,
+            "auditedAt": fmt_bj(now),
+        },
+    )
+    row.reject_reason = ""
     close_open_todos(db, row.id)
     for reviewer in users_with_tag(db, tenant_id, "R8"):
         if reviewer.id == actor.id:

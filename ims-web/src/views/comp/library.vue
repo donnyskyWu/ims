@@ -168,8 +168,7 @@
         <div v-if="active.auditRounds?.length" class="dsec">审核记录</div>
         <ul v-if="active.auditRounds?.length" class="timeline" data-testid="comp-timeline">
           <li v-for="item in active.auditRounds" :key="item.round">
-            第 {{ item.round }} 轮 · {{ item.auditLevel === 'FINAL' ? '终审（R4）' : '初审（R8）' }} ·
-            {{ item.conclusion === 'REJECTED' ? '退回' : '通过' }} · {{ item.auditorName }} · {{ item.auditedAt }}
+            第 {{ item.round }} 轮 · {{ roundTitle(item) }} · {{ item.auditorName }} · {{ item.auditedAt }}
             <span v-if="item.rejectReason"> · {{ item.rejectReason }}</span>
           </li>
         </ul>
@@ -317,6 +316,13 @@ const active = ref<Card | null>(null)
 const basket = ref<{ assetNo: string; compName: string }[]>([])
 const showRejectBox = ref(false)
 const rejectReason = ref('')
+
+function roundTitle(item: Round) {
+  if (item.auditLevel === 'RESUBMIT' || item.conclusion === 'RESUBMITTED') return '重新提交'
+  const level = item.auditLevel === 'FINAL' ? '终审（R4）' : '初审（R8）'
+  const result = item.conclusion === 'REJECTED' ? '退回' : '通过'
+  return `${level} · ${result}`
+}
 const rejectError = ref('')
 
 const createForm = reactive({
