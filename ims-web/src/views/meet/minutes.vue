@@ -64,7 +64,7 @@
               <td class="mono" style="color: var(--blue)">{{ row.minutesNo }}</td>
               <td style="font-weight: 500">{{ row.meetingTitle }}</td>
               <td>{{ row.organizerName || row.recorderName }}</td>
-              <td class="mono">{{ row.meetingDate || '—' }}</td>
+              <td class="mono">{{ formatShanghaiMinute(row.meetingDate) }}</td>
               <td class="num">{{ row.durationMinutes || '—' }} 分钟</td>
               <td>{{ row.meetingRoom || '—' }}</td>
               <td class="num">{{ row.attendeeCount }} 人</td>
@@ -128,7 +128,7 @@
         <h3 style="margin: 0 0 8px">{{ detail.meetingTitle }}</h3>
         <p class="hint">{{ detail.minutesNo }} · {{ statusLabel(detail.minutesStatus) }}</p>
         <p><b>组织者</b> {{ detail.organizerName || '—' }} · <b>记录人</b> {{ detail.recorderName || '—' }}</p>
-        <p><b>时间</b> {{ detail.meetingDate || '—' }} · <b>时长</b> {{ detail.durationMinutes || '—' }} 分钟</p>
+        <p><b>时间</b> {{ formatShanghaiMinute(detail.meetingDate) }} · <b>时长</b> {{ detail.durationMinutes || '—' }} 分钟</p>
         <p><b>会议室</b> {{ detail.meetingRoom || '—' }} · <b>参会</b> {{ detail.attendeeCount || 0 }} 人</p>
         <p v-if="detail.agenda"><b>议程</b> {{ detail.agenda }}</p>
         <p v-if="aiPhase" class="hint" data-testid="meet-ai-phase">{{ aiPhase }}</p>
@@ -331,6 +331,12 @@ function timeLabel(value?: string) {
   if (!value) return '—'
   const match = value.match(/T(\d{2}:\d{2})/)
   return match ? match[1] : value
+}
+
+function formatShanghaiMinute(value?: string) {
+  if (!value) return '—'
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+  return match ? `${match[1]} ${match[2]}` : value
 }
 
 async function loadTimeline() {
