@@ -287,7 +287,12 @@ def test_bug_c055_primary_and_part_time_messages():
         json={"userId": uid, "relationType": "PRIMARY", "targetName": "又一个主", "shareRatio": 100},
     )
     assert second.json()["code"] == 1198
-    assert second.json()["msg"] == "该人员已有生效主归属（BR-213 在职唯一主归属）"
+    assert second.json()["msg"] == "该人员已有生效主归属"
+    saved = first.json()["data"]
+    assert saved["relationType"] == "PRIMARY"
+    assert saved["relationTypeName"] == "主归属"
+    assert saved["status"] == "ACTIVE"
+    assert saved["statusName"] == "生效"
     part = client.post(
         "/admin-api/ims/eff/relation",
         headers=auth,
@@ -300,7 +305,7 @@ def test_bug_c055_primary_and_part_time_messages():
         json={"userId": uid, "relationType": "PART_TIME", "targetName": "兼职乙", "shareRatio": 50},
     )
     assert over.json()["code"] == 1199
-    assert over.json()["msg"] == "该人员兼职分摊合计 110% 超 100%"
+    assert over.json()["msg"] == "兼职分摊合计 110% 超 100%"
 
 
 def test_eff_inventory_snapshot():

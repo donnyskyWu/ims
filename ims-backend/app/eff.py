@@ -125,6 +125,7 @@ def relation_vo(row: EffRelation, names: dict[int, str]) -> dict:
         "userId": row.user_id,
         "userName": names.get(row.user_id, ""),
         "relationType": row.relation_type,
+        "relationTypeName": TYPE_NAMES.get(row.relation_type, row.relation_type),
         "targetType": row.target_type,
         "targetId": row.target_id,
         "targetName": row.target_name,
@@ -132,6 +133,7 @@ def relation_vo(row: EffRelation, names: dict[int, str]) -> dict:
         "effectiveFrom": row.effective_from,
         "effectiveTo": row.effective_to or None,
         "status": row.status,
+        "statusName": STATUS_NAMES.get(row.status, row.status),
         "changedByName": names.get(row.changed_by, ""),
         "changedAt": iso(row.updated_at),
     }
@@ -149,6 +151,10 @@ def active_primary(db: Session, tenant_id: int, user_id: int) -> EffRelation | N
     )
 
 
+TYPE_NAMES = {"PRIMARY": "主归属", "PART_TIME": "兼职"}
+STATUS_NAMES = {"ACTIVE": "生效", "HISTORICAL": "历史"}
+
+
 def share_text(value: float) -> str:
     number = float(value)
     if number.is_integer():
@@ -157,7 +163,7 @@ def share_text(value: float) -> str:
 
 
 def part_time_over_msg(total: float) -> str:
-    return f"该人员兼职分摊合计 {share_text(total)}% 超 100%"
+    return f"兼职分摊合计 {share_text(total)}% 超 100%"
 
 
 def part_time_sum(db: Session, tenant_id: int, user_id: int) -> float:
@@ -226,7 +232,7 @@ def relation_create(
         if body.shareRatio != 100:
             return fail(1001, "主归属分摊比例必须为 100%")
         if active_primary(db, tenant_id, body.userId) is not None:
-            return fail(1198, "该人员已有生效主归属（BR-213 在职唯一主归属）")
+            return fail(1198, "该人员已有生效主归属")
     else:
         total = part_time_sum(db, tenant_id, body.userId) + body.shareRatio
         if total > 100:

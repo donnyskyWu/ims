@@ -33,8 +33,11 @@
       </div>
     </div>
 
+    <div class="toasts" aria-live="polite">
+      <div v-if="relationToast" class="toast t-success" data-testid="eff-save-toast">{{ relationToast }}</div>
+    </div>
+
     <section v-if="tab === 'relation'" data-testid="eff-panel-relation">
-      <p v-if="relationToast" class="hint" data-testid="eff-save-toast">{{ relationToast }}</p>
       <p v-if="listError" class="hint" style="color: var(--red)" data-testid="eff-list-error">{{ listError }}</p>
       <form class="qbar" @submit.prevent="loadRelations">
         <select v-model="filters.userId" style="width: 160px" data-testid="eff-filter-user">
@@ -68,11 +71,11 @@
               <tr v-else-if="!relations.length"><td colspan="7"><div class="empty"><div class="et">暂无归属</div></div></td></tr>
               <tr v-for="row in relations" v-else :key="row.id">
                 <td>{{ row.userName || row.userId }}</td>
-                <td>{{ typeLabel(row.relationType) }}</td>
+                <td><span class="chip" :class="{ pp: row.relationType === 'PART_TIME' }">{{ typeLabel(row) }}</span></td>
                 <td>{{ targetLabel(row) }}</td>
                 <td class="num">{{ row.shareRatio }}%</td>
                 <td>{{ row.effectiveFrom }}</td>
-                <td>{{ statusLabel(row.status) }}</td>
+                <td><span :style="row.status === 'HISTORICAL' ? 'color: var(--text2)' : 'color: var(--green)'">{{ statusLabel(row) }}</span></td>
                 <td>
                   <button v-if="showCreate && row.status === 'ACTIVE'" class="btn btn-sec btn-sm" type="button" data-testid="eff-change" @click="openChange(row)">变更</button>
                   <button v-if="canDelete" class="btn btn-sec btn-sm" type="button" data-testid="eff-delete" @click="removeRelation(row)">删除</button>
@@ -230,7 +233,7 @@
           <div><div class="k">主归属工时占比</div><div class="v num">{{ pctText(person.primaryShare) }}</div></div>
           <div><div class="k">分摊合计</div><div class="v num" :style="person.overShare ? 'color: var(--red)' : ''">{{ person.shareTotal }}%</div></div>
           <div><div class="k">人效得分</div><div class="v num">{{ plainText(person.score) }}</div></div>
-          <div><div class="k">评价</div><div class="v" data-testid="eff-person-comment">{{ person.comment || '—' }}</div></div>
+          <div><div class="k">评价</div><div class="v" data-testid="eff-person-comment">{{ personComment(person) }}</div></div>
         </div>
       </div>
       <div class="drawer-f">
@@ -241,7 +244,7 @@
     <div v-if="changing" class="modal-mask" data-testid="eff-change-dialog" @click.self="changing = null">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">变更归属</h3>
-        <p class="hint">{{ changing.userName || changing.userId }} · {{ changing.targetName }} · {{ changing.shareRatio }}%</p>
+        <p class="hint">{{ changing.userName || changing.userId }} · {{ typeLabel(changing) }} · {{ statusLabel(changing) }} · {{ changing.targetName }} · {{ changing.shareRatio }}%</p>
         <label class="fld">变更动作</label>
         <select v-model="changeForm.action" class="fld-in" data-testid="eff-change-action">
           <option value="TRANSFER">调岗</option>
@@ -323,12 +326,14 @@ type Relation = {
   userId: number
   userName: string
   relationType: string
+  relationTypeName?: string
   targetType: string
   targetId: number
   targetName: string
   shareRatio: number
   effectiveFrom: string
   status: string
+  statusName?: string
 }
 
 type NamedUser = { id: string; username?: string; nickname?: string }
@@ -448,16 +453,26 @@ function userLabel(item: NamedUser) {
   return item.nickname || item.username || item.id
 }
 
-function typeLabel(value: string) {
-  if (value === 'PRIMARY') return '主归属'
-  if (value === 'PART_TIME') return '兼职'
-  return value || '—'
+function typeLabel(row: { relationType?: string; relationTypeName?: string }) {
+  if (row.relationTypeName) return row.relationTypeName
+  if (row.relationType === 'PRIMARY') return '主归属'
+  if (row.relationType === 'PART_TIME') return '兼职'
+  return '—'
 }
 
-function statusLabel(value: string) {
-  if (value === 'ACTIVE') return '生效'
-  if (value === 'HISTORICAL') return '历史'
-  return value || '—'
+function statusLabel(row: { status?: string; statusName?: string }) {
+  if (row.statusName) return row.statusName
+  if (row.status === 'ACTIVE') return '生效'
+  if (row.status === 'HISTORICAL') return '历史'
+  return '—'
+}
+
+function personComment(row: PersonRow) {
+  if (row.comment) return row.comment
+  if (row.score === null || row.score === undefined) return '—'
+  if (row.score >= 80) return '优秀'
+  if (row.score >= 70) return '合格'
+  return '待改进'
 }
 
 function targetTypeLabel(value: string) {
