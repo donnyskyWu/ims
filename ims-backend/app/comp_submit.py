@@ -316,6 +316,18 @@ def dimension_filled(data: dict) -> bool:
     return False
 
 
+ESSENTIALS_MSG = "来源、维度字段、结论均须明确"
+
+
+def essentials_block(source: str, dimension: dict, conclusion: str):
+    """提交时三要素不齐。来源单独缺失仍走 1171；其余不把错误码写进文案。"""
+    if not (source or "").strip():
+        return fail(1171, "1171 数据来源必填（仅可采集公开数据，BR-202）")
+    if not dimension_filled(dimension or {}) or not (conclusion or "").strip():
+        return fail(1174, ESSENTIALS_MSG)
+    return None
+
+
 def subscribe_monitor(ops: Session, tenant_id: int, asset: CompAsset, homepage: str) -> None:
     info = dict(asset.base_info or {})
     tomorrow = (datetime.now(BJ) + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -445,11 +457,9 @@ def submit_analysis(
     if err := check_enum(db, "dict_platform_type", body.platform, True):
         return err
     source = (body.dataSource or "").strip()
-    if not source:
-        return fail(1171, "1171 数据来源必填（仅可采集公开数据，BR-202）")
     conclusion = (body.conclusion or "").strip()
-    if not conclusion:
-        return fail(1001, "结论与可借鉴点必填")
+    if blocked := essentials_block(source, dict(body.dimensionData or {}), conclusion):
+        return blocked
     period = body.periodMonth.strip()
     dup = find_duplicate(db, tenant_id, actor.id, period, match_key(name))
     if dup is not None:
@@ -594,11 +604,10 @@ def resubmit_analysis(
     if err := check_enum(db, "dict_platform_type", platform, True):
         return err
     source = (body.dataSource if body.dataSource is not None else row.data_source).strip()
-    if not source:
-        return fail(1171, "1171 数据来源必填（仅可采集公开数据，BR-202）")
     conclusion = (body.conclusion or row.conclusion).strip()
-    if not conclusion:
-        return fail(1001, "结论与可借鉴点必填")
+    dimension = dict(body.dimensionData) if body.dimensionData else dict(row.dimension_data or {})
+    if blocked := essentials_block(source, dimension, conclusion):
+        return blocked
     dup = find_duplicate(db, tenant_id, actor.id, period, match_key(name), skip_id=row.id)
     if dup is not None:
         return fail(1172, f"本月已提交过该竞品（{dup.analysis_no}）", {"analysisNo": dup.analysis_no})

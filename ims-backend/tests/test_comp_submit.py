@@ -125,6 +125,32 @@ def test_submit_requires_data_source_then_enters_first_audit():
     assert dup.json()["code"] == 1172
 
 
+def test_submit_requires_three_essentials_without_internal_code():
+    seed_roles()
+    auth = headers("tc_r6")
+    missing_dim = client.post(
+        "/admin-api/ims/comp/analysis",
+        headers=auth,
+        json={**BODY, "compName": "TC缺维度", "dimensionData": {}},
+    ).json()
+    assert missing_dim["code"] == 1174
+    assert missing_dim["msg"] == "来源、维度字段、结论均须明确"
+    assert "1174" not in missing_dim["msg"]
+
+    missing_conclusion = client.post(
+        "/admin-api/ims/comp/analysis",
+        headers=auth,
+        json={**BODY, "compName": "TC缺结论", "conclusion": "  "},
+    ).json()
+    assert missing_conclusion["code"] == 1174
+    assert "1174" not in missing_conclusion["msg"]
+
+    listed = client.get("/admin-api/ims/comp/analysis/list", headers=auth, params={"pageNo": 1, "pageSize": 20}).json()
+    names = {item["compName"] for item in listed["data"]["list"]}
+    assert "TC缺维度" not in names
+    assert "TC缺结论" not in names
+
+
 def test_two_level_audit_stores_and_subscribes():
     seed_roles()
     r6 = headers("tc_r6")

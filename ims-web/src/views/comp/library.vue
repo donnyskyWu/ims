@@ -113,6 +113,7 @@
           <label>{{ dim.label }}</label>
           <input v-model="createForm.dimensionData[dim.key]" :data-testid="'comp-dim-' + dim.key" />
         </div>
+        <div v-if="fieldErrors.dimension" class="ferr" data-testid="comp-dim-error">{{ fieldErrors.dimension }}</div>
         <div class="fld">
           <label>结论与可借鉴点 <span class="req">*</span></label>
           <textarea v-model="createForm.conclusion" data-testid="comp-conclusion" rows="3" />
@@ -527,8 +528,13 @@ function validateCreate() {
   if (!createForm.compName.trim()) fieldErrors.compName = '必填项，请填写'
   if (!createForm.platform) fieldErrors.platform = '必填项，请填写'
   if (!createForm.periodMonth) fieldErrors.periodMonth = '必填项，请填写'
-  if (!createForm.dataSource.trim()) fieldErrors.dataSource = '1171 数据来源必填（仅可采集公开数据，BR-202）'
-  if (!createForm.conclusion.trim()) fieldErrors.conclusion = '必填项，请填写'
+  const hasDimension = Object.values(createForm.dimensionData).some((value) => String(value || '').trim())
+  if (!createForm.dataSource.trim() || !hasDimension || !createForm.conclusion.trim()) {
+    formError.value = '来源、维度字段、结论均须明确'
+  }
+  if (!createForm.dataSource.trim()) fieldErrors.dataSource = '请填写数据来源'
+  if (!hasDimension) fieldErrors.dimension = '请填写维度字段'
+  if (!createForm.conclusion.trim()) fieldErrors.conclusion = '请填写结论与可借鉴点'
   return Object.keys(fieldErrors).length === 0
 }
 
