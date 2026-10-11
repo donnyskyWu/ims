@@ -19,6 +19,7 @@ DICT_SEED = [
     ("dict_sales_platform", "销售平台", [("PRIVATE", "私域"), ("KUAISHOU", "快手"), ("DOUYIN", "抖音"), ("NONE", "无")]),
     ("dict_win_prediction", "红黑", [("RED", "红"), ("BLACK", "黑"), ("UNKNOWN", "待判定")]),
     ("dict_position", "钉钉岗位", [("LIVE_OPS", "直播运营"), ("DIRECTOR", "编导"), ("ANCHOR", "主播达人")]),
+    ("dict_ip_group_level", "IP组等级", [("S", "S级"), ("A", "A级"), ("B", "B级"), ("C", "C级")]),
     ("dict_content_type", "内容类型", [("ARTICLE", "文章"), ("SHORT_VIDEO", "短视频"), ("VIDEO", "视频")]),
     ("dict_ai_scene", "AI 场景", [("TITLE", "标题"), ("COVER", "封面")]),
     ("dict_yes_no", "是否", [("YES", "是"), ("NO", "否")]),
@@ -82,18 +83,26 @@ def seed_dict(db: Session) -> None:
     for dict_type, type_name, items in DICT_SEED:
         if db.scalar(select(DictType).where(DictType.dict_type == dict_type)) is None:
             db.add(DictType(dict_type=dict_type, type_name=type_name, status="ENABLED", tenant_id=0))
-            for index, (value, label) in enumerate(items, start=1):
-                status = "DISABLED" if value == "LEGACY_OFF" else "ENABLED"
-                db.add(
-                    DictData(
-                        dict_type=dict_type,
-                        dict_label=label,
-                        dict_value=value,
-                        sort=index,
-                        status=status,
-                        tenant_id=0,
-                    )
+            db.flush()
+        existing = set(
+            db.scalars(
+                select(DictData.dict_value).where(DictData.dict_type == dict_type, DictData.deleted == 0)
+            ).all()
+        )
+        for index, (value, label) in enumerate(items, start=1):
+            if value in existing:
+                continue
+            status = "DISABLED" if value == "LEGACY_OFF" else "ENABLED"
+            db.add(
+                DictData(
+                    dict_type=dict_type,
+                    dict_label=label,
+                    dict_value=value,
+                    sort=index,
+                    status=status,
+                    tenant_id=0,
                 )
+            )
     db.flush()
     ensure_dict_content_type(db)
     for key, value, remark in PARAM_SEED:

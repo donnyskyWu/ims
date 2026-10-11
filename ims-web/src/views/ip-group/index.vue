@@ -9,7 +9,7 @@
         <button class="btn btn-sec" type="button" disabled>导出</button>
       </div>
     </div>
-    <p v-if="msg" class="hint" style="margin-bottom: 10px">{{ msg }}</p>
+    <p v-if="msg" class="hint" data-testid="ipg-toast" style="margin-bottom: 10px">{{ msg }}</p>
     <div class="ipg-split">
       <div class="ipg-tree-panel card">
         <div class="ipg-tree-hd">
@@ -37,7 +37,7 @@
               <span class="nm">
                 {{ node.groupName }}
                 <span class="cnt">({{ node.memberCount }}/{{ node.accountCount }}/{{ node.anchorCount }})</span>
-                <span v-if="node.level" class="lv">{{ node.level }}级</span>
+                <span v-if="node.level" class="lv">{{ levelText(node.level) }}</span>
               </span>
             </div>
           </template>
@@ -54,7 +54,7 @@
                     <span class="dot"></span>{{ detail.groupType === 'BIG' ? '大组' : '小组' }}
                   </span>
                   <span v-if="detail.level" class="tag" style="background: rgba(0, 113, 227, 0.12); color: #0071e3">
-                    <span class="dot"></span>{{ detail.level }}级
+                    <span class="dot"></span>{{ levelText(detail.level) }}
                   </span>
                 </div>
                 <h2>{{ detail.groupName }}</h2>
@@ -79,7 +79,8 @@
               <tbody>
                 <tr><td class="lbl">组名</td><td>{{ detail.groupName }}</td></tr>
                 <tr><td class="lbl">组类型</td><td>{{ detail.groupType === 'BIG' ? '大组' : '小组' }}</td></tr>
-                <tr><td class="lbl">等级</td><td>{{ detail.level || '—' }}</td></tr>
+                <tr><td class="lbl">组长</td><td>{{ detail.leaderUserName || '—' }}</td></tr>
+                <tr><td class="lbl">等级</td><td>{{ levelText(detail.level) }}</td></tr>
                 <tr><td class="lbl">状态</td><td>{{ detail.status === 1 ? '启用' : '停用' }}</td></tr>
                 <tr><td class="lbl">备注</td><td>{{ detail.remark || '—' }}</td></tr>
               </tbody>
@@ -162,23 +163,81 @@
         </template>
       </div>
     </div>
-    <div v-if="creating" class="drawer on">
-      <div class="drawer-mask" @click="creating = false"></div>
-      <div class="drawer-panel">
-        <h3>{{ createType === 'BIG' ? '新建大组' : '新建小组' }}</h3>
+    <div v-if="creating" class="drawer on" data-testid="ipg-group-drawer">
+      <div class="drawer-h">
+        <b>{{ createType === 'BIG' ? '新建大组' : '新建小组' }}</b>
+      </div>
+      <div class="drawer-b">
         <div class="formrow one">
-          <div class="fld"><label>组名</label><input v-model="createForm.groupName" /></div>
-        </div>
-        <div v-if="createType === 'SMALL'" class="formrow one">
-          <div class="fld"><label>上级大组 id</label><input v-model.number="createForm.parentId" /></div>
+          <div class="fld">
+            <label>IP 组名称<i class="req">*</i></label>
+            <input v-model="createForm.groupName" data-testid="ipg-name" :class="{ err: formErrors.groupName }" />
+            <div v-if="formErrors.groupName" class="ferr" data-testid="ipg-name-err">{{ formErrors.groupName }}</div>
+          </div>
         </div>
         <div class="formrow one">
-          <div class="fld"><label>等级</label><input v-model="createForm.level" placeholder="S/A/B/C" /></div>
+          <div class="fld">
+            <label>组类型</label>
+            <div class="pills" data-testid="ipg-type">
+              <label class="pill">
+                <input v-model="createType" type="radio" value="BIG" :disabled="createType !== 'BIG'" />
+                <span>大组</span>
+              </label>
+              <label class="pill">
+                <input v-model="createType" type="radio" value="SMALL" :disabled="createType !== 'SMALL'" />
+                <span>小组</span>
+              </label>
+            </div>
+          </div>
         </div>
-        <div class="acts" style="margin-top: 16px">
-          <button class="btn btn-pri" type="button" @click="submitCreate">确定</button>
-          <button class="btn btn-sec" type="button" @click="creating = false">取消</button>
+        <div class="formrow one">
+          <div class="fld">
+            <label>上级 IP 组<i v-if="createType === 'SMALL'" class="req">*</i></label>
+            <select
+              v-model="createForm.parentId"
+              data-testid="ipg-parent"
+              :disabled="createType === 'BIG'"
+              :class="{ err: formErrors.parentId }"
+            >
+              <option value="">{{ createType === 'BIG' ? '大组无上级' : '请选择大组' }}</option>
+              <option v-for="group in bigGroups" :key="group.id" :value="String(group.id)">{{ group.groupName }}</option>
+            </select>
+            <div class="hint">小组须选择大组</div>
+            <div v-if="formErrors.parentId" class="ferr" data-testid="ipg-parent-err">{{ formErrors.parentId }}</div>
+          </div>
         </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>组长</label>
+            <input v-model="leaderKeyword" data-testid="ipg-leader-search" placeholder="搜索姓名" />
+            <select v-model="createForm.leaderUserId" data-testid="ipg-leader" style="margin-top: 8px">
+              <option value="">请选择（可空）</option>
+              <option v-for="user in filteredUsers" :key="user.id" :value="String(user.id)">
+                {{ user.nickname || user.username }}
+              </option>
+            </select>
+          </div>
+        </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>等级</label>
+            <select v-model="createForm.level" data-testid="ipg-level">
+              <option value="">未分级</option>
+              <option v-for="item in levels" :key="item.dictValue" :value="item.dictValue">{{ item.dictLabel }}</option>
+            </select>
+          </div>
+        </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>描述</label>
+            <textarea v-model="createForm.description" data-testid="ipg-desc" rows="3" :class="{ err: formErrors.description }" />
+            <div v-if="formErrors.description" class="ferr" data-testid="ipg-desc-err">{{ formErrors.description }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="drawer-f">
+        <button class="btn btn-sec" type="button" @click="creating = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="ipg-group-submit" @click="submitCreate">确认</button>
       </div>
     </div>
   </div>
@@ -218,7 +277,11 @@ const bindAccountId = ref<number | undefined>()
 const bindAuthorId = ref<number | undefined>()
 const creating = ref(false)
 const createType = ref<'BIG' | 'SMALL'>('BIG')
-const createForm = ref({ groupName: '', parentId: undefined as number | undefined, level: '' })
+const createForm = ref({ groupName: '', parentId: '', leaderUserId: '', level: '', description: '' })
+const formErrors = ref<Record<string, string>>({})
+const leaderKeyword = ref('')
+const users = ref<{ id: number; nickname: string; username: string }[]>([])
+const levels = ref<{ dictValue: string; dictLabel: string }[]>([])
 
 const nodeMap = computed(() => {
   const map = new Map<number, TreeNode>()
@@ -246,6 +309,28 @@ const flatNodes = computed(() => {
   walk(tree.value, 0)
   return out
 })
+
+const bigGroups = computed(() => {
+  const out: TreeNode[] = []
+  const walk = (nodes: TreeNode[]) => {
+    for (const node of nodes) {
+      if (node.groupType === 'BIG') out.push(node)
+      if (node.children?.length) walk(node.children)
+    }
+  }
+  walk(tree.value)
+  return out
+})
+const filteredUsers = computed(() => {
+  const key = leaderKeyword.value.trim().toLowerCase()
+  if (!key) return users.value
+  return users.value.filter((user) => `${user.nickname} ${user.username}`.toLowerCase().includes(key))
+})
+function levelText(level?: string) {
+  if (!level) return '未分级'
+  const found = levels.value.find((item) => item.dictValue === level)
+  return found?.dictLabel || `${level}级`
+}
 
 const detail = computed(() => (selectedId.value ? nodeMap.value.get(selectedId.value) : null))
 const parentName = computed(() => {
@@ -291,25 +376,78 @@ function selectGroup(id: number) {
   selectedId.value = id
 }
 
+async function loadUsers() {
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
+    const list = (res.data.data?.list || []) as { id: string | number; nickname?: string; username?: string }[]
+    users.value = list.map((user) => ({
+      id: Number(user.id),
+      nickname: user.nickname || '',
+      username: user.username || '',
+    }))
+  } catch (e) {
+    msg.value = errorMessage(e)
+  }
+}
+
+async function loadLevels() {
+  try {
+    const res = await http.get('/system/dict-data/list', { params: { dictType: 'dict_ip_group_level' } })
+    const list = (res.data.data || []) as { dictValue: string; dictLabel: string; status: string }[]
+    levels.value = list.filter((item) => item.status === 'ENABLED')
+  } catch {
+    levels.value = [
+      { dictValue: 'S', dictLabel: 'S级' },
+      { dictValue: 'A', dictLabel: 'A级' },
+      { dictValue: 'B', dictLabel: 'B级' },
+      { dictValue: 'C', dictLabel: 'C级' },
+    ]
+  }
+}
+
 function openCreate(type: 'BIG' | 'SMALL', parentId?: number) {
   createType.value = type
-  createForm.value = { groupName: '', parentId, level: '' }
+  createForm.value = {
+    groupName: '',
+    parentId: parentId ? String(parentId) : '',
+    leaderUserId: '',
+    level: '',
+    description: '',
+  }
+  formErrors.value = {}
+  leaderKeyword.value = ''
   creating.value = true
+  loadUsers()
+}
+
+function validateCreate() {
+  const errors: Record<string, string> = {}
+  const name = createForm.value.groupName.trim()
+  if (!name) errors.groupName = '必填项，请填写'
+  else if (name.length > 50) errors.groupName = '名称长度 1-50 字符'
+  if (createType.value === 'SMALL' && !createForm.value.parentId) errors.parentId = '必填项，请填写'
+  if (createForm.value.description.trim().length > 200) errors.description = '描述长度 0-200 字符'
+  formErrors.value = errors
+  return Object.keys(errors).length === 0
 }
 
 async function submitCreate() {
+  if (!validateCreate()) return
+  const leader = createForm.value.leaderUserId ? Number(createForm.value.leaderUserId) : null
   try {
-    await http.post('/ip-group/create', {
-      groupName: createForm.value.groupName,
+    const res = await http.post('/ip-group/create', {
+      groupName: createForm.value.groupName.trim(),
       groupType: createType.value,
-      parentId: createType.value === 'SMALL' ? createForm.value.parentId : null,
-      leaderUserId: 1,
+      parentId: createType.value === 'SMALL' ? Number(createForm.value.parentId) : null,
+      leaderUserId: leader,
       level: createForm.value.level,
+      description: createForm.value.description.trim(),
       status: 1,
     })
     creating.value = false
     msg.value = '已创建 IP 组'
     await loadTree()
+    selectedId.value = Number(res.data.data)
   } catch (e) {
     msg.value = errorMessage(e)
   }
@@ -377,7 +515,7 @@ watch(selectedId, () => {
 })
 
 onMounted(async () => {
-  await loadTree()
+  await Promise.all([loadTree(), loadLevels()])
   await loadDetailTabs()
 })
 </script>

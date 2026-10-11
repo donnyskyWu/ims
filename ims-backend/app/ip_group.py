@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
+from app.corp import check_enum, ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import User
 from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, IpGroupMember, PlatformAccount
 
@@ -80,6 +80,32 @@ def check_local_user(db: Session, actor: User, user_id: int | None, required: bo
     if (user.tenant_id or 0) != tenant_of(actor):
         return fail(1504, "资源不可用")
     return None
+
+
+def clean_group_name(name: str | None):
+    text = (name or "").strip()
+    if not text:
+        return None, fail(1001, "IP 组名称必填")
+    if len(text) > 50:
+        return None, fail(1001, "名称长度 1-50 字符")
+    return text, None
+
+
+def clean_description(text: str | None):
+    value = (text or "").strip()
+    if len(value) > 200:
+        return None, fail(1001, "描述长度 0-200 字符")
+    return value, None
+
+
+def clean_level(db: Session, level: str | None):
+    text = (level or "").strip()
+    if not text:
+        return "", None
+    err = check_enum(db, "dict_ip_group_level", text, False)
+    if err is not None:
+        return None, err
+    return text, None
 
 
 def sibling_name_taken(ops: Session, actor: User, parent_id: int | None, name: str, exclude_id: int | None = None) -> bool:
@@ -352,9 +378,15 @@ def ip_group_create(
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
-    name = (body.groupName or "").strip()
-    if not name or len(name) > 50:
-        return fail(1001, "组名长度非法")
+    name, name_err = clean_group_name(body.groupName)
+    if name_err is not None:
+        return name_err
+    description, desc_err = clean_description(body.remark if body.remark is not None else body.description)
+    if desc_err is not None:
+        return desc_err
+    level, level_err = clean_level(db, body.level)
+    if level_err is not None:
+        return level_err
     group_type = (body.groupType or "").upper()
     if group_type not in ("BIG", "SMALL"):
         return fail(1003, "组类型非法")
@@ -378,9 +410,9 @@ def ip_group_create(
         group_type=group_type,
         parent_id=parent_id,
         leader_user_id=body.leaderUserId,
-        level=(body.level or "").strip(),
+        level=level or "",
         sort_order=body.sortOrder or 0,
-        remark=(body.remark or body.description or "").strip(),
+        remark=description or "",
         ding_dept_id=body.dingDeptId,
         status=status_store(body.status),
         tenant_id=tenant_of(actor),
@@ -421,16 +453,25 @@ def ip_group_update(
             return fail(1003, "上级组必须为大组")
         parent_id = body.parentId
         row.parent_id = parent_id
-    new_name = row.group_name if body.groupName is None else body.groupName.strip()
-    if not new_name or len(new_name) > 50:
-        return fail(1001, "组名长度非法")
+    if body.groupName is None:
+        new_name = row.group_name
+    else:
+        new_name, name_err = clean_group_name(body.groupName)
+        if name_err is not None:
+            return name_err
+    if body.level is not None:
+        level, level_err = clean_level(db, body.level)
+        if level_err is not None:
+            return level_err
+        row.level = level or ""
+    if body.remark is not None or body.description is not None:
+        description, desc_err = clean_description(body.remark if body.remark is not None else body.description)
+        if desc_err is not None:
+            return desc_err
+        row.remark = description or ""
     if sibling_name_taken(ops, actor, parent_id, new_name, exclude_id=row.id):
         return fail(1002, "同父级下名称重复")
     row.group_name = new_name
-    if body.level is not None:
-        row.level = body.level.strip()
-    if body.remark is not None or body.description is not None:
-        row.remark = (body.remark or body.description or "").strip()
     if body.sortOrder is not None:
         row.sort_order = body.sortOrder
     if body.dingDeptId is not None:

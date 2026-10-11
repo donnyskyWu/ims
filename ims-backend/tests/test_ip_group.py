@@ -97,6 +97,64 @@ def test_ip_group_tree_members_and_accounts_cascade():
     assert anchors.json()["data"][0]["isPrimary"] is True
 
 
+def test_ip_group_create_field_rules():
+    auth = headers()
+    empty = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "  ", "groupType": "BIG"},
+    )
+    assert empty.json()["code"] == 1001
+    assert "必填" in empty.json()["msg"]
+    too_long = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "名" * 51, "groupType": "BIG"},
+    )
+    assert too_long.json()["code"] == 1001
+    assert too_long.json()["msg"] == "名称长度 1-50 字符"
+    bad_level = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "等级非法组", "groupType": "BIG", "level": "Z"},
+    )
+    assert bad_level.json()["code"] == 1503
+    long_desc = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "描述超长组", "groupType": "BIG", "description": "描" * 201},
+    )
+    assert long_desc.json()["code"] == 1001
+    assert "0-200" in long_desc.json()["msg"]
+    created = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={
+            "groupName": "字段组",
+            "groupType": "BIG",
+            "leaderUserId": 1,
+            "level": "A",
+            "description": "一组说明",
+        },
+    )
+    assert created.json()["code"] == 0
+    listed = client.get("/admin-api/ims/ip-group/list", headers=auth, params={"keyword": "字段组"})
+    row = next(item for item in listed.json()["data"]["list"] if item["groupName"] == "字段组")
+    assert row["level"] == "A"
+    assert row["remark"] == "一组说明"
+    assert row["leaderUserId"] == 1
+    assert row["leaderUserName"] == "管理员"
+    plain = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "无组长大组", "groupType": "BIG"},
+    )
+    assert plain.json()["code"] == 0
+    listed_plain = client.get("/admin-api/ims/ip-group/list", headers=auth, params={"keyword": "无组长大组"})
+    plain_row = next(item for item in listed_plain.json()["data"]["list"] if item["groupName"] == "无组长大组")
+    assert plain_row["leaderUserId"] in (None, 0)
+
+
 def test_ip_group_delete_guard_and_duplicate_name():
     auth = headers()
     created = client.post(

@@ -198,7 +198,7 @@ export async function prepareIpGroupWithAdminMember(
   const bigResp = page.waitForResponse(
     (r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await bigDrawer.getByRole('button', { name: '确定' }).click()
+  await bigDrawer.getByRole('button', { name: '确认' }).click()
   const bigBody = (await (await bigResp).json()) as { code: number; data?: unknown }
   expect(bigBody.code).toBe(0)
   const bigId = idFromOkPayload(bigBody.data)
@@ -216,7 +216,7 @@ export async function prepareIpGroupWithAdminMember(
   const smallResp = page.waitForResponse(
     (r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await smallDrawer.getByRole('button', { name: '确定' }).click()
+  await smallDrawer.getByRole('button', { name: '确认' }).click()
   const smallBody = (await (await smallResp).json()) as { code: number; data?: unknown }
   expect(smallBody.code).toBe(0)
   const ipGroupId = idFromOkPayload(smallBody.data)
