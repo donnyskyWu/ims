@@ -104,6 +104,14 @@ interface FinCostVO {
   entryAt: string;
   /** 客户端幂等令牌（与请求头一致，重试返回已有单据） */
   clientToken: string;
+  /** 仅成本详情返回。草稿/已提交状态下的编辑留痕，按字段一行 */
+  editLogs?: Array<{
+    editorName: string;
+    editedAt: string;            // 北京时间 yyyy-MM-dd HH:mm:ss
+    field: string;
+    oldValue: string;
+    newValue: string;
+  }>;
 }
 ```
 
@@ -116,6 +124,8 @@ interface FinCostVO {
 #### 2.1.4 PUT /admin-api/ims/fin/cost/{sessionCode} — 编辑成本（核准前）
 
 **请求**：`FinCostEntryReq` → **响应** `data`：`FinCostVO`。仅 `DRAFT`/`SUBMITTED` 状态可编辑；核准后修改走更正单（2.1.6）。
+
+草稿和已提交状态下的每次编辑，按实际变更字段写入修改记录（修改人、北京时间、字段、旧值、新值）。同一 `clientToken` 的幂等重放不新增记录。记录随 `GET /fin/cost/{sessionCode}` 的 `editLogs` 返回，在成本详情中展示。核准后的红冲蓝补仍走更正单，不写这条记录。
 
 #### 2.1.5 PUT /admin-api/ims/fin/cost/{sessionCode}/confirm — 财务核准
 

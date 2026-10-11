@@ -304,6 +304,30 @@
         </div>
       </div>
       <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
+      <div v-if="editLogs" data-testid="fin-cost-edit-log" class="hint" style="margin-top: 12px">
+        <div>修改记录</div>
+        <div v-if="!editLogs.length">暂无修改记录</div>
+        <table v-else>
+          <thead>
+            <tr>
+              <th>修改人</th>
+              <th>时间</th>
+              <th>字段</th>
+              <th>旧值</th>
+              <th>新值</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(log, index) in editLogs" :key="index">
+              <td>{{ log.editorName }}</td>
+              <td>{{ log.editedAt }}</td>
+              <td>{{ log.field }}</td>
+              <td>{{ log.oldValue }}</td>
+              <td>{{ log.newValue }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
         <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
@@ -402,6 +426,7 @@ const rate = ref<Record<string, any> | null>(null)
 const pendingRows = ref<Record<string, any>[]>([])
 const enteredRows = ref<Record<string, any>[]>([])
 const drawerOpen = ref(false)
+const editLogs = ref<Array<{ editorName: string; editedAt: string; field: string; oldValue: string; newValue: string }> | null>(null)
 const confirmOpen = ref(false)
 const confirmTarget = ref('')
 const confirmTotal = ref(0)
@@ -752,6 +777,7 @@ function openEntry(row: Record<string, unknown>) {
   fieldErrors.shareDaren = ''
   fieldErrors.shareRealname = ''
   error.value = ''
+  editLogs.value = null
   drawerOpen.value = true
 }
 
@@ -813,6 +839,7 @@ async function viewDetail(sessionCode: string) {
   const res = await http.get(`/fin/cost/${sessionCode}`)
   if (res.data?.code === 0) {
     assignFormFromCost(res.data.data)
+    editLogs.value = res.data.data.editLogs || []
     drawerOpen.value = true
   }
 }

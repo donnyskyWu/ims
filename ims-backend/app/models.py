@@ -1247,6 +1247,24 @@ class FinCost(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class FinCostEditLog(Base):
+    """核准前编辑留痕。一行一个变更字段，写入后不改。"""
+
+    __tablename__ = "ims_fin_cost_edit_log"
+    __table_args__ = (Index("idx_fin_cost_edit", "tenant_id", "session_code"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_code: Mapped[str] = mapped_column(String(32), index=True)
+    field_label: Mapped[str] = mapped_column(String(32), default="")
+    old_value: Mapped[str] = mapped_column(String(512), default="")
+    new_value: Mapped[str] = mapped_column(String(512), default="")
+    editor_user_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    editor_name: Mapped[str] = mapped_column(String(64), default="")
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class FinProfit(Base):
     __tablename__ = "ims_fin_profit"
     __table_args__ = (UniqueConstraint("tenant_id", "session_code", name="uk_fin_profit_session"),)

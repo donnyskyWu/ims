@@ -17,6 +17,7 @@ from app.corp import page_args, tenant_of, user_names
 from app.live import get_session, iso, restrict_sessions, role_tags
 from app.models import (
     FinCost,
+    FinCostEditLog,
     FinPeriod,
     FinProfit,
     FinProfitHistory,
@@ -325,12 +326,12 @@ def validate_body(body: FinCostEntryBody) -> str | None:
     return None
 
 
-def cost_vo(db: Session, row: FinCost) -> dict:
+def cost_vo(db: Session, row: FinCost, *, with_edits: bool = False) -> dict:
     names = user_names(db, [row.entry_user_id])
     session = live_session_row(db, row.tenant_id, row.session_code)
     plan = session.plan_start_time if session is not None else ""
     month = session_period_month(plan, row.session_code)
-    return {
+    payload = {
         "id": row.id,
         "sessionCode": row.session_code,
         "platform": row.platform,
@@ -355,6 +356,9 @@ def cost_vo(db: Session, row: FinCost) -> dict:
         "periodMonth": month,
         "financeStatus": finance_status_of(db, row.tenant_id, month),
     }
+    if with_edits:
+        payload["editLogs"] = cost_edit_log_vos(db, row)
+    return payload
 
 
 def hours_since(ts: str | None) -> float:
@@ -555,6 +559,109 @@ CORRECTION_ITEMS: tuple[tuple[str, str], ...] = (
     ("shareDaren", "达人分成"),
     ("shareRealname", "实名人分成"),
 )
+
+
+COST_EDIT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("commissionRate", "佣金率"),
+    ("commissionAmount", "平台佣金"),
+    ("adCost", "投放成本"),
+    ("rechargeCost", "冲话费摊销"),
+    ("fixedCost", "固定成本"),
+    ("sampleCost", "样品成本"),
+    ("shareDaren", "达人分成"),
+    ("shareRealname", "实名人分成"),
+    ("shareCostType", "分成方式"),
+    ("remark", "备注"),
+    ("entryStatus", "录入状态"),
+)
+EDIT_STATUS_LABEL = {"DRAFT": "草稿", "SUBMITTED": "已提交", "CONFIRMED": "已核准"}
+EDIT_SHARE_LABEL = {"MANUAL": "手工", "ENGINE": "引擎计算"}
+
+
+def beijing_clock(dt: datetime | None) -> str:
+    """库内 naive 时间是 UTC。详情展示换成北京时间。"""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BJ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def show_edit_value(key: str, value) -> str:
+    if key == "entryStatus":
+        return EDIT_STATUS_LABEL.get(str(value), str(value))
+    if key == "shareCostType":
+        return EDIT_SHARE_LABEL.get(str(value), str(value))
+    if key == "remark":
+        return str(value or "")
+    if key == "commissionRate":
+        return f"{round(float(value or 0), 4):.4f}"
+    return f"{money(value):.2f}"
+
+
+def cost_edit_snapshot(row: FinCost) -> dict:
+    return {
+        "commissionRate": round(float(row.commission_rate or 0), 4),
+        "commissionAmount": money(row.commission_amount),
+        "adCost": money(row.ad_cost),
+        "rechargeCost": money(row.recharge_cost),
+        "fixedCost": money(row.fixed_cost),
+        "sampleCost": money(row.sample_cost),
+        "shareDaren": money(row.share_daren),
+        "shareRealname": money(row.share_realname),
+        "shareCostType": row.share_cost_type or "MANUAL",
+        "remark": row.remark or "",
+        "entryStatus": row.entry_status or "DRAFT",
+    }
+
+
+def append_cost_edits(db: Session, row: FinCost, before: dict, actor: User) -> None:
+    """草稿、已提交的编辑按变更字段留痕。首次录入和核准后更正不写。"""
+    if before.get("entryStatus") not in ("DRAFT", "SUBMITTED"):
+        return
+    after = cost_edit_snapshot(row)
+    now = utcnow()
+    name = actor_display(actor)
+    for key, label in COST_EDIT_FIELDS:
+        if before.get(key) == after.get(key):
+            continue
+        db.add(
+            FinCostEditLog(
+                session_code=row.session_code,
+                field_label=label,
+                old_value=show_edit_value(key, before.get(key)),
+                new_value=show_edit_value(key, after.get(key)),
+                editor_user_id=actor.id,
+                editor_name=name,
+                edited_at=now,
+                deleted=0,
+                tenant_id=row.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def cost_edit_log_vos(db: Session, row: FinCost) -> list[dict]:
+    logs = db.scalars(
+        select(FinCostEditLog)
+        .where(
+            FinCostEditLog.tenant_id == row.tenant_id,
+            FinCostEditLog.session_code == row.session_code,
+            FinCostEditLog.deleted == 0,
+        )
+        .order_by(FinCostEditLog.id.desc())
+    ).all()
+    return [
+        {
+            "editorUserId": item.editor_user_id,
+            "editorName": item.editor_name,
+            "editedAt": beijing_clock(item.edited_at),
+            "field": item.field_label,
+            "oldValue": item.old_value,
+            "newValue": item.new_value,
+        }
+        for item in logs
+    ]
 
 
 def cost_amount_snapshot(row: FinCost) -> dict[str, float]:
@@ -1392,10 +1499,14 @@ def cost_submit(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is not None and row.entry_status == "CONFIRMED":
         return fail(1141, "成本已核准，请走更正单")
+    existed = row is not None
+    before = cost_edit_snapshot(row) if existed else None
     if row is None:
         row = FinCost(session_code=session_code, tenant_id=tenant_id, client_token=clientToken)
         db.add(row)
     apply_cost_row(db, row, session, report, body, actor)
+    if existed and before is not None:
+        append_cost_edits(db, row, before, actor)
     row.client_token = clientToken
     db.flush()
     return ok(cost_vo(db, row))
@@ -1415,7 +1526,7 @@ def cost_detail(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None:
         return fail(1141, "成本未录入")
-    return ok(cost_vo(db, row))
+    return ok(cost_vo(db, row, with_edits=True))
 
 
 @router.put("/cost/{session_code}")
@@ -1446,9 +1557,11 @@ def cost_update(
 
     if row.entry_status == "CONFIRMED" or (row.entry_status == "SUBMITTED" and not EDIT_COST_BEFORE_CONFIRM):
         return fail(1141, "成本已核准，请走更正单")
+    before = cost_edit_snapshot(row)
     apply_cost_row(db, row, session, report, body, actor)
+    append_cost_edits(db, row, before, actor)
     db.flush()
-    return ok(cost_vo(db, row))
+    return ok(cost_vo(db, row, with_edits=True))
 
 
 @router.put("/cost/{session_code}/confirm")
