@@ -117,6 +117,24 @@ def clean_level(db: Session, level: str | None):
     return text, None
 
 
+RELATION_TYPES = {"PRIMARY": "主职", "PART_TIME": "兼职"}
+
+
+def clean_position(db: Session, position: str | None, required: bool):
+    text = (position or "").strip()
+    err = check_enum(db, "dict_position", text, required)
+    if err is not None:
+        return None, err
+    return text, None
+
+
+def clean_relation(value: str | None):
+    text = (value or "PRIMARY").strip().upper()
+    if text not in RELATION_TYPES:
+        return None, fail(1001, "主/兼取值非法")
+    return text, None
+
+
 def sibling_name_taken(ops: Session, actor: User, parent_id: int | None, name: str, exclude_id: int | None = None) -> bool:
     stmt = select(IpGroup.id).where(
         IpGroup.deleted == 0,
@@ -590,6 +608,12 @@ def ip_group_add_member(
     err = check_local_user(db, actor, body.userId, required=True)
     if err is not None:
         return err
+    position, pos_err = clean_position(db, body.position, True)
+    if pos_err is not None:
+        return pos_err
+    relation, rel_err = clean_relation(body.relationType)
+    if rel_err is not None:
+        return rel_err
     exists = ops.scalar(
         select(IpGroupMember.id).where(
             IpGroupMember.ip_group_id == group_id,
@@ -605,8 +629,8 @@ def ip_group_add_member(
         IpGroupMember(
             ip_group_id=group_id,
             user_id=body.userId,
-            position=body.position or "",
-            relation_type=(body.relationType or "PRIMARY").upper(),
+            position=position or "",
+            relation_type=relation or "PRIMARY",
             is_leader=is_leader,
             tenant_id=tenant_of(actor),
         )
@@ -631,9 +655,15 @@ def ip_group_update_member(
     if member is None or member.deleted or member.ip_group_id != group_id or member.tenant_id != tenant_of(actor):
         return fail(1504, "资源不可用")
     if body.position is not None:
-        member.position = body.position
+        position, pos_err = clean_position(db, body.position, True)
+        if pos_err is not None:
+            return pos_err
+        member.position = position or ""
     if body.relationType is not None:
-        member.relation_type = body.relationType.upper()
+        relation, rel_err = clean_relation(body.relationType)
+        if rel_err is not None:
+            return rel_err
+        member.relation_type = relation or "PRIMARY"
     if body.isLeader is not None:
         member.is_leader = 1 if body.isLeader else 0
     member.updated_at = utcnow()

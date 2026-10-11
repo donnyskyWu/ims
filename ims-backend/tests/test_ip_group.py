@@ -244,6 +244,55 @@ def test_disabled_ip_group_hidden_from_selectors_and_reference_1501():
     assert any(row["id"] == gid and row["status"] == 1 for row in visible.json()["data"]["list"])
 
 
+def test_ip_group_member_user_position_and_count():
+    auth = headers()
+    big = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "成员大组", "groupType": "BIG"},
+    )
+    big_id = big.json()["data"]
+    small = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "成员小组", "groupType": "SMALL", "parentId": big_id},
+    )
+    gid = small.json()["data"]
+    missing = client.post(
+        f"/admin-api/ims/ip-group/{gid}/members",
+        headers=auth,
+        json={"userId": 99999, "position": "LIVE_OPS", "relationType": "PRIMARY"},
+    )
+    assert missing.json()["code"] == 1204
+    bad_position = client.post(
+        f"/admin-api/ims/ip-group/{gid}/members",
+        headers=auth,
+        json={"userId": 1, "position": "NOT_A_POSITION", "relationType": "PRIMARY"},
+    )
+    assert bad_position.json()["code"] == 1503
+    empty_position = client.post(
+        f"/admin-api/ims/ip-group/{gid}/members",
+        headers=auth,
+        json={"userId": 1, "position": "", "relationType": "PRIMARY"},
+    )
+    assert empty_position.json()["code"] == 1001
+    added = client.post(
+        f"/admin-api/ims/ip-group/{gid}/members",
+        headers=auth,
+        json={"userId": 1, "position": "EDITOR", "relationType": "PRIMARY"},
+    )
+    assert added.json()["code"] == 0
+    members = client.get(f"/admin-api/ims/ip-group/{gid}/members", headers=auth)
+    row = members.json()["data"][0]
+    assert row["userName"] == "管理员"
+    assert row["position"] == "EDITOR"
+    assert row["relationType"] == "PRIMARY"
+    tree = client.get("/admin-api/ims/ip-group/tree", headers=auth).json()["data"]
+    parent = next(item for item in tree if item["id"] == big_id)
+    node = next(child for child in parent["children"] if child["id"] == gid)
+    assert node["memberCount"] == 1
+
+
 def test_ip_group_delete_guard_and_duplicate_name():
     auth = headers()
     created = client.post(

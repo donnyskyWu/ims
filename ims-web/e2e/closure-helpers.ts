@@ -144,12 +144,20 @@ async function ensureAdminMemberOnSelectedGroup(page: Page) {
   await waitIpGroupMembersLoaded(page).catch(() => {})
   const memberRows = page.locator('.ipg-detail-body .tbl-wrap tbody tr').filter({ hasNotText: '暂无成员' })
   if ((await memberRows.count()) > 0) return
-  const addBtn = page.getByRole('button', { name: '+ 添加成员（管理员 id=1）' })
+  const addBtn = page.getByTestId('ipg-add-member')
   if (!(await addBtn.isVisible())) return
+  await addBtn.click()
+  const drawer = page.getByTestId('ipg-member-drawer')
+  await expect(drawer).toBeVisible()
+  await drawer.getByTestId('ipg-member-user').selectOption({ label: '管理员' })
+  const position = drawer.getByTestId('ipg-member-position')
+  await expect(position.locator('option:not([value=""])').first()).toBeAttached()
+  const positionValue = await position.locator('option:not([value=""])').first().getAttribute('value')
+  await position.selectOption(positionValue || '')
   const addResp = page.waitForResponse(
     (r) => r.url().includes('/ip-group/') && r.url().includes('/members') && r.request().method() === 'POST',
   )
-  await addBtn.click()
+  await drawer.getByTestId('ipg-member-submit').click()
   const addBody = (await (await addResp).json()) as { code: number; msg?: string }
   if (addBody.code !== 0 && !String(addBody.msg || '').includes('成员已存在')) {
     expect(addBody.code).toBe(0)

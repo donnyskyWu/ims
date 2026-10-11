@@ -106,7 +106,7 @@
             </table>
             <div v-else-if="tab === '成员管理'" class="tbl-block">
               <div class="acts" style="margin: 12px 0">
-                <button class="btn btn-pri btn-sm" type="button" @click="addMember">+ 添加成员（管理员 id=1）</button>
+                <button class="btn btn-pri btn-sm" type="button" data-testid="ipg-add-member" @click="openAddMember">+ 添加成员</button>
               </div>
               <div class="tbl-wrap">
                 <table>
@@ -265,6 +265,52 @@
         <button class="btn btn-pri" type="button" data-testid="ipg-group-submit" @click="submitGroup">确认</button>
       </div>
     </div>
+    <div v-if="memberOpen" class="drawer on" data-testid="ipg-member-drawer">
+      <div class="drawer-h"><b>添加成员</b></div>
+      <div class="drawer-b">
+        <div class="formrow one">
+          <div class="fld">
+            <label>用户<i class="req">*</i></label>
+            <input v-model="memberKeyword" data-testid="ipg-member-user-search" placeholder="搜索姓名" />
+            <select
+              v-model="memberForm.userId"
+              data-testid="ipg-member-user"
+              style="margin-top: 8px"
+              :class="{ err: memberErrors.userId }"
+            >
+              <option value="">请按姓名选择</option>
+              <option v-for="user in filteredMemberUsers" :key="user.id" :value="String(user.id)">
+                {{ user.nickname || user.username }}
+              </option>
+            </select>
+            <div v-if="memberErrors.userId" class="ferr" data-testid="ipg-member-user-err">{{ memberErrors.userId }}</div>
+          </div>
+        </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>岗位<i class="req">*</i></label>
+            <select v-model="memberForm.position" data-testid="ipg-member-position" :class="{ err: memberErrors.position }">
+              <option value="">请选择</option>
+              <option v-for="item in positions" :key="item.dictValue" :value="item.dictValue">{{ item.dictLabel }}</option>
+            </select>
+            <div v-if="memberErrors.position" class="ferr" data-testid="ipg-member-position-err">{{ memberErrors.position }}</div>
+          </div>
+        </div>
+        <div class="formrow one">
+          <div class="fld">
+            <label>主/兼</label>
+            <select v-model="memberForm.relationType" data-testid="ipg-member-relation">
+              <option value="PRIMARY">主职</option>
+              <option value="PART_TIME">兼职</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="drawer-f">
+        <button class="btn btn-sec" type="button" @click="memberOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="ipg-member-submit" @click="submitMember">确认</button>
+      </div>
+    </div>
     <div v-if="confirming" class="cfwrap on" data-testid="ipg-confirm">
       <div class="cfmask" @click="confirming = null"></div>
       <div class="cfcard danger">
@@ -328,6 +374,11 @@ const formErrors = ref<Record<string, string>>({})
 const leaderKeyword = ref('')
 const users = ref<{ id: number; nickname: string; username: string }[]>([])
 const levels = ref<{ dictValue: string; dictLabel: string }[]>([])
+const positions = ref<{ dictValue: string; dictLabel: string }[]>([])
+const memberOpen = ref(false)
+const memberKeyword = ref('')
+const memberForm = ref({ userId: '', position: '', relationType: 'PRIMARY' })
+const memberErrors = ref<Record<string, string>>({})
 
 const nodeMap = computed(() => {
   const map = new Map<number, TreeNode>()
@@ -367,11 +418,14 @@ const bigGroups = computed(() => {
   walk(tree.value)
   return out
 })
-const filteredUsers = computed(() => {
-  const key = leaderKeyword.value.trim().toLowerCase()
+const filteredUsers = computed(() => filterUsers(leaderKeyword.value))
+const filteredMemberUsers = computed(() => filterUsers(memberKeyword.value))
+
+function filterUsers(keyword: string) {
+  const key = keyword.trim().toLowerCase()
   if (!key) return users.value
   return users.value.filter((user) => `${user.nickname} ${user.username}`.toLowerCase().includes(key))
-})
+}
 function levelText(level?: string) {
   if (!level) return '未分级'
   const found = levels.value.find((item) => item.dictValue === level)
@@ -459,11 +513,15 @@ async function loadUsers() {
   }
 }
 
+async function loadDict(dictType: string) {
+  const res = await http.get('/system/dict-data/list', { params: { dictType } })
+  const list = (res.data.data || []) as { dictValue: string; dictLabel: string; status: string }[]
+  return list.filter((item) => item.status === 'ENABLED')
+}
+
 async function loadLevels() {
   try {
-    const res = await http.get('/system/dict-data/list', { params: { dictType: 'dict_ip_group_level' } })
-    const list = (res.data.data || []) as { dictValue: string; dictLabel: string; status: string }[]
-    levels.value = list.filter((item) => item.status === 'ENABLED')
+    levels.value = await loadDict('dict_ip_group_level')
   } catch {
     levels.value = [
       { dictValue: 'S', dictLabel: 'S级' },
@@ -471,6 +529,14 @@ async function loadLevels() {
       { dictValue: 'B', dictLabel: 'B级' },
       { dictValue: 'C', dictLabel: 'C级' },
     ]
+  }
+}
+
+async function loadPositions() {
+  try {
+    positions.value = await loadDict('dict_position')
+  } catch {
+    positions.value = []
   }
 }
 
@@ -555,17 +621,36 @@ async function submitGroup() {
   }
 }
 
-async function addMember() {
-  if (!selectedId.value) return
+function openAddMember() {
+  memberForm.value = { userId: '', position: '', relationType: 'PRIMARY' }
+  memberErrors.value = {}
+  memberKeyword.value = ''
+  memberOpen.value = true
+  loadUsers()
+}
+
+function validateMember() {
+  const errors: Record<string, string> = {}
+  if (!memberForm.value.userId) errors.userId = '必填项，请填写'
+  if (!memberForm.value.position) errors.position = '必填项，请填写'
+  memberErrors.value = errors
+  return Object.keys(errors).length === 0
+}
+
+async function submitMember() {
+  if (!selectedId.value || !validateMember()) return
   try {
     await http.post(`/ip-group/${selectedId.value}/members`, {
-      userId: 1,
-      position: 'OPERATOR',
-      relationType: 'PRIMARY',
+      userId: Number(memberForm.value.userId),
+      position: memberForm.value.position,
+      relationType: memberForm.value.relationType || 'PRIMARY',
     })
+    memberOpen.value = false
     msg.value = '已添加成员'
-    await loadDetailTabs()
+    const current = selectedId.value
     await loadTree()
+    selectedId.value = current
+    await loadDetailTabs()
   } catch (e) {
     msg.value = apiError(e)
   }
@@ -629,7 +714,7 @@ watch(selectedId, () => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadTree(), loadLevels()])
+  await Promise.all([loadTree(), loadLevels(), loadPositions()])
   await loadDetailTabs()
 })
 </script>
