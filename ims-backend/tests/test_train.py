@@ -1687,6 +1687,81 @@ def test_train_task_list_beijing_time_finished_count_and_dept_name():
     assert rec["finishedAt"] in (None, "")
 
 
+def test_train_record_dept_name_comes_from_org_catalog_not_id():
+    """本人事件没有部门名时，仍用同一部门编号在其他组织事件里的名称。"""
+    auth = headers()
+    material_id = _published_material(auth, "部门目录资料")
+    username = f"deptcat_{uuid.uuid4().hex[:8]}"
+    created_user = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": "只挂编号", "mobile": f"135{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    user_body = created_user.json()
+    assert user_body["code"] == 0, user_body
+    user_id = int(user_body["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(UserDept(user_id=user_id, dept_id=7301, tenant_id=0))
+        db.add(
+            UserMapping(
+                user_id=user_id,
+                dingtalk_user_id=f"dt-{username}",
+                dept_ids=[7301],
+                tenant_id=0,
+            )
+        )
+        db.add(
+            OrgEvent(
+                dingtalk_event_id=f"evt-cat-{username}",
+                event_type="hire",
+                idempotency_key=f"idem-cat-{username}",
+                user_id=None,
+                after_dept="内容部",
+                payload_json=json.dumps({"deptIds": [7301], "deptNames": ["内容部"]}, ensure_ascii=False),
+                sync_status="SUCCESS",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    name = f"部门名 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [user_id],
+            "deadline": "2026-10-18T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    rec = records.json()["data"]["list"][0]
+    assert rec["deptName"] == "内容部"
+    assert "7301" not in rec["deptName"]
+
+    db = SessionLocal()
+    try:
+        task = db.get(TrainTask, task_id)
+        from app.train import deadline_text
+
+        assert deadline_text(task.deadline) == "2026-10-18 18:00"
+    finally:
+        db.close()
+
+
 def datetime_from_iso(text: str):
     from datetime import datetime
 

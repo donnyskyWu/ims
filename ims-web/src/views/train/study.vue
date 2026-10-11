@@ -19,7 +19,9 @@
     <div v-else-if="task" class="g2">
       <div class="card head">
         <div style="font-weight: 600; font-size: 16px">{{ task.taskName }}</div>
-        <div class="meta">编号 {{ task.taskNo }} · 截止 {{ task.deadline }} · {{ confirmTypeLabel }}</div>
+        <div class="meta">
+          编号 {{ task.taskNo }} · 截止 <span data-testid="train-study-deadline">{{ deadlineText }}</span> · {{ confirmTypeLabel }}
+        </div>
         <p v-if="overdueDays > 0" class="hint overdue-banner" data-testid="train-study-overdue">
           本任务已逾期 {{ overdueDays }} 天，补学仍计入完成率统计
         </p>
@@ -280,6 +282,26 @@ const studyHoursText = computed(() => {
   const rest = minutes % 60
   return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`
 })
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)) return raw
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
+const deadlineText = computed(() => fmtBj(task.value?.deadline))
 
 const confirmTypeLabel = computed(() =>
   task.value?.confirmType === 'QUIZ' ? '自测问卷' : '学时达标',

@@ -22,6 +22,7 @@ from app.bi_br212 import primary_dept_id
 from app.models import (
     DictData,
     ImsFile,
+    OrgEvent,
     Role,
     Todo,
     TrainMaterial,
@@ -771,12 +772,57 @@ def as_date(value) -> date:
     return value
 
 
+_DEPT_PLACEHOLDER = re.compile(r"^部门\s*#?\s*(\d+)$")
+
+
 def dept_label(dept_id: int) -> str:
     return f"部门 {dept_id}" if dept_id else "未分配"
 
 
+def placeholder_dept_name(name: str, dept_id: int) -> bool:
+    text = (name or "").strip()
+    if not text or text == "未分配":
+        return True
+    match = _DEPT_PLACEHOLDER.fullmatch(text)
+    return match is not None and int(match.group(1)) == int(dept_id or 0)
+
+
+def dept_name_catalog(db: Session) -> dict[int, str]:
+    """部门编号 → 名称。来自组织事件，后发生的事件覆盖先发生的。"""
+    stored = getattr(db, "_train_dept_catalog", None)
+    if isinstance(stored, dict):
+        return stored
+    from app.org_sync import read_payload
+
+    found: dict[int, str] = {}
+    rows = db.execute(
+        select(OrgEvent.payload_json, OrgEvent.after_dept).order_by(OrgEvent.id.asc())
+    ).all()
+    for payload_json, after_dept in rows:
+        payload = read_payload(payload_json or "")
+        raw_ids = payload.get("deptIds") or []
+        raw_names = payload.get("deptNames") or []
+        if not isinstance(raw_ids, list):
+            continue
+        dept_ids = [int(item) for item in raw_ids if str(item).isdigit()]
+        labels = [str(item).strip() for item in raw_names] if isinstance(raw_names, list) else []
+        for index, dept_id in enumerate(dept_ids):
+            label = labels[index] if index < len(labels) else ""
+            if label and not placeholder_dept_name(label, dept_id):
+                found[dept_id] = label
+        if len(dept_ids) == 1:
+            after = (after_dept or "").strip() or str(payload.get("afterDept") or "").strip()
+            if after and not placeholder_dept_name(after, dept_ids[0]):
+                found[dept_ids[0]] = after
+    try:
+        setattr(db, "_train_dept_catalog", found)
+    except Exception:
+        pass
+    return found
+
+
 def user_dept_view(db: Session, user_id: int, tenant_id: int, cache: dict[int, tuple[int, str]]) -> tuple[int, str]:
-    """部门编号沿用主部门，名称优先取组织事件里的部门名。"""
+    """部门编号沿用主部门。名称取组织事件；没有名称时才显示「部门 {编号}」。"""
     found = cache.get(user_id)
     if found is not None:
         return found
@@ -784,10 +830,18 @@ def user_dept_view(db: Session, user_id: int, tenant_id: int, cache: dict[int, t
 
     ids, names = user_dept_snapshot(db, user_id, tenant_id)
     dept_id = int(ids[0]) if ids else primary_dept_id(db, user_id, tenant_id)
-    if names and str(names[0]).strip():
-        name = str(names[0]).strip()
-    else:
-        name = dept_label(dept_id)
+    raw_name = ""
+    if ids and names and len(names) == len(ids):
+        try:
+            index = [int(item) for item in ids].index(dept_id)
+            raw_name = str(names[index]).strip()
+        except ValueError:
+            raw_name = str(names[0]).strip()
+    elif names:
+        raw_name = str(names[0]).strip()
+    if placeholder_dept_name(raw_name, dept_id):
+        raw_name = dept_name_catalog(db).get(dept_id, "")
+    name = raw_name if raw_name and not placeholder_dept_name(raw_name, dept_id) else dept_label(dept_id)
     cache[user_id] = (dept_id, name)
     return cache[user_id]
 
