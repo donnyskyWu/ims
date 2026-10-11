@@ -30,10 +30,12 @@ def test_air_kb_upload_page_download_stub():
     )
     assert cate_tree.json()["code"] == 0
 
+    payload = b"%PDF-1.4\npolicy-bytes\n"
     up = client.post(
         "/admin-api/ims/air/kb/doc/upload",
         headers=auth,
-        json={"title": "制度汇编", "fileKey": "kb/2026/policy.pdf", "fileSize": 1024},
+        data={"title": "制度汇编"},
+        files={"file": ("policy.pdf", payload, "application/pdf")},
     )
     assert up.json()["code"] == 0
     assert up.json()["data"]["auditStatus"] == ["PENDING"]
@@ -64,7 +66,8 @@ def test_air_kb_upload_page_download_stub():
     assert dl.status_code == 200
     assert "attachment" in dl.headers["content-disposition"]
     assert "policy.pdf" in dl.headers["content-disposition"]
-    assert b"policy.pdf" in dl.content
+    assert dl.headers["content-type"].startswith("application/pdf")
+    assert dl.content == payload
 
 
 def test_air_kb_audit_reject_requires_note():

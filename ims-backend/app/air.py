@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -65,6 +67,19 @@ class KbImportTextBody(BaseModel):
 
 
 FILE_EXTS = frozenset({"pdf", "doc", "docx", "md", "html", "htm", "xls", "xlsx", "txt", "csv"})
+FILE_MEDIA = {
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "md": "text/markdown",
+    "html": "text/html",
+    "htm": "text/html",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "txt": "text/plain",
+    "csv": "text/csv",
+}
+MAX_KB_FILE_BYTES = 20 * 1024 * 1024
 
 
 class KbCategoryBody(BaseModel):
@@ -1146,13 +1161,131 @@ def insert_pending_doc(
     return row
 
 
+def kb_storage_root() -> Path:
+    from app.content_file import storage_root
+
+    return storage_root()
+
+
+def safe_upload_name(name: str) -> str:
+    base = (name or "").replace("\\", "/").replace("\x00", "").rsplit("/", 1)[-1].strip()
+    if not base or base in {".", ".."} or ".." in base:
+        return ""
+    return base[:180]
+
+
+def save_kb_file(tenant_id: int, filename: str, data: bytes) -> str:
+    month = datetime.now(BJ).strftime("%Y%m")
+    file_key = f"kb/{tenant_id}/{month}/{uuid.uuid4().hex}/{filename}"
+    root = kb_storage_root().resolve()
+    path = (root / file_key).resolve()
+    if root not in path.parents:
+        raise ValueError("escape")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return file_key
+
+
+def read_kb_file(file_key: str) -> bytes | None:
+    key = (file_key or "").replace("\\", "/").strip()
+    if not key.startswith("kb/") or key.startswith("/") or ".." in key.split("/"):
+        return None
+    root = kb_storage_root().resolve()
+    path = (root / key).resolve()
+    if root not in path.parents or not path.is_file():
+        return None
+    return path.read_bytes()
+
+
+def media_for_name(filename: str, declared: str = "") -> str:
+    ext = extension_of(filename)
+    mapped = FILE_MEDIA.get(ext, "")
+    given = (declared or "").split(";")[0].strip().lower()
+    if given and given != "application/octet-stream":
+        return given
+    return mapped or "application/octet-stream"
+
+
+def finish_file_doc(
+    db: Session,
+    actor: User,
+    *,
+    kb_id: int,
+    category_id: int,
+    secret_level: str,
+    title: str,
+    file_key: str,
+    content_type: str,
+    file_size: int,
+    body: str,
+) -> object:
+    kb, secret, tenant_id, error = resolve_upload_kb(db, actor, kb_id, category_id, secret_level)
+    if error is not None:
+        return error
+    row = insert_pending_doc(
+        db,
+        kb=kb,
+        tenant_id=tenant_id,
+        actor_id=actor.id,
+        title=title,
+        file_key=file_key,
+        content_type=content_type,
+        file_size=file_size,
+        cate_id=category_id,
+        secret=secret,
+        source_type="FILE",
+        body=body,
+    )
+    names = user_names(db, {actor.id})
+    return ok({"docIds": [row.id], "auditStatus": [row.audit_status], "doc": kb_doc_vo(row, names)})
+
+
 @router.post("/kb/doc/upload")
-def kb_doc_upload(
-    body: KbUploadBody,
+async def kb_doc_upload(
+    request: Request,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    file_name = (body.fileName or "").strip()
+    ctype = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ctype:
+        form = await request.form()
+        upload = form.get("file")
+        filename = safe_upload_name(getattr(upload, "filename", "") or "")
+        if upload is None or not filename or not hasattr(upload, "read"):
+            return fail(1001, "请选择文件")
+        ext = extension_of(filename)
+        if ext not in FILE_EXTS:
+            return fail(1001, "不支持的文件类型")
+        data = await upload.read()
+        if len(data) > MAX_KB_FILE_BYTES:
+            return fail(1001, "文件不超过 20MB")
+        try:
+            kb_id = int(form.get("kbId") or 0)
+            category_id = int(form.get("categoryId") or form.get("cateId") or 0)
+        except (TypeError, ValueError):
+            return fail(1001, "知识库不存在")
+        file_key = save_kb_file(tenant_of(actor), filename, data)
+        title = (str(form.get("title") or "")).strip() or filename
+        return finish_file_doc(
+            db,
+            actor,
+            kb_id=kb_id,
+            category_id=category_id,
+            secret_level=str(form.get("secretLevel") or ""),
+            title=title[:256],
+            file_key=file_key,
+            content_type=media_for_name(filename, getattr(upload, "content_type", "") or ""),
+            file_size=len(data),
+            body="",
+        )
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    body = KbUploadBody.model_validate(payload)
+    file_name = safe_upload_name(body.fileName) or (body.fileName or "").strip()
     file_key = (body.fileKey or "").strip()
     title = (body.title or "").strip() or file_name
     if not file_key and not file_name:
@@ -1164,28 +1297,20 @@ def kb_doc_upload(
     if not title:
         return fail(1001, "标题必填")
     if not file_key:
-        safe = file_name.replace("\\", "/").rsplit("/", 1)[-1].replace(" ", "_")
+        safe = file_name.replace(" ", "_")
         file_key = f"kb/{utcnow().astimezone(BJ).year}/{safe}"
-    cate_id = int(body.categoryId or body.cateId or 0)
-    kb, secret, tenant_id, error = resolve_upload_kb(db, actor, int(body.kbId or 0), cate_id, body.secretLevel)
-    if error is not None:
-        return error
-    row = insert_pending_doc(
+    return finish_file_doc(
         db,
-        kb=kb,
-        tenant_id=tenant_id,
-        actor_id=actor.id,
+        actor,
+        kb_id=int(body.kbId or 0),
+        category_id=int(body.categoryId or body.cateId or 0),
+        secret_level=body.secretLevel,
         title=title,
         file_key=file_key,
-        content_type=(body.contentType or "application/octet-stream").strip(),
+        content_type=media_for_name(file_name or file_key, body.contentType),
         file_size=body.fileSize or len((body.content or "").encode("utf-8")),
-        cate_id=cate_id,
-        secret=secret,
-        source_type="FILE",
         body=body.content or "",
     )
-    names = user_names(db, {actor.id})
-    return ok({"docIds": [row.id], "auditStatus": [row.audit_status], "doc": kb_doc_vo(row, names)})
 
 
 @router.post("/kb/doc/import-url")
@@ -1352,17 +1477,28 @@ def kb_doc_download(
     reason = download_block_reason(db, actor, row)
     if reason:
         return fail(1001, reason)
-    payload, media, filename = doc_download_bytes(row)
+    packed = doc_download_bytes(row)
+    if packed is None:
+        return fail(1001, "原文件未保存，请重新上传")
+    payload, media, filename = packed
     return Response(content=payload, media_type=media, headers={"Content-Disposition": content_disposition(filename)})
 
 
 def download_filename(row: AirKbDoc) -> str:
+    if (row.source_type or "") == "TEXT":
+        title = (row.title or "").strip() or "document"
+        base = title.replace("\\", "/").rsplit("/", 1)[-1]
+        if "." not in base:
+            base = f"{base}.txt"
+        return base[:180]
     raw = (row.file_key or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
     if raw and "." in raw and not raw.lower().startswith("http"):
         return raw[:180]
-    title = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in (row.title or "document"))[:80] or "document"
+    title = (row.title or "").strip() or "document"
     ext = "url" if (row.source_type or "") == "URL" else "txt"
-    return f"{title}.{ext}"
+    if "." in title.replace("\\", "/").rsplit("/", 1)[-1]:
+        return title.replace("\\", "/").rsplit("/", 1)[-1][:180]
+    return f"{title}.{ext}"[:180]
 
 
 def content_disposition(filename: str) -> str:
@@ -1370,13 +1506,16 @@ def content_disposition(filename: str) -> str:
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
-def doc_download_bytes(row: AirKbDoc) -> tuple[bytes, str, str]:
+def doc_download_bytes(row: AirKbDoc) -> tuple[bytes, str, str] | None:
     filename = download_filename(row)
+    kind = row.source_type or "FILE"
+    if kind == "FILE":
+        blob = read_kb_file(row.file_key)
+        if blob is not None:
+            return blob, media_for_name(filename, row.content_type or ""), filename
+        text = row.body or ""
+        if text:
+            return text.encode("utf-8"), "text/plain; charset=utf-8", filename
+        return None
     text = row.body or ""
-    if text:
-        media = (row.content_type or "text/plain").split(";")[0].strip() or "text/plain"
-        if not media.startswith("text/") and media not in {"application/json", "application/xml"}:
-            media = "text/plain"
-        return text.encode("utf-8"), f"{media}; charset=utf-8", filename
-    note = f"{row.title or filename}\n{row.file_key or ''}\n"
-    return note.encode("utf-8"), "text/plain; charset=utf-8", filename
+    return text.encode("utf-8"), "text/plain; charset=utf-8", filename

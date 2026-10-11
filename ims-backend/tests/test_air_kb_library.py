@@ -250,7 +250,8 @@ def test_kb_download_respects_publish_and_secret():
     internal = client.post(
         "/admin-api/ims/air/kb/doc/upload",
         headers=auth,
-        json={"title": "TC内部可下", "fileKey": "kb/c065/internal.txt", "kbId": kb_id, "secretLevel": "INTERNAL"},
+        data={"kbId": str(kb_id), "secretLevel": "INTERNAL", "title": "TC内部可下"},
+        files={"file": ("internal.txt", b"internal-bytes", "text/plain")},
     )
     internal_id = internal.json()["data"]["docIds"][0]
     client.post("/admin-api/ims/air/kb/doc/audit", headers=auth, json={"docId": internal_id, "approve": True})
@@ -261,7 +262,8 @@ def test_kb_download_respects_publish_and_secret():
     secret = client.post(
         "/admin-api/ims/air/kb/doc/upload",
         headers=auth,
-        json={"title": "TC机密下载", "fileKey": "kb/c065/secret.txt", "kbId": kb_id, "secretLevel": "CONFIDENTIAL"},
+        data={"kbId": str(kb_id), "secretLevel": "CONFIDENTIAL", "title": "TC机密下载"},
+        files={"file": ("secret.txt", b"secret-bytes", "text/plain")},
     )
     doc_id = secret.json()["data"]["docIds"][0]
     pending = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=reader)

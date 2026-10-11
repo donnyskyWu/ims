@@ -483,6 +483,7 @@ const deleteCat = ref<FlatCat | null>(null)
 
 const FILE_EXTS = ['pdf', 'doc', 'docx', 'md', 'html', 'htm', 'xls', 'xlsx', 'txt', 'csv']
 const showUpload = ref(false)
+const uploadFile = ref<File | null>(null)
 const upload = reactive({
   mode: 'file' as 'file' | 'url' | 'text',
   kbId: '',
@@ -794,6 +795,7 @@ function openUpload() {
   upload.fileName = ''
   upload.fileSize = 0
   upload.contentType = ''
+  uploadFile.value = null
   upload.urls = ''
   upload.title = ''
   upload.content = ''
@@ -803,7 +805,8 @@ function openUpload() {
 
 function onUploadFile(event: Event) {
   const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
+  const file = input.files?.[0] || null
+  uploadFile.value = file
   upload.fileName = file?.name || ''
   upload.fileSize = file?.size || 0
   upload.contentType = file?.type || 'application/octet-stream'
@@ -836,14 +839,16 @@ async function submitUpload() {
     const categoryId = upload.categoryId ? Number(upload.categoryId) : undefined
     const secretLevel = upload.secretLevel || undefined
     if (upload.mode === 'file') {
-      await http.post('/air/kb/doc/upload', {
-        kbId,
-        categoryId,
-        fileName: upload.fileName,
-        fileSize: upload.fileSize,
-        contentType: upload.contentType || 'application/octet-stream',
-        secretLevel,
-      })
+      if (!uploadFile.value) {
+        uploadErrors.file = '必填项，请填写'
+        return
+      }
+      const body = new FormData()
+      body.append('file', uploadFile.value, uploadFile.value.name)
+      body.append('kbId', String(kbId))
+      if (categoryId) body.append('categoryId', String(categoryId))
+      if (secretLevel) body.append('secretLevel', secretLevel)
+      await http.post('/air/kb/doc/upload', body)
     } else if (upload.mode === 'url') {
       const urls = upload.urls.split(/\n+/).map((item) => item.trim()).filter(Boolean)
       await http.post('/air/kb/doc/import-url', { kbId, categoryId, urls, secretLevel })
