@@ -35,10 +35,10 @@ from app.models import (
     FlowTemplateVersion,
     Role,
     User,
+    UserDept,
     UserRole,
     WorkMessage,
 )
-from app.scope import dept_ids_of, enabled_roles
 
 router = APIRouter(prefix="/flow", tags=["flow"])
 
@@ -465,16 +465,26 @@ def ensure_pending_task(
 
 
 def sync_seed_tasks(db: Session, tenant_id: int, default_assignee_id: int) -> None:
-    """给还没有待办的运行中实例补一条。处理人按节点规则解析，解析不到再用发起人。
+    """只给还没有待办的运行中实例补一条。已有待办的不再逐人重解析。
 
     default_assignee_id 只在发起人也为空时兜底，避免谁打开待办就把单子领走。
     """
+    pending = (
+        select(FlowTask.instance_id)
+        .where(
+            FlowTask.deleted == 0,
+            FlowTask.tenant_id == tenant_id,
+            FlowTask.task_status == "PENDING",
+        )
+        .distinct()
+    )
     running = list(
         db.scalars(
             select(FlowInstance).where(
                 FlowInstance.deleted == 0,
                 FlowInstance.tenant_id == tenant_id,
                 FlowInstance.instance_status == "RUNNING",
+                FlowInstance.id.notin_(pending),
             )
         ).all()
     )
@@ -631,32 +641,61 @@ def _role_matches_position(role: Role, codes: list[str]) -> bool:
     return False
 
 
-def _users_in_tenant(db: Session, tenant_id: int) -> list[User]:
-    return list(
+class _OrgIndex:
+    """一次取出本租户的人、角色、部门。避免按人 flush + 查角色。"""
+
+    __slots__ = ("users", "roles", "depts")
+
+    def __init__(self, users: list[User], roles: dict[int, list[Role]], depts: dict[int, set[int]]) -> None:
+        self.users = users
+        self.roles = roles
+        self.depts = depts
+
+
+def _org(db: Session, tenant_id: int) -> _OrgIndex:
+    cache = db.info.setdefault("flow_org", {})
+    hit = cache.get(tenant_id)
+    if hit is not None:
+        return hit
+    users = list(
         db.scalars(
             select(User).where(User.deleted == 0, User.status == "ENABLED", User.tenant_id == tenant_id)
         ).all()
     )
-
-
-def _share_dept(db: Session, left: User, right: User) -> bool:
-    return bool(set(dept_ids_of(db, left)) & set(dept_ids_of(db, right)))
+    roles: dict[int, list[Role]] = {}
+    depts: dict[int, set[int]] = {}
+    ids = [user.id for user in users]
+    if ids:
+        for uid, role in db.execute(
+            select(UserRole.user_id, Role)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(UserRole.user_id.in_(ids), Role.deleted == 0, Role.status == "ENABLED")
+        ).all():
+            roles.setdefault(int(uid), []).append(role)
+        for uid, dept_id in db.execute(
+            select(UserDept.user_id, UserDept.dept_id).where(
+                UserDept.user_id.in_(ids),
+                UserDept.tenant_id == tenant_id,
+            )
+        ).all():
+            depts.setdefault(int(uid), set()).add(int(dept_id))
+    hit = _OrgIndex(users, roles, depts)
+    cache[tenant_id] = hit
+    return hit
 
 
 def _pick_among(db: Session, initiator: User, candidates: list[User]) -> User | None:
     others = [user for user in candidates if user.id != initiator.id]
     if not others:
         return None
-    same = [user for user in others if _share_dept(db, initiator, user)]
+    mine = _org(db, initiator.tenant_id or 0).depts.get(initiator.id, set())
+    same = [user for user in others if mine & _org(db, initiator.tenant_id or 0).depts.get(user.id, set())]
     return (same or others)[0]
 
 
 def _leaders(db: Session, tenant_id: int) -> list[User]:
-    found: list[User] = []
-    for user in _users_in_tenant(db, tenant_id):
-        if any(_role_is_leader(role) for role in enabled_roles(db, user)):
-            found.append(user)
-    return found
+    org = _org(db, tenant_id)
+    return [user for user in org.users if any(_role_is_leader(role) for role in org.roles.get(user.id, []))]
 
 
 def graph_nodes(db: Session, tpl: FlowTemplate | None, *, version_no: int | None = None) -> list[dict]:
@@ -704,15 +743,16 @@ def _is_direct_superior_role(role: Role) -> bool:
 
 
 def _direct_superior(db: Session, initiator: User) -> User | None:
-    dept_ids = set(dept_ids_of(db, initiator))
+    org = _org(db, initiator.tenant_id or 0)
+    dept_ids = org.depts.get(initiator.id, set())
     if not dept_ids:
         return None
-    for user in _users_in_tenant(db, initiator.tenant_id or 0):
+    for user in org.users:
         if user.id == initiator.id:
             continue
-        if not dept_ids & set(dept_ids_of(db, user)):
+        if not dept_ids & org.depts.get(user.id, set()):
             continue
-        if any(_is_direct_superior_role(role) for role in enabled_roles(db, user)):
+        if any(_is_direct_superior_role(role) for role in org.roles.get(user.id, [])):
             return user
     return None
 
@@ -724,8 +764,9 @@ def _domain_owners(db: Session, tenant_id: int, domain: str) -> list[User]:
         return []
     exact: list[User] = []
     named: list[User] = []
-    for user in _users_in_tenant(db, tenant_id):
-        roles = enabled_roles(db, user)
+    org = _org(db, tenant_id)
+    for user in org.users:
+        roles = org.roles.get(user.id, [])
         if any((role.role_key or "").lower() == wanted for role in roles):
             exact.append(user)
         elif hint and any(hint in (role.role_name or "") for role in roles):
@@ -734,10 +775,11 @@ def _domain_owners(db: Session, tenant_id: int, domain: str) -> list[User]:
 
 
 def _other_r1(db: Session, initiator: User) -> User | None:
-    for user in _users_in_tenant(db, initiator.tenant_id or 0):
+    org = _org(db, initiator.tenant_id or 0)
+    for user in org.users:
         if user.id == initiator.id:
             continue
-        for role in enabled_roles(db, user):
+        for role in org.roles.get(user.id, []):
             key = (role.role_key or "").lower()
             if key in {"r1", "sys:admin"} or key.endswith(":r1"):
                 return user
@@ -787,16 +829,18 @@ def _candidates(db: Session, initiator: User, node: dict) -> tuple[list[User], s
         dept_id = rule.get("targetDeptId")
         if not dept_id:
             return [], "处理人规则非法"
-        members = [user for user in _users_in_tenant(db, tenant_id) if dept_id in dept_ids_of(db, user)]
+        org = _org(db, tenant_id)
+        members = [user for user in org.users if int(dept_id) in org.depts.get(user.id, set())]
         if not members:
             return [], "处理人规则非法"
-        leaders = [user for user in members if any(_role_is_leader(role) for role in enabled_roles(db, user))]
+        leaders = [user for user in members if any(_role_is_leader(role) for role in org.roles.get(user.id, []))]
         return leaders or members, None
+    org = _org(db, tenant_id)
     codes = [str(code) for code in (rule.get("targetPositionCodes") or [])]
     pool = [
         user
-        for user in _users_in_tenant(db, tenant_id)
-        if any(_role_matches_position(role, codes) for role in enabled_roles(db, user))
+        for user in org.users
+        if any(_role_matches_position(role, codes) for role in org.roles.get(user.id, []))
     ]
     if not pool and (not codes or "DEPT_LEADER" in {code.upper() for code in codes}):
         pool = _leaders(db, tenant_id)
@@ -1001,23 +1045,30 @@ def instance_detail_vo(db: Session, inst: FlowInstance, actor: User, names: dict
     }
 
 
+_SEED_TEMPLATES = (
+    ("FL-LEAVE", "请假审批", "ADMIN", "PUBLISHED", "v1.2", 4),
+    ("FL-REIMB", "费用报销", "FINANCE", "PUBLISHED", "v2.0", 5),
+    ("FL-CONTENT", "内容审核", "BUSINESS", "PUBLISHED", "v1.0", 3),
+    ("FL-LIVE", "开播审批", "BUSINESS", "DRAFT", "v0.9", 2),
+)
+_SEED_TITLES = ("张三 · 年假 3 天", "差旅报销 · 上海出差", "短视频《赛事集锦》发布")
+
+
 def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
-    """补齐默认模板和示例实例。已有账号流转等业务实例时仍要补，不能因表非空整段跳过。"""
+    """补齐默认模板和示例实例。热路径只查内置编码和三条例子标题，不扫全表、不重解析已有待办。"""
     now = utcnow()
-    templates = [
-        ("FL-LEAVE", "请假审批", "ADMIN", "PUBLISHED", "v1.2", 4),
-        ("FL-REIMB", "费用报销", "FINANCE", "PUBLISHED", "v2.0", 5),
-        ("FL-CONTENT", "内容审核", "BUSINESS", "PUBLISHED", "v1.0", 3),
-        ("FL-LIVE", "开播审批", "BUSINESS", "DRAFT", "v0.9", 2),
-    ]
-    existing_codes = set(
+    codes = tuple(item[0] for item in _SEED_TEMPLATES)
+    existing = list(
         db.scalars(
-            select(FlowTemplate.template_code).where(
-                FlowTemplate.deleted == 0, FlowTemplate.tenant_id == tenant_id
+            select(FlowTemplate).where(
+                FlowTemplate.deleted == 0,
+                FlowTemplate.tenant_id == tenant_id,
+                FlowTemplate.template_code.in_(codes),
             )
         ).all()
     )
-    missing = [item for item in templates if item[0] not in existing_codes]
+    have = {row.template_code for row in existing}
+    missing = [item for item in _SEED_TEMPLATES if item[0] not in have]
     if missing:
         db.add_all(
             [
@@ -1037,13 +1088,16 @@ def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
             ]
         )
         db.flush()
-
-    tpls = list(
-        db.scalars(
-            select(FlowTemplate).where(FlowTemplate.deleted == 0, FlowTemplate.tenant_id == tenant_id)
-        ).all()
-    )
-    by_code = {t.template_code: t for t in tpls}
+        existing = list(
+            db.scalars(
+                select(FlowTemplate).where(
+                    FlowTemplate.deleted == 0,
+                    FlowTemplate.tenant_id == tenant_id,
+                    FlowTemplate.template_code.in_(codes),
+                )
+            ).all()
+        )
+    by_code = {row.template_code: row for row in existing}
     day = datetime.now(BJ).strftime("%Y%m%d")
     seeds = [
         (f"FI{day}001", "FL-LEAVE", "张三 · 年假 3 天", "RUNNING", "部门负责人审批", 26),
@@ -1052,52 +1106,53 @@ def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
     ]
     existing_titles = set(
         db.scalars(
-            select(FlowInstance.title).where(FlowInstance.deleted == 0, FlowInstance.tenant_id == tenant_id)
-        ).all()
-    )
-    # 含软删：uk_flow_instance_no 不区分 deleted，固定 001/002/003 可能已被闭环实例占用。
-    taken_nos = set(
-        db.scalars(
-            select(FlowInstance.instance_no).where(
+            select(FlowInstance.title).where(
+                FlowInstance.deleted == 0,
                 FlowInstance.tenant_id == tenant_id,
-                FlowInstance.instance_no.like(f"FI{day}%"),
+                FlowInstance.title.in_(_SEED_TITLES),
             )
         ).all()
     )
-    added = False
-    for preferred, code, title, st, node, age_hours in seeds:
-        if title in existing_titles:
-            continue
-        tpl = by_code.get(code)
-        if tpl is None:
-            continue
-        no = preferred
-        if no in taken_nos:
-            n = 1
-            while f"FI{day}{n:03d}" in taken_nos and n < 10000:
-                n += 1
-            no = f"FI{day}{n:03d}"
-        taken_nos.add(no)
-        finished = now if st == "APPROVED" else None
-        started = now - timedelta(hours=age_hours) if age_hours else now
-        db.add(
-            FlowInstance(
-                instance_no=no,
-                template_id=tpl.id,
-                template_name=tpl.template_name,
-                title=title,
-                instance_status=st,
-                current_node_name=node,
-                initiator_user_id=creator_id,
-                tenant_id=tenant_id,
-                started_at=started,
-                finished_at=finished,
-                created_at=now,
-                updated_at=now,
-            )
+    missing_seeds = [item for item in seeds if item[2] not in existing_titles]
+    if missing_seeds:
+        # 含软删：uk_flow_instance_no 不区分 deleted，固定 001/002/003 可能已被闭环实例占用。
+        taken_nos = set(
+            db.scalars(
+                select(FlowInstance.instance_no).where(
+                    FlowInstance.tenant_id == tenant_id,
+                    FlowInstance.instance_no.like(f"FI{day}%"),
+                )
+            ).all()
         )
-        added = True
-    if added:
+        for preferred, code, title, st, node, age_hours in missing_seeds:
+            tpl = by_code.get(code)
+            if tpl is None:
+                continue
+            no = preferred
+            if no in taken_nos:
+                n = 1
+                while f"FI{day}{n:03d}" in taken_nos and n < 10000:
+                    n += 1
+                no = f"FI{day}{n:03d}"
+            taken_nos.add(no)
+            finished = now if st == "APPROVED" else None
+            started = now - timedelta(hours=age_hours) if age_hours else now
+            db.add(
+                FlowInstance(
+                    instance_no=no,
+                    template_id=tpl.id,
+                    template_name=tpl.template_name,
+                    title=title,
+                    instance_status=st,
+                    current_node_name=node,
+                    initiator_user_id=creator_id,
+                    tenant_id=tenant_id,
+                    started_at=started,
+                    finished_at=finished,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
         db.flush()
     _bind_seed_graphs(db, list(by_code.values()), creator_id)
     sync_seed_tasks(db, tenant_id, creator_id)
@@ -1136,24 +1191,31 @@ def flow_template_list(
 def _bind_seed_graphs(db: Session, tpls: list[FlowTemplate], actor_id: int) -> None:
     """内置模板把预览链写入节点和 v1 快照，实例按这个版本往下走。"""
     now = utcnow()
-    for tpl in tpls:
+    wanted = [tpl for tpl in tpls if PREVIEW_NODES.get(tpl.template_code)]
+    if not wanted:
+        return
+    bound = {
+        (int(row.template_id), int(row.version_no))
+        for row in db.execute(
+            select(FlowTemplateVersion.template_id, FlowTemplateVersion.version_no).where(
+                FlowTemplateVersion.deleted == 0,
+                FlowTemplateVersion.tenant_id == wanted[0].tenant_id,
+                FlowTemplateVersion.template_id.in_([tpl.id for tpl in wanted]),
+            )
+        ).all()
+    }
+    wrote = False
+    for tpl in wanted:
         preset = PREVIEW_NODES.get(tpl.template_code)
-        if not preset:
+        if preset is None:
             continue
         if not tpl.nodes:
             tpl.nodes = nodes_from_preview(preset, int(tpl.sla_hours or DEFAULT_SLA_HOURS))
             tpl.node_count = len(tpl.nodes)
             tpl.updated_at = now
+            wrote = True
         version = int(tpl.version_no or 1)
-        exists = db.scalar(
-            select(FlowTemplateVersion.id).where(
-                FlowTemplateVersion.deleted == 0,
-                FlowTemplateVersion.tenant_id == tpl.tenant_id,
-                FlowTemplateVersion.template_id == tpl.id,
-                FlowTemplateVersion.version_no == version,
-            )
-        )
-        if exists is not None:
+        if (tpl.id, version) in bound:
             continue
         db.add(
             FlowTemplateVersion(
@@ -1170,7 +1232,9 @@ def _bind_seed_graphs(db: Session, tpls: list[FlowTemplate], actor_id: int) -> N
                 created_at=now,
             )
         )
-    db.flush()
+        wrote = True
+    if wrote:
+        db.flush()
 
 
 def preview_nodes_for(tpl: FlowTemplate) -> list[tuple[int, str, str, str]]:

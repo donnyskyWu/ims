@@ -1909,6 +1909,10 @@ class FlowTemplate(Base):
 
 class FlowTask(Base):
     __tablename__ = "ims_flow_task"
+    __table_args__ = (
+        Index("idx_flow_task_todo", "tenant_id", "task_status", "assignee_user_id"),
+        Index("idx_flow_task_pending", "tenant_id", "instance_id", "task_status"),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     instance_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     node_order: Mapped[int] = mapped_column(Integer, default=1)
@@ -1933,6 +1937,8 @@ class FlowInstance(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "instance_no", name="uk_flow_instance_no"),
         UniqueConstraint("tenant_id", "business_key", name="uk_flow_instance_biz_key"),
+        Index("idx_flow_inst_status", "tenant_id", "instance_status"),
+        Index("idx_flow_inst_title", "tenant_id", "title"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     instance_no: Mapped[str] = mapped_column(String(32), default="", index=True)

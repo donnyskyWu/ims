@@ -539,11 +539,64 @@ def ensure_flow_columns() -> None:
             alters.append("ALTER TABLE ims_flow_instance ADD COLUMN current_node_order INT NOT NULL DEFAULT 1")
         if "template_version" not in cols:
             alters.append("ALTER TABLE ims_flow_instance ADD COLUMN template_version INT NOT NULL DEFAULT 1")
-    if not alters:
+    if alters:
+        with engine.begin() as conn:
+            for stmt in alters:
+                conn.execute(text(stmt))
+    _ensure_flow_indexes()
+
+
+def _ensure_flow_indexes() -> None:
+    """待办、缺待办补齐、种子标题查询。create_all 已建的索引这里跳过。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    wanted: list[tuple[str, str, str]] = []
+    if "ims_flow_task" in tables:
+        wanted.append(
+            (
+                "ims_flow_task",
+                "idx_flow_task_todo",
+                "CREATE INDEX idx_flow_task_todo ON ims_flow_task (tenant_id, task_status, assignee_user_id)",
+            )
+        )
+        wanted.append(
+            (
+                "ims_flow_task",
+                "idx_flow_task_pending",
+                "CREATE INDEX idx_flow_task_pending ON ims_flow_task (tenant_id, instance_id, task_status)",
+            )
+        )
+    if "ims_flow_instance" in tables:
+        wanted.append(
+            (
+                "ims_flow_instance",
+                "idx_flow_inst_status",
+                "CREATE INDEX idx_flow_inst_status ON ims_flow_instance (tenant_id, instance_status)",
+            )
+        )
+        wanted.append(
+            (
+                "ims_flow_instance",
+                "idx_flow_inst_title",
+                "CREATE INDEX idx_flow_inst_title ON ims_flow_instance (tenant_id, title)",
+            )
+        )
+    if not wanted:
         return
     with engine.begin() as conn:
-        for stmt in alters:
-            conn.execute(text(stmt))
+        for table, name, ddl in wanted:
+            found = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.statistics "
+                    "WHERE table_schema = DATABASE() AND table_name = :table AND index_name = :name LIMIT 1"
+                ),
+                {"table": table, "name": name},
+            ).first()
+            if found:
+                continue
+            conn.execute(text(ddl))
 
 
 def init_db() -> None:

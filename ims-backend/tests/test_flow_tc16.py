@@ -906,3 +906,109 @@ def test_c078_reassign_when_approver_is_initiator():
     second = next(row for row in again["data"]["list"] if row["instanceNo"] == both["instanceNo"])
     assert second["nodeName"] == "域负责人确认"
     assert second["id"] != owner_task["id"]
+
+
+def test_flow_hot_path_does_not_rescan_users():
+    """模板列表、草稿保存、待办、发起在人变多之后仍不按人查角色。"""
+    import time
+
+    from sqlalchemy import event
+
+    from app.core import SessionLocal, engine
+    from app.models import User
+
+    admin = login()
+    warmed = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=admin,
+        params={"pageNo": 1, "pageSize": 10, "status": "PUBLISHED"},
+    ).json()
+    assert warmed["code"] == 0
+    assert any(row["templateCode"] == "FL-LEAVE" for row in warmed["data"]["list"])
+    db = SessionLocal()
+    try:
+        for index in range(80):
+            db.add(
+                User(
+                    username=f"cflow_bulk_{index}",
+                    nickname=f"批量{index}",
+                    password_hash="x",
+                    status="ENABLED",
+                    tenant_id=0,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    created = client.post(
+        "/admin-api/ims/flow/template",
+        headers=admin,
+        json={
+            "templateName": "热路径草稿",
+            "businessDomain": "ADMIN",
+            "slaHours": 24,
+            "nodeChain": "发起申请、部门审批、归档确认",
+        },
+    ).json()
+    assert created["code"] == 0, created
+    tpl_id = created["data"]["id"]
+    leave = next(row for row in warmed["data"]["list"] if row["templateCode"] == "FL-LEAVE")
+
+    counts = {"n": 0}
+
+    def _count(*_args, **_kwargs):
+        counts["n"] += 1
+
+    event.listen(engine, "before_cursor_execute", _count)
+    try:
+        started = time.perf_counter()
+        counts["n"] = 0
+        saved = client.put(
+            f"/admin-api/ims/flow/template/{tpl_id}",
+            headers=admin,
+            json={"templateName": "热路径草稿", "nodeChain": "发起申请、部门审批、归档确认"},
+        ).json()
+        save_queries = counts["n"]
+        assert saved["code"] == 0, saved
+        assert saved["data"]["version"] == 2
+
+        counts["n"] = 0
+        listed = client.get(
+            "/admin-api/ims/flow/template/list",
+            headers=admin,
+            params={"pageNo": 1, "pageSize": 20, "status": "PUBLISHED"},
+        ).json()
+        list_queries = counts["n"]
+        assert listed["code"] == 0
+        assert any(row["status"] == "PUBLISHED" for row in listed["data"]["list"])
+
+        counts["n"] = 0
+        todo = client.get(
+            "/admin-api/ims/flow/task/my-todo",
+            headers=admin,
+            params={"pageNo": 1, "pageSize": 10},
+        ).json()
+        todo_queries = counts["n"]
+        assert todo["code"] == 0
+        assert "list" in todo["data"]
+
+        counts["n"] = 0
+        started_body = client.post(
+            "/admin-api/ims/flow/instance",
+            headers=admin,
+            json={"templateId": leave["id"], "formData": {"title": "热路径发起"}, "businessKey": "hot-path-1"},
+        ).json()
+        start_queries = counts["n"]
+        elapsed = time.perf_counter() - started
+    finally:
+        event.remove(engine, "before_cursor_execute", _count)
+
+    assert started_body["code"] == 0, started_body
+    assert started_body["data"]["instanceStatus"] == "RUNNING"
+    assert elapsed < 5
+    # 80 人若仍逐人 enabled_roles，单接口就会超过 160 次查询。
+    assert save_queries < 80, save_queries
+    assert list_queries < 80, list_queries
+    assert todo_queries < 80, todo_queries
+    assert start_queries < 80, start_queries
