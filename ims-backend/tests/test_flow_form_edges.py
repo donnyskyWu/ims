@@ -12,8 +12,8 @@ from app.main import app
 client = TestClient(app)
 
 
-def headers() -> dict:
-    token = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"][
+def headers(username: str = "admin", password: str = "Admin@123") -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": password}).json()["data"][
         "accessToken"
     ]
     return {"Authorization": f"Bearer {token}"}
@@ -98,23 +98,24 @@ def test_flow_approve_comment_length():
     assert started["code"] == 0
     instance_no = started["data"]["instanceNo"]
 
-    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 50}).json()
+    leader = headers("tc_r4")
+    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=leader, params={"pageNo": 1, "pageSize": 50}).json()
     task = next(row for row in todo["data"]["list"] if row["instanceNo"] == instance_no)
 
     too_long = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
+        headers=leader,
         json={"action": "APPROVE", "comment": "意" * 513},
     ).json()
     assert too_long["code"] == 1001
     assert "512" in too_long["msg"]
 
-    still = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 50}).json()
+    still = client.get("/admin-api/ims/flow/task/my-todo", headers=leader, params={"pageNo": 1, "pageSize": 50}).json()
     assert any(row["instanceNo"] == instance_no and row["taskStatus"] == "PENDING" for row in still["data"]["list"])
 
     ok = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
+        headers=leader,
         json={"action": "APPROVE", "comment": "意" * 512},
     ).json()
     assert ok["code"] == 0

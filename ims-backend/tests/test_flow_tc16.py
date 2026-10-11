@@ -426,6 +426,12 @@ def test_c025_template_publish_version_and_disable():
 
 def test_c026_kanban_advance_then_finish():
     admin = login()
+    leader_id = create_user(admin, "c026_r4", "13616000031")
+    staff_id = create_user(admin, "c026_r6", "13616000032")
+    bind(leader_id, key="dept:leader", name="部门负责人", scope="ALL", depts=[88051])
+    bind(staff_id, key="flow:staff", name="员工", scope="ALL", depts=[88051])
+    staff = login("c026_r6", "Pass@123")
+    leader = login("c026_r4", "Pass@123")
     created = client.post(
         "/admin-api/ims/flow/template",
         headers=admin,
@@ -443,12 +449,13 @@ def test_c026_kanban_advance_then_finish():
 
     started = client.post(
         "/admin-api/ims/flow/instance",
-        headers=admin,
+        headers=staff,
         json={"templateId": tpl_id, "formData": {"title": "看板单"}, "businessKey": "c026-board"},
     ).json()
     assert started["code"] == 0, started
     instance_no = started["data"]["instanceNo"]
     assert started["data"]["currentNodes"][0]["nodeName"] == "初审"
+    assert started["data"]["currentNodes"][0]["assigneeUserId"] == leader_id
 
     board = client.get("/admin-api/ims/flow/instance/board", headers=admin).json()
     assert board["code"] == 0
@@ -459,7 +466,7 @@ def test_c026_kanban_advance_then_finish():
 
     advanced = client.put(
         f"/admin-api/ims/flow/task/{card['pendingTaskId']}/handle",
-        headers=admin,
+        headers=leader,
         json={"action": "APPROVE", "advance": True, "comment": "到终审"},
     ).json()
     assert advanced["code"] == 0, advanced
@@ -474,7 +481,7 @@ def test_c026_kanban_advance_then_finish():
 
     finished = client.put(
         f"/admin-api/ims/flow/task/{card2['pendingTaskId']}/handle",
-        headers=admin,
+        headers=leader,
         json={"action": "APPROVE", "comment": "归档"},
     ).json()
     assert finished["data"]["newStatus"] == "APPROVED"
@@ -492,7 +499,12 @@ def test_c026_kanban_advance_then_finish():
 
 def test_c031_instance_urge_without_waiting_for_timeout():
     admin = login()
-    started = start_leave(admin, "C031 催办", "c031-urge")
+    leader_id = create_user(admin, "c031_r4", "13616000041")
+    staff_id = create_user(admin, "c031_r6", "13616000042")
+    bind(leader_id, key="dept:leader", name="部门负责人", scope="ALL", depts=[88061])
+    bind(staff_id, key="flow:staff", name="员工", scope="ALL", depts=[88061])
+    staff = login("c031_r6", "Pass@123")
+    started = start_leave(staff, "C031 催办", "c031-urge")
     task_id = started["currentNodes"][0]["assigneeUserId"]
     listed = client.get(
         "/admin-api/ims/flow/instance/list",
@@ -595,3 +607,85 @@ def test_c077_leave_walks_bound_version_until_last_node():
     assert finished["instanceStatus"] == "APPROVED"
     assert finished["instanceStatusLabel"] == "已完成"
     assert finished["templateVersion"] == leave["version"]
+
+
+def test_c078_admin_cannot_approve_own_leave():
+    """解析到发起人时跳过审批/抄送。PRD 未规定改派对象，跳到下一节点并留痕。"""
+    admin = login()
+    started = start_leave(admin, "C078 管理员请假", "c078-admin")
+    assert started["instanceStatus"] == "RUNNING"
+    node = started["currentNodes"][0]
+    assert node["nodeName"] == "部门负责人审批"
+    assert node["assigneeName"] != "admin"
+    assert node["assigneeUserId"] != started["initiatorUserId"]
+
+    denied = client.put(
+        "/admin-api/ims/flow/task/0/handle",
+        headers=admin,
+        json={"action": "APPROVE", "comment": "自己批"},
+    ).json()
+    assert denied["code"] == 1001
+
+    leader = login("tc_r4", "Admin@123")
+    leader_todo = client.get("/admin-api/ims/flow/task/my-todo", headers=leader, params={"pageSize": 50}).json()
+    task = next(row for row in leader_todo["data"]["list"] if row["instanceNo"] == started["instanceNo"])
+    blocked = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=admin,
+        json={"action": "APPROVE", "comment": "管理员不能批自己的单"},
+    ).json()
+    assert blocked["code"] == 1135
+
+    admin_id = started["initiatorUserId"]
+    created = client.post(
+        "/admin-api/ims/flow/template",
+        headers=admin,
+        json={
+            "templateName": "指定本人审批",
+            "businessDomain": "ADMIN",
+            "slaHours": 24,
+            "nodes": [
+                {
+                    "nodeOrder": 1,
+                    "nodeName": "发起申请",
+                    "nodeType": "TASK",
+                    "assigneeRule": {"assignType": "USER", "targetIds": []},
+                },
+                {
+                    "nodeOrder": 2,
+                    "nodeName": "本人审批",
+                    "nodeType": "APPROVE",
+                    "assigneeRule": {"assignType": "USER", "targetIds": [admin_id]},
+                },
+                {
+                    "nodeOrder": 3,
+                    "nodeName": "部门负责人审批",
+                    "nodeType": "APPROVE",
+                    "assigneeRule": {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]},
+                },
+            ],
+        },
+    ).json()
+    assert created["code"] == 0, created
+    published = client.post(
+        f"/admin-api/ims/flow/template/{created['data']['id']}/publish",
+        headers=admin,
+        json={"changeDesc": "指定本人"},
+    ).json()
+    assert published["code"] == 0, published
+    own = client.post(
+        "/admin-api/ims/flow/instance",
+        headers=admin,
+        json={
+            "templateId": created["data"]["id"],
+            "formData": {"title": "C078 指定本人"},
+            "businessKey": "c078-self",
+        },
+    ).json()
+    assert own["code"] == 0, own
+    assert own["data"]["instanceStatus"] == "RUNNING"
+    assert "本人审批" in own["data"]["skippedNodes"]
+    assert own["data"]["currentNodes"][0]["nodeName"] == "部门负责人审批"
+    assert own["data"]["currentNodes"][0]["assigneeUserId"] != admin_id
+    detail = client.get(f"/admin-api/ims/flow/instance/{own['data']['instanceNo']}", headers=admin).json()["data"]
+    assert any("已跳过" in (item.get("comment") or "") for item in detail["traceLog"])

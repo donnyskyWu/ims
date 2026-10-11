@@ -687,18 +687,19 @@ def graph_nodes(db: Session, tpl: FlowTemplate | None, *, version_no: int | None
     return []
 
 
+SKIP_SELF_NOTE = "发起人与审批人相同，已跳过该节点"
+
+
 def resolve_assignee(db: Session, initiator: User, node: dict) -> tuple[int | None, str | None]:
     """按节点规则解析处理人。
 
-    R1 发起时仍落到 R1，避免单管理员环境里锁后审批和闭环待办被转走。
-    其他发起人：能解析到部门负责人/指定人时不把审批待办派回自己。
+    能解析到部门负责人/指定人时不把审批待办派回发起人。
     INITIATOR_SUPERIOR 解析失败返回 1132，不静默派给发起人。
+    PRD 未规定「解析结果就是发起人」时如何改派；由 _land_node 跳到下一节点并留痕。
     """
     rule = node.get("assigneeRule") or {}
     kind = str(rule.get("assignType") or "")
     node_type = str(node.get("nodeType") or "APPROVE")
-    if _actor_is_r1(db, initiator) and kind != "USER":
-        return initiator.id, None
     if kind == "USER":
         ids = [int(item) for item in (rule.get("targetIds") or [])]
         if not ids:
@@ -742,6 +743,60 @@ def resolve_assignee(db: Session, initiator: User, node: dict) -> tuple[int | No
     if node_type == "APPROVE":
         return initiator.id, None
     return initiator.id, None
+
+
+def _self_approval(node: dict, assignee_id: int | None, initiator_id: int) -> bool:
+    return node.get("nodeType") in {"APPROVE", "CC"} and assignee_id == initiator_id
+
+
+def _land_node(
+    db: Session, initiator: User, nodes: list[dict], node: dict | None
+) -> tuple[dict | None, int | None, list[dict], str | None]:
+    """从当前节点起找待办。审批/抄送解析到发起人时跳过，PRD 对此没有改派条款。"""
+    skipped: list[dict] = []
+    current = node
+    while current is not None:
+        if current.get("nodeType") == "TIMER":
+            current = next_chain_node(nodes, int(current.get("nodeOrder") or 0))
+            continue
+        assignee_id, err = resolve_assignee(db, initiator, current)
+        if assignee_id is None and err == "发起人不能审批自己的单据":
+            skipped.append(current)
+            current = next_chain_node(nodes, int(current.get("nodeOrder") or 0))
+            continue
+        if assignee_id is None:
+            return None, None, skipped, err or "处理人规则非法"
+        if _self_approval(current, assignee_id, initiator.id):
+            skipped.append(current)
+            current = next_chain_node(nodes, int(current.get("nodeOrder") or 0))
+            continue
+        return current, assignee_id, skipped, None
+    return None, None, skipped, None
+
+
+def _record_skips(db: Session, inst: FlowInstance, tenant_id: int, nodes: list[dict]) -> None:
+    now = utcnow()
+    for node in nodes:
+        db.add(
+            FlowTask(
+                instance_id=inst.id,
+                node_order=int(node.get("nodeOrder") or 1),
+                node_name=str(node.get("nodeName") or "审批节点"),
+                node_type=str(node.get("nodeType") or "APPROVE"),
+                assignee_user_id=inst.initiator_user_id,
+                task_status="APPROVED",
+                sla_hours=int(node.get("slaHours") or DEFAULT_SLA_HOURS),
+                allow_transfer=0,
+                comment=SKIP_SELF_NOTE,
+                tenant_id=tenant_id,
+                started_at=now,
+                handled_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    if nodes:
+        db.flush()
 
 
 def _assignee_for_instance(db: Session, inst: FlowInstance) -> tuple[int, dict | None]:
@@ -1351,15 +1406,13 @@ def flow_instance_start(
             "assigneeRule": {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]},
             "slaHours": DEFAULT_SLA_HOURS,
         }
-    assignee_id, rule_err = resolve_assignee(db, actor, node)
-    if rule_err and str((node.get("assigneeRule") or {}).get("assignType")) == "INITIATOR_SUPERIOR":
-        return fail(1132, "处理人规则非法，发起人上级无法解析")
-    if assignee_id is None:
+    node, assignee_id, skipped, rule_err = _land_node(db, actor, nodes, node)
+    if rule_err and (not node or str((node.get("assigneeRule") or {}).get("assignType")) == "INITIATOR_SUPERIOR"):
+        if "上级" in (rule_err or ""):
+            return fail(1132, "处理人规则非法，发起人上级无法解析")
         return fail(1132, rule_err or "处理人规则非法")
-    if node.get("nodeType") == "APPROVE" and assignee_id == actor.id and not _actor_is_r1(db, actor):
-        leaders = _leaders(db, tenant_id)
-        if any(user.id != actor.id for user in leaders):
-            return fail(1132, "审批节点不能派给发起人")
+    if node is not None and assignee_id is None:
+        return fail(1132, rule_err or "处理人规则非法")
     now = utcnow()
     row = FlowInstance(
         instance_no=next_instance_no(db, tenant_id),
@@ -1368,20 +1421,27 @@ def flow_instance_start(
         title=title,
         business_key=biz_key,
         form_data=form,
-        instance_status="RUNNING",
-        current_node_name=str(node.get("nodeName") or "审批节点"),
-        current_node_order=int(node.get("nodeOrder") or 1),
+        instance_status="RUNNING" if node is not None else "APPROVED",
+        current_node_name=str(node.get("nodeName") or "—") if node is not None else "—",
+        current_node_order=int(node.get("nodeOrder") or 1) if node is not None else 0,
         template_version=int(tpl.version_no or template_version_no(tpl) or 1),
         initiator_user_id=actor.id,
         tenant_id=tenant_id,
         started_at=now,
-        finished_at=None,
+        finished_at=None if node is not None else now,
         created_at=now,
         updated_at=now,
     )
     db.add(row)
     db.flush()
     tpl.start_count = int(tpl.start_count or 0) + 1
+    _record_skips(db, row, tenant_id, skipped)
+    if node is None or assignee_id is None:
+        names = user_names(db, [actor.id])
+        done = instance_start_vo(row, tpl, names, assignee_user_id=actor.id, node_order=0)
+        done["currentNodes"] = []
+        done["skippedNodes"] = [item.get("nodeName") for item in skipped]
+        return ok(done)
     task = ensure_pending_task(
         db,
         row,
@@ -1394,7 +1454,10 @@ def flow_instance_start(
     )
     holder = task.assignee_user_id if task is not None else assignee_id
     names = user_names(db, [actor.id, holder])
-    return ok(instance_start_vo(row, tpl, names, assignee_user_id=holder, node_order=row.current_node_order))
+    started = instance_start_vo(row, tpl, names, assignee_user_id=holder, node_order=row.current_node_order)
+    if skipped:
+        started["skippedNodes"] = [item.get("nodeName") for item in skipped]
+    return ok(started)
 
 
 @router.get("/task/my-todo")
@@ -1496,15 +1559,16 @@ def flow_task_handle(
     if action == "APPROVE":
         # 通过即沿绑定版本的节点链往下走。advance 只是看板按钮的同义标记。
         nxt = next_chain_node(nodes, task.node_order) if nodes else None
-        if nxt is not None:
-            initiator = db.get(User, inst.initiator_user_id) or actor
-            assignee_id, rule_err = resolve_assignee(db, initiator, nxt)
-            if assignee_id is None:
-                return fail(1132, rule_err or "处理人规则非法")
-            task.task_status = "APPROVED"
-            db.flush()
-            inst.current_node_name = str(nxt.get("nodeName") or "审批节点")
-            inst.current_node_order = int(nxt.get("nodeOrder") or task.node_order + 1)
+        initiator = db.get(User, inst.initiator_user_id) or actor
+        landed, assignee_id, skipped, rule_err = _land_node(db, initiator, nodes, nxt)
+        if rule_err:
+            return fail(1132, rule_err)
+        task.task_status = "APPROVED"
+        db.flush()
+        _record_skips(db, inst, tenant_id, skipped)
+        if landed is not None and assignee_id is not None:
+            inst.current_node_name = str(landed.get("nodeName") or "审批节点")
+            inst.current_node_order = int(landed.get("nodeOrder") or task.node_order + 1)
             inst.instance_status = "RUNNING"
             inst.finished_at = None
             inst.updated_at = now
@@ -1515,8 +1579,8 @@ def flow_task_handle(
                 assignee_id,
                 inst.current_node_name,
                 node_order=inst.current_node_order,
-                node_type=str(nxt.get("nodeType") or "APPROVE"),
-                sla_hours=int(nxt.get("slaHours") or DEFAULT_SLA_HOURS),
+                node_type=str(landed.get("nodeType") or "APPROVE"),
+                sla_hours=int(landed.get("slaHours") or DEFAULT_SLA_HOURS),
             )
             new_status = "RUNNING"
             is_finished = False
@@ -1528,7 +1592,6 @@ def flow_task_handle(
                 }
             ]
         else:
-            task.task_status = "APPROVED"
             inst.instance_status = "APPROVED"
             inst.current_node_name = "—"
             inst.finished_at = now
