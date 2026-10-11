@@ -158,7 +158,7 @@ def test_reverse_holders_distinguish_three_asset_states():
     detail = client.get(f"/admin-api/ims/asset/ledger/{scrapped}", headers=auth).json()
     assert detail["code"] == 0
     assert [row["status"] for row in detail["data"]["holders"]] == ["IN_USE", "RETURNED", "SCRAPPED"]
-    assert {row["statusLabel"] for row in detail["data"]["holders"]} == {"在用", "已归还", "已报废"}
+    assert {row["statusLabel"] for row in detail["data"]["holders"]} == {"使用中", "已归还", "已报废"}
     assert all(row["userName"] == "管理员" for row in detail["data"]["holders"])
 
     forward = client.get(f"/admin-api/ims/asset/forward/detail/{scrapped}", headers=auth).json()

@@ -304,7 +304,7 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="useOpen" title="使用" width="480px" @close="useOpen = false">
-      <p class="hint">登记使用后状态仍为在用，之后才能归还。</p>
+      <p class="hint">登记使用后状态仍为使用中，之后才能归还。</p>
       <div class="formrow one"><div class="fld"><label>使用说明</label><input v-model="assetForm.remark" data-testid="corp-asset-use-remark" /></div></div>
       <div v-if="formError" class="hint bad">{{ formError }}</div>
       <template #foot>
@@ -734,7 +734,7 @@ const parentOverridesPerson = computed(
 
 const fallbackStatus: Opt[] = [
   { value: 'PENDING_REVIEW', label: '待审核' },
-  { value: 'IN_USE', label: '在用' },
+  { value: 'IN_USE', label: '使用中' },
   { value: 'RETURNED', label: '已归还' },
   { value: 'SCRAPPED', label: '已报废' },
 ]
@@ -1611,7 +1611,7 @@ function pickEntry(type: 'ACCOUNT' | 'SESSION' | 'PERSON') {
 }
 
 function entrySummaryText(summary: Row) {
-  return `命中 ${summary.total || 0} 条（在用 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
+  return `命中 ${summary.total || 0} 条（使用中 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
 }
 
 async function queryEntry() {
@@ -1756,7 +1756,7 @@ async function openReverse(row: Row) {
   reverseOpen.value = true
   reverseHolders.value = []
   reverseError.value = ''
-  reverseHint.value = `${row.assetCode || ''} → 使用人（在用 / 已归还 / 已报废）`
+  reverseHint.value = `${row.assetCode || ''} → 使用人（使用中 / 已归还 / 已报废）`
   try {
     const res = await http.get(`/asset/ledger/${row.id}`)
     reverseHolders.value = (res.data?.data?.holders || []) as Row[]

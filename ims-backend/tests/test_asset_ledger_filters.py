@@ -191,7 +191,7 @@ def test_ledger_export_follows_current_filters():
     text = csv_res.content.decode("utf-8-sig")
     assert kept_code in text
     assert gap_code not in text
-    assert "在用" in text
+    assert "使用中" in text
 
     expired = client.get("/admin-api/ims/asset/ledger/export/file", headers=auth, params={"token": "missing"}).json()
     assert expired["code"] == 1002

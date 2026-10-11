@@ -36,7 +36,7 @@ router = APIRouter()
 
 MAX_LAYER = 5
 LAYER_TOKENS = {"L1", "L2", "L3", "L4", "L5"}
-HOLDER_LABEL = {"IN_USE": "在用", "RETURNED": "已归还", "SCRAPPED": "已报废"}
+HOLDER_LABEL = {"IN_USE": "使用中", "RETURNED": "已归还", "SCRAPPED": "已报废"}
 BIND_TYPES = {"HOLD", "GUARANTEE", "CUSTODY"}
 SESSION_CODE = re.compile(r"^IMS\d{8}[A-Z]{3}\d{4}$")
 ALLOWED_ACCOUNT_STATUS = {"IN_USE", "IN_POOL"}

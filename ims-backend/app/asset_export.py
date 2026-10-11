@@ -34,7 +34,7 @@ REVERSE_MESSAGE = "反查结果已生成"
 DISK_FAIL = "报告生成失败，请稍后重试或联系管理员"
 STATUS_LABEL = {
     "PENDING_REVIEW": "待审核",
-    "IN_USE": "在用",
+    "IN_USE": "使用中",
     "RETURNED": "已归还",
     "SCRAPPED": "已报废",
 }
@@ -61,7 +61,7 @@ def chain_lines(nodes: list[dict]) -> list[str]:
 
 def summary_text(summary: dict) -> str:
     return (
-        f"命中 {summary.get('total') or 0} 条（在用 {summary.get('inUse') or 0} / "
+        f"命中 {summary.get('total') or 0} 条（使用中 {summary.get('inUse') or 0} / "
         f"已归还 {summary.get('returned') or 0} / 已报废 {summary.get('scrapped') or 0}）"
     )
 
