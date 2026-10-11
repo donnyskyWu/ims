@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.ops_db import ops_session
-from app.ops_models import ExternalAccount, ExternalWork, IpGroup, ThresholdConfig
+from app.ops_models import ExternalAccount, ExternalWork, InternalAccount, InternalContent, IpGroup, ThresholdConfig
 
 client = TestClient(app)
 
@@ -134,3 +134,49 @@ def test_monitor_industry_page_keyword():
     assert body["data"]["total"] == 1
     assert body["data"]["list"][0]["dimensionKey"] == "电竞"
     assert body["data"]["list"][0]["workCount"] == 1
+
+
+def test_monitor_internal_source_groups_by_ip_name():
+    ops = ops_session()
+    try:
+        group = IpGroup(group_name="内部监测组", status="ENABLED", tenant_id=0)
+        ops.add(group)
+        ops.flush()
+        ops.add(
+            InternalAccount(
+                account_identifier="int_mon_a",
+                account_name="内部号A",
+                platform_type="DOUYIN",
+                ip_group_id=group.id,
+                follower_count=1000,
+                content_count=1,
+                tenant_id=0,
+            )
+        )
+        ops.add(
+            InternalContent(
+                title="内部作品A",
+                account_name="内部号A",
+                platform_type="DOUYIN",
+                ip_group_id=group.id,
+                play_count=10_000,
+                completion_rate=40,
+                publish_time="2026-10-01 10:00:00",
+                tenant_id=0,
+            )
+        )
+        ops.commit()
+    finally:
+        ops.close()
+    auth = headers()
+    resp = client.get(
+        "/admin-api/ims/monitor/ip-theme/page",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20, "source": "INTERNAL"},
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    row = next(item for item in body["data"]["list"] if item["dimensionKey"] == "内部监测组")
+    assert row["externalAccountCount"] == 1
+    assert row["workCount"] == 1
+    assert "内部号A" in row["relatedAccounts"]
