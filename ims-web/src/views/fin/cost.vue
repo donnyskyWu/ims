@@ -257,7 +257,10 @@
     >
       <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
       <p v-if="error" data-testid="fin-cost-entry-error" class="hint" style="color: var(--red)">{{ error }}</p>
-      <div class="form-grid">
+      <p v-if="entryLocked" class="hint" data-testid="fin-cost-entry-readonly">
+        {{ form.entryStatus === 'CONFIRMED' ? '已核准，修改请走更正单' : '已提交，详情只读' }}
+      </p>
+      <fieldset class="form-grid" :disabled="entryLocked" style="border: 0; padding: 0; margin: 0; min-width: 0">
         <div>
           <label>平台<input :value="platformLabel(form.platform)" data-testid="fin-cost-platform" disabled /></label>
         </div>
@@ -306,7 +309,7 @@
         <div v-if="form.shareCostType === 'ENGINE' || Number(form.shareTeam) > 0">
           <label>团队分成<input :value="form.shareTeam === '' ? '' : fmt(form.shareTeam)" data-testid="fin-cost-share-team" disabled /></label>
         </div>
-      </div>
+      </fieldset>
       <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
       <div v-if="editLogs" data-testid="fin-cost-edit-log" class="hint" style="margin-top: 12px">
         <div>修改记录</div>
@@ -333,8 +336,19 @@
         </table>
       </div>
       <template #footer>
-        <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
-        <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
+        <template v-if="!entryLocked">
+          <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
+          <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
+        </template>
+        <button
+          v-else-if="form.entryStatus === 'CONFIRMED'"
+          class="btn btn-pri"
+          type="button"
+          data-testid="fin-cost-detail-correct"
+          @click="openCorrectionFromDetail"
+        >
+          更正
+        </button>
       </template>
     </ProtoDrawer>
 
@@ -511,8 +525,11 @@ const form = reactive({
   shareRealname: '' as string | number,
   shareTeam: '' as string | number,
   shareCostType: 'MANUAL',
+  entryStatus: '',
   remark: '',
 })
+
+const entryLocked = computed(() => form.entryStatus === 'SUBMITTED' || form.entryStatus === 'CONFIRMED')
 
 const shareRules = ref<Array<Record<string, any>>>([])
 
@@ -804,6 +821,7 @@ function openEntry(row: Record<string, unknown>) {
   form.shareRealname = ''
   form.shareTeam = ''
   form.shareCostType = 'MANUAL'
+  form.entryStatus = ''
   entryFormError()
   fieldErrors.commissionRate = ''
   fieldErrors.adCost = ''
@@ -818,6 +836,7 @@ function openEntry(row: Record<string, unknown>) {
 }
 
 async function submitEntry(asDraft: boolean) {
+  if (entryLocked.value) return
   const invalid = entryFormError()
   if (invalid) {
     error.value = invalid
@@ -868,6 +887,7 @@ function assignFormFromCost(d: Record<string, unknown>) {
     shareRealname: d.shareRealname,
     shareTeam: d.shareTeam ?? 0,
     shareCostType: d.shareCostType || 'MANUAL',
+    entryStatus: d.entryStatus || '',
     platform: d.platform || form.platform,
   })
 }
@@ -922,6 +942,12 @@ async function closePeriod() {
   } finally {
     periodBusy.value = false
   }
+}
+
+function openCorrectionFromDetail() {
+  const sessionCode = form.sessionCode
+  drawerOpen.value = false
+  void openCorrection(sessionCode)
 }
 
 async function openCorrection(sessionCode: string) {
