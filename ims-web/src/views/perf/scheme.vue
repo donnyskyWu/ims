@@ -1,5 +1,15 @@
 <template>
   <div class="page">
+    <div class="toasts" aria-live="polite">
+      <div
+        v-if="toast"
+        class="toast"
+        :class="toastKind === 'warn' ? 't-warn' : 't-success'"
+        data-testid="scheme-toast"
+      >
+        {{ toast }}
+      </div>
+    </div>
     <div class="pg-h">
       <div>
         <h1>考核方案</h1>
@@ -42,10 +52,19 @@
       <div class="et">{{ schemeEmpty }}</div>
     </div>
     <div v-else class="scheme-grid">
-      <div v-for="row in rows" :key="row.id" class="card hov scheme-card">
+      <div v-for="row in rows" :key="row.id" class="card hov scheme-card" :data-testid="`scheme-card-${row.id}`">
         <div class="rowline" style="justify-content: space-between; margin-bottom: 8px">
           <span class="mono num" style="color: var(--blue); font-size: 12px">{{ row.schemeNo }}</span>
-          <span class="sw" :class="{ on: row.status === 'ACTIVE' }"><i></i></span>
+          <button
+            class="sw"
+            :class="{ on: row.status === 'ACTIVE' }"
+            type="button"
+            data-testid="scheme-toggle"
+            :aria-label="row.status === 'ACTIVE' ? '停用方案' : '启用方案'"
+            @click="toggleStatus(row)"
+          >
+            <i></i>
+          </button>
         </div>
         <h3 style="font-size: 15px; margin: 0 0 6px">{{ row.templateName }}</h3>
         <div class="csub">{{ row.metricSummary || '—' }}</div>
@@ -55,28 +74,74 @@
           </span>
           <span class="csub">{{ row.positionLabel }}</span>
           <span class="csub">{{ row.evaluateeCount }} 名被考核人</span>
-          <span class="chip">{{ row.status === 'ACTIVE' ? '生效中' : '已停用' }}</span>
+          <span class="chip" data-testid="scheme-status">{{ row.status === 'ACTIVE' ? '生效中' : '已停用' }}</span>
         </div>
         <div class="rowline" style="margin-top: 12px; gap: 8px">
+          <button class="btn btn-sec btn-sm" type="button" data-testid="scheme-edit-metrics" @click="openEdit(row)">
+            编辑指标
+          </button>
           <button
             class="btn btn-pri btn-sm"
             type="button"
-            :disabled="row.status !== 'ACTIVE'"
+            data-testid="scheme-launch"
+            :style="row.status === 'ACTIVE' ? undefined : { opacity: 0.45 }"
             @click="launchExec(row)"
           >
             发起考核
           </button>
-          <button
-            v-if="row.status !== 'ACTIVE'"
-            class="btn btn-sec btn-sm"
-            type="button"
-            @click="activateRow(row)"
-          >
-            启用
-          </button>
         </div>
       </div>
     </div>
+
+    <ProtoDrawer :open="editOpen" :title="editTitle" width="640px" @close="editOpen = false">
+      <p class="hint">勾选指标并填写权重。权重合计须为 100%，否则返回 1154。</p>
+      <div v-if="!editItems.length" class="empty"><div class="et">请先在指标配置中创建指标</div></div>
+      <div v-else class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>选用</th>
+              <th>指标</th>
+              <th>权重（%）</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in editItems" :key="item.metricId">
+              <td>
+                <input v-model="item.checked" type="checkbox" :data-testid="`scheme-check-${item.metricCode}`" />
+              </td>
+              <td>
+                {{ item.metricName }}
+                <div class="csub mono">{{ item.metricCode }}</div>
+              </td>
+              <td>
+                <input
+                  v-model="item.weight"
+                  :data-testid="`scheme-weight-${item.metricCode}`"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  style="width: 120px"
+                />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p
+        data-testid="scheme-weight-total"
+        class="hint"
+        :style="{ color: editWeightOk ? 'inherit' : 'var(--red)', marginTop: '10px' }"
+      >
+        Σ 权重 = {{ editTotal }}%
+      </p>
+      <p v-if="editError" data-testid="scheme-edit-error" class="hint" style="color: var(--red)">{{ editError }}</p>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="editOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="scheme-edit-save" @click="submitEdit">保存</button>
+      </template>
+    </ProtoDrawer>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="modal card" style="max-width: 520px; padding: 20px">
@@ -122,7 +187,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
+type SchemeItem = { metricId?: number; metricName: string; weight: number; calcRule?: string }
 type Row = {
   id: number
   schemeNo: string
@@ -134,7 +201,10 @@ type Row = {
   metricSummary: string
   evaluateeCount: number
   itemCount: number
+  items?: SchemeItem[]
 }
+type MetricOpt = { id: number; metricCode: string; metricName: string; status: string }
+type EditItem = { metricId: number; metricCode: string; metricName: string; checked: boolean; weight: string }
 
 const router = useRouter()
 const rows = ref<Row[]>([])
@@ -142,6 +212,14 @@ const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
 const formError = ref('')
+const toast = ref('')
+const toastKind = ref<'success' | 'warn'>('success')
+const editOpen = ref(false)
+const editTitle = ref('编辑指标')
+const editSchemeId = ref(0)
+const editItems = ref<EditItem[]>([])
+const editError = ref('')
+const catalog = ref<MetricOpt[]>([])
 const filters = reactive({ templateName: '', positionCode: '', periodType: '', status: '' })
 const schemeFiltered = computed(
   () => !!(filters.templateName.trim() || filters.positionCode || filters.periodType || filters.status),
@@ -260,23 +338,99 @@ async function submitCreate() {
   }
 }
 
+const editTotal = computed(() => {
+  let sum = 0
+  for (const item of editItems.value) {
+    if (!item.checked) continue
+    const raw = Number(item.weight)
+    if (Number.isFinite(raw)) sum += raw
+  }
+  return Math.round(sum * 100) / 100
+})
+const editWeightOk = computed(() => Math.abs(editTotal.value - 100) < 0.001)
+
+function showToast(message: string, kind: 'success' | 'warn' = 'success') {
+  toastKind.value = kind
+  toast.value = message
+}
+
+function rejectText(err: unknown) {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const body = err as { code?: number; msg?: string }
+    return `${body.code ?? ''} ${body.msg || ''}`.trim()
+  }
+  return '网络错误'
+}
+
 function launchExec(row: Row) {
+  if (row.status !== 'ACTIVE') {
+    showToast('方案已停用，需启用后发起', 'warn')
+    return
+  }
   router.push({
     path: '/ims/perf/execution',
     query: { schemeId: String(row.id), schemeName: row.templateName },
   })
 }
 
-async function activateRow(row: Row) {
+async function loadCatalog() {
+  const res = await http.get('/perf/metric/list', { params: { pageNo: 1, pageSize: 100 } })
+  catalog.value = (res.data.data.list || []).filter(
+    (item: MetricOpt) => item.status === 'ENABLED' && item.metricCode !== 'COMPETE_SUBMIT_RATE',
+  )
+}
+
+async function openEdit(row: Row) {
+  editError.value = ''
+  editSchemeId.value = row.id
+  editTitle.value = `编辑指标 · ${row.templateName}`
   try {
-    const res = await http.post(`/perf/scheme/${row.id}/activate`)
-    if (res.data.code !== 0) {
-      error.value = res.data.msg || '启用失败'
-      return
+    await loadCatalog()
+  } catch (err) {
+    editError.value = rejectText(err)
+  }
+  const saved = row.items || []
+  editItems.value = catalog.value.map((metric) => {
+    const hit = saved.find((item) => item.metricId === metric.id || item.metricName === metric.metricName)
+    return {
+      metricId: metric.id,
+      metricCode: metric.metricCode,
+      metricName: metric.metricName,
+      checked: !!hit,
+      weight: hit ? String(hit.weight) : '',
     }
+  })
+  editOpen.value = true
+}
+
+async function submitEdit() {
+  editError.value = ''
+  const items = editItems.value
+    .filter((item) => item.checked)
+    .map((item) => ({
+      metricId: item.metricId,
+      metricName: item.metricName,
+      weight: Number(item.weight),
+      calcRule: 'AUTO',
+    }))
+  try {
+    await http.put(`/perf/scheme/${editSchemeId.value}`, { items })
+    editOpen.value = false
+    showToast('方案已保存')
     await loadList()
-  } catch {
-    error.value = '网络错误'
+  } catch (err) {
+    editError.value = rejectText(err)
+  }
+}
+
+async function toggleStatus(row: Row) {
+  const turningOff = row.status === 'ACTIVE'
+  try {
+    await http.post(`/perf/scheme/${row.id}/${turningOff ? 'deactivate' : 'activate'}`)
+    showToast(turningOff ? '方案已停用' : '方案已启用')
+    await loadList()
+  } catch (err) {
+    showToast(rejectText(err), 'warn')
   }
 }
 
@@ -292,5 +446,8 @@ onMounted(loadList)
 }
 .scheme-card {
   padding: 16px;
+}
+button.sw {
+  border: 0;
 }
 </style>

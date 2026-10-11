@@ -61,7 +61,8 @@ test.describe('perf issue export csv closure', () => {
     await execRow.getByText('算分').click()
     await expect(execRow.locator('.tag')).toContainText('已计算', { timeout: 15_000 })
 
-    await execRow.getByText('确认').click()
+    await execRow.getByTestId('perf-exec-confirm').click()
+    await page.getByTestId('perf-confirm-submit').click()
     await expect(execRow.locator('.tag')).toContainText('已确认', { timeout: 15_000 })
 
     const issueResp = page.waitForResponse(

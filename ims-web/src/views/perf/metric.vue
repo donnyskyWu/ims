@@ -12,8 +12,11 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 12px">
-      竞品分析提交率（COMPETE_SUBMIT_RATE）在 V2 锁定禁用。岗位指标集保存时服务端校验权重合计。
+      竞品分析提交率（COMPETE_SUBMIT_RATE）在 V2 锁定禁用。岗位指标集保存时服务端校验权重合计。修改得分规则会生成新版本，历史周期仍按旧版本追溯。
     </p>
+    <div class="toasts" aria-live="polite">
+      <div v-if="toast" class="toast t-success" data-testid="metric-version-toast">{{ toast }}</div>
+    </div>
     <div
       data-testid="metric-coverage"
       :data-level="coverageLevel"
@@ -116,6 +119,14 @@
                   查看
                 </button>
                 <template v-else>
+                  <button
+                    class="btn btn-sec btn-sm"
+                    type="button"
+                    :data-testid="`metric-edit-${row.metricCode}`"
+                    @click="openEdit(row)"
+                  >
+                    编辑
+                  </button>
                   <button class="btn btn-sec btn-sm" type="button" data-testid="metric-fetch" @click="openFetch(row)">
                     试取数
                   </button>
@@ -142,10 +153,18 @@
       </div>
     </div>
 
-    <ProtoDrawer :open="createOpen" title="创建指标" width="720px" @close="createOpen = false">
+    <ProtoDrawer :open="createOpen" :title="editorMode === 'edit' ? '编辑指标' : '创建指标'" width="720px" @close="createOpen = false">
+      <p v-if="editorMode === 'edit'" class="hint" data-testid="metric-edit-hint">
+        指标编码不可改。保存后生成新版本，历史周期不受影响（PER-M-R4）。
+      </p>
       <div class="fld">
         <label>指标编码</label>
-        <input v-model="form.metricCode" data-testid="metric-code" placeholder="TRAIN_FINISH_RATE" />
+        <input
+          v-model="form.metricCode"
+          data-testid="metric-code"
+          placeholder="TRAIN_FINISH_RATE"
+          :readonly="editorMode === 'edit'"
+        />
       </div>
       <div class="fld">
         <label>指标名称</label>
@@ -228,7 +247,7 @@
       </p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="createOpen = false">取消</button>
-        <button class="btn btn-pri" type="button" data-testid="metric-save" @click="submitCreate">保存</button>
+        <button class="btn btn-pri" type="button" data-testid="metric-save" @click="submitForm">保存</button>
       </template>
     </ProtoDrawer>
 
@@ -363,8 +382,12 @@ const metricEmpty = computed(() => {
 })
 
 const createOpen = ref(false)
+const editorMode = ref<'create' | 'edit'>('create')
+const editingId = ref(0)
+const toast = ref('')
 const formError = ref('')
 const form = reactive({
+  status: 'ENABLED',
   metricCode: '',
   metricName: '',
   dataSource: 'MANUAL',
@@ -511,11 +534,12 @@ function resetFilters() {
   loadList()
 }
 
-function openCreate() {
+function resetForm() {
   form.metricCode = ''
   form.metricName = ''
   form.dataSource = 'MANUAL'
   form.weight = '10'
+  form.status = 'ENABLED'
   form.module = 'TRAIN'
   form.metricExpression = ''
   form.ruleType = 'SEGMENT'
@@ -528,6 +552,44 @@ function openCreate() {
   form.minScore = '0'
   form.maxScore = '100'
   formError.value = ''
+}
+
+function openCreate() {
+  editorMode.value = 'create'
+  editingId.value = 0
+  resetForm()
+  createOpen.value = true
+}
+
+function openEdit(row: MetricRow) {
+  editorMode.value = 'edit'
+  editingId.value = row.id
+  resetForm()
+  form.metricCode = row.metricCode
+  form.metricName = row.metricName
+  form.dataSource = row.dataSource || 'MANUAL'
+  form.weight = String(row.weight ?? 0)
+  form.status = row.status || 'ENABLED'
+  form.module = row.sourceConfig?.module || 'TRAIN'
+  form.metricExpression = row.sourceConfig?.metricExpression || ''
+  const rule = row.scoreRule || {}
+  if (rule.ruleType === 'LINEAR' && rule.linear) {
+    form.ruleType = 'LINEAR'
+    form.minMetric = String(rule.linear.minMetric ?? 0)
+    form.maxMetric = String(rule.linear.maxMetric ?? 100)
+    form.minScore = String(rule.linear.minScore ?? 0)
+    form.maxScore = String(rule.linear.maxScore ?? 100)
+  } else {
+    form.ruleType = 'SEGMENT'
+    const segments = (rule.segments || []) as Array<{ minValue?: number; maxValue?: number | null; score?: number }>
+    if (segments.length) {
+      form.segments = segments.map((seg) => ({
+        minValue: String(seg.minValue ?? ''),
+        maxValue: seg.maxValue === null || seg.maxValue === undefined ? '' : String(seg.maxValue),
+        score: String(seg.score ?? ''),
+      }))
+    }
+  }
   createOpen.value = true
 }
 
@@ -557,7 +619,7 @@ function asText(value: unknown) {
   return String(value ?? '').trim()
 }
 
-async function submitCreate() {
+async function submitForm() {
   formError.value = ''
   const payload: Record<string, unknown> = {
     metricCode: asText(form.metricCode),
@@ -565,7 +627,7 @@ async function submitCreate() {
     dataSource: form.dataSource,
     weight: Number(form.weight),
     scoreRule: scoreRulePayload(),
-    status: 'ENABLED',
+    status: editorMode.value === 'edit' ? form.status : 'ENABLED',
   }
   if (form.dataSource === 'AUTO') {
     payload.sourceConfig = {
@@ -575,8 +637,15 @@ async function submitCreate() {
     }
   }
   try {
-    await http.post('/perf/metric', payload)
-    createOpen.value = false
+    if (editorMode.value === 'edit') {
+      const res = await http.put(`/perf/metric/${editingId.value}`, payload)
+      const version = res.data.data?.version
+      toast.value = `已生成新版本 v${version}，历史周期不受影响`
+      createOpen.value = false
+    } else {
+      await http.post('/perf/metric', payload)
+      createOpen.value = false
+    }
     await loadList()
     await loadCoverage()
   } catch (err) {

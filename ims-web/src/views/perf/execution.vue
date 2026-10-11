@@ -81,7 +81,8 @@
                 <span
                   v-if="row.status === 'CALCULATED' || row.status === 'REVIEWED'"
                   class="btn-txt btn"
-                  @click="confirmRow(row)"
+                  data-testid="perf-exec-confirm"
+                  @click="openConfirm(row)"
                 >确认</span>
                 <span
                   v-if="row.status === 'REVIEWED' || row.status === 'CONFIRMED'"
@@ -92,6 +93,24 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="confirmTarget" class="modal-mask" data-testid="perf-confirm-dialog" @click.self="confirmTarget = null">
+      <div class="modal card" style="max-width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">确认结果</h3>
+        <p data-testid="perf-confirm-score">综合得分 {{ confirmTarget.totalScore ?? '—' }}</p>
+        <p data-testid="perf-confirm-grade">分档 {{ confirmTarget.gradeEdge || '—' }}</p>
+        <p v-if="confirmTarget.grade === 'IMPROVE'" class="hint" data-testid="perf-confirm-alert" style="color: var(--red)">
+          低于合格线，将触发预警
+        </p>
+        <p v-if="confirmError" class="hint" style="color: var(--red)">{{ confirmError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="confirmTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="perf-confirm-submit" @click="submitConfirm">
+            确认结果
+          </button>
+        </div>
       </div>
     </div>
 
@@ -156,6 +175,8 @@ type Row = {
   manualAdjustment?: number
   status: string
   evaluatorName: string
+  grade?: string
+  gradeEdge?: string
 }
 
 const route = useRoute()
@@ -164,6 +185,8 @@ const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
 const showAdjust = ref(false)
+const confirmTarget = ref<Row | null>(null)
+const confirmError = ref('')
 const adjustTarget = ref<Row | null>(null)
 const adjustError = ref('')
 const adjustForm = reactive({ manualAdjustment: 0, remark: '' })
@@ -280,13 +303,26 @@ async function calculate(row: Row) {
   await loadList()
 }
 
-async function confirmRow(row: Row) {
-  const res = await http.post(`/perf/execution/${row.id}/confirm`)
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '确认失败')
-    return
+function openConfirm(row: Row) {
+  confirmError.value = ''
+  confirmTarget.value = row
+}
+
+async function submitConfirm() {
+  if (!confirmTarget.value) return
+  confirmError.value = ''
+  try {
+    const res = await http.post(`/perf/execution/${confirmTarget.value.id}/confirm`)
+    if (res.data.code !== 0) {
+      confirmError.value = res.data.msg || '确认失败'
+      return
+    }
+    confirmTarget.value = null
+    await loadList()
+  } catch (err) {
+    const body = err as { msg?: string }
+    confirmError.value = body.msg || '确认失败'
   }
-  await loadList()
 }
 
 async function issueRow(row: Row) {

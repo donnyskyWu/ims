@@ -118,13 +118,11 @@
         <option value="MONTHLY">月度</option>
         <option value="QUARTERLY">季度</option>
       </select>
-      <select v-model="filters.grade" data-testid="perf-result-grade-filter" style="width: 130px">
-        <option value="">全部等级</option>
-        <option value="S">S ≥90</option>
-        <option value="A">A 80-89</option>
-        <option value="B">B 70-79</option>
-        <option value="C">C 60-69</option>
-        <option value="D">D &lt;60</option>
+      <select v-model="filters.grade" data-testid="perf-result-grade-filter" style="width: 150px">
+        <option value="">全部分档</option>
+        <option value="EXCELLENT">优秀 ≥85</option>
+        <option value="QUALIFIED">合格 60~84</option>
+        <option value="IMPROVE">待改进 &lt;60</option>
       </select>
       <input v-model="filters.evaluateeName" data-testid="perf-result-name" placeholder="被考核人" style="width: 120px" />
       <input v-model="filters.recordNo" data-testid="perf-result-no" placeholder="单号" style="width: 140px" />
@@ -143,7 +141,7 @@
               <th>岗位</th>
               <th>周期</th>
               <th>得分</th>
-              <th>等级</th>
+              <th>评级</th>
               <th>状态</th>
             </tr>
           </thead>
@@ -188,7 +186,7 @@ type Row = {
   status: string
 }
 
-type GradeCounts = { S: number; A: number; B: number; C: number; D: number }
+type GradeCounts = { EXCELLENT: number; QUALIFIED: number; IMPROVE: number }
 type RankRow = {
   id?: number
   userId: number
@@ -208,7 +206,8 @@ const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const exportNote = ref('')
-const counts = ref<GradeCounts>({ S: 0, A: 0, B: 0, C: 0, D: 0 })
+const counts = ref<GradeCounts>({ EXCELLENT: 0, QUALIFIED: 0, IMPROVE: 0 })
+const recordGradeLine = ref('优秀 ≥85 · 合格 60~84 · 待改进 <60')
 const filters = reactive({ status: '', periodType: '', grade: '', evaluateeName: '', recordNo: '' })
 const rankPeriod = ref(previousMonth())
 const rankDept = ref('')
@@ -302,7 +301,7 @@ const emptyText = computed(() => {
 
 const distText = computed(() => {
   const item = counts.value
-  return `等级分布 S ${item.S} · A ${item.A} · B ${item.B} · C ${item.C} · D ${item.D}（边界 90 / 80 / 70 / 60）`
+  return `分档分布 优秀 ${item.EXCELLENT || 0} · 合格 ${item.QUALIFIED || 0} · 待改进 ${item.IMPROVE || 0}（${recordGradeLine.value}）`
 })
 
 function listParams() {
@@ -325,11 +324,12 @@ async function loadList() {
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
-      counts.value = { S: 0, A: 0, B: 0, C: 0, D: 0 }
+      counts.value = { EXCELLENT: 0, QUALIFIED: 0, IMPROVE: 0 }
       return
     }
     rows.value = res.data.data?.list || []
-    counts.value = res.data.data?.gradeCounts || { S: 0, A: 0, B: 0, C: 0, D: 0 }
+    counts.value = res.data.data?.gradeCounts || { EXCELLENT: 0, QUALIFIED: 0, IMPROVE: 0 }
+    if (res.data.data?.gradeLine) recordGradeLine.value = res.data.data.gradeLine
   } catch {
     error.value = '网络错误'
     rows.value = []

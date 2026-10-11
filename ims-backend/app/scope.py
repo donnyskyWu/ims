@@ -357,6 +357,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/dc/profit-trace", "ims_fin_profit"),
     ("GET", "/admin-api/ims/perf/scheme", "ims_perf_scheme"),
     ("POST", "/admin-api/ims/perf/scheme", "ims_perf_scheme"),
+    ("PUT", "/admin-api/ims/perf/scheme", "ims_perf_scheme"),
     ("GET", "/admin-api/ims/perf/metric", "ims_perf_metric"),
     ("POST", "/admin-api/ims/perf/metric", "ims_perf_metric"),
     ("PUT", "/admin-api/ims/perf/metric", "ims_perf_metric"),

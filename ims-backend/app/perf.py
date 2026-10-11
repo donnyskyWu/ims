@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import io
 import time
@@ -16,7 +17,16 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
-from app.models import ExamQuestion, PerfMetric, PerfPositionBind, PerfRecord, PerfScheme, User
+from app.models import (
+    ExamQuestion,
+    PerfMetric,
+    PerfMetricRevision,
+    PerfPositionBind,
+    PerfRecord,
+    PerfScheme,
+    User,
+)
+from app.perf_grade import GRADE_LEVELS, alert_triggered, edge_text, grade_line_text, grade_lines, level_of
 
 router = APIRouter(prefix="/perf", tags=["perf"])
 
@@ -28,16 +38,7 @@ RECORD_STATUSES = frozenset(
 )
 RESULT_STATUSES = frozenset({"CALCULATED", "REVIEWED", "CONFIRMED", "ISSUED"})
 EXPORT_STATUSES = frozenset({"CONFIRMED", "ISSUED"})
-# PRD-M3 绩效等级 PerfGrade。与 PerfGradeLevel（≥85 / ≥60）分开，不在这里混用。
-GRADE_THRESHOLDS = ((90, "S"), (80, "A"), (70, "B"), (60, "C"))
-GRADE_LETTERS = frozenset({"S", "A", "B", "C", "D"})
-GRADE_EDGES = {
-    "S": "S ≥90",
-    "A": "A 80-89",
-    "B": "B 70-79",
-    "C": "C 60-69",
-    "D": "D <60",
-}
+# 分档只用 PerfGradeLevel（优秀 / 合格 / 待改进）。禁止写入 S～D。
 CALC_RULES = frozenset({"AUTO", "MANUAL", "MIXED"})
 QUESTION_TYPES = frozenset({"SINGLE", "MULTIPLE", "JUDGE", "ESSAY"})
 KNOWLEDGE_DOMAINS = frozenset(
@@ -55,9 +56,16 @@ POSITION_LABELS = {
 
 class SchemeItemBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    metricName: str
+    metricName: str = ""
     weight: float = Field(ge=0, le=100)
     calcRule: str = "AUTO"
+    metricId: int | None = None
+
+
+class SchemeItemsBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    items: list[SchemeItemBody] = Field(default_factory=list)
+    metricSummary: str | None = None
 
 
 class ExecutionBody(BaseModel):
@@ -184,25 +192,27 @@ def next_scheme_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
-def grade_of(score: float | None) -> str:
+def grade_bundle(db: Session, score: float | None) -> dict:
+    excellent, qualified = grade_lines(db)
     if score is None:
-        return "—"
-    for threshold, label in GRADE_THRESHOLDS:
-        if score >= threshold:
-            return label
-    return "D"
+        return {"grade": "", "gradeLevel": "", "gradeEdge": "", "alerted": False}
+    level = level_of(score, excellent, qualified)
+    return {
+        "grade": level,
+        "gradeLevel": level,
+        "gradeEdge": edge_text(level, excellent, qualified),
+        "alerted": alert_triggered(level),
+    }
 
 
-def grade_edge(letter: str) -> str:
-    return GRADE_EDGES.get(letter, letter)
-
-
-def grade_counts(rows: list[PerfRecord]) -> dict[str, int]:
-    counts = {letter: 0 for letter in ("S", "A", "B", "C", "D")}
+def grade_counts(db: Session, rows: list[PerfRecord]) -> dict[str, int]:
+    excellent, qualified = grade_lines(db)
+    counts = {level: 0 for level in ("EXCELLENT", "QUALIFIED", "IMPROVE")}
     for row in rows:
-        letter = grade_of(row.total_score)
-        if letter in counts:
-            counts[letter] += 1
+        if row.total_score is None:
+            continue
+        level = level_of(row.total_score, excellent, qualified)
+        counts[level] += 1
     return counts
 
 
@@ -234,14 +244,14 @@ def result_records(
     grade: str | None,
     record_no: str | None = None,
 ) -> tuple[list[PerfRecord], dict[str, int], str | None]:
-    if grade and grade not in GRADE_LETTERS:
+    if grade and grade not in GRADE_LEVELS:
         return [], {}, "grade 无效"
     if status and status not in statuses:
         return [], {}, "status 无效"
     if period_type and period_type not in PERIOD_TYPES:
         return [], {}, "periodType 无效"
     user_ids = matching_user_ids(db, tenant_id, evaluatee_name or "")
-    empty_counts = {letter: 0 for letter in ("S", "A", "B", "C", "D")}
+    empty_counts = {level: 0 for level in ("EXCELLENT", "QUALIFIED", "IMPROVE")}
     if user_ids is not None and not user_ids:
         return [], empty_counts, None
     stmt = select(PerfRecord).where(
@@ -264,17 +274,19 @@ def result_records(
             stmt.order_by(PerfRecord.total_score.desc(), PerfRecord.id.desc())
         ).all()
     )
-    counts = grade_counts(rows)
+    counts = grade_counts(db, rows)
     if grade:
-        rows = [row for row in rows if grade_of(row.total_score) == grade]
+        excellent, qualified = grade_lines(db)
+        rows = [
+            row
+            for row in rows
+            if row.total_score is not None and level_of(row.total_score, excellent, qualified) == grade
+        ]
     return rows, counts, None
 
 
 def result_vo(db: Session, row: PerfRecord, scheme: PerfScheme | None = None) -> dict:
     base = record_vo(db, row, scheme)
-    letter = grade_of(row.total_score)
-    base["grade"] = letter
-    base["gradeEdge"] = grade_edge(letter)
     base["published"] = row.status in ("CONFIRMED", "ISSUED")
     return base
 
@@ -305,6 +317,7 @@ def record_vo(db: Session, row: PerfRecord, scheme: PerfScheme | None = None) ->
         "evaluatorName": user_label(db, row.evaluator_user_id),
         "ipGroupId": row.ip_group_id or None,
         "createdAt": iso(row.created_at),
+        **grade_bundle(db, row.total_score),
     }
 
 
@@ -558,7 +571,9 @@ def result_list(
         page_no,
         size,
     )
+    excellent, qualified = grade_lines(db)
     payload["data"]["gradeCounts"] = counts
+    payload["data"]["gradeLine"] = grade_line_text(excellent, qualified)
     return payload
 
 
@@ -603,7 +618,7 @@ def result_export(
                 vo["position"],
                 vo["cycleDisplay"],
                 vo["totalScore"] if vo["totalScore"] is not None else "",
-                vo["grade"],
+                vo["gradeEdge"] or vo["grade"],
                 vo["status"],
             ]
         )
@@ -872,6 +887,96 @@ def activate_scheme(
     return ok(scheme_vo(row))
 
 
+def scheme_item_payloads(db: Session, tenant_id: int, items: list[SchemeItemBody], *, weight_code: int):
+    if not items:
+        return fail(1001, "至少配置一项指标"), None
+    payloads: list[dict] = []
+    seen: set[int] = set()
+    for item in items:
+        if item.calcRule not in CALC_RULES:
+            return fail(1001, "算分方式无效"), None
+        name = item.metricName.strip()
+        metric_id = item.metricId
+        if metric_id:
+            if metric_id in seen:
+                return fail(1001, "指标重复"), None
+            seen.add(metric_id)
+            metric = find_metric(db, tenant_id, metric_id)
+            if metric is None:
+                return fail(1001, "指标不存在"), None
+            if not name:
+                name = metric.metric_name
+        if not name:
+            return fail(1001, "指标名称必填"), None
+        payload = {
+            "metricName": name,
+            "weight": float(q2(item.weight)),
+            "calcRule": item.calcRule,
+        }
+        if metric_id:
+            payload["metricId"] = metric_id
+        payloads.append(payload)
+    total = q2(sum(item["weight"] for item in payloads))
+    if total != HUNDRED:
+        shown = f"{total:.2f}"
+        if weight_code == 1154:
+            return (
+                fail(1154, f"方案指标权重合计 {shown}%，须 = 100%", {"totalWeight": float(total)}),
+                None,
+            )
+        return fail(1001, "指标权重合计须为 100%"), None
+    return None, payloads
+
+
+def summary_from_items(items: list[dict], override: str | None) -> str:
+    if override and override.strip():
+        return override.strip()
+    parts = []
+    for item in items:
+        weight = float(item["weight"])
+        text = str(int(weight)) if weight == int(weight) else f"{weight:.2f}"
+        parts.append(f"{item['metricName']} {text}%")
+    return " · ".join(parts)
+
+
+@router.put("/scheme/{scheme_id}")
+def update_scheme_items(
+    scheme_id: int,
+    body: SchemeItemsBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(PerfScheme, scheme_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1500, "方案不存在")
+    rejected, payloads = scheme_item_payloads(db, tenant_id, body.items, weight_code=1154)
+    if rejected is not None:
+        return rejected
+    assert payloads is not None
+    row.items = payloads
+    row.metric_summary = summary_from_items(payloads, body.metricSummary)
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(scheme_vo(row))
+
+
+@router.post("/scheme/{scheme_id}/deactivate")
+def deactivate_scheme(
+    scheme_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(PerfScheme, scheme_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1500, "方案不存在")
+    row.status = "INACTIVE"
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(scheme_vo(row))
+
+
 COMPETE_CODE = "COMPETE_SUBMIT_RATE"
 COMPETE_NOTE = "待 V3 竞品管理（04）上线后启用（BR-110/BR-206）"
 COMPETE_LOCK_MSG = "竞品分析提交率指标 V2 锁定禁用（BR-110）"
@@ -1124,6 +1229,36 @@ def ensure_compete_metric(db: Session, tenant_id: int, actor_id: int) -> PerfMet
     return row
 
 
+def archive_metric_revision(db: Session, row: PerfMetric, effective_at: datetime | None = None) -> None:
+    """落一条不可变口径。同一指标同一版本只保留一次。"""
+    version = int(row.version or 1)
+    exists = db.scalar(
+        select(PerfMetricRevision.id).where(
+            PerfMetricRevision.deleted == 0,
+            PerfMetricRevision.tenant_id == row.tenant_id,
+            PerfMetricRevision.metric_id == row.id,
+            PerfMetricRevision.version == version,
+        )
+    )
+    if exists is not None:
+        return
+    db.add(
+        PerfMetricRevision(
+            metric_id=row.id,
+            version=version,
+            metric_name=row.metric_name,
+            data_source=row.data_source,
+            source_config=copy.deepcopy(row.source_config) if row.source_config else None,
+            weight=float(row.weight or 0),
+            score_rule=copy.deepcopy(row.score_rule or {}),
+            status=row.status,
+            effective_at=effective_at or row.created_at or utcnow(),
+            created_by=row.created_by,
+            tenant_id=row.tenant_id,
+        )
+    )
+
+
 def find_metric(db: Session, tenant_id: int, metric_id: int) -> PerfMetric | None:
     row = db.get(PerfMetric, metric_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
@@ -1308,6 +1443,8 @@ def create_metric(
     )
     db.add(row)
     db.flush()
+    archive_metric_revision(db, row, effective_at=row.created_at or utcnow())
+    db.flush()
     return ok(metric_vo(row))
 
 
@@ -1341,8 +1478,11 @@ def update_metric(
     row.status = payload["status"]
     if row.metric_code == COMPETE_CODE:
         row.enable_note = COMPETE_NOTE
+    archive_metric_revision(db, row, effective_at=row.created_at or utcnow())
     row.version = int(row.version or 1) + 1
     row.updated_at = utcnow()
+    db.flush()
+    archive_metric_revision(db, row, effective_at=row.updated_at)
     db.flush()
     return ok(metric_vo(row))
 

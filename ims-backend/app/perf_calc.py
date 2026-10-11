@@ -135,13 +135,48 @@ def previous_period(period: str) -> str:
     return f"{year}-{month - 1:02d}"
 
 
-def grade_level_of(score: Decimal | float | None) -> str:
-    value = Decimal(str(score or 0))
-    if value >= GRADE_EXCELLENT:
-        return "EXCELLENT"
-    if value >= GRADE_QUALIFIED:
-        return "QUALIFIED"
-    return "IMPROVE"
+def grade_level_of(score: Decimal | float | None, db: Session | None = None) -> str:
+    from app.perf_grade import grade_lines, level_of
+
+    excellent, qualified = grade_lines(db)
+    return level_of(score, excellent, qualified)
+
+
+def qualified_label(db: Session | None = None) -> str:
+    from app.perf_grade import grade_lines
+
+    _, qualified = grade_lines(db)
+    if qualified == qualified.to_integral_value():
+        return str(int(qualified))
+    return format(qualified.normalize(), "f")
+
+
+def metric_rule_for_period(db: Session, metric: PerfMetric, period: str) -> tuple[dict, int]:
+    """历史周期用当时已生效的口径。编辑之后的新版本不影响更早的月份（PER-M-R4）。"""
+    from app.models import PerfMetricRevision
+
+    _, end = month_bounds(period)
+    rows = list(
+        db.scalars(
+            select(PerfMetricRevision)
+            .where(
+                PerfMetricRevision.deleted == 0,
+                PerfMetricRevision.tenant_id == metric.tenant_id,
+                PerfMetricRevision.metric_id == metric.id,
+            )
+            .order_by(PerfMetricRevision.version.asc())
+        ).all()
+    )
+    if not rows:
+        return metric.score_rule or {}, int(metric.version or 1)
+    chosen = None
+    for revision in rows:
+        stamp = revision.effective_at
+        if stamp is not None and stamp < end:
+            chosen = revision
+    if chosen is None:
+        chosen = rows[0]
+    return chosen.score_rule or {}, int(chosen.version or 1)
 
 
 def is_manager(tags: set[str]) -> bool:
@@ -580,7 +615,8 @@ def build_details(
             status = "MISSING"
         if status == "MISSING":
             missing = True
-        metric_score = score_of(metric.score_rule or {}, value)
+        rule, rule_version = metric_rule_for_period(db, metric, period)
+        metric_score = score_of(rule, value)
         total += q2(metric_score * weight / HUNDRED)
         details.append(
             {
@@ -592,7 +628,7 @@ def build_details(
                 "metric_score": metric_score,
                 "weight": weight,
                 "data_status": status,
-                "version": int(metric.version or 1),
+                "version": rule_version,
             }
         )
     return details, q2(total), missing
@@ -721,8 +757,8 @@ def recompute_total(db: Session, row: PerfCalcResult) -> None:
 def notify_published(db: Session, tenant_id: int, row: PerfCalcResult) -> None:
     score = float(row.total_score or 0)
     content = f"{row.period_month} 绩效已发布，综合得分 {score:.2f}"
-    if grade_level_of(row.total_score) == "IMPROVE":
-        content += "，低于 60 分，分档为待改进"
+    if grade_level_of(row.total_score, db) == "IMPROVE":
+        content += f"，低于 {qualified_label(db)} 分，分档为待改进"
     db.add(
         WorkMessage(
             user_id=row.user_id,
@@ -803,7 +839,7 @@ def sync_rank_alerts(db: Session, tenant_id: int, period: str | None = None) -> 
                     user_id=rank.user_id,
                     title="绩效预警",
                     content=(
-                        f"{rank.period_month} 综合得分 {score:.2f}，低于 60，"
+                        f"{rank.period_month} 综合得分 {score:.2f}，低于 {qualified_label(db)}，"
                         "已通知本人、直属上级与 HR"
                     ),
                     channel="IN_APP",
@@ -898,12 +934,30 @@ def average_score(rows: list[PerfRank]) -> float | None:
     return float((total / Decimal(len(rows))).quantize(Decimal("0.01")))
 
 
-def board_item(row: PerfRank, board_rank: int) -> dict:
+def board_item(row: PerfRank, board_rank: int, qualified: Decimal | None = None) -> dict:
+    from app.perf_grade import grade_lines
+
     data = rank_vo(row)
     data["boardRank"] = board_rank
     data["medal"] = MEDALS.get(board_rank, "")
-    data["belowLine"] = score_cents(row.total_score) < GRADE_QUALIFIED
+    line = GRADE_QUALIFIED if qualified is None else qualified
+    if qualified is None:
+        _, line = grade_lines()
+    data["belowLine"] = score_cents(row.total_score) < line
     return data
+
+
+def current_grade_copy() -> tuple[str, str]:
+    from app.perf_grade import grade_line_text, grade_lines
+
+    excellent, qualified = grade_lines()
+    line = grade_line_text(excellent, qualified)
+    qualified_text = str(int(qualified)) if qualified == qualified.to_integral_value() else format(qualified, "f")
+    stub = (
+        f"低于 {qualified_text} 分列入末位预警，将触发绩效改进计划（PIP），"
+        "并通知本人、直属上级与 HR。本地只记说明，不外发钉钉。"
+    )
+    return line, stub
 
 
 def competition_board(rows: list[PerfRank]) -> list[tuple[int, PerfRank]]:
@@ -962,20 +1016,24 @@ def build_rank_board(visible: list[PerfRank], period_rows: list[PerfRank]) -> di
         "deptAverage": None,
         "deptAverages": [],
         "depts": depts,
-        "pipStub": PIP_STUB,
-        "gradeLine": GRADE_LINE,
+        "pipStub": current_grade_copy()[1],
+        "gradeLine": current_grade_copy()[0],
     }
     if not period_rows:
         return {**empty, "emptyReason": "UNPUBLISHED", "depts": []}
     if not visible:
         return {**empty, "emptyReason": "DEPT_EMPTY"}
     ranked = competition_board(visible)
-    top3 = [board_item(row, rank) for rank, row in ranked if rank <= 3]
+    from app.perf_grade import grade_lines
+
+    _, qualified = grade_lines()
+    grade_line, pip_stub = current_grade_copy()
+    top3 = [board_item(row, rank, qualified) for rank, row in ranked if rank <= 3]
     tail_rows = sorted(
         [row for row in visible if row.grade_level == "IMPROVE" or row.alert_status == "ALERTED"],
         key=lambda row: (score_cents(row.total_score), int(row.user_id or 0)),
     )
-    tail = [board_item(row, 0) for row in tail_rows[:3]]
+    tail = [board_item(row, 0, qualified) for row in tail_rows[:3]]
     return {
         "emptyReason": "",
         "top3": top3,
@@ -983,8 +1041,8 @@ def build_rank_board(visible: list[PerfRank], period_rows: list[PerfRank]) -> di
         "deptAverage": average_score(visible),
         "deptAverages": dept_averages(visible),
         "depts": depts,
-        "pipStub": PIP_STUB,
-        "gradeLine": GRADE_LINE,
+        "pipStub": pip_stub,
+        "gradeLine": grade_line,
     }
 
 
