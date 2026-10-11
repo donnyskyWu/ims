@@ -8,6 +8,9 @@
       <div v-if="kind === 'company'" class="acts">
         <button class="btn btn-pri" type="button" data-testid="corp-company-create" @click="openCompanyCreate">新建公司</button>
       </div>
+      <div v-else-if="kind === 'realname'" class="acts">
+        <button class="btn btn-pri" type="button" data-testid="corp-realname-create" @click="openRealnameCreate">新增实名人</button>
+      </div>
       <div v-else-if="kind === 'sim-card'" class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新建手机卡</button>
       </div>
@@ -167,6 +170,7 @@
       </div>
     </div>
     <p v-if="companyToast" class="hint" data-testid="corp-company-toast">{{ companyToast }}</p>
+    <p v-if="realnameToast" class="hint" data-testid="corp-realname-toast">{{ realnameToast }}</p>
     <p v-if="kind === 'company'" class="hint" data-testid="master-company-industry-hint">
       行业来自字典 dict_industry。未列入字典的行业不会出现在下拉里。
     </p>
@@ -482,7 +486,7 @@
       <div v-if="kind === 'realname' && detailReady" data-testid="master-realname-relations">
         <div v-if="!intermediaryItems.length" class="empty" data-testid="master-realname-intermediary-empty">
           <div class="et">暂无中介人</div>
-          <div class="es">契约没有实名人写入接口，中介关系不会在这里新增。</div>
+          <div class="es">登记实名人时填写的中介人会列在这里。</div>
         </div>
         <ul v-else data-testid="master-realname-intermediaries">
           <li v-for="(item, index) in intermediaryItems" :key="index">{{ relationText(item) }}</li>
@@ -587,6 +591,47 @@
       <template #foot>
         <button class="btn btn-sec" type="button" @click="companyOpen = false">取消</button>
         <button class="btn btn-pri" type="button" data-testid="corp-company-save" @click="submitCompany">保存</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="realnameOpen" title="新增实名人" width="480px" @close="realnameOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>姓名<i class="req">*</i></label>
+          <input v-model="realnameForm.realName" data-testid="corp-realname-name" :class="{ err: realnameErrors.realName }" />
+          <div v-if="realnameErrors.realName" class="ferr" data-testid="corp-realname-error-name">{{ realnameErrors.realName }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>证件号<i class="req">*</i></label>
+          <input v-model="realnameForm.idCard" data-testid="corp-realname-idcard" :class="{ err: realnameErrors.idCard }" />
+          <div v-if="realnameErrors.idCard" class="ferr" data-testid="corp-realname-error-idcard">{{ realnameErrors.idCard }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>手机号</label>
+          <input v-model="realnameForm.phone" data-testid="corp-realname-phone" placeholder="可空" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>中介人</label>
+          <input v-model="realnameForm.intermediary" data-testid="corp-realname-intermediary" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>状态</label>
+          <select v-model="realnameForm.status" data-testid="corp-realname-status">
+            <option value="ENABLED">在职</option>
+            <option value="DISABLED">离职</option>
+          </select>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="realnameOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-realname-save" @click="submitRealname">保存</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="formOpen" :title="editingId ? '编辑手机卡' : '新建手机卡'" width="480px" @close="formOpen = false">
@@ -988,6 +1033,19 @@ const companyErrors = reactive({
   creditCode: '',
   capacity: '',
 })
+const realnameOpen = ref(false)
+const realnameToast = ref('')
+const realnameForm = reactive({
+  realName: '',
+  idCard: '',
+  phone: '',
+  intermediary: '',
+  status: 'ENABLED',
+})
+const realnameErrors = reactive({
+  realName: '',
+  idCard: '',
+})
 const editingId = ref<number | null>(null)
 const saving = ref(false)
 const formError = ref('')
@@ -1040,14 +1098,14 @@ const specs: Record<string, {
     sub: 'CORP-R · 姓名、证件号、手机由接口脱敏',
     placeholder: '姓名',
     empty: '没有实名人',
-    emptyHint: '契约只有分页和详情。',
-    hint: '列表不返回证件号和手机明文。没有新建接口。',
+    emptyHint: '点右上角「新增实名人」。',
+    hint: '列表不返回证件号和手机明文。状态按在职、离职筛选，库存值仍是 ENABLED / DISABLED。',
     detailTitle: '实名人详情',
-    columns: ['姓名', '证件类型', '证件号', '手机', '状态'],
-    keys: ['realName', 'idType', 'idCardMasked', 'phoneMasked', 'status'],
+    columns: ['实名人ID', '姓名', '证件类型', '证件号', '手机', '中介人', '状态'],
+    keys: ['id', 'realName', 'idType', 'idCardMasked', 'phoneMasked', 'intermediary', 'status'],
     statusOptions: [
-      { value: 'ENABLED', label: '启用' },
-      { value: 'DISABLED', label: '停用' },
+      { value: 'ENABLED', label: '在职' },
+      { value: 'DISABLED', label: '离职' },
     ],
   },
   'sim-card': {
@@ -2295,6 +2353,43 @@ async function prepareSim() {
     persons.value = asList(personPage.data?.data) as unknown as { id: number; realName: string }[]
   } finally {
     simDictReady.value = true
+  }
+}
+
+function openRealnameCreate() {
+  realnameForm.realName = ''
+  realnameForm.idCard = ''
+  realnameForm.phone = ''
+  realnameForm.intermediary = ''
+  realnameForm.status = 'ENABLED'
+  realnameErrors.realName = ''
+  realnameErrors.idCard = ''
+  realnameToast.value = ''
+  realnameOpen.value = true
+}
+
+async function submitRealname() {
+  const required = '必填项，请填写'
+  realnameErrors.realName = realnameForm.realName.trim() ? '' : required
+  realnameErrors.idCard = realnameForm.idCard.trim() ? '' : required
+  if (realnameErrors.realName || realnameErrors.idCard) {
+    realnameToast.value = '请先完成必填项'
+    return
+  }
+  try {
+    await http.post('/corp/resource/realname', {
+      realName: realnameForm.realName.trim(),
+      idCard: realnameForm.idCard.trim(),
+      phone: realnameForm.phone.trim() || undefined,
+      intermediary: realnameForm.intermediary.trim() || undefined,
+      status: realnameForm.status,
+    })
+    realnameOpen.value = false
+    realnameToast.value = '实名人已创建'
+    pageNo.value = 1
+    await load()
+  } catch (e: unknown) {
+    realnameToast.value = errorMessage(e)
   }
 }
 

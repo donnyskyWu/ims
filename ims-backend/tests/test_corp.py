@@ -247,6 +247,36 @@ def test_cert_e2e_seed_watermark_view():
     assert "signedUrl" not in view.text
 
 
+def test_realname_create_encrypts_id_card_and_keeps_status_codes():
+    auth = headers()
+    missing = client.post("/admin-api/ims/corp/resource/realname", headers=auth, json={"realName": "王五"})
+    assert missing.json()["code"] == 1001
+    created = client.post(
+        "/admin-api/ims/corp/resource/realname",
+        headers=auth,
+        json={
+            "realName": "王五",
+            "idCard": "330102199001011234",
+            "intermediary": "中介甲",
+            "status": "ENABLED",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0
+    assert "330102199001011234" not in created.text
+    assert body["data"]["idCardMasked"].startswith("330102")
+    assert body["data"]["intermediary"] == "中介甲"
+    assert body["data"]["status"] == "ENABLED"
+    assert body["data"]["intermediaries"] == [{"name": "中介甲"}]
+    listed = client.get(
+        "/admin-api/ims/corp/resource/realname/page",
+        headers=auth,
+        params={"realName": "王五", "status": "ENABLED"},
+    )
+    assert listed.json()["data"]["total"] >= 1
+    assert listed.json()["data"]["list"][0]["intermediary"] == "中介甲"
+
+
 def test_e2e_content_company_is_restored_when_douyin_account_exists():
     from app.main import _ensure_e2e_douyin_account
 

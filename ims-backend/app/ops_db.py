@@ -37,6 +37,7 @@ def ops_engine():
         OpsBase.metadata.create_all(engine)
         _ensure_credential_ref(engine)
         _ensure_keyword_collect_enabled(engine)
+        _ensure_realname_intermediary(engine)
         _schema_ready.add(name)
     return engine
 
@@ -71,6 +72,20 @@ def _ensure_keyword_collect_enabled(engine) -> None:
         conn.execute(
             text("ALTER TABLE oa_collect_keyword ADD COLUMN collect_enabled TINYINT NOT NULL DEFAULT 1")
         )
+
+
+def _ensure_realname_intermediary(engine) -> None:
+    """旧库补实名人中介人。create_all 不会给已有表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "oa_realname" not in insp.get_table_names():
+        return
+    cols = {col["name"] for col in insp.get_columns("oa_realname")}
+    if "intermediary" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE oa_realname ADD COLUMN intermediary VARCHAR(64) NOT NULL DEFAULT ''"))
 
 
 def ops_session():

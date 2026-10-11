@@ -36,6 +36,7 @@ class Realname(OpsBase):
     phone_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     wechat: Mapped[str] = mapped_column(String(64), default="")
     gender: Mapped[str] = mapped_column(String(16), default="")
+    intermediary: Mapped[str] = mapped_column(String(64), default="")
     status: Mapped[str] = mapped_column(String(16), default="ENABLED")
     company_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)

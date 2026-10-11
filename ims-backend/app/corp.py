@@ -167,6 +167,7 @@ def realname_vo(row: Realname) -> dict:
         "phoneMasked": mask_mobile(decrypt_text(row.phone_enc)),
         "wechat": row.wechat,
         "gender": row.gender,
+        "intermediary": row.intermediary or "",
         "status": row.status,
         "companyId": row.company_id,
     }
@@ -434,7 +435,77 @@ def realname_detail(realname_id: int, ops: Session = Depends(ops_db), actor: Use
     if not visible(row, actor):
         return fail(1504, "资源不可用")
     data = realname_vo(row)
-    data["intermediaries"] = []
+    data["intermediaries"] = [{"name": row.intermediary}] if row.intermediary else []
+    data["linkedAccounts"] = []
+    return ok(data)
+
+
+class RealnameBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    realName: str | None = None
+    idCard: str | None = None
+    phone: str | None = None
+    intermediary: str | None = None
+    status: str | None = None
+
+
+def realname_phone_taken(ops: Session, actor: User, digest: str) -> bool:
+    return (
+        ops.scalar(
+            select(Realname.id).where(
+                Realname.deleted == 0,
+                Realname.tenant_id == tenant_of(actor),
+                Realname.phone_sha256 == digest,
+            )
+        )
+        is not None
+    )
+
+
+@router.post("/corp/resource/realname")
+def realname_create(
+    body: RealnameBody,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    name = (body.realName or "").strip()
+    card = (body.idCard or "").strip()
+    phone = (body.phone or "").strip()
+    if not name:
+        return fail(1001, "姓名必填")
+    if not card:
+        return fail(1001, "证件号必填")
+    status = (body.status or "ENABLED").strip() or "ENABLED"
+    enum_error = check_enum(db, "dict_realname_status", status, True)
+    if enum_error:
+        return enum_error
+    phone_enc = ""
+    digest = None
+    if phone:
+        if not PHONE_RE.match(phone):
+            return fail(1001, "手机号格式不正确")
+        digest = sha256_hex(phone)
+        if realname_phone_taken(ops, actor, digest):
+            return fail(1001, "手机号已存在")
+        phone_enc = encrypt_text(phone)
+    row = Realname(
+        real_name=name,
+        id_type="ID_CARD",
+        id_card_enc=encrypt_text(card),
+        phone_enc=phone_enc,
+        phone_sha256=digest,
+        intermediary=(body.intermediary or "").strip(),
+        status=status,
+        deleted=0,
+        tenant_id=tenant_of(actor),
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    ops.add(row)
+    ops.flush()
+    data = realname_vo(row)
+    data["intermediaries"] = [{"name": row.intermediary}] if row.intermediary else []
     data["linkedAccounts"] = []
     return ok(data)
 

@@ -168,6 +168,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/corp/resource/company", "oa_company"),
     ("POST", "/admin-api/ims/corp/resource/company", "oa_company"),
     ("GET", "/admin-api/ims/corp/resource/realname", "oa_realname"),
+    ("POST", "/admin-api/ims/corp/resource/realname", "oa_realname"),
     ("GET", "/admin-api/ims/corp/resource/sim-card", "oa_sim_card"),
     ("POST", "/admin-api/ims/corp/resource/sim-card", "oa_sim_card"),
     ("PUT", "/admin-api/ims/corp/resource/sim-card", "oa_sim_card"),
