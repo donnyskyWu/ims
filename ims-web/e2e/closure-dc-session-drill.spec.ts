@@ -32,7 +32,7 @@ test.describe('dc session drill export closure', () => {
 
     await openDcAccountTraceViaUi(page, E2E_FIN_ACCOUNT_NO, sessionCode)
     await expect(page.getByTestId('dc-trace-query-cost')).toContainText('queryCostMs')
-    await expect(page.getByTestId('dc-trace-timeout-hint')).toContainText('1181')
+    await expect(page.getByTestId('dc-trace-timeout-hint')).not.toContainText('1181')
 
     const { drawer, detail } = await openDcSessionDetailViaUi(page, sessionCode)
     expect(detail?.liveData?.gmv).toBe(100_000)

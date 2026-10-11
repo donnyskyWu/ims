@@ -10,7 +10,12 @@
       </div>
     </div>
     <div class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">
-      <span v-if="dataAsOf">数据截至 <b>{{ dataAsOf }}</b> · </span>
+      <span
+        v-if="dataAsOf"
+        data-testid="dc-trace-as-of"
+        :data-fresh="asOfFresh ? '1' : '0'"
+        :style="{ color: asOfFresh ? 'var(--green)' : 'var(--red)', fontWeight: '600' }"
+      >数据截至 <b>{{ asOfText }}</b>{{ asOfFresh ? ' ✓' : ' 同步延迟告警' }} · </span>
       <router-link
         data-testid="dc-trace-query-cost"
         to="/ims/dc/trace/perf"
@@ -371,7 +376,7 @@
       </div>
       <div class="drawer-b">
         <p class="hint">
-          {{ sessionDetail.sessionTitle }} · {{ sessionDetail.platform }} · 数据截至 {{ sessionDetail.dataAsOf }}
+          {{ sessionDetail.sessionTitle }} · {{ sessionDetail.platform }} · 数据截至 {{ formatShanghai(sessionDetail.dataAsOf || '') }}
         </p>
         <div class="g2" style="margin: 12px 0">
           <div class="card stat">
@@ -551,8 +556,10 @@ const drawerOpen = ref(false)
 const sessionDetail = ref<SessionDetail | null>(null)
 
 const timeoutHint = computed(() =>
-  timeoutDegraded.value ? '1181 穿透查询超时降级，请缩小日期范围' : '超时降级 1181',
+  timeoutDegraded.value ? '1181 穿透查询超时降级，请缩小日期范围' : '',
 )
+const asOfText = computed(() => formatShanghai(dataAsOf.value))
+const asOfFresh = computed(() => freshAsOf(dataAsOf.value))
 const dateFiltered = computed(
   () => !!(dateFrom.value && dateTo.value && dateFrom.value <= dateTo.value),
 )
@@ -712,6 +719,30 @@ onMounted(() => {
   filterRestored.value = restoreDcFilters()
 })
 
+function formatShanghai(raw: string) {
+  if (!raw) return ''
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
+function freshAsOf(raw: string) {
+  if (!raw) return true
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return true
+  return Date.now() - date.getTime() < 60 * 60 * 1000
+}
+
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -757,7 +788,7 @@ function applyResult(data: TracePayload | undefined, degraded: boolean) {
   dataAsOf.value = data?.dataAsOf || ''
   queryCostMs.value = data?.queryCostMs ?? 0
   queried.value = true
-  timeoutDegraded.value = degraded || queryCostMs.value > 3000
+  timeoutDegraded.value = degraded
 }
 
 async function searchEntry() {
