@@ -68,7 +68,7 @@ def _deny_eff_mutation(db: Session, actor: User, *, delete: bool = False):
     allowed = _EFF_DELETE_KEYS if delete else _EFF_WRITE_KEYS
     if keys & allowed:
         return None
-    return fail(403, "无操作权限")
+    return fail(1008, "无操作权限")
 
 
 def active_primary(db: Session, tenant_id: int, user_id: int) -> EffRelation | None:

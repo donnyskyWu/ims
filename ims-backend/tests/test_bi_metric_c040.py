@@ -175,48 +175,62 @@ def test_tc_r9_save_rejects_delete_and_preview_rejects_stored_formula():
     assert enabled.json()["code"] == 1192
 
 
+def _get_or_create_role(db, *, role_key: str, role_name: str, data_scope: str) -> Role:
+    role = db.scalar(select(Role).where(func.lower(Role.role_key) == role_key.lower()))
+    if role is None:
+        role = Role(
+            role_name=role_name,
+            role_key=role_key,
+            data_scope=data_scope,
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        return role
+    role.deleted = 0
+    role.status = "ENABLED"
+    if role_key == "R9":
+        role.role_name = "数据分析师"
+    elif not (role.role_name or "").strip():
+        role.role_name = role_name
+    return role
+
+
 def _preset_bi_tc_r9(db, *, with_standard_r9: bool) -> tuple[int, int]:
-    user = User(
-        username="tc_r9",
-        nickname="TC-数据分析",
-        mobile="13900001040",
-        password_hash=hash_password("Admin@123"),
-        status="ENABLED",
-        tenant_id=0,
-    )
-    role = Role(
-        role_name="数据分析师",
-        role_key="bi:tc_r9",
-        data_scope="ALL",
-        source="MANUAL",
-        status="ENABLED",
-        tenant_id=0,
-    )
-    db.add_all([user, role])
-    db.flush()
+    user = db.scalar(select(User).where(User.username == "tc_r9", User.deleted == 0))
+    if user is None:
+        user = User(
+            username="tc_r9",
+            nickname="TC-数据分析",
+            mobile="13900001040",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+    else:
+        user.status = "ENABLED"
+        user.password_hash = hash_password("Admin@123")
+    role = _get_or_create_role(db, role_key="bi:tc_r9", role_name="数据分析师", data_scope="ALL")
     if with_standard_r9:
+        _get_or_create_role(db, role_key="R9", role_name="数据分析师", data_scope="ALL")
+    if db.scalar(select(RolePerm).where(RolePerm.role_id == role.id, RolePerm.perm_code == "system:user:query")) is None:
         db.add(
-            Role(
-                role_name="数据分析师",
-                role_key="R9",
-                data_scope="ALL",
-                source="MANUAL",
-                status="ENABLED",
+            RolePerm(
+                role_id=role.id,
+                module_code="system",
+                perm_code="system:user:query",
+                perm_level="RWD",
                 tenant_id=0,
             )
         )
-        db.flush()
-    db.add(
-        RolePerm(
-            role_id=role.id,
-            module_code="system",
-            perm_code="system:user:query",
-            perm_level="RWD",
-            tenant_id=0,
-        )
-    )
-    db.add(RoleMenu(role_id=role.id, menu_id=11, perm_code="system:user:query", tenant_id=0))
-    db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+    if db.scalar(select(RoleMenu).where(RoleMenu.role_id == role.id, RoleMenu.menu_id == 11)) is None:
+        db.add(RoleMenu(role_id=role.id, menu_id=11, perm_code="system:user:query", tenant_id=0))
+    if db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id)) is None:
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
     db.commit()
     return user.id, role.id
 
@@ -234,7 +248,13 @@ def _role_keys_of(db, user_id: int) -> list[str]:
 
 def test_retire_bi_tc_r9_unbinds_and_logs_when_standard_r9_missing(caplog):
     db = SessionLocal()
+    hidden: tuple[int, int, str, str] | None = None
     try:
+        existing = db.scalar(select(Role).where(func.lower(Role.role_key) == "r9", Role.deleted == 0))
+        if existing is not None:
+            hidden = (existing.id, existing.deleted, existing.status, existing.role_name)
+            existing.deleted = 1
+            db.commit()
         user_id, role_id = _preset_bi_tc_r9(db, with_standard_r9=False)
         with caplog.at_level(logging.WARNING):
             _retire_bi_tc_r9(db)
@@ -244,12 +264,24 @@ def test_retire_bi_tc_r9_unbinds_and_logs_when_standard_r9_missing(caplog):
         assert db.scalar(select(func.count()).select_from(RolePerm).where(RolePerm.role_id == role_id)) == 0
         assert db.scalar(select(func.count()).select_from(RoleMenu).where(RoleMenu.role_id == role_id)) == 0
         assert _role_keys_of(db, user_id) == []
-        assert db.scalar(select(Role).where(Role.role_key == "R9")) is None
+        assert (
+            db.scalar(
+                select(Role).where(func.lower(Role.role_key) == "r9", Role.deleted == 0, Role.role_name == "数据分析师")
+            )
+            is None
+        )
         assert "未创建 R9" in caplog.text
         _retire_bi_tc_r9(db)
         db.commit()
         assert _role_keys_of(db, user_id) == []
     finally:
+        if hidden is not None:
+            role = db.get(Role, hidden[0])
+            if role is not None:
+                role.deleted = hidden[1]
+                role.status = hidden[2]
+                role.role_name = hidden[3]
+                db.commit()
         db.close()
 
 
@@ -269,7 +301,7 @@ def test_startup_deletes_bi_tc_r9_and_rebinds_tc_r9_to_standard_r9():
         assert db.scalar(select(Role).where(Role.role_key == "bi:tc_r9")) is None
         assert db.scalar(select(func.count()).select_from(RolePerm).where(RolePerm.role_id == role_id)) == 0
         assert db.scalar(select(func.count()).select_from(RoleMenu).where(RoleMenu.role_id == role_id)) == 0
-        assert _role_keys_of(db, user_id) == ["R9"]
+        assert [key.upper() for key in _role_keys_of(db, user_id)] == ["R9"]
         kept = db.get(User, user_id)
         assert kept is not None and kept.deleted == 0 and kept.username == "tc_r9"
     finally:
