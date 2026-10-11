@@ -125,7 +125,14 @@ const visibleGroups = computed(() => {
           const mod = mods[item]
           const label = mod?.name || item
           if (hit(label) || hit(name)) {
-            visible.push({ kind: 'leaf', key: item, id: item, label, icon: mod?.icon || 'doc', code: codeLabel(mod) })
+            visible.push({
+              kind: 'leaf',
+              key: item,
+              id: item,
+              label,
+              icon: mod?.icon || 'doc',
+              code: name === '数据决策' ? '' : codeLabel(mod),
+            })
           }
           continue
         }
@@ -140,7 +147,7 @@ const visibleGroups = computed(() => {
             id: item.id,
             label: item.label,
             icon: folder?.icon || 'doc',
-            code: codeLabel(folder),
+            code: name === '数据决策' ? '' : codeLabel(folder),
             active: item.children.includes(currentId.value),
             children,
           })

@@ -51,6 +51,23 @@ def test_bi_report_manage_create_list():
     assert "未分类" in names
 
 
+def test_bi_report_publish_version_starts_at_one():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "版本报表", "reportType": "REPORT", "category": "内容"},
+    )
+    rid = created.json()["data"]["id"]
+    assert created.json()["data"]["version"] == 1
+    first = client.post(f"/admin-api/ims/bi/report/{rid}/publish", headers=auth)
+    assert first.json()["code"] == 0
+    assert first.json()["data"]["status"] == "PUBLISHED"
+    assert first.json()["data"]["version"] == 1
+    second = client.post(f"/admin-api/ims/bi/report/{rid}/publish", headers=auth)
+    assert second.json()["data"]["version"] == 2
+
+
 def test_bi_report_create_requires_scope_and_note():
     auth = headers()
     created = client.post(

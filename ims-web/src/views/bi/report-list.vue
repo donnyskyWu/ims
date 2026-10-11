@@ -86,7 +86,8 @@
               <span class="tag tag-info">{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</span>
             </div>
             <div class="csub" style="margin-top: 6px">{{ row.category }} / {{ row.subCategory || '—' }}</div>
-            <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ row.status }}</div>
+            <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ statusLabel(row.status) }} · v{{ row.version || 1 }}</div>
+            <div class="csub" style="margin-top: 4px">{{ formatBj(row.updatedAt) }}</div>
             <button class="btn btn-sec btn-sm" type="button" style="margin-top: 10px" @click="openDesigner(row.id)">编辑设计</button>
           </div>
           <div v-if="!loading && !rows.length" class="card" style="grid-column: 1 / -1">
@@ -104,20 +105,22 @@
                   <th>类型</th>
                   <th>分类</th>
                   <th>状态</th>
+                  <th>版本</th>
                   <th>更新</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="loading"><td colspan="7"><div class="empty"><div class="et">加载中</div></div></td></tr>
-                <tr v-else-if="!rows.length"><td colspan="7"><div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div></td></tr>
+                <tr v-if="loading"><td colspan="8"><div class="empty"><div class="et">加载中</div></div></td></tr>
+                <tr v-else-if="!rows.length"><td colspan="8"><div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div></td></tr>
                 <tr v-for="row in rows" v-else :key="row.id">
                   <td class="mono">{{ row.reportNo }}</td>
                   <td>{{ row.reportName }}</td>
                   <td>{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</td>
                   <td>{{ row.category }}</td>
-                  <td>{{ row.status }}</td>
-                  <td class="csub">{{ row.updatedAt }}</td>
+                  <td>{{ statusLabel(row.status) }}</td>
+                  <td>v{{ row.version || 1 }}</td>
+                  <td class="csub">{{ formatBj(row.updatedAt) }}</td>
                   <td><button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button></td>
                 </tr>
               </tbody>
@@ -248,6 +251,7 @@ type Row = {
   category: string
   subCategory: string
   status: string
+  version?: number
   updatedAt: string
 }
 
@@ -302,6 +306,29 @@ const categoryOptions = computed(() => {
 })
 const catForm = reactive({ name: '', parentId: 0 })
 const activeCatLabel = computed(() => filters.subCategory || filters.category || '全部')
+
+function statusLabel(status: string) {
+  if (status === 'PUBLISHED') return '已发布'
+  if (status === 'DRAFT') return '草稿'
+  return status || '—'
+}
+
+function formatBj(raw: string) {
+  if (!raw) return '—'
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw.replace('T', ' ').slice(0, 16)
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
 
 function childNodes(cat: Cat): CatChild[] {
   return (cat.children || []).map((child, index) =>

@@ -760,6 +760,8 @@ def report_design_publish(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    if row.status == "PUBLISHED":
+        row.version_no = int(row.version_no or 1) + 1
     row.status = "PUBLISHED"
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])

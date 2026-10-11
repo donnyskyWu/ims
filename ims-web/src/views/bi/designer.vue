@@ -687,7 +687,7 @@ async function publish() {
   if (previewMsg.value !== '已保存') return
   const res = await http.post(`/bi/report/${reportId.value}/publish`)
   if (res.data.code === 0) {
-    previewMsg.value = `已发布 · ${res.data.data.status}`
+    previewMsg.value = `已发布 · v${res.data.data.version || 1}`
     report.value = { ...report.value!, status: res.data.data.status }
     markClean()
   } else {
