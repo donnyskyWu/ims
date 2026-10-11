@@ -8,7 +8,7 @@
       <div class="acts">
         <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
         <template v-else>
-          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
+          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click.stop="openForwardPerson">按实名人穿透</button>
           <button v-if="kind !== 'phone'" class="btn btn-sec" type="button" data-testid="corp-asset-entry-open" @click="openEntryReverse">账号/场次反查</button>
           <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-verify-open" @click="openVerify">关联校验</button>
           <button class="btn btn-sec" type="button" data-testid="corp-asset-import-btn" @click="openImport">采购导入</button>
@@ -134,8 +134,8 @@
                 <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-return-btn" @click="openReturn(row)">归还</button>
                 <button v-if="row.status === 'RETURNED'" class="btn btn-txt" type="button" data-testid="corp-asset-scrap-btn" @click="openScrap(row)">报废</button>
                 <button class="btn btn-txt" type="button" data-testid="corp-asset-detail-btn" @click="openAssetDetail(row)">详情</button>
-                <button v-if="kind === 'live'" class="btn btn-txt" type="button" data-testid="corp-asset-chain-btn" @click="openChain(row)">正向穿透</button>
-                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">正向穿透</button>
+                <button v-if="kind === 'live' || kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-chain-btn" @click="openChain(row)">正向穿透</button>
+                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">层级穿透</button>
                 <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-reverse-btn" @click="openReverse(row)">反向穿透</button>
               </td>
             </tr>
@@ -679,7 +679,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import FilteredExportButton from '../../components/FilteredExportButton.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
@@ -1552,9 +1552,8 @@ const forwardEmpty = computed(
   () => forwardNodes.value.length > 0 && forwardNodes.value.every((node) => node.layer === 'PERSON'),
 )
 
-function openForwardPerson() {
+async function openForwardPerson() {
   closeAssetDrawers()
-  forwardOpen.value = true
   forwardNodes.value = []
   forwardError.value = ''
   forwardHint.value = '实名人 → 资产，最多 5 层'
@@ -1562,6 +1561,8 @@ function openForwardPerson() {
   clearForwardLayers()
   exportNote.value = ''
   forwardRealnameId.value = persons.value[0] ? String(persons.value[0].id) : ''
+  await nextTick()
+  forwardOpen.value = true
 }
 
 async function queryForwardPerson() {
