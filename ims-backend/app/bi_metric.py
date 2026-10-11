@@ -499,7 +499,7 @@ def metric_delete(metric_id: int, db: Session = Depends(db_session), actor: User
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1504, "资源不可用")
     if int(row.ref_count or 0) > 0:
-        return fail(1262, "指标已被引用，不可删除")
+        return fail(1502, "指标已被引用，不可删除")
     row.deleted = 1
     row.updated_at = utcnow()
     return ok({"id": metric_id})
