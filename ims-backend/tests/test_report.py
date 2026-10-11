@@ -575,6 +575,43 @@ def test_report_submit_1122_rejects_value_below_min():
     assert body["data"]["errors"][0]["fieldKey"] == "gmv"
 
 
+def test_report_submit_list_author_filter_and_data_volume():
+    auth = headers()
+    author_id, account_id, _ = seed_author_accounts()
+    template_id = create_enabled_template(auth)
+    submit = client.post(
+        "/admin-api/ims/report/submit",
+        headers=auth,
+        json={
+            "templateId": template_id,
+            "period": "2026-10-13",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"metric_value": 9, "_rowCount": 3},
+            "asDraft": False,
+        },
+    )
+    assert submit.json()["code"] == 0
+    assert submit.json()["data"]["dataVolume"] == 3
+
+    listed = client.get(
+        "/admin-api/ims/report/submit/list",
+        headers=auth,
+        params={"authorId": author_id, "accountId": account_id, "pageNo": 1, "pageSize": 20},
+    )
+    assert listed.json()["code"] == 0
+    matched = [row for row in listed.json()["data"]["list"] if row["templateId"] == template_id]
+    assert matched
+    assert matched[0]["dataVolume"] == 3
+
+    empty = client.get(
+        "/admin-api/ims/report/submit/list",
+        headers=auth,
+        params={"authorId": 999999, "pageNo": 1, "pageSize": 10},
+    )
+    assert empty.json()["data"]["total"] == 0
+
+
 def test_report_template_frequency_dept_and_reenable():
     auth = headers()
     created = client.post(

@@ -3,14 +3,14 @@
     <div class="pg-h">
       <div>
         <h1>完成率统计</h1>
-        <div class="sub">REPORT-004 · BR-106 质量口径 · 09 REPORT</div>
+        <div class="sub">按模板查看上报完成情况</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/report/submission')">填报单管理</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      分子 = 审核通过（APPROVED）填报单；分母 = 非草稿应报单数。目标 &gt;95%（BR-106）。
+      完成率按已通过单据计算，目标高于 95%。退回的单据不计入完成。
     </p>
     <form class="qbar" @submit.prevent="loadAll">
       <input v-model="statPeriod" placeholder="统计周期 YYYY-MM-DD" style="width: 160px" />

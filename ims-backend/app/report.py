@@ -549,6 +549,23 @@ def find_dedup_row(
     )
 
 
+def data_volume(data_content: dict, fields: list) -> int:
+    raw = data_content.get("_rowCount")
+    if raw not in (None, ""):
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            pass
+    keys = schema_field_keys(fields)
+    if keys:
+        return sum(1 for key in keys if data_content.get(key) not in (None, ""))
+    return sum(
+        1
+        for key, value in data_content.items()
+        if not str(key).startswith("_") and value not in (None, "")
+    )
+
+
 def submission_vo(db: Session, ops: Session, row: ReportSubmission) -> dict:
     template = db.get(ReportTemplate, row.template_id)
     author = ops.get(AuthorUser, row.author_id)
@@ -556,6 +573,7 @@ def submission_vo(db: Session, ops: Session, row: ReportSubmission) -> dict:
     names = user_names(db, {row.submitter_user_id})
     attachments = row.attachments if isinstance(row.attachments, list) else []
     data_content = row.data_content if isinstance(row.data_content, dict) else {}
+    fields = template.fields_schema if template and isinstance(template.fields_schema, list) else []
     return {
         "id": row.id,
         "submissionNo": row.submission_no,
@@ -570,6 +588,7 @@ def submission_vo(db: Session, ops: Session, row: ReportSubmission) -> dict:
         "accountId": row.account_id,
         "accountLabel": (account.account_no or account.account_name) if account else "",
         "dataContent": data_content,
+        "dataVolume": data_volume(data_content, fields),
         "attachments": attachments,
         "submitStatus": row.submit_status,
         "isOnTime": bool(row.is_on_time),

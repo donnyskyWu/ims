@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>填报单管理</h1>
-        <div class="sub">REPORT-002/003 · 审核队列 SLA 24h · 09 REPORT</div>
+        <div class="sub">查看填报记录，并处理待审核单据</div>
       </div>
       <div class="acts">
         <button v-if="tab === 'list'" class="btn btn-pri btn-sm" type="button" data-testid="submit-open" @click="openSubmit">提交填报单</button>
@@ -16,15 +16,22 @@
       <button type="button" class="tab-btn" :class="{ active: tab === 'audit' }" @click="switchTab('audit')">审核队列</button>
     </div>
     <p v-if="tab === 'list'" class="hint" style="margin-bottom: 8px">
-      作者与账号须同属 IP 组账号池，否则后端返回 <strong>1127</strong>；去重键：模板+周期+填报人+作者+账号。
+      作者与平台账号须属于同一账号池。同一模板、日期、填报人、作者和账号不能重复提交。
     </p>
     <p v-else class="hint" style="margin-bottom: 8px">
-      REPORT-003：<code>GET /report/audit/queue</code> · 退回须填原因（<strong>1124</strong>）· SLA 超时行标红。
+      退回须填写原因。超过 24 小时未审核的单据会标红。
     </p>
     <form v-if="tab === 'list'" class="qbar" @submit.prevent="loadList">
       <input v-model="filters.submissionNo" placeholder="上报单号" style="width: 130px" />
-      <input v-model="filters.period" placeholder="周期 2026-10-07" style="width: 130px" />
-      <select v-model="filters.submitStatus" style="width: 110px">
+      <select v-model.number="filters.authorId" style="width: 140px" data-testid="filter-author" @change="onFilterAuthor">
+        <option :value="0">全部作者</option>
+        <option v-for="author in filterAuthors" :key="author.id" :value="author.id">{{ author.authorName }}</option>
+      </select>
+      <select v-model.number="filters.accountId" style="width: 150px" data-testid="filter-account" :disabled="!filters.authorId">
+        <option :value="0">{{ filters.authorId ? '全部账号' : '请先选择作者' }}</option>
+        <option v-for="acc in filterAccounts" :key="acc.id" :value="acc.id">{{ acc.label || acc.accountName }}</option>
+      </select>
+      <select v-model="filters.submitStatus" style="width: 110px" data-testid="filter-status">
         <option value="">全部状态</option>
         <option value="DRAFT">草稿</option>
         <option value="SUBMITTED">待审核</option>
@@ -52,28 +59,30 @@
             <tr>
               <th>上报单号</th>
               <th>模板</th>
-              <th>周期</th>
-              <th>作者</th>
-              <th>账号</th>
               <th>提交人</th>
+              <th>作者</th>
+              <th>平台账号</th>
+              <th>提交时间</th>
+              <th>数据量</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无填报单' }}</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无填报单' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono num" style="color: var(--blue)">{{ row.submissionNo }}</td>
               <td>{{ row.templateName }}</td>
-              <td>{{ row.period }}</td>
-              <td>{{ row.authorName || row.authorId }}</td>
-              <td>{{ row.accountLabel || row.accountId }}</td>
               <td>{{ row.submitterName }}</td>
+              <td>{{ row.authorName || '—' }}</td>
+              <td>{{ row.accountLabel || '—' }}</td>
+              <td>{{ formatTime(row.submittedAt) }}</td>
+              <td class="num">{{ row.dataVolume ?? 0 }}</td>
               <td>
                 <span class="tag" :style="statusStyle(row.submitStatus)">
                   <span class="dot"></span>{{ statusLabel(row.submitStatus) }}
@@ -208,7 +217,7 @@
     <div v-if="rejectRow" class="modal-mask" @click.self="rejectRow = null">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 8px">退回 · {{ rejectRow.submissionNo }}</h3>
-        <label class="fld">退回原因（必填 · 1124）</label>
+        <label class="fld">退回原因（必填）</label>
         <textarea v-model="rejectReason" class="fld-in" rows="4" placeholder="如：数据来源不明、勾稽不平"></textarea>
         <p v-if="auditError" class="hint" style="color: var(--red); margin-top: 8px">{{ auditError }}</p>
         <div class="acts" style="margin-top: 16px; justify-content: flex-end">
@@ -244,6 +253,8 @@ type Row = {
   accountId: number
   accountLabel: string
   submitterName: string
+  submittedAt: string
+  dataVolume: number
   submitStatus: string
   dataContent: Record<string, unknown>
 }
@@ -270,7 +281,10 @@ const showForm = ref(false)
 const formError = ref('')
 const toast = ref('')
 const detail = ref<Row | null>(null)
-const filters = reactive({ submissionNo: '', period: '', submitStatus: '' })
+const filters = reactive({ submissionNo: '', authorId: 0, accountId: 0, submitStatus: '' })
+const filterAuthors = ref<AuthorOpt[]>([])
+const filterAccounts = ref<AccountOpt[]>([])
+const filterTemplateId = ref(0)
 
 type FieldDef = {
   fieldKey: string
@@ -313,6 +327,11 @@ function switchTab(next: 'list' | 'audit') {
   else loadList()
 }
 
+function formatTime(value: string) {
+  if (!value) return '—'
+  return value.replace('T', ' ').replace('+08:00', '')
+}
+
 function statusLabel(s: string) {
   const map: Record<string, string> = {
     DRAFT: '草稿',
@@ -335,7 +354,8 @@ async function loadList() {
   error.value = ''
   try {
     const params: Record<string, string | number> = { pageNo: 1, pageSize: 30 }
-    if (filters.period) params.period = filters.period
+    if (filters.authorId) params.authorId = filters.authorId
+    if (filters.accountId) params.accountId = filters.accountId
     if (filters.submitStatus) params.submitStatus = filters.submitStatus
     const res = await http.get('/report/submit/list', { params })
     if (res.data.code !== 0) {
@@ -349,8 +369,8 @@ async function loadList() {
       list = list.filter((r) => r.submissionNo.includes(key))
     }
     rows.value = list
-  } catch {
-    error.value = '网络错误'
+  } catch (err) {
+    error.value = describeError(err)
     rows.value = []
   } finally {
     loading.value = false
@@ -359,9 +379,41 @@ async function loadList() {
 
 function resetFilters() {
   filters.submissionNo = ''
-  filters.period = ''
+  filters.authorId = 0
+  filters.accountId = 0
   filters.submitStatus = ''
+  filterAccounts.value = []
   loadList()
+}
+
+async function loadFilterAuthors() {
+  try {
+    const res = await http.get('/report/submit/context')
+    const templates: TemplateOpt[] = res.data.data?.templates || []
+    filterTemplateId.value = templates[0]?.id || 0
+    if (!filterTemplateId.value) {
+      filterAuthors.value = []
+      return
+    }
+    const withAuthors = await http.get('/report/submit/context', { params: { templateId: filterTemplateId.value } })
+    filterAuthors.value = withAuthors.data.data?.authors || []
+  } catch {
+    filterAuthors.value = []
+  }
+}
+
+async function onFilterAuthor() {
+  filters.accountId = 0
+  filterAccounts.value = []
+  if (!filters.authorId || !filterTemplateId.value) return
+  try {
+    const res = await http.get('/report/submit/context', {
+      params: { templateId: filterTemplateId.value, authorId: filters.authorId },
+    })
+    filterAccounts.value = res.data.data?.accounts || []
+  } catch (err) {
+    error.value = describeError(err)
+  }
 }
 
 function inputType(fieldType: string) {
@@ -527,8 +579,8 @@ async function loadQueue() {
       return
     }
     queueRows.value = res.data.data.list || []
-  } catch {
-    queueError.value = '网络错误'
+  } catch (err) {
+    queueError.value = describeError(err)
     queueRows.value = []
   } finally {
     queueLoading.value = false
@@ -551,8 +603,8 @@ async function doAudit(row: QueueRow, conclusion: 'APPROVED' | 'REJECTED', reaso
     }
     await loadQueue()
     return true
-  } catch {
-    auditError.value = '网络错误'
+  } catch (err) {
+    auditError.value = describeError(err)
     return false
   }
 }
@@ -566,7 +618,7 @@ function openReject(row: QueueRow) {
 async function confirmReject() {
   if (!rejectRow.value) return
   if (!rejectReason.value.trim()) {
-    auditError.value = '退回原因必填（1124）'
+    auditError.value = '退回原因必填'
     return
   }
   const ok = await doAudit(rejectRow.value, 'REJECTED', rejectReason.value.trim())
@@ -582,7 +634,10 @@ async function showDetail(row: Row) {
   }
 }
 
-onMounted(loadList)
+onMounted(() => {
+  loadList()
+  loadFilterAuthors()
+})
 </script>
 
 <style scoped>
