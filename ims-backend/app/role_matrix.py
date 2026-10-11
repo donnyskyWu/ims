@@ -185,7 +185,27 @@ def grants_for(role_key: str) -> dict[str, str]:
             put(_button(perm, "edit"), "R")
         if "D" in level:
             put(_button(perm, "remove"), "R")
+    _apply_eff_relation(role_key, levels)
     return levels
+
+
+# EFF-001（PRD R1–R11）：查看归属与看板；建立/变更仅 R1、R2；删除仅 R1。
+EFF_RELATION_QUERY = "ims:eff:relation:query"
+EFF_RELATION_CREATE = "ims:eff:relation:create"
+EFF_RELATION_UPDATE = "ims:eff:relation:update"
+EFF_RELATION_DELETE = "ims:eff:relation:delete"
+_EFF_RELATION_READ = frozenset({"R1", "R2", "R4", "R7", "R9"})
+_EFF_RELATION_WRITE = frozenset({"R1", "R2"})
+
+
+def _apply_eff_relation(role_key: str, levels: dict[str, str]) -> None:
+    if role_key in _EFF_RELATION_READ:
+        levels[EFF_RELATION_QUERY] = "R"
+    if role_key in _EFF_RELATION_WRITE:
+        levels[EFF_RELATION_CREATE] = "R"
+        levels[EFF_RELATION_UPDATE] = "R"
+    if role_key == "R1":
+        levels[EFF_RELATION_DELETE] = "R"
 
 
 def l1_names(role_key: str) -> list[str]:

@@ -284,3 +284,72 @@ def test_tc_accounts_follow_matrix_and_custom_role_survives():
 def test_catalog_has_button_rows():
     buttons = [row for row in CATALOG if row[3] == "BUTTON"]
     assert len(buttons) >= 100
+
+
+def test_eff_relation_perms_seed_and_login():
+    from app.models import Menu, RoleMenu
+    from app.role_matrix import (
+        EFF_RELATION_CREATE,
+        EFF_RELATION_DELETE,
+        EFF_RELATION_QUERY,
+        EFF_RELATION_UPDATE,
+        ensure_role_matrix,
+    )
+
+    readers = {"R1", "R2", "R4", "R7", "R9"}
+    writers = {"R1", "R2"}
+    for key in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"):
+        codes = grants_for(key)
+        assert (EFF_RELATION_QUERY in codes) is (key in readers)
+        assert (EFF_RELATION_CREATE in codes) is (key in writers)
+        assert (EFF_RELATION_UPDATE in codes) is (key in writers)
+        assert (EFF_RELATION_DELETE in codes) is (key == "R1")
+
+    db = SessionLocal()
+    try:
+        ensure_role_matrix(db)
+        db.commit()
+        ensure_role_matrix(db)
+        db.commit()
+        for code in (EFF_RELATION_QUERY, EFF_RELATION_CREATE, EFF_RELATION_UPDATE, EFF_RELATION_DELETE):
+            menu = db.scalar(select(Menu).where(Menu.perm_code == code, Menu.deleted == 0))
+            assert menu is not None and menu.menu_type == "BUTTON"
+        role = db.scalar(select(Role).where(Role.role_key == "R2", Role.deleted == 0))
+        assert role is not None
+        held = list(
+            db.scalars(
+                select(RolePerm).where(RolePerm.role_id == role.id, RolePerm.perm_code.like("ims:eff:relation:%"))
+            ).all()
+        )
+        assert sorted(row.perm_code for row in held) == [
+            EFF_RELATION_CREATE,
+            EFF_RELATION_QUERY,
+            EFF_RELATION_UPDATE,
+        ]
+        links = list(
+            db.scalars(
+                select(RoleMenu).where(RoleMenu.role_id == role.id, RoleMenu.perm_code.like("ims:eff:relation:%"))
+            ).all()
+        )
+        assert len(links) == 3
+    finally:
+        db.close()
+
+    admin = client.get("/admin-api/ims/auth/access", headers=login()).json()["data"]
+    for code in (EFF_RELATION_QUERY, EFF_RELATION_CREATE, EFF_RELATION_UPDATE, EFF_RELATION_DELETE):
+        assert code in admin["permCodes"]
+    r2 = client.get("/admin-api/ims/auth/access", headers=login("tc_r2")).json()["data"]
+    assert EFF_RELATION_QUERY in r2["permCodes"]
+    assert EFF_RELATION_CREATE in r2["permCodes"]
+    assert EFF_RELATION_UPDATE in r2["permCodes"]
+    assert EFF_RELATION_DELETE not in r2["permCodes"]
+    r4 = client.get("/admin-api/ims/auth/access", headers=login("tc_r4")).json()["data"]
+    assert EFF_RELATION_QUERY in r4["permCodes"]
+    assert EFF_RELATION_CREATE not in r4["permCodes"]
+    assert EFF_RELATION_DELETE not in r4["permCodes"]
+    r7 = client.get("/admin-api/ims/auth/access", headers=login("tc_r7")).json()["data"]
+    assert EFF_RELATION_QUERY in r7["permCodes"]
+    assert EFF_RELATION_CREATE not in r7["permCodes"]
+    r5 = client.get("/admin-api/ims/auth/access", headers=login("tc_r5")).json()["data"]
+    assert EFF_RELATION_QUERY not in r5["permCodes"]
+    assert EFF_RELATION_DELETE not in r5["permCodes"]
