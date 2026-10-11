@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import SessionLocal, utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
-from app.models import CompAsset, CompAssetSeq, User
+from app.models import CompAnalysis, CompAsset, CompAssetSeq, User
 from app.ops_models import ExternalAccount, ExternalWork
 
 router = APIRouter(prefix="/comp/asset", tags=["comp-asset"])
@@ -436,6 +436,61 @@ def interaction_trend(rate: float) -> list[dict]:
     ]
 
 
+def linked_reviews(db: Session, tenant_id: int, asset: CompAsset) -> dict:
+    """归并进该档案的全部送审单，以及各单的审核轮次。"""
+    info = dict(asset.base_info or {})
+    ordered_nos: list[str] = []
+    for item in list(info.get("versionTimeline") or []):
+        number = str((item or {}).get("sourceAnalysisNo") or "").strip()
+        if number and number not in ordered_nos:
+            ordered_nos.append(number)
+    rows = list(
+        db.scalars(
+            select(CompAnalysis)
+            .where(
+                CompAnalysis.deleted == 0,
+                CompAnalysis.tenant_id == tenant_id,
+                CompAnalysis.asset_no == asset.asset_no,
+            )
+            .order_by(CompAnalysis.id.asc())
+        ).all()
+    )
+    by_no = {row.analysis_no: row for row in rows}
+    missing = [number for number in ordered_nos if number not in by_no]
+    if missing:
+        extras = db.scalars(
+            select(CompAnalysis).where(
+                CompAnalysis.deleted == 0,
+                CompAnalysis.tenant_id == tenant_id,
+                CompAnalysis.analysis_no.in_(missing),
+            )
+        ).all()
+        for row in extras:
+            by_no[row.analysis_no] = row
+    ordered: list[CompAnalysis] = []
+    seen: set[str] = set()
+    for number in ordered_nos:
+        row = by_no.get(number)
+        if row is not None and row.analysis_no not in seen:
+            ordered.append(row)
+            seen.add(row.analysis_no)
+    for row in rows:
+        if row.analysis_no not in seen:
+            ordered.append(row)
+            seen.add(row.analysis_no)
+    rounds: list[dict] = []
+    for row in ordered:
+        for item in list(row.audit_rounds or []):
+            entry = dict(item)
+            entry["analysisNo"] = row.analysis_no
+            entry["comment"] = entry.get("rejectReason") or entry.get("comment") or ""
+            rounds.append(entry)
+    return {
+        "sourceAnalysisNos": [row.analysis_no for row in ordered],
+        "auditRounds": rounds,
+    }
+
+
 def asset_detail(ops: Session, tenant_id: int, asset: CompAsset) -> dict:
     metrics = enrich_metrics(ops, tenant_id, asset)
     vo = asset_vo(asset, metrics)
@@ -510,7 +565,10 @@ def get_asset(
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
-    row = _load_asset(db, tenant_of(actor), asset_no)
+    tenant_id = tenant_of(actor)
+    row = _load_asset(db, tenant_id, asset_no)
     if row is None:
         return fail(1504, "竞品档案不存在")
-    return ok(asset_detail(ops, tenant_of(actor), row))
+    detail = asset_detail(ops, tenant_id, row)
+    detail.update(linked_reviews(db, tenant_id, row))
+    return ok(detail)

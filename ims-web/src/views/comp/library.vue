@@ -166,11 +166,20 @@
           <div><div class="k">结论</div><div class="v">{{ active.conclusion || '—' }}</div></div>
           <div><div class="k">单号</div><div class="v">{{ active.analysisNo || active.assetNo }}</div></div>
         </div>
-        <div v-if="active.auditRounds?.length" class="dsec">审核记录</div>
-        <ul v-if="active.auditRounds?.length" class="timeline" data-testid="comp-timeline">
-          <li v-for="item in active.auditRounds" :key="item.round">
+        <template v-if="active.cardKind === 'asset'">
+          <div class="dsec">关联送审</div>
+          <ul class="timeline" data-testid="comp-source-analyses">
+            <li v-if="!(active.sourceAnalysisNos || []).length">暂无关联送审单</li>
+            <li v-for="no in active.sourceAnalysisNos || []" :key="no">送审单号 {{ no }}</li>
+          </ul>
+        </template>
+        <div v-if="active.cardKind === 'asset' || active.auditRounds?.length" class="dsec">审核记录</div>
+        <ul v-if="active.cardKind === 'asset' || active.auditRounds?.length" class="timeline" data-testid="comp-timeline">
+          <li v-if="active.cardKind === 'asset' && !(active.auditRounds || []).length">暂无审核记录</li>
+          <li v-for="item in active.auditRounds || []" :key="(item.analysisNo || '') + '-' + item.round">
             第 {{ item.round }} 轮 · {{ roundTitle(item) }} · {{ item.auditorName }} · {{ item.auditedAt }}
-            <span v-if="item.rejectReason"> · {{ item.rejectReason }}</span>
+            <span v-if="item.analysisNo"> · 送审单号 {{ item.analysisNo }}</span>
+            <span v-if="item.rejectReason || item.comment"> · {{ item.rejectReason || item.comment }}</span>
           </li>
         </ul>
         <div v-if="showRejectBox" class="fld" style="margin-top: 12px">
@@ -262,8 +271,10 @@ type Round = {
   auditLevel: string
   conclusion: string
   rejectReason?: string
+  comment?: string
   auditorName: string
   auditedAt: string
+  analysisNo?: string
 }
 type Card = {
   key: string
@@ -285,6 +296,7 @@ type Card = {
   dataSource?: string
   conclusion?: string
   auditRounds?: Round[]
+  sourceAnalysisNos?: string[]
   submitterUserId?: number
   homepageUrl?: string
   dimensionData?: Record<string, string>
@@ -422,6 +434,10 @@ function assetCard(row: Record<string, unknown>): Card {
     foot: row.monitorSubscribed ? '已订阅监控' : '代表作品已收录',
     homepageUrl: String(row.homepageUrl || ''),
     monitorSubscribed: Boolean(row.monitorSubscribed),
+    dataSource: String(row.dataSource || ''),
+    conclusion: String(row.conclusion || ''),
+    auditRounds: (row.auditRounds as Round[]) || [],
+    sourceAnalysisNos: (row.sourceAnalysisNos as string[]) || [],
     updateFrequency: Number(row.updateFrequency || 0),
     trendNote: String(row.trendNote || ''),
     interactionTrend: (row.interactionTrend as { date: string; value: number }[]) || [],

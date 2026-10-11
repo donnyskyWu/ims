@@ -315,3 +315,49 @@ def test_self_audit_blocked_and_merge_preview():
     assert preview["code"] == 0
     assert preview["data"]["matched"] is True
     assert preview["data"]["compNameStd"] == "Keep 官方"
+
+
+def _store(name: str, period: str) -> tuple[str, str]:
+    created = client.post(
+        "/admin-api/ims/comp/analysis",
+        headers=headers("tc_r6"),
+        json={**BODY, "compName": name, "periodMonth": period},
+    ).json()
+    assert created["code"] == 0, created
+    analysis_no = created["data"]["analysisNo"]
+    first = client.put(
+        f"/admin-api/ims/comp/audit/{analysis_no}",
+        headers=headers("tc_r8"),
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    assert first.json()["code"] == 0, first.json()
+    final = client.put(
+        f"/admin-api/ims/comp/audit/{analysis_no}",
+        headers=headers("tc_r4"),
+        json={"auditLevel": "FINAL", "conclusion": "STORED"},
+    )
+    final_body = final.json()
+    assert final_body["code"] == 0, final_body
+    return analysis_no, final_body["data"]["mergeInfo"]["assetNo"]
+
+
+def test_archive_detail_lists_merged_submissions_and_review_rounds():
+    seed_roles()
+    first_no, asset_no = _store("TC归并档案", "2026-09")
+    second_no, again = _store("TC归并档案", "2026-10")
+    assert again == asset_no
+
+    detail = client.get(f"/admin-api/ims/comp/asset/{asset_no}", headers=headers("tc_r4")).json()
+    assert detail["code"] == 0, detail
+    data = detail["data"]
+    assert data["sourceAnalysisNos"] == [first_no, second_no]
+    rounds = data["auditRounds"]
+    assert {item["analysisNo"] for item in rounds} == {first_no, second_no}
+    levels = {(item["analysisNo"], item["auditLevel"]) for item in rounds}
+    assert (first_no, "FIRST") in levels
+    assert (first_no, "FINAL") in levels
+    assert (second_no, "FIRST") in levels
+    assert (second_no, "FINAL") in levels
+    final_round = next(item for item in rounds if item["analysisNo"] == second_no and item["auditLevel"] == "FINAL")
+    assert final_round["auditorName"]
+    assert final_round["auditedAt"]
