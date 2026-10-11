@@ -11,7 +11,11 @@ client = TestClient(app)
 
 
 def headers() -> dict:
-    token = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"][
+    return headers_for("admin")
+
+
+def headers_for(username: str) -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"}).json()["data"][
         "accessToken"
     ]
     return {"Authorization": f"Bearer {token}"}
@@ -169,6 +173,101 @@ def test_bug_c053_board_uses_live_ledger_not_placeholder():
     assert full["avgGmvPerCap"] not in (None, 286000)
     assert any(item["gmv"] >= 20000 for item in full["chart"])
     assert again["avgGmvPerCap"] == full["avgGmvPerCap"]
+
+
+def test_bug_c054_change_delete_and_permission_message():
+    import random
+
+    from app.core import SessionLocal
+    from app.models import Role, RolePerm, User, UserRole
+    from app.security import hash_password
+
+    auth = headers()
+    uid = random.randint(900_000, 999_989)
+    created = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PRIMARY", "targetType": "IP_GROUP", "targetName": "原IP组", "shareRatio": 100},
+    )
+    assert created.json()["code"] == 0, created.json()
+    relation_id = created.json()["data"]["id"]
+    changed = client.put(
+        f"/admin-api/ims/eff/relation/{relation_id}",
+        headers=auth,
+        json={
+            "action": "TRANSFER",
+            "newTargetType": "IP_GROUP",
+            "newTargetId": 9,
+            "newTargetName": "新IP组",
+            "effectiveDate": "2026-10-12",
+        },
+    )
+    assert changed.json()["code"] == 0, changed.json()
+    new_id = changed.json()["data"]["newRelationId"]
+    assert changed.json()["data"]["oldEffectiveTo"] == "2026-10-12"
+    listed = client.get("/admin-api/ims/eff/relation/list", headers=auth, params={"userId": uid, "pageSize": 20}).json()["data"]["list"]
+    by_id = {row["id"]: row for row in listed}
+    assert by_id[relation_id]["status"] == "HISTORICAL"
+    assert by_id[new_id]["status"] == "ACTIVE"
+    assert by_id[new_id]["targetName"] == "新IP组"
+    removed = client.delete(f"/admin-api/ims/eff/relation/{new_id}", headers=auth)
+    assert removed.json()["code"] == 0, removed.json()
+    caps = client.get("/admin-api/ims/eff/relation/coverage", headers=auth).json()["data"]
+    assert caps["canCreate"] is True
+    assert caps["canDelete"] is True
+
+    username = f"tc_r2_{uid}"
+    db = SessionLocal()
+    try:
+        user = User(
+            username=username,
+            nickname="无权限同事",
+            mobile=f"139{uid % 100000000:08d}"[:11],
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        role = Role(
+            role_name="只读同事",
+            role_key=f"eff:reader:{uid}",
+            data_scope="SELF",
+            status="ENABLED",
+            source="MANUAL",
+            tenant_id=0,
+        )
+        naked = User(
+            username=f"tc_naked_{uid}",
+            nickname="无角色",
+            mobile=f"138{uid % 100000000:08d}"[:11],
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add_all([user, role, naked])
+        db.flush()
+        db.add(RolePerm(role_id=role.id, module_code="eff", perm_code="ims:eff:none", perm_level="R", tenant_id=0))
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+    finally:
+        db.close()
+
+    reader = headers_for(username)
+    denied = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=reader,
+        json={"userId": uid, "relationType": "PART_TIME", "targetName": "越权", "shareRatio": 10},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["code"] == 1008
+    assert denied.json()["msg"] == "无权限建立归属"
+    reader_caps = client.get("/admin-api/ims/eff/relation/coverage", headers=reader).json()["data"]
+    assert reader_caps["canCreate"] is False
+    assert reader_caps["canDelete"] is False
+    naked_token = headers_for(f"tc_naked_{uid}")
+    blocked = client.get("/admin-api/ims/eff/relation/list", headers=naked_token)
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == 1008
+    assert blocked.json()["msg"]
 
 
 def test_eff_inventory_snapshot():

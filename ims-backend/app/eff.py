@@ -11,12 +11,16 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.corp import page_args, paged, tenant_of, user_names
+from app.corp import ops_db, page_args, paged, tenant_of, user_names
 from app.models import ContentProject, EffRelation, LiveReport, LiveSession, User
+from app.ops_models import IpGroup, PlatformAccount
 
 router = APIRouter(prefix="/eff", tags=["eff"])
 
 BJ = timezone(timedelta(hours=8))
+
+
+TARGET_TYPES = {"IP_GROUP", "TEAM", "ACCOUNT"}
 
 
 class RelationBody(BaseModel):
@@ -28,6 +32,57 @@ class RelationBody(BaseModel):
     targetName: str = ""
     shareRatio: float = Field(default=100.0, ge=0, le=100)
     effectiveFrom: str = ""
+
+
+class ChangeBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    action: str
+    newTargetType: str = ""
+    newTargetId: int = 0
+    newTargetName: str = ""
+    newShareRatio: float | None = Field(default=None, ge=0, le=100)
+    effectiveDate: str = ""
+    changeReason: str = ""
+
+
+def actor_tags(db: Session, actor: User) -> set[str]:
+    from app.scope import enabled_roles
+
+    tags: set[str] = set()
+    if actor.username == "admin":
+        tags.add("r1")
+    for role in enabled_roles(db, actor):
+        key = (role.role_key or "").strip().lower()
+        name = role.role_name or ""
+        if key in {"sys:admin", "r1"} or key.endswith(":r1") or "系统管理员" in name:
+            tags.add("r1")
+        if key == "r2" or key.endswith(":r2") or "行政" in name:
+            tags.add("r2")
+    return tags
+
+
+def can_manage_relation(db: Session, actor: User) -> bool:
+    tags = actor_tags(db, actor)
+    return "r1" in tags or "r2" in tags
+
+
+def can_delete_relation(db: Session, actor: User) -> bool:
+    return "r1" in actor_tags(db, actor)
+
+
+def resolve_target_name(ops: Session, tenant_id: int, target_type: str, target_id: int, fallback: str) -> str:
+    name = fallback.strip()
+    if target_id <= 0:
+        return name or "未命名目标"
+    if target_type in {"IP_GROUP", "TEAM"}:
+        row = ops.get(IpGroup, target_id)
+        if row is not None and row.deleted == 0 and (row.tenant_id or 0) == tenant_id and row.group_name:
+            return row.group_name
+    if target_type == "ACCOUNT":
+        row = ops.get(PlatformAccount, target_id)
+        if row is not None and row.deleted == 0 and (row.tenant_id or 0) == tenant_id:
+            return row.account_name or row.account_no or name
+    return name or f"目标#{target_id}"
 
 
 def iso(dt: datetime | None) -> str:
@@ -109,11 +164,21 @@ def relation_list(
 
 
 @router.post("/relation")
-def relation_create(body: RelationBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+def relation_create(
+    body: RelationBody,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
     tenant_id = tenant_of(actor)
+    if not can_manage_relation(db, actor):
+        return fail(1008, "无权限建立归属")
     rtype = body.relationType.strip().upper()
     if rtype not in {"PRIMARY", "PART_TIME"}:
         return fail(1001, "归属类型无效")
+    ttype = body.targetType.strip().upper() or "IP_GROUP"
+    if ttype not in TARGET_TYPES:
+        return fail(1001, "归属目标类型无效")
     if rtype == "PRIMARY":
         if body.shareRatio != 100:
             return fail(1001, "主归属分摊比例必须为 100%")
@@ -128,9 +193,9 @@ def relation_create(body: RelationBody, db: Session = Depends(db_session), actor
     row = EffRelation(
         user_id=body.userId,
         relation_type=rtype,
-        target_type=body.targetType.strip().upper() or "IP_GROUP",
+        target_type=ttype,
         target_id=body.targetId,
-        target_name=body.targetName.strip() or f"目标#{body.targetId}",
+        target_name=resolve_target_name(ops, tenant_id, ttype, body.targetId, body.targetName),
         share_ratio=body.shareRatio,
         effective_from=eff_from,
         status="ACTIVE",
@@ -143,6 +208,88 @@ def relation_create(body: RelationBody, db: Session = Depends(db_session), actor
     db.flush()
     names = user_names(db, [row.user_id, row.changed_by])
     return ok(relation_vo(row, names))
+
+
+@router.put("/relation/{relation_id}")
+def relation_change(
+    relation_id: int,
+    body: ChangeBody,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    if not can_manage_relation(db, actor):
+        return fail(1008, "无权限变更归属")
+    row = db.get(EffRelation, relation_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1504, "归属不存在")
+    if row.status != "ACTIVE":
+        return fail(1001, "仅生效中的归属可以变更")
+    action = body.action.strip().upper()
+    if action not in {"TRANSFER", "TO_PART_TIME", "TERMINATE"}:
+        return fail(1001, "变更动作无效")
+    effective = body.effectiveDate.strip() or datetime.now(BJ).strftime("%Y-%m-%d")
+    new_type = row.relation_type
+    new_ratio = float(row.share_ratio or 0)
+    new_target_type = (body.newTargetType or row.target_type or "IP_GROUP").strip().upper()
+    new_target_id = body.newTargetId or row.target_id
+    new_target_name = body.newTargetName or row.target_name
+    if action == "TRANSFER":
+        if new_target_type not in TARGET_TYPES:
+            return fail(1001, "归属目标类型无效")
+        if int(new_target_id or 0) <= 0 and not body.newTargetName.strip():
+            return fail(1001, "调岗需要新的归属目标")
+    elif action == "TO_PART_TIME":
+        new_type = "PART_TIME"
+        new_ratio = float(body.newShareRatio if body.newShareRatio is not None else row.share_ratio or 0)
+        existing = part_time_sum(db, tenant_id, row.user_id)
+        if row.relation_type == "PART_TIME":
+            existing -= float(row.share_ratio or 0)
+        if existing + new_ratio > 100:
+            return fail(1199, "兼职分摊比例合计超过 100%")
+    now = utcnow()
+    row.effective_to = effective
+    row.status = "HISTORICAL"
+    row.changed_by = actor.id
+    row.updated_at = now
+    new_id = None
+    if action != "TERMINATE":
+        created = EffRelation(
+            user_id=row.user_id,
+            relation_type=new_type,
+            target_type=new_target_type,
+            target_id=int(new_target_id or 0),
+            target_name=resolve_target_name(ops, tenant_id, new_target_type, int(new_target_id or 0), new_target_name),
+            share_ratio=new_ratio if new_type != "PRIMARY" else 100,
+            effective_from=effective,
+            status="ACTIVE",
+            changed_by=actor.id,
+            tenant_id=tenant_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(created)
+        db.flush()
+        new_id = created.id
+    return ok({"oldRelationId": row.id, "oldEffectiveTo": effective, "newRelationId": new_id})
+
+
+@router.delete("/relation/{relation_id}")
+def relation_delete(
+    relation_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    if not can_delete_relation(db, actor):
+        return fail(1008, "无权限删除归属，仅管理员可删除误操作记录")
+    row = db.get(EffRelation, relation_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1504, "归属不存在")
+    row.deleted = 1
+    row.updated_at = utcnow()
+    return ok(None)
 
 
 @router.get("/relation/coverage")
@@ -172,6 +319,9 @@ def relation_coverage(db: Session = Depends(db_session), actor: User = Depends(c
             "coveredUserCount": covered,
             "coverageRate": rate,
             "canPublish": rate >= 100.0 and enabled_users > 0,
+            "canCreate": can_manage_relation(db, actor),
+            "canChange": can_manage_relation(db, actor),
+            "canDelete": can_delete_relation(db, actor),
         }
     )
 

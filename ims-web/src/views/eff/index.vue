@@ -7,7 +7,7 @@
       </div>
       <div class="acts">
         <button v-if="tab === 'board'" class="btn btn-sec btn-sm" type="button" data-testid="eff-export-month" @click="exportMonth">导出月报</button>
-        <button v-if="tab === 'relation'" class="btn btn-pri btn-sm" type="button" @click="openCreate">建立归属</button>
+        <button v-if="tab === 'relation' && showCreate" class="btn btn-pri btn-sm" type="button" data-testid="eff-create" @click="openCreate">建立归属</button>
       </div>
     </div>
 
@@ -34,8 +34,12 @@
     </div>
 
     <template v-if="tab === 'relation'">
+      <p v-if="listError" class="hint" style="color: var(--red)" data-testid="eff-list-error">{{ listError }}</p>
       <form class="qbar" @submit.prevent="loadRelations">
-        <input v-model.number="filters.userId" type="number" placeholder="用户 ID" style="width: 100px" />
+        <select v-model="filters.userId" style="width: 160px" data-testid="eff-filter-user">
+          <option value="">全部人员</option>
+          <option v-for="item in users" :key="item.id" :value="item.id">{{ userLabel(item) }}</option>
+        </select>
         <select v-model="filters.relationType" style="width: 110px">
           <option value="">全部类型</option>
           <option value="PRIMARY">主归属</option>
@@ -55,11 +59,12 @@
                 <th>分摊%</th>
                 <th>生效自</th>
                 <th>状态</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
-              <tr v-else-if="!relations.length"><td colspan="6"><div class="empty"><div class="et">暂无归属</div></div></td></tr>
+              <tr v-if="loading"><td colspan="7"><div class="empty"><div class="et">加载中</div></div></td></tr>
+              <tr v-else-if="!relations.length"><td colspan="7"><div class="empty"><div class="et">暂无归属</div></div></td></tr>
               <tr v-for="row in relations" v-else :key="row.id">
                 <td>{{ row.userName || row.userId }}</td>
                 <td>{{ row.relationType }}</td>
@@ -67,6 +72,10 @@
                 <td class="num">{{ row.shareRatio }}%</td>
                 <td>{{ row.effectiveFrom }}</td>
                 <td>{{ row.status }}</td>
+                <td>
+                  <button v-if="showCreate && row.status === 'ACTIVE'" class="btn btn-sec btn-sm" type="button" data-testid="eff-change" @click="openChange(row)">变更</button>
+                  <button v-if="canDelete" class="btn btn-sec btn-sm" type="button" data-testid="eff-delete" @click="removeRelation(row)">删除</button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -167,21 +176,71 @@
       </div>
     </div>
 
+    <div v-if="changing" class="modal-mask" data-testid="eff-change-dialog" @click.self="changing = null">
+      <div class="card" style="width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">变更归属</h3>
+        <p class="hint">{{ changing.userName || changing.userId }} · {{ changing.targetName }} · {{ changing.shareRatio }}%</p>
+        <label class="fld">变更动作</label>
+        <select v-model="changeForm.action" class="fld-in" data-testid="eff-change-action">
+          <option value="TRANSFER">调岗</option>
+          <option value="TO_PART_TIME">转兼职</option>
+          <option value="TERMINATE">终止</option>
+        </select>
+        <template v-if="changeForm.action === 'TRANSFER'">
+          <label class="fld">目标类型</label>
+          <select v-model="changeForm.targetType" class="fld-in" @change="loadTargets(true)">
+            <option value="IP_GROUP">IP 组</option>
+            <option value="TEAM">小组</option>
+            <option value="ACCOUNT">账号</option>
+          </select>
+          <label class="fld">新归属目标</label>
+          <select v-model="changeForm.targetId" class="fld-in" data-testid="eff-change-target">
+            <option value="">请选择目标</option>
+            <option v-for="item in targets" :key="item.id" :value="item.id">{{ item.name }}</option>
+          </select>
+        </template>
+        <template v-if="changeForm.action === 'TO_PART_TIME'">
+          <label class="fld">新分摊比例</label>
+          <input v-model.number="changeForm.shareRatio" class="fld-in" type="number" />
+        </template>
+        <label class="fld">生效日</label>
+        <input v-model="changeForm.effectiveDate" class="fld-in" type="date" data-testid="eff-change-date" />
+        <p class="hint">旧关系在生效日封口，新关系自该日起生效，历史保留。</p>
+        <p v-if="changeError" class="hint" style="color: var(--red)" data-testid="eff-change-error">{{ changeError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="changing = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="eff-change-save" @click="submitChange">保存</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">建立归属</h3>
-        <label class="fld">用户 ID</label>
-        <input v-model.number="form.userId" class="fld-in" type="number" />
+        <label class="fld">人员</label>
+        <select v-model="form.userId" class="fld-in" data-testid="eff-form-user">
+          <option value="">请选择人员</option>
+          <option v-for="item in users" :key="item.id" :value="item.id">{{ userLabel(item) }}</option>
+        </select>
         <label class="fld">类型</label>
-        <select v-model="form.relationType" class="fld-in">
+        <select v-model="form.relationType" class="fld-in" @change="onTypeChange">
           <option value="PRIMARY">主归属</option>
           <option value="PART_TIME">兼职</option>
         </select>
-        <label class="fld">目标名称</label>
-        <input v-model="form.targetName" class="fld-in" />
+        <label class="fld">目标类型</label>
+        <select v-model="form.targetType" class="fld-in" data-testid="eff-form-target-type" @change="loadTargets(false)">
+          <option value="IP_GROUP">IP 组</option>
+          <option value="TEAM">小组</option>
+          <option value="ACCOUNT">账号</option>
+        </select>
+        <label class="fld">归属目标</label>
+        <select v-model="form.targetId" class="fld-in" data-testid="eff-form-target">
+          <option value="">请选择目标</option>
+          <option v-for="item in targets" :key="item.id" :value="item.id">{{ item.name }}</option>
+        </select>
         <label class="fld">分摊比例</label>
-        <input v-model.number="form.shareRatio" class="fld-in" type="number" />
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <input v-model.number="form.shareRatio" class="fld-in" type="number" :readonly="form.relationType === 'PRIMARY'" />
+        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="eff-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存</button>
@@ -195,24 +254,50 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 type Relation = {
   id: number
   userId: number
   userName: string
   relationType: string
+  targetType: string
+  targetId: number
   targetName: string
   shareRatio: number
   effectiveFrom: string
   status: string
 }
 
+type NamedUser = { id: string; username?: string; nickname?: string }
+type TargetOption = { id: string; name: string }
+
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const tab = ref('board')
 const relations = ref<Relation[]>([])
 const loading = ref(false)
-const coverage = ref<{ enabledUserCount: number; coveredUserCount: number; coverageRate: number; canPublish: boolean } | null>(null)
+const coverage = ref<{
+  enabledUserCount: number
+  coveredUserCount: number
+  coverageRate: number
+  canPublish: boolean
+  canCreate?: boolean
+  canDelete?: boolean
+} | null>(null)
+const users = ref<NamedUser[]>([])
+const targets = ref<TargetOption[]>([])
+const listError = ref('')
+const changing = ref<Relation | null>(null)
+const changeError = ref('')
+const changeForm = reactive({
+  action: 'TRANSFER',
+  targetType: 'IP_GROUP',
+  targetId: '',
+  shareRatio: 60,
+  effectiveDate: '',
+})
 type PersonRow = {
   userId: number
   userName: string
@@ -254,13 +339,21 @@ const inventory = ref<{
 } | null>(null)
 const showForm = ref(false)
 const formError = ref('')
-const filters = reactive({ userId: undefined as number | undefined, relationType: '' })
+const filters = reactive({ userId: '', relationType: '' })
 const form = reactive({
-  userId: 1,
+  userId: '',
   relationType: 'PRIMARY',
-  targetName: '默认 IP 组',
-  targetId: 1,
+  targetType: 'IP_GROUP',
+  targetName: '',
+  targetId: '',
   shareRatio: 100,
+})
+const canCreate = computed(() => Boolean(coverage.value?.canCreate))
+const canDelete = computed(() => Boolean(coverage.value?.canDelete))
+const showCreate = computed(() => {
+  if (!canCreate.value) return false
+  if (userStore.permCodes.length === 0) return true
+  return userStore.hasPerm('ims_eff_relation')
 })
 
 function tabFromRoute() {
@@ -279,12 +372,62 @@ function switchTab(name: string) {
 }
 
 async function loadCoverage() {
-  const res = await http.get('/eff/relation/coverage')
-  if (res.data.code === 0) coverage.value = res.data.data
+  try {
+    const res = await http.get('/eff/relation/coverage')
+    if (res.data.code === 0) coverage.value = res.data.data
+  } catch (error) {
+    coverage.value = null
+    listError.value = errorMessage(error)
+  }
+}
+
+function userLabel(item: NamedUser) {
+  return item.nickname || item.username || item.id
+}
+
+function onTypeChange() {
+  form.shareRatio = form.relationType === 'PRIMARY' ? 100 : 60
+}
+
+async function loadUsers() {
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
+    users.value = (res.data.data?.list || []) as NamedUser[]
+  } catch (error) {
+    formError.value = errorMessage(error)
+  }
+}
+
+async function loadTargets(forChange = false) {
+  const type = forChange ? changeForm.targetType : form.targetType
+  if (forChange) changeForm.targetId = ''
+  else form.targetId = ''
+  targets.value = []
+  try {
+    if (type === 'ACCOUNT') {
+      const res = await http.get('/corp/account/page', { params: { pageNo: 1, pageSize: 100 } })
+      const list = (res.data.data?.list || []) as { id: string | number; accountName?: string; nickname?: string; accountNo?: string }[]
+      targets.value = list.map((item) => ({
+        id: String(item.id),
+        name: item.accountName || item.nickname || item.accountNo || String(item.id),
+      }))
+      return
+    }
+    const res = await http.get('/ip-group/list', {
+      params: { pageNo: 1, pageSize: 100, groupType: type === 'TEAM' ? 'SMALL' : 'BIG' },
+    })
+    const list = (res.data.data?.list || []) as { id: string | number; groupName?: string }[]
+    targets.value = list.map((item) => ({ id: String(item.id), name: item.groupName || String(item.id) }))
+  } catch (error) {
+    const text = errorMessage(error)
+    if (forChange) changeError.value = text
+    else formError.value = text
+  }
 }
 
 async function loadRelations() {
   loading.value = true
+  listError.value = ''
   try {
     const res = await http.get('/eff/relation/list', {
       params: {
@@ -295,6 +438,9 @@ async function loadRelations() {
       },
     })
     if (res.data.code === 0) relations.value = res.data.data.list || []
+  } catch (error) {
+    relations.value = []
+    listError.value = errorMessage(error)
   } finally {
     loading.value = false
   }
@@ -401,26 +547,92 @@ async function loadInventory() {
 
 function openCreate() {
   formError.value = ''
+  form.relationType = 'PRIMARY'
+  form.shareRatio = 100
+  changing.value = null
   showForm.value = true
+  loadUsers()
+  loadTargets(false)
+}
+
+function selectedTargetName() {
+  return targets.value.find((item) => item.id === String(form.targetId))?.name || ''
 }
 
 async function submitCreate() {
   formError.value = ''
-  const res = await http.post('/eff/relation', {
-    userId: form.userId,
-    relationType: form.relationType,
-    targetType: 'IP_GROUP',
-    targetId: form.targetId,
-    targetName: form.targetName,
-    shareRatio: form.shareRatio,
-  })
-  if (res.data.code !== 0) {
-    formError.value = res.data.msg || '保存失败'
+  if (!form.userId) {
+    formError.value = '请选择人员'
     return
   }
-  showForm.value = false
-  await loadCoverage()
-  await loadRelations()
+  if (!form.targetId) {
+    formError.value = '请选择归属目标'
+    return
+  }
+  try {
+    await http.post('/eff/relation', {
+      userId: Number(form.userId),
+      relationType: form.relationType,
+      targetType: form.targetType,
+      targetId: Number(form.targetId),
+      targetName: selectedTargetName(),
+      shareRatio: form.relationType === 'PRIMARY' ? 100 : form.shareRatio,
+    })
+    showForm.value = false
+    await loadCoverage()
+    await loadRelations()
+    if (tab.value === 'board') await loadBoard()
+  } catch (error) {
+    formError.value = errorMessage(error)
+  }
+}
+
+function openChange(row: Relation) {
+  changing.value = row
+  changeError.value = ''
+  changeForm.action = 'TRANSFER'
+  changeForm.targetType = row.targetType || 'IP_GROUP'
+  changeForm.targetId = ''
+  changeForm.shareRatio = row.relationType === 'PART_TIME' ? row.shareRatio : 60
+  const next = new Date()
+  next.setDate(next.getDate() + 1)
+  const month = String(next.getMonth() + 1).padStart(2, '0')
+  const day = String(next.getDate()).padStart(2, '0')
+  changeForm.effectiveDate = `${next.getFullYear()}-${month}-${day}`
+  loadTargets(true)
+}
+
+async function submitChange() {
+  if (!changing.value) return
+  changeError.value = ''
+  const picked = targets.value.find((item) => item.id === String(changeForm.targetId))
+  try {
+    await http.put(`/eff/relation/${changing.value.id}`, {
+      action: changeForm.action,
+      newTargetType: changeForm.targetType,
+      newTargetId: changeForm.targetId ? Number(changeForm.targetId) : undefined,
+      newTargetName: picked?.name || '',
+      newShareRatio: changeForm.action === 'TO_PART_TIME' ? changeForm.shareRatio : undefined,
+      effectiveDate: changeForm.effectiveDate,
+    })
+    changing.value = null
+    await loadRelations()
+    await loadCoverage()
+  } catch (error) {
+    changeError.value = errorMessage(error)
+  }
+}
+
+async function removeRelation(row: Relation) {
+  if (!window.confirm('仅限误操作场景物理删除；正常人员变动请走【变更】')) return
+  listError.value = ''
+  try {
+    await http.delete(`/eff/relation/${row.id}`)
+    await loadRelations()
+    await loadCoverage()
+  } catch (error) {
+    listError.value = errorMessage(error)
+  }
 }
 
 watch(
@@ -434,6 +646,7 @@ watch(
 onMounted(async () => {
   tab.value = tabFromRoute()
   await loadCoverage()
+  await loadUsers()
   if (tab.value === 'relation') await loadRelations()
   else if (tab.value === 'inventory') await loadInventory()
   else await loadBoard()
