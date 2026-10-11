@@ -142,6 +142,8 @@ def test_cost_details_reject_then_drive_roas_and_summary():
     auth = headers()
     account_id, person_id, phone_id = seed_account()
     code = register(auth, account_id, person_id, phone_id)
+    assert client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth).json()["code"] == 0
+    assert client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth).json()["code"] == 0
     negative = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,

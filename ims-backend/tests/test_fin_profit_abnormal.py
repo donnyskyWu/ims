@@ -26,6 +26,8 @@ def open_session(auth: dict, deps: tuple[int, int, int, int]) -> str:
             headers=auth,
             json={"approve": True},
         )
+    assert client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth).json()["code"] == 0
+    assert client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth).json()["code"] == 0
     report = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,

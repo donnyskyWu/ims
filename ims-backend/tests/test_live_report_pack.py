@@ -21,6 +21,13 @@ client = TestClient(app)
 BJ = timezone(timedelta(hours=8))
 
 
+def release_entry(auth: dict, code: str) -> None:
+    started = client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth)
+    assert started.json()["code"] == 0, started.json()
+    ended = client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth)
+    assert ended.json()["code"] == 0, ended.json()
+
+
 def headers() -> dict:
     token = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"][
         "accessToken"
@@ -110,6 +117,12 @@ def test_missing_fields_then_submit_rounds_money():
     auth = headers()
     account_id, person_id, phone_id = seed_account()
     code = register(auth, account_id, person_id, phone_id)
+    blocked = client.post(f"/admin-api/ims/live/report/{code}", headers=auth, json=full_report())
+    assert blocked.json()["code"] == 1042
+    assert "未下播" in blocked.json()["msg"]
+    approved = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth)
+    assert approved.json()["data"]["sessionStatus"] == "APPROVED"
+    release_entry(auth, code)
     missing = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,
@@ -118,7 +131,7 @@ def test_missing_fields_then_submit_rounds_money():
     assert missing.json()["code"] == 1046
     assert set(missing.json()["data"]["missing"]) == {"gmv", "viewerCount"}
     still = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth)
-    assert still.json()["data"]["sessionStatus"] == "APPROVED"
+    assert still.json()["data"]["sessionStatus"] == "ENDED"
     assert still.json()["data"]["report"] is None
 
     negative = client.post(
@@ -143,6 +156,7 @@ def test_readonly_1047_and_correction_keeps_status():
     auth = headers()
     account_id, person_id, phone_id = seed_account()
     code = register(auth, account_id, person_id, phone_id)
+    release_entry(auth, code)
     submitted = client.post(f"/admin-api/ims/live/report/{code}", headers=auth, json=full_report(gmv=200))
     assert submitted.json()["code"] == 0, submitted.json()
 

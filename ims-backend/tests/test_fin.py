@@ -28,6 +28,8 @@ def approved_session(auth: dict) -> str:
             headers=auth,
             json={"approve": True},
         )
+    assert client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth).json()["code"] == 0
+    assert client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth).json()["code"] == 0
     report = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,
@@ -460,6 +462,8 @@ def _session_in_period(auth: dict, plan_start: str, deps: tuple[int, int, int, i
             headers=auth,
             json={"approve": True},
         )
+    assert client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth).json()["code"] == 0
+    assert client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth).json()["code"] == 0
     report = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,
@@ -729,6 +733,8 @@ def _profit_on_day(auth: dict, deps: tuple[int, int, int, int], day: str, gmv: f
             headers=auth,
             json={"approve": True},
         )
+    assert client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth).json()["code"] == 0
+    assert client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth).json()["code"] == 0
     report = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,

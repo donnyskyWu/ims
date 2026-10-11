@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.live_fin_e2e_seed import E2E_LEDGER_SESSION
 from app.main import app
-from test_live_report_pack import full_report, headers, register, seed_account
+from test_live_report_pack import full_report, headers, register, release_entry, seed_account
 
 client = TestClient(app)
 
@@ -33,6 +33,7 @@ def test_draft_zero_denominator_and_reversed_times():
     auth = headers()
     account_id, person_id, phone_id = seed_account()
     code = register(auth, account_id, person_id, phone_id)
+    release_entry(auth, code)
 
     saved = client.put(
         f"/admin-api/ims/live/report/{code}",
@@ -47,7 +48,7 @@ def test_draft_zero_denominator_and_reversed_times():
     assert data["roas"] is None
     assert data["gmv"] == 80
     session = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth)
-    assert session.json()["data"]["sessionStatus"] == "APPROVED"
+    assert session.json()["data"]["sessionStatus"] == "ENDED"
     assert session.json()["data"]["riskCheckResults"]
 
     zero_lines = client.put(
@@ -72,4 +73,4 @@ def test_draft_zero_denominator_and_reversed_times():
     assert kept["actualEnd"] == "2026-10-08T22:00:00+08:00"
     assert kept["entryStatus"] == "DRAFT"
     still = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth)
-    assert still.json()["data"]["sessionStatus"] == "APPROVED"
+    assert still.json()["data"]["sessionStatus"] == "ENDED"

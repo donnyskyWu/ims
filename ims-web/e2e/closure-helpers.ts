@@ -730,6 +730,7 @@ export async function registerLiveSessionConfirmedReportViaUi(
 
   const detailDrawer = page.locator('.drawer').filter({ hasText: '场次' })
   await expect(detailDrawer).toBeVisible({ timeout: 15_000 })
+  await detailDrawer.locator('.tab', { hasText: '风控登记' }).click()
 
   if (regBody.data?.sessionStatus === 'PENDING_RISK_CHECK') {
     await detailDrawer.locator('.tab', { hasText: '风控登记' }).click()
@@ -739,6 +740,18 @@ export async function registerLiveSessionConfirmedReportViaUi(
     await detailDrawer.getByRole('button', { name: '执行风控' }).click()
     await riskResp
   }
+
+  const startResp = page.waitForResponse(
+    (r) => r.url().includes('/start') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await detailDrawer.getByTestId('live-start-btn').click()
+  expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
+  await detailDrawer.getByTestId('live-end-btn').click()
+  const endResp = page.waitForResponse(
+    (r) => r.url().includes('/end') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await page.getByTestId('live-end-confirm').click()
+  expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
 
   const reportLoad = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,

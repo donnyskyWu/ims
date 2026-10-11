@@ -2045,9 +2045,10 @@ def upsert_report(
         report.entry_status = "SUBMITTED"
         report.submitted_at = iso(utcnow())
         if end_session:
-            session.session_status = "ENDED"
-            session.actual_start = body.actualStart
-            session.actual_end = body.actualEnd
+            if (body.actualStart or "").strip():
+                session.actual_start = body.actualStart
+            if (body.actualEnd or "").strip():
+                session.actual_end = body.actualEnd
     else:
         report.entry_status = "DRAFT"
     return report
@@ -2066,7 +2067,7 @@ def report_pending(
     page_no, size = page_args(pageNo, pageSize)
     now = datetime.now(BJ)
     stmt = restrict_sessions(select(LiveSession), actor, request.state.scope)
-    stmt = stmt.where(LiveSession.session_status.in_(("LIVE", "ENDED")))
+    stmt = stmt.where(LiveSession.session_status == "ENDED")
     if responsibleUserId:
         stmt = stmt.where(LiveSession.responsible_user_id == responsibleUserId)
     rows = db.scalars(stmt).all()
@@ -2130,8 +2131,8 @@ def report_submit(
         return fail(1504, "资源不可用")
     if supplement_pending(row):
         return fail(1049, "补录未审批")
-    if row.session_status not in ("LIVE", "ENDED") and row.session_status != "APPROVED":
-        return fail(1042, "场次状态不允许录入")
+    if row.session_status != "ENDED":
+        return fail(1042, "场次未下播，下播录入在状态为已下播后开放")
     existing = load_report(db, session_code)
     if existing and existing.entry_status in ("SUBMITTED", "CONFIRMED"):
         return fail(1047, "提交后只读")
@@ -2179,6 +2180,8 @@ def report_update(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
+    if row.session_status != "ENDED":
+        return fail(1042, "场次未下播，下播录入在状态为已下播后开放")
     report = load_report(db, session_code)
     if report and report.entry_status != "DRAFT":
         return fail(1047, "提交后只读")

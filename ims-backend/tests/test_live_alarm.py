@@ -83,6 +83,8 @@ def register_and_report(auth: dict, viewer: int, topic: str = "pytest 告警专�
     )
     assert reg.json()["code"] == 0, reg.json()
     code = reg.json()["data"]["sessionCode"]
+    assert client.put(f"/admin-api/ims/live/register/{code}/start", headers=auth).json()["code"] == 0
+    assert client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth).json()["code"] == 0
     start = datetime(2026, 10, 9, 20, 0)
     end = start + timedelta(hours=2)
     report = client.post(

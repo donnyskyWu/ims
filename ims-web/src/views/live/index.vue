@@ -473,6 +473,7 @@
           <div class="et">加载中</div>
         </div>
         <template v-else>
+        <p v-if="!entryOpen" class="hint bad" data-testid="live-report-locked">场次未下播，下播录入在状态为已下播后开放</p>
         <div v-if="!report" class="empty" data-testid="live-report-empty" style="padding: 12px 0">
           <div class="et">待录入</div>
           <div class="es">下播九项还没提交。缺字段返回 1046，提交后只能走更正单。</div>
@@ -793,7 +794,8 @@ function supplementGap(key: string) {
   return supplementGaps.value.includes(key)
 }
 
-const reportLocked = computed(() => !!report.value && report.value.entryStatus !== 'DRAFT')
+const entryOpen = computed(() => detail.value?.sessionStatus === 'ENDED')
+const reportLocked = computed(() => !entryOpen.value || (!!report.value && report.value.entryStatus !== 'DRAFT'))
 const financeView = computed(() => report.value?.fieldScope === 'FINANCE')
 const showOpsFields = computed(() => !financeView.value)
 const showCostEditor = computed(() => !financeView.value && (!reportLocked.value || correcting.value))
@@ -1648,6 +1650,10 @@ async function doSupplementApprove(pass: boolean) {
 
 async function saveDraft() {
   if (!detail.value) return
+  if (detail.value.sessionStatus !== 'ENDED') {
+    reportError.value = '场次未下播，下播录入在状态为已下播后开放'
+    return
+  }
   reportError.value = ''
   reportMissing.value = []
   try {
@@ -1663,6 +1669,10 @@ async function saveDraft() {
 
 async function submitReport() {
   if (!detail.value) return
+  if (detail.value.sessionStatus !== 'ENDED') {
+    reportError.value = '场次未下播，下播录入在状态为已下播后开放'
+    return
+  }
   reportError.value = ''
   reportMissing.value = []
   reportBadField.value = ''
