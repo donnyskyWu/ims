@@ -183,7 +183,7 @@ def test_fin_share_rule_1146_sum_boundary_and_1147_conflict():
         json=body(ruleName="超一", shareTarget="REALNAME", fixedRate=0.4001, priority=9),
     )
     assert high.json()["code"] == 1146
-    assert "1.0001" in high.json()["msg"]
+    assert "100.01%" in high.json()["msg"]
     assert client.delete(f"/admin-api/ims/fin/share/rule/{low.json()['data']['id']}", headers=auth).json()["code"] == 0
     exact = client.post(
         "/admin-api/ims/fin/share/rule",
@@ -459,7 +459,7 @@ def test_fin_share_rule_sum_is_per_base_and_shortfall_allowed():
         ),
     )
     assert over.json()["code"] == 1146
-    assert "1.0500" in over.json()["msg"]
+    assert "105.00%" in over.json()["msg"]
     short = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,

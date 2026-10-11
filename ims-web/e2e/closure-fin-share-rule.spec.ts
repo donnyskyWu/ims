@@ -75,7 +75,7 @@ test.describe('fin share rule closure', () => {
     const highBody = (await (await highResp).json()) as ApiBody
     expect(highBody.code).toBe(1146)
     await expect(page.getByTestId('fin-share-rule-error')).toContainText('1146')
-    await expect(page.getByTestId('fin-share-rule-error')).toContainText('1.0001')
+    await expect(page.getByTestId('fin-share-rule-error')).toContainText('100.01%')
     await page.screenshot({ path: `${shotDir}/02-error-1146-sum.png`, fullPage: true })
     await page.getByTestId('fin-share-rule-drawer').getByRole('button', { name: '关闭' }).click()
 

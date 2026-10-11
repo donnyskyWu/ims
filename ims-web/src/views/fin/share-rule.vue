@@ -397,6 +397,14 @@ const platformOptions = [
   { value: 'JD', label: '京东' },
   { value: 'OTA', label: '其他' },
 ]
+/** 分成平台码 → 账号档案 platformType。淘宝/京东无对应档案平台。 */
+const CORP_BY_SHARE: Record<string, string[]> = {
+  DYS: ['DOUYIN'],
+  KS: ['KUAISHOU'],
+  WX: ['WECHAT_CHANNELS'],
+  OTA: ['XIAOHONGSHU', 'WECHAT_OFFICIAL'],
+}
+const ALL_CORP_PLATFORMS = ['DOUYIN', 'KUAISHOU', 'WECHAT_CHANNELS', 'WECHAT_OFFICIAL', 'XIAOHONGSHU']
 const accountOptions = ref<{ id: number; label: string }[]>([])
 const groupOptions = ref<{ id: number; label: string }[]>([])
 const accountNames = ref<Record<number, string>>({})
@@ -597,6 +605,7 @@ function togglePlatform(value: string) {
   form.platforms = form.platforms.includes(value)
     ? form.platforms.filter((item) => item !== value)
     : [...form.platforms, value]
+  void loadAccounts()
 }
 
 function toggleAccount(id: number) {
@@ -605,6 +614,7 @@ function toggleAccount(id: number) {
 
 function toggleGroup(id: number) {
   form.ipGroups = form.ipGroups.includes(id) ? form.ipGroups.filter((item) => item !== id) : [...form.ipGroups, id]
+  void loadAccounts()
 }
 
 function rateOutOfRange(raw: string) {
@@ -713,17 +723,54 @@ function goPage(raw: number) {
   return loadList()
 }
 
+function corpPlatformsForScope() {
+  if (!form.platforms.length) return ALL_CORP_PLATFORMS
+  const picked = new Set<string>()
+  for (const code of form.platforms) {
+    for (const corp of CORP_BY_SHARE[code] || []) picked.add(corp)
+  }
+  return [...picked]
+}
+
 async function loadAccounts() {
+  const platforms = corpPlatformsForScope()
+  if (!platforms.length) {
+    accountOptions.value = []
+    return
+  }
+  const groups: Array<number | undefined> = form.ipGroups.length ? [...form.ipGroups] : [undefined]
   try {
-    const res = await http.get('/corp/account/page', {
-      params: { pageNo: 1, pageSize: 100, keyword: accountKeyword.value || undefined },
-    })
-    accountOptions.value = (res.data?.data?.list || []).map((row: { id: number; accountNo?: string; accountName?: string; nickname?: string }) => ({
-      id: Number(row.id),
-      label: `${row.accountNo || row.id} ${row.nickname || row.accountName || ''}`.trim(),
-    }))
+    const lists = await Promise.all(
+      platforms.flatMap((platformType) =>
+        groups.map((ipGroupId) =>
+          http.get('/corp/account/page', {
+            params: {
+              pageNo: 1,
+              pageSize: 100,
+              platformType,
+              keyword: accountKeyword.value || undefined,
+              ipGroupId,
+            },
+          }),
+        ),
+      ),
+    )
+    const seen = new Set<number>()
+    const options: { id: number; label: string }[] = []
+    for (const res of lists) {
+      for (const row of (res.data?.data?.list || []) as Array<{ id: number; accountNo?: string; accountName?: string; nickname?: string }>) {
+        const id = Number(row.id)
+        if (seen.has(id)) continue
+        seen.add(id)
+        options.push({
+          id,
+          label: `${row.accountNo || row.id} ${row.nickname || row.accountName || ''}`.trim(),
+        })
+      }
+    }
+    accountOptions.value = options
     const names = { ...accountNames.value }
-    for (const item of accountOptions.value) names[item.id] = item.label
+    for (const item of options) names[item.id] = item.label
     accountNames.value = names
   } catch {
     accountOptions.value = []

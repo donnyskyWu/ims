@@ -94,6 +94,11 @@ def rate_text(value: Decimal) -> str:
     return f"{q_rate(value):.4f}"
 
 
+def percent_text(value: Decimal) -> str:
+    pct = (q_rate(value) * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{pct:.2f}%"
+
+
 def money_text(value: Decimal) -> str:
     return f"{q_money(value):.2f}"
 
@@ -359,7 +364,7 @@ def sum_error(grouped: dict[str, dict[str, Decimal]]) -> str | None:
             continue
         total = q_rate(sum(rates.values(), Decimal("0")))
         if total > ONE:
-            return f"同一范围同一基数的分成比例合计不能超过 1.0000（当前 {rate_text(total)}）"
+            return f"同一范围同一基数的分成比例合计不能超过 100%（当前 {percent_text(total)}）"
     return None
 
 
