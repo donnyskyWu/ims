@@ -187,6 +187,43 @@ def test_bi_query_run_pagination_and_cost():
     assert data["total"] >= len(data["rows"])
 
 
+def test_bi_query_sources_and_agg_join_preview():
+    auth = headers()
+    sources = client.get("/admin-api/ims/bi/query/sources", headers=auth)
+    assert sources.json()["code"] == 0
+    codes = {row["entityCode"] for row in sources.json()["data"]["list"]}
+    assert "IP_GROUP" in codes
+    assert "CONTENT_METRIC" in codes
+    ip = next(row for row in sources.json()["data"]["list"] if row["entityCode"] == "IP_GROUP")
+    assert any(j["table"] == "oa_internal_content" for j in ip["joins"])
+
+    preview = client.post(
+        "/admin-api/ims/bi/query/preview",
+        headers=auth,
+        json={
+            "entityCode": "IP_GROUP",
+            "config": {
+                "selectFields": ["group_name"],
+                "aggFunc": "SUM",
+                "aggField": "play_count",
+                "groupBy": ["group_name"],
+                "joinTable": "oa_internal_content",
+                "conditions": [{"fieldCode": "group_name", "operator": "EQ", "value": "电竞一组"}],
+                "limit": 100,
+            },
+        },
+    )
+    assert preview.json()["code"] == 0, preview.json()
+    sql = preview.json()["data"]["sql"]
+    assert "SUM(" in sql
+    assert "GROUP BY" in sql
+    assert "`oa_ip_group`" in sql
+    assert "`oa_internal_content`" in sql
+    assert ":tenant_id" in sql
+    assert ":p0" in sql
+    assert "电竞一组" not in sql
+
+
 def test_bi_query_save_and_publish():
     auth = headers()
     seed_platform_account_entity(auth)

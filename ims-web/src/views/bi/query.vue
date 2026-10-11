@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>自定义查询</h1>
-        <div class="sub">FR-M6-005 · 只读消费 COLLECT 元数据 · /ims/bi/query</div>
+        <div class="sub">按已映射实体配置条件并查询</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goMetadata">元数据维护</button>
@@ -27,6 +27,7 @@
           </div>
           <div class="rowline">
             <button class="btn btn-pri btn-sm" type="button" :disabled="running" @click="runAdhoc">执行查询</button>
+            <button class="btn btn-sec btn-sm" type="button" @click="copySql">复制 SQL</button>
             <button class="btn btn-sec btn-sm" type="button" @click="saveDraft">保存为我的查询</button>
           </div>
         </div>
@@ -77,19 +78,95 @@
               <div class="qb-row">
                 <label>展示字段</label>
                 <div class="qb-chips" data-testid="bi-query-select-fields">
-                  <span
+                  <label
                     v-for="f in fields"
                     :key="f.fieldCode"
-                    class="chip field-chip"
+                    class="chip"
                     :class="{ off: !builder.selectFields.includes(f.fieldCode) }"
-                    @click="toggleSelectField(f.fieldCode)"
+                    :data-field-code="f.fieldCode"
+                    @click.prevent="onPickField"
                   >
+                    <input type="checkbox" tabindex="-1" :checked="builder.selectFields.includes(f.fieldCode)" />
                     {{ f.displayName }}
-                  </span>
-                  <span v-if="fields.length" class="qb-val-muted">多选 · displayFields</span>
+                  </label>
+                  <span v-if="fields.length" class="qb-val-muted">多选 · 点击加入展示</span>
                   <span v-else class="qb-val-muted">先选数据源</span>
                 </div>
               </div>
+              <div class="bi0-form-grid" style="margin-top: 12px">
+                <label class="fld">
+                  <span>计算方式</span>
+                  <select v-model="builder.aggFunc" data-testid="bi-query-agg">
+                    <option value="DETAIL">明细</option>
+                    <option value="SUM">SUM</option>
+                    <option value="COUNT">COUNT</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>计算字段</span>
+                  <select v-model="builder.aggField" data-testid="bi-query-agg-field">
+                    <option value="">请选择</option>
+                    <option v-for="f in aggFieldOptions" :key="f.fieldCode" :value="f.fieldCode">
+                      {{ f.displayName }}
+                    </option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>汇总字段</span>
+                  <select v-model="builder.groupBy" multiple data-testid="bi-query-group" class="bi0-multi">
+                    <option v-for="f in fields" :key="'g' + f.fieldCode" :value="f.fieldCode">{{ f.displayName }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>关联表</span>
+                  <select v-model="builder.joinTable" data-testid="bi-query-join">
+                    <option value="">不关联</option>
+                    <option v-for="j in joinOptions" :key="j.table" :value="j.table">{{ j.label }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>排序字段</span>
+                  <select v-model="builder.orderField" data-testid="bi-query-order">
+                    <option value="">不排序</option>
+                    <option v-for="f in fields" :key="'o' + f.fieldCode" :value="f.fieldCode">{{ f.displayName }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>排序方向</span>
+                  <select v-model="builder.orderDir">
+                    <option value="ASC">升序</option>
+                    <option value="DESC">降序</option>
+                  </select>
+                </label>
+              </div>
+              <div class="qb-cond-hd"><b>条件</b></div>
+              <table class="bi0-cond-table" data-testid="bi-query-conditions">
+                <thead>
+                  <tr><th>字段</th><th>运算符</th><th>值</th><th></th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, idx) in builder.condRows" :key="idx">
+                    <td>
+                      <select v-model="row.fieldCode">
+                        <option value="">请选择</option>
+                        <option v-for="f in fields" :key="f.fieldCode" :value="f.fieldCode">{{ f.displayName }}</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select v-model="row.operator">
+                        <option value="EQ">等于</option>
+                        <option value="LIKE">包含</option>
+                        <option value="RANGE">区间</option>
+                      </select>
+                    </td>
+                    <td><input v-model="row.value" placeholder="条件值" /></td>
+                    <td>
+                      <button class="btn btn-sec btn-sm" type="button" @click="removeCond(idx)">删除</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-query-add-cond" @click="addCond">+ 添加条件</button>
               <p v-if="fieldHint" class="hint bi0-field-hint">{{ fieldHint }}</p>
               <p v-if="formError" class="hint bad" data-testid="bi-query-form-error">{{ formError }}</p>
               <div class="qb-cond-hd"><b>SQL 预览</b></div>
@@ -97,15 +174,17 @@
             </div>
             <div class="qb-side">
               <div class="qb-side-hd">可选字段（只读 · entity/fields）</div>
-              <div
+              <button
                 v-for="f in fields"
                 :key="'s' + f.fieldCode"
+                type="button"
                 class="fi"
-                @click="toggleSelectField(f.fieldCode)"
+                :data-field-code="f.fieldCode"
+                @click="onPickField"
               >
                 {{ f.displayName }}
                 <br /><span class="mono" style="font-size: 10px; color: var(--text2)">{{ f.fieldCode }}</span>
-              </div>
+              </button>
               <p v-if="!fields.length" class="hint">先选数据源；未映射请去元数据维护</p>
             </div>
           </div>
@@ -114,6 +193,7 @@
       <div v-if="result && result.empty" class="card bi0-result-card">
         <div class="empty" data-testid="bi-query-result-empty">
           <div class="et">{{ result.emptyReason || '当前条件下暂无数据' }}</div>
+          <div v-if="result.queryCostMs != null" class="csub">queryCostMs {{ result.queryCostMs }} ms</div>
         </div>
       </div>
       <div v-else-if="result" class="card bi0-result-card">
@@ -307,7 +387,9 @@ import {
 } from './query-chart'
 
 type FieldVo = { fieldCode: string; displayName: string; columnName: string; queryConditionType?: string }
-type EntityOpt = { entityCode: string; entityName: string }
+type JoinOpt = { table: string; entityCode: string; label: string }
+type EntityOpt = { entityCode: string; entityName: string; tableName?: string; joins?: JoinOpt[] }
+type CondRow = { fieldCode: string; operator: string; value: string }
 type QueryRow = {
   id: string
   queryName: string
@@ -360,7 +442,17 @@ const builder = reactive({
   dateFrom: '',
   dateTo: '',
   condValue: '',
+  aggFunc: 'DETAIL',
+  aggField: '',
+  groupBy: [] as string[],
+  joinTable: '',
+  orderField: '',
+  orderDir: 'ASC',
+  condRows: [{ fieldCode: '', operator: 'EQ', value: '' }] as CondRow[],
 })
+
+const joinOptions = computed(() => entities.value.find((e) => e.entityCode === builder.entityCode)?.joins || [])
+const aggFieldOptions = computed(() => fields.value)
 
 const mineFilter = reactive({ queryName: '', status: '' })
 const appliedMine = reactive({ queryName: '', status: '' })
@@ -417,15 +509,24 @@ function columnLabel(code: string): string {
   return resultFieldMap.value[code] || fields.value.find((f) => f.fieldCode === code)?.displayName || code
 }
 
-function toggleSelectField(code: string) {
-  const set = new Set(builder.selectFields)
-  if (set.has(code)) {
-    if (set.size <= 1) return
-    set.delete(code)
-  } else {
-    set.add(code)
+function onPickField(ev: MouseEvent) {
+  const code = (ev.currentTarget as HTMLElement).dataset.fieldCode || ''
+  const field = fields.value.find((f) => f.fieldCode === code)
+  if (!field) return
+  if (!builder.selectFields.includes(code)) builder.selectFields.push(code)
+  toast.value = `已加入展示：${field.displayName}`
+}
+
+function addCond() {
+  builder.condRows.push({ fieldCode: '', operator: 'EQ', value: '' })
+}
+
+function removeCond(index: number) {
+  if (builder.condRows.length <= 1) {
+    toast.value = '至少保留一个条件行'
+    return
   }
-  builder.selectFields = [...set]
+  builder.condRows.splice(index, 1)
 }
 
 function syncResultFieldMap() {
@@ -473,6 +574,10 @@ function limitEdge(): string {
 const payloadConfig = computed(() => {
   const selectFields = builder.selectFields.length ? builder.selectFields : fields.value.map((f) => f.fieldCode)
   const conditions: { fieldCode: string; operator: string; value: string }[] = []
+  for (const row of builder.condRows) {
+    if (!row.fieldCode) continue
+    conditions.push({ fieldCode: row.fieldCode, operator: row.operator || 'EQ', value: row.value })
+  }
   const probe = builder.condValue.trim()
   if (probe && selectFields.length) {
     conditions.push({ fieldCode: selectFields[0], operator: 'EQ', value: probe })
@@ -487,17 +592,59 @@ const payloadConfig = computed(() => {
       })
     }
   }
-  return { selectFields, conditions, limit: Number(builder.limit) || 100 }
+  const orderBy: string[] = []
+  if (builder.orderField) {
+    orderBy.push(builder.orderDir === 'DESC' ? `-${builder.orderField}` : builder.orderField)
+  }
+  return {
+    selectFields,
+    conditions,
+    orderBy,
+    limit: Number(builder.limit) || 100,
+    aggFunc: builder.aggFunc === 'DETAIL' ? '' : builder.aggFunc,
+    aggField: builder.aggField,
+    groupBy: [...builder.groupBy],
+    joinTable: builder.joinTable,
+  }
 })
+
+function quoteIdent(name: string) {
+  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) ? name : ''
+}
+
+function refreshPreview() {
+  const table = quoteIdent(entities.value.find((e) => e.entityCode === builder.entityCode)?.tableName || '')
+  const cols = (payloadConfig.value.selectFields || [])
+    .map((code) => {
+      const field = fields.value.find((f) => f.fieldCode === code)
+      const column = quoteIdent(field?.columnName || '')
+      return column ? `\`${column}\` AS \`${code}\`` : ''
+    })
+    .filter(Boolean)
+  if (!table || !cols.length) {
+    previewSql.value = 'SELECT … FROM … WHERE tenant_id = :tenant_id'
+    return
+  }
+  let sql = `SELECT ${cols.join(', ')} FROM \`${table}\` WHERE deleted = 0 AND tenant_id = :tenant_id`
+  payloadConfig.value.conditions.forEach((cond, idx) => {
+    const field = fields.value.find((f) => f.fieldCode === cond.fieldCode)
+    const column = quoteIdent(field?.columnName || '')
+    if (!column) return
+    if (cond.operator === 'LIKE') sql += ` AND \`${column}\` LIKE :p${idx}`
+    else if (cond.operator === 'RANGE') sql += ` AND \`${column}\` BETWEEN :p${idx}_lo AND :p${idx}_hi`
+    else sql += ` AND \`${column}\` = :p${idx}`
+  })
+  if (payloadConfig.value.aggFunc === 'SUM' || payloadConfig.value.aggFunc === 'COUNT') {
+    sql += ' /* GROUP BY */'
+  }
+  sql += ` LIMIT ${Number(builder.limit) || 100}`
+  previewSql.value = sql
+}
 
 async function loadEntities() {
   try {
-    const res = await http.get('/collect/metadata/list', { params: { pageNo: 1, pageSize: 100 } })
-    const list = res.data.data?.list || []
-    entities.value = list.map((r: { entityCode: string; entityName: string }) => ({
-      entityCode: r.entityCode,
-      entityName: r.entityName,
-    }))
+    const res = await http.get('/bi/query/sources')
+    entities.value = res.data.data?.list || []
   } catch (error: unknown) {
     fieldHint.value = errorMessage(error)
   }
@@ -510,14 +657,47 @@ async function loadFields() {
   try {
     const res = await http.get(`/collect/metadata/entity/${builder.entityCode}/fields`)
     fields.value = res.data.data?.fields || []
-    builder.selectFields = fields.value.slice(0, 2).map((f) => f.fieldCode)
+    builder.selectFields = []
+    builder.aggField = ''
+    builder.groupBy = []
+    builder.joinTable = ''
+    builder.orderField = ''
     syncResultFieldMap()
+    refreshPreview()
   } catch (error: unknown) {
     if (rejectedCode(error) === 1261) {
       fieldHint.value = '实体未映射（1261）· 请点击右上角「元数据维护」完成 COLLECT P4m 映射'
       return
     }
     fieldHint.value = errorMessage(error)
+  }
+}
+
+async function copySql() {
+  formError.value = ''
+  if (!builder.entityCode) {
+    formError.value = '请选择数据源'
+    return
+  }
+  const limitMsg = limitEdge()
+  if (limitMsg) {
+    formError.value = limitMsg
+    return
+  }
+  try {
+    const res = await http.post('/bi/query/preview', {
+      entityCode: builder.entityCode,
+      config: payloadConfig.value,
+    })
+    const sql = String(res.data.data?.sql || '')
+    previewSql.value = sql
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(sql)
+    }
+    toast.value = 'SQL 已复制到剪贴板'
+  } catch (error: unknown) {
+    formError.value = errorMessage(error)
+    toast.value = formError.value
   }
 }
 
@@ -724,6 +904,33 @@ onMounted(() => {
 }
 .bi0-mine-qbar .fld input,
 .bi0-mine-qbar .fld select {
+  width: 100%;
+}
+.qb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qb-chips .chip {
+  margin: 0;
+}
+.fi {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.bi0-multi {
+  min-height: 72px;
+}
+.bi0-cond-table {
+  width: 100%;
+  margin: 8px 0;
+}
+.bi0-cond-table select,
+.bi0-cond-table input {
   width: 100%;
 }
 .sr-only {
