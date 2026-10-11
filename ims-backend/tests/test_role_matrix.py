@@ -149,6 +149,28 @@ def test_air_center_matrix_for_r11_r6_and_r4():
     assert "运营技能" in names
 
 
+def test_r7_and_r10_cannot_open_ops_board():
+    assert "menu:home:query" not in grants_for("R7")
+    assert "menu:home:query" not in grants_for("R10")
+    assert "auth:workbench:query" in grants_for("R7")
+    assert "auth:workbench:query" in grants_for("R10")
+    assert "menu:home:query" in grants_for("R6")
+    assert "menu:flow:query" not in grants_for("R7")
+    for username in ("tc_r7", "tc_r10"):
+        access = client.get("/admin-api/ims/auth/access", headers=login(username)).json()["data"]
+        assert "/ims/home" not in access["routes"]
+        assert "/ims/workbench" in access["routes"]
+        for path in ("/admin-api/ims/home/dashboard", "/admin-api/ims/home/todos", "/admin-api/ims/home/shortcuts"):
+            denied = client.get(path, headers=login(username))
+            assert denied.status_code == 403, path
+            assert denied.json()["code"] == 403, (path, denied.json())
+            assert denied.json()["msg"] == "无操作权限"
+    kept = client.get("/admin-api/ims/home/dashboard", headers=login("tc_r6"))
+    assert kept.status_code == 200 and kept.json()["code"] == 0, kept.json()
+    director = client.get("/admin-api/ims/auth/access", headers=login("tc_r4")).json()["data"]
+    assert "/ims/home" in director["routes"]
+
+
 def test_r5_analysis_menu_is_prd_subset():
     codes = grants_for("R5")
     assert "menu:queryTool:query" in codes

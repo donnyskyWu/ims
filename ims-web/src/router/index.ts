@@ -130,6 +130,7 @@ const router = createRouter({
 })
 
 const HIDDEN_GUARDED = new Set([
+  '/ims/home',
   '/ims/content/topic',
   '/ims/content/publish',
   '/ims/air/skill',

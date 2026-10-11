@@ -416,6 +416,7 @@ API_RULES = (
     ('/admin-api/ims/system/operate-log', 'system:log:query'),
     ('/admin-api/ims/system/login-log', 'system:log:query'),
     ('/admin-api/ims/system/notify', 'system:notify:query'),
+    ('/admin-api/ims/home', 'menu:home:query'),
     ('/admin-api/ims/auth/org', 'auth:org:query'),
     ('/admin-api/ims/auth/position', 'auth:position:query'),
     ('/admin-api/ims/ip-group', 'menu:ipg:query'),

@@ -14,7 +14,6 @@ PUBLIC_ROUTES = (
 FUNCTION_SKIP = (
     "/admin-api/ims/auth/workbench",
     "/admin-api/ims/auth/access",
-    "/admin-api/ims/home",
     "/admin-api/ims/health",
 )
 # 菜单表尚未覆盖的功能点 → 前端路由。只登记已有种子在用的码，避免把未授权业务页放出来。
