@@ -26,7 +26,16 @@ def test_bi_report_catalog_and_preview():
 
     preview = client.get("/admin-api/ims/bi/report/unified-account", headers=auth)
     assert preview.json()["code"] == 0
-    assert preview.json()["data"]["rows"]
+    data = preview.json()["data"]
+    assert data["rows"]
+    assert data["kpis"]
+    assert data["trend"]
+    assert "平台" in data["columns"]
+    assert "metric" not in data["columns"]
+    status = client.get("/admin-api/ims/bi/report/account-status", headers=auth).json()["data"]
+    assert status["rows"]
+    assert "状态" in status["columns"]
+    assert "note" not in status["columns"]
 
 
 def test_bi_report_manage_create_list():

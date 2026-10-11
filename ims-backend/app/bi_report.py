@@ -434,14 +434,67 @@ STANDARD_REPORTS = [
     },
 ]
 
-MOCK_ROWS = {
+COLUMN_LABEL = {
+    "platform": "平台",
+    "accountName": "账号",
+    "followerCount": "粉丝数",
+    "workCount": "作品数",
+    "statusName": "状态",
+    "health": "健康度",
+    "reason": "异常原因",
+    "ipGroupName": "IP组",
+    "outputCount": "产出量",
+    "interact": "互动量",
+    "author": "作者",
+    "statDate": "日期",
+    "liveHours": "直播时长",
+    "cost": "成本",
+    "gmv": "GMV",
+    "revenue": "营收",
+    "roi": "ROI",
+    "member": "人员",
+    "roleName": "角色",
+    "capacity": "产能",
+    "alertName": "预警",
+    "levelName": "级别",
+}
+# 无仓库时的标准报表种子。ipGroupId 只参与筛选，不作为展示列。
+STANDARD_SEED = {
     "unified-account": [
-        {"platform": "抖音", "accountName": "神鱼体育官方", "followerCount": 128000, "workCount": 342},
-        {"platform": "视频号", "accountName": "神鱼精选", "followerCount": 86000, "workCount": 198},
+        {"platform": "抖音", "accountName": "神鱼体育官方", "followerCount": 128000, "workCount": 342, "statDate": "2026-09-12"},
+        {"platform": "视频号", "accountName": "神鱼精选", "followerCount": 86000, "workCount": 198, "statDate": "2026-09-18"},
+    ],
+    "account-status": [
+        {"accountName": "神鱼体育官方", "platform": "抖音", "statusName": "正常", "health": 92, "reason": "—"},
+        {"accountName": "神鱼精选", "platform": "视频号", "statusName": "关注", "health": 71, "reason": "互动下滑"},
+        {"accountName": "快手旗舰", "platform": "快手", "statusName": "异常", "health": 48, "reason": "登录失效"},
+    ],
+    "video-output": [
+        {"ipGroupName": "电竞一组", "ipGroupId": 1, "platform": "抖音", "outputCount": 28, "interact": 12600, "statDate": "2026-09-08"},
+        {"ipGroupName": "体育二组", "ipGroupId": 2, "platform": "视频号", "outputCount": 16, "interact": 8400, "statDate": "2026-09-21"},
+    ],
+    "live-duration": [
+        {"author": "主播-林晓", "statDate": "2026-09-11", "liveHours": 6.5, "platform": "抖音"},
+        {"author": "主播-周宁", "statDate": "2026-09-19", "liveHours": 4.0, "platform": "视频号"},
+        {"author": "主播-林晓", "statDate": "2026-09-26", "liveHours": 5.5, "platform": "抖音"},
+    ],
+    "cost-allocation": [
+        {"accountName": "神鱼体育官方", "ipGroupName": "电竞一组", "cost": 18600, "gmv": 128400},
+        {"accountName": "神鱼精选", "ipGroupName": "体育二组", "cost": 9200, "gmv": 86400},
     ],
     "roi": [
         {"ipGroupName": "电竞一组", "revenue": 520000, "cost": 310000, "roi": 1.68},
         {"ipGroupName": "体育二组", "revenue": 410000, "cost": 280000, "roi": 1.46},
+    ],
+    "team-config": [
+        {"ipGroupName": "电竞一组", "member": "林晓", "roleName": "主播", "capacity": 18},
+        {"ipGroupName": "电竞一组", "member": "周宁", "roleName": "运营", "capacity": 12},
+        {"ipGroupName": "体育二组", "member": "陈可", "roleName": "主播", "capacity": 15},
+    ],
+    "account-alert": [
+        {"accountName": "快手旗舰", "alertName": "登录失效", "levelName": "高", "statDate": "2026-09-22"},
+        {"accountName": "神鱼精选", "alertName": "互动下滑", "levelName": "中", "statDate": "2026-09-24"},
+        {"accountName": "神鱼体育官方", "alertName": "证书临期", "levelName": "低", "statDate": "2026-09-27"},
     ],
 }
 # 标准报表本地样本窗（dataAsOf 落在 2026-09）。未传日期时不截断。
@@ -1269,6 +1322,44 @@ def standard_platform(raw: str | None) -> str:
     return PLATFORM_LABEL.get(text, text)
 
 
+def standard_visuals(title: str, rows: list[dict], grain: str) -> tuple[list[dict], list[dict]]:
+    numeric_key = ""
+    label_key = ""
+    for row in rows:
+        for key, value in row.items():
+            if key == "ipGroupId":
+                continue
+            if not numeric_key and isinstance(value, (int, float)) and key != "roi":
+                numeric_key = key
+            if not label_key and isinstance(value, str) and key in {"statDate", "platform", "ipGroupName", "accountName", "author"}:
+                label_key = key
+        if numeric_key and label_key:
+            break
+    total = 0.0
+    if numeric_key:
+        total = float(sum(float(row.get(numeric_key) or 0) for row in rows))
+    kpis = [
+        {"metric": "记录数", "value": len(rows), "note": title},
+        {
+            "metric": COLUMN_LABEL.get(numeric_key, "合计") if numeric_key else "合计",
+            "value": round(total, 2) if numeric_key else 0,
+            "note": "种子数据合计",
+        },
+    ]
+    if not rows or not numeric_key:
+        return kpis, []
+    if grain == "WEEK":
+        trend = [{"label": "当周", "value": round(total, 2)}]
+    elif grain == "MONTH":
+        trend = [{"label": "当月", "value": round(total, 2)}]
+    else:
+        trend = []
+        for row in rows:
+            label = str(row.get(label_key) or row.get("statDate") or title)
+            trend.append({"label": label, "value": float(row.get(numeric_key) or 0)})
+    return kpis, trend
+
+
 @router.get("/{code}")
 def report_preview(
     code: str,
@@ -1276,6 +1367,7 @@ def report_preview(
     platform: str | None = None,
     dateFrom: str = "",
     dateTo: str = "",
+    timeGrain: str = "DAY",
     _: Session = Depends(db_session),
     __: User = Depends(current_user),
 ):
@@ -1291,10 +1383,12 @@ def report_preview(
             return fail(1001, "日期格式应为 yyyy-MM-dd")
         if day_from > day_to:
             return fail(1001, "开始日期不能晚于结束日期")
-    source = MOCK_ROWS.get(code)
-    placeholder = source is None
-    rows = [dict(item) for item in source] if source else [{"metric": "sample", "value": 1, "note": f"占位数据 · {code}"}]
+    source = STANDARD_SEED.get(code) or []
+    rows = [dict(item) for item in source]
     label = standard_platform(platform)
+    grain = (timeGrain or "DAY").strip().upper()
+    if grain not in {"DAY", "WEEK", "MONTH"}:
+        grain = "DAY"
     outside = bool(day_from and day_to and (day_to < REPORT_SAMPLE_FROM or day_from > REPORT_SAMPLE_TO))
     empty = False
     empty_reason = ""
@@ -1303,18 +1397,27 @@ def report_preview(
         rows = []
         empty = True
         empty_reason = "当前日期下暂无数据"
-    elif label and placeholder:
-        rows = []
-        empty = True
-        empty_reason = "当前平台下暂无数据"
-    elif label and any("platform" in item for item in rows):
-        rows = [item for item in rows if item.get("platform") == label]
-        if not rows:
-            empty = True
-            empty_reason = "当前平台下暂无数据"
-    elif label:
-        filter_note = "本报表不含平台列，筛选未改变结果"
-    columns = list(rows[0].keys()) if rows else (list(source[0].keys()) if source else ["metric", "value", "note"])
+    else:
+        if label and any("platform" in item for item in source):
+            rows = [item for item in rows if item.get("platform") == label]
+            if not rows:
+                empty = True
+                empty_reason = "当前平台下暂无数据"
+        elif label:
+            filter_note = "本报表不含平台列，筛选未改变结果"
+        if ipGroupId and not empty and any("ipGroupId" in item for item in source):
+            rows = [item for item in rows if int(item.get("ipGroupId") or 0) == int(ipGroupId)]
+            if not rows:
+                empty = True
+                empty_reason = "当前 IP 组下暂无数据"
+                filter_note = ""
+        elif ipGroupId:
+            extra = "本报表不含 IP 组，筛选未改变结果"
+            filter_note = f"{filter_note} · {extra}" if filter_note else extra
+    display_keys = [key for key in (rows[0].keys() if rows else (source[0].keys() if source else [])) if key != "ipGroupId"]
+    columns = [COLUMN_LABEL.get(key, key) for key in display_keys]
+    display_rows = [{COLUMN_LABEL.get(key, key): item.get(key) for key in display_keys} for item in rows]
+    kpis, trend = standard_visuals(meta["title"], rows, grain)
     return ok(
         {
             "code": code,
@@ -1324,10 +1427,13 @@ def report_preview(
                 "platform": label,
                 "dateFrom": day_from,
                 "dateTo": day_to,
+                "timeGrain": grain,
             },
+            "kpis": kpis,
+            "trend": trend,
             "columns": columns,
-            "rows": rows,
-            "total": len(rows),
+            "rows": display_rows,
+            "total": len(display_rows),
             "dataAsOf": "2026-09-30T23:59:59+08:00",
             "empty": empty,
             "emptyReason": empty_reason,
