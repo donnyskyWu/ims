@@ -35,6 +35,8 @@ def ensure_meet_columns() -> None:
         cols = {c["name"] for c in insp.get_columns("ims_meet_minutes")}
         if "organizer_user_id" not in cols:
             alters.append(("ims_meet_minutes", "organizer_user_id", "BIGINT NOT NULL DEFAULT 0"))
+        if "agenda" not in cols:
+            alters.append(("ims_meet_minutes", "agenda", "TEXT NULL"))
     if not alters:
         return
     with engine.begin() as conn:
@@ -731,11 +733,13 @@ class ActionItemIn(BaseModel):
 
 class MinutesCreateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    meetingTitle: str
-    meetingDate: str
+    meetingTitle: str = ""
+    meetingDate: str = ""
     meetingRoom: str = ""
     durationMinutes: int = Field(default=60, ge=15, le=480)
     attendees: list[AttendeeItem] = Field(default_factory=list)
+    recorderUserId: int = 0
+    agenda: str = ""
     summary: str = ""
     decisions: list[DecisionItem] | None = None
     actionItems: list[ActionItemIn] | None = None
@@ -803,6 +807,7 @@ def minutes_vo(row: MeetMinutes) -> dict:
         "meetingDate": iso(row.meeting_date),
         "meetingRoom": row.meeting_room or None,
         "durationMinutes": row.duration_minutes,
+        "agenda": row.agenda or "",
         "organizerUserId": row.organizer_user_id or row.recorder_user_id,
         "organizerName": row.organizer_name or row.recorder_name,
         "attendeeCount": len(attendees),
@@ -895,17 +900,20 @@ def minutes_create(
     actor: User = Depends(current_user),
 ):
     title = (body.meetingTitle or "").strip()
-    if not title:
-        return fail(1001, "meetingTitle 必填")
     when = parse_meeting_date(body.meetingDate)
-    if when is None:
-        return fail(1001, "meetingDate 格式无效")
+    attendees = [a.model_dump(exclude_none=True) for a in body.attendees if (a.userName or "").strip() or a.userId]
+    if not title or when is None or not attendees:
+        return fail(1001, "必填项，请填写")
     tenant_id = tenant_of(actor)
     dept_id, _ = primary_dept(db, actor)
     now = utcnow()
     summary = (body.summary or "").strip()
     status = "MINUTES_RECORDED" if summary else "REGISTERED"
-    attendees = [a.model_dump(exclude_none=True) for a in body.attendees]
+    recorder_id = int(body.recorderUserId or 0) or actor.id
+    recorder = db.get(User, recorder_id) if recorder_id != actor.id else actor
+    if recorder is None or recorder.deleted:
+        recorder = actor
+        recorder_id = actor.id
     decisions = [{"description": d.description} for d in (body.decisions or []) if d.description]
     actions = normalize_action_items(db, body.actionItems)
     row = MeetMinutes(
@@ -914,6 +922,7 @@ def minutes_create(
         meeting_date=when,
         meeting_room=(body.meetingRoom or "").strip(),
         duration_minutes=body.durationMinutes,
+        agenda=(body.agenda or "").strip(),
         organizer_user_id=actor.id,
         organizer_name=actor.nickname or actor.username,
         attendees=attendees,
@@ -921,8 +930,8 @@ def minutes_create(
         decisions=decisions,
         action_items=actions,
         minutes_status=status,
-        recorder_user_id=actor.id,
-        recorder_name=actor.nickname or actor.username,
+        recorder_user_id=recorder.id,
+        recorder_name=recorder.nickname or recorder.username,
         dept_id=dept_id,
         tenant_id=tenant_id,
         created_at=now,
@@ -959,6 +968,26 @@ def minutes_archive_rate(
             "recordedCount": recorded,
             "archiveRate": rate,
             "traceRate": trace_rate,
+        }
+    )
+
+
+@router.get("/minutes/participants")
+def minutes_participants(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    rows = list(
+        db.scalars(
+            select(User)
+            .where(User.deleted == 0, User.status == "ENABLED", User.tenant_id == tenant_of(actor))
+            .order_by(User.id)
+            .limit(300)
+        ).all()
+    )
+    return ok(
+        {
+            "list": [
+                {"userId": row.id, "userName": row.nickname or row.username, "username": row.username}
+                for row in rows
+            ]
         }
     )
 

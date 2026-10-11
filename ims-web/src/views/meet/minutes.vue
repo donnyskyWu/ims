@@ -6,7 +6,7 @@
         <div class="sub">MEET-004 · 纪要登记 · 03 MEET</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri btn-sm" type="button" @click="openCreate">登记会议</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="meet-book" @click="openCreate">预约会议</button>
       </div>
     </div>
     <div class="g3" style="margin-bottom: 12px">
@@ -66,22 +66,39 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 440px; padding: 20px; max-height: 90vh; overflow: auto">
-        <h3 style="margin: 0 0 12px">登记会议 / 录入纪要</h3>
-        <label class="fld">主题</label>
-        <input v-model="form.meetingTitle" class="fld-in" />
-        <label class="fld">会议时间（ISO）</label>
-        <input v-model="form.meetingDate" class="fld-in" placeholder="2026-10-07T16:00:00+08:00" />
+      <div class="card meet-dialog" data-testid="meet-book-form">
+        <h3 style="margin: 0 0 12px">预约会议</h3>
+        <label class="fld">会议主题 *</label>
+        <input v-model="form.meetingTitle" class="fld-in" data-testid="meet-title" />
+        <p v-if="fieldErrors.meetingTitle" class="err">{{ fieldErrors.meetingTitle }}</p>
+        <label class="fld">会议时间 *</label>
+        <input v-model="form.meetingDate" class="fld-in" type="datetime-local" data-testid="meet-time" />
+        <p v-if="fieldErrors.meetingDate" class="err">{{ fieldErrors.meetingDate }}</p>
+        <label class="fld">参会人 *</label>
+        <select v-model="form.attendeeIds" class="fld-in" multiple data-testid="meet-attendees" size="5">
+          <option v-for="person in people" :key="person.userId" :value="person.userId">
+            {{ person.userName }}（{{ person.username }}）
+          </option>
+        </select>
+        <p v-if="fieldErrors.attendees" class="err">{{ fieldErrors.attendees }}</p>
+        <label class="fld">记录人</label>
+        <select v-model="form.recorderUserId" class="fld-in" data-testid="meet-recorder">
+          <option :value="0">默认本人</option>
+          <option v-for="person in people" :key="'r' + person.userId" :value="person.userId">{{ person.userName }}</option>
+        </select>
+        <label class="fld">时长（分钟）</label>
+        <input v-model.number="form.durationMinutes" class="fld-in" type="number" min="15" max="480" data-testid="meet-duration" />
         <label class="fld">会议室</label>
-        <input v-model="form.meetingRoom" class="fld-in" placeholder="3F-大会议室 / 线上" />
-        <label class="fld">纪要正文（留空则仅登记）</label>
-        <textarea v-model="form.summary" class="fld-in" rows="4" />
-        <label class="fld">参会人（逗号分隔姓名）</label>
-        <input v-model="form.attendeesText" class="fld-in" placeholder="张三,李四" />
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <select v-model="form.meetingRoom" class="fld-in" data-testid="meet-room">
+          <option value="">不指定</option>
+          <option v-for="room in rooms" :key="room" :value="room">{{ room }}</option>
+        </select>
+        <label class="fld">议程</label>
+        <textarea v-model="form.agenda" class="fld-in" rows="3" data-testid="meet-agenda" />
+        <p v-if="formError" class="err">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="meet-submit" @click="submit">提交预约</button>
         </div>
       </div>
     </div>
@@ -113,12 +130,15 @@
         </div>
       </div>
     </div>
+    <div v-if="toast" class="toasts">
+      <div class="toast t-success" data-testid="meet-toast">{{ toast }}</div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -141,13 +161,19 @@ const detail = ref<Record<string, any> | null>(null)
 const archiveStat = ref({ totalMeetings: 0, archivedCount: 0, traceRate: 0 })
 
 const filters = reactive({ meetingTitle: '', minutesStatus: '' })
+const rooms = ['2F-会议室 A', '3F-大会议室', '1F-会议室 B', '线上']
+const people = ref<{ userId: number; userName: string; username: string }[]>([])
 const form = reactive({
   meetingTitle: '',
   meetingDate: '',
   meetingRoom: '',
-  summary: '',
-  attendeesText: '',
+  durationMinutes: 60,
+  agenda: '',
+  attendeeIds: [] as number[],
+  recorderUserId: 0,
 })
+const fieldErrors = reactive({ meetingTitle: '', meetingDate: '', attendees: '' })
+const toast = ref('')
 
 function statusLabel(s: string) {
   const map: Record<string, string> = {
@@ -176,53 +202,81 @@ async function loadList() {
       return
     }
     rows.value = res.data.data?.list || []
-  } catch {
-    error.value = '网络错误'
+  } catch (e: unknown) {
+    error.value = errorMessage(e)
     rows.value = []
   } finally {
     loading.value = false
   }
 }
 
+function bizDateTime(value: string) {
+  if (!value) return ''
+  const text = value.length === 16 ? `${value}:00` : value
+  return `${text}+08:00`
+}
+
+async function loadPeople() {
+  try {
+    const res = await http.get('/meet/minutes/participants')
+    people.value = res.data.data?.list || []
+  } catch (e: unknown) {
+    formError.value = errorMessage(e)
+  }
+}
+
 function openCreate() {
   formError.value = ''
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const off = -now.getTimezoneOffset()
-  const sign = off >= 0 ? '+' : '-'
-  const oh = pad(Math.floor(Math.abs(off) / 60))
-  const om = pad(Math.abs(off) % 60)
-  form.meetingDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:00${sign}${oh}:${om}`
+  toast.value = ''
+  fieldErrors.meetingTitle = ''
+  fieldErrors.meetingDate = ''
+  fieldErrors.attendees = ''
   form.meetingTitle = ''
+  form.meetingDate = ''
   form.meetingRoom = ''
-  form.summary = ''
-  form.attendeesText = ''
+  form.durationMinutes = 60
+  form.agenda = ''
+  form.attendeeIds = []
+  form.recorderUserId = 0
   showForm.value = true
+  loadPeople()
+}
+
+function validateForm() {
+  fieldErrors.meetingTitle = form.meetingTitle.trim() ? '' : '必填项，请填写'
+  fieldErrors.meetingDate = form.meetingDate ? '' : '必填项，请填写'
+  fieldErrors.attendees = form.attendeeIds.length ? '' : '必填项，请填写'
+  return !fieldErrors.meetingTitle && !fieldErrors.meetingDate && !fieldErrors.attendees
 }
 
 async function submit() {
   formError.value = ''
-  const attendees = form.attendeesText
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((userName) => ({ userName }))
+  toast.value = ''
+  if (!validateForm()) {
+    formError.value = '必填项，请填写'
+    return
+  }
+  const attendees = form.attendeeIds.map((userId) => {
+    const person = people.value.find((item) => item.userId === userId)
+    return { userId, userName: person?.userName || '' }
+  })
   try {
     const res = await http.post('/meet/minutes', {
-      meetingTitle: form.meetingTitle,
-      meetingDate: form.meetingDate,
+      meetingTitle: form.meetingTitle.trim(),
+      meetingDate: bizDateTime(form.meetingDate),
       meetingRoom: form.meetingRoom,
+      durationMinutes: form.durationMinutes || 60,
+      agenda: form.agenda,
+      recorderUserId: form.recorderUserId || undefined,
       attendees,
-      summary: form.summary,
     })
-    if (res.data.code !== 0) {
-      formError.value = res.data.msg || '保存失败'
-      return
-    }
+    const no = res.data.data?.minutesNo || ''
+    toast.value = no ? `会议已登记 · ${no}` : '会议已登记'
     showForm.value = false
     await loadList()
-  } catch {
-    formError.value = '网络错误'
+    await loadArchiveRate()
+  } catch (e: unknown) {
+    formError.value = errorMessage(e)
   }
 }
 
@@ -265,3 +319,37 @@ onMounted(() => {
   loadArchiveRate()
 })
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px 16px;
+}
+.meet-dialog {
+  width: min(560px, 100%);
+  max-height: min(90vh, 820px);
+  overflow: auto;
+  padding: 20px;
+}
+.fld {
+  display: block;
+  font-size: 12px;
+  color: var(--text2, #6e6e73);
+  margin: 10px 0 4px;
+}
+.fld-in {
+  width: 100%;
+  box-sizing: border-box;
+}
+.err {
+  color: var(--red, #d70015);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+</style>

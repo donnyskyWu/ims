@@ -1041,6 +1041,7 @@ class MeetMinutes(Base):
     meeting_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     meeting_room: Mapped[str] = mapped_column(String(128), default="")
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    agenda: Mapped[str] = mapped_column(Text, default="")
     organizer_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     organizer_name: Mapped[str] = mapped_column(String(64), default="")
     attendees: Mapped[list] = mapped_column(JSON, default=list)

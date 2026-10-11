@@ -333,6 +333,32 @@ def test_meet_stat_on_time_rate_after_submit():
     assert stat.json()["data"]["byPerson"]
 
 
+def test_meet_minutes_register_requires_title_time_attendees():
+    auth = headers()
+    empty = client.post("/admin-api/ims/meet/minutes", headers=auth, json={})
+    assert empty.json()["code"] == 1001
+    assert "必填" in empty.json()["msg"]
+    named = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "预约字段",
+            "meetingDate": datetime.now(BJ).strftime("%Y-%m-%dT16:30:00+08:00"),
+            "durationMinutes": 90,
+            "meetingRoom": "2F-会议室 A",
+            "agenda": "对齐进度",
+            "attendees": [{"userId": 1, "userName": "admin"}],
+        },
+    )
+    assert named.json()["code"] == 0
+    assert named.json()["data"]["minutesStatus"] == "REGISTERED"
+    assert named.json()["data"]["agenda"] == "对齐进度"
+    assert named.json()["data"]["durationMinutes"] == 90
+    people = client.get("/admin-api/ims/meet/minutes/participants", headers=auth)
+    assert people.json()["code"] == 0
+    assert any(item["username"] == "admin" for item in people.json()["data"]["list"])
+
+
 def test_meet_minutes_registered_without_summary():
     auth = headers()
     when = (datetime.now(BJ) - timedelta(days=1)).strftime("%Y-%m-%dT09:00:00+08:00")
@@ -342,7 +368,7 @@ def test_meet_minutes_registered_without_summary():
         json={
             "meetingTitle": "仅登记会议",
             "meetingDate": when,
-            "attendees": [],
+            "attendees": [{"userName": "admin"}],
             "summary": "",
         },
     )
@@ -450,6 +476,7 @@ def test_meet_minutes_archive_and_rate():
         json={
             "meetingTitle": "归档测试会",
             "meetingDate": when,
+            "attendees": [{"userName": "admin"}],
             "summary": "结论已录入",
         },
     )
