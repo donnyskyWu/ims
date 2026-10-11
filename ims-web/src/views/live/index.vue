@@ -495,6 +495,7 @@
         </div>
         <template v-else>
         <p v-if="!entryOpen" class="hint bad" data-testid="live-report-locked">场次未下播，下播录入在状态为已下播后开放</p>
+        <template v-if="entryOpen">
         <div v-if="!report" class="empty" data-testid="live-report-empty" style="padding: 12px 0">
           <div class="et">待录入</div>
           <div class="es">下播九项还没提交。缺字段返回 1046，提交后只能走更正单。</div>
@@ -592,6 +593,7 @@
           <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
           <button v-if="correcting" class="btn btn-pri btn-sm" type="button" data-testid="live-report-correction-submit" @click="submitCorrection">提交更正单</button>
         </div>
+        </template>
         </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
