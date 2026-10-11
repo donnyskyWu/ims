@@ -667,9 +667,9 @@ def audit_queue(
     level = (auditLevel or "FIRST").strip().upper()
     caps = actor_caps(db, actor)
     if level == "FIRST" and not caps["canFirstAudit"]:
-        return fail(1176, "1176 越级审核：初审队列仅 R8")
+        return fail(1176, "越级审核：初审队列仅内容审核员")
     if level == "FINAL" and not caps["canFinalAudit"]:
-        return fail(1176, "1176 越级审核：终审队列仅 R4")
+        return fail(1176, "越级审核：终审队列仅运营总监")
     if level not in {"FIRST", "FINAL"}:
         return fail(1001, "auditLevel 须为 FIRST 或 FINAL")
     stmt = select(CompAnalysis).where(
@@ -765,13 +765,13 @@ def audit_analysis(
         return fail(1001, "审核参数不合法")
     caps = actor_caps(db, actor)
     if level == "FIRST" and not caps["canFirstAudit"]:
-        return fail(1176, "1176 越级审核：初审仅 R8")
+        return fail(1176, "越级审核：初审仅内容审核员")
     if level == "FINAL" and not caps["canFinalAudit"]:
-        return fail(1176, "1176 越级审核：终审仅 R4")
+        return fail(1176, "越级审核：终审仅运营总监")
     if level == "FINAL" and row.audit_stage != "FINAL":
-        return fail(1176, "1176 越级审核：初审未通过不可进终审")
+        return fail(1176, "越级审核：初审未通过不可进终审")
     if level == "FIRST" and row.audit_stage != "FIRST":
-        return fail(1176, "1176 越级审核：该单已不在初审")
+        return fail(1176, "越级审核：该单已不在初审")
     if actor.id == row.submitter_user_id:
         return fail(1057, "1057 审核回避：不能审核自己提交的竞品")
     reason = (body.rejectReason or "").strip()

@@ -5,6 +5,7 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await loginAdmin(page)
   await page.goto('/ims/comp/library')
   await expect(page.getByRole('heading', { name: '竞品库' })).toBeVisible()
+  await expect(page.getByText('内容审核员初审 → 运营总监终审')).toBeVisible()
 
   await page.getByTestId('comp-add').click()
   await expect(page.getByTestId('comp-name')).toBeVisible()

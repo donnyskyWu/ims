@@ -167,7 +167,11 @@ def test_two_level_audit_stores_and_subscribes():
         headers=r6,
         json={"auditLevel": "FIRST", "conclusion": "STORED"},
     )
-    assert blocked.json()["code"] == 1176
+    blocked_body = blocked.json()
+    assert blocked_body["code"] == 1176
+    assert blocked_body["msg"] == "越级审核：初审仅内容审核员"
+    assert "R8" not in blocked_body["msg"]
+    assert "1176" not in blocked_body["msg"]
 
     first = client.put(
         f"/admin-api/ims/comp/audit/{no}",

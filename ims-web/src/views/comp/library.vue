@@ -22,7 +22,7 @@
     </div>
     <p v-if="note" class="hint" data-testid="comp-lib-note">{{ note }}</p>
     <p v-else class="hint" style="margin-bottom: 8px">
-      提交后进入两级审核：R8 初审 → R4 终审。终审通过后「已入库」并自动订阅监控。
+      提交后进入两级审核：内容审核员初审 → 运营总监终审。终审通过后「已入库」并自动订阅监控。
     </p>
     <div class="tabs" style="margin-bottom: 12px">
       <button
@@ -140,7 +140,7 @@
     </div>
 
     <ProtoDrawer :open="showCreate" title="新增竞品" width="720px" @close="showCreate = false">
-      <p class="hint">仅可采集公开数据。提交后状态为「待初审」，由 R8 初审、R4 终审。</p>
+      <p class="hint">仅可采集公开数据。提交后状态为「待初审」，由内容审核员初审、运营总监终审。</p>
       <div v-if="mergeHint" class="hint" data-testid="comp-merge-preview" style="background: rgba(255, 149, 0, 0.08)">
         {{ mergeHint }}
       </div>
@@ -413,7 +413,7 @@ const rejectReason = ref('')
 
 function roundTitle(item: Round) {
   if (item.auditLevel === 'RESUBMIT' || item.conclusion === 'RESUBMITTED') return '重新提交'
-  const level = item.auditLevel === 'FINAL' ? '终审（R4）' : '初审（R8）'
+  const level = item.auditLevel === 'FINAL' ? '终审（运营总监）' : '初审（内容审核员）'
   const result = item.conclusion === 'REJECTED' ? '退回' : '通过'
   return `${level} · ${result}`
 }
