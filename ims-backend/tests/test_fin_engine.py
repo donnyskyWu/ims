@@ -8,10 +8,10 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
+from app.main import app
 from app.core import SessionLocal
 from app.fin import net_profit_rate
 from app.fin_policy import EDIT_COST_BEFORE_CONFIRM, commission_amount, net_rate_denominator
-from app.main import app
 from app.models import LiveReport, LiveSession
 from tests.test_fin_share_rule import rule_body
 from tests.test_live import headers
@@ -26,7 +26,7 @@ def test_fin_policy_matches_confirmed_rules():
     assert net_profit_rate(50000, 2000, 30940) == 64.46
 
 
-def seed_confirmed_session(code: str, account_id: int, gmv: float, refund: float) -> None:
+def seed_confirmed_session(code: str, account_id: int, gmv: float, refund: float, topic: str = "") -> None:
     db = SessionLocal()
     try:
         db.add(
@@ -34,6 +34,7 @@ def seed_confirmed_session(code: str, account_id: int, gmv: float, refund: float
                 session_code=code,
                 account_id=account_id,
                 platform="DOUYIN",
+                topic=topic,
                 plan_start_time="2026-10-11T20:00:00+08:00",
                 session_status="ENDED",
                 responsible_user_id=1,
@@ -142,3 +143,32 @@ def test_engine_keeps_higher_priority_rule_on_dys0004():
     assert len(daren) == 1
     assert daren[0]["shareAmount"] == 1140
     assert daren[0]["ruleName"] == "达人毛利一二"
+
+
+def test_engine_ls1_daren_share_is_gross_times_ten_percent():
+    """ST-05：LS-1 引擎达人分成 = 毛利 45,500 × 10% = ¥4,550。"""
+    auth = headers()
+    code = "IMS20261011DYS0001"
+    account_id = 91001
+    scope = {"platforms": ["DYS"], "accountIds": [account_id], "ipGroupIds": []}
+    create_rule(
+        auth,
+        ruleName="LS-1达人毛利一成",
+        shareTarget="DAREN",
+        baseType="GROSS_PROFIT",
+        fixedRate=0.1,
+        priority=10,
+        scope=scope,
+    )
+    seed_confirmed_session(code, account_id, 50000, 2000, topic="LS-1")
+    saved = submit_engine(auth, code, commissionRate=0.05, adCost=5000, rechargeCost=1000, fixedCost=3000, sampleCost=0)
+    assert saved["commissionAmount"] == 2500
+    assert saved["shareDaren"] == 4550
+    profit = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()["data"]
+    assert profit["grossProfit"] == 45500
+    assert profit["netProfit"] == 31950
+    bills = client.get("/admin-api/ims/fin/share/results", headers=auth, params={"sessionCode": code}).json()["data"]["list"]
+    daren = [row for row in bills if row["shareTarget"] == "DAREN"]
+    assert len(daren) == 1
+    assert daren[0]["shareAmount"] == 4550
+    assert daren[0]["shareBase"] == 45500
