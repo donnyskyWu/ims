@@ -652,7 +652,7 @@ const entryTotal = computed(() => {
   const gmv = finite(form.costGmv)
   const commission = round2((Number.isFinite(gmv) ? gmv : 0) * rate)
   const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname, form.shareTeam]
-  const extra = parts.reduce((acc, raw) => {
+  const extra = parts.reduce<number>((acc, raw) => {
     const value = finite(raw)
     return acc + (Number.isFinite(value) ? value : 0)
   }, 0)
