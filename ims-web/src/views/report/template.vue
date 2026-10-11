@@ -73,7 +73,16 @@
               </td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" data-testid="tpl-edit" @click="openEdit(row)">编辑</button>
-                <button class="btn btn-sec btn-sm" type="button" @click="disableRow(row)" :disabled="row.status === 'DISABLED'">
+                <button
+                  v-if="row.status === 'DISABLED'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="tpl-enable"
+                  @click="enableRow(row)"
+                >
+                  启用
+                </button>
+                <button v-else class="btn btn-sec btn-sm" type="button" data-testid="tpl-disable" @click="askDisable(row)">
                   停用
                 </button>
               </td>
@@ -84,33 +93,59 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="modal card" style="max-width: 480px; padding: 20px">
+      <div class="modal card" style="max-width: 480px; padding: 20px" data-testid="tpl-create-dialog">
         <h3 style="margin: 0 0 12px">新建上报模板</h3>
-        <div class="fld"><label>模板名称</label><input v-model="form.templateName" /></div>
         <div class="fld">
-          <label>周期</label>
-          <select v-model="form.periodType">
-            <option value="DAILY">每日</option>
-            <option value="WEEKLY">每周</option>
-            <option value="MONTHLY">每月</option>
-          </select>
+          <label>模板名称 <span class="req">*</span></label>
+          <input v-model="form.templateName" data-testid="tpl-name" :class="{ bad: fieldTips.templateName }" />
+          <p v-if="fieldTips.templateName" class="field-err">{{ fieldTips.templateName }}</p>
         </div>
-        <div class="fld"><label>截止规则</label><input v-model="form.deadlineRule" placeholder="22:00" /></div>
-        <div class="fld"><label>责任部门</label><input v-model="form.deptName" placeholder="运营中心" /></div>
         <div class="fld">
-          <label>业务线</label>
-          <select v-model="form.businessLine">
+          <label>上报频率 <span class="req">*</span></label>
+          <select v-model="form.frequency" data-testid="tpl-frequency" :class="{ bad: fieldTips.frequency }">
+            <option value="">请选择</option>
+            <option v-for="item in FREQUENCIES" :key="item.label" :value="item.label">{{ item.label }}</option>
+          </select>
+          <p v-if="fieldTips.frequency" class="field-err">{{ fieldTips.frequency }}</p>
+        </div>
+        <div class="fld">
+          <label>责任部门 <span class="req">*</span></label>
+          <select v-model="form.deptName" data-testid="tpl-dept" :class="{ bad: fieldTips.deptName }">
+            <option value="">请选择</option>
+            <option v-for="dept in DEPTS" :key="dept" :value="dept">{{ dept }}</option>
+          </select>
+          <p v-if="fieldTips.deptName" class="field-err">{{ fieldTips.deptName }}</p>
+        </div>
+        <div class="fld">
+          <label>业务线 <span class="req">*</span></label>
+          <select v-model="form.businessLine" data-testid="tpl-line" :class="{ bad: fieldTips.businessLine }">
+            <option value="">请选择</option>
             <option value="BUSINESS">业务</option>
             <option value="FINANCE">财务</option>
             <option value="ADMIN">行政</option>
           </select>
+          <p v-if="fieldTips.businessLine" class="field-err">{{ fieldTips.businessLine }}</p>
         </div>
-        <div class="fld"><label>示例字段标签</label><input v-model="form.sampleFieldLabel" placeholder="当日 GMV" /></div>
+        <div class="fld">
+          <label>初始字段数</label>
+          <input v-model="form.fieldCount" type="number" min="0" data-testid="tpl-field-count" placeholder="0" />
+        </div>
         <div class="acts" style="margin-top: 16px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="tpl-create" @click="submitCreate">创建模板</button>
         </div>
         <p v-if="formError" class="hint" style="color: var(--red); margin-top: 8px">{{ formError }}</p>
+      </div>
+    </div>
+
+    <div v-if="confirmRow" class="modal-mask" @click.self="confirmRow = null">
+      <div class="modal card" style="max-width: 420px; padding: 20px" data-testid="tpl-disable-confirm">
+        <h3 style="margin: 0 0 8px">停用模板</h3>
+        <p>确认停用「{{ confirmRow.templateName }}」？停用后不能再用于新的填报。</p>
+        <div class="acts" style="margin-top: 16px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="confirmRow = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="tpl-disable-ok" @click="confirmDisable">确认停用</button>
+        </div>
       </div>
     </div>
 
@@ -261,14 +296,24 @@ const toast = ref('')
 const showForm = ref(false)
 const formError = ref('')
 const filters = reactive({ templateName: '', periodType: '', status: '' })
+const FREQUENCIES = [
+  { label: '每日 18:00 前', periodType: 'DAILY', deadlineRule: '18:00' },
+  { label: '场次结束 2h 内', periodType: 'DAILY', deadlineRule: '场次结束 2h 内' },
+  { label: '每周一 12:00 前', periodType: 'WEEKLY', deadlineRule: '周一 12:00' },
+  { label: '每周五 18:00 前', periodType: 'WEEKLY', deadlineRule: '周五 18:00' },
+  { label: '活动结束 24h 内', periodType: 'MONTHLY', deadlineRule: '活动结束 24h 内' },
+]
+const DEPTS = ['运营中心', '直播运营', '内容中心', '数据中心', '商务外协']
+
 const form = reactive({
   templateName: '',
-  periodType: 'DAILY',
-  deadlineRule: '22:00',
+  frequency: '',
   deptName: '',
-  businessLine: 'BUSINESS',
-  sampleFieldLabel: '当日 GMV',
+  businessLine: '',
+  fieldCount: '',
 })
+const fieldTips = reactive({ templateName: '', frequency: '', deptName: '', businessLine: '' })
+const confirmRow = ref<Row | null>(null)
 
 const showEdit = ref(false)
 const editing = ref<Row | null>(null)
@@ -293,6 +338,8 @@ function apiError(err: unknown): string {
 }
 
 function periodLabel(period: string, rule: string) {
+  const hit = FREQUENCIES.find((item) => item.periodType === period && item.deadlineRule === rule)
+  if (hit) return hit.label
   const map: Record<string, string> = {
     DAILY: '每日',
     WEEKLY: '每周',
@@ -338,38 +385,49 @@ function resetFilters() {
 
 function openCreate() {
   form.templateName = ''
-  form.periodType = 'DAILY'
-  form.deadlineRule = '22:00'
+  form.frequency = ''
   form.deptName = ''
-  form.businessLine = 'BUSINESS'
-  form.sampleFieldLabel = '当日 GMV'
+  form.businessLine = ''
+  form.fieldCount = ''
+  fieldTips.templateName = ''
+  fieldTips.frequency = ''
+  fieldTips.deptName = ''
+  fieldTips.businessLine = ''
   formError.value = ''
   showForm.value = true
 }
 
 async function submitCreate() {
   formError.value = ''
-  if (!form.templateName.trim()) {
-    formError.value = '请填写模板名称'
+  fieldTips.templateName = form.templateName.trim() ? '' : '必填项，请填写'
+  fieldTips.frequency = form.frequency ? '' : '必填项，请填写'
+  fieldTips.deptName = form.deptName ? '' : '必填项，请填写'
+  fieldTips.businessLine = form.businessLine ? '' : '必填项，请填写'
+  if (fieldTips.templateName || fieldTips.frequency || fieldTips.deptName || fieldTips.businessLine) {
+    formError.value = '必填项，请填写'
     return
   }
-  const label = form.sampleFieldLabel.trim() || '数值'
+  const freq = FREQUENCIES.find((item) => item.label === form.frequency)
+  if (!freq) {
+    fieldTips.frequency = '必填项，请填写'
+    return
+  }
+  const count = Math.max(0, Number(form.fieldCount) || 0)
+  const fieldsSchema = Array.from({ length: count }, (_, index) => ({
+    fieldKey: `field_${index + 1}`,
+    fieldLabel: `字段${index + 1}`,
+    fieldType: 'NUMBER',
+    required: false,
+  }))
   try {
     await http.post('/report/template', {
       templateName: form.templateName.trim(),
-      periodType: form.periodType,
-      deadlineRule: form.deadlineRule.trim() || '22:00',
-      deptName: form.deptName.trim(),
+      periodType: freq.periodType,
+      deadlineRule: freq.deadlineRule,
+      deptName: form.deptName,
       businessLine: form.businessLine,
       status: 'ENABLED',
-      fieldsSchema: [
-        {
-          fieldKey: 'metric_value',
-          fieldLabel: label,
-          fieldType: 'NUMBER',
-          required: true,
-        },
-      ],
+      fieldsSchema,
       assignees: [],
     })
     showForm.value = false
@@ -380,10 +438,37 @@ async function submitCreate() {
   }
 }
 
-async function disableRow(row: Row) {
-  if (!confirm(`停用模板「${row.templateName}」？`)) return
+function askDisable(row: Row) {
+  confirmRow.value = row
+}
+
+async function confirmDisable() {
+  const row = confirmRow.value
+  if (!row) return
   try {
     await http.delete(`/report/template/${row.id}`)
+    confirmRow.value = null
+    toast.value = '模板已停用'
+    await loadList()
+  } catch (err) {
+    error.value = apiError(err)
+    confirmRow.value = null
+  }
+}
+
+async function enableRow(row: Row) {
+  try {
+    await http.put(`/report/template/${row.id}`, {
+      templateName: row.templateName,
+      periodType: row.periodType,
+      deadlineRule: row.deadlineRule,
+      deptName: row.deptName,
+      businessLine: row.businessLine || 'BUSINESS',
+      status: 'ENABLED',
+      fieldsSchema: row.fieldsSchema || [],
+      assignees: row.assignees || [],
+    })
+    toast.value = '已启用'
     await loadList()
   } catch (err) {
     error.value = apiError(err)
@@ -624,5 +709,16 @@ onMounted(loadList)
   align-items: center;
   margin: 6px 0;
   font-size: 13px;
+}
+.req {
+  color: #c62828;
+}
+.field-err {
+  margin: 4px 0 0;
+  color: #c62828;
+  font-size: 12px;
+}
+.bad {
+  border-color: #c62828;
 }
 </style>

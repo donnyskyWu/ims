@@ -573,3 +573,47 @@ def test_report_submit_1122_rejects_value_below_min():
     body = bad.json()
     assert body["code"] == 1122
     assert body["data"]["errors"][0]["fieldKey"] == "gmv"
+
+
+def test_report_template_frequency_dept_and_reenable():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "周五经营模板",
+            "periodType": "WEEKLY",
+            "deadlineRule": "周五 18:00",
+            "deptName": "直播运营",
+            "businessLine": "FINANCE",
+            "fieldsSchema": [],
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0
+    assert body["data"]["periodType"] == "WEEKLY"
+    assert body["data"]["deadlineRule"] == "周五 18:00"
+    assert body["data"]["deptName"] == "直播运营"
+    assert body["data"]["businessLine"] == "FINANCE"
+    template_id = body["data"]["id"]
+
+    stopped = client.delete(f"/admin-api/ims/report/template/{template_id}", headers=auth)
+    assert stopped.json()["code"] == 0
+    assert stopped.json()["data"]["status"] == "DISABLED"
+
+    enabled = client.put(
+        f"/admin-api/ims/report/template/{template_id}",
+        headers=auth,
+        json={
+            "templateName": "周五经营模板",
+            "periodType": "WEEKLY",
+            "deadlineRule": "周五 18:00",
+            "deptName": "直播运营",
+            "businessLine": "FINANCE",
+            "status": "ENABLED",
+            "fieldsSchema": [],
+            "assignees": [],
+        },
+    )
+    assert enabled.json()["code"] == 0
+    assert enabled.json()["data"]["status"] == "ENABLED"
