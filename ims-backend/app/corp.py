@@ -107,16 +107,40 @@ def realname_masked(ops: Session, ids: set[int]) -> dict[int, str]:
     return {row.id: mask_name(row.real_name) for row in rows}
 
 
-def company_vo(row: Company) -> dict:
-    capacity = row.mp_capacity_standard or 0
-    registered = 0
-    history = []
+def expansion_history_of(row: Company) -> list:
     try:
         parsed = json.loads(row.expansion_history or "[]")
-        if isinstance(parsed, list):
-            history = parsed
     except json.JSONDecodeError:
-        history = []
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def capacity_note(row: Company, capacity: int) -> str:
+    history = expansion_history_of(row)
+    if history:
+        return f"标准容量 {capacity} · 扩容 {len(history)} 次"
+    return f"标准容量 {capacity}"
+
+
+def official_counts(ops: Session, actor: User, company_ids: list[int]) -> dict[int, int]:
+    if not company_ids:
+        return {}
+    rows = ops.execute(
+        select(PlatformAccount.company_id, func.count())
+        .where(
+            PlatformAccount.deleted == 0,
+            PlatformAccount.tenant_id == tenant_of(actor),
+            PlatformAccount.platform_type == "WECHAT_OFFICIAL",
+            PlatformAccount.company_id.in_(company_ids),
+        )
+        .group_by(PlatformAccount.company_id)
+    ).all()
+    return {int(company_id): int(count) for company_id, count in rows if company_id}
+
+
+def company_vo(row: Company, registered: int = 0) -> dict:
+    capacity = row.mp_capacity_standard or 0
+    history = expansion_history_of(row)
     return {
         "id": row.id,
         "companyName": row.company_name,
@@ -127,6 +151,8 @@ def company_vo(row: Company) -> dict:
         "mpCapacityStandard": capacity,
         "mpRegisteredCount": registered,
         "mpRemaining": capacity - registered,
+        "usedTotal": f"{registered} / {capacity}",
+        "capacityNote": capacity_note(row, capacity),
         "expansionHistory": history,
         "status": row.status,
     }
@@ -318,7 +344,56 @@ def company_page(
         stmt = stmt.where(Company.status == status)
     total = count_of(ops, stmt)
     rows = ops.scalars(stmt.order_by(Company.id).offset((page_no - 1) * size).limit(size)).all()
-    return paged([company_vo(row) for row in rows], total, page_no, size)
+    counts = official_counts(ops, actor, [row.id for row in rows])
+    return paged([company_vo(row, counts.get(row.id, 0)) for row in rows], total, page_no, size)
+
+
+class CompanyBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    companyName: str | None = None
+    creditCode: str | None = None
+    industry: str | None = None
+    legalName: str | None = None
+    mpCapacityStandard: int | None = None
+
+
+@router.post("/corp/resource/company")
+def company_create(body: CompanyBody, ops: Session = Depends(ops_db), actor: User = Depends(current_user)):
+    name = (body.companyName or "").strip()
+    credit = (body.creditCode or "").strip()
+    if not name:
+        return fail(1001, "公司名称必填")
+    if not credit:
+        return fail(1001, "信用代码必填")
+    if body.mpCapacityStandard is None:
+        return fail(1001, "容量必填")
+    if body.mpCapacityStandard < 0:
+        return fail(1001, "容量不能为负")
+    taken = ops.scalar(
+        select(Company.id).where(
+            Company.deleted == 0,
+            Company.tenant_id == tenant_of(actor),
+            Company.company_name == name,
+        )
+    )
+    if taken is not None:
+        return fail(1001, "公司名称已存在")
+    row = Company(
+        company_name=name,
+        credit_code=credit,
+        industry=(body.industry or "").strip(),
+        legal_name=(body.legalName or "").strip(),
+        mp_capacity_standard=body.mpCapacityStandard,
+        expansion_history="[]",
+        status="ENABLED",
+        deleted=0,
+        tenant_id=tenant_of(actor),
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    ops.add(row)
+    ops.flush()
+    return ok(company_vo(row, 0))
 
 
 @router.get("/corp/resource/company/{company_id}")
@@ -326,7 +401,8 @@ def company_detail(company_id: int, ops: Session = Depends(ops_db), actor: User 
     row = ops.get(Company, company_id)
     if not visible(row, actor):
         return fail(1504, "资源不可用")
-    return ok(company_vo(row))
+    counts = official_counts(ops, actor, [row.id])
+    return ok(company_vo(row, counts.get(row.id, 0)))
 
 
 @router.get("/corp/resource/realname/page")

@@ -31,9 +31,37 @@ def _ensure_e2e_ops_author(ops) -> None:
     )
 
 
-def _ensure_e2e_douyin_account(db, ops) -> None:
-    from app.ops_models import Company, IpGroup, PlatformAccount
+def _ensure_e2e_content_company(ops):
+    """公司列表要能看到「E2E内容公司」。已有抖音账号时也不能跳过，软删的要恢复。"""
+    from app.ops_models import Company
 
+    company = ops.scalar(
+        select(Company).where(Company.company_name == "E2E内容公司", Company.tenant_id == 0)
+    )
+    if company is None:
+        company = Company(
+            company_name="E2E内容公司",
+            credit_code="E2ECONTENT000001",
+            status="ENABLED",
+            mp_capacity_standard=10,
+            tenant_id=0,
+        )
+        ops.add(company)
+        ops.flush()
+    else:
+        company.deleted = 0
+        company.status = "ENABLED"
+        if not company.credit_code:
+            company.credit_code = "E2ECONTENT000001"
+        if not company.mp_capacity_standard:
+            company.mp_capacity_standard = 10
+    return company
+
+
+def _ensure_e2e_douyin_account(db, ops) -> None:
+    from app.ops_models import IpGroup, PlatformAccount
+
+    company = _ensure_e2e_content_company(ops)
     exists = ops.scalar(
         select(PlatformAccount.id).where(
             PlatformAccount.platform_type == "DOUYIN",
@@ -42,9 +70,8 @@ def _ensure_e2e_douyin_account(db, ops) -> None:
     )
     if exists is not None:
         return
-    company = Company(company_name="E2E内容公司", status="ENABLED", tenant_id=0)
     group = IpGroup(group_name="E2E发布组", status="ENABLED", tenant_id=0)
-    ops.add_all([company, group])
+    ops.add(group)
     ops.flush()
     admin = db.scalar(select(User).where(User.username == "admin", User.deleted == 0))
     holder = admin.id if admin is not None else 1

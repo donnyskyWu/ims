@@ -4,6 +4,7 @@ os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core import Base, SessionLocal, engine
 from app.crypto import encrypt_text, sha256_hex
@@ -33,7 +34,24 @@ def test_company_and_realname_are_query_only_and_masked():
     assert missing.json()["code"] == 1504
     assert missing.json()["msg"] == "资源不可用"
     blocked = client.post("/admin-api/ims/corp/resource/company", headers=auth, json={"companyName": "甲"})
-    assert blocked.status_code == 404
+    assert blocked.json()["code"] == 1001
+    assert blocked.json()["msg"] == "信用代码必填"
+    created = client.post(
+        "/admin-api/ims/corp/resource/company",
+        headers=auth,
+        json={"companyName": "丙公司", "creditCode": "91330100MA0000099X", "mpCapacityStandard": 10},
+    )
+    assert created.json()["code"] == 0
+    assert created.json()["data"]["status"] == "ENABLED"
+    assert created.json()["data"]["usedTotal"] == "0 / 10"
+    assert created.json()["data"]["capacityNote"] == "标准容量 10"
+    duplicate = client.post(
+        "/admin-api/ims/corp/resource/company",
+        headers=auth,
+        json={"companyName": "丙公司", "creditCode": "91330100MA0000098X", "mpCapacityStandard": 1},
+    )
+    assert duplicate.json()["code"] == 1001
+    assert duplicate.json()["msg"] == "公司名称已存在"
 
     ops = ops_session()
     try:
@@ -227,6 +245,32 @@ def test_cert_e2e_seed_watermark_view():
     assert "admin" in view.json()["data"]["watermarkText"].lower()
     assert view.json()["data"]["indexInfo"]["certNoMasked"] != "110101199888011234"
     assert "signedUrl" not in view.text
+
+
+def test_e2e_content_company_is_restored_when_douyin_account_exists():
+    from app.main import _ensure_e2e_douyin_account
+
+    ops = ops_session()
+    db = SessionLocal()
+    try:
+        company = ops.scalar(select(Company).where(Company.company_name == "E2E内容公司"))
+        assert company is not None
+        company.deleted = 1
+        ops.commit()
+        _ensure_e2e_douyin_account(db, ops)
+        ops.commit()
+        revived = ops.scalar(
+            select(Company).where(
+                Company.company_name == "E2E内容公司",
+                Company.deleted == 0,
+                Company.tenant_id == 0,
+            )
+        )
+        assert revived is not None
+        assert revived.status == "ENABLED"
+    finally:
+        ops.close()
+        db.close()
 
 
 def test_company_scope_without_all_is_1008():

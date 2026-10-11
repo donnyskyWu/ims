@@ -5,7 +5,10 @@
         <h1>{{ meta.title }}</h1>
         <div class="sub">{{ meta.sub }}</div>
       </div>
-      <div v-if="kind === 'sim-card'" class="acts">
+      <div v-if="kind === 'company'" class="acts">
+        <button class="btn btn-pri" type="button" data-testid="corp-company-create" @click="openCompanyCreate">新建公司</button>
+      </div>
+      <div v-else-if="kind === 'sim-card'" class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新建手机卡</button>
       </div>
       <div v-else-if="kind === 'certificate'" class="acts">
@@ -163,6 +166,7 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
+    <p v-if="companyToast" class="hint" data-testid="corp-company-toast">{{ companyToast }}</p>
     <p v-if="kind === 'company'" class="hint" data-testid="master-company-industry-hint">
       行业来自字典 dict_industry。未列入字典的行业不会出现在下拉里。
     </p>
@@ -541,6 +545,48 @@
       </div>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="fileOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="companyOpen" title="新建公司" width="480px" @close="companyOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>公司名称<i class="req">*</i></label>
+          <input v-model="companyForm.companyName" data-testid="corp-company-name" :class="{ err: companyErrors.companyName }" />
+          <div v-if="companyErrors.companyName" class="ferr" data-testid="corp-company-error-name">{{ companyErrors.companyName }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>信用代码<i class="req">*</i></label>
+          <input v-model="companyForm.creditCode" data-testid="corp-company-credit" :class="{ err: companyErrors.creditCode }" />
+          <div v-if="companyErrors.creditCode" class="ferr" data-testid="corp-company-error-credit">{{ companyErrors.creditCode }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>行业</label>
+          <select v-model="companyForm.industry" data-testid="corp-company-industry">
+            <option value="">请选择行业</option>
+            <option v-for="item in industries" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>法人</label>
+          <input v-model="companyForm.legalName" data-testid="corp-company-legal" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>容量<i class="req">*</i></label>
+          <input v-model="companyForm.capacity" data-testid="corp-company-capacity" :class="{ err: companyErrors.capacity }" />
+          <div v-if="companyErrors.capacity" class="ferr" data-testid="corp-company-error-capacity">{{ companyErrors.capacity }}</div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="companyOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-company-save" @click="submitCompany">保存</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="formOpen" :title="editingId ? '编辑手机卡' : '新建手机卡'" width="480px" @close="formOpen = false">
@@ -928,6 +974,20 @@ const riskTotal = ref(0)
 const riskExportOpen = ref(false)
 const riskExportNote = ref('')
 const formOpen = ref(false)
+const companyOpen = ref(false)
+const companyToast = ref('')
+const companyForm = reactive({
+  companyName: '',
+  creditCode: '',
+  industry: '',
+  legalName: '',
+  capacity: '',
+})
+const companyErrors = reactive({
+  companyName: '',
+  creditCode: '',
+  capacity: '',
+})
 const editingId = ref<number | null>(null)
 const saving = ref(false)
 const formError = ref('')
@@ -962,14 +1022,14 @@ const specs: Record<string, {
 }> = {
   company: {
     title: '公司管理',
-    sub: 'CORP-R · 只查询 · GET /corp/resource/company/page',
+    sub: 'CORP-R · 新建公司 · GET/POST /corp/resource/company',
     placeholder: '公司名称',
     empty: '没有公司',
-    emptyHint: '契约只有分页和详情，这里不能新建。',
-    hint: '公司、实名人按契约只做查询。信用代码和法人来自详情，不提供写入。',
+    emptyHint: '点右上角「新建公司」登记主体。',
+    hint: '公司名称、信用代码、容量必填。已用/总量按该公司公众号账号计数。',
     detailTitle: '公司详情',
-    columns: ['公司', '信用代码', '行业', '法人', '容量', '已注册', '剩余', '状态'],
-    keys: ['companyName', 'creditCode', 'industry', 'legalName', 'mpCapacityStandard', 'mpRegisteredCount', 'mpRemaining', 'status'],
+    columns: ['公司ID', '公司', '信用代码', '行业', '法人', '已用/总量', '容量/扩容说明', '状态'],
+    keys: ['id', 'companyName', 'creditCode', 'industry', 'legalName', 'usedTotal', 'capacityNote', 'status'],
     statusOptions: [
       { value: 'ENABLED', label: '启用' },
       { value: 'DISABLED', label: '停用' },
@@ -2235,6 +2295,51 @@ async function prepareSim() {
     persons.value = asList(personPage.data?.data) as unknown as { id: number; realName: string }[]
   } finally {
     simDictReady.value = true
+  }
+}
+
+function openCompanyCreate() {
+  companyForm.companyName = ''
+  companyForm.creditCode = ''
+  companyForm.industry = ''
+  companyForm.legalName = ''
+  companyForm.capacity = ''
+  companyErrors.companyName = ''
+  companyErrors.creditCode = ''
+  companyErrors.capacity = ''
+  companyToast.value = ''
+  companyOpen.value = true
+}
+
+async function submitCompany() {
+  const required = '必填项，请填写'
+  companyErrors.companyName = companyForm.companyName.trim() ? '' : required
+  companyErrors.creditCode = companyForm.creditCode.trim() ? '' : required
+  companyErrors.capacity = companyForm.capacity.trim() ? '' : required
+  if (companyErrors.companyName || companyErrors.creditCode || companyErrors.capacity) {
+    companyToast.value = '请先完成必填项'
+    return
+  }
+  const capacity = Number(companyForm.capacity.trim())
+  if (!Number.isInteger(capacity) || capacity < 0) {
+    companyErrors.capacity = '容量须为非负整数'
+    companyToast.value = '请先完成必填项'
+    return
+  }
+  try {
+    await http.post('/corp/resource/company', {
+      companyName: companyForm.companyName.trim(),
+      creditCode: companyForm.creditCode.trim(),
+      industry: companyForm.industry || undefined,
+      legalName: companyForm.legalName.trim() || undefined,
+      mpCapacityStandard: capacity,
+    })
+    companyOpen.value = false
+    companyToast.value = '公司已创建'
+    pageNo.value = 1
+    await load()
+  } catch (e: unknown) {
+    companyToast.value = errorMessage(e)
   }
 }
 
