@@ -128,7 +128,7 @@ test.describe('live report end ledger closure', () => {
     expect(corrBody.data?.before?.gmv).toBe(88000)
     expect(corrBody.data?.after?.gmv).toBe(86000)
     await expect(detail.getByTestId('live-correction-trace')).toContainText(String(corrBody.data?.correctionId))
-    await expect(detail).toContainText('SUBMITTED')
+    await expect(detail).toContainText('已提交')
     await page.screenshot({ path: `${shotDir}/04-correction-trace.png`, fullPage: true })
     expect(pageErrors).toEqual([])
   })

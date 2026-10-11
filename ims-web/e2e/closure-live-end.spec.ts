@@ -30,14 +30,14 @@ test.describe('live confirm end', () => {
     await expect(detail).toBeVisible({ timeout: 15_000 })
     await detail.locator('.tab', { hasText: '风控登记' }).click()
     await expect(detail.getByTestId('live-end-btn')).toHaveCount(0)
-    await expect(detail.getByTestId('live-session-status')).toContainText('APPROVED')
+    await expect(detail.getByTestId('live-session-status')).toContainText('已放行')
 
     const startResp = page.waitForResponse(
       (r) => r.url().includes('/start') && r.request().method() === 'PUT' && r.status() === 200,
     )
     await detail.getByTestId('live-start-btn').click()
     expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
-    await expect(detail.getByTestId('live-session-status')).toContainText('LIVE')
+    await expect(detail.getByTestId('live-session-status')).toContainText('直播中')
     await expect(detail.getByTestId('live-end-btn')).toBeVisible()
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
     await expect(detail.getByTestId('live-report-locked')).toContainText('场次未下播，下播录入在状态为已下播后开放')
@@ -47,7 +47,7 @@ test.describe('live confirm end', () => {
     await detail.getByTestId('live-end-btn').click()
     await expect(page.getByTestId('live-end-copy')).toHaveText('确认下播后开始 24 小时数据录入计时，确定下播？')
     await page.getByTestId('live-end-dismiss').click()
-    await expect(detail.getByTestId('live-session-status')).toContainText('LIVE')
+    await expect(detail.getByTestId('live-session-status')).toContainText('直播中')
     await page.screenshot({ path: `${shotDir}/01-live-before-end.png`, fullPage: true })
 
     await detail.locator('.dr-x').click()
@@ -66,7 +66,7 @@ test.describe('live confirm end', () => {
     )
     await page.getByTestId('live-end-confirm').click()
     expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
-    await expect(row).toContainText('ENDED')
+    await expect(row).toContainText('已下播')
     await expect(row.getByTestId('live-row-end')).toHaveCount(0)
 
     await row.getByRole('button', { name: '详情' }).click()

@@ -122,12 +122,12 @@ test.describe('live local risk report tails', () => {
     expect(loaded.code).toBe(0)
     expect(loaded.data?.entryStatus).toBe('DRAFT')
     expect(loaded.data?.roas ?? null).toBeNull()
-    await expect(detail.getByTestId('live-report-headline')).toContainText('DRAFT')
+    await expect(detail.getByTestId('live-report-headline')).toContainText('草稿')
     await expect(detail.getByTestId('live-report-aov')).toHaveText('—')
     await expect(detail.getByTestId('live-report-roas')).toHaveText('—')
     await expect(detail.getByTestId('live-cost-empty')).toContainText('暂无成本明细')
     await detail.locator('.tab', { hasText: '风控登记' }).click()
-    await expect(detail.getByTestId('live-session-status')).toContainText('ENDED')
+    await expect(detail.getByTestId('live-session-status')).toContainText('已下播')
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
     await page.screenshot({ path: `${shotDir}/04-draft-zero.png`, fullPage: true })
 
@@ -140,7 +140,7 @@ test.describe('live local risk report tails', () => {
     const blocked = (await (await blockedResp).json()) as { code: number }
     expect(blocked.code).toBe(1001)
     await expect(detail.getByTestId('live-report-error')).toContainText('1001')
-    await expect(detail.getByTestId('live-report-headline')).toContainText('DRAFT')
+    await expect(detail.getByTestId('live-report-headline')).toContainText('草稿')
     await page.screenshot({ path: `${shotDir}/05-draft-time.png`, fullPage: true })
 
     await page.goto('/ims/live/alarm')

@@ -672,7 +672,7 @@ export async function confirmLiveSessionEnd(page: Page, detail: Locator) {
   )
   await page.getByTestId('live-end-confirm').click()
   expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
-  await expect(detail.getByTestId('live-session-status')).toContainText('ENDED')
+  await expect(detail.getByTestId('live-session-status')).toContainText('已下播')
 }
 
 export async function fillLiveReportFields(detail: Locator, patch: Record<string, string> = {}) {
@@ -786,7 +786,7 @@ export async function registerLiveSessionConfirmedReportViaUi(
   )
   await page.getByTestId('live-end-confirm').click()
   expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
-  await expect(detailDrawer.getByTestId('live-session-status')).toContainText('ENDED')
+  await expect(detailDrawer.getByTestId('live-session-status')).toContainText('已下播')
 
   const reportLoad = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,

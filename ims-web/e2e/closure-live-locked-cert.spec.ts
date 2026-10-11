@@ -219,7 +219,7 @@ test.describe('live locked certificate closure', () => {
     )
     await detail.getByTestId('live-start-btn').click()
     expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
-    await expect(detail.getByTestId('live-session-status')).toContainText('LIVE')
+    await expect(detail.getByTestId('live-session-status')).toContainText('直播中')
     await page.screenshot({ path: `${shotDir}/05-live-started.png`, fullPage: true })
     expect(pageErrors).toEqual([])
   })

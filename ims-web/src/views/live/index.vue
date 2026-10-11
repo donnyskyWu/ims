@@ -116,12 +116,12 @@
               </td>
               <td class="mono" style="font-size: 12px">{{ row.accountNo }}</td>
               <td>{{ row.topic }}</td>
-              <td>{{ row.platform }}</td>
-              <td class="num" style="font-size: 12px">{{ row.planStartTime }}</td>
+              <td>{{ platformText(row.platform) }}</td>
+              <td class="num" style="font-size: 12px">{{ minuteText(row.planStartTime) }}</td>
               <td>
-                <span data-testid="live-risk-level" :data-level="row.riskLevel || ''" :style="{ color: riskColor(row.riskLevel), fontWeight: 600 }">{{ row.riskLevel || '—' }}</span>
+                <span data-testid="live-risk-level" :data-level="row.riskLevel || ''" :style="{ color: riskColor(row.riskLevel), fontWeight: 600 }">{{ riskText(row.riskLevel) }}</span>
               </td>
-              <td>{{ row.sessionStatus }}</td>
+              <td>{{ sessionStatusText(row) }}</td>
               <td>{{ syncLabel(row.footballSyncStatus) }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
@@ -445,7 +445,7 @@
           </div>
         </div>
         <p v-if="actionError" class="hint bad" data-testid="live-action-error">{{ actionError }}</p>
-        <p data-testid="live-session-status">风险分 {{ detail.riskScore ?? '—' }} · {{ detail.riskLevel || '—' }} · 状态 {{ detail.sessionStatus }}</p>
+        <p data-testid="live-session-status" :data-status="detail.sessionStatus" :data-level="detail.riskLevel || ''">风险分 {{ detail.riskScore ?? '—' }} · {{ riskText(detail.riskLevel) }} · 状态 {{ sessionStatusText(detail) }}</p>
         <p v-if="riskConclusion" data-testid="live-risk-conclusion" :style="{ color: riskColor(detail.riskLevel), fontWeight: 600 }">{{ riskConclusion }}</p>
         <p v-if="startBlockedHint" class="hint bad" data-testid="live-start-blocked">{{ startBlockedHint }}</p>
         <p v-if="detail.yellowNotice" data-testid="live-yellow-notice">{{ detail.yellowNotice }}</p>
@@ -502,7 +502,7 @@
         <p v-if="financeView" class="hint" data-testid="live-report-finance-scope">财务字段：仅 GMV 与成本</p>
         <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
         <div v-if="report" class="hint" data-testid="live-report-headline">
-          录入状态 {{ report.entryStatus || '—' }} · GMV ¥{{ displayMoney(report.gmv) }}
+          录入状态 {{ entryText(report.entryStatus) }} · GMV ¥{{ displayMoney(report.gmv) }}
           · 客单价 <span data-testid="live-report-aov">{{ displayMoney(report.avgOrderValue) }}</span>
           · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
           · 时长 {{ reportDurationText }}
@@ -1047,6 +1047,48 @@ function minuteText(value: unknown) {
   return text.replace('T', ' ').slice(0, 16)
 }
 
+const SESSION_STATUS_TEXT: Record<string, string> = {
+  PENDING_RISK_CHECK: '待风控',
+  APPROVED: '已放行',
+  LIVE: '直播中',
+  ENDED: '已下播',
+  CANCELLED: '已取消',
+}
+const RISK_TEXT: Record<string, string> = { GREEN: '绿', YELLOW: '黄', RED: '红' }
+const ENTRY_TEXT: Record<string, string> = {
+  DRAFT: '草稿',
+  SUBMITTED: '已提交',
+  CONFIRMED: '已核准',
+  PENDING_RISK_CHECK: '待风控',
+  LIVE: '直播中',
+}
+const PLATFORM_TEXT: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  OTHER: '其他',
+}
+
+function sessionStatusText(row?: { sessionStatus?: string; isSupplement?: boolean; approverUserId?: number | null }) {
+  if (row?.isSupplement && !row?.approverUserId) return '待审批'
+  return SESSION_STATUS_TEXT[row?.sessionStatus || ''] || row?.sessionStatus || '—'
+}
+
+function riskText(level?: string) {
+  if (!level) return '—'
+  return RISK_TEXT[level] || level
+}
+
+function entryText(status?: string) {
+  if (!status) return '—'
+  return ENTRY_TEXT[status] || status
+}
+
+function platformText(code?: string) {
+  if (!code) return '—'
+  return PLATFORM_TEXT[code] || code
+}
+
 function roomStatusLabel(status: unknown) {
   const map: Record<string, string> = { '1': '未开始', '2': '直播中', '3': '已结束', '4': '过期', '5': '暂停' }
   return map[String(status ?? '')] || '—'
@@ -1439,9 +1481,11 @@ const basicLines = computed(() => {
     { k: '实名人', v: d.realnameName },
     { k: '责任人', v: d.responsibleUserName },
     { k: '主题', v: d.topic },
-    { k: '状态', v: d.sessionStatus },
-    { k: '实际开播', v: d.actualStart || '—' },
-    { k: '实际下播', v: d.actualEnd || '—' },
+    { k: '状态', v: sessionStatusText(d) },
+    { k: '平台', v: platformText(d.platform) },
+    { k: '计划开播', v: minuteText(d.planStartTime) },
+    { k: '实际开播', v: minuteText(d.actualStart) },
+    { k: '实际下播', v: minuteText(d.actualEnd) },
     { k: '实际时长', v: d.durationMinutes == null ? '—' : `${d.durationMinutes} 分钟` },
     { k: '取消原因', v: d.cancelReason || '—' },
     { k: '补录', v: d.isSupplement ? d.supplementReason || '待审批' : '否' },

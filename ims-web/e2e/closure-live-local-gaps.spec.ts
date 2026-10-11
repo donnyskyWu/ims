@@ -109,7 +109,7 @@ test.describe('live local empty and edge copy', () => {
     await detail.getByTestId('live-report-submit').click()
     expect(((await (await submitResp).json()) as { code: number }).code).toBe(0)
     await detail.getByTestId('live-report-confirm').click()
-    await expect(detail.getByTestId('live-report-headline')).toContainText('CONFIRMED')
+    await expect(detail.getByTestId('live-report-headline')).toContainText('已核准')
     await detail.getByTestId('live-report-correction-open').click()
     await expect(detail.getByTestId('live-correction-reason-hint')).toContainText('更正原因必填')
     await detail.getByTestId('live-report-correction-submit').click()

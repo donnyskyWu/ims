@@ -2637,6 +2637,23 @@ def _money_cell(value: object, masked: bool) -> str:
         return COST_MASK
 
 
+STATUS_TEXT = {
+    "PENDING_RISK_CHECK": "待风控",
+    "APPROVED": "已放行",
+    "LIVE": "直播中",
+    "ENDED": "已下播",
+    "CANCELLED": "已取消",
+}
+RISK_TEXT = {"GREEN": "绿", "YELLOW": "黄", "RED": "红"}
+ENTRY_TEXT = {"DRAFT": "草稿", "SUBMITTED": "已提交", "CONFIRMED": "已核准"}
+PLATFORM_TEXT = {"DOUYIN": "抖音", "KUAISHOU": "快手", "WECHAT_CHANNELS": "视频号", "OTHER": "其他"}
+
+
+def zh_label(mapping: dict[str, str], value: str | None) -> str:
+    text = value or ""
+    return mapping.get(text, text)
+
+
 def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[str]]:
     header = [
         "场次ID",
@@ -2669,12 +2686,12 @@ def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[
         matrix.append(
             [
                 row.session_code,
-                row.platform or "",
+                zh_label(PLATFORM_TEXT, row.platform),
                 row.topic or "",
                 row.account_no or "",
                 names.get(row.responsible_user_id, ""),
-                row.session_status or "",
-                row.risk_level or "",
+                "待审批" if row.is_supplement and not row.approver_user_id else zh_label(STATUS_TEXT, row.session_status),
+                zh_label(RISK_TEXT, row.risk_level),
                 "是" if row.is_supplement else "否",
                 _money_cell(payload.get("gmv"), False) if present else "",
                 _money_cell(payload.get("refundAmount"), False) if present else "",
@@ -2685,7 +2702,7 @@ def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[
                 _cell(payload.get("newFans")) if present else "",
                 _cell(payload.get("durationMinutes")) if present else "",
                 (COST_MASK if masked else _money_cell(payload.get("roas"), False)) if present else "",
-                _cell(payload.get("entryStatus")) if present else "",
+                zh_label(ENTRY_TEXT, payload.get("entryStatus")) if present else "",
             ]
         )
     return matrix
