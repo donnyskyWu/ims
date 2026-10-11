@@ -224,8 +224,9 @@ test.describe('content TC-07 P1', () => {
     expect(statsBody.code).toBe(0)
     expect(statsBody.data?.firstPassRate).not.toBeUndefined()
     await expect(page.locator('h1')).toHaveText('内容审核', { timeout: 15_000 })
-    await expect(page.locator('.csub')).toContainText('一次通过率')
-    await expect(page.locator('.csub')).not.toContainText('—%')
+    const rate = page.locator('.pg-h .csub')
+    await expect(rate).toContainText('一次通过率')
+    await expect(rate).not.toContainText('—%')
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })
