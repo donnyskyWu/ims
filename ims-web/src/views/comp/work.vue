@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>竞品作品</h1>
-        <div class="sub">Tab：全部/爆款/低分 · oa_external_work · 18a COMPA</div>
+        <div class="sub">全部、爆款、低分</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" data-testid="comp-work-export" @click="exportCsv">导出</button>

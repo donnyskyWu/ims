@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>作品监测</h1>
-        <div class="sub">IP 主题/行业 · oa_external_account/work · 18 MON</div>
+        <div class="sub">按 IP 主题或行业查看</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" data-testid="mon-export" @click="exportCsv">导出</button>

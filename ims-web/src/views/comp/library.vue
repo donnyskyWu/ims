@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>竞品库</h1>
-        <div class="sub">V3 COMP-003 · BR-202 审核入库 · /ims/comp/library · 18a COMP</div>
+        <div class="sub">审核入库后的竞品档案</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/comp/work')">竞品作品监测</button>
@@ -140,7 +140,7 @@
     </div>
 
     <ProtoDrawer :open="showCreate" title="新增竞品" width="720px" @close="showCreate = false">
-      <p class="hint">仅可采集公开数据（BR-202）。提交后状态为「待初审」，由 R8 初审、R4 终审。</p>
+      <p class="hint">仅可采集公开数据。提交后状态为「待初审」，由 R8 初审、R4 终审。</p>
       <div v-if="mergeHint" class="hint" data-testid="comp-merge-preview" style="background: rgba(255, 149, 0, 0.08)">
         {{ mergeHint }}
       </div>

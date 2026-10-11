@@ -322,7 +322,7 @@ ESSENTIALS_MSG = "来源、维度字段、结论均须明确"
 def essentials_block(source: str, dimension: dict, conclusion: str):
     """提交时三要素不齐。来源单独缺失仍走 1171；其余不把错误码写进文案。"""
     if not (source or "").strip():
-        return fail(1171, "1171 数据来源必填（仅可采集公开数据，BR-202）")
+        return fail(1171, "1171 数据来源必填（仅可采集公开数据）")
     if not dimension_filled(dimension or {}) or not (conclusion or "").strip():
         return fail(1174, ESSENTIALS_MSG)
     return None
