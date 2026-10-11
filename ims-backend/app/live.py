@@ -569,11 +569,20 @@ def report_summary(report: LiveReport | None) -> dict | None:
     }
 
 
+def duration_minutes_of(start: str | None, end: str | None) -> int | None:
+    begin = parse_iso(start)
+    finish = parse_iso(end)
+    if begin is None or finish is None or finish < begin:
+        return None
+    return int((finish - begin).total_seconds() // 60)
+
+
 def session_vo(
     db: Session,
     row: LiveSession,
     report: LiveReport | None = None,
     risk_checks: list[LiveRiskCheck] | None = None,
+    actor: User | None = None,
 ) -> dict:
     names = user_names(db, [row.responsible_user_id, row.approver_user_id or 0, row.creator or 0])
     base = {
@@ -606,8 +615,12 @@ def session_vo(
         "supplementOperatorName": names.get(row.creator or 0) if row.is_supplement else None,
         "actualStart": row.actual_start,
         "actualEnd": row.actual_end,
+        "durationMinutes": duration_minutes_of(row.actual_start, row.actual_end),
         "createdAt": iso(row.created_at),
     }
+    allowed = actor is not None and can_operate_session(db, actor, row)
+    base["startAllowed"] = allowed
+    base["endAllowed"] = allowed and row.session_status == "LIVE"
     if report is not None:
         base["reportSummary"] = report_summary(report)
         base["reportEntryStatus"] = report.entry_status if report and not report.deleted else None
@@ -628,8 +641,8 @@ def session_vo(
     return base
 
 
-def ledger_vo(db: Session, row: LiveSession, report: LiveReport | None) -> dict:
-    item = session_vo(db, row, report)
+def ledger_vo(db: Session, row: LiveSession, report: LiveReport | None, actor: User | None = None) -> dict:
+    item = session_vo(db, row, report, actor=actor)
     item["reportSummary"] = report_summary(report)
     return item
 
@@ -823,7 +836,7 @@ _LEDGER_EXPORTS: dict[str, tuple[float, bytes, int, str]] = {}
 
 
 def role_tags(db: Session, actor: User) -> set[str]:
-    """把角色收成 R1/R2/R3/R4/R9。财务看 acct:r3 或角色名含「财务」。"""
+    """把角色收成 R1/R2/R3/R4/R5/R7/R9。财务看 acct:r3 或角色名含「财务」。"""
     from app.scope import enabled_roles
 
     tags: set[str] = set()
@@ -840,9 +853,23 @@ def role_tags(db: Session, actor: User) -> set[str]:
             tags.add("r3")
         if key == "r4" or key.endswith(":r4") or "运营总监" in name:
             tags.add("r4")
+        if key == "r5" or key.endswith(":r5") or "直播运营" in name:
+            tags.add("r5")
+        if key == "r7" or key.endswith(":r7") or "主播" in name:
+            tags.add("r7")
         if key == "r9" or key.endswith(":r9") or "数据分析" in name:
             tags.add("r9")
     return tags
+
+
+def can_operate_session(db: Session, actor: User, row: LiveSession) -> bool:
+    """开播/下播：R1、R4 可操作全部场次；R5、R7 只能操作本人负责的场次。"""
+    tags = role_tags(db, actor)
+    if tags & {"r1", "r4", "sys:admin"}:
+        return True
+    if tags & {"r5", "r7"}:
+        return row.responsible_user_id == actor.id
+    return False
 
 
 def report_view(tags: set[str]) -> str:
@@ -1356,7 +1383,7 @@ def sessions_list(
         report = db.scalar(
             select(LiveReport).where(LiveReport.session_code == row.session_code, LiveReport.deleted == 0)
         )
-        item = ledger_vo(db, row, report)
+        item = ledger_vo(db, row, report, actor)
         if report is not None:
             item["reportSummary"] = shape_summary(summary_of(report_payload(db, report)), view)
         out.append(item)
@@ -1378,7 +1405,7 @@ def sessions_detail(
     checks = db.scalars(
         select(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id, LiveRiskCheck.deleted == 0)
     ).all()
-    data = session_vo(db, row, report, list(checks))
+    data = session_vo(db, row, report, list(checks), actor)
     data["metricsSnapshot"] = metrics_payload(db, ops, actor, row)
     data["footballEnrichment"] = data["metricsSnapshot"].get("footballRoomBasic")
     view = report_view(role_tags(db, actor))
@@ -1631,7 +1658,7 @@ def register_create(
         row = db.scalar(select(LiveSession).where(LiveSession.session_code == existing.session_code))
         if row:
             checks = db.scalars(select(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id)).all()
-            return ok(session_vo(db, row, risk_checks=list(checks)))
+            return ok(session_vo(db, row, risk_checks=list(checks), actor=actor))
     account = load_account(ops, actor, body.accountId)
     if account is None:
         return fail(1041, "账号不存在")
@@ -1674,7 +1701,7 @@ def register_create(
     db.flush()
     for item in checks:
         db.refresh(item)
-    return ok(session_vo(db, row, risk_checks=checks))
+    return ok(session_vo(db, row, risk_checks=checks, actor=actor))
 
 
 @router.get("/register/list")
@@ -1705,7 +1732,7 @@ def register_list(
     )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all()
-    records = [session_vo(db, row) for row in rows]
+    records = [session_vo(db, row, actor=actor) for row in rows]
     return ok({"total": total, "records": records})
 
 
@@ -1722,7 +1749,7 @@ def register_detail(
     checks = db.scalars(
         select(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id, LiveRiskCheck.deleted == 0)
     ).all()
-    return ok(session_vo(db, row, risk_checks=list(checks)))
+    return ok(session_vo(db, row, risk_checks=list(checks), actor=actor))
 
 
 @router.put("/register/{session_code}")
@@ -1861,6 +1888,8 @@ def register_start(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
+    if not can_operate_session(db, actor, row):
+        return fail(1008, "无数据权限")
     if supplement_pending(row):
         return fail(1049, "补录未审批")
     if row.risk_level == "RED":
@@ -1876,8 +1905,105 @@ def register_start(
     if blocked is not None:
         return blocked
     row.session_status = "LIVE"
+    if not (row.actual_start or "").strip():
+        row.actual_start = iso(utcnow()) or ""
     close_yellow_todos(db, row)
     return ok(None)
+
+
+ENTRY_TASK = "live_report_entry"
+
+
+def ensure_entry_todo(db: Session, session: LiveSession) -> None:
+    """下播后给责任人一条录入待办，时限从实际结束起 24 小时。"""
+    user_id = session.responsible_user_id
+    if not user_id:
+        return
+    ended = parse_iso(session.actual_end) or datetime.now(BJ)
+    deadline = (ended + timedelta(hours=24)).astimezone(timezone.utc).replace(tzinfo=None)
+    title = f"下播录入 {session.session_code}"[:128]
+    content = "确认下播后 24 小时内完成九项录入"[:512]
+    tenant_id = session.tenant_id or 0
+    existing = db.scalar(
+        select(Todo).where(
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == ENTRY_TASK,
+            Todo.ref_type == "live_session",
+            Todo.ref_id == session.id,
+            Todo.status == "PENDING",
+        )
+    )
+    if existing is None:
+        db.add(
+            Todo(
+                assignee_user_id=user_id,
+                task_type=ENTRY_TASK,
+                ref_type="live_session",
+                ref_id=session.id,
+                title=title,
+                content=content,
+                status="PENDING",
+                deadline=deadline,
+                tenant_id=tenant_id,
+            )
+        )
+    sent = db.scalar(
+        select(WorkMessage).where(
+            WorkMessage.user_id == user_id,
+            WorkMessage.source_module == "LIVE",
+            WorkMessage.ref_type == ENTRY_TASK,
+            WorkMessage.ref_id == session.id,
+            WorkMessage.channel == "IN_APP",
+        )
+    )
+    if sent is None:
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="LIVE",
+                ref_type=ENTRY_TASK,
+                ref_id=session.id,
+                tenant_id=tenant_id,
+            )
+        )
+
+
+def close_entry_todos(db: Session, session: LiveSession) -> None:
+    rows = db.scalars(
+        select(Todo).where(
+            Todo.task_type == ENTRY_TASK,
+            Todo.ref_type == "live_session",
+            Todo.ref_id == session.id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for item in rows:
+        item.status = "DONE"
+
+
+@router.put("/register/{session_code}/end")
+def register_end(
+    request: Request,
+    session_code: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = get_session(db, actor, request.state.scope, session_code)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if not can_operate_session(db, actor, row):
+        return fail(1008, "无数据权限")
+    if row.session_status != "LIVE":
+        return fail(1042, "当前状态不可下播")
+    row.session_status = "ENDED"
+    row.actual_end = iso(utcnow()) or ""
+    ensure_entry_todo(db, row)
+    db.flush()
+    return ok(session_vo(db, row, actor=actor))
 
 
 def upsert_report(
@@ -2014,6 +2140,7 @@ def report_submit(
         return rejected
     report = upsert_report(db, row, body, actor, submit=True)
     close_overdue_todos(db, row)
+    close_entry_todos(db, row)
     db.flush()
     view = report_view(role_tags(db, actor))
     return ok(shape_report(report_payload(db, report), view))

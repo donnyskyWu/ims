@@ -127,13 +127,22 @@
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
                 <button
-                  v-if="row.sessionStatus === 'APPROVED'"
+                  v-if="row.sessionStatus === 'APPROVED' && row.startAllowed"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="live-row-start"
                   @click="startFromRow(row)"
                 >
                   确认开播
+                </button>
+                <button
+                  v-if="row.sessionStatus === 'LIVE' && row.endAllowed"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="live-row-end"
+                  @click="askEnd(row)"
+                >
+                  确认下播
                 </button>
               </td>
             </tr>
@@ -361,6 +370,9 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="detailOpen" :title="detailTitle" width="90%" @close="detailOpen = false">
+      <div v-if="showEnd" class="acts" data-testid="live-detail-head" style="margin-bottom: 8px">
+        <button class="btn btn-pri btn-sm" type="button" data-testid="live-end-btn" @click="askEnd()">确认下播</button>
+      </div>
       <div v-if="detail" class="tabs" data-testid="live-ledger-detail">
         <div v-for="t in tabs" :key="t" class="tab" :class="{ on: tab === t }" @click="switchTab(t)">{{ t }}</div>
       </div>
@@ -398,7 +410,7 @@
       <div v-else-if="detail && tab === '风控登记'" class="tbl-block" style="margin-top: 12px">
         <div class="acts" style="margin-bottom: 8px">
           <button class="btn btn-pri btn-sm" type="button" @click="doRisk">执行风控</button>
-          <button class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
+          <button v-if="detail.startAllowed" class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
           <button v-if="showReregister" class="btn btn-sec btn-sm" type="button" data-testid="live-reregister-open" @click="openEdit">重新登记整改</button>
           <button v-if="showEdit" class="btn btn-sec btn-sm" type="button" data-testid="live-edit-open" @click="openEdit">编辑</button>
           <button v-if="showCancel" class="btn btn-sec btn-sm" type="button" data-testid="live-cancel-open" @click="cancelForm = true">取消场次</button>
@@ -566,6 +578,20 @@
         </div>
       </div>
     </ProtoDrawer>
+    <div
+      v-if="endAsk"
+      data-testid="live-end-dialog"
+      style="position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center"
+    >
+      <div class="card" style="padding: 16px; max-width: 440px">
+        <p data-testid="live-end-copy">确认下播后开始 24 小时数据录入计时，确定下播？</p>
+        <p v-if="actionError" class="hint bad">{{ actionError }}</p>
+        <div class="acts" style="margin-top: 12px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="live-end-confirm" @click="doEnd">确定下播</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="live-end-dismiss" @click="endAsk = false">取消</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -643,6 +669,8 @@ const actionError = ref('')
 const approveComment = ref('')
 const cancelForm = ref(false)
 const cancelReason = ref('')
+const endAsk = ref(false)
+const endCode = ref('')
 const supplementOpen = ref(false)
 const supplementError = ref('')
 const supplementComment = ref('')
@@ -1310,6 +1338,9 @@ const basicLines = computed(() => {
     { k: '责任人', v: d.responsibleUserName },
     { k: '主题', v: d.topic },
     { k: '状态', v: d.sessionStatus },
+    { k: '实际开播', v: d.actualStart || '—' },
+    { k: '实际下播', v: d.actualEnd || '—' },
+    { k: '实际时长', v: d.durationMinutes == null ? '—' : `${d.durationMinutes} 分钟` },
     { k: '取消原因', v: d.cancelReason || '—' },
     { k: '补录', v: d.isSupplement ? d.supplementReason || '待审批' : '否' },
     { k: 'Football room', v: d.footballRoomId || '—' },
@@ -1334,6 +1365,7 @@ const beforeLive = computed(() => {
 const showReregister = computed(() => beforeLive.value && detail.value?.riskLevel === 'RED')
 const showEdit = computed(() => beforeLive.value && detail.value?.riskLevel !== 'RED')
 const showCancel = computed(() => beforeLive.value)
+const showEnd = computed(() => detail.value?.sessionStatus === 'LIVE' && !!detail.value?.endAllowed)
 
 const startBlockedHint = computed(() => {
   const status = detail.value?.sessionStatus as string | undefined
@@ -1502,6 +1534,28 @@ async function doStart() {
     hint.value = actionError.value
   }
   await refreshDetail()
+  await loadList()
+}
+
+function askEnd(row?: { sessionCode?: string }) {
+  endCode.value = row?.sessionCode || detail.value?.sessionCode || ''
+  endAsk.value = !!endCode.value
+}
+
+async function doEnd() {
+  if (!endCode.value) return
+  actionError.value = ''
+  try {
+    await apiPut(`/live/register/${endCode.value}/end`, {})
+    hint.value = '已确认下播'
+    endAsk.value = false
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+    return
+  }
+  if (detail.value?.sessionCode === endCode.value) await refreshDetail()
+  await loadList()
 }
 
 async function doApprove(pass: boolean) {
