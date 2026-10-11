@@ -437,7 +437,7 @@
       </p>
     </div>
 
-    <ProtoDrawer :open="detailOpen" :title="`${meta.title} · 详情`" width="640px" @close="detailOpen = false">
+    <ProtoDrawer :open="detailOpen" :title="`${meta.title} · 详情`" width="640px" @close="closeDetail">
       <div v-if="detail" class="tabs">
         <button
           v-for="tab in tabs"
@@ -850,7 +850,7 @@
         >
           归还
         </button>
-        <button class="btn btn-sec" type="button" @click="detailOpen = false">关闭</button>
+        <button class="btn btn-sec" type="button" @click="closeDetail">关闭</button>
       </template>
     </ProtoDrawer>
 
@@ -1815,6 +1815,7 @@ const timelineFrom = ref('')
 const timelineTo = ref('')
 const timelineExportBusy = ref(false)
 const timelineExportNote = ref('')
+let timelineExportToken = 0
 const poolEventEmpty = computed(() => {
   if (poolEventType.value) return `当前没有「${eventLabel(poolEventType.value)}」动态`
   return '最近池动态：暂无'
@@ -2525,7 +2526,18 @@ async function loadWxLogs(accountId: unknown) {
   }
 }
 
+function clearTimelineExportNote() {
+  timelineExportToken += 1
+  timelineExportNote.value = ''
+}
+
+function closeDetail() {
+  detailOpen.value = false
+  clearTimelineExportNote()
+}
+
 async function openDetail(row: Record<string, unknown>, tab = 'basic') {
+  clearTimelineExportNote()
   timelineType.value = ''
   timelineFrom.value = ''
   timelineTo.value = ''
@@ -2820,9 +2832,13 @@ async function submitRecycle() {
 
 async function exportTimeline() {
   if (!detail.value?.id) return
-  timelineExportNote.value = ''
+  const noteToken = ++timelineExportToken
+  const note = (text: string) => {
+    if (noteToken === timelineExportToken) timelineExportNote.value = text
+  }
+  note('')
   if (timelineRangeHint.value) {
-    timelineExportNote.value = timelineRangeHint.value
+    note(timelineRangeHint.value)
     return
   }
   timelineExportBusy.value = true
@@ -2832,7 +2848,7 @@ async function exportTimeline() {
     const downloadUrl = String(data.downloadUrl || '')
     const fileName = String(data.fileName || 'handover.pdf')
     if (!downloadUrl) {
-      timelineExportNote.value = '导出失败'
+      note('导出失败')
       return
     }
     const token = localStorage.getItem('ims_access')
@@ -2840,7 +2856,7 @@ async function exportTimeline() {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     if (!fileRes.ok) {
-      timelineExportNote.value = `导出失败（${fileRes.status}）`
+      note(`导出失败（${fileRes.status}）`)
       return
     }
     const blob = await fileRes.blob()
@@ -2851,11 +2867,11 @@ async function exportTimeline() {
     anchor.click()
     anchor.remove()
     URL.revokeObjectURL(anchor.href)
-    timelineExportNote.value = `${data.message || '交接凭证已生成'} · ${fileName}`
+    note(`${data.message || '交接凭证已生成'} · ${fileName}`)
   } catch (e: unknown) {
     const message = bizMessage(e)
     const vague = !message || message.includes('5005') || message.includes('请求失败（500）')
-    timelineExportNote.value = vague ? '交接凭证生成失败，请稍后重试（5005）' : message
+    note(vague ? '交接凭证生成失败，请稍后重试（5005）' : message)
   } finally {
     timelineExportBusy.value = false
   }
