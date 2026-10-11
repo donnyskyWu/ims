@@ -1887,6 +1887,7 @@ def stat_finish_rate(
             by_task[tid] = {
                 "taskNo": task.task_no,
                 "taskName": task.task_name,
+                "createdAt": iso_utc(task.created_at),
                 "assignedCount": 0,
                 "finishedCount": 0,
             }

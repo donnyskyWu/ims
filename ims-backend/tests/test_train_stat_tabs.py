@@ -121,6 +121,8 @@ def test_dept_rank_heat_match_finish_rate_caliber():
     perf = next(row for row in rate["data"]["byTask"] if row["taskName"] == "PERF95-TRAIN")
     assert perf["assignedCount"] == 1
     assert perf["finishedCount"] == 1
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00", perf["createdAt"])
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00", hit["createdAt"])
     today_rows = [row for row in dept["data"] if row["statDate"] == today]
     assert today_rows
     assert today_rows[0]["avgDurationMinutes"] == 2

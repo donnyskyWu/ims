@@ -99,6 +99,7 @@
                   <tr>
                     <th>任务编号</th>
                     <th>任务名称</th>
+                    <th data-testid="train-stat-task-published-h">发布时间</th>
                     <th>应完成</th>
                     <th>已完成</th>
                     <th>完成率</th>
@@ -106,14 +107,15 @@
                 </thead>
                 <tbody>
                   <tr v-if="loading">
-                    <td colspan="5"><div class="empty"><div class="et">加载中</div></div></td>
+                    <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
                   </tr>
                   <tr v-else-if="!finish?.byTask?.length">
-                    <td colspan="5"><div class="empty"><div class="et">暂无统计数据</div></div></td>
+                    <td colspan="6"><div class="empty"><div class="et">暂无统计数据</div></div></td>
                   </tr>
                   <tr v-for="row in (finish?.byTask || []).slice(0, 10)" v-else :key="row.taskNo">
                     <td class="mono">{{ row.taskNo }}</td>
                     <td>{{ row.taskName }}</td>
+                    <td class="mono" data-testid="train-stat-task-published">{{ fmtBj(row.createdAt) }}</td>
                     <td class="num">{{ row.assignedCount }}</td>
                     <td class="num">{{ row.finishedCount }}</td>
                     <td :style="{ color: rateColor(row.finishRate) }">{{ row.finishRate }}%</td>
@@ -486,6 +488,7 @@ import { http } from '../../api/http'
 type FinishRow = {
   taskNo: string
   taskName: string
+  createdAt?: string
   assignedCount: number
   finishedCount: number
   finishRate: number
@@ -616,6 +619,24 @@ const deptDrawerAlert = computed(() => deptDrawerRows.value.some((row) => row.al
 const deptDrawerTrend = computed(() =>
   [...deptDrawerRows.value].sort((a, b) => a.statDate.localeCompare(b.statDate)),
 )
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)) return raw
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
 
 function fmtDate(d: Date) {
   const y = d.getFullYear()
