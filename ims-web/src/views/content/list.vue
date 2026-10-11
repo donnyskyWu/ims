@@ -7,7 +7,7 @@
       </div>
       <div class="acts">
         <button class="btn btn-sec" type="button" data-testid="content-export" @click="exportCsv">导出 CSV</button>
-        <button class="btn btn-pri" type="button" data-testid="content-create" @click="openCreate">新建内容</button>
+        <button class="btn btn-pri" type="button" data-testid="content-create" @click="openCreate">新增内容</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
@@ -61,8 +61,6 @@
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-filter-reset" @click="resetFilters">重置</button>
     </form>
     <div class="rowline" data-testid="content-batch-bar" style="gap: 8px; margin-bottom: 10px; flex-wrap: wrap">
-      <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新增内容</button>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="content-export-bar" @click="exportCsv">导出</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-delete" @click="batchDelete">批量删除</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-submit" @click="batchSubmit">批量提交审核</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-kb" @click="batchTransfer">批量转知识库</button>
@@ -359,6 +357,16 @@ const submitHint = ref('')
 const selectedIds = ref<number[]>([])
 const batchMsg = ref('')
 const batchWarn = ref(false)
+let batchTimer = 0
+
+function showBatch(message: string, warn: boolean) {
+  batchWarn.value = warn
+  batchMsg.value = message
+  window.clearTimeout(batchTimer)
+  batchTimer = window.setTimeout(() => {
+    batchMsg.value = ''
+  }, 3000)
+}
 const exportNote = ref('')
 const editContentType = ref('SHORT_VIDEO')
 const editPlatform = ref('')
@@ -707,13 +715,13 @@ function onLayoutApplied(payload: {
 function toggleSelect(id: number) {
   if (selectedIds.value.includes(id)) selectedIds.value = selectedIds.value.filter((item) => item !== id)
   else selectedIds.value = [...selectedIds.value, id]
+  window.clearTimeout(batchTimer)
   batchMsg.value = ''
 }
 
 function requireSelection(message: string) {
   if (selectedIds.value.length) return true
-  batchWarn.value = true
-  batchMsg.value = message
+  showBatch(message, true)
   return false
 }
 
@@ -761,13 +769,11 @@ async function batchDelete() {
   if (!window.confirm(`批量删除选中的 ${selectedIds.value.length} 条内容？`)) return
   try {
     const { data } = await http.post('/content/batch-delete', { ids: selectedIds.value })
-    batchWarn.value = false
-    batchMsg.value = `已删除 ${data.data?.deleted ?? 0} 条`
+    showBatch(`已删除 ${data.data?.deleted ?? 0} 条`, false)
     selectedIds.value = []
     await loadList()
   } catch (e) {
-    batchWarn.value = true
-    batchMsg.value = errorMessage(e)
+    showBatch(errorMessage(e), true)
   }
 }
 
@@ -775,13 +781,11 @@ async function batchSubmit() {
   if (!requireSelection('请先勾选要提交的内容')) return
   try {
     const { data } = await http.post('/content/batch-submit', { ids: selectedIds.value })
-    batchWarn.value = false
-    batchMsg.value = `已提交 ${data.data?.submitted ?? 0} 条`
+    showBatch(`已提交 ${data.data?.submitted ?? 0} 条`, false)
     selectedIds.value = []
     await loadList()
   } catch (e) {
-    batchWarn.value = true
-    batchMsg.value = errorMessage(e)
+    showBatch(errorMessage(e), true)
   }
 }
 
@@ -789,12 +793,10 @@ async function batchTransfer() {
   if (!requireSelection('请先勾选要转入知识库的内容')) return
   try {
     const { data } = await http.post('/content/batch-transfer-kb', { ids: selectedIds.value })
-    batchWarn.value = false
-    batchMsg.value = `已转入知识库 ${data.data?.transferred ?? 0} 条`
+    showBatch(`已转入知识库 ${data.data?.transferred ?? 0} 条`, false)
     selectedIds.value = []
   } catch (e) {
-    batchWarn.value = true
-    batchMsg.value = errorMessage(e)
+    showBatch(errorMessage(e), true)
   }
 }
 
