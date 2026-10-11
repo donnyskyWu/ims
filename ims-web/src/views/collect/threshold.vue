@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>阈值规则</h1>
-        <div class="sub">UX-M8 §5 · ALERT/MON 只读消费 · 16 COLLECT</div>
+        <div class="sub">预警、粉丝、作品与账号覆盖</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="threshold-create" @click="openCreate">新增规则</button>

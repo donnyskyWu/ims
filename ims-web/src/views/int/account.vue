@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内部账号</h1>
-        <div class="sub">M1 账号分析 · 全部 / 高粉 / 低粉</div>
+        <div class="sub">账号分析 · 全部 / 高粉 / 低粉</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" data-testid="int-account-export" @click="exportCsv">导出</button>
@@ -13,7 +13,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px" data-testid="int-account-hint">
-      对照 M1 账号分析，并套用 M7 高粉、低粉规则。高粉为粉丝达到阈值（默认 ≥10 万）。低粉包含绝对阈值（默认粉丝 &lt;1000）和「7 日连降」。判定只读引用数据采集中的粉丝阈值。
+      账号分析口径：自有账号列表；高粉为粉丝数达到阈值（默认 ≥10 万）。高粉/低粉口径：低粉包括粉丝数低于阈值（默认 &lt;1000），或连续 7 日下降。判定只读引用数据采集中的粉丝阈值。
     </p>
     <div class="cattabs">
       <button

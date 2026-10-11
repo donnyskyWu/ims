@@ -12,7 +12,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px" data-testid="int-work-hint">
-      爆款按 BR-003（默认播放 ≥100 万），低分按 BR-004（完播率 &lt;20%）。判定只读引用数据采集中的作品阈值。
+      作品分析口径：爆款为播放达到阈值（默认 ≥100 万）；低分口径：完播率低于阈值（默认 &lt;20%）。判定只读引用数据采集中的作品阈值。
     </p>
     <div class="cattabs">
       <button
