@@ -105,7 +105,9 @@
                 >
                   编辑
                 </button>
-                <button class="btn btn-sec btn-sm" type="button" @click="goStudy(row)">去学习</button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="train-task-enter-study" @click="goStudy(row)">
+                  进入学习
+                </button>
                 <button class="btn btn-sec btn-sm" type="button" @click="openRecords(row)">学习记录</button>
               </td>
             </tr>

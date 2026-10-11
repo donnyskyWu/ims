@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserRole
+from app.models import Todo, TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserRole
 
 client = TestClient(app)
 
@@ -224,6 +224,64 @@ def test_train_task_create_and_list():
     row = next(r for r in list_body["data"]["list"] if r["taskName"] == "新人 onboarding")
     assert row["finishRate"] == 0.0
     assert row["materialCount"] == 1
+
+
+def test_train_task_pushes_study_todo():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    material = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": f"待办资料 {uuid.uuid4().hex[:6]}",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/todo.pdf",
+            "publish": True,
+        },
+    )
+    material_id = material.json()["data"]["id"]
+    name = f"学习待办任务 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    todos = client.get(
+        "/admin-api/ims/auth/workbench/todos",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50, "status": "PENDING"},
+    )
+    assert todos.json()["code"] == 0, todos.json()
+    hit = next(
+        (
+            item
+            for item in todos.json()["data"]["list"]
+            if item.get("taskType") == "train_study" and item.get("refId") == task_id
+        ),
+        None,
+    )
+    assert hit is not None, todos.json()["data"]["list"]
+    assert name in hit["title"]
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(select(Todo).where(Todo.id == hit["id"]))
+        assert row is not None
+        assert row.status == "PENDING"
+    finally:
+        db.close()
 
 
 def test_train_task_1102_deadline_past():

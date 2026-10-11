@@ -170,6 +170,14 @@
                 >
                   去考试
                 </router-link>
+                <router-link
+                  v-if="String(row.taskType) === 'train_study' && row.refId != null"
+                  class="btn btn-txt"
+                  :to="'/ims/train/study/' + row.refId"
+                  data-testid="wb-train-study-entry"
+                >
+                  进入学习
+                </router-link>
                 <button
                   v-if="transferTodoPath(row)"
                   class="btn btn-txt"

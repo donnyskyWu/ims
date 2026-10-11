@@ -15,6 +15,7 @@ from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.bi_br212 import primary_dept_id
 from app.models import (
+    Todo,
     TrainMaterial,
     TrainMaterialCate,
     TrainMaterialVersion,
@@ -32,6 +33,8 @@ MATERIAL_STATUSES = frozenset({"DRAFT", "PUBLISHED", "OFFLINE"})
 ASSIGN_SCOPES = frozenset({"BY_USER", "BY_POSITION"})
 CONFIRM_TYPES = frozenset({"DURATION", "QUIZ"})
 TASK_STATUSES = frozenset({"IN_PROGRESS", "FINISHED"})
+TRAIN_TODO = "train_study"
+TRAIN_REF = "train_task"
 
 
 class MaterialBody(BaseModel):
@@ -886,6 +889,56 @@ def clamp_top_n(top_n: int | None):
     return top_n, None
 
 
+def upsert_study_todos(db: Session, tenant_id: int, task: TrainTask, user_ids: list[int]) -> None:
+    """被指派人工作台学习待办。点开进学习中心 /ims/train/study/{taskId}。"""
+    title = f"学习待办：{task.task_name}"[:128]
+    content = "进入学习中心完成本任务"
+    for uid in user_ids:
+        row = db.scalar(
+            select(Todo).where(
+                Todo.tenant_id == tenant_id,
+                Todo.assignee_user_id == uid,
+                Todo.task_type == TRAIN_TODO,
+                Todo.ref_type == TRAIN_REF,
+                Todo.ref_id == task.id,
+                Todo.status == "PENDING",
+            )
+        )
+        if row is None:
+            db.add(
+                Todo(
+                    assignee_user_id=uid,
+                    task_type=TRAIN_TODO,
+                    ref_type=TRAIN_REF,
+                    ref_id=task.id,
+                    title=title,
+                    content=content,
+                    status="PENDING",
+                    deadline=task.deadline,
+                    tenant_id=tenant_id,
+                )
+            )
+            continue
+        row.title = title
+        row.content = content
+        row.deadline = task.deadline
+
+
+def close_study_todo(db: Session, tenant_id: int, user_id: int, task_id: int) -> None:
+    row = db.scalar(
+        select(Todo).where(
+            Todo.tenant_id == tenant_id,
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == TRAIN_TODO,
+            Todo.ref_type == TRAIN_REF,
+            Todo.ref_id == task_id,
+            Todo.status == "PENDING",
+        )
+    )
+    if row is not None:
+        row.status = "DONE"
+
+
 def finish_rate(db: Session, task_id: int, assigned: int) -> float:
     if assigned <= 0:
         return 0.0
@@ -1107,6 +1160,7 @@ def create_task(
                 tenant_id=tenant_id,
             )
         )
+    upsert_study_todos(db, tenant_id, row, unique_users)
     db.flush()
     return ok(task_vo(db, row))
 
@@ -1174,6 +1228,7 @@ def update_task(
         db.add(TrainTaskRecord(task_id=row.id, user_id=uid, tenant_id=tenant_id))
         have.add(uid)
     row.assigned_count = len(have)
+    upsert_study_todos(db, tenant_id, row, sorted(have))
     db.flush()
     return ok(task_vo(db, row))
 
@@ -1521,6 +1576,7 @@ def progress_vo(
         "confirmScore": record.confirm_score,
         "startedAt": iso(record.created_at),
         "finishedAt": finished,
+        "studySeconds": int(record.study_seconds or 0),
     }
 
 
@@ -1635,6 +1691,7 @@ def confirm_task(
     record.progress = 100
     record.finished_at = now
     record.updated_at = now
+    close_study_todo(db, tenant_id, actor.id, task.id)
     db.flush()
     return ok(confirm_payload(task, record))
 

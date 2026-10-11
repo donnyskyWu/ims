@@ -162,6 +162,12 @@ export function crumbOf(id: string) {
   return { parent: mod.parent || mod.name, page: mod.page || mod.name }
 }
 
+/** 学习中心是二级页，不进侧栏。面包屑跟培训管理，不显示「建设中」。 */
+export function crumbForPath(path: string) {
+  if (path.startsWith('/ims/train/study')) return { parent: '培训管理', page: '学习中心' }
+  return crumbOf(modIdFromPath(path))
+}
+
 export function codeLabel(mod: Mod | undefined) {
   if (!mod) return ''
   return `${mod.no || ''} ${mod.code || ''}`.trim()

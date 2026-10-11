@@ -105,7 +105,7 @@ test.describe('train local tails', () => {
     await queryTasks(page)
     const overdueRow = page.locator('tr', { hasText: 'E2E-TRAIN-OD-76' })
     await expect(overdueRow).toBeVisible({ timeout: 15_000 })
-    await overdueRow.getByRole('button', { name: '去学习' }).click()
+    await overdueRow.getByRole('button', { name: '进入学习' }).click()
     await expect(page.getByTestId('train-study-overdue')).toContainText('本任务已逾期')
     await expect(page.getByTestId('train-study-overdue')).toContainText('补学仍计入完成率统计')
     await page.screenshot({ path: `${SHOT}/train-study-overdue.png`, fullPage: true })

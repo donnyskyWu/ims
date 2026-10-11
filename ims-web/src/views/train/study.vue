@@ -20,6 +20,7 @@
         </p>
         <div class="meta">
           总进度 <strong>{{ progressPct }}%</strong>
+          · 学时 <strong data-testid="train-study-hours">{{ studyHoursText }}</strong>
           · 确认状态
           <span :class="confirmStatus === 'CONFIRMED' ? 'ok' : 'pending'">{{ confirmStatusLabel }}</span>
         </div>
@@ -185,6 +186,7 @@ const task = ref<TaskRow | null>(null)
 const materials = ref<MatRow[]>([])
 const materialProgress = ref<Record<number, number>>({})
 const progressPct = ref(0)
+const studySeconds = ref(0)
 const confirmStatus = ref<'NOT_CONFIRMED' | 'CONFIRMED'>('NOT_CONFIRMED')
 const loadError = ref('')
 const actionError = ref('')
@@ -200,6 +202,15 @@ const answers = reactive<(number | null)[]>([])
 const confirmStatusLabel = computed(() =>
   confirmStatus.value === 'CONFIRMED' ? '已确认' : '未确认',
 )
+
+const studyHoursText = computed(() => {
+  const minutes = Math.floor(studySeconds.value / 60)
+  if (minutes <= 0) return '0 分钟'
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`
+})
 
 const confirmTypeLabel = computed(() =>
   task.value?.confirmType === 'QUIZ' ? '自测问卷' : '学时达标',
@@ -319,6 +330,7 @@ async function loadTaskAndProgress() {
     const rec = recRes.data.data.list[0]
     materialProgress.value = parseMatProgress(rec.materialProgress)
     progressPct.value = rec.progress ?? 0
+    studySeconds.value = Number(rec.studySeconds || 0)
     confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
     if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
       passedScore.value = rec.confirmScore
