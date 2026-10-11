@@ -357,7 +357,7 @@
       "icon": "doc",
       "page": "选题计划",
       "parent": "内容生产",
-      "desc": "选题提报与立项（CONTENT-002 · TOP-R1）"
+      "desc": "选题提报与立项（CONTENT-002 · TOP-R1）。PRD v2.6.33 不出主导航，路由保留"
     },
     "contentPlan": {
       "no": "15",
@@ -429,7 +429,7 @@
       "icon": "send",
       "page": "发布管理",
       "parent": "内容生产",
-      "desc": "发布单 / 回填 / 督办（CONTENT-006 · PUB-R2/R3）"
+      "desc": "发布单 / 回填 / 督办（CONTENT-006 · PUB-R2/R3）。PRD v2.6.33 不出主导航，路由保留"
     },
     "collect": {
       "no": "16",
@@ -1197,14 +1197,12 @@
           "label": "内容生产",
           "children": [
             "contentSop",
-            "contentTopic",
             "contentPlan",
             "contentWork",
             "contentTask",
             "contentList",
             "contentLayout",
-            "contentReview",
-            "contentPublish"
+            "contentReview"
           ]
         },
         {

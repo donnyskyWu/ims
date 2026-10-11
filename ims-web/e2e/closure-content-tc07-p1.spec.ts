@@ -166,4 +166,27 @@ test.describe('content TC-07 P1', () => {
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })
+
+  test('content nav hides topic and publish but routes stay', async ({ page }) => {
+    test.setTimeout(60_000)
+    const pageErrors = attachClosurePageHooks(page)
+    await loginAdmin(page)
+    await page.goto('/ims/content/sop')
+    await expect(page.locator('h1')).toHaveText('SOP 管理', { timeout: 15_000 })
+    const contentNav = page.locator('.nav-sub-g', { hasText: '内容生产' })
+    await expect(contentNav.locator('.nav-item.sub')).toHaveText([
+      'SOP管理',
+      '计划管理',
+      '工作任务登记',
+      '我的任务',
+      '内容管理',
+      '公推模板库',
+      '内容审核',
+    ])
+    await page.goto('/ims/content/topic')
+    await expect(page.locator('h1')).toHaveText('选题计划', { timeout: 15_000 })
+    await page.goto('/ims/content/publish')
+    await expect(page.locator('h1')).toHaveText('发布管理', { timeout: 15_000 })
+    expect(pageErrors, pageErrors.join('\n')).toEqual([])
+  })
 })
