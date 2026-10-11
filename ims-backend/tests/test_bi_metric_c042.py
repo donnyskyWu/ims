@@ -15,7 +15,7 @@ client = TestClient(app)
 def headers() -> dict:
     token = client.post(
         "/admin-api/ims/auth/login",
-        json={"username": "tc_r9", "password": "Admin@123"},
+        json={"username": "admin", "password": "Admin@123"},
     ).json()["data"]["accessToken"]
     return {"Authorization": f"Bearer {token}"}
 

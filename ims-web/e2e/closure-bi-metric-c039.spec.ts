@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { loginAs } from './closure-helpers'
+import { loginAdmin } from './closure-helpers'
 
 /** BUG-C039 · 指标表单字段、编码、名称长度、生成公式、预览、编辑与停用 */
 test.describe('bi metric form C039', () => {
@@ -10,7 +10,7 @@ test.describe('bi metric form C039', () => {
     const code = `TC_PLAY_${Date.now()}`
     const name = `TC播放量${Date.now()}`
 
-    await loginAs(page, 'tc_r9')
+    await loginAdmin(page)
     await page.goto('/ims/bi/metric')
     await expect(page.locator('h1')).toContainText('指标管理')
     await expect(page.locator('thead')).toContainText('数据源')

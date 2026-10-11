@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { loginAs } from './closure-helpers'
+import { loginAdmin } from './closure-helpers'
 
 /** BUG-C041 · 结果查询抽屉、导出、删除确认。被引用 1502 在 pytest 覆盖。 */
 test.describe('bi metric chrome C041', () => {
@@ -10,7 +10,7 @@ test.describe('bi metric chrome C041', () => {
     const code = `C041_${Date.now()}`
     const name = `C041删除${Date.now()}`
 
-    await loginAs(page, 'tc_r9')
+    await loginAdmin(page)
     await page.goto('/ims/bi/metric')
     await expect(page.locator('h1')).toContainText('指标管理')
 

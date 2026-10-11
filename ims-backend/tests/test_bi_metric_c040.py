@@ -7,15 +7,18 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
+from sqlalchemy import func, select
+
 from app.bi_metric_formula import formula_error, quarantine_illegal_metric_formulas
 from app.core import SessionLocal, utcnow
-from app.main import app
-from app.models import BiMetric
+from app.main import _retire_bi_tc_r9, app
+from app.models import BiMetric, Role, RoleMenu, RolePerm, User, UserRole
+from app.security import hash_password
 
 client = TestClient(app)
 
 
-def headers(username: str = "tc_r9") -> dict:
+def headers(username: str = "admin") -> dict:
     token = client.post(
         "/admin-api/ims/auth/login",
         json={"username": username, "password": "Admin@123"},
@@ -169,3 +172,59 @@ def test_tc_r9_save_rejects_delete_and_preview_rejects_stored_formula():
         json={"status": "ENABLED"},
     )
     assert enabled.json()["code"] == 1192
+
+
+def test_retire_bi_tc_r9_drops_full_grants_without_creating_r9():
+    db = SessionLocal()
+    try:
+        assert db.scalar(select(Role).where(Role.role_key == "bi:tc_r9", Role.deleted == 0)) is None
+        user = User(
+            username="tc_r9",
+            nickname="TC-数据分析",
+            mobile="13900001040",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        role = Role(
+            role_name="数据分析师",
+            role_key="bi:tc_r9",
+            data_scope="ALL",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add_all([user, role])
+        db.flush()
+        db.add(
+            RolePerm(
+                role_id=role.id,
+                module_code="system",
+                perm_code="system:user:query",
+                perm_level="RWD",
+                tenant_id=0,
+            )
+        )
+        db.add(RoleMenu(role_id=role.id, menu_id=11, perm_code="system:user:query", tenant_id=0))
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+        role_id = role.id
+        user_id = user.id
+
+        _retire_bi_tc_r9(db)
+        db.commit()
+
+        stored = db.get(Role, role_id)
+        assert stored is not None
+        assert stored.deleted == 1
+        assert stored.status == "DISABLED"
+        assert db.scalar(select(func.count()).select_from(RolePerm).where(RolePerm.role_id == role_id)) == 0
+        assert db.scalar(select(func.count()).select_from(RoleMenu).where(RoleMenu.role_id == role_id)) == 0
+        assert db.scalar(select(func.count()).select_from(UserRole).where(UserRole.role_id == role_id)) == 0
+        kept = db.get(User, user_id)
+        assert kept is not None
+        assert kept.deleted == 0
+        assert kept.username == "tc_r9"
+        assert db.scalar(select(Role).where(Role.role_key == "R9", Role.deleted == 0)) is None
+    finally:
+        db.close()

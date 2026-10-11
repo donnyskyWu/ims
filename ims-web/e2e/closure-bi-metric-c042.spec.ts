@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { loginAs } from './closure-helpers'
+import { loginAdmin } from './closure-helpers'
 
 /** BUG-C042 · IP 组名称下拉、种子明细、趋势图、导出和重置。 */
 test.describe('bi metric analysis C042', () => {
@@ -10,7 +10,7 @@ test.describe('bi metric analysis C042', () => {
     const code = `C042_${Date.now()}`
     const name = `C042分析${Date.now()}`
 
-    await loginAs(page, 'tc_r9')
+    await loginAdmin(page)
     await page.goto('/ims/bi/metric')
     await page.getByRole('button', { name: '新建指标' }).click()
     const modal = page.locator('.modal-mask .card').filter({ hasText: '新建指标' })

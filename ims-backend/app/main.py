@@ -5,9 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import AuthError, fail, router
 from app.core import IMS_DB, OPS_DB, SessionLocal, ensure_databases, engine
 from app.core import Base
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from app.models import Role, User, UserRole
+from app.models import Role, RoleMenu, RolePerm, User, UserRole
 from app.security import hash_password
 
 
@@ -63,18 +63,28 @@ def _ensure_e2e_douyin_account(db, ops) -> None:
     )
 
 
-def _ensure_tc_r9_user(db) -> None:
-    """TC-18 数据分析师。密码与 admin 种子相同，克隆菜单以便指标页纯 UI 登录。"""
-    from app.acct_seed import _ensure_cloned_user
+def _retire_bi_tc_r9(db) -> None:
+    """撤掉误种的全权限角色 bi:tc_r9 及其菜单授权。
 
-    _ensure_cloned_user(
-        db,
-        username="tc_r9",
-        nickname="TC-数据分析",
-        mobile="13900001040",
-        role_key="bi:tc_r9",
-        role_name="数据分析师",
-    )
+    tc_r9 应使用标准 R9。这里不创建 R9，也不复制管理员权限。
+    已存在的用户账号保留，只解除和该角色的绑定。
+    """
+    from app.core import utcnow
+    from app.scope import refresh_user_scope
+
+    role = db.scalar(select(Role).where(Role.role_key == "bi:tc_r9", Role.deleted == 0))
+    if role is None:
+        return
+    holder_ids = list(db.scalars(select(UserRole.user_id).where(UserRole.role_id == role.id)).all())
+    db.execute(delete(RolePerm).where(RolePerm.role_id == role.id))
+    db.execute(delete(RoleMenu).where(RoleMenu.role_id == role.id))
+    db.execute(delete(UserRole).where(UserRole.role_id == role.id))
+    role.deleted = 1
+    role.status = "DISABLED"
+    role.updated_at = utcnow()
+    db.flush()
+    for user_id in holder_ids:
+        refresh_user_scope(db, int(user_id))
 
 
 def _ensure_fin_r9_user(db) -> None:
@@ -171,12 +181,12 @@ def seed() -> None:
             ensure_acct_e2e_pool_account(db, admin)
             refresh_acct_e2e_pool(db, admin)
             _ensure_fin_r9_user(db)
-            _ensure_tc_r9_user(db)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
             refresh_perf_e2e_seed(db, admin)
+        _retire_bi_tc_r9(db)
         from app.live_alarm import refresh_live_alarm_e2e
 
         refresh_live_alarm_e2e(db)

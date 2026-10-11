@@ -1,19 +1,19 @@
 import { expect, test } from '@playwright/test'
-import { attachClosurePageHooks, loginAs } from './closure-helpers'
+import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
 
 /**
- * BUG-C040 · 复合指标公式白名单（tc_r9）
+ * BUG-C040 · 复合指标公式白名单（admin；tc_r9 走标准 R9，不在此克隆全菜单）
  * 保存 DELETE 被拦；合法公式可保存并试算。存量非法公式的试算拒绝在 pytest 覆盖。
  */
 test.describe('bi metric formula C040', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
 
-  test('tc_r9 cannot save DELETE formula and can preview a whitelist formula', async ({ page }) => {
+  test('cannot save DELETE formula and can preview a whitelist formula', async ({ page }) => {
     test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     const legalName = `C040合法试算${Date.now()}`
 
-    await loginAs(page, 'tc_r9')
+    await loginAdmin(page)
     await page.goto('/ims/bi/metric')
     await expect(page.locator('h1')).toContainText('指标管理')
 
