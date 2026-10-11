@@ -288,6 +288,7 @@ def test_meet_minutes_create_list_detail():
             "meetingTitle": "W7-9 联调会",
             "meetingDate": when,
             "meetingRoom": "3F-A",
+            "agenda": "联调议程",
             "attendees": [{"userName": "admin"}],
             "summary": "纪要正文 P0",
         },
@@ -342,6 +343,18 @@ def test_meet_minutes_register_requires_title_time_attendees():
     empty = client.post("/admin-api/ims/meet/minutes", headers=auth, json={})
     assert empty.json()["code"] == 1001
     assert "必填" in empty.json()["msg"]
+    blank_agenda = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "空白议程",
+            "meetingDate": datetime.now(BJ).strftime("%Y-%m-%dT16:40:00+08:00"),
+            "agenda": "   ",
+            "attendees": [{"userName": "admin"}],
+        },
+    )
+    assert blank_agenda.json()["code"] == 1001
+    assert blank_agenda.json()["msg"] == "必填项，请填写"
     named = client.post(
         "/admin-api/ims/meet/minutes",
         headers=auth,
@@ -372,6 +385,7 @@ def test_meet_minutes_registered_without_summary():
         json={
             "meetingTitle": "仅登记会议",
             "meetingDate": when,
+            "agenda": "登记议程",
             "attendees": [{"userName": "admin"}],
             "summary": "",
         },
@@ -439,6 +453,7 @@ def test_meet_minutes_visible_to_organizer_recorder_and_attendee():
         json={
             "meetingTitle": "范围可见会议",
             "meetingDate": when,
+            "agenda": "范围议程",
             "attendees": [{"userId": attendee_id, "userName": "参会甲"}],
         },
     )
@@ -481,6 +496,7 @@ def test_meet_minutes_archive_and_rate():
         json={
             "meetingTitle": "归档测试会",
             "meetingDate": when,
+            "agenda": "归档议程",
             "attendees": [{"userName": "admin"}],
             "summary": "结论已录入",
         },
@@ -660,6 +676,7 @@ def test_meet_room_conflict_and_invitation():
             "meetingDate": when,
             "durationMinutes": 60,
             "meetingRoom": "2F-会议室 A",
+            "agenda": "上午议程",
             "attendees": [{"userId": guest_id, "userName": "受邀人"}],
         },
     )
@@ -672,6 +689,7 @@ def test_meet_room_conflict_and_invitation():
             "meetingDate": "2026-10-21T10:30:00+08:00",
             "durationMinutes": 30,
             "meetingRoom": "2F-会议室 A",
+            "agenda": "冲突议程",
             "attendees": [{"userId": guest_id, "userName": "受邀人"}],
         },
     )
@@ -684,6 +702,7 @@ def test_meet_room_conflict_and_invitation():
             "meetingTitle": "线上不冲突",
             "meetingDate": when,
             "meetingRoom": "线上",
+            "agenda": "线上议程",
             "attendees": [{"userName": "外部嘉宾", "external": True}],
         },
     )
@@ -740,12 +759,12 @@ def test_meet_minutes_bucket_today_and_ended():
     client.post(
         "/admin-api/ims/meet/minutes",
         headers=auth,
-        json={"meetingTitle": "今天这场", "meetingDate": today, "durationMinutes": 30, "attendees": [{"userName": "admin"}]},
+        json={"meetingTitle": "今天这场", "meetingDate": today, "durationMinutes": 30, "agenda": "今日议程", "attendees": [{"userName": "admin"}]},
     )
     client.post(
         "/admin-api/ims/meet/minutes",
         headers=auth,
-        json={"meetingTitle": "已经结束", "meetingDate": past, "durationMinutes": 30, "attendees": [{"userName": "admin"}]},
+        json={"meetingTitle": "已经结束", "meetingDate": past, "durationMinutes": 30, "agenda": "结束议程", "attendees": [{"userName": "admin"}]},
     )
     today_list = client.get("/admin-api/ims/meet/minutes/list", headers=auth, params={"bucket": "today", "pageSize": 20})
     titles = [row["meetingTitle"] for row in today_list.json()["data"]["list"]]
