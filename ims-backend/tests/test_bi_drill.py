@@ -147,7 +147,19 @@ def test_export_xlsx_and_csv_match_current_level():
     assert "平台" in text
     assert "抖音" in text
 
-    bad_fmt = client.get("/admin-api/ims/bi/query/export", headers=auth, params={"format": "PDF"})
+    pdf = client.get(
+        "/admin-api/ims/bi/query/export",
+        headers=auth,
+        params={"drillPath": "PLATFORM", "format": "PDF"},
+    )
+    pdf_body = pdf.json()
+    assert pdf_body["code"] == 0, pdf_body
+    assert pdf_body["data"]["fileName"] == "bi_drill.pdf"
+    pdf_file = client.get(pdf_body["data"]["downloadUrl"], headers=auth)
+    assert pdf_file.status_code == 200
+    assert pdf_file.content.startswith(b"%PDF")
+
+    bad_fmt = client.get("/admin-api/ims/bi/query/export", headers=auth, params={"format": "DOC"})
     assert bad_fmt.json()["code"] == 1001
 
 

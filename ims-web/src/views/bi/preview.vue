@@ -9,6 +9,8 @@
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-drill-reset" @click="resetDrill">重置路径</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-xlsx" @click="exportDrill('XLSX')">导出 XLSX</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-csv" @click="exportDrill('CSV')">导出 CSV</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="bi-export-pdf" @click="exportDrill('PDF')">导出 PDF</button>
+        <router-link class="btn btn-sec btn-sm" data-testid="bi-preview-edit" :to="editTo">编辑</router-link>
         <router-link class="btn btn-sec btn-sm" data-testid="bi-open-perf" to="/ims/bi/query/perf">查询性能</router-link>
         <router-link class="btn btn-sec btn-sm" data-testid="bi-workbench-link" to="/ims/workbench/messages?sourceModule=BI">工作台通知</router-link>
         <router-link class="btn btn-sec btn-sm" to="/ims/bi/report/list">← 返回列表</router-link>
@@ -36,6 +38,15 @@
         <option value="斗鱼">斗鱼</option>
         <option value="快手">快手</option>
       </select>
+      <select v-model="filters.ipGroupId" data-testid="bi-filter-ip" style="width: 140px">
+        <option value="">全部 IP 组</option>
+        <option v-for="group in ipGroups" :key="group.id" :value="String(group.id)">{{ group.groupName }}</option>
+      </select>
+      <select v-model="filters.timeGrain" data-testid="bi-filter-grain" style="width: 90px">
+        <option value="DAY">按日</option>
+        <option value="WEEK">按周</option>
+        <option value="MONTH">按月</option>
+      </select>
       <button class="btn btn-pri btn-sm" type="button" data-testid="bi-filter-run" @click="runPreview({ user: true })">查询</button>
       <span class="csub">超过 180 天转异步，超过 366 天终止</span>
     </div>
@@ -60,6 +71,23 @@
         <div style="font-size: 20px; font-weight: 600">{{ k.value }}</div>
         <div class="csub">{{ k.label }}</div>
         <div class="csub" style="color: var(--green)">{{ k.delta }}</div>
+      </div>
+    </div>
+    <p v-if="kpiNote && !widgetEmpty" class="hint" data-testid="bi-kpi-note">{{ kpiNote }}</p>
+    <div v-if="!widgetEmpty && (trendPoints.length || pieSlices.length)" class="g2" style="margin-top: 12px">
+      <div v-if="trendPoints.length" class="card" data-testid="bi-trend-chart" style="padding: 12px">
+        <b style="font-size: 13px">趋势</b>
+        <div v-for="point in trendPoints" :key="point.label" class="hint" style="display: flex; gap: 8px; align-items: center">
+          <span style="width: 88px">{{ point.label }}</span>
+          <span :style="{ display: 'inline-block', height: '8px', width: barWidth(point.value, trendMax) + 'px', background: 'var(--blue)' }"></span>
+          <span>{{ formatMoney(point.value) }}</span>
+        </div>
+      </div>
+      <div v-if="pieSlices.length" class="card" data-testid="bi-pie-chart" style="padding: 12px">
+        <b style="font-size: 13px">占比</b>
+        <div v-for="slice in pieSlices" :key="slice.name" class="hint">
+          {{ slice.name }} {{ formatMoney(slice.value) }} · {{ sliceShare(slice.value) }}
+        </div>
       </div>
     </div>
 
@@ -127,9 +155,14 @@
                 style="cursor: pointer"
                 @click="cellDrill(row)"
               >
-                {{ formatMoney(row.gmv) }}
+                {{ formatMoney(row.gmv) }} <span class="csub">穿透</span>
               </td>
               <td class="num">{{ row.orders }}</td>
+            </tr>
+            <tr v-if="tableRows.length" data-testid="bi-detail-total">
+              <td>合计</td>
+              <td class="num">{{ formatMoney(detailGmv) }}</td>
+              <td class="num">{{ detailOrders }}</td>
             </tr>
           </tbody>
         </table>
@@ -178,8 +211,11 @@ const filters = reactive({
   dateFrom: '2026-09-01',
   dateTo: '2026-10-03',
   platform: '',
+  ipGroupId: '',
+  timeGrain: 'DAY',
   reportId: route.query.reportId ? Number(route.query.reportId) : undefined,
 })
+const ipGroups = ref<{ id: number; groupName: string }[]>([])
 
 const kpiCards = computed(() => {
   const raw = preview.value?.kpis
@@ -187,6 +223,34 @@ const kpiCards = computed(() => {
 })
 const widgetEmpty = computed(() => Boolean(preview.value && preview.value.empty))
 const widgetEmptyReason = computed(() => String(preview.value?.emptyReason || '当前筛选下暂无指标'))
+const kpiNote = computed(() => String(preview.value?.kpiNote || ''))
+const trendPoints = computed(() => {
+  const raw = preview.value?.trend
+  return Array.isArray(raw) ? (raw as Array<{ label: string; value: number }>) : []
+})
+const pieSlices = computed(() => {
+  const raw = preview.value?.pie
+  return Array.isArray(raw) ? (raw as Array<{ name: string; value: number }>) : []
+})
+const trendMax = computed(() => Math.max(1, ...trendPoints.value.map((point) => Number(point.value) || 0)))
+const detailGmv = computed(() => tableRows.value.reduce((sum, row) => sum + Number(row.gmv || 0), 0))
+const detailOrders = computed(() => tableRows.value.reduce((sum, row) => sum + Number(row.orders || 0), 0))
+const pieTotal = computed(() => pieSlices.value.reduce((sum, slice) => sum + Number(slice.value || 0), 0))
+const editTo = computed(() =>
+  filters.reportId
+    ? { path: '/ims/bi/report/designer', query: { reportId: String(filters.reportId) } }
+    : '/ims/bi/report/designer',
+)
+
+function barWidth(value: number, max: number) {
+  return Math.max(4, Math.round((Number(value) / max) * 160))
+}
+
+function sliceShare(value: number) {
+  const total = pieTotal.value
+  if (!total) return '0%'
+  return `${Math.round((Number(value) / total) * 1000) / 10}%`
+}
 
 function filterStorageKey() {
   return `${FILTER_KEY}:${filters.reportId ?? ''}`
@@ -199,6 +263,8 @@ function persistFilters() {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       platform: filters.platform,
+      ipGroupId: filters.ipGroupId,
+      timeGrain: filters.timeGrain,
     }),
   )
 }
@@ -207,10 +273,20 @@ function restoreFilters() {
   const raw = sessionStorage.getItem(filterStorageKey())
   if (!raw) return false
   try {
-    const saved = JSON.parse(raw) as { dateFrom?: string; dateTo?: string; platform?: string }
+    const saved = JSON.parse(raw) as {
+      dateFrom?: string
+      dateTo?: string
+      platform?: string
+      ipGroupId?: string
+      timeGrain?: string
+    }
     if (typeof saved.dateFrom === 'string') filters.dateFrom = saved.dateFrom
     if (typeof saved.dateTo === 'string') filters.dateTo = saved.dateTo
     if (typeof saved.platform === 'string') filters.platform = saved.platform
+    if (typeof saved.ipGroupId === 'string') filters.ipGroupId = saved.ipGroupId
+    if (saved.timeGrain === 'DAY' || saved.timeGrain === 'WEEK' || saved.timeGrain === 'MONTH') {
+      filters.timeGrain = saved.timeGrain
+    }
     return true
   } catch {
     return false
@@ -251,7 +327,33 @@ function queryFilter(): Record<string, string> {
   if (filters.platform) ctx.PLATFORM = filters.platform
   if (filters.dateFrom) ctx.dateFrom = filters.dateFrom
   if (filters.dateTo) ctx.dateTo = filters.dateTo
+  if (filters.ipGroupId) ctx.ipGroupId = filters.ipGroupId
+  if (filters.timeGrain) ctx.timeGrain = filters.timeGrain
   return ctx
+}
+
+function syncKpiFromDetail() {
+  if (!preview.value || preview.value.empty) return
+  const kpis = Array.isArray(preview.value.kpis)
+    ? [...(preview.value.kpis as Array<{ label: string; value: string; delta: string }>)]
+    : []
+  const gmvCard = {
+    label: 'GMV（当前明细合计）',
+    value: formatMoney(detailGmv.value),
+    delta: '与明细同一单位',
+  }
+  const orderCard = {
+    label: '订单数（当前明细合计）',
+    value: String(detailOrders.value),
+    delta: `${tableRows.value.length} 行`,
+  }
+  if (kpis.length >= 2) {
+    kpis[0] = gmvCard
+    kpis[1] = orderCard
+  } else {
+    kpis.splice(0, kpis.length, gmvCard, orderCard)
+  }
+  preview.value = { ...preview.value, kpis, gmvTotal: detailGmv.value, orderTotal: detailOrders.value }
 }
 
 async function runPreview(options?: { user?: boolean }) {
@@ -283,7 +385,8 @@ async function runPreview(options?: { user?: boolean }) {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       platform: filters.platform,
-      timeGrain: 'DAY',
+      ipGroupId: filters.ipGroupId ? Number(filters.ipGroupId) : null,
+      timeGrain: filters.timeGrain,
     })
     if (res.data.code === 1008) {
       denied.value = '您无权查看该报表'
@@ -366,6 +469,7 @@ async function loadLevel(path: string[], filter: Record<string, string>, directi
     filterContext.value = filter
     drillPath.value = path
     drillMeta.value = `${currentLabel.value} · ${data.total ?? tableRows.value.length} 行 · 耗时 ${data.costMs}ms`
+    syncKpiFromDetail()
     return true
   } catch (error: unknown) {
     const body = rejected(error)
@@ -423,10 +527,6 @@ function resetDrill() {
 async function cellDrill(row: DrillRow) {
   jump.value = null
   drillToast.value = ''
-  if (!filters.reportId) {
-    drillToast.value = '请从报表设计器进入后再穿透'
-    return
-  }
   try {
     const res = await http.post('/bi/query/cell-drill', {
       reportId: filters.reportId,
@@ -440,7 +540,7 @@ async function cellDrill(row: DrillRow) {
   }
 }
 
-async function exportDrill(format: 'XLSX' | 'CSV') {
+async function exportDrill(format: 'XLSX' | 'CSV' | 'PDF') {
   exportNote.value = ''
   try {
     const res = await http.get('/bi/query/export', {
@@ -458,7 +558,8 @@ async function exportDrill(format: 'XLSX' | 'CSV') {
       return
     }
     const downloadUrl = String(data.downloadUrl || '')
-    const fileName = String(data.fileName || `bi_drill.${format === 'CSV' ? 'csv' : 'xlsx'}`)
+    const ext = format === 'CSV' ? 'csv' : format === 'PDF' ? 'pdf' : 'xlsx'
+    const fileName = String(data.fileName || `bi_drill.${ext}`)
     if (!downloadUrl) return
     const token = localStorage.getItem('ims_access')
     const fileRes = await fetch(downloadUrl, {
@@ -506,8 +607,26 @@ async function openShareToken(token: string): Promise<boolean> {
   }
 }
 
+async function loadIpGroups() {
+  try {
+    const res = await http.get('/ip-group/list', { params: { pageNo: 1, pageSize: 50 } })
+    const list = res.data.data?.list
+    ipGroups.value = Array.isArray(list)
+      ? list
+          .map((row: { id?: number; groupName?: string }) => ({
+            id: Number(row.id),
+            groupName: String(row.groupName || row.id),
+          }))
+          .filter((row: { id: number }) => Number.isFinite(row.id))
+      : []
+  } catch {
+    ipGroups.value = []
+  }
+}
+
 onMounted(async () => {
   filterRestored.value = restoreFilters()
+  await loadIpGroups()
   const raw = route.query.token
   if (raw !== undefined && raw !== null) {
     const token = Array.isArray(raw) ? String(raw[0] || '') : String(raw)
