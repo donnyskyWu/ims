@@ -512,6 +512,21 @@
           UV价值 <span data-testid="live-report-uv">{{ reportUvText }}</span>
           · 时长 <span data-testid="live-report-duration">{{ reportDurationText }}</span>
         </p>
+        <div :style="correcting ? 'display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start' : ''" data-testid="live-correction-compare">
+          <div v-if="correcting" data-testid="live-correction-original">
+            <b>原值</b>
+            <div class="fld"><label>实际开始</label><div>{{ originalReport.actualStart || '—' }}</div></div>
+            <div class="fld"><label>实际结束</label><div>{{ originalReport.actualEnd || '—' }}</div></div>
+            <div class="fld"><label>GMV</label><div>{{ originalReport.gmv || '—' }}</div></div>
+            <div class="fld"><label>订单数</label><div>{{ originalReport.orderCount || '—' }}</div></div>
+            <div class="fld"><label>观看人数</label><div>{{ originalReport.viewerCount || '—' }}</div></div>
+            <div class="fld"><label>峰值在线</label><div>{{ originalReport.peakOnline || '—' }}</div></div>
+            <div class="fld"><label>涨粉</label><div>{{ originalReport.newFans || '—' }}</div></div>
+            <div class="fld"><label>退款</label><div>{{ originalReport.refundAmount || '—' }}</div></div>
+            <div class="fld"><label>投放成本</label><div>{{ originalReport.adCost || '—' }}</div></div>
+          </div>
+          <div>
+            <b v-if="correcting">更正后</b>
         <div class="formrow one">
           <div v-if="showOpsFields" class="fld"><label>实际开始 *</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
           <div v-if="showOpsFields" class="fld"><label>实际结束 *</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
@@ -541,9 +556,6 @@
             </select>
             <input v-model="costDraft.amount" type="number" step="0.01" placeholder="金额" data-testid="live-cost-amount" :style="fieldMissing('amount') ? 'border-color: var(--red)' : ''" />
           </div>
-          <div v-if="correcting" class="hint" data-testid="live-correction-original">
-            原值：GMV {{ originalReport.gmv || '—' }} · 订单 {{ originalReport.orderCount || '—' }} · 观看 {{ originalReport.viewerCount || '—' }} · 峰值 {{ originalReport.peakOnline || '—' }} · 涨粉 {{ originalReport.newFans || '—' }} · 退款 {{ originalReport.refundAmount || '—' }} · 投放 {{ originalReport.adCost || '—' }}
-          </div>
           <div v-if="correcting" class="fld">
             <label>更正原因 *</label>
             <input
@@ -554,6 +566,8 @@
               :style="correctionReasonBad ? 'border-color: var(--red)' : ''"
             />
             <p class="hint" data-testid="live-correction-reason-hint">更正原因必填。留空不会生成更正单。</p>
+          </div>
+        </div>
           </div>
         </div>
         <ul v-if="costLines.length" data-testid="live-cost-details">
@@ -683,6 +697,8 @@ const slowQueryHint = ref('')
 const correcting = ref(false)
 const correctionReason = ref('')
 const originalReport = reactive({
+  actualStart: '',
+  actualEnd: '',
   gmv: '',
   orderCount: '',
   viewerCount: '',
@@ -1870,6 +1886,8 @@ async function submitReport() {
 }
 
 function openCorrection() {
+  originalReport.actualStart = reportForm.actualStart
+  originalReport.actualEnd = reportForm.actualEnd
   originalReport.gmv = reportForm.gmv
   originalReport.orderCount = reportForm.orderCount
   originalReport.viewerCount = reportForm.viewerCount
