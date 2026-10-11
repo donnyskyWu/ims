@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
+from app.corp import ops_db, paged, tenant_of, user_names, visible
 from app.models import User
 from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, IpGroupMember, PlatformAccount
 
@@ -305,8 +305,12 @@ def ip_group_list(
 ):
     load_scope_ip_groups(db, request, actor)
     page_no = page if page and page > 0 else pageNo
-    page_size = size if size and size > 0 else pageSize
-    page_no, page_size = page_args(page_no, min(page_size, 200))
+    raw_size = size if size and size > 0 else pageSize
+    # page_args 把超过 100 的 pageSize 收成 10。这里按接口约定最多 200，否则选择器只能看到前 10 个组。
+    page_no = page_no if page_no > 0 else 1
+    page_size = raw_size if raw_size and raw_size > 0 else 20
+    if page_size > 200:
+        page_size = 200
     stmt = select(IpGroup).where(IpGroup.deleted == 0, IpGroup.tenant_id == tenant_of(actor))
     allowed = scoped_group_ids(request)
     if allowed is not None:

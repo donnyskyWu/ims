@@ -520,6 +520,45 @@ def _login(username: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_share_rule_picker_lists_account_and_group_names():
+    auth = headers()
+    missing = client.get("/admin-api/ims/corp/account/page", headers=auth, params={"pageNo": 1, "pageSize": 20})
+    assert missing.json()["code"] == 1001
+    assert missing.json()["msg"] == "platformType 必填"
+    assert "ERR_" not in missing.json()["msg"]
+
+    accounts = client.get(
+        "/admin-api/ims/corp/account/page",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 100, "platformType": "DOUYIN"},
+    )
+    body = accounts.json()
+    assert body["code"] == 0
+    assert body["data"]["list"]
+    row = body["data"]["list"][0]
+    assert row["id"]
+    assert row.get("nickname") or row.get("accountNo")
+
+    for index in range(11):
+        created = client.post(
+            "/admin-api/ims/ip-group/create",
+            headers=auth,
+            json={"groupName": f"选择器大组{index}", "groupType": "BIG"},
+        )
+        assert created.json()["code"] == 0, created.json()
+    groups = client.get(
+        "/admin-api/ims/ip-group/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 200},
+    )
+    listed = groups.json()
+    assert listed["code"] == 0
+    names = [item["groupName"] for item in listed["data"]["list"]]
+    assert len(names) >= 11
+    assert "选择器大组0" in names
+    assert listed["data"]["pageSize"] == 200
+
+
 def test_r9_query_lists_share_rules_write_stays_chinese():
     analyst = _login("e2e_fin_r9")
     listed = client.get("/admin-api/ims/fin/share/rules", headers=analyst)

@@ -231,7 +231,10 @@
               />
               <span>{{ opt.label }}</span>
             </label>
-            <span v-if="!accountOptions.length" class="hint">暂无账号</span>
+            <span v-if="accountLoading" class="hint">账号加载中</span>
+            <span v-else-if="accountError" class="hint" data-testid="fin-share-rule-account-error" style="color: var(--red)">{{ accountError }}</span>
+            <span v-else-if="!accountOptions.length" class="hint">暂无账号</span>
+            <span v-else-if="accountHint" class="hint">{{ accountHint }}</span>
           </div>
         </div>
         <div class="fld" data-testid="fin-share-rule-groups">
@@ -253,7 +256,9 @@
               />
               <span>{{ opt.label }}</span>
             </label>
-            <span v-if="!groupOptions.length" class="hint">暂无 IP 组</span>
+            <span v-if="groupLoading" class="hint">IP 组加载中</span>
+            <span v-else-if="groupError" class="hint" data-testid="fin-share-rule-group-error" style="color: var(--red)">{{ groupError }}</span>
+            <span v-else-if="!groupOptions.length" class="hint">暂无 IP 组</span>
           </div>
         </div>
         <p class="hint" data-testid="fin-share-rule-draft-sum">{{ draftSumText }}</p>
@@ -426,6 +431,11 @@ const accountNames = ref<Record<number, string>>({})
 const groupNames = ref<Record<number, string>>({})
 const accountKeyword = ref('')
 const groupKeyword = ref('')
+const accountLoading = ref(false)
+const groupLoading = ref(false)
+const accountError = ref('')
+const groupError = ref('')
+const accountHint = ref('')
 const fieldErrors = reactive({
   name: '',
   target: '',
@@ -782,65 +792,95 @@ function corpPlatformsForScope() {
   return [...picked]
 }
 
+type AccountRow = { id: number; accountNo?: string; accountName?: string; nickname?: string }
+
+function accountLabel(row: AccountRow) {
+  return `${row.accountNo || row.id} ${row.nickname || row.accountName || ''}`.trim()
+}
+
 async function loadAccounts() {
-  const platforms = corpPlatformsForScope()
+  accountLoading.value = true
+  accountError.value = ''
+  let platforms = corpPlatformsForScope()
   if (!platforms.length) {
-    accountOptions.value = []
-    return
+    platforms = [...ALL_CORP_PLATFORMS]
+    accountHint.value = '淘宝/京东没有账号档案，已列出全部账号'
+  } else {
+    accountHint.value = ''
   }
-  const groups: Array<number | undefined> = form.ipGroups.length ? [...form.ipGroups] : [undefined]
-  try {
-    const lists = await Promise.all(
-      platforms.flatMap((platformType) =>
-        groups.map((ipGroupId) =>
-          http.get('/corp/account/page', {
+  const groupIds: Array<number | undefined> = form.ipGroups.length ? [...form.ipGroups] : [undefined]
+  const results = await Promise.all(
+    platforms.flatMap((platformType) =>
+      groupIds.map(async (ipGroupId) => {
+        try {
+          const res = await http.get('/corp/account/page', {
             params: {
               pageNo: 1,
               pageSize: 100,
               platformType,
-              keyword: accountKeyword.value || undefined,
-              ipGroupId,
+              keyword: accountKeyword.value.trim() || undefined,
+              ...(ipGroupId ? { ipGroupId } : {}),
             },
-          }),
-        ),
-      ),
-    )
-    const seen = new Set<number>()
-    const options: { id: number; label: string }[] = []
-    for (const res of lists) {
-      for (const row of (res.data?.data?.list || []) as Array<{ id: number; accountNo?: string; accountName?: string; nickname?: string }>) {
-        const id = Number(row.id)
-        if (seen.has(id)) continue
-        seen.add(id)
-        options.push({
-          id,
-          label: `${row.accountNo || row.id} ${row.nickname || row.accountName || ''}`.trim(),
-        })
-      }
+          })
+          return { ok: true as const, list: (res.data?.data?.list || []) as AccountRow[] }
+        } catch (err) {
+          return { ok: false as const, message: errorMessage(err) }
+        }
+      }),
+    ),
+  )
+  const seen = new Set<number>()
+  const options: { id: number; label: string }[] = []
+  for (const item of results) {
+    if (!item.ok) continue
+    for (const row of item.list) {
+      const id = Number(row.id)
+      if (!Number.isFinite(id) || seen.has(id)) continue
+      seen.add(id)
+      options.push({ id, label: accountLabel(row) })
     }
-    accountOptions.value = options
-    const names = { ...accountNames.value }
-    for (const item of options) names[item.id] = item.label
-    accountNames.value = names
-  } catch {
-    accountOptions.value = []
   }
+  const fetched = options.length
+  for (const id of form.accountIds) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    options.push({ id, label: accountNames.value[id] || `账号#${id}` })
+  }
+  accountOptions.value = options
+  const names = { ...accountNames.value }
+  for (const item of options) names[item.id] = item.label
+  accountNames.value = names
+  const failure = results.find((item): item is { ok: false; message: string } => !item.ok)
+  accountError.value = fetched === 0 && failure ? failure.message : ''
+  accountLoading.value = false
 }
 
 async function loadGroups() {
+  groupLoading.value = true
+  groupError.value = ''
   try {
     const res = await http.get('/ip-group/list', {
-      params: { pageNo: 1, pageSize: 200, keyword: groupKeyword.value || undefined },
+      params: { pageNo: 1, pageSize: 200, keyword: groupKeyword.value.trim() || undefined },
     })
-    groupOptions.value = (res.data?.data?.list || []).map((row: { id: number; groupName?: string }) => ({
+    const options = ((res.data?.data?.list || []) as Array<{ id: number; groupName?: string }>).map((row) => ({
       id: Number(row.id),
       label: row.groupName || `IP组#${row.id}`,
     }))
+    const seen = new Set(options.map((item) => item.id))
+    for (const id of form.ipGroups) {
+      if (seen.has(id)) continue
+      options.push({ id, label: groupNames.value[id] || `IP组#${id}` })
+    }
+    groupOptions.value = options.filter((item) => Number.isFinite(item.id))
     const names = { ...groupNames.value }
     for (const item of groupOptions.value) names[item.id] = item.label
     groupNames.value = names
-  } catch {
-    groupOptions.value = []
+  } catch (err) {
+    groupError.value = errorMessage(err)
+    const kept = form.ipGroups.map((id) => ({ id, label: groupNames.value[id] || `IP组#${id}` }))
+    groupOptions.value = kept
+  } finally {
+    groupLoading.value = false
   }
 }
 
