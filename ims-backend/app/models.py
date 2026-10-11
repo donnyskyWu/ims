@@ -1848,6 +1848,7 @@ class AirPromptConfig(Base):
     __table_args__ = (UniqueConstraint("tenant_id", "prompt_code", name="uk_air_prompt_code"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     prompt_code: Mapped[str] = mapped_column(String(32), default="")
+    prompt_name: Mapped[str] = mapped_column(String(128), default="")
     scene: Mapped[str] = mapped_column(String(64), default="")
     doc_type: Mapped[str] = mapped_column(String(64), default="")
     version_label: Mapped[str] = mapped_column(String(16), default="v1.0")

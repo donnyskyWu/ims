@@ -43,12 +43,24 @@ def test_air_cfg_model_prompt_crud():
     assert prompts.json()["code"] == 0
     assert prompts.json()["data"]["list"]
 
+    empty_prompt = client.post("/admin-api/ims/air/cfg/prompt", headers=auth, json={})
+    assert empty_prompt.status_code == 200
+    assert empty_prompt.json()["code"] == 1001
+
     pr = client.post(
         "/admin-api/ims/air/cfg/prompt",
         headers=auth,
         json={"scene": "测试场景", "docType": "NOTE", "content": "hello prompt"},
     )
     assert pr.json()["code"] == 0
+
+    named = client.post(
+        "/admin-api/ims/air/cfg/prompt",
+        headers=auth,
+        json={"promptName": "竞彩方案正文", "scene": "内容生成", "docType": "正式方案", "content": "你好 {{topic}}"},
+    )
+    assert named.json()["code"] == 0
+    assert named.json()["data"]["promptName"] == "竞彩方案正文"
 
 
 def test_air_cfg_model_test_is_stub():

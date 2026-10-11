@@ -419,6 +419,20 @@ def ensure_air_skill_audit_columns() -> None:
         conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''"))
 
 
+def ensure_air_prompt_columns() -> None:
+    """已有库补提示词模板名称。不回写已有模板的名称。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_prompt_config" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_prompt_config")}
+    if "prompt_name" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_air_prompt_config ADD COLUMN prompt_name VARCHAR(128) NOT NULL DEFAULT ''"))
+
+
 def ensure_air_model_columns() -> None:
     """已有库补模型显示名、密钥掩码与默认标记。不改已有行的连接状态。"""
     from sqlalchemy import inspect, text
@@ -620,6 +634,7 @@ def init_db() -> None:
     ensure_air_skill_form_columns()
     ensure_air_expert_grant_columns()
     ensure_air_model_columns()
+    ensure_air_prompt_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     from app.ops_db import ensure_ops

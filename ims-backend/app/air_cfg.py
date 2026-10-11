@@ -33,10 +33,11 @@ class ModelSaveBody(BaseModel):
 
 class PromptSaveBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    scene: str
+    promptName: str = ""
+    scene: str = ""
     docType: str = ""
     versionLabel: str = "v1.0"
-    content: str
+    content: str = ""
     status: str = "ENABLED"
 
 
@@ -100,6 +101,7 @@ def prompt_vo(row: AirPromptConfig, names: dict[int, str]) -> dict:
     return {
         "id": row.id,
         "promptCode": row.prompt_code,
+        "promptName": row.prompt_name or "",
         "scene": row.scene,
         "docType": row.doc_type,
         "versionLabel": row.version_label,
@@ -277,6 +279,7 @@ def prompt_create(body: PromptSaveBody, db: Session = Depends(db_session), actor
     now = utcnow()
     row = AirPromptConfig(
         prompt_code=next_prompt_code(db, tenant_id),
+        prompt_name=body.promptName.strip(),
         scene=body.scene.strip(),
         doc_type=body.docType.strip(),
         version_label=body.versionLabel.strip() or "v1.0",
@@ -301,6 +304,8 @@ def prompt_update(
     row = db.get(AirPromptConfig, prompt_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1001, "提示词不存在")
+    if body.promptName.strip():
+        row.prompt_name = body.promptName.strip()
     row.scene = body.scene.strip() or row.scene
     row.doc_type = body.docType.strip()
     row.version_label = body.versionLabel.strip() or row.version_label

@@ -426,7 +426,7 @@
         <table>
           <thead>
             <tr>
-              <th>编号</th>
+              <th>模板</th>
               <th>场景</th>
               <th>文档类型</th>
               <th>版本</th>
@@ -440,7 +440,7 @@
               <td colspan="6"><div class="empty" data-testid="air-prompt-empty"><div class="et">暂无提示词</div></div></td>
             </tr>
             <tr v-for="row in prompts" v-else :key="row.id">
-              <td class="mono">{{ row.promptCode }}</td>
+              <td>{{ row.promptName || row.promptCode }}</td>
               <td>{{ row.scene }}</td>
               <td>{{ row.docType || '—' }}</td>
               <td>{{ row.versionLabel }}</td>
@@ -600,18 +600,30 @@
     </div>
 
     <div v-if="showPrompt" class="modal-mask" @click.self="showPrompt = false">
-      <div class="card" style="width: 480px; padding: 20px">
+      <div class="card" style="width: 560px; padding: 20px" data-testid="air-prompt-form">
         <h3 style="margin: 0 0 12px">{{ promptForm.id ? '编辑提示词' : '新增提示词' }}</h3>
-        <label class="fld">场景</label>
-        <input v-model="promptForm.scene" class="fld-in" />
-        <label class="fld">文档类型</label>
-        <input v-model="promptForm.docType" class="fld-in" />
-        <label class="fld">正文</label>
-        <textarea v-model="promptForm.content" class="fld-in" rows="5" />
+        <label class="fld">模板名称 <i class="req">*</i></label>
+        <input v-model="promptForm.promptName" class="fld-in" data-testid="air-prompt-name" />
+        <p v-if="promptErrors.promptName" class="hint" style="color: var(--red)">{{ promptErrors.promptName }}</p>
+        <label class="fld">场景 <i class="req">*</i></label>
+        <select v-model="promptForm.scene" class="fld-in" data-testid="air-prompt-scene">
+          <option value="">请选择</option>
+          <option v-for="item in promptScenes" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <p v-if="promptErrors.scene" class="hint" style="color: var(--red)">{{ promptErrors.scene }}</p>
+        <label class="fld">文档类型 <i class="req">*</i></label>
+        <select v-model="promptForm.docType" class="fld-in" data-testid="air-prompt-doc">
+          <option value="">请选择</option>
+          <option v-for="item in promptDocs" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <p v-if="promptErrors.docType" class="hint" style="color: var(--red)">{{ promptErrors.docType }}</p>
+        <label class="fld">正文（&#123;&#123;变量&#125;&#125;） <i class="req">*</i></label>
+        <textarea v-model="promptForm.content" class="fld-in" rows="5" data-testid="air-prompt-content" placeholder="你是神鱼体育运营助手……" />
+        <p v-if="promptErrors.content" class="hint" style="color: var(--red)" data-testid="air-prompt-error">{{ promptErrors.content }}</p>
         <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showPrompt = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="savePrompt">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-prompt-save" @click="savePrompt">保存</button>
         </div>
       </div>
     </div>
@@ -639,6 +651,7 @@ type ModelRow = {
 type PromptRow = {
   id: number
   promptCode: string
+  promptName?: string
   scene: string
   docType: string
   versionLabel: string
@@ -650,6 +663,8 @@ type TabId = 'model' | 'prompt' | 'key' | 'audit'
 
 const route = useRoute()
 const router = useRouter()
+const promptScenes = ['内容生成', '短视频文案', '直播脚本', 'AI排版语义']
+const promptDocs = ['通用', '短视频文案', '正式方案', '预热前瞻']
 const vendorOptions = ['Football jingcai', 'OpenAI 兼容', '自建网关']
 const modelUses = ['内容生成 / 润色', 'AI_TYPESET_SEMANTIC', '降级直连']
 const tab = ref<TabId>('model')
@@ -788,11 +803,13 @@ const modelErrors = reactive({ displayName: '', vendor: '', modelName: '' })
 
 const promptForm = reactive({
   id: 0,
+  promptName: '',
   scene: '',
   docType: '',
   content: '',
   status: 'ENABLED',
 })
+const promptErrors = reactive({ promptName: '', scene: '', docType: '', content: '' })
 
 function say(message: string) {
   toast.value = message
@@ -1260,11 +1277,18 @@ async function testModel(row: ModelRow) {
 
 function openPromptForm(row?: PromptRow) {
   formError.value = ''
+  promptErrors.promptName = ''
+  promptErrors.scene = ''
+  promptErrors.docType = ''
+  promptErrors.content = ''
   promptForm.id = row?.id || 0
+  promptForm.promptName = row?.promptName || ''
   promptForm.scene = row?.scene || ''
   promptForm.docType = row?.docType || ''
   promptForm.content = row?.content || ''
   promptForm.status = row?.status || 'ENABLED'
+  if (promptForm.scene && !promptScenes.includes(promptForm.scene)) promptScenes.push(promptForm.scene)
+  if (promptForm.docType && !promptDocs.includes(promptForm.docType)) promptDocs.push(promptForm.docType)
   showPrompt.value = true
 }
 
@@ -1295,21 +1319,27 @@ async function saveModel() {
 
 async function savePrompt() {
   formError.value = ''
+  promptErrors.promptName = promptForm.promptName.trim() ? '' : '必填项，请填写'
+  promptErrors.scene = promptForm.scene ? '' : '必填项，请填写'
+  promptErrors.docType = promptForm.docType ? '' : '必填项，请填写'
+  promptErrors.content = promptForm.content.trim() ? '' : '必填项，请填写'
+  if (promptErrors.promptName || promptErrors.scene || promptErrors.docType || promptErrors.content) return
   const body = {
+    promptName: promptForm.promptName.trim(),
     scene: promptForm.scene,
     docType: promptForm.docType,
-    content: promptForm.content,
+    content: promptForm.content.trim(),
     status: promptForm.status,
   }
-  const res = promptForm.id
-    ? await http.put(`/air/cfg/prompt/${promptForm.id}`, body)
-    : await http.post('/air/cfg/prompt', body)
-  if (res.data.code !== 0) {
-    formError.value = res.data.msg || '保存失败'
-    return
+  try {
+    if (promptForm.id) await http.put(`/air/cfg/prompt/${promptForm.id}`, body)
+    else await http.post('/air/cfg/prompt', body)
+    showPrompt.value = false
+    say('提示词已保存')
+    await loadPrompts()
+  } catch (error) {
+    formError.value = errorMessage(error)
   }
-  showPrompt.value = false
-  await loadPrompts()
 }
 
 watch(
