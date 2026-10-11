@@ -429,8 +429,8 @@
       </div>
       <div v-else-if="detail && tab === '风控登记'" class="tbl-block" style="margin-top: 12px">
         <div class="acts" style="margin-bottom: 8px">
-          <button class="btn btn-pri btn-sm" type="button" @click="doRisk">执行风控</button>
-          <button v-if="detail.startAllowed" class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
+          <button v-if="showRiskRun" class="btn btn-pri btn-sm" type="button" data-testid="live-risk-run" @click="doRisk">执行风控</button>
+          <button v-if="showStart" class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
           <button v-if="showReregister" class="btn btn-sec btn-sm" type="button" data-testid="live-reregister-open" @click="openEdit">重新登记整改</button>
           <button v-if="showEdit" class="btn btn-sec btn-sm" type="button" data-testid="live-edit-open" @click="openEdit">编辑</button>
           <button v-if="showCancel" class="btn btn-sec btn-sm" type="button" data-testid="live-cancel-open" @click="cancelForm = true">取消场次</button>
@@ -589,8 +589,7 @@
           >
             核准下播
           </button>
-          <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-direct-save" @click="directSave">保存修改</button>
-          <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
+          <button v-if="canCorrect && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
           <button v-if="correcting" class="btn btn-pri btn-sm" type="button" data-testid="live-report-correction-submit" @click="submitCorrection">提交更正单</button>
         </div>
         </template>
@@ -856,6 +855,14 @@ function supplementGap(key: string) {
 
 const entryOpen = computed(() => detail.value?.sessionStatus === 'ENDED')
 const reportLocked = computed(() => !entryOpen.value || (!!report.value && report.value.entryStatus !== 'DRAFT'))
+const canCorrect = computed(
+  () => entryOpen.value && !!report.value && (report.value.entryStatus === 'SUBMITTED' || report.value.entryStatus === 'CONFIRMED'),
+)
+const showRiskRun = computed(() => {
+  const status = detail.value?.sessionStatus
+  return status === 'PENDING_RISK_CHECK' || status === 'APPROVED'
+})
+const showStart = computed(() => detail.value?.sessionStatus === 'APPROVED' && !!detail.value?.startAllowed)
 const financeView = computed(() => report.value?.fieldScope === 'FINANCE')
 const showOpsFields = computed(() => !financeView.value)
 const showCostEditor = computed(() => !financeView.value && (!reportLocked.value || correcting.value))
@@ -1858,18 +1865,6 @@ async function submitReport() {
     reportBadField.value = body.data?.field || ''
     const label = numberFieldLabel[reportBadField.value]
     reportError.value = label ? `${bizError(e)}（${label}）` : bizError(e)
-    hint.value = reportError.value
-  }
-}
-
-async function directSave() {
-  if (!detail.value) return
-  reportError.value = ''
-  try {
-    await apiPut(`/live/report/${detail.value.sessionCode}`, reportPayload())
-    hint.value = '草稿已保存'
-  } catch (e: unknown) {
-    reportError.value = bizError(e)
     hint.value = reportError.value
   }
 }
