@@ -237,9 +237,12 @@
     </div>
 
     <div v-if="showImport" class="modal-mask" data-testid="layout-import" @click.self="showImport = false">
-      <div class="card" style="width: 560px; padding: 20px">
-        <h3 style="margin: 0 0 8px">导入向导</h3>
-        <p class="hint" style="margin-bottom: 10px">ADR-020 套用 vs 预览 · 导入方式为 Tab（非步骤条）</p>
+      <div class="card import-dialog" style="width: 560px; padding: 20px">
+        <div class="import-head">
+          <button class="btn btn-txt btn-sm" type="button" data-testid="layout-import-back" @click="showImport = false">返回</button>
+          <h3 style="margin: 0">导入向导</h3>
+        </div>
+        <p class="import-alert" data-testid="layout-import-alert">ADR-020：套用写入内容版式，预览只读不落库。导入方式为 Tab，不是步骤条。</p>
         <div class="tabs" style="margin-bottom: 10px">
           <button class="tab" :class="{ on: importTab === 'url' }" type="button" data-testid="layout-import-tab-url" @click="importTab = 'url'">公众号链接</button>
           <button class="tab" :class="{ on: importTab === 'mhtml' }" type="button" data-testid="layout-import-tab-mhtml" @click="importTab = 'mhtml'">MHTML 上传</button>
@@ -254,7 +257,7 @@
         </template>
         <template v-else-if="importTab === 'mhtml'">
           <label class="fld">.mhtml 单文件 *</label>
-          <input data-testid="layout-import-file" type="file" accept=".mhtml,.mht" @change="onMhtmlFile" />
+          <input class="import-file" data-testid="layout-import-file" type="file" accept=".mhtml,.mht" @change="onMhtmlFile" />
           <label class="fld">模板名（可选）</label>
           <input v-model="importName" class="fld-in" />
           <label class="fld">覆盖模板 ID（可选）</label>
@@ -622,6 +625,48 @@ onMounted(() => {
 .req {
   color: #d92d20;
   margin-left: 2px;
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 120;
+  padding: 24px;
+}
+.import-dialog {
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+.import-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.import-alert {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7e8;
+  color: #8a5a00;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.fld-in,
+.import-file {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line, #d0d5dd);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  background: #fff;
+}
+.import-file {
+  border-style: dashed;
 }
 .layout-toast {
   position: fixed;
