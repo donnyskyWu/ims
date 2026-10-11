@@ -58,6 +58,7 @@ const router = createRouter({
         { path: 'bi/screen/:id/view', component: () => import('../views/bi/screen-view.vue') },
         { path: 'flow', component: () => import('../views/flow/index.vue') },
         { path: 'analysis/query-tool', component: () => import('../views/analysis/query-tool.vue') },
+        { path: 'analysis/query-tool/run/:templateCode', component: () => import('../views/analysis/query-tool-run.vue') },
         { path: 'eff', component: () => import('../views/eff/index.vue') },
         { path: 'int/work', component: () => import('../views/int/work.vue') },
         { path: 'int/account', component: () => import('../views/int/account.vue') },

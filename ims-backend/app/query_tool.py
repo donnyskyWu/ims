@@ -7,12 +7,13 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.corp import page_args, paged, tenant_of, user_names
+from app.corp import ops_db, page_args, paged, tenant_of, user_names
 from app.models import QueryTemplate, User
 
 router = APIRouter(prefix="/analysis/query-tool", tags=["query-tool"])
@@ -42,6 +43,56 @@ class RunBody(BaseModel):
     mode: str
     templateCode: str | None = None
     runtime: dict | None = None
+    inlineTemplate: dict | None = None
+
+
+# 执行只读开发/测试种子表。列名来自白名单，条件值只走绑定参数。
+_SEED_SOURCES: dict[str, dict] = {
+    "IP_GROUP": {
+        "table": "oa_ip_group",
+        "kind": "ops",
+        "columns": [("group_name", "组名称"), ("level", "级别"), ("status", "状态")],
+    },
+    "PLATFORM_ACCOUNT": {
+        "table": "oa_platform_account",
+        "kind": "ops",
+        "columns": [("account_no", "账号"), ("account_name", "账号名称"), ("platform_type", "平台")],
+    },
+    "LIVE_SESSION": {
+        "table": "ims_live_session",
+        "kind": "ims",
+        "columns": [("session_code", "场次编号"), ("topic", "主题"), ("platform", "平台"), ("account_no", "账号")],
+    },
+    "REALNAME": {
+        "table": "oa_realname",
+        "kind": "ops",
+        "columns": [("real_name", "姓名"), ("status", "状态")],
+    },
+    "CONTENT_METRIC": {
+        "table": "oa_internal_content",
+        "kind": "ops",
+        "columns": [("title", "标题"), ("play_count", "播放量")],
+    },
+}
+_SEED_ALIAS = {
+    "ip_group": "IP_GROUP",
+    "IP_GROUP": "IP_GROUP",
+    "platform_account": "PLATFORM_ACCOUNT",
+    "PLATFORM_ACCOUNT": "PLATFORM_ACCOUNT",
+    "ACCOUNT": "PLATFORM_ACCOUNT",
+    "account": "PLATFORM_ACCOUNT",
+    "live_session": "LIVE_SESSION",
+    "LIVE_SESSION": "LIVE_SESSION",
+    "SESSION": "LIVE_SESSION",
+    "session": "LIVE_SESSION",
+    "realname": "REALNAME",
+    "REALNAME": "REALNAME",
+    "PERSON": "REALNAME",
+    "person": "REALNAME",
+    "COST": "CONTENT_METRIC",
+    "cost": "CONTENT_METRIC",
+    "CONTENT_METRIC": "CONTENT_METRIC",
+}
 
 
 def iso(dt: datetime | None) -> str:
@@ -62,11 +113,12 @@ def next_template_code(db: Session, tenant_id: int) -> str:
 
 
 def template_vo(row: QueryTemplate, names: dict[int, str]) -> dict:
-    menu_label = ""
-    if row.menu_seed and row.menu_route:
-        menu_label = "已挂 L3"
-    elif row.menu_seed:
-        menu_label = "已挂 L3"
+    payload = row.payload_json if isinstance(row.payload_json, dict) else {}
+    menu_title = str(payload.get("menuTitle") or "")
+    if row.menu_seed:
+        menu_label = "已挂 L3 数据分析"
+    else:
+        menu_label = ""
     return {
         "templateCode": row.template_code,
         "name": row.name,
@@ -74,6 +126,7 @@ def template_vo(row: QueryTemplate, names: dict[int, str]) -> dict:
         "status": row.status,
         "menuSeed": bool(row.menu_seed),
         "menuRoute": row.menu_route or "",
+        "menuTitle": menu_title or (row.name if row.menu_seed else ""),
         "menuPathLabel": menu_label or ("未挂菜单" if row.status == "PUBLISHED" else "—"),
         "permCode": row.perm_code or "",
         "ownerUserId": row.owner_user_id,
@@ -333,50 +386,180 @@ def template_delete(
     return ok({"templateCode": template_code})
 
 
+def fetch_seed_level(
+    ims: Session,
+    ops: Session,
+    entity_code: str,
+    tenant_id: int,
+    *,
+    entry_id: int | None = None,
+    keyword: str = "",
+) -> dict:
+    spec = _SEED_SOURCES.get(_SEED_ALIAS.get(entity_code.strip(), ""))
+    if spec is None:
+        return {"entityCode": entity_code, "columns": [], "rows": []}
+    columns = [{"key": col, "label": label} for col, label in spec["columns"]]
+    select_sql = ", ".join(f"`{col}` AS `{col}`" for col, _label in spec["columns"])
+    sql = f"SELECT {select_sql} FROM `{spec['table']}` WHERE deleted = 0 AND tenant_id = :tenant_id"
+    params: dict = {"tenant_id": tenant_id}
+    if entry_id is not None:
+        sql += " AND id = :entry_id"
+        params["entry_id"] = entry_id
+    if keyword:
+        probe = spec["columns"][0][0]
+        sql += f" AND `{probe}` LIKE :kw"
+        params["kw"] = f"%{keyword}%"
+    sql += " ORDER BY id DESC LIMIT 100"
+    db = ops if spec["kind"] == "ops" else ims
+    fetched = db.execute(text(sql), params).mappings().all()
+    rows = [{col: item.get(col) for col, _label in spec["columns"]} for item in fetched]
+    return {"entityCode": entity_code, "columns": columns, "rows": rows}
+
+
+def _entry_id(runtime: dict) -> int | None:
+    raw = runtime.get("entryId")
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+class MenuSeedBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    templateCode: str
+    menuTitle: str = ""
+    parentMenuCode: str = "ims:analysis:query-tool-group"
+    sortOrder: int = 0
+    permCode: str = ""
+
+
+@router.post("/menu-seed")
+def menu_seed_create(
+    body: MenuSeedBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if body.parentMenuCode.strip() != "ims:analysis:query-tool-group":
+        return fail(1001, "只能挂到数据分析")
+    tenant_id = tenant_of(actor)
+    row = get_template(db, tenant_id, body.templateCode)
+    if row is None:
+        return fail(1263, "查询模板不存在")
+    if row.status != "PUBLISHED":
+        return fail(1001, "仅已发布模板可挂到侧栏")
+    title = (body.menuTitle or row.name).strip()
+    if not title:
+        return fail(1001, "请填写菜单标题")
+    if len(title) > 16:
+        return fail(1001, "菜单标题不超过 16 字")
+    payload = dict(row.payload_json) if isinstance(row.payload_json, dict) else {}
+    payload["menuTitle"] = title
+    row.payload_json = payload
+    row.menu_seed = 1
+    row.menu_route = f"/ims/analysis/query-tool/run/{row.template_code}"
+    row.perm_code = (body.permCode or f"ims:analysis:qt:run:{row.template_code}").strip()
+    row.updated_at = utcnow()
+    return ok({"menuId": row.id, "routePath": row.menu_route})
+
+
+@router.delete("/menu-seed/{template_code}")
+def menu_seed_delete(
+    template_code: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = get_template(db, tenant_id, template_code)
+    if row is None:
+        return fail(1263, "查询模板不存在")
+    payload = dict(row.payload_json) if isinstance(row.payload_json, dict) else {}
+    payload.pop("menuTitle", None)
+    row.payload_json = payload
+    row.menu_seed = 0
+    row.menu_route = ""
+    row.updated_at = utcnow()
+    names = user_names(db, [row.owner_user_id])
+    return ok(template_vo(row, names))
+
+
 @router.post("/run")
-def query_run(body: RunBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+def query_run(
+    body: RunBody,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
     mode = body.mode.strip().upper()
-    if mode not in MODES:
+    if mode not in {"DRILL", "TRACE"}:
         return fail(1001, "mode 无效")
     tenant_id = tenant_of(actor)
     template = None
+    payload: dict = {}
     if body.templateCode:
         template = get_template(db, tenant_id, body.templateCode)
-        if template is None:
+        if template is None or template.status != "PUBLISHED":
             return fail(1263, "查询模板不存在或未发布")
-        if template.status != "PUBLISHED":
-            return fail(1263, "查询模板不存在或未发布")
-        mode = template.mode
+        mode = template.mode if template.mode in {"DRILL", "TRACE"} else mode
+        payload = template.payload_json if isinstance(template.payload_json, dict) else {}
+    elif isinstance(body.inlineTemplate, dict):
+        inline_mode = str(body.inlineTemplate.get("mode") or mode).strip().upper()
+        if inline_mode not in {"DRILL", "TRACE"}:
+            return fail(1001, "mode 无效")
+        mode = inline_mode
+        raw_payload = body.inlineTemplate.get("payloadJson")
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+    runtime = body.runtime if isinstance(body.runtime, dict) else {}
+    entry_id = _entry_id(runtime)
+    keyword = str(runtime.get("keyword") or "").strip()[:64]
     t0 = time.perf_counter()
+    levels: list[dict] = []
     if mode == "TRACE":
-        columns = [
-            {"key": "nodeType", "label": "节点类型"},
-            {"key": "nodeLabel", "label": "名称"},
-        ]
-        rows = [
-            {"nodeType": "PERSON", "nodeLabel": "实名人 · 示例"},
-            {"nodeType": "SESSION", "nodeLabel": "场次 · DEMO-001"},
-        ]
-        level_state = {"activeLevel": 1, "breadcrumbs": ["入口", "场次"]}
+        steps = payload.get("pathSteps") if isinstance(payload.get("pathSteps"), list) else []
+        if len(steps) < 1:
+            steps = [{"entity": "PERSON"}, {"entity": "SESSION"}]
+        root = str(payload.get("rootEntity") or (steps[0].get("entity") if steps else "PERSON"))
+        for index, step in enumerate(steps[:6]):
+            entity = str((step or {}).get("entity") or "PERSON")
+            level = fetch_seed_level(
+                db, ops, entity, tenant_id, entry_id=entry_id if index == 0 else None, keyword=keyword if index == 0 else ""
+            )
+            level["levelIndex"] = index
+            level["label"] = entity
+            levels.append(level)
+        breadcrumbs = [root]
+        root_entity = root
     else:
-        columns = [
-            {"key": "dimName", "label": "维度"},
-            {"key": "metricValue", "label": "指标值"},
-        ]
-        rows = [
-            {"dimName": "电竞一组", "metricValue": 1280},
-            {"dimName": "体育二组", "metricValue": 960},
-        ]
-        level_state = {"activeLevel": 0, "breadcrumbs": ["IP 组"]}
-    cost_ms = int((time.perf_counter() - t0) * 1000) + 12
+        raw_levels = payload.get("levels") if isinstance(payload.get("levels"), list) else []
+        if not raw_levels:
+            raw_levels = [{"levelIndex": 0, "label": "IP组", "entityCode": "IP_GROUP"}]
+        root_entity = str(payload.get("rootEntity") or raw_levels[0].get("entityCode") or "IP_GROUP")
+        for index, item in enumerate(raw_levels[:5]):
+            entity = str((item or {}).get("entityCode") or "IP_GROUP")
+            level = fetch_seed_level(
+                db, ops, entity, tenant_id, entry_id=entry_id if index == 0 else None, keyword=keyword if index == 0 else ""
+            )
+            level["levelIndex"] = index
+            level["label"] = str((item or {}).get("label") or entity)
+            level["entityCode"] = entity
+            levels.append(level)
+        breadcrumbs = [levels[0]["label"]] if levels else ["IP组"]
+    active = levels[0] if levels else {"columns": [], "rows": [], "label": ""}
     return ok(
         {
-            "columns": columns,
-            "rows": rows,
-            "levelState": level_state,
-            "queryCostMs": cost_ms,
+            "columns": active.get("columns") or [],
+            "rows": active.get("rows") or [],
+            "levels": levels,
+            "levelState": {
+                "activeLevel": 0,
+                "breadcrumbs": breadcrumbs,
+                "currentLevel": active.get("label") or "",
+                "rootEntity": root_entity,
+            },
+            "queryCostMs": int((time.perf_counter() - t0) * 1000),
             "queryMode": "SYNC",
+            "mode": mode,
             "templateCode": template.template_code if template else None,
-            "note": "QT run 占位 · 未接 DW/DC 逐步编排",
         }
     )

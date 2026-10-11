@@ -70,6 +70,8 @@
                     <span class="btn-txt btn" @click="openEdit(row)">编辑</span>
                     <span v-if="row.status === 'DRAFT'" class="btn-txt btn" @click="publishRow(row)">发布</span>
                     <span v-else class="btn-txt btn" @click="unpublishRow(row)">取消发布</span>
+                    <span v-if="row.status === 'PUBLISHED' && !row.menuSeed" class="btn-txt btn" @click="seedMenu(row)">发布到侧栏</span>
+                    <span v-if="row.menuSeed" class="btn-txt btn" @click="revokeMenu(row)">撤销侧栏</span>
                     <span class="btn-txt btn btn-danger-txt" @click="deleteRow(row)">删除</span>
                   </td>
                 </tr>
@@ -89,23 +91,6 @@
             <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="gotoPage(pageNo + 1)">›</span>
           </div>
         </div>
-      </div>
-    </div>
-
-    <div v-if="runResult" class="card bi0-result-card" style="margin-top: 16px; padding: 16px">
-      <h3 style="margin: 0 0 8px">执行结果 · {{ runResult.templateCode || 'inline' }}</h3>
-      <p class="csub">queryCostMs={{ runResult.queryCostMs }} · {{ runResult.note }}</p>
-      <div class="tbl-wrap">
-        <table>
-          <thead>
-            <tr><th v-for="c in runResult.columns" :key="c.key || c">{{ c.label || c }}</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="(r, idx) in runResult.rows" :key="idx">
-              <td v-for="c in runResult.columns" :key="c.key || c">{{ r[c.key || c] }}</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
     </div>
 
@@ -232,6 +217,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 
@@ -251,13 +237,13 @@ type PathStep = { entity: string }
 const stepLabels = ['选类型', '基本信息', '配置载荷', '展示与来源', '预览试跑', '完成']
 const traceEntities = ['PERSON', 'ACCOUNT', 'SESSION', 'COST']
 
+const router = useRouter()
 const rows = ref<Row[]>([])
 const total = ref(0)
 const loading = ref(false)
 const pageNo = ref(1)
 const pageSize = ref(10)
 const filters = reactive({ keyword: '', status: '', mode: '' })
-const runResult = ref<Record<string, any> | null>(null)
 const wizardOpen = ref(false)
 const step = ref(0)
 const editingCode = ref('')
@@ -574,17 +560,40 @@ async function deleteRow(row: Row) {
   }
 }
 
-async function runRow(row: Row) {
+async function seedMenu(row: Row) {
+  const title = window.prompt('菜单标题（不超过 16 字）', row.name.slice(0, 16))
+  if (title == null) return
+  if (!title.trim()) {
+    alert('请填写菜单标题')
+    return
+  }
   try {
-    const res = await http.post('/analysis/query-tool/run', {
-      mode: row.mode,
-      templateCode: row.status === 'PUBLISHED' ? row.templateCode : undefined,
-      runtime: {},
+    await http.post('/analysis/query-tool/menu-seed', {
+      templateCode: row.templateCode,
+      menuTitle: title.trim().slice(0, 16),
+      parentMenuCode: 'ims:analysis:query-tool-group',
     })
-    runResult.value = res.data.data
+    await loadList()
   } catch (error: unknown) {
     alert(errorMessage(error))
   }
+}
+
+async function revokeMenu(row: Row) {
+  try {
+    await http.delete(`/analysis/query-tool/menu-seed/${row.templateCode}`)
+    await loadList()
+  } catch (error: unknown) {
+    alert(errorMessage(error))
+  }
+}
+
+function runRow(row: Row) {
+  if (row.status !== 'PUBLISHED') {
+    alert('请先发布后再执行')
+    return
+  }
+  router.push(`/ims/analysis/query-tool/run/${row.templateCode}`)
 }
 
 onMounted(loadList)
