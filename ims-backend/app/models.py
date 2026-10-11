@@ -1640,6 +1640,7 @@ class BiReportDef(Base):
     category: Mapped[str] = mapped_column(String(64), default="")
     sub_category: Mapped[str] = mapped_column(String(64), default="")
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")
+    share_scope: Mapped[str] = mapped_column(String(16), default="PRIVATE")
     layout_json: Mapped[str] = mapped_column(Text, default="{}")
     creator_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
@@ -1647,6 +1648,17 @@ class BiReportDef(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BiReportCategory(Base):
+    __tablename__ = "ims_bi_report_category"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    parent_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    system_flag: Mapped[int] = mapped_column(Integer, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class BiMetric(Base):

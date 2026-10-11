@@ -228,6 +228,22 @@ def ensure_bi_share_note_column() -> None:
         )
 
 
+def ensure_bi_report_scope_column() -> None:
+    """已有库补报表可见范围。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_bi_report_def" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_bi_report_def")}
+    if "share_scope" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE ims_bi_report_def ADD COLUMN share_scope VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'")
+        )
+
+
 def ensure_bi_br212_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -503,6 +519,7 @@ def init_db() -> None:
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()
     ensure_bi_br212_columns()
+    ensure_bi_report_scope_column()
     ensure_bi_share_note_column()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()

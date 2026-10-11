@@ -17,15 +17,17 @@ from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_de
 from app.bi_drill import guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import BiReportDef, User
+from app.models import BiReportCategory, BiReportDef, User
 
 router = APIRouter(prefix="/bi/report", tags=["bi-report"])
 
 BJ = timezone(timedelta(hours=8))
 
-REPORT_CATEGORIES = [
-    {"code": "content", "name": "内容分析", "children": ["作品表现", "账号经营"]},
-    {"code": "finance", "name": "经营财务", "children": ["成本效率", "ROI"]},
+CATEGORY_TREE = [
+    ("运营", 0, ["日报", "周报", "大屏"]),
+    ("内容", 0, []),
+    ("财务", 0, []),
+    ("未分类", 1, []),
 ]
 
 
@@ -35,6 +37,20 @@ class ReportCreateBody(BaseModel):
     reportType: str = "REPORT"
     category: str = "内容分析"
     subCategory: str = ""
+    shareScope: str = "PRIVATE"
+
+
+class CategoryBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    action: str = "add"
+    name: str = ""
+    parentId: int = 0
+    categoryId: int = 0
+
+
+class ImportBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    template: dict | None = None
 
 
 class ReportUpdateBody(BaseModel):
@@ -340,6 +356,7 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "category": row.category,
         "subCategory": row.sub_category,
         "status": row.status,
+        "shareScope": row.share_scope or "PRIVATE",
         "layoutMode": layout.get("layoutMode", "FREE"),
         "comps": layout.get("comps", []),
         "creatorName": names.get(row.creator_id, ""),
@@ -427,9 +444,250 @@ def report_catalog(_: User = Depends(current_user)):
     return ok({"reports": STANDARD_REPORTS})
 
 
+def ensure_report_categories(db: Session, tenant_id: int) -> None:
+    count = db.scalar(
+        select(func.count()).select_from(BiReportCategory).where(
+            BiReportCategory.deleted == 0,
+            BiReportCategory.tenant_id == tenant_id,
+        )
+    )
+    if int(count or 0) > 0:
+        return
+    now = utcnow()
+    for name, system, children in CATEGORY_TREE:
+        parent = BiReportCategory(
+            name=name,
+            parent_id=0,
+            system_flag=system,
+            tenant_id=tenant_id,
+            created_at=now,
+        )
+        db.add(parent)
+        db.flush()
+        for child in children:
+            db.add(
+                BiReportCategory(
+                    name=child,
+                    parent_id=parent.id,
+                    system_flag=0,
+                    tenant_id=tenant_id,
+                    created_at=now,
+                )
+            )
+    db.flush()
+
+
+def category_rows(db: Session, tenant_id: int) -> list[BiReportCategory]:
+    ensure_report_categories(db, tenant_id)
+    return list(
+        db.scalars(
+            select(BiReportCategory)
+            .where(BiReportCategory.deleted == 0, BiReportCategory.tenant_id == tenant_id)
+            .order_by(BiReportCategory.id)
+        ).all()
+    )
+
+
+def category_tree(db: Session, tenant_id: int) -> list[dict]:
+    rows = category_rows(db, tenant_id)
+    children: dict[int, list[BiReportCategory]] = {}
+    for row in rows:
+        children.setdefault(int(row.parent_id or 0), []).append(row)
+    tree = []
+    for row in children.get(0, []):
+        kids = children.get(row.id, [])
+        tree.append(
+            {
+                "id": row.id,
+                "code": str(row.id),
+                "name": row.name,
+                "parentId": 0,
+                "system": bool(row.system_flag),
+                "children": [
+                    {
+                        "id": kid.id,
+                        "code": str(kid.id),
+                        "name": kid.name,
+                        "parentId": row.id,
+                        "system": False,
+                        "children": [],
+                    }
+                    for kid in kids
+                ],
+            }
+        )
+    return tree
+
+
+def category_match_names(db: Session, tenant_id: int, name: str) -> list[str]:
+    rows = category_rows(db, tenant_id)
+    found = next((row for row in rows if row.name == name), None)
+    if found is None:
+        return [name]
+    names = [found.name]
+    if not found.parent_id:
+        names.extend(row.name for row in rows if row.parent_id == found.id)
+    return names
+
+
+def category_node(db: Session, tenant_id: int, category_id: int) -> BiReportCategory | None:
+    row = db.get(BiReportCategory, category_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    return row
+
+
 @router.get("/categories")
-def report_categories(_: User = Depends(current_user)):
-    return ok({"categories": REPORT_CATEGORIES})
+def report_categories(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    return ok({"categories": category_tree(db, tenant_of(actor))})
+
+
+@router.post("/category")
+def report_category_save(body: CategoryBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    ensure_report_categories(db, tenant_id)
+    action = (body.action or "add").strip().lower()
+    if action == "add":
+        name = body.name.strip()
+        if not name:
+            return fail(1001, "请填写分类名称")
+        parent_id = int(body.parentId or 0)
+        if parent_id:
+            parent = category_node(db, tenant_id, parent_id)
+            if parent is None:
+                return fail(1001, "上级分类不存在")
+            if parent.parent_id:
+                return fail(1001, "分类最多两级")
+        dup = db.scalar(
+            select(BiReportCategory).where(
+                BiReportCategory.deleted == 0,
+                BiReportCategory.tenant_id == tenant_id,
+                BiReportCategory.parent_id == parent_id,
+                BiReportCategory.name == name,
+            )
+        )
+        if dup is not None:
+            return fail(1001, "分类已存在")
+        row = BiReportCategory(
+            name=name,
+            parent_id=parent_id,
+            system_flag=0,
+            tenant_id=tenant_id,
+            created_at=utcnow(),
+        )
+        db.add(row)
+        db.flush()
+        return ok({"id": row.id, "name": row.name, "parentId": row.parent_id, "level": 2 if parent_id else 1})
+    if action == "rename":
+        row = category_node(db, tenant_id, int(body.categoryId or 0))
+        if row is None:
+            return fail(1001, "分类不存在")
+        name = body.name.strip()
+        if not name:
+            return fail(1001, "请填写分类名称")
+        if row.system_flag:
+            return fail(1001, "未分类不能改名")
+        previous = row.name
+        row.name = name
+        reports = list(
+            db.scalars(
+                select(BiReportDef).where(
+                    BiReportDef.deleted == 0,
+                    BiReportDef.tenant_id == tenant_id,
+                    BiReportDef.category == previous,
+                )
+            ).all()
+        )
+        for report in reports:
+            report.category = name
+        return ok({"id": row.id, "name": row.name})
+    if action == "delete":
+        row = category_node(db, tenant_id, int(body.categoryId or 0))
+        if row is None:
+            return fail(1001, "分类不存在")
+        if row.system_flag or row.name == "未分类":
+            return fail(1001, "未分类不能删除")
+        rows = category_rows(db, tenant_id)
+        removing = [row] + [item for item in rows if item.parent_id == row.id]
+        names = [item.name for item in removing]
+        reports = list(
+            db.scalars(
+                select(BiReportDef).where(
+                    BiReportDef.deleted == 0,
+                    BiReportDef.tenant_id == tenant_id,
+                    BiReportDef.category.in_(names),
+                )
+            ).all()
+        )
+        for report in reports:
+            report.category = "未分类"
+            report.sub_category = ""
+        for item in removing:
+            item.deleted = 1
+        return ok({"moved": len(reports), "message": "其下报表已移入「未分类」"})
+    return fail(1001, "分类操作无效")
+
+
+@router.post("/import")
+def report_import(body: ImportBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    template = body.template
+    if not isinstance(template, dict):
+        return fail(1001, "文件格式不正确")
+    name = str(template.get("reportName") or template.get("name") or "").strip()
+    comps = template.get("comps")
+    if comps is None:
+        comps = template.get("components")
+    layout = template.get("layoutJson")
+    if comps is None and isinstance(layout, dict):
+        comps = layout.get("comps") or layout.get("components") or []
+    if not name or not isinstance(comps, list):
+        return fail(1001, "文件格式不正确")
+    known = {item["code"] for item in DATASETS if item.get("enabled", True)}
+    warnings = []
+    seen: set[str] = set()
+    for comp in comps:
+        if not isinstance(comp, dict):
+            return fail(1001, "文件格式不正确")
+        dataset = str(comp.get("dataset") or "").strip()
+        if dataset and dataset not in known and dataset not in seen:
+            seen.add(dataset)
+            warnings.append({"key": dataset, "message": f"数据源 {dataset} 需重新配置"})
+    tenant_id = tenant_of(actor)
+    rtype = str(template.get("reportType") or "REPORT").strip().upper() or "REPORT"
+    if rtype not in {"REPORT", "DASHBOARD"}:
+        rtype = "REPORT"
+    scope = str(template.get("shareScope") or "PRIVATE").strip().upper() or "PRIVATE"
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        scope = "PRIVATE"
+    now = utcnow()
+    row = BiReportDef(
+        report_no=next_report_no(db, tenant_id),
+        report_name=name,
+        report_type=rtype,
+        category=str(template.get("category") or "未分类").strip() or "未分类",
+        sub_category="",
+        status="DRAFT",
+        share_scope=scope,
+        layout_json=json.dumps({"layoutMode": "FREE", "comps": comps}, ensure_ascii=False),
+        creator_id=actor.id,
+        dept_id=primary_dept_id(db, actor.id, tenant_id),
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    names = user_names(db, [row.creator_id])
+    vo = report_def_vo(row, names)
+    return ok(
+        {
+            **vo,
+            "reportId": row.id,
+            "compCount": len(comps),
+            "warnings": warnings,
+            "formatOk": True,
+        }
+    )
 
 
 @router.get("/datasets")
@@ -444,6 +702,7 @@ def report_manage_list(
     reportType: str | None = None,
     category: str | None = None,
     status: str | None = None,
+    shareScope: str | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
     db: Session = Depends(db_session),
@@ -464,9 +723,12 @@ def report_manage_list(
     if reportType:
         q = q.where(BiReportDef.report_type == reportType.strip().upper())
     if category:
-        q = q.where(BiReportDef.category == category.strip())
+        names = category_match_names(db, tenant_id, category.strip())
+        q = q.where(BiReportDef.category.in_(names))
     if status:
         q = q.where(BiReportDef.status == status.strip().upper())
+    if shareScope:
+        q = q.where(BiReportDef.share_scope == shareScope.strip().upper())
     page_no, size = page_args(pageNo, pageSize)
     stmt = q.order_by(BiReportDef.id.desc())
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
@@ -484,6 +746,9 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
     rtype = body.reportType.strip().upper() or "REPORT"
     if rtype not in {"REPORT", "DASHBOARD"}:
         return fail(1001, "报表类型无效")
+    scope = (body.shareScope or "PRIVATE").strip().upper() or "PRIVATE"
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        return fail(1001, "可见范围无效")
     now = utcnow()
     row = BiReportDef(
         report_no=next_report_no(db, tenant_id),
@@ -492,6 +757,7 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
         category=body.category.strip() or "内容分析",
         sub_category=body.subCategory.strip(),
         status="DRAFT",
+        share_scope=scope,
         layout_json="{}",
         creator_id=actor.id,
         dept_id=primary_dept_id(db, actor.id, tenant_id),
