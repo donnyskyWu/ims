@@ -45,6 +45,8 @@
 | isHit | boolean | 爆款（segment=ALL 时） |
 | isLowScore | boolean | 低分（segment=ALL 时；BFF 按 COLLECT `LOW_SCORE` 阈值计算，同源 internal-content 列表字段） |
 
+`data.summary`（只读聚合，GET 不回写）：`hitCount` 爆款（库内）、`lowScoreCount` 低分（库内）。口径与当前筛选一致，不含 Tab 的 segment 裁剪。页面统计范围用中文，不展示 `ALL` / `HIT` / `LOW_SCORE`。
+
 ### 1.2 GET `/admin-api/ims/int-analysis/work/{id}/trend`
 
 **下游**：`GET /admin-api/oa/internal-content/{id}/trend`（默认近 7 日，见 M1）

@@ -175,12 +175,12 @@ def collect_works(
 ):
     seg = (segment or "").strip().upper()
     if seg not in SEGMENTS:
-        return fail(1001, "segment 必填且为 ALL/HIT/LOW_SCORE")
+        return fail(1001, "segment 必填且为 ALL/HIT/LOW_SCORE"), {}
 
     if err := check_enum(db, "dict_platform_type", platformType or None, False):
-        return err
+        return err, {}
     if err := check_enum(db, "dict_content_type", contentType or None, False):
-        return err
+        return err, {}
 
     tenant_id = tenant_of(actor)
     # BR-004：未配置 WORK 阈值时按完播率 <20% 过滤，避免低分 Tab 因 1251 被前端显示成网络错误。
@@ -213,15 +213,21 @@ def collect_works(
 
     rows = list(ops.scalars(stmt.order_by(InternalContent.publish_time.desc())).all())
     filtered: list[dict] = []
+    library_hit = 0
+    library_low = 0
     for row in rows:
         hit_play, low_completion, _ = work_thresholds(ops, tenant_id, row.platform_type or "")
         is_hit, is_low = classify(row, hit_play, low_completion)
+        if is_hit:
+            library_hit += 1
+        if is_low:
+            library_low += 1
         if seg == "HIT" and not is_hit:
             continue
         if seg == "LOW_SCORE" and not is_low:
             continue
         filtered.append(work_vo(row, segment=seg, hit_play=hit_play, low_completion=low_completion))
-    return filtered
+    return filtered, {"hitCount": library_hit, "lowScoreCount": library_low}
 
 
 @router.get("/work/page")
@@ -242,7 +248,7 @@ def work_page(
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
-    filtered = collect_works(
+    filtered, summary = collect_works(
         request,
         db,
         ops,
@@ -261,7 +267,9 @@ def work_page(
         return filtered
     page_no, size = page_args(pageNo, pageSize)
     start = (page_no - 1) * size
-    return paged(filtered[start : start + size], len(filtered), page_no, size)
+    payload = paged(filtered[start : start + size], len(filtered), page_no, size)
+    payload["data"]["summary"] = summary
+    return payload
 
 
 def account_vo(
@@ -461,7 +469,7 @@ def work_export(
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
-    filtered = collect_works(
+    filtered, _summary = collect_works(
         request,
         db,
         ops,

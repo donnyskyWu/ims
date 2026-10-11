@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内部作品</h1>
-        <div class="sub">Tab：全部/爆款/低分 · internal-content · 18b INT</div>
+        <div class="sub">全部 / 爆款 / 低分</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" data-testid="int-work-export" @click="exportCsv">导出</button>
@@ -11,8 +11,8 @@
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/corp/account/douyin')">平台账号</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">
-      爆款默认播放 ≥100w · 低分完播 &lt;20% · 阈值只读引用 COLLECT WORK 规则。
+    <p class="hint" style="margin-bottom: 8px" data-testid="int-work-hint">
+      爆款按 BR-003（默认播放 ≥100 万），低分按 BR-004（完播率 &lt;20%）。判定只读引用数据采集中的作品阈值。
     </p>
     <div class="cattabs">
       <button
@@ -33,15 +33,24 @@
         <option value="KUAISHOU">快手</option>
         <option value="WECHAT_CHANNELS">视频号</option>
       </select>
-      <input v-model.number="filters.ipGroupId" type="number" placeholder="IP 组 id" style="width: 110px" />
+      <select v-model="filters.ipGroupId" style="width: 140px" data-testid="int-work-ip-group">
+        <option value="">全部 IP 组</option>
+        <option v-for="group in ipGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+      </select>
+      <select v-model="filters.contentType" style="width: 120px" data-testid="int-work-type">
+        <option value="">全部类型</option>
+        <option v-for="item in contentTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
+      </select>
       <input v-model="filters.keyword" placeholder="标题关键词" style="width: 140px" />
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
     </form>
     <div class="g4" style="margin: 12px 0">
-      <div class="card stat"><span class="l">当前 Tab 作品</span><div class="n">{{ total }}</div></div>
-      <div class="card stat"><span class="l">segment</span><div class="n" style="font-size: 14px">{{ segment }}</div></div>
+      <div class="card stat"><span class="l">当前 Tab 作品</span><div class="n" data-testid="int-work-tab-count">{{ total }}</div></div>
+      <div class="card stat"><span class="l">爆款（库内）</span><div class="n" data-testid="int-work-hit-count">{{ libraryHit }}</div></div>
+      <div class="card stat"><span class="l">低分（库内）</span><div class="n" data-testid="int-work-low-count">{{ libraryLow }}</div></div>
+      <div class="card stat" data-testid="int-work-scope"><div class="n" style="font-size: 14px">{{ scopeText }}</div></div>
     </div>
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -67,7 +76,7 @@
             <tr v-for="row in rows" v-else :key="row.id">
               <td style="font-weight: 500">{{ row.title }}</td>
               <td>{{ row.accountName }}</td>
-              <td>{{ row.platformType }}</td>
+              <td>{{ platformLabel(row.platformType) }}</td>
               <td class="num">{{ formatPlay(row.playCount) }}</td>
               <td class="num">{{ row.completionRate }}%</td>
               <td>
@@ -91,7 +100,7 @@
     <ProtoDrawer :open="detailOpen" title="作品详情" width="480px" @close="detailOpen = false">
       <div v-if="detail" class="kv" data-testid="int-work-detail-body">
         <div><div class="k">账号</div><div class="v">{{ detail.accountName || '—' }}</div></div>
-        <div><div class="k">平台</div><div class="v">{{ detail.platformType }}</div></div>
+        <div><div class="k">平台</div><div class="v">{{ platformLabel(detail.platformType) }}</div></div>
         <div><div class="k">播放</div><div class="v">{{ formatPlay(detail.playCount) }}</div></div>
         <div><div class="k">完播率</div><div class="v">{{ detail.completionRate }}%</div></div>
       </div>
@@ -111,7 +120,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
@@ -148,11 +157,37 @@ const trend = ref<{ date: string; value: number }[]>([])
 const trendNote = ref('')
 const filters = reactive({
   platformType: '',
-  ipGroupId: null as number | null,
+  ipGroupId: '',
+  contentType: '',
   keyword: '',
   accountId: '' as string,
   accountName: '',
 })
+const ipGroups = ref<{ id: string; name: string }[]>([])
+const contentTypes = ref([
+  { value: 'ARTICLE', label: '文章' },
+  { value: 'SHORT_VIDEO', label: '短视频' },
+  { value: 'VIDEO', label: '视频' },
+])
+const libraryHit = ref(0)
+const libraryLow = ref(0)
+const scopeLabels: Record<string, string> = { ALL: '全部', HIT: '爆款', LOW_SCORE: '低分' }
+const platformLabels: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  WECHAT_OFFICIAL: '公众号',
+  XIAOHONGSHU: '小红书',
+}
+const scopeText = computed(() => {
+  const base = `统计范围：${scopeLabels[segment.value] || '全部'}`
+  const type = contentTypes.value.find((item) => item.value === filters.contentType)
+  return type ? `${base} · ${type.label}` : base
+})
+
+function platformLabel(code: string) {
+  return platformLabels[code] || '—'
+}
 
 function go(path: string) {
   router.push(path)
@@ -173,7 +208,8 @@ async function loadList() {
       pageSize: 20,
     }
     if (filters.platformType) params.platformType = filters.platformType
-    if (filters.ipGroupId) params.ipGroupId = filters.ipGroupId
+    if (filters.ipGroupId) params.ipGroupId = Number(filters.ipGroupId)
+    if (filters.contentType) params.contentType = filters.contentType
     if (filters.keyword) params.keyword = filters.keyword
     if (filters.accountId) params.accountId = filters.accountId
     if (filters.accountName) params.accountName = filters.accountName
@@ -182,14 +218,20 @@ async function loadList() {
       error.value = res.data.msg || '加载失败'
       rows.value = []
       total.value = 0
+      libraryHit.value = 0
+      libraryLow.value = 0
       return
     }
     rows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
+    libraryHit.value = Number(res.data.data.summary?.hitCount || 0)
+    libraryLow.value = Number(res.data.data.summary?.lowScoreCount || 0)
   } catch (e: unknown) {
     error.value = errorMessage(e)
     rows.value = []
     total.value = 0
+    libraryHit.value = 0
+    libraryLow.value = 0
   } finally {
     loading.value = false
   }
@@ -202,7 +244,8 @@ function switchSegment(value: string) {
 
 function resetFilters() {
   filters.platformType = ''
-  filters.ipGroupId = null
+  filters.ipGroupId = ''
+  filters.contentType = ''
   filters.keyword = ''
   filters.accountId = ''
   filters.accountName = ''
@@ -213,7 +256,8 @@ function listParams() {
   const params = new URLSearchParams()
   params.set('segment', segment.value)
   if (filters.platformType) params.set('platformType', filters.platformType)
-  if (filters.ipGroupId) params.set('ipGroupId', String(filters.ipGroupId))
+  if (filters.ipGroupId) params.set('ipGroupId', filters.ipGroupId)
+  if (filters.contentType) params.set('contentType', filters.contentType)
   if (filters.keyword) params.set('keyword', filters.keyword)
   if (filters.accountId) params.set('accountId', filters.accountId)
   if (filters.accountName) params.set('accountName', filters.accountName)
@@ -265,11 +309,37 @@ async function openDetail(row: (typeof rows.value)[number]) {
   }
 }
 
+async function loadIpGroups() {
+  try {
+    const res = await http.get('/ip-group/list', { params: { pageNo: 1, pageSize: 200 } })
+    const list = (res.data?.data?.list || []) as { id: number | string; groupName: string }[]
+    ipGroups.value = list.map((row) => ({ id: String(row.id), name: row.groupName }))
+  } catch {
+    ipGroups.value = []
+  }
+}
+
+async function loadContentTypes() {
+  try {
+    const res = await http.get('/system/dict-data/list', { params: { dictType: 'dict_content_type' } })
+    const rows = ((res.data.data || []) as { status?: string; dictValue: string; dictLabel: string }[]).filter(
+      (row) => row.status === 'ENABLED',
+    )
+    if (rows.length) {
+      contentTypes.value = rows.map((row) => ({ value: row.dictValue, label: row.dictLabel }))
+    }
+  } catch {
+    /* 保留文章 / 短视频 / 视频 */
+  }
+}
+
 onMounted(() => {
   const accountId = route.query.accountId
   const accountName = route.query.accountName
   if (typeof accountId === 'string' && accountId) filters.accountId = accountId
   if (typeof accountName === 'string' && accountName) filters.accountName = accountName
+  loadIpGroups()
+  loadContentTypes()
   loadList()
 })
 </script>
