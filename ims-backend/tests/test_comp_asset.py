@@ -54,6 +54,54 @@ def test_comp_asset_list_seeds():
     assert body["code"] == 0
     assert body["data"]["total"] >= 4
     assert any(row["compName"] == "Keep 官方" for row in body["data"]["list"])
+    numbers = [row["assetNo"] for row in body["data"]["list"]]
+    assert len(numbers) == len(set(numbers))
+    assert all(no.startswith("CP") and len(no) >= 11 for no in numbers)
+
+
+def test_duplicate_asset_nos_repaired_once():
+    from app.core import SessionLocal
+    from app.models import CompAsset
+
+    db = SessionLocal()
+    try:
+        for name in ("重复甲", "重复乙", "重复丙"):
+            db.add(
+                CompAsset(
+                    asset_no="CP20261011001",
+                    comp_name_std=name,
+                    platform="DOUYIN",
+                    status="APPROVED",
+                    tenant_id=0,
+                    created_by=1,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    auth = headers()
+    first = client.get(
+        "/admin-api/ims/comp/asset/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20},
+    ).json()
+    assert first["code"] == 0
+    rows = [row for row in first["data"]["list"] if row["compName"] in {"重复甲", "重复乙", "重复丙"}]
+    numbers = [row["assetNo"] for row in rows]
+    assert len(numbers) == 3
+    assert len(set(numbers)) == 3
+    assert "CP20261011001" in numbers
+
+    again = client.get(
+        "/admin-api/ims/comp/asset/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 20},
+    ).json()
+    again_numbers = [
+        row["assetNo"] for row in again["data"]["list"] if row["compName"] in {"重复甲", "重复乙", "重复丙"}
+    ]
+    assert sorted(again_numbers) == sorted(numbers)
 
 
 def test_comp_asset_create_enriched_from_ops():

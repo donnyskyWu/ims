@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
@@ -31,20 +32,86 @@ class AssetBody(BaseModel):
     engagementRate: float = Field(ge=0, default=0.0)
 
 
-def next_asset_no(db: Session, tenant_id: int) -> str:
+_CP_DAY = re.compile(r"^(CP\d{8})")
+
+
+def known_asset_nos(db: Session, tenant_id: int) -> set[str]:
+    found = {
+        no
+        for no in db.scalars(
+            select(CompAsset.asset_no).where(
+                CompAsset.deleted == 0,
+                CompAsset.tenant_id == tenant_id,
+                CompAsset.asset_no != "",
+            )
+        ).all()
+        if no
+    }
+    for obj in list(db.new) + list(db.dirty):
+        if (
+            isinstance(obj, CompAsset)
+            and int(obj.tenant_id or 0) == int(tenant_id)
+            and not obj.deleted
+            and obj.asset_no
+        ):
+            found.add(obj.asset_no)
+    return found
+
+
+def next_asset_no(
+    db: Session,
+    tenant_id: int,
+    *,
+    prefix: str | None = None,
+    reserved: set[str] | None = None,
+) -> str:
     day = datetime.now(BJ).strftime("%Y%m%d")
-    prefix = f"CP{day}"
-    count = db.scalar(
-        select(func.count())
-        .select_from(CompAsset)
-        .where(
-            CompAsset.deleted == 0,
-            CompAsset.tenant_id == tenant_id,
-            CompAsset.asset_no.like(f"{prefix}%"),
-        )
+    prefix = prefix or f"CP{day}"
+    numbers = known_asset_nos(db, tenant_id)
+    if reserved:
+        numbers |= reserved
+    seq = 0
+    for no in numbers:
+        if not no.startswith(prefix):
+            continue
+        tail = no[len(prefix) :]
+        if tail.isdigit():
+            seq = max(seq, int(tail))
+    seq += 1
+    candidate = f"{prefix}{seq:03d}"
+    while candidate in numbers:
+        seq += 1
+        candidate = f"{prefix}{seq:03d}"
+    return candidate
+
+
+def repair_duplicate_asset_nos(db: Session, tenant_id: int) -> int:
+    """同一租户里重复的 asset_no 只保留 id 最小的一条，其余改成同日前缀的下一个空号。
+
+    无表结构变更。列表读取时执行，重复消失后不再 UPDATE。
+    """
+    rows = list(
+        db.scalars(
+            select(CompAsset)
+            .where(CompAsset.deleted == 0, CompAsset.tenant_id == tenant_id)
+            .order_by(CompAsset.id.asc())
+        ).all()
     )
-    seq = int(count or 0) + 1
-    return f"{prefix}{seq:03d}"
+    seen: set[str] = set()
+    changed = 0
+    for row in rows:
+        current = row.asset_no or ""
+        if current and current not in seen:
+            seen.add(current)
+            continue
+        matched = _CP_DAY.match(current)
+        row.asset_no = next_asset_no(db, tenant_id, prefix=matched.group(1) if matched else None, reserved=seen)
+        row.updated_at = utcnow()
+        seen.add(row.asset_no)
+        changed += 1
+    if changed:
+        db.flush()
+    return changed
 
 
 def normalize_name(name: str) -> str:
@@ -208,6 +275,7 @@ def asset_list(
     if err := check_enum(db, "dict_platform_type", platform or None, False):
         return err
     ensure_seed_assets(db, tenant_id, actor.id)
+    repair_duplicate_asset_nos(db, tenant_id)
 
     stmt = select(CompAsset).where(CompAsset.deleted == 0, CompAsset.tenant_id == tenant_id)
     if compName.strip():

@@ -28,6 +28,15 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await expect(page.getByTestId('comp-conclusion')).toHaveValue('')
   await page.locator('.drawer.on').getByRole('button', { name: '取消' }).click()
 
+  const seeded = ['悦跑圈', '咕咚运动', '刘畊宏', 'Keep 官方']
+  const assetNos: string[] = []
+  for (const seededName of seeded) {
+    const text = await page.locator('.comp-card', { hasText: seededName }).innerText()
+    const matched = text.match(/CP\d+/)
+    assetNos.push(matched?.[0] || '')
+  }
+  expect(new Set(assetNos).size).toBe(seeded.length)
+
   await page.getByText('悦跑圈').click()
   await expect(page.getByTestId('comp-monitor-chip')).toBeVisible()
   await expect(page.getByTestId('comp-add-compare')).toBeVisible()
