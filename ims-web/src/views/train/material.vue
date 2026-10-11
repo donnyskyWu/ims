@@ -437,6 +437,7 @@ type Row = {
   requiredMinutes?: number
   status: string
   uploaderName: string
+  updatedAt?: string
 }
 
 type Weekly = {
