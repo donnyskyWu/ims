@@ -140,7 +140,7 @@ const reviewSteps = computed(() => {
       reviewer: row?.reviewerName || '待审',
       action: row ? actionName[row.action || ''] || row.action || '—' : '—',
       comment: row?.comment || '—',
-      time: row?.reviewedAt || '—',
+      time: formatShanghaiMinute(row?.reviewedAt),
     }
   })
 })
