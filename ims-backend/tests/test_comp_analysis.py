@@ -328,10 +328,10 @@ def test_content_type_remap_is_idempotent():
                 tenant_id=0,
             )
         )
-        db.add(ContentProject(title="旧图文", content_type="GRAPHIC", tenant_id=0))
-        db.add(ContentProject(title="旧图文码", content_type="IMAGE_TEXT", tenant_id=0))
-        db.add(ContentProject(title="旧切片项目", content_type="直播切片", tenant_id=0))
-        db.add(ContentProject(title="保持直播", content_type="LIVE", tenant_id=0))
+        db.add(ContentProject(title="旧图文", content_type="GRAPHIC", submitter_user_id=1, tenant_id=0))
+        db.add(ContentProject(title="旧图文码", content_type="IMAGE_TEXT", submitter_user_id=1, tenant_id=0))
+        db.add(ContentProject(title="旧切片项目", content_type="直播切片", submitter_user_id=1, tenant_id=0))
+        db.add(ContentProject(title="保持直播", content_type="LIVE", submitter_user_id=1, tenant_id=0))
         db.add(ContentSop(sop_code="LEGACY-IMG", sop_name="图文SOP", content_type="图文", tenant_id=0))
         ops.add(
             ExternalWork(
