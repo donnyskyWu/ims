@@ -1633,6 +1633,7 @@ class EffRelation(Base):
 
 class BiReportDef(Base):
     __tablename__ = "ims_bi_report_def"
+    __table_args__ = (UniqueConstraint("tenant_id", "report_no", name="uk_bi_report_no"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     report_no: Mapped[str] = mapped_column(String(32), default="", index=True)
     report_name: Mapped[str] = mapped_column(String(128), default="")

@@ -424,3 +424,36 @@ def test_bi_republish_menu_access_and_version():
     assert detail.json()["data"]["shareScope"] == "ALL"
     assert detail.json()["data"]["publishDest"] == "CENTER,MENU"
 
+def test_bi_import_report_no_uses_max_existing():
+    """BUG-C083：编号取已有最大值 +1，删除中间号后不能按条数撞上仍在用的编号。"""
+    auth = headers()
+    made = []
+    for index in range(3):
+        created = client.post(
+            "/admin-api/ims/bi/report",
+            headers=auth,
+            json={"reportName": f"编号种子{index}", "reportType": "REPORT", "category": "日报"},
+        )
+        assert created.json()["code"] == 0
+        made.append(created.json()["data"])
+    removed = client.delete(f"/admin-api/ims/bi/report/{made[0]['id']}", headers=auth)
+    assert removed.json()["code"] == 0
+    imported = client.post(
+        "/admin-api/ims/bi/report/import",
+        headers=auth,
+        json={
+            "template": {
+                "reportName": "编号导入",
+                "reportType": "REPORT",
+                "category": "日报",
+                "comps": [{"id": "c1", "type": "KPI", "title": "GMV", "dataset": "METRIC_LIB"}],
+            }
+        },
+    )
+    assert imported.json()["code"] == 0
+    fresh = imported.json()["data"]["reportNo"]
+    kept = {made[1]["reportNo"], made[2]["reportNo"]}
+    assert fresh not in kept
+    assert fresh != made[0]["reportNo"]
+    top = max(int(item["reportNo"].split("-")[1]) for item in made)
+    assert int(fresh.split("-")[1]) == top + 1

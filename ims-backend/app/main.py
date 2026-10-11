@@ -262,17 +262,28 @@ def ensure_bi_report_scope_column() -> None:
     if alters:
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE ims_bi_report_def {', '.join(alters)}"))
-    if "ims_bi_report_publish" not in insp.get_table_names():
-        return
-    pub_cols = {c["name"] for c in insp.get_columns("ims_bi_report_publish")}
-    pub_alters: list[str] = []
-    if "expire_days" not in pub_cols:
-        pub_alters.append("ADD COLUMN expire_days INT NOT NULL DEFAULT 7")
-    if "password_hash" not in pub_cols:
-        pub_alters.append("ADD COLUMN password_hash VARCHAR(128) NOT NULL DEFAULT ''")
-    if pub_alters:
+    if "ims_bi_report_publish" in insp.get_table_names():
+        pub_cols = {c["name"] for c in insp.get_columns("ims_bi_report_publish")}
+        pub_alters: list[str] = []
+        if "expire_days" not in pub_cols:
+            pub_alters.append("ADD COLUMN expire_days INT NOT NULL DEFAULT 7")
+        if "password_hash" not in pub_cols:
+            pub_alters.append("ADD COLUMN password_hash VARCHAR(128) NOT NULL DEFAULT ''")
+        if pub_alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_bi_report_publish {', '.join(pub_alters)}"))
+
+    index_names = {item.get("name") for item in insp.get_indexes("ims_bi_report_def")}
+    if "uk_bi_report_no" not in index_names:
         with engine.begin() as conn:
-            conn.execute(text(f"ALTER TABLE ims_bi_report_publish {', '.join(pub_alters)}"))
+            dupes = conn.execute(
+                text(
+                    "SELECT tenant_id, report_no FROM ims_bi_report_def "
+                    "GROUP BY tenant_id, report_no HAVING COUNT(*) > 1 LIMIT 1"
+                )
+            ).first()
+            if dupes is None:
+                conn.execute(text("CREATE UNIQUE INDEX uk_bi_report_no ON ims_bi_report_def (tenant_id, report_no)"))
 
 
 def ensure_bi_br212_columns() -> None:

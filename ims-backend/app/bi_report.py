@@ -388,15 +388,27 @@ def iso(dt: datetime | None) -> str:
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
+_REPORT_NO = re.compile(r"^RPT-(\d+)$")
 REPORT_EDIT_PERM = "bi:report:edit"
 
 
 def next_report_no(db: Session, tenant_id: int) -> str:
-    count = db.scalar(
-        select(func.count()).select_from(BiReportDef).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id)
-    )
-    seq = int(count or 0) + 1
-    return f"RPT-{seq:04d}"
+    """取本租户已有编号的最大值 +1。含已删除行，避免按条数重号。"""
+    numbers = db.scalars(
+        select(BiReportDef.report_no).where(BiReportDef.tenant_id == tenant_id).with_for_update()
+    ).all()
+    taken = {(item or "").strip() for item in numbers}
+    max_n = 0
+    for item in taken:
+        matched = _REPORT_NO.fullmatch(item)
+        if matched:
+            max_n = max(max_n, int(matched.group(1)))
+    seq = max_n + 1
+    while True:
+        candidate = f"RPT-{seq:04d}"
+        if candidate not in taken:
+            return candidate
+        seq += 1
 
 
 def has_report_edit_perm(db: Session, actor: User) -> bool:
