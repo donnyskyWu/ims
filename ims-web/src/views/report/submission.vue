@@ -240,7 +240,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 
 type Row = {
@@ -266,6 +266,7 @@ type QueueRow = Row & {
 }
 
 const router = useRouter()
+const route = useRoute()
 const tab = ref<'list' | 'audit'>('list')
 const rows = ref<Row[]>([])
 const queueRows = ref<QueueRow[]>([])
@@ -634,9 +635,30 @@ async function showDetail(row: Row) {
   }
 }
 
+async function openPreselected(templateId: number) {
+  form.templateId = templateId
+  form.period = new Date().toISOString().slice(0, 10)
+  form.authorId = 0
+  form.accountId = 0
+  form.rowCount = ''
+  form.remark = ''
+  formError.value = ''
+  attachmentName.value = ''
+  showForm.value = true
+  try {
+    await loadContext()
+    await onTemplateChange()
+  } catch (error) {
+    formError.value = describeError(error)
+  }
+}
+
 onMounted(() => {
   loadList()
   loadFilterAuthors()
+  const raw = route.query.templateId
+  const templateId = Number(Array.isArray(raw) ? raw[0] : raw || 0)
+  if (templateId) void openPreselected(templateId)
 })
 </script>
 

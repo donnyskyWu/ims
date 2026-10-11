@@ -159,7 +159,14 @@
               :style="row.overdue ? 'background:#fff4f2' : ''"
               :data-testid="String(row.taskType || '') === 'acct_transfer' ? 'wb-acct-transfer-todo' : undefined"
             >
-              <td>{{ cell(row, ['title']) }}</td>
+              <td>
+                <router-link
+                  v-if="reportFillPath(row)"
+                  :to="reportFillPath(row)"
+                  data-testid="wb-report-fill-title"
+                >{{ cell(row, ['title']) }}</router-link>
+                <template v-else>{{ cell(row, ['title']) }}</template>
+              </td>
               <td>{{ cell(row, ['status']) }}</td>
               <td>{{ overdueLabel(row) }}</td>
               <td>
@@ -178,6 +185,15 @@
                   @click="router.push(transferTodoPath(row))"
                 >
                   去处理
+                </button>
+                <button
+                  v-else-if="reportFillPath(row)"
+                  class="btn btn-txt"
+                  type="button"
+                  data-testid="wb-report-fill-go"
+                  @click="router.push(reportFillPath(row))"
+                >
+                  去填报
                 </button>
                 <button
                   v-else-if="String(row.status) === 'PENDING' && row.id != null"
@@ -284,6 +300,13 @@ function transferTodoPath(row: Record<string, unknown>) {
   if (!refId) return ''
   const platform = String(row.content || '').split('|')[0] || 'DOUYIN'
   return `/ims/corp/account/${platformSlug(platform)}?transferId=${refId}`
+}
+
+function reportFillPath(row: Record<string, unknown>) {
+  if (String(row.taskType || '') !== 'report_fill') return ''
+  const refId = Number(row.refId || 0)
+  if (!refId) return ''
+  return `/ims/report/submission?templateId=${refId}`
 }
 
 function flowForm(row: Record<string, unknown>) {

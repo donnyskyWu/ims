@@ -6,7 +6,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from typing import NamedTuple
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -602,12 +602,16 @@ def submission_vo(db: Session, ops: Session, row: ReportSubmission) -> dict:
 @router.post("/submit")
 def submit_report(
     body: SubmitBody,
+    request: Request,
     db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
     if not body.period.strip():
         return fail(1001, "period 必填")
+    err = require_fill_access(request, db, actor, body.templateId)
+    if err:
+        return err
     err = validate_author_account(ops, actor, body.authorId, body.accountId)
     if err:
         return err
@@ -661,6 +665,7 @@ def submit_report(
 
 @router.get("/submit/list")
 def submit_list(
+    request: Request,
     templateId: int | None = None,
     period: str | None = None,
     submitterUserId: int | None = None,
@@ -693,6 +698,8 @@ def submit_list(
         if submitStatus not in SUBMIT_STATUSES:
             return fail(1001, "submitStatus 无效")
         stmt = stmt.where(ReportSubmission.submit_status == submitStatus)
+    if scope_kind(request) != "ALL":
+        stmt = stmt.where(ReportSubmission.submitter_user_id == actor.id)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         db.scalars(
@@ -706,13 +713,18 @@ def submit_list(
 
 @router.get("/submit/context")
 def submit_context(
+    request: Request,
     templateId: int | None = None,
     authorId: int | None = None,
     db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
-    """填报下拉。先选启用中的模板，再给出作者，账号只含该作者 IP 组已绑定账号。"""
+    """填报下拉。先选启用中的模板，再给出作者，账号只含该作者 IP 组已绑定账号。
+
+    作者按租户列出，不按填报人的数据范围裁剪，否则被指派的人会看不到可用作者。
+    非全量账号只能看到指派给自己的模板。
+    """
     tenant_id = tenant_of(actor)
     templates = list(
         db.scalars(
@@ -725,6 +737,9 @@ def submit_context(
             .order_by(ReportTemplate.id.desc())
         ).all()
     )
+    if scope_kind(request) != "ALL":
+        allowed = filler_template_ids(db, actor)
+        templates = [row for row in templates if row.id in allowed]
     template_rows = [
         {
             "id": row.id,
@@ -742,6 +757,9 @@ def submit_context(
     if templateId:
         chosen = next((row for row in templates if row.id == templateId), None)
         if chosen is None:
+            denied = require_fill_access(request, db, actor, templateId)
+            if denied:
+                return denied
             raw = db.get(ReportTemplate, templateId)
             if raw is None or raw.deleted or raw.tenant_id != tenant_id:
                 return fail(1500, "模板不存在")
@@ -794,6 +812,7 @@ def submit_context(
 @router.get("/submit/{submission_no}")
 def submit_detail(
     submission_no: str,
+    request: Request,
     db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
@@ -808,6 +827,8 @@ def submit_detail(
     )
     if row is None:
         return fail(1500, "填报单不存在")
+    if scope_kind(request) != "ALL" and row.submitter_user_id != actor.id:
+        return fail(1008, "无数据权限")
     return ok(submission_vo(db, ops, row))
 
 
@@ -1282,6 +1303,43 @@ def stable_and_rotations(
         else:
             add_stable(enabled_user_ids(db, parse_user_ids(item.get("targetIds")), tenant_id))
     return stable, rotations
+
+
+def filler_template_ids(db: Session, user: User) -> set[int]:
+    """被指定的填报人。岗位展开到人，轮值花名册里的人都算被指派。"""
+    tenant_id = tenant_of(user)
+    found: set[int] = set()
+    templates = list(
+        db.scalars(
+            select(ReportTemplate).where(
+                ReportTemplate.deleted == 0,
+                ReportTemplate.tenant_id == tenant_id,
+                ReportTemplate.status == "ENABLED",
+            )
+        ).all()
+    )
+    for template in templates:
+        stable, rotations = stable_and_rotations(db, template, tenant_id)
+        people = set(stable)
+        for roster in rotations:
+            people.update(roster)
+        if user.id in people:
+            found.add(template.id)
+    return found
+
+
+def scope_kind(request: Request) -> str:
+    scope = getattr(request.state, "scope", None)
+    return str(getattr(scope, "kind", "") or "")
+
+
+def require_fill_access(request: Request, db: Session, actor: User, template_id: int):
+    """全量范围沿用原权限。其余账号靠填报人指派授权，不看菜单权限码。"""
+    if scope_kind(request) == "ALL":
+        return None
+    if template_id in filler_template_ids(db, actor):
+        return None
+    return fail(1008, "无数据权限")
 
 
 def obliged_for_period(

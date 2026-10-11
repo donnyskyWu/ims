@@ -532,6 +532,19 @@ def gate(db: Session, request, user: User) -> None:
         request.state.scope = None
         return
     table = match_table(request.method, path)
+    # 填报人指派即该模板的提交授权，部门/本岗范围不再被报表表的 scope 规格挡掉。
+    if path.startswith("/admin-api/ims/report/submit"):
+        from app.api import AuthError
+        from app.report import filler_template_ids
+
+        if filler_template_ids(db, user):
+            try:
+                scope = resolve(db, user)
+            except AuthError:
+                scope = DataScope(kind="SELF", user_id=user.id)
+            request.state.scope = scope
+            request.state.scope_table = table or "ims_report_submission"
+            return
     if table is None or table not in SPECS:
         deny()
     scope = resolve(db, user)

@@ -925,3 +925,123 @@ def test_report_template_frequency_dept_and_reenable():
     )
     assert enabled.json()["code"] == 0
     assert enabled.json()["data"]["status"] == "ENABLED"
+
+
+def _dept_user(username: str, mobile: str) -> int:
+    from app.core import SessionLocal
+    from app.models import Role, RolePerm, User, UserDept, UserRole
+    from app.security import hash_password
+
+    db = SessionLocal()
+    try:
+        user = User(
+            username=username,
+            nickname=username,
+            mobile=mobile,
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        role = Role(
+            role_name=username,
+            role_key=f"rpt:{username}",
+            data_scope="DEPT",
+            status="ENABLED",
+            source="MANUAL",
+            tenant_id=0,
+        )
+        db.add_all([user, role])
+        db.flush()
+        db.add(
+            RolePerm(
+                role_id=role.id,
+                module_code="auth",
+                perm_code="auth:workbench:query",
+                perm_level="R",
+                tenant_id=0,
+            )
+        )
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.add(UserDept(user_id=user.id, dept_id=8301, tenant_id=0))
+        db.commit()
+        return int(user.id)
+    finally:
+        db.close()
+
+
+def _login(username: str) -> dict:
+    token = client.post(
+        "/admin-api/ims/auth/login",
+        json={"username": username, "password": "Admin@123"},
+    ).json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_assigned_dept_filler_can_submit_without_report_menu_perm():
+    filler_id = _dept_user("rpt_fill_b083", "13900008301")
+    outsider_id = _dept_user("rpt_outsider_b083", "13900008302")
+    assert outsider_id != filler_id
+    auth = headers()
+    author_id, account_id, _ = seed_author_accounts()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "TB上报模板3",
+            "periodType": "DAILY",
+            "deadlineRule": "18:00",
+            "status": "ENABLED",
+            "businessLine": "BUSINESS",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [{"assignType": "USER", "targetIds": [filler_id]}],
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    template_id = created.json()["data"]["id"]
+
+    filler = _login("rpt_fill_b083")
+    context = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=filler,
+        params={"templateId": template_id},
+    )
+    body = context.json()
+    assert body["code"] == 0, body
+    assert any(row["id"] == template_id for row in body["data"]["templates"])
+
+    submitted = client.post(
+        "/admin-api/ims/report/submit",
+        headers=filler,
+        json={
+            "templateId": template_id,
+            "period": "2026-10-11",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"gmv": 12},
+            "asDraft": False,
+        },
+    )
+    assert submitted.json()["code"] == 0, submitted.json()
+
+    outsider = _login("rpt_outsider_b083")
+    denied = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=outsider,
+        params={"templateId": template_id},
+    )
+    assert denied.json()["code"] == 1008
+    blocked = client.post(
+        "/admin-api/ims/report/submit",
+        headers=outsider,
+        json={
+            "templateId": template_id,
+            "period": "2026-10-11",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"gmv": 1},
+            "asDraft": False,
+        },
+    )
+    assert blocked.json()["code"] == 1008
