@@ -1235,8 +1235,8 @@ async function openTransfer(row: { id: number; instanceNo: string }) {
   transferMsg.value = ''
   transferOpen.value = true
   try {
-    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
-    transferUsers.value = res.data.code === 0 ? res.data.data?.list || [] : []
+    const res = await http.get('/flow/task/transfer-candidates')
+    transferUsers.value = res.data.data?.list || []
   } catch {
     transferUsers.value = []
   }

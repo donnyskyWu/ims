@@ -1650,6 +1650,35 @@ def flow_task_handle(
     )
 
 
+@router.get("/task/transfer-candidates")
+def flow_transfer_candidates(
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """转交候选人。持有流程权限即可拉取，不要求系统用户管理权限。"""
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(User)
+            .where(
+                User.deleted == 0,
+                User.status == "ENABLED",
+                User.tenant_id == tenant_id,
+                User.id != actor.id,
+            )
+            .order_by(User.id.asc())
+        ).all()
+    )
+    return ok(
+        {
+            "list": [
+                {"id": user.id, "username": user.username, "nickname": user.nickname or user.username}
+                for user in rows
+            ]
+        }
+    )
+
+
 @router.put("/task/{task_id}/transfer")
 def flow_task_transfer(
     task_id: int,

@@ -266,6 +266,24 @@ def test_c027_return_requires_comment_and_transfer_once():
     assert "一次" in again["msg"]
 
 
+def test_c027_transfer_candidates_without_sys_user_perm():
+    """任务处理人拉转交目标，不走系统用户管理权限。"""
+    leader = login("tc_r4", "Admin@123")
+    denied = client.get(
+        "/admin-api/ims/system/user/page",
+        headers=leader,
+        params={"pageNo": 1, "pageSize": 20},
+    )
+    assert denied.status_code == 403
+    listed = client.get("/admin-api/ims/flow/task/transfer-candidates", headers=leader).json()
+    assert listed["code"] == 0, listed
+    rows = listed["data"]["list"]
+    assert rows
+    assert all(row["username"] != "tc_r4" for row in rows)
+    assert any(row["username"] == "admin" for row in rows)
+    assert all(row["id"] and row["nickname"] for row in rows)
+
+
 def test_c025_template_publish_version_and_disable():
     admin = login()
     created = client.post(
