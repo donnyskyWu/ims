@@ -177,8 +177,7 @@ def work_page(
         return err
 
     tenant_id = tenant_of(actor)
-    if seg == "LOW_SCORE" and not work_threshold_configured(ops, tenant_id):
-        return fail(1251, "作品阈值未配置")
+    # BR-004：未配置 WORK 阈值时按完播率 <20% 过滤，避免低分 Tab 因 1251 被前端显示成网络错误。
 
     load_scope_ip_groups(db, request, actor)
     scoped_groups = scope_ip_groups(request)

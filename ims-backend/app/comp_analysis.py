@@ -21,7 +21,6 @@ from app.int_analysis import (
     classify_account,
     fans_threshold_configured,
     fans_thresholds,
-    work_threshold_configured,
     work_thresholds,
 )
 from app.models import User
@@ -147,8 +146,7 @@ def collect_works(
 
     tenant_id = tenant_of(actor)
     ensure_comp_monitor_stub(ops, tenant_id)
-    if seg == "LOW_SCORE" and not work_threshold_configured(ops, tenant_id):
-        return None, fail(1251, "作品阈值未配置")
+    # 与内部作品同一口径：LOW_SCORE 未配置阈值时用 BR-004 默认完播率 <20%，不返回 1251。
 
     load_scope_ip_groups(db, request, actor)
     scoped_groups = scope_ip_groups(request)

@@ -60,7 +60,7 @@
               <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无作品' }}</div></div></td>
+              <td colspan="6"><div class="empty" data-testid="int-work-empty"><div class="et">{{ error || '暂无作品' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td style="font-weight: 500">{{ row.title }}</td>
@@ -88,7 +88,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { http, errorMessage } from '../../api/http'
 
 const router = useRouter()
 const tabs = [
@@ -145,7 +145,9 @@ async function loadList() {
     rows.value = res.data.data.list || []
     total.value = res.data.data.total || 0
   } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '网络错误'
+    error.value = errorMessage(e)
+    rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }

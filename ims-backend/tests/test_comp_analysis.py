@@ -182,7 +182,8 @@ def test_comp_account_low_fans_requires_threshold():
     assert low_body["data"]["list"][0]["accountName"] == "竞品低粉号"
 
 
-def test_comp_work_low_score_requires_threshold():
+def test_comp_work_low_score_uses_br004_default():
+    """BUG-B028：竞品低分 Tab 与内部作品同一根因，未配置阈值时按完播率 <20% 加载。"""
     seed_external_works()
     auth = headers()
     missing = client.get(
@@ -190,7 +191,11 @@ def test_comp_work_low_score_requires_threshold():
         headers=auth,
         params={"segment": "LOW_SCORE", "pageNo": 1, "pageSize": 20},
     )
-    assert missing.json()["code"] == 1251
+    missing_body = missing.json()
+    assert missing_body["code"] == 0
+    assert missing_body["data"]["total"] == 1
+    assert missing_body["data"]["list"][0]["title"] == "对手日常更新"
+    assert missing_body["data"]["list"][0]["isLowScore"] is True
 
     created = client.post(
         "/admin-api/ims/collect/threshold",
