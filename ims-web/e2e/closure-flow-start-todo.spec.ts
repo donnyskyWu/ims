@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test'
  * Checklist **E2E-FLOW-01**（acceptance · 非 narrow smoke）
  * Given: 已发布流程模板 · admin 会话
  * When: UI 发起 → 流程实例可见 → 我的待办「通过」
- * Then: 待办表无该单号 · 实例表状态 tag「已通过」+ 标题可见
+ * Then: 待办表无该单号 · 实例表状态 tag「已完成」+ 标题可见
  */
 test.describe('flow start todo approve closure', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
@@ -69,7 +69,7 @@ test.describe('flow start todo approve closure', () => {
     await page.getByRole('button', { name: '流程实例' }).click()
     const instRowAfter = instTable.locator('tbody tr').filter({ hasText: instanceNo }).first()
     await expect(instRowAfter).toBeVisible({ timeout: 15_000 })
-    await expect(instRowAfter.locator('.tag')).toContainText('已通过')
+    await expect(instRowAfter.locator('.tag')).toContainText('已完成')
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })

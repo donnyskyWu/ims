@@ -143,13 +143,16 @@ test.describe('flow local tails closure', () => {
     promptText = ''
     await todoRow.getByTestId('flow-reject').click()
     await page.getByTestId('flow-reject-confirm').click()
-    await expect(page.getByTestId('flow-handle-hint')).toContainText('退回建议填写意见')
+    await expect(page.getByTestId('flow-reject-msg')).toContainText('退回意见必填')
+    await page.getByTestId('flow-reject-comment').fill('请补充材料')
+    await page.getByTestId('flow-reject-confirm').click()
+    await expect(page.getByTestId('flow-reject-done')).toContainText(instanceNo)
     await shot(page, 'flow-188-reject-empty-comment')
 
     await page.getByRole('button', { name: '流程实例' }).click()
     const instTable = page.locator('.tbl-wrap table').filter({ has: page.locator('th', { hasText: '状态' }) })
     const instRow = instTable.locator('tbody tr').filter({ hasText: instanceNo }).first()
-    await expect(instRow.locator('.tag')).toContainText('已驳回', { timeout: 15_000 })
+    await expect(instRow.locator('.tag')).toContainText('进行中', { timeout: 15_000 })
 
     await page.getByRole('button', { name: '流程模板' }).click()
     const tplForm = page.locator('form.qbar')

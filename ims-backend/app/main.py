@@ -510,10 +510,47 @@ def ensure_user_mapping_position_column() -> None:
         )
 
 
+def ensure_flow_columns() -> None:
+    """已有库补流程节点图、转交标记和版本号。create_all 不会改旧表。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    alters: list[str] = []
+    if "ims_flow_template" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_flow_template")}
+        if "nodes" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN nodes JSON NULL")
+        if "sla_hours" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN sla_hours INT NOT NULL DEFAULT 24")
+        if "version_no" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN version_no INT NOT NULL DEFAULT 1")
+        if "start_count" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN start_count INT NOT NULL DEFAULT 0")
+    if "ims_flow_task" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_flow_task")}
+        if "sla_hours" not in cols:
+            alters.append("ALTER TABLE ims_flow_task ADD COLUMN sla_hours INT NOT NULL DEFAULT 24")
+        if "allow_transfer" not in cols:
+            alters.append("ALTER TABLE ims_flow_task ADD COLUMN allow_transfer INT NOT NULL DEFAULT 1")
+    if "ims_flow_instance" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_flow_instance")}
+        if "current_node_order" not in cols:
+            alters.append("ALTER TABLE ims_flow_instance ADD COLUMN current_node_order INT NOT NULL DEFAULT 1")
+        if "template_version" not in cols:
+            alters.append("ALTER TABLE ims_flow_instance ADD COLUMN template_version INT NOT NULL DEFAULT 1")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for stmt in alters:
+            conn.execute(text(stmt))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
     ensure_role_remark_column()
+    ensure_flow_columns()
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()

@@ -114,6 +114,7 @@ SPECS = {
     "ims_exam_assignment": Spec(creator=True, creator_col="user_id"),
     "ims_exam_record": Spec(creator=True, creator_col="user_id"),
     # 本部门角色（运营总监审阅/业务流程）可以打开这些管理视图，不能因表上没有 dept_id 直接 403。
+    # 规格按业务域/本人过滤，不按 IP 组收窄这三张表。
     "ims_flow_template": Spec(dept=True, creator=True, creator_col="creator_id"),
     "ims_flow_instance": Spec(dept=True, creator=True, creator_col="initiator_user_id"),
     "ims_flow_task": Spec(dept=True, creator=True, creator_col="assignee_user_id"),
@@ -299,6 +300,10 @@ PREFIXES = [
     ("PUT", "/admin-api/ims/perf/exam/record", "ims_exam_record"),
     ("GET", "/admin-api/ims/perf/exam", "ims_exam_question"),
     ("GET", "/admin-api/ims/flow/template", "ims_flow_template"),
+    ("POST", "/admin-api/ims/flow/template", "ims_flow_template"),
+    ("PUT", "/admin-api/ims/flow/template", "ims_flow_template"),
+    ("GET", "/admin-api/ims/flow/version", "ims_flow_template"),
+    ("POST", "/admin-api/ims/flow/version", "ims_flow_template"),
     ("GET", "/admin-api/ims/flow/instance", "ims_flow_instance"),
     ("POST", "/admin-api/ims/flow/instance", "ims_flow_instance"),
     ("PUT", "/admin-api/ims/flow/instance", "ims_flow_instance"),
@@ -528,6 +533,38 @@ def fit(scope: DataScope, spec: Spec) -> None:
         deny()
 
 
+FLOW_TABLES = frozenset({"ims_flow_template", "ims_flow_instance", "ims_flow_task"})
+
+
+def flow_role_scope(db: Session, user: User) -> DataScope:
+    """工作流表在 resolve 因空菜单 1008 时的兜底：已启用角色仍做数据范围校验。
+
+    功能权限由 enforce_function 先拦。无角色、非法范围、空 IP 组维持 fail-closed。
+    规格按业务域/本人过滤，不按 IP 组收窄这三张表，IP_GROUP 在 fit 处 1008。
+    """
+    roles = enabled_roles(db, user)
+    if not roles:
+        deny()
+    for role in roles:
+        if role.data_scope not in VALID_SCOPES:
+            deny()
+    kind = max((role.data_scope for role in roles), key=lambda item: RANK[item])
+    scope = DataScope(kind=kind, user_id=user.id, dept_ids=dept_ids_of(db, user))
+    if kind == "IP_GROUP":
+        rows = db.scalars(
+            select(UserScope.scope_value).where(
+                UserScope.user_id == user.id,
+                UserScope.deleted == 0,
+                UserScope.scope_type == "IP_GROUP",
+                UserScope.tenant_id == (user.tenant_id or 0),
+            )
+        ).all()
+        scope.ip_group_ids = sorted({int(row) for row in rows if str(row).isdigit()})
+        if not scope.ip_group_ids:
+            deny()
+    return scope
+
+
 def gate(db: Session, request, user: User) -> None:
     path = request.url.path
     if any(path.startswith(prefix) for prefix in WHITELIST_PREFIXES):
@@ -536,7 +573,14 @@ def gate(db: Session, request, user: User) -> None:
     table = match_table(request.method, path)
     if table is None or table not in SPECS:
         deny()
-    scope = resolve(db, user)
+    from app.api import AuthError
+
+    try:
+        scope = resolve(db, user)
+    except AuthError:
+        if table not in FLOW_TABLES:
+            raise
+        scope = flow_role_scope(db, user)
     fit(scope, SPECS[table])
     request.state.scope = scope
     request.state.scope_table = table

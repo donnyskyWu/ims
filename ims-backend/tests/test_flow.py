@@ -491,15 +491,23 @@ def test_flow_reject_edges_and_repeat_handle():
     assert bad_node["code"] == 1001
     assert "退回目标节点" in bad_node["msg"]
 
-    rejected = client.put(
+    empty = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
         headers=auth,
         json={"action": "REJECT", "comment": "   "},
     ).json()
+    assert empty["code"] == 1001
+    assert "退回意见必填" in empty["msg"]
+
+    rejected = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=auth,
+        json={"action": "REJECT", "comment": "请补充材料"},
+    ).json()
     assert rejected["code"] == 0
     assert rejected["data"]["newStatus"] == "REJECTED"
+    assert rejected["data"]["isInstanceFinished"] is False
     assert rejected["data"]["rejectToNodeOrder"] == 1
-    assert rejected["data"]["commentHint"] == "退回建议填写意见"
 
     again = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
@@ -674,21 +682,28 @@ def test_flow_detail_revoke_and_timeout_filter():
         params={"pageNo": 1, "pageSize": 50},
     ).json()
     task = next(row for row in todo["data"]["list"] if row["instanceNo"] == reject_no)
-    rejected = client.put(
+    empty = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
         headers=auth,
         json={"action": "REJECT", "comment": ""},
     ).json()
+    assert empty["code"] == 1001
+    assert "退回意见必填" in empty["msg"]
+
+    rejected = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=auth,
+        json={"action": "REJECT", "comment": "请补充材料"},
+    ).json()
     assert rejected["code"] == 0
     assert rejected["data"]["newStatus"] == "REJECTED"
+    assert rejected["data"]["isInstanceFinished"] is False
     assert rejected["data"]["rejectToNodeOrder"] == 1
-    assert rejected["data"]["commentHint"] == "退回建议填写意见"
 
     rejected_detail = client.get(f"/admin-api/ims/flow/instance/{reject_no}", headers=auth).json()["data"]
-    assert rejected_detail["edgeCopy"] == "实例已驳回结束，不可撤销。"
-    assert rejected_detail["canRevoke"] is False
-    blocked = client.put(f"/admin-api/ims/flow/instance/{reject_no}/revoke", headers=auth).json()
-    assert blocked["code"] == 1140
+    assert rejected_detail["instanceStatus"] == "RUNNING"
+    assert rejected_detail["canRevoke"] is True
+    assert "进行中" in rejected_detail["edgeCopy"]
 
 
 def headers_for(username: str) -> dict:

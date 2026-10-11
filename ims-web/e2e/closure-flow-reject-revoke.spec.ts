@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 
 /**
  * #203 FLOW 本地收尾（acceptance）
- * 已超时筛选空态、实例详情边界文案、撤销留痕、驳回抽屉（取消不提交，空意见可驳回）。
+ * 已超时筛选空态、实例详情边界文案、撤销留痕、退回意见必填且单据回到发起人。
  * 不覆盖 #188 的 SLA / 退回目标节点 / 钉钉督办桩。
  */
 test.describe('flow reject revoke local tails', () => {
@@ -114,29 +114,37 @@ test.describe('flow reject revoke local tails', () => {
     const todoRow = todoTable.locator('tbody tr').filter({ hasText: rejectNo }).first()
     await expect(todoRow).toBeVisible({ timeout: 15_000 })
     await todoRow.getByTestId('flow-reject').click()
-    await expect(page.getByTestId('flow-reject-copy')).toContainText('建议填写退回意见，可不填')
+    await expect(page.getByTestId('flow-reject-copy')).toContainText('退回意见必填')
     await shot('reject-drawer')
+    await page.getByTestId('flow-reject-confirm').click()
+    await expect(page.getByTestId('flow-reject-msg')).toContainText('退回意见必填')
     await page.getByTestId('flow-reject-cancel').click()
     await expect(todoRow).toBeVisible()
 
     await todoRow.getByTestId('flow-reject').click()
+    await page.getByTestId('flow-reject-comment').fill('请补充材料')
     const rejectResp = page.waitForResponse(
       (r) => r.url().includes('/flow/task/') && r.url().includes('/handle') && r.request().method() === 'PUT',
     )
     await page.getByTestId('flow-reject-confirm').click()
-    const rejectBody = (await (await rejectResp).json()) as { code: number; data?: { newStatus?: string } }
+    const rejectBody = (await (await rejectResp).json()) as {
+      code: number
+      data?: { newStatus?: string; isInstanceFinished?: boolean }
+    }
     expect(rejectBody.code).toBe(0)
     expect(rejectBody.data?.newStatus).toBe('REJECTED')
+    expect(rejectBody.data?.isInstanceFinished).toBe(false)
     await expect(page.getByTestId('flow-reject-done')).toContainText(rejectNo)
-    await expect(todoTable.locator('tbody tr').filter({ hasText: rejectNo })).toHaveCount(0, { timeout: 15_000 })
 
     await page.getByRole('button', { name: '流程实例' }).click()
     const rejectedRow = instTable.locator('tbody tr').filter({ hasText: rejectNo }).first()
     await expect(rejectedRow).toBeVisible({ timeout: 15_000 })
+    await expect(rejectedRow.locator('.tag')).toContainText('进行中')
     await rejectedRow.getByTestId('flow-instance-detail').click()
-    await expect(page.getByTestId('flow-detail-edge')).toContainText('实例已驳回结束，不可撤销')
-    await expect(page.getByTestId('flow-revoke')).toHaveCount(0)
+    await expect(page.getByTestId('flow-detail-edge')).toContainText('进行中')
+    await expect(page.getByTestId('flow-detail-handler')).toBeVisible()
     await expect(page.locator('.drawer').getByText(rejectTitle)).toBeVisible()
+    await expect(page.locator('.drawer').getByText('请补充材料')).toBeVisible()
     await shot('detail-rejected')
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])

@@ -1896,6 +1896,10 @@ class FlowTemplate(Base):
     status: Mapped[str] = mapped_column(String(16), default="DRAFT")
     version_label: Mapped[str] = mapped_column(String(16), default="v1.0")
     node_count: Mapped[int] = mapped_column(Integer, default=0)
+    nodes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    sla_hours: Mapped[int] = mapped_column(Integer, default=24)
+    version_no: Mapped[int] = mapped_column(Integer, default=1)
+    start_count: Mapped[int] = mapped_column(Integer, default=0)
     creator_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
@@ -1912,6 +1916,8 @@ class FlowTask(Base):
     node_type: Mapped[str] = mapped_column(String(16), default="APPROVE")
     assignee_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     task_status: Mapped[str] = mapped_column(String(16), default="PENDING", index=True)
+    sla_hours: Mapped[int] = mapped_column(Integer, default=24)
+    allow_transfer: Mapped[int] = mapped_column(Integer, default=1)
     comment: Mapped[str] = mapped_column(String(512), default="")
     remind_count: Mapped[int] = mapped_column(Integer, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
@@ -1937,6 +1943,8 @@ class FlowInstance(Base):
     form_data: Mapped[dict] = mapped_column(JSON, default=dict)
     instance_status: Mapped[str] = mapped_column(String(16), default="RUNNING", index=True)
     current_node_name: Mapped[str] = mapped_column(String(128), default="")
+    current_node_order: Mapped[int] = mapped_column(Integer, default=1)
+    template_version: Mapped[int] = mapped_column(Integer, default=1)
     initiator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
@@ -1944,6 +1952,26 @@ class FlowInstance(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FlowTemplateVersion(Base):
+    """已发布模板的节点快照。回滚生成新版本号，在途实例仍读发起时的版本。"""
+
+    __tablename__ = "ims_flow_template_version"
+    __table_args__ = (UniqueConstraint("tenant_id", "template_id", "version_no", name="uk_flow_tpl_ver"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    template_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    version_no: Mapped[int] = mapped_column(Integer, default=1)
+    nodes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    template_name: Mapped[str] = mapped_column(String(128), default="")
+    sla_hours: Mapped[int] = mapped_column(Integer, default=24)
+    change_desc: Mapped[str] = mapped_column(String(256), default="")
+    version_status: Mapped[str] = mapped_column(String(16), default="CURRENT")
+    published_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    published_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class ExamQuestion(Base):

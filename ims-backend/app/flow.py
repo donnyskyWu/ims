@@ -13,7 +13,32 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import FlowInstance, FlowTask, FlowTemplate, Role, User, UserRole
+from app.flow_graph import (
+    PREVIEW_NODES,
+    SLA_CHOICES,
+    chain_text,
+    diff_nodes,
+    ends_moved,
+    next_human_node,
+    node_by_order,
+    nodes_from_chain,
+    nodes_from_preview,
+    normalize_nodes,
+    opening_node,
+    validate_dag,
+    validate_rules,
+)
+from app.models import (
+    FlowInstance,
+    FlowTask,
+    FlowTemplate,
+    FlowTemplateVersion,
+    Role,
+    User,
+    UserRole,
+    WorkMessage,
+)
+from app.scope import dept_ids_of, enabled_roles
 
 router = APIRouter(prefix="/flow", tags=["flow"])
 
@@ -40,31 +65,6 @@ FIRST_NODE_BY_CODE = {
     "FL-CONTENT": "内容初审",
     "FL-LIVE": "直属领导审批",
 }
-# 本地预览桩：不落设计器，按种子模板给出串行节点与处理人预览文案。
-PREVIEW_NODES: dict[str, list[tuple[int, str, str, str]]] = {
-    "FL-LEAVE": [
-        (1, "发起申请", "TASK", "发起人"),
-        (2, "部门负责人审批", "APPROVE", "岗位·部门负责人"),
-        (3, "人事备案", "CC", "抄送·人事"),
-        (4, "归档", "TIMER", "定时·归档"),
-    ],
-    "FL-REIMB": [
-        (1, "发起报销", "TASK", "发起人"),
-        (2, "部门负责人审批", "APPROVE", "岗位·部门负责人"),
-        (3, "财务复核", "APPROVE", "岗位·财务"),
-        (4, "出纳付款", "TASK", "岗位·出纳"),
-        (5, "归档", "TIMER", "定时·归档"),
-    ],
-    "FL-CONTENT": [
-        (1, "提交内容", "TASK", "发起人"),
-        (2, "内容初审", "APPROVE", "岗位·内容审核"),
-        (3, "发布确认", "APPROVE", "岗位·内容负责人"),
-    ],
-    "FL-LIVE": [
-        (1, "发起开播", "TASK", "发起人"),
-        (2, "直属领导审批", "APPROVE", "发起人直属上级（运行时按组织解析）"),
-    ],
-}
 DINGTALK_TIMEOUT_MARK = "__DINGTALK_TIMEOUT__"
 WARN_SLA_RATIO = 0.8
 
@@ -84,12 +84,50 @@ class FlowTaskHandleBody(BaseModel):
     comment: str = ""
     rejectToNodeOrder: int | None = None
     formDataPatch: dict[str, str | int | float | None] | None = None
+    advance: bool = False
+
+
+class FlowTaskTransferBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    toUserId: int | None = None
+    transferReason: str = ""
 
 
 class FlowTimeoutUrgeBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     urgeMessage: str | None = None
+    fromInstance: bool = False
+
+
+class FlowTemplateWriteBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    templateName: str = ""
+    businessDomain: str = "COMMON"
+    slaHours: int | None = None
+    nodeChain: str | None = None
+    nodes: list[dict] = Field(default_factory=list)
+    status: str | None = None
+    changeDesc: str = ""
+
+
+class FlowTemplatePublishBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    templateName: str | None = None
+    slaHours: int | None = None
+    nodeChain: str | None = None
+    nodes: list[dict] | None = None
+    changeDesc: str = ""
+
+
+class FlowVersionRollbackBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    targetVersion: int
+    changeDesc: str = ""
 
 
 STATUS_LABELS = {
@@ -97,7 +135,7 @@ STATUS_LABELS = {
     "PUBLISHED": "已发布",
     "DISABLED": "已停用",
     "RUNNING": "进行中",
-    "APPROVED": "已通过",
+    "APPROVED": "已完成",
     "REJECTED": "已驳回",
     "CANCELLED": "已撤销",
     "TIMEOUT": "已超时",
@@ -113,6 +151,7 @@ def iso(dt: datetime | None) -> str:
 
 
 def template_vo(row: FlowTemplate, names: dict[int, str]) -> dict:
+    stored = normalize_nodes(row.nodes) if row.nodes else []
     return {
         "id": row.id,
         "templateCode": row.template_code,
@@ -122,7 +161,11 @@ def template_vo(row: FlowTemplate, names: dict[int, str]) -> dict:
         "status": row.status,
         "statusLabel": STATUS_LABELS.get(row.status, row.status),
         "versionLabel": row.version_label,
+        "version": int(row.version_no or template_version_no(row)),
         "nodeCount": row.node_count,
+        "slaHours": int(row.sla_hours or DEFAULT_SLA_HOURS),
+        "nodeChain": chain_text(stored) if stored else "",
+        "startCount": int(row.start_count or 0),
         "creatorName": names.get(row.creator_id, ""),
         "updatedAt": iso(row.updated_at),
     }
@@ -150,7 +193,14 @@ def next_instance_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{n:03d}"
 
 
-def instance_start_vo(row: FlowInstance, tpl: FlowTemplate, actor: User, names: dict[int, str]) -> dict:
+def instance_start_vo(
+    row: FlowInstance,
+    tpl: FlowTemplate,
+    names: dict[int, str],
+    *,
+    assignee_user_id: int,
+    node_order: int = 1,
+) -> dict:
     title = row.title or str((row.form_data or {}).get("title") or "")
     return {
         "id": row.id,
@@ -163,10 +213,10 @@ def instance_start_vo(row: FlowInstance, tpl: FlowTemplate, actor: User, names: 
         "title": title,
         "currentNodes": [
             {
-                "nodeOrder": 1,
+                "nodeOrder": node_order,
                 "nodeName": row.current_node_name,
-                "assigneeUserId": actor.id,
-                "assigneeName": names.get(actor.id, ""),
+                "assigneeUserId": assignee_user_id,
+                "assigneeName": names.get(assignee_user_id, ""),
             }
         ],
         "instanceStatus": row.instance_status,
@@ -213,6 +263,7 @@ def task_vo(task: FlowTask, inst: FlowInstance, names: dict[int, str], *, now: d
         "formData": inst.form_data or {},
         "handledAt": iso(task.handled_at),
         "comment": task.comment or "",
+        "allowTransfer": bool(task.allow_transfer),
         "startedAt": iso(task.started_at),
         **sla_view(task, now=now),
     }
@@ -375,6 +426,11 @@ def ensure_pending_task(
     tenant_id: int,
     assignee_user_id: int,
     node_name: str,
+    *,
+    node_order: int = 1,
+    node_type: str = "APPROVE",
+    sla_hours: int = DEFAULT_SLA_HOURS,
+    allow_transfer: int = 1,
 ) -> FlowTask | None:
     if inst.instance_status != "RUNNING":
         return None
@@ -391,11 +447,13 @@ def ensure_pending_task(
     now = utcnow()
     task = FlowTask(
         instance_id=inst.id,
-        node_order=1,
+        node_order=node_order,
         node_name=node_name or inst.current_node_name or "审批节点",
-        node_type="APPROVE",
+        node_type=node_type or "APPROVE",
         assignee_user_id=assignee_user_id,
         task_status="PENDING",
+        sla_hours=sla_hours or DEFAULT_SLA_HOURS,
+        allow_transfer=allow_transfer,
         tenant_id=tenant_id,
         started_at=now,
         created_at=now,
@@ -407,6 +465,10 @@ def ensure_pending_task(
 
 
 def sync_seed_tasks(db: Session, tenant_id: int, default_assignee_id: int) -> None:
+    """给还没有待办的运行中实例补一条。处理人按节点规则解析，解析不到再用发起人。
+
+    default_assignee_id 只在发起人也为空时兜底，避免谁打开待办就把单子领走。
+    """
     running = list(
         db.scalars(
             select(FlowInstance).where(
@@ -417,7 +479,23 @@ def sync_seed_tasks(db: Session, tenant_id: int, default_assignee_id: int) -> No
         ).all()
     )
     for inst in running:
-        ensure_pending_task(db, inst, tenant_id, default_assignee_id, inst.current_node_name)
+        assignee_id, node = _assignee_for_instance(db, inst)
+        if assignee_id <= 0:
+            assignee_id = inst.initiator_user_id or default_assignee_id
+        node_name = (node or {}).get("nodeName") or inst.current_node_name
+        node_order = int((node or {}).get("nodeOrder") or inst.current_node_order or 1)
+        node_type = str((node or {}).get("nodeType") or "APPROVE")
+        sla_hours = int((node or {}).get("slaHours") or DEFAULT_SLA_HOURS)
+        ensure_pending_task(
+            db,
+            inst,
+            tenant_id,
+            assignee_id,
+            node_name,
+            node_order=node_order,
+            node_type=node_type,
+            sla_hours=sla_hours,
+        )
 
 
 def _backdate_demo_timeout_task(db: Session, tenant_id: int) -> None:
@@ -482,7 +560,27 @@ def _mark_demo_warn_task(db: Session, tenant_id: int) -> None:
         return
 
 
-def instance_vo(row: FlowInstance, names: dict[int, str]) -> dict:
+def _pending_by_instance(db: Session, tenant_id: int, instance_ids: list[int]) -> dict[int, FlowTask]:
+    if not instance_ids:
+        return {}
+    tasks = list(
+        db.scalars(
+            select(FlowTask).where(
+                FlowTask.deleted == 0,
+                FlowTask.tenant_id == tenant_id,
+                FlowTask.instance_id.in_(instance_ids),
+                FlowTask.task_status == "PENDING",
+            )
+        ).all()
+    )
+    found: dict[int, FlowTask] = {}
+    for task in tasks:
+        found.setdefault(task.instance_id, task)
+    return found
+
+
+def instance_vo(row: FlowInstance, names: dict[int, str], pending: FlowTask | None = None) -> dict:
+    assignee_id = pending.assignee_user_id if pending is not None else 0
     return {
         "id": row.id,
         "instanceNo": row.instance_no,
@@ -492,6 +590,10 @@ def instance_vo(row: FlowInstance, names: dict[int, str]) -> dict:
         "instanceStatus": row.instance_status,
         "instanceStatusLabel": STATUS_LABELS.get(row.instance_status, row.instance_status),
         "currentNodeName": row.current_node_name,
+        "currentNodeOrder": row.current_node_order or (pending.node_order if pending is not None else 0),
+        "currentAssigneeUserId": assignee_id,
+        "currentAssigneeName": names.get(assignee_id, "") if assignee_id else "",
+        "pendingTaskId": pending.id if pending is not None else 0,
         "initiatorName": names.get(row.initiator_user_id, ""),
         "startedAt": iso(row.started_at),
         "finishedAt": iso(row.finished_at),
@@ -508,6 +610,150 @@ def _actor_is_r1(db: Session, actor: User) -> bool:
         select(Role).where(Role.id.in_(role_ids), Role.deleted == 0, Role.status == "ENABLED")
     ).all()
     return any(role.role_key == "sys:admin" for role in roles)
+
+
+def _role_is_leader(role: Role) -> bool:
+    key = (role.role_key or "").lower()
+    name = role.role_name or ""
+    return key in {"r4", "dept_leader", "dept:leader"} or key.endswith(":r4") or "部门负责人" in name or "运营总监" in name
+
+
+def _role_matches_position(role: Role, codes: list[str]) -> bool:
+    key = (role.role_key or "").lower()
+    name = role.role_name or ""
+    folded = {code.upper() for code in codes}
+    if folded & {"DEPT_LEADER", "R4", "部门负责人"} and _role_is_leader(role):
+        return True
+    if folded & {"FINANCE", "R3", "财务"} and (key in {"r3", "acct:r3"} or key.endswith(":r3") or "财务" in name):
+        return True
+    if folded & {"CONTENT", "R8", "内容审核"} and (key.endswith(":r8") or key == "r8" or "审核" in name):
+        return True
+    return False
+
+
+def _users_in_tenant(db: Session, tenant_id: int) -> list[User]:
+    return list(
+        db.scalars(
+            select(User).where(User.deleted == 0, User.status == "ENABLED", User.tenant_id == tenant_id)
+        ).all()
+    )
+
+
+def _share_dept(db: Session, left: User, right: User) -> bool:
+    return bool(set(dept_ids_of(db, left)) & set(dept_ids_of(db, right)))
+
+
+def _pick_among(db: Session, initiator: User, candidates: list[User]) -> User | None:
+    others = [user for user in candidates if user.id != initiator.id]
+    if not others:
+        return None
+    same = [user for user in others if _share_dept(db, initiator, user)]
+    return (same or others)[0]
+
+
+def _leaders(db: Session, tenant_id: int) -> list[User]:
+    found: list[User] = []
+    for user in _users_in_tenant(db, tenant_id):
+        if any(_role_is_leader(role) for role in enabled_roles(db, user)):
+            found.append(user)
+    return found
+
+
+def graph_nodes(db: Session, tpl: FlowTemplate | None, *, version_no: int | None = None) -> list[dict]:
+    if tpl is None:
+        return []
+    if version_no is not None:
+        snap = db.scalar(
+            select(FlowTemplateVersion).where(
+                FlowTemplateVersion.deleted == 0,
+                FlowTemplateVersion.tenant_id == tpl.tenant_id,
+                FlowTemplateVersion.template_id == tpl.id,
+                FlowTemplateVersion.version_no == version_no,
+            )
+        )
+        if snap is not None and snap.nodes:
+            return normalize_nodes(snap.nodes)
+    if tpl.nodes:
+        return normalize_nodes(tpl.nodes)
+    preset = PREVIEW_NODES.get(tpl.template_code)
+    if preset:
+        return nodes_from_preview(preset, int(tpl.sla_hours or DEFAULT_SLA_HOURS))
+    return []
+
+
+def resolve_assignee(db: Session, initiator: User, node: dict) -> tuple[int | None, str | None]:
+    """按节点规则解析处理人。
+
+    R1 发起时仍落到 R1，避免单管理员环境里锁后审批和闭环待办被转走。
+    其他发起人：能解析到部门负责人/指定人时不把审批待办派回自己。
+    INITIATOR_SUPERIOR 解析失败返回 1132，不静默派给发起人。
+    """
+    rule = node.get("assigneeRule") or {}
+    kind = str(rule.get("assignType") or "")
+    node_type = str(node.get("nodeType") or "APPROVE")
+    if _actor_is_r1(db, initiator) and kind != "USER":
+        return initiator.id, None
+    if kind == "USER":
+        ids = [int(item) for item in (rule.get("targetIds") or [])]
+        if not ids:
+            return initiator.id, None
+        target = db.get(User, ids[0])
+        if target is None or target.deleted or target.status != "ENABLED":
+            return None, "处理人规则非法"
+        if node_type == "APPROVE" and target.id == initiator.id:
+            return None, "发起人不能审批自己的单据"
+        return target.id, None
+    if kind == "INITIATOR_SUPERIOR":
+        picked = _pick_among(db, initiator, _leaders(db, initiator.tenant_id or 0))
+        if picked is None:
+            return None, "处理人规则非法"
+        return picked.id, None
+    if kind == "DEPT":
+        dept_id = rule.get("targetDeptId")
+        if not dept_id:
+            return None, "处理人规则非法"
+        members = [
+            user
+            for user in _users_in_tenant(db, initiator.tenant_id or 0)
+            if dept_id in dept_ids_of(db, user) and user.id != initiator.id
+        ]
+        leaders = [user for user in members if any(_role_is_leader(role) for role in enabled_roles(db, user))]
+        picked = (leaders or members)[:1]
+        if not picked:
+            return None, "处理人规则非法"
+        return picked[0].id, None
+    codes = [str(code) for code in (rule.get("targetPositionCodes") or [])]
+    pool = [
+        user
+        for user in _users_in_tenant(db, initiator.tenant_id or 0)
+        if any(_role_matches_position(role, codes) for role in enabled_roles(db, user))
+    ]
+    if not pool and (not codes or "DEPT_LEADER" in {code.upper() for code in codes}):
+        pool = _leaders(db, initiator.tenant_id or 0)
+    picked = _pick_among(db, initiator, pool)
+    if picked is not None:
+        return picked.id, None
+    if node_type == "APPROVE":
+        return initiator.id, None
+    return initiator.id, None
+
+
+def _assignee_for_instance(db: Session, inst: FlowInstance) -> tuple[int, dict | None]:
+    initiator = db.get(User, inst.initiator_user_id)
+    tpl = db.get(FlowTemplate, inst.template_id)
+    nodes = graph_nodes(db, tpl, version_no=inst.template_version or None)
+    node = None
+    if nodes:
+        if inst.current_node_name:
+            node = next((item for item in nodes if item["nodeName"] == inst.current_node_name), None)
+        if node is None and inst.current_node_order:
+            node = node_by_order(nodes, inst.current_node_order)
+        if node is None:
+            node = opening_node(nodes)
+    if initiator is None or node is None:
+        return inst.initiator_user_id or 0, node
+    assignee_id, _err = resolve_assignee(db, initiator, node)
+    return assignee_id or inst.initiator_user_id or 0, node
 
 
 def _form_empty(form: dict | None) -> bool:
@@ -607,7 +853,7 @@ def instance_detail_vo(db: Session, inst: FlowInstance, actor: User, names: dict
     else:
         current_nodes = []
     return {
-        **instance_vo(inst, names),
+        **instance_vo(inst, names, pending),
         "templateVersion": template_version_no(tpl) if tpl is not None and not tpl.deleted else 1,
         "initiatorUserId": inst.initiator_user_id,
         "formData": inst.form_data or {},
@@ -769,7 +1015,19 @@ def preview_nodes_for(tpl: FlowTemplate) -> list[tuple[int, str, str, str]]:
 
 
 def template_preview_vo(tpl: FlowTemplate) -> dict:
-    nodes = preview_nodes_for(tpl)
+    if tpl.nodes:
+        stored = normalize_nodes(tpl.nodes)
+        nodes = [
+            (
+                int(node["nodeOrder"]),
+                str(node["nodeName"]),
+                str(node["nodeType"]),
+                str(node.get("assigneePreview") or "处理人"),
+            )
+            for node in stored
+        ]
+    else:
+        nodes = preview_nodes_for(tpl)
     return {
         "templateId": tpl.id,
         "templateCode": tpl.template_code,
@@ -837,8 +1095,83 @@ def flow_instance_list(
     stmt = q.order_by(FlowInstance.id.desc())
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
-    names = user_names(db, [r.initiator_user_id for r in rows])
-    return paged([instance_vo(r, names) for r in rows], total, page_no, size)
+    pending_by_inst = _pending_by_instance(db, tenant_id, [row.id for row in rows])
+    user_ids = [row.initiator_user_id for row in rows]
+    user_ids.extend(task.assignee_user_id for task in pending_by_inst.values())
+    names = user_names(db, user_ids)
+    return paged(
+        [instance_vo(row, names, pending_by_inst.get(row.id)) for row in rows],
+        total,
+        page_no,
+        size,
+    )
+
+
+@router.get("/instance/board")
+def flow_instance_board(
+    businessDomain: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """看板：按当前节点分列进行中实例，供流转/完成。"""
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    q = select(FlowInstance).where(FlowInstance.deleted == 0, FlowInstance.tenant_id == tenant_id)
+    if businessDomain and businessDomain.strip().upper() in DOMAINS:
+        q = q.join(FlowTemplate, FlowTemplate.id == FlowInstance.template_id).where(
+            FlowTemplate.business_domain == businessDomain.strip().upper()
+        )
+    rows = list(db.scalars(q.order_by(FlowInstance.id.desc())).all())
+    now = utcnow()
+    running = [row for row in rows if row.instance_status == "RUNNING"]
+    finished = [row for row in rows if row.instance_status == "APPROVED"]
+    pending = _pending_by_instance(db, tenant_id, [row.id for row in running])
+    timeout_count = 0
+    for task in pending.values():
+        started = task.started_at or now
+        if started.tzinfo is not None:
+            started = started.replace(tzinfo=None)
+        if now.replace(tzinfo=None) >= started + timedelta(hours=task.sla_hours or DEFAULT_SLA_HOURS):
+            timeout_count += 1
+    names = user_names(
+        db,
+        [row.initiator_user_id for row in running] + [task.assignee_user_id for task in pending.values()],
+    )
+    columns: dict[str, list[dict]] = {}
+    by_node: dict[str, dict] = {}
+    for row in running:
+        task = pending.get(row.id)
+        name = row.current_node_name or "未分派"
+        card = instance_vo(row, names, task)
+        card["canAdvance"] = bool(task is not None and next_human_node(graph_nodes(db, db.get(FlowTemplate, row.template_id), version_no=row.template_version or None), task.node_order))
+        columns.setdefault(name, []).append(card)
+        bucket = by_node.setdefault(name, {"nodeName": name, "pendingCount": 0, "timeoutCount": 0})
+        bucket["pendingCount"] += 1
+        if task is not None:
+            started = task.started_at or now
+            if started.tzinfo is not None:
+                started = started.replace(tzinfo=None)
+            if now.replace(tzinfo=None) >= started + timedelta(hours=task.sla_hours or DEFAULT_SLA_HOURS):
+                bucket["timeoutCount"] += 1
+    by_template: dict[str, dict] = {}
+    for row in rows:
+        item = by_template.setdefault(
+            row.template_name,
+            {"templateName": row.template_name, "runningCount": 0, "timeoutCount": 0, "avgDurationHours": 0},
+        )
+        if row.instance_status == "RUNNING":
+            item["runningCount"] += 1
+    return ok(
+        {
+            "runningCount": len(running),
+            "timeoutCount": timeout_count,
+            "finishedCount": len(finished),
+            "byTemplate": list(by_template.values()),
+            "byNode": list(by_node.values()),
+            "columns": [{"nodeName": name, "cards": cards} for name, cards in columns.items()],
+            "recentTimeout": [],
+        }
+    )
 
 
 @router.get("/instance/{instance_no}")
@@ -901,7 +1234,7 @@ def flow_instance_start(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    """发起流程实例（本地桩：首节点处理人=发起人，无 Flowable）。"""
+    """发起流程实例。审批节点按模板规则解析处理人，不把待办派回非管理员发起人。"""
     tenant_id = tenant_of(actor)
     seed_flow(db, tenant_id, actor.id)
     biz_key = (body.businessKey or "").strip() or None
@@ -919,9 +1252,25 @@ def flow_instance_start(
             tpl = db.get(FlowTemplate, existing.template_id)
             if tpl is None:
                 return fail(1001, "模板不存在")
-            ensure_pending_task(db, existing, tenant_id, actor.id, existing.current_node_name)
-            names = user_names(db, [existing.initiator_user_id, actor.id])
-            replay = instance_start_vo(existing, tpl, actor, names)
+            assignee_id, node = _assignee_for_instance(db, existing)
+            task = ensure_pending_task(
+                db,
+                existing,
+                tenant_id,
+                assignee_id or existing.initiator_user_id,
+                (node or {}).get("nodeName") or existing.current_node_name,
+                node_order=int((node or {}).get("nodeOrder") or existing.current_node_order or 1),
+                node_type=str((node or {}).get("nodeType") or "APPROVE"),
+            )
+            holder = task.assignee_user_id if task is not None else assignee_id or actor.id
+            names = user_names(db, [existing.initiator_user_id, holder])
+            replay = instance_start_vo(
+                existing,
+                tpl,
+                names,
+                assignee_user_id=holder,
+                node_order=task.node_order if task is not None else 1,
+            )
             replay["idempotent"] = True
             return ok(replay)
 
@@ -938,7 +1287,26 @@ def flow_instance_start(
     if len(title) > 256:
         return fail(1001, "标题不能超过 256 字")
 
-    first_node = FIRST_NODE_BY_CODE.get(tpl.template_code, "审批节点")
+    nodes = graph_nodes(db, tpl)
+    node = opening_node(nodes) if nodes else None
+    if node is None:
+        first_name = FIRST_NODE_BY_CODE.get(tpl.template_code, "审批节点")
+        node = {
+            "nodeOrder": 1,
+            "nodeName": first_name,
+            "nodeType": "APPROVE",
+            "assigneeRule": {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]},
+            "slaHours": DEFAULT_SLA_HOURS,
+        }
+    assignee_id, rule_err = resolve_assignee(db, actor, node)
+    if rule_err and str((node.get("assigneeRule") or {}).get("assignType")) == "INITIATOR_SUPERIOR":
+        return fail(1132, "处理人规则非法，发起人上级无法解析")
+    if assignee_id is None:
+        return fail(1132, rule_err or "处理人规则非法")
+    if node.get("nodeType") == "APPROVE" and assignee_id == actor.id and not _actor_is_r1(db, actor):
+        leaders = _leaders(db, tenant_id)
+        if any(user.id != actor.id for user in leaders):
+            return fail(1132, "审批节点不能派给发起人")
     now = utcnow()
     row = FlowInstance(
         instance_no=next_instance_no(db, tenant_id),
@@ -948,7 +1316,9 @@ def flow_instance_start(
         business_key=biz_key,
         form_data=form,
         instance_status="RUNNING",
-        current_node_name=first_node,
+        current_node_name=str(node.get("nodeName") or "审批节点"),
+        current_node_order=int(node.get("nodeOrder") or 1),
+        template_version=template_version_no(tpl),
         initiator_user_id=actor.id,
         tenant_id=tenant_id,
         started_at=now,
@@ -958,9 +1328,20 @@ def flow_instance_start(
     )
     db.add(row)
     db.flush()
-    ensure_pending_task(db, row, tenant_id, actor.id, first_node)
-    names = user_names(db, [actor.id])
-    return ok(instance_start_vo(row, tpl, actor, names))
+    tpl.start_count = int(tpl.start_count or 0) + 1
+    task = ensure_pending_task(
+        db,
+        row,
+        tenant_id,
+        assignee_id,
+        row.current_node_name,
+        node_order=row.current_node_order,
+        node_type=str(node.get("nodeType") or "APPROVE"),
+        sla_hours=int(node.get("slaHours") or DEFAULT_SLA_HOURS),
+    )
+    holder = task.assignee_user_id if task is not None else assignee_id
+    names = user_names(db, [actor.id, holder])
+    return ok(instance_start_vo(row, tpl, names, assignee_user_id=holder, node_order=row.current_node_order))
 
 
 @router.get("/task/my-todo")
@@ -980,12 +1361,13 @@ def flow_task_my_todo(
         .where(
             FlowTask.deleted == 0,
             FlowTask.tenant_id == tenant_id,
-            FlowTask.assignee_user_id == actor.id,
             FlowTask.task_status == "PENDING",
             FlowInstance.deleted == 0,
             FlowInstance.instance_status == "RUNNING",
         )
     )
+    # 我的待办只列派给自己的。管理员在实例列表和详情看当前处理人，避免把别人的确认单领进自己的待办。
+    q = q.where(FlowTask.assignee_user_id == actor.id)
     if businessDomain and businessDomain.strip().upper() in DOMAINS:
         q = q.join(FlowTemplate, FlowTemplate.id == FlowInstance.template_id).where(
             FlowTemplate.business_domain == businessDomain.strip().upper()
@@ -1026,11 +1408,12 @@ def flow_task_handle(
         return fail(1001, "实例已终态，不可处理")
 
     tpl = db.get(FlowTemplate, inst.template_id)
-    max_order = 1
-    if tpl is not None and not tpl.deleted:
-        orders = [order for order, *_rest in preview_nodes_for(tpl)]
-        if orders:
-            max_order = max(orders)
+    nodes = graph_nodes(db, tpl, version_no=inst.template_version or None) if tpl is not None else []
+    max_order = max((int(node["nodeOrder"]) for node in nodes), default=1)
+    if not nodes and tpl is not None and not tpl.deleted:
+        preview_orders = [order for order, *_rest in preview_nodes_for(tpl)]
+        if preview_orders:
+            max_order = max(preview_orders)
     reject_order: int | None = None
     if action == "REJECT":
         if body.rejectToNodeOrder is None:
@@ -1040,20 +1423,63 @@ def flow_task_handle(
         else:
             reject_order = body.rejectToNodeOrder
 
+    now = utcnow()
+    comment = (body.comment or "").strip()
+    if len(comment) > 512:
+        return fail(1001, "审批意见不能超过 512 字")
+    if action == "REJECT" and not comment:
+        return fail(1001, "退回意见必填")
+
     if body.formDataPatch:
         merged = dict(inst.form_data or {})
         merged.update(body.formDataPatch)
         inst.form_data = merged
 
-    now = utcnow()
-    comment = (body.comment or "").strip()
-    if len(comment) > 512:
-        return fail(1001, "审批意见不能超过 512 字")
     task.comment = comment
     task.handled_at = now
     task.updated_at = now
+    next_nodes: list[dict] = []
 
-    if action == "APPROVE":
+    if action == "APPROVE" and body.advance:
+        nxt = next_human_node(nodes, task.node_order) if nodes else None
+        if nxt is not None:
+            initiator = db.get(User, inst.initiator_user_id) or actor
+            assignee_id, rule_err = resolve_assignee(db, initiator, nxt)
+            if assignee_id is None:
+                return fail(1132, rule_err or "处理人规则非法")
+            task.task_status = "APPROVED"
+            db.flush()
+            inst.current_node_name = str(nxt.get("nodeName") or "审批节点")
+            inst.current_node_order = int(nxt.get("nodeOrder") or task.node_order + 1)
+            inst.updated_at = now
+            ensure_pending_task(
+                db,
+                inst,
+                tenant_id,
+                assignee_id,
+                inst.current_node_name,
+                node_order=inst.current_node_order,
+                node_type=str(nxt.get("nodeType") or "APPROVE"),
+                sla_hours=int(nxt.get("slaHours") or DEFAULT_SLA_HOURS),
+            )
+            new_status = "RUNNING"
+            is_finished = False
+            next_nodes = [
+                {
+                    "nodeOrder": inst.current_node_order,
+                    "nodeName": inst.current_node_name,
+                    "assigneeUserId": assignee_id,
+                }
+            ]
+        else:
+            task.task_status = "APPROVED"
+            inst.instance_status = "APPROVED"
+            inst.current_node_name = "—"
+            inst.finished_at = now
+            inst.updated_at = now
+            new_status = "APPROVED"
+            is_finished = True
+    elif action == "APPROVE":
         task.task_status = "APPROVED"
         inst.instance_status = "APPROVED"
         inst.current_node_name = "—"
@@ -1061,19 +1487,45 @@ def flow_task_handle(
         inst.updated_at = now
         new_status = "APPROVED"
         is_finished = True
-        next_nodes: list[dict] = []
     else:
+        target = node_by_order(nodes, reject_order or 1) if nodes else None
+        node_name = str((target or {}).get("nodeName") or "发起申请")
         task.task_status = "REJECTED"
-        inst.instance_status = "REJECTED"
-        inst.current_node_name = "—"
-        inst.finished_at = now
+        inst.instance_status = "RUNNING"
+        inst.current_node_name = node_name
+        inst.current_node_order = reject_order or 1
+        inst.finished_at = None
         inst.updated_at = now
+        db.flush()
+        ensure_pending_task(
+            db,
+            inst,
+            tenant_id,
+            inst.initiator_user_id,
+            node_name,
+            node_order=inst.current_node_order,
+            node_type="TASK",
+            sla_hours=int((target or {}).get("slaHours") or DEFAULT_SLA_HOURS),
+        )
+        _notify(
+            db,
+            user_id=inst.initiator_user_id,
+            tenant_id=tenant_id,
+            title="流程已退回",
+            content=f"{inst.instance_no} 已退回：{comment}"[:512],
+            ref_id=inst.id,
+        )
         new_status = "REJECTED"
-        is_finished = True
-        next_nodes = []
+        is_finished = False
+        next_nodes = [
+            {
+                "nodeOrder": inst.current_node_order,
+                "nodeName": node_name,
+                "assigneeUserId": inst.initiator_user_id,
+            }
+        ]
 
     db.flush()
-    comment_hint = "退回建议填写意见" if action == "REJECT" and not comment else ""
     return ok(
         {
             "taskId": task.id,
@@ -1082,9 +1534,77 @@ def flow_task_handle(
             "nextNodes": next_nodes,
             "isInstanceFinished": is_finished,
             "rejectToNodeOrder": reject_order,
-            "commentHint": comment_hint,
+            "commentHint": "",
         }
     )
+
+
+@router.put("/task/{task_id}/transfer")
+def flow_task_transfer(
+    task_id: int,
+    body: FlowTaskTransferBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """转交一次一跳。目标不能是自己，同一节点不可再次转交。"""
+    tenant_id = tenant_of(actor)
+    task = db.get(FlowTask, task_id)
+    if task is None or task.deleted or task.tenant_id != tenant_id:
+        return fail(1001, "任务不存在")
+    if task.task_status != "PENDING":
+        return fail(1001, "任务已处理")
+    if task.assignee_user_id != actor.id:
+        return fail(1135, "非该任务处理人")
+    inst = db.get(FlowInstance, task.instance_id)
+    if inst is None or inst.deleted or inst.tenant_id != tenant_id:
+        return fail(1001, "流程实例不存在")
+    if inst.instance_status != "RUNNING":
+        return fail(1001, "实例已终态，不可转交")
+    if not task.allow_transfer:
+        return fail(1138, "同一节点只能转交一次")
+    reason = (body.transferReason or "").strip()
+    if not reason:
+        return fail(1001, "转交原因必填")
+    if len(reason) > 512:
+        return fail(1001, "转交原因不能超过 512 字")
+    target_id = int(body.toUserId or 0)
+    if target_id <= 0 or target_id == actor.id:
+        return fail(1138, "转交目标人无效或与当前处理人相同")
+    target = db.get(User, target_id)
+    if (
+        target is None
+        or target.deleted
+        or target.status != "ENABLED"
+        or (target.tenant_id or 0) != tenant_id
+    ):
+        return fail(1138, "转交目标人无效或与当前处理人相同")
+    now = utcnow()
+    task.task_status = "TRANSFERRED"
+    task.comment = reason
+    task.handled_at = now
+    task.updated_at = now
+    db.flush()
+    ensure_pending_task(
+        db,
+        inst,
+        tenant_id,
+        target.id,
+        task.node_name,
+        node_order=task.node_order,
+        node_type=task.node_type,
+        sla_hours=task.sla_hours or DEFAULT_SLA_HOURS,
+        allow_transfer=0,
+    )
+    _notify(
+        db,
+        user_id=target.id,
+        tenant_id=tenant_id,
+        title="流程已转交",
+        content=f"{inst.instance_no} 转交给你：{reason}"[:512],
+        ref_id=inst.id,
+    )
+    db.flush()
+    return ok(None)
 
 
 @router.get("/timeout/rate")
@@ -1316,7 +1836,7 @@ def flow_timeout_urge(
     started = task.started_at or now
     if started.tzinfo is not None:
         started = started.replace(tzinfo=None)
-    if now.replace(tzinfo=None) < started + timedelta(hours=DEFAULT_SLA_HOURS):
+    if not body.fromInstance and now.replace(tzinfo=None) < started + timedelta(hours=DEFAULT_SLA_HOURS):
         return fail(1001, "任务未超时，不可督办")
     raw = body.urgeMessage or ""
     if len(raw) > 256:
@@ -1324,6 +1844,15 @@ def flow_timeout_urge(
     message = raw.strip()
     task.remind_count = (task.remind_count or 0) + 1
     task.updated_at = now
+    note = message or "请尽快处理该审批待办"
+    _notify(
+        db,
+        user_id=task.assignee_user_id,
+        tenant_id=tenant_id,
+        title="流程催办",
+        content=f"{inst.instance_no} {note}"[:512],
+        ref_id=inst.id,
+    )
     db.flush()
     timed_out = message == DINGTALK_TIMEOUT_MARK
     payload = {
@@ -1336,3 +1865,411 @@ def flow_timeout_urge(
     if timed_out:
         return fail(5003, "钉钉推送失败已入补发队列", payload)
     return ok(payload)
+
+
+def _notify(
+    db: Session,
+    *,
+    user_id: int,
+    tenant_id: int,
+    title: str,
+    content: str,
+    ref_id: int,
+) -> None:
+    if user_id <= 0:
+        return
+    db.add(
+        WorkMessage(
+            user_id=user_id,
+            title=title[:128],
+            content=content[:512],
+            channel="IN_APP",
+            source_module="FLOW",
+            ref_type="FLOW_INSTANCE",
+            ref_id=ref_id,
+            tenant_id=tenant_id,
+            created_at=utcnow(),
+        )
+    )
+
+
+def _resolve_write_nodes(body_nodes: list[dict] | None, node_chain: str | None, sla_hours: int) -> list[dict]:
+    if body_nodes:
+        return normalize_nodes(body_nodes)
+    names = [part.strip() for part in (node_chain or "").replace("，", "、").split("、") if part.strip()]
+    if names:
+        return nodes_from_chain(names, sla_hours)
+    return []
+
+
+def _check_graph(nodes: list[dict]) -> tuple[int, str] | None:
+    dag_err = validate_dag(nodes)
+    if dag_err:
+        return 1131, dag_err if "环路" in dag_err or "起止" in dag_err else f"DAG 校验失败：{dag_err}"
+    rule_err = validate_rules(nodes)
+    if rule_err:
+        return 1132, rule_err
+    return None
+
+
+def next_template_code(db: Session, tenant_id: int) -> str:
+    day = datetime.now(BJ).strftime("%Y%m%d")
+    prefix = f"FT{day}"
+    taken = set(
+        db.scalars(
+            select(FlowTemplate.template_code).where(
+                FlowTemplate.tenant_id == tenant_id,
+                FlowTemplate.template_code.like(f"{prefix}%"),
+            )
+        ).all()
+    )
+    n = 1
+    while f"{prefix}{n:03d}" in taken and n < 10000:
+        n += 1
+    return f"{prefix}{n:03d}"
+
+
+def template_detail_vo(row: FlowTemplate, names: dict[int, str]) -> dict:
+    base = template_vo(row, names)
+    base.update(
+        {
+            "templateNo": row.template_code,
+            "version": int(row.version_no or template_version_no(row)),
+            "slaHours": int(row.sla_hours or DEFAULT_SLA_HOURS),
+            "startCount": int(row.start_count or 0),
+            "nodes": normalize_nodes(row.nodes) if row.nodes else nodes_from_preview(
+                preview_nodes_for(row), int(row.sla_hours or DEFAULT_SLA_HOURS)
+            ),
+            "nodeChain": chain_text(normalize_nodes(row.nodes)) if row.nodes else chain_text(
+                nodes_from_preview(preview_nodes_for(row))
+            ),
+            "createdBy": row.creator_id,
+            "createdAt": iso(row.created_at),
+        }
+    )
+    return base
+
+
+def _load_template(db: Session, tenant_id: int, template_id: int) -> FlowTemplate | None:
+    tpl = db.get(FlowTemplate, template_id)
+    if tpl is None or tpl.deleted or tpl.tenant_id != tenant_id:
+        return None
+    return tpl
+
+
+def _write_snapshot(db: Session, tpl: FlowTemplate, actor: User, change_desc: str) -> None:
+    current = list(
+        db.scalars(
+            select(FlowTemplateVersion).where(
+                FlowTemplateVersion.deleted == 0,
+                FlowTemplateVersion.tenant_id == tpl.tenant_id,
+                FlowTemplateVersion.template_id == tpl.id,
+                FlowTemplateVersion.version_status == "CURRENT",
+            )
+        ).all()
+    )
+    for row in current:
+        row.version_status = "HISTORICAL"
+    now = utcnow()
+    db.add(
+        FlowTemplateVersion(
+            template_id=tpl.id,
+            version_no=int(tpl.version_no or 1),
+            nodes=tpl.nodes,
+            template_name=tpl.template_name,
+            sla_hours=int(tpl.sla_hours or DEFAULT_SLA_HOURS),
+            change_desc=(change_desc or "")[:256],
+            version_status="CURRENT",
+            published_by=actor.id,
+            tenant_id=tpl.tenant_id,
+            published_at=now,
+            created_at=now,
+        )
+    )
+
+
+def _apply_nodes(tpl: FlowTemplate, nodes: list[dict], sla_hours: int) -> None:
+    tpl.nodes = nodes
+    tpl.node_count = len(nodes)
+    tpl.sla_hours = sla_hours
+    tpl.version_label = f"v{int(tpl.version_no or 1)}.0"
+    tpl.updated_at = utcnow()
+
+
+@router.post("/template")
+def flow_template_create(
+    body: FlowTemplateWriteBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    name = (body.templateName or "").strip()
+    if not name:
+        return fail(1001, "模板名称必填")
+    if len(name) > 128:
+        return fail(1001, "模板名称不能超过 128 字")
+    domain = (body.businessDomain or "COMMON").strip().upper()
+    if domain not in DOMAINS:
+        return fail(1001, "业务域非法")
+    sla = int(body.slaHours or DEFAULT_SLA_HOURS)
+    if sla not in SLA_CHOICES:
+        return fail(1001, "节点超时须为 2/12/24/48/72 小时")
+    nodes = _resolve_write_nodes(body.nodes, body.nodeChain, sla)
+    if not nodes:
+        return fail(1001, "节点链必填")
+    checked = _check_graph(nodes)
+    if checked:
+        return fail(checked[0], checked[1])
+    now = utcnow()
+    row = FlowTemplate(
+        template_code=next_template_code(db, tenant_id),
+        template_name=name,
+        business_domain=domain,
+        status="DRAFT",
+        version_label="v1.0",
+        version_no=1,
+        node_count=len(nodes),
+        nodes=nodes,
+        sla_hours=sla,
+        start_count=0,
+        creator_id=actor.id,
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return ok(template_detail_vo(row, user_names(db, [actor.id])))
+
+
+@router.put("/template/{template_id}")
+def flow_template_update(
+    template_id: int,
+    body: FlowTemplateWriteBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = _load_template(db, tenant_id, template_id)
+    if tpl is None:
+        return fail(1001, "模板不存在")
+    status_only = (
+        body.status
+        and not (body.templateName or "").strip()
+        and not body.nodes
+        and not (body.nodeChain or "").strip()
+        and body.slaHours is None
+    )
+    if status_only:
+        target = (body.status or "").strip().upper()
+        if target not in {"PUBLISHED", "DISABLED"}:
+            return fail(1001, "状态非法")
+        if tpl.status == "DRAFT" and target == "DISABLED":
+            tpl.status = "DISABLED"
+        elif tpl.status == "PUBLISHED" and target == "DISABLED":
+            tpl.status = "DISABLED"
+        elif tpl.status == "DISABLED" and target == "PUBLISHED":
+            tpl.status = "PUBLISHED"
+        else:
+            return fail(1133, "已发布模板不可直接编辑，须升版本")
+        tpl.updated_at = utcnow()
+        db.flush()
+        return ok(template_detail_vo(tpl, user_names(db, [tpl.creator_id])))
+    if tpl.status != "DRAFT":
+        return fail(1133, "已发布模板不可直接编辑，须升版本")
+    name = (body.templateName or tpl.template_name).strip()
+    if not name:
+        return fail(1001, "模板名称必填")
+    sla = int(body.slaHours or tpl.sla_hours or DEFAULT_SLA_HOURS)
+    if sla not in SLA_CHOICES:
+        return fail(1001, "节点超时须为 2/12/24/48/72 小时")
+    nodes = _resolve_write_nodes(body.nodes or None, body.nodeChain, sla)
+    if nodes:
+        previous = normalize_nodes(tpl.nodes) if tpl.nodes else []
+        if previous and ends_moved(previous, nodes):
+            return fail(1001, "首 / 尾节点不可移动")
+        checked = _check_graph(nodes)
+        if checked:
+            return fail(checked[0], checked[1])
+        _apply_nodes(tpl, nodes, sla)
+    tpl.template_name = name
+    tpl.updated_at = utcnow()
+    db.flush()
+    return ok(template_detail_vo(tpl, user_names(db, [tpl.creator_id])))
+
+
+@router.post("/template/{template_id}/publish")
+def flow_template_publish(
+    template_id: int,
+    body: FlowTemplatePublishBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = _load_template(db, tenant_id, template_id)
+    if tpl is None:
+        return fail(1001, "模板不存在")
+    payload = body or FlowTemplatePublishBody()
+    sla = int(payload.slaHours or tpl.sla_hours or DEFAULT_SLA_HOURS)
+    if sla not in SLA_CHOICES:
+        return fail(1001, "节点超时须为 2/12/24/48/72 小时")
+    incoming = _resolve_write_nodes(payload.nodes, payload.nodeChain, sla)
+    previous = normalize_nodes(tpl.nodes) if tpl.nodes else graph_nodes(db, tpl)
+    nodes = incoming or previous
+    if not nodes:
+        return fail(1131, "DAG 校验失败：缺起止节点")
+    if previous and incoming and ends_moved(previous, incoming):
+        return fail(1001, "首 / 尾节点不可移动")
+    checked = _check_graph(nodes)
+    if checked:
+        return fail(checked[0], checked[1])
+    if (payload.templateName or "").strip():
+        tpl.template_name = payload.templateName.strip()
+    if tpl.status == "PUBLISHED" and not incoming:
+        return ok(template_detail_vo(tpl, user_names(db, [tpl.creator_id, actor.id])))
+    if tpl.status == "PUBLISHED" and incoming:
+        already = db.scalar(
+            select(FlowTemplateVersion.id).where(
+                FlowTemplateVersion.deleted == 0,
+                FlowTemplateVersion.tenant_id == tenant_id,
+                FlowTemplateVersion.template_id == tpl.id,
+                FlowTemplateVersion.version_no == int(tpl.version_no or 1),
+            )
+        )
+        if already is None:
+            _write_snapshot(db, tpl, actor, "升版本前快照")
+            db.flush()
+        tpl.version_no = int(tpl.version_no or 1) + 1
+    _apply_nodes(tpl, nodes, sla)
+    tpl.status = "PUBLISHED"
+    if not tpl.version_no:
+        tpl.version_no = 1
+    _write_snapshot(db, tpl, actor, payload.changeDesc or "发布")
+    db.flush()
+    return ok(template_detail_vo(tpl, user_names(db, [tpl.creator_id, actor.id])))
+
+
+def _version_nodes(db: Session, tpl: FlowTemplate, version_no: int) -> list[dict] | None:
+    snap = db.scalar(
+        select(FlowTemplateVersion).where(
+            FlowTemplateVersion.deleted == 0,
+            FlowTemplateVersion.tenant_id == tpl.tenant_id,
+            FlowTemplateVersion.template_id == tpl.id,
+            FlowTemplateVersion.version_no == version_no,
+        )
+    )
+    if snap is None or not snap.nodes:
+        if version_no == int(tpl.version_no or 1) and tpl.nodes:
+            return normalize_nodes(tpl.nodes)
+        return None
+    return normalize_nodes(snap.nodes)
+
+
+@router.get("/version/list")
+def flow_version_list(
+    templateId: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = _load_template(db, tenant_id, templateId)
+    if tpl is None:
+        return fail(1001, "模板不存在")
+    rows = list(
+        db.scalars(
+            select(FlowTemplateVersion)
+            .where(
+                FlowTemplateVersion.deleted == 0,
+                FlowTemplateVersion.tenant_id == tenant_id,
+                FlowTemplateVersion.template_id == tpl.id,
+            )
+            .order_by(FlowTemplateVersion.version_no.desc())
+        ).all()
+    )
+    names = user_names(db, [row.published_by for row in rows])
+    return ok(
+        [
+            {
+                "templateId": tpl.id,
+                "version": row.version_no,
+                "changeDesc": row.change_desc or "",
+                "publishedBy": row.published_by,
+                "publishedByName": names.get(row.published_by, ""),
+                "publishedAt": iso(row.published_at),
+                "status": row.version_status,
+            }
+            for row in rows
+        ]
+    )
+
+
+@router.get("/version/diff")
+def flow_version_diff(
+    templateId: int,
+    fromVersion: int,
+    toVersion: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = _load_template(db, tenant_id, templateId)
+    if tpl is None:
+        return fail(1001, "模板不存在")
+    old = _version_nodes(db, tpl, fromVersion)
+    new = _version_nodes(db, tpl, toVersion)
+    if old is None or new is None:
+        return fail(1134, "回滚目标版本非法")
+    return ok({"nodeChanges": diff_nodes(old, new), "configChanges": []})
+
+
+@router.get("/version/snapshot")
+def flow_version_snapshot(
+    templateId: int,
+    version: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = _load_template(db, tenant_id, templateId)
+    if tpl is None:
+        return fail(1001, "模板不存在")
+    nodes = _version_nodes(db, tpl, version)
+    if nodes is None:
+        return fail(1134, "回滚目标版本非法")
+    data = template_detail_vo(tpl, user_names(db, [tpl.creator_id]))
+    data["version"] = version
+    data["nodes"] = nodes
+    data["nodeChain"] = chain_text(nodes)
+    data["readonly"] = True
+    return ok(data)
+
+
+@router.post("/version/{template_id}/rollback")
+def flow_version_rollback(
+    template_id: int,
+    body: FlowVersionRollbackBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    seed_flow(db, tenant_id, actor.id)
+    tpl = _load_template(db, tenant_id, template_id)
+    if tpl is None:
+        return fail(1001, "模板不存在")
+    nodes = _version_nodes(db, tpl, body.targetVersion)
+    if nodes is None or body.targetVersion < 1:
+        return fail(1134, "回滚目标版本非法")
+    if tpl.status == "DRAFT":
+        return fail(1134, "回滚目标版本非法")
+    tpl.version_no = int(tpl.version_no or 1) + 1
+    _apply_nodes(tpl, nodes, int(tpl.sla_hours or DEFAULT_SLA_HOURS))
+    tpl.status = "PUBLISHED"
+    _write_snapshot(db, tpl, actor, body.changeDesc or f"回滚到 v{body.targetVersion}")
+    db.flush()
+    return ok({"newVersion": tpl.version_no, "targetVersion": body.targetVersion})
