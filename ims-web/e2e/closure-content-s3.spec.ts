@@ -192,7 +192,7 @@ test.describe('content S3 task and list closure', () => {
     await expect(page.locator('h1')).toHaveText('公推模板库', { timeout: 15_000 })
     await page.getByRole('button', { name: '新建模板' }).click()
     const createModal = page.locator('.modal-mask').filter({ hasText: '新建公推模板' })
-    await createModal.locator('input').fill(name)
+    await createModal.getByTestId('layout-create-name').fill(name)
     await createModal.locator('textarea').fill(`<p>${label}</p>`)
     await createModal.getByRole('button', { name: '保存' }).click()
 

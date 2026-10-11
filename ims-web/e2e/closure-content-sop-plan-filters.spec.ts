@@ -113,7 +113,7 @@ test.describe('content sop plan layout filters', () => {
     const tplName = `空预览 ${label}`
     await page.getByRole('button', { name: '新建模板' }).click()
     const createModal = page.locator('.modal-mask').filter({ hasText: '新建公推模板' })
-    await createModal.locator('input').fill(tplName)
+    await createModal.getByTestId('layout-create-name').fill(tplName)
     await createModal.getByRole('button', { name: '保存' }).click()
     const tplRow = page.locator('tr', { hasText: tplName })
     await expect(tplRow).toBeVisible({ timeout: 15_000 })
