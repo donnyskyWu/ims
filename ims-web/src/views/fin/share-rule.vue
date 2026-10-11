@@ -399,6 +399,8 @@ const platformOptions = [
 ]
 const accountOptions = ref<{ id: number; label: string }[]>([])
 const groupOptions = ref<{ id: number; label: string }[]>([])
+const accountNames = ref<Record<number, string>>({})
+const groupNames = ref<Record<number, string>>({})
 const accountKeyword = ref('')
 const groupKeyword = ref('')
 const fieldErrors = reactive({
@@ -437,8 +439,8 @@ const emptyText = computed(() => {
 
 function scopeLabel(scope: Scope | undefined) {
   const platforms = (scope?.platforms || []).map((code) => platformOptions.find((item) => item.value === code)?.label || code)
-  const accounts = (scope?.accountIds || []).map((id) => accountOptions.value.find((item) => item.id === id)?.label || `账号#${id}`)
-  const groups = (scope?.ipGroupIds || []).map((id) => groupOptions.value.find((item) => item.id === id)?.label || `IP组#${id}`)
+  const accounts = (scope?.accountIds || []).map((id) => accountNames.value[id] || `账号#${id}`)
+  const groups = (scope?.ipGroupIds || []).map((id) => groupNames.value[id] || `IP组#${id}`)
   const parts = [...platforms, ...accounts, ...groups]
   return parts.length ? parts.join(' / ') : '全范围'
 }
@@ -720,6 +722,9 @@ async function loadAccounts() {
       id: Number(row.id),
       label: `${row.accountNo || row.id} ${row.nickname || row.accountName || ''}`.trim(),
     }))
+    const names = { ...accountNames.value }
+    for (const item of accountOptions.value) names[item.id] = item.label
+    accountNames.value = names
   } catch {
     accountOptions.value = []
   }
@@ -734,6 +739,9 @@ async function loadGroups() {
       id: Number(row.id),
       label: row.groupName || `IP组#${row.id}`,
     }))
+    const names = { ...groupNames.value }
+    for (const item of groupOptions.value) names[item.id] = item.label
+    groupNames.value = names
   } catch {
     groupOptions.value = []
   }
