@@ -436,6 +436,65 @@ def search_responsible_entries(db: Session, tenant_id: int, keyword: str, limit:
     return items
 
 
+def search_account_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
+    stmt = base_sessions(tenant_id)
+    if keyword:
+        stmt = stmt.where(or_(LiveSession.account_no.contains(keyword), LiveSession.session_code.contains(keyword)))
+    items: list[dict] = []
+    for row in db.scalars(stmt.order_by(LiveSession.id.desc()).limit(limit)).all():
+        if not row.account_id:
+            continue
+        items.append(
+            entry_item(
+                "ACCOUNT",
+                str(row.account_id),
+                row.account_no or f"账号#{row.account_id}",
+                f"最近场次 {row.session_code}",
+                row.platform,
+            )
+        )
+    return dedup_entries(items, limit)
+
+
+def search_session_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
+    stmt = base_sessions(tenant_id)
+    if keyword:
+        stmt = stmt.where(or_(LiveSession.session_code.contains(keyword), LiveSession.topic.contains(keyword)))
+    items: list[dict] = []
+    for row in db.scalars(stmt.order_by(LiveSession.id.desc()).limit(limit)).all():
+        items.append(
+            entry_item(
+                "SESSION",
+                row.session_code,
+                row.topic or row.session_code,
+                row.account_no or "",
+                row.platform,
+            )
+        )
+    return dedup_entries(items, limit)
+
+
+def search_entries(db: Session, tenant_id: int, entry_type: str, keyword: str, limit: int) -> list[dict]:
+    if entry_type == "ALL":
+        merged: list[dict] = []
+        for kind in ("ACCOUNT", "SESSION", "PERSON", "RESPONSIBLE", "ASSET", "IP_GROUP"):
+            merged.extend(search_entries(db, tenant_id, kind, keyword, limit))
+        return dedup_entries(merged, limit)
+    if entry_type == "ACCOUNT":
+        return search_account_entries(db, tenant_id, keyword, limit)
+    if entry_type == "SESSION":
+        return search_session_entries(db, tenant_id, keyword, limit)
+    if entry_type == "PERSON":
+        return search_person_entries(db, tenant_id, keyword, limit)
+    if entry_type == "RESPONSIBLE":
+        return search_responsible_entries(db, tenant_id, keyword, limit)
+    if entry_type == "ASSET":
+        return search_asset_entries(db, tenant_id, keyword, limit)
+    if entry_type == "IP_GROUP":
+        return search_ip_group_entries(db, tenant_id, keyword, limit)
+    return search_account_entries(db, tenant_id, keyword, limit)
+
+
 def search_asset_entries(db: Session, tenant_id: int, keyword: str, limit: int) -> list[dict]:
     ops = ops_session()
     try:
@@ -1208,56 +1267,11 @@ def trace_entry(
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
-    if entryType not in ENTRY_TYPES:
+    if entryType not in ENTRY_TYPES and entryType != "ALL":
         entryType = "ACCOUNT"
     kw = keyword.strip()
     lim = min(max(limit, 1), 50)
-    items: list[dict] = []
-    if entryType == "ACCOUNT":
-        stmt = base_sessions(tenant_id)
-        if kw:
-            stmt = stmt.where(
-                or_(LiveSession.account_no.contains(kw), LiveSession.session_code.contains(kw))
-            )
-        for row in db.scalars(stmt.order_by(LiveSession.id.desc()).limit(lim)).all():
-            if not row.account_id:
-                continue
-            items.append(
-                entry_item(
-                    "ACCOUNT",
-                    str(row.account_id),
-                    row.account_no or f"账号#{row.account_id}",
-                    f"最近场次 {row.session_code}",
-                    row.platform,
-                )
-            )
-        return ok(dedup_entries(items, lim))
-    if entryType == "SESSION":
-        stmt = base_sessions(tenant_id)
-        if kw:
-            stmt = stmt.where(
-                or_(LiveSession.session_code.contains(kw), LiveSession.topic.contains(kw))
-            )
-        for row in db.scalars(stmt.order_by(LiveSession.id.desc()).limit(lim)).all():
-            items.append(
-                entry_item(
-                    "SESSION",
-                    row.session_code,
-                    row.topic or row.session_code,
-                    row.account_no or "",
-                    row.platform,
-                )
-            )
-        return ok(dedup_entries(items, lim))
-    if entryType == "PERSON":
-        return ok(search_person_entries(db, tenant_id, kw, lim))
-    if entryType == "RESPONSIBLE":
-        return ok(search_responsible_entries(db, tenant_id, kw, lim))
-    if entryType == "ASSET":
-        return ok(search_asset_entries(db, tenant_id, kw, lim))
-    if entryType == "IP_GROUP":
-        return ok(search_ip_group_entries(db, tenant_id, kw, lim))
-    return ok([])
+    return ok(search_entries(db, tenant_id, entryType, kw, lim))
 
 
 @router.post("/query")

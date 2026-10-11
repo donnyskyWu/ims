@@ -537,6 +537,52 @@ def test_dc_trace_query_rejects_inverted_or_partial_date_range():
     assert partial["msg"] == "dateRange 须为开始日,结束日"
 
 
+def test_bug_c050_all_entry_search_still_queries():
+    """BUG-C050 · 全部类型能搜到入口，选中后再查询不会变成空入口。"""
+    from tests.test_fin import approved_session
+
+    auth = headers()
+    code = approved_session(auth)
+    live = client.get(f"/admin-api/ims/live/register/{code}", headers=auth).json()["data"]
+    account_no = live["accountNo"]
+    listed = client.get(
+        "/admin-api/ims/dc/trace/entry",
+        headers=auth,
+        params={"entryType": "ALL", "keyword": account_no, "limit": 8},
+    )
+    body = listed.json()
+    assert body["code"] == 0, body
+    hits = body["data"]
+    assert isinstance(hits, list) and hits
+    account = next(
+        (item for item in hits if item["entryType"] == "ACCOUNT" and item["entryId"] == str(live["accountId"])),
+        None,
+    )
+    assert account is not None, hits
+    session_hit = client.get(
+        "/admin-api/ims/dc/trace/entry",
+        headers=auth,
+        params={"entryType": "ALL", "keyword": code, "limit": 8},
+    ).json()
+    assert any(item["entryType"] == "SESSION" and item["entryId"] == code for item in session_hit["data"])
+
+    queried = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=auth,
+        json={"entryType": account["entryType"], "entryId": account["entryId"], "mode": "DETAIL", "pageNo": 1, "pageSize": 10},
+    ).json()
+    assert queried["code"] == 0, queried
+    assert code in [row["sessionCode"] for row in queried["data"]["detailList"]["list"]]
+
+    missing = client.get(
+        "/admin-api/ims/dc/trace/entry",
+        headers=auth,
+        params={"entryType": "ALL", "keyword": "___no_such_asset___", "limit": 8},
+    ).json()
+    assert missing["code"] == 0
+    assert missing["data"] == []
+
+
 def test_bug_c051_live_cost_fills_profit_before_fin_confirm():
     """BUG-C051 · GMV 5 万、退款 2 千只有下播成本时，链路和抽屉要算出成本与利润。财务核准后仍用核准数。"""
     import uuid
