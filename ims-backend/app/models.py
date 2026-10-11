@@ -1626,6 +1626,7 @@ class PerfRecord(Base):
     calc_base_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     manual_adjustment: Mapped[float] = mapped_column(Float, default=0.0)
     adjust_remark: Mapped[str] = mapped_column(String(256), default="")
+    score_lines: Mapped[list | None] = mapped_column(JSON, nullable=True)
     evaluator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)

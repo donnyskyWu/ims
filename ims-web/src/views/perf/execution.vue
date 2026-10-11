@@ -115,18 +115,50 @@
     </div>
 
     <div v-if="showAdjust" class="modal-mask" @click.self="showAdjust = false">
-      <div class="modal card" style="max-width: 400px; padding: 20px">
+      <div class="modal card" style="max-width: 760px; padding: 20px">
         <h3 style="margin: 0 0 12px">人工调整 · {{ adjustTarget?.recordNo }}</h3>
-        <p class="hint">基础分 {{ adjustTarget?.calcBaseScore ?? adjustTarget?.totalScore }} · ±20% 上限</p>
-        <div class="fld">
-          <label>调整分值（±）</label>
-          <input v-model.number="adjustForm.manualAdjustment" type="number" step="0.1" />
+        <p class="hint">
+          基础分 {{ adjustTarget?.calcBaseScore ?? adjustTarget?.totalScore }} · 综合分变动不能超过 ±20%。综合分 =
+          Σ(自动得分 + 人工调整) × 权重。
+        </p>
+        <div class="tbl-wrap">
+          <table data-testid="perf-adjust-table">
+            <thead>
+              <tr>
+                <th>指标</th>
+                <th>权重</th>
+                <th>原始值</th>
+                <th>自动得分</th>
+                <th>人工调整</th>
+                <th>最终得分</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="line in adjustLines" :key="line.metricName">
+                <td>{{ line.metricName }}</td>
+                <td class="num">{{ line.weight }}%</td>
+                <td class="num">{{ line.rawValue }}</td>
+                <td class="num">{{ line.autoScore }}</td>
+                <td>
+                  <input
+                    v-model="line.manualAdjustment"
+                    data-testid="perf-adjust-line"
+                    type="number"
+                    step="0.1"
+                    style="width: 88px"
+                  />
+                </td>
+                <td class="num">{{ lineFinal(line) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+        <p class="hint" data-testid="perf-adjust-total">综合分 {{ adjustPreview }}</p>
         <div class="fld">
           <label>说明</label>
           <input v-model="adjustForm.remark" placeholder="场次补录等" />
         </div>
-        <p v-if="adjustError" class="hint" style="color: var(--red)">{{ adjustError }}</p>
+        <p v-if="adjustError" class="hint" data-testid="perf-adjust-error" style="color: var(--red)">{{ adjustError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showAdjust = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitAdjust">保存</button>
@@ -163,6 +195,14 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 
+type ScoreLine = {
+  metricName: string
+  weight: number
+  rawValue: number
+  autoScore: number
+  manualAdjustment: number | string
+  finalScore: number
+}
 type Row = {
   id: number
   recordNo: string
@@ -177,6 +217,7 @@ type Row = {
   evaluatorName: string
   grade?: string
   gradeEdge?: string
+  lines?: ScoreLine[]
 }
 
 const route = useRoute()
@@ -189,7 +230,8 @@ const confirmTarget = ref<Row | null>(null)
 const confirmError = ref('')
 const adjustTarget = ref<Row | null>(null)
 const adjustError = ref('')
-const adjustForm = reactive({ manualAdjustment: 0, remark: '' })
+const adjustLines = ref<ScoreLine[]>([])
+const adjustForm = reactive({ remark: '' })
 const formError = ref('')
 const filters = reactive({ evaluateeName: '', status: '', periodType: '' })
 const form = reactive({
@@ -335,11 +377,33 @@ async function issueRow(row: Row) {
   await loadList()
 }
 
+function lineFinal(line: ScoreLine) {
+  const delta = Number(line.manualAdjustment)
+  const auto = Number(line.autoScore)
+  if (!Number.isFinite(delta) || !Number.isFinite(auto)) return '—'
+  return Math.round((auto + delta) * 100) / 100
+}
+
+const adjustPreview = computed(() => {
+  let total = 0
+  for (const line of adjustLines.value) {
+    const finalScore = Number(lineFinal(line))
+    const weight = Number(line.weight)
+    if (!Number.isFinite(finalScore) || !Number.isFinite(weight)) continue
+    total += (finalScore * weight) / 100
+  }
+  if (!adjustLines.value.length) return adjustTarget.value?.totalScore ?? '—'
+  return Math.round(total * 10) / 10
+})
+
 function openAdjust(row: Row) {
   adjustTarget.value = row
-  adjustForm.manualAdjustment = row.manualAdjustment ?? 0
   adjustForm.remark = ''
   adjustError.value = ''
+  adjustLines.value = (row.lines || []).map((line) => ({
+    ...line,
+    manualAdjustment: line.manualAdjustment ?? 0,
+  }))
   showAdjust.value = true
 }
 
@@ -348,7 +412,10 @@ async function submitAdjust() {
   adjustError.value = ''
   try {
     const res = await http.put(`/perf/execution/${adjustTarget.value.id}/adjust`, {
-      manualAdjustment: adjustForm.manualAdjustment,
+      lines: adjustLines.value.map((line) => ({
+        metricName: line.metricName,
+        manualAdjustment: Number(line.manualAdjustment),
+      })),
       remark: adjustForm.remark,
     })
     if (res.data.code !== 0) {
@@ -357,8 +424,9 @@ async function submitAdjust() {
     }
     showAdjust.value = false
     await loadList()
-  } catch {
-    adjustError.value = '网络错误'
+  } catch (err) {
+    const body = err as { msg?: string }
+    adjustError.value = body.msg || '调整失败'
   }
 }
 

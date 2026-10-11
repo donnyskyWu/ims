@@ -91,7 +91,12 @@ test.describe('perf result tails closure', () => {
     if (target.delta !== 0) {
       await located.row.getByText('调整').click()
       const adjustModal = page.locator('.modal.card').filter({ hasText: '人工调整' })
-      await adjustModal.locator('input[type="number"]').fill(String(target.delta))
+      const lineInputs = adjustModal.getByTestId('perf-adjust-line')
+      const lineCount = await lineInputs.count()
+      expect(lineCount).toBeGreaterThan(0)
+      for (let index = 0; index < lineCount; index += 1) {
+        await lineInputs.nth(index).fill(String(target.delta))
+      }
       const adjustResp = page.waitForResponse(
         (r) => r.url().includes(`/perf/execution/${recordId}/adjust`) && r.request().method() === 'PUT',
       )

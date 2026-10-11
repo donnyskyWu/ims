@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.core import SessionLocal
 from app.main import app
 from app.models import PerfMetric, PerfMetricRevision
+from app.perf import adjustment_limit_message
 from app.perf_calc import metric_rule_for_period, score_of
 from app.settings_runtime import invalidate_param_cache
 
@@ -252,3 +253,68 @@ def test_same_user_same_period_is_blocked():
         json={**payload, "periodStart": "2026-11-01", "periodEnd": "2026-11-30"},
     )
     assert other.json()["code"] == 0
+
+
+def test_adjust_by_metric_rejects_over_20_percent():
+    auth = headers()
+    scheme = client.post(
+        "/admin-api/ims/perf/scheme",
+        headers=auth,
+        json={
+            "templateName": "逐项调整",
+            "positionCode": "R5",
+            "periodType": "MONTHLY",
+            "activate": True,
+            "items": [
+                {"metricName": "开播", "weight": 40, "calcRule": "AUTO"},
+                {"metricName": "GMV", "weight": 60, "calcRule": "AUTO"},
+            ],
+        },
+    )
+    scheme_id = scheme.json()["data"]["id"]
+    created = client.post(
+        "/admin-api/ims/perf/execution",
+        headers=auth,
+        json={
+            "schemeId": scheme_id,
+            "targetUserId": 1,
+            "periodType": "MONTHLY",
+            "periodStart": "2026-04-01",
+            "periodEnd": "2026-04-30",
+        },
+    )
+    record_id = created.json()["data"]["id"]
+    calc = client.post(f"/admin-api/ims/perf/execution/{record_id}/calculate", headers=auth)
+    body = calc.json()["data"]
+    assert len(body["lines"]) == 2
+    base = body["calcBaseScore"]
+    names = [line["metricName"] for line in body["lines"]]
+    assert names == ["开播", "GMV"]
+    blocked = client.put(
+        f"/admin-api/ims/perf/execution/{record_id}/adjust",
+        headers=auth,
+        json={
+            "lines": [
+                {"metricName": "开播", "manualAdjustment": 50},
+                {"metricName": "GMV", "manualAdjustment": 50},
+            ]
+        },
+    )
+    assert blocked.json()["code"] == 1001
+    assert blocked.json()["msg"] == adjustment_limit_message(base)
+    saved = client.put(
+        f"/admin-api/ims/perf/execution/{record_id}/adjust",
+        headers=auth,
+        json={
+            "lines": [
+                {"metricName": "开播", "manualAdjustment": 2},
+                {"metricName": "GMV", "manualAdjustment": 0},
+            ],
+            "remark": "补一场",
+        },
+    )
+    saved_body = saved.json()
+    assert saved_body["code"] == 0
+    lines = {line["metricName"]: line for line in saved_body["data"]["lines"]}
+    assert lines["开播"]["finalScore"] == lines["开播"]["autoScore"] + 2
+    assert saved_body["data"]["totalScore"] == round(base + 2 * 0.4, 1)

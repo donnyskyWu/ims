@@ -79,9 +79,16 @@ class ExecutionBody(BaseModel):
     periodEnd: str
 
 
+class AdjustLineBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    metricName: str
+    manualAdjustment: float = 0
+
+
 class AdjustBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    manualAdjustment: float
+    manualAdjustment: float | None = None
+    lines: list[AdjustLineBody] | None = None
     remark: str = ""
 
 
@@ -312,6 +319,7 @@ def record_vo(db: Session, row: PerfRecord, scheme: PerfScheme | None = None) ->
         "calcBaseScore": row.calc_base_score,
         "manualAdjustment": float(row.manual_adjustment or 0),
         "adjustRemark": row.adjust_remark or "",
+        "lines": score_line_views(row),
         "status": row.status,
         "evaluatorUserId": row.evaluator_user_id,
         "evaluatorName": user_label(db, row.evaluator_user_id),
@@ -341,15 +349,74 @@ def scheme_vo(row: PerfScheme) -> dict:
     }
 
 
-def mock_total_score(scheme: PerfScheme) -> float:
+def build_score_lines(scheme: PerfScheme) -> list[dict]:
     items = scheme.items if isinstance(scheme.items, list) else []
-    total = 0.0
-    for item in items:
+    lines: list[dict] = []
+    for index, item in enumerate(items):
+        name = str(item.get("metricName") or f"指标{index + 1}")
         weight = float(item.get("weight") or 0)
-        name = str(item.get("metricName") or "")
-        raw = 70.0 + (hash(name) % 26)
-        total += raw * weight / 100.0
-    return round(total, 1) if items else 75.0
+        raw = float(70 + (hash(name) % 26))
+        lines.append(
+            {
+                "metricName": name,
+                "weight": weight,
+                "rawValue": raw,
+                "autoScore": raw,
+                "manualAdjustment": 0.0,
+                "finalScore": raw,
+            }
+        )
+    return lines
+
+
+def rollup_score(lines: list[dict]) -> float:
+    if not lines:
+        return 75.0
+    total = 0.0
+    for line in lines:
+        total += float(line.get("finalScore") or 0) * float(line.get("weight") or 0) / 100.0
+    return round(total, 1)
+
+
+def score_line_views(row: PerfRecord) -> list[dict]:
+    raw = row.score_lines if isinstance(row.score_lines, list) else []
+    views: list[dict] = []
+    for line in raw:
+        if not isinstance(line, dict):
+            continue
+        auto = float(line.get("autoScore") or 0)
+        delta = float(line.get("manualAdjustment") or 0)
+        final = float(line.get("finalScore") if line.get("finalScore") is not None else auto + delta)
+        views.append(
+            {
+                "metricName": line.get("metricName") or "",
+                "weight": float(line.get("weight") or 0),
+                "rawValue": float(line.get("rawValue") or 0),
+                "autoScore": auto,
+                "manualAdjustment": delta,
+                "finalScore": final,
+            }
+        )
+    return views
+
+
+def format_base(value: float) -> str:
+    rounded = round(float(value), 2)
+    if abs(rounded - round(rounded)) < 1e-9:
+        return str(int(round(rounded)))
+    return f"{rounded:.2f}".rstrip("0").rstrip(".")
+
+
+def adjustment_limit_message(base: float) -> str:
+    return f"调整幅度不能超过 ±20%（基础分 {format_base(base)}）"
+
+
+def exceeds_adjustment(delta: float, base: float) -> bool:
+    return abs(delta) > round(float(base) * 0.2, 4) + 1e-6
+
+
+def mock_total_score(scheme: PerfScheme) -> float:
+    return rollup_score(build_score_lines(scheme))
 
 
 def deactivate_position_schemes(db: Session, tenant_id: int, position_code: str, except_id: int | None = None) -> None:
@@ -678,7 +745,9 @@ def calculate_execution(
     row.status = "CALCULATING"
     row.updated_at = utcnow()
     db.flush()
-    row.total_score = mock_total_score(scheme)
+    lines = build_score_lines(scheme)
+    row.score_lines = lines
+    row.total_score = rollup_score(lines)
     row.calc_base_score = row.total_score
     row.manual_adjustment = 0.0
     row.adjust_remark = ""
@@ -708,16 +777,45 @@ def adjust_execution(
         base = row.total_score
     if base is None:
         return fail(1001, "总分缺失，请先算分")
-    delta = float(body.manualAdjustment)
-    if abs(delta) > round(float(base) * 0.2, 4) + 1e-6:
-        return fail(1001, "人工调整幅度不得超过基础分的 ±20%")
-    row.manual_adjustment = delta
+    scheme = db.get(PerfScheme, row.scheme_id) if row.scheme_id else None
+    stored = score_line_views(row)
+    if body.lines is not None:
+        if not stored:
+            stored = build_score_lines(scheme) if scheme is not None and not scheme.deleted else []
+        by_name = {line["metricName"]: line for line in stored}
+        for item in body.lines:
+            line = by_name.get(item.metricName)
+            if line is None:
+                return fail(1001, "指标不存在")
+            line["manualAdjustment"] = float(item.manualAdjustment)
+            line["finalScore"] = round(float(line["autoScore"]) + float(item.manualAdjustment), 2)
+        new_total = rollup_score(stored)
+        delta = round(new_total - float(base), 4)
+        if exceeds_adjustment(delta, float(base)):
+            return fail(1001, adjustment_limit_message(float(base)))
+        row.score_lines = stored
+        row.manual_adjustment = round(delta, 1)
+        row.total_score = new_total
+    else:
+        if body.manualAdjustment is None:
+            return fail(1001, "请填写调整值")
+        delta = float(body.manualAdjustment)
+        if exceeds_adjustment(delta, float(base)):
+            return fail(1001, adjustment_limit_message(float(base)))
+        if stored:
+            weight = float(stored[0].get("weight") or 0) or 100.0
+            stored[0]["manualAdjustment"] = round(delta * 100.0 / weight, 4)
+            stored[0]["finalScore"] = round(float(stored[0]["autoScore"]) + stored[0]["manualAdjustment"], 2)
+            for line in stored[1:]:
+                line["manualAdjustment"] = 0.0
+                line["finalScore"] = float(line["autoScore"])
+            row.score_lines = stored
+        row.manual_adjustment = delta
+        row.total_score = round(float(base) + delta, 1)
     row.adjust_remark = (body.remark or "").strip()[:256]
-    row.total_score = round(float(base) + delta, 1)
     row.status = "REVIEWED"
     row.updated_at = utcnow()
     db.flush()
-    scheme = db.get(PerfScheme, row.scheme_id) if row.scheme_id else None
     return ok(record_vo(db, row, scheme))
 
 
