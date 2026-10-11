@@ -123,15 +123,59 @@ def test_bi_category_tree_import_and_scope_filter():
     hidden = client.get("/admin-api/ims/bi/report/list", headers=auth, params={"shareScope": "PRIVATE", "keyword": "分类迁移报表"})
     assert all(item["id"] != rid for item in hidden.json()["data"]["list"])
 
+    child_report = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "子类报表", "reportType": "REPORT", "category": "TC子类", "shareScope": "PRIVATE"},
+    )
+    assert child_report.json()["code"] == 0
+    child_rid = child_report.json()["data"]["id"]
+
     removed = client.post(
         "/admin-api/ims/bi/report/category",
         headers=auth,
         json={"action": "delete", "categoryId": parent_id},
     )
-    assert removed.json()["code"] == 0
-    assert "未分类" in removed.json()["data"]["message"]
+    assert removed.json()["code"] == 1001
+    assert removed.json()["msg"] == "该分类下有 2 个报表，请先移动"
     detail = client.get(f"/admin-api/ims/bi/report/{rid}", headers=auth)
-    assert detail.json()["data"]["category"] == "未分类"
+    assert detail.json()["data"]["category"] == "TC分类"
+    assert client.get(f"/admin-api/ims/bi/report/{child_rid}", headers=auth).json()["data"]["category"] == "TC子类"
+
+    uncategorized = next(item for item in cats if item["name"] == "未分类")
+    blocked_delete = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "delete", "categoryId": uncategorized["id"]},
+    )
+    assert blocked_delete.json()["code"] == 1001
+    assert blocked_delete.json()["msg"] == "未分类不能删除"
+    blocked_rename = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "rename", "categoryId": uncategorized["id"], "name": "其他"},
+    )
+    assert blocked_rename.json()["code"] == 1001
+    assert blocked_rename.json()["msg"] == "未分类不能改名"
+
+    assert client.delete(f"/admin-api/ims/bi/report/{rid}", headers=auth).json()["code"] == 0
+    still_blocked = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "delete", "categoryId": parent_id},
+    )
+    assert still_blocked.json()["msg"] == "该分类下有 1 个报表，请先移动"
+    assert client.delete(f"/admin-api/ims/bi/report/{child_rid}", headers=auth).json()["code"] == 0
+    cleared = client.post(
+        "/admin-api/ims/bi/report/category",
+        headers=auth,
+        json={"action": "delete", "categoryId": parent_id},
+    )
+    assert cleared.json()["code"] == 0
+    assert cleared.json()["data"]["message"] == "分类已删除"
+    left = client.get("/admin-api/ims/bi/report/categories", headers=auth).json()["data"]["categories"]
+    assert all(item["name"] != "TC分类" for item in left)
+    assert any(item["name"] == "未分类" for item in left)
 
     bad = client.post("/admin-api/ims/bi/report/import", headers=auth, json={"template": {"comps": []}})
     assert bad.json()["code"] == 1001

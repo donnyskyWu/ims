@@ -242,11 +242,20 @@
               <td class="csub">{{ node.level === 1 ? '顶级' : '二级' }}</td>
               <td>
                 <button
-                  v-if="node.name !== '未分类'"
+                  v-if="!node.system"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="bi-cat-rename"
+                  @click="renameCategory(node)"
+                >
+                  改名
+                </button>
+                <button
+                  v-if="!node.system"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="bi-cat-delete"
-                  @click="removeCategory(node.id)"
+                  @click="removeCategory(node)"
                 >
                   删除
                 </button>
@@ -301,6 +310,7 @@ type Row = {
 }
 
 type CatNode = { id: number; name: string; system?: boolean; children: CatNode[] }
+type FlatCat = { id: number; name: string; level: number; system: boolean }
 
 const rows = ref<Row[]>([])
 const categories = ref<CatNode[]>([])
@@ -339,10 +349,12 @@ const flatNames = computed(() => {
 })
 
 const flatNodes = computed(() => {
-  const list: { id: number; name: string; level: number }[] = []
+  const list: FlatCat[] = []
   for (const node of categories.value) {
-    list.push({ id: node.id, name: node.name, level: 1 })
-    for (const child of node.children || []) list.push({ id: child.id, name: child.name, level: 2 })
+    list.push({ id: node.id, name: node.name, level: 1, system: Boolean(node.system) || node.name === '未分类' })
+    for (const child of node.children || []) {
+      list.push({ id: child.id, name: child.name, level: 2, system: Boolean(child.system) || child.name === '未分类' })
+    }
   }
   return list
 })
@@ -567,11 +579,52 @@ async function addCategory() {
   }
 }
 
-async function removeCategory(id: number) {
+function rejectSystemCategory(node: FlatCat, action: '删除' | '改名') {
+  if (!node.system && node.name !== '未分类') return false
+  catError.value = action === '改名' ? '未分类不能改名' : '未分类不能删除'
+  catMsg.value = ''
+  return true
+}
+
+async function renameCategory(node: FlatCat) {
   catError.value = ''
+  catMsg.value = ''
+  if (rejectSystemCategory(node, '改名')) return
+  if (!catForm.name.trim()) {
+    catError.value = '请填写分类名称'
+    return
+  }
   try {
-    const res = await http.post('/bi/report/category', { action: 'delete', categoryId: id })
-    catMsg.value = res.data.data?.message || '其下报表已移入「未分类」'
+    await http.post('/bi/report/category', {
+      action: 'rename',
+      categoryId: node.id,
+      name: catForm.name.trim(),
+    })
+    catForm.name = ''
+    catMsg.value = '分类已改名'
+    await loadCategories()
+    await loadList()
+  } catch (err) {
+    const body = err as { msg?: string }
+    catError.value = body.msg || '改名失败'
+  }
+}
+
+async function removeCategory(node: FlatCat) {
+  catError.value = ''
+  catMsg.value = ''
+  if (rejectSystemCategory(node, '删除')) return
+  try {
+    const listed = await http.get('/bi/report/list', {
+      params: { category: node.name, pageNo: 1, pageSize: 1 },
+    })
+    const occupied = Number(listed.data.data?.total || 0)
+    if (occupied > 0) {
+      catError.value = `该分类下有 ${occupied} 个报表，请先移动`
+      return
+    }
+    await http.post('/bi/report/category', { action: 'delete', categoryId: node.id })
+    catMsg.value = '分类已删除'
     await loadCategories()
     await loadList()
   } catch (err) {

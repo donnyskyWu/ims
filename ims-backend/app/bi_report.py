@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -603,6 +603,23 @@ def category_match_names(db: Session, tenant_id: int, name: str) -> list[str]:
     return names
 
 
+def category_report_count(db: Session, tenant_id: int, names: list[str]) -> int:
+    if not names:
+        return 0
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(BiReportDef)
+            .where(
+                BiReportDef.deleted == 0,
+                BiReportDef.tenant_id == tenant_id,
+                or_(BiReportDef.category.in_(names), BiReportDef.sub_category.in_(names)),
+            )
+        )
+        or 0
+    )
+
+
 def category_node(db: Session, tenant_id: int, category_id: int) -> BiReportCategory | None:
     row = db.get(BiReportCategory, category_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
@@ -658,7 +675,7 @@ def report_category_save(body: CategoryBody, db: Session = Depends(db_session), 
         name = body.name.strip()
         if not name:
             return fail(1001, "请填写分类名称")
-        if row.system_flag:
+        if row.system_flag or row.name == "未分类":
             return fail(1001, "未分类不能改名")
         previous = row.name
         row.name = name
@@ -683,21 +700,12 @@ def report_category_save(body: CategoryBody, db: Session = Depends(db_session), 
         rows = category_rows(db, tenant_id)
         removing = [row] + [item for item in rows if item.parent_id == row.id]
         names = [item.name for item in removing]
-        reports = list(
-            db.scalars(
-                select(BiReportDef).where(
-                    BiReportDef.deleted == 0,
-                    BiReportDef.tenant_id == tenant_id,
-                    BiReportDef.category.in_(names),
-                )
-            ).all()
-        )
-        for report in reports:
-            report.category = "未分类"
-            report.sub_category = ""
+        occupied = category_report_count(db, tenant_id, names)
+        if occupied:
+            return fail(1001, f"该分类下有 {occupied} 个报表，请先移动")
         for item in removing:
             item.deleted = 1
-        return ok({"moved": len(reports), "message": "其下报表已移入「未分类」"})
+        return ok({"deleted": len(removing), "message": "分类已删除"})
     return fail(1001, "分类操作无效")
 
 
