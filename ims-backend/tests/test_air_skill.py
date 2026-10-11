@@ -35,6 +35,33 @@ def test_air_skill_create_list_audit():
     assert submit.json()["code"] == 0
     assert submit.json()["data"]["auditStatus"] == "PENDING"
 
-    approved = client.put(f"/admin-api/ims/air/skill/{skill_id}/audit", headers=auth, json={"approve": True})
+    self_audit = client.put(f"/admin-api/ims/air/skill/{skill_id}/audit", headers=auth, json={"approve": True})
+    assert self_audit.json()["code"] == 1057
+
+    from app.core import SessionLocal
+    from app.models import AirSkill, User
+
+    db = SessionLocal()
+    try:
+        other = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).one()
+        row = db.get(AirSkill, skill_id)
+        assert row is not None
+        row.owner_user_id = other.id
+        db.commit()
+    finally:
+        db.close()
+
+    rejected = client.put(
+        f"/admin-api/ims/air/skill/{skill_id}/audit",
+        headers=auth,
+        json={"approve": False},
+    )
+    assert rejected.json()["code"] == 1001
+
+    approved = client.put(
+        f"/admin-api/ims/air/skill/{skill_id}/audit",
+        headers=auth,
+        json={"approve": True, "auditNote": "同意发布"},
+    )
     assert approved.json()["code"] == 0
     assert approved.json()["data"]["status"] == "PUBLISHED"

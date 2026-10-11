@@ -405,6 +405,20 @@ def ensure_air_kb_library_columns() -> None:
                 conn.execute(text("ALTER TABLE ims_kb_doc ADD COLUMN body TEXT NULL"))
 
 
+def ensure_air_skill_audit_columns() -> None:
+    """已有库补技能审核意见。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_skill" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_skill")}
+    if "audit_note" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''"))
+
+
 def ensure_air_slice92_columns() -> None:
     """已有库补审计列与冻结原因。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -552,6 +566,7 @@ def init_db() -> None:
     ensure_cert_file_key_column()
     ensure_air_key_columns()
     ensure_air_kb_library_columns()
+    ensure_air_skill_audit_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     from app.ops_db import ensure_ops

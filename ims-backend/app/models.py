@@ -1782,6 +1782,7 @@ class AirSkill(Base):
     owner_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     grant_count: Mapped[int] = mapped_column(Integer, default=0)
     invoke_count: Mapped[int] = mapped_column(Integer, default=0)
+    audit_note: Mapped[str] = mapped_column(String(512), default="")
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

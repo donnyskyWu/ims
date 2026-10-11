@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.air_key import set_qpm_clock
 from app.core import SessionLocal
 from app.main import app
-from app.models import AirApiKey, AirExpertGrant, AirMcpLog, Notify, User
+from app.models import AirApiKey, AirExpertGrant, AirMcpLog, AirSkill, Notify, User
 
 client = TestClient(app)
 
@@ -23,6 +23,18 @@ def headers() -> dict:
         "accessToken"
     ]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _hand_off_skill_owner(skill_id: int) -> None:
+    db = SessionLocal()
+    try:
+        other = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).one()
+        row = db.get(AirSkill, skill_id)
+        assert row is not None
+        row.owner_user_id = other.id
+        db.commit()
+    finally:
+        db.close()
 
 
 def make_user(auth: dict, prefix: str) -> int:
@@ -64,6 +76,7 @@ def publish_skill(auth: dict, name: str) -> dict:
     )
     skill = created.json()["data"]
     client.put(f"/admin-api/ims/air/skill/{skill['id']}/submit-audit", headers=auth)
+    _hand_off_skill_owner(skill["id"])
     approved = client.put(
         f"/admin-api/ims/air/skill/{skill['id']}/audit",
         headers=auth,

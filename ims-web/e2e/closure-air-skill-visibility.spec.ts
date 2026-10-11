@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, loginAdmin, loginAs } from './closure-helpers'
 
 /**
  * Checklist E2E-S8-01 / E2E-S8-10 / E2E-S8-04 的页面侧（acceptance · 纯 UI）。
@@ -15,7 +15,7 @@ test.describe('air skill visibility closure S8', () => {
     test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     fs.mkdirSync(shotDir, { recursive: true })
-    await loginAdmin(page)
+    await loginAs(page, 'e2e_author')
     await page.goto('/ims/air/skill')
     await expect(page.locator('h1')).toHaveText('技能库', { timeout: 15_000 })
 
@@ -45,10 +45,22 @@ test.describe('air skill visibility closure S8', () => {
     await expect(row.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PENDING')
     await page.screenshot({ path: `${shotDir}/02-skill-pending.png`, fullPage: true })
 
+    await loginAdmin(page)
+    await page.goto('/ims/air/skill')
+    await expect(page.locator('h1')).toHaveText('技能库', { timeout: 15_000 })
+    await page.locator('input[placeholder="技能名称"]').fill(skillName)
+    const relisted = page.waitForResponse(
+      (response) => response.url().includes('/air/skill/list') && response.request().method() === 'GET',
+    )
+    await page.getByRole('button', { name: '查询' }).click()
+    await relisted
+    const pendingRow = page.locator('tbody tr').filter({ hasText: skillName })
+    await pendingRow.getByTestId('air-skill-audit').click()
+    const audit = page.getByTestId('air-skill-audit-form')
     const approved = page.waitForResponse(
       (response) => response.url().includes('/audit') && response.request().method() === 'PUT',
     )
-    await row.getByTestId('air-skill-approve').click()
+    await audit.getByTestId('air-skill-approve').click()
     expect((await (await approved).json()).code).toBe(0)
     await expect(row.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PUBLISHED')
     await expect(row.getByTestId('air-skill-grant-count')).toHaveText('0')

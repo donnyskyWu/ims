@@ -61,8 +61,7 @@
               <td>
                 <div style="display: flex; gap: 4px; flex-wrap: wrap">
                   <button v-if="row.status === 'DRAFT'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-submit" @click="submitAudit(row.id)">提交审核</button>
-                  <button v-if="row.auditStatus === 'PENDING'" class="btn btn-pri btn-sm" type="button" data-testid="air-skill-approve" @click="audit(row.id, true)">通过</button>
-                  <button v-if="row.auditStatus === 'PENDING'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-reject" @click="audit(row.id, false)">驳回</button>
+                  <button v-if="canAudit(row)" class="btn btn-pri btn-sm" type="button" data-testid="air-skill-audit" @click="openAudit(row)">审核</button>
                   <button v-if="row.status === 'PUBLISHED'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-grant" @click="openGrant(row)">授权</button>
                   <button v-if="row.status === 'PUBLISHED'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-disable" @click="askDisable(row)">停用</button>
                   <button v-if="row.status === 'DISABLED'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-enable" @click="setStatus(row.id, 'ENABLED')">启用</button>
@@ -85,6 +84,22 @@
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-save" @click="submitCreate">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="auditSkill" class="modal-mask" @click.self="auditSkill = null">
+      <div class="card" style="width: 560px; padding: 20px" data-testid="air-skill-audit-form">
+        <h3 style="margin: 0 0 12px">技能审核 · {{ auditSkill.skillName }}</h3>
+        <p class="hint">责任人 {{ auditSkill.ownerName || '—' }} · 当前状态 {{ statusLabel(auditSkill.status) }}</p>
+        <p v-if="auditSkill.capability" style="font-size: 13px; line-height: 1.6">{{ auditSkill.capability }}</p>
+        <label class="fld">意见（驳回时必填）</label>
+        <textarea v-model="auditNote" class="fld-in" rows="4" placeholder="说明通过与驳回原因" data-testid="air-skill-audit-note" />
+        <p v-if="auditError" class="hint" style="color: var(--red)" data-testid="air-skill-audit-error">{{ auditError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="auditSkill = null">取消</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-skill-reject" @click="submitAuditDecision(false)">驳回</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-approve" @click="submitAuditDecision(true)">审核通过</button>
         </div>
       </div>
     </div>
@@ -171,6 +186,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 type Row = {
   id: number
@@ -180,8 +196,10 @@ type Row = {
   versionLabel: string
   status: string
   auditStatus: string
+  ownerUserId: number
   ownerName: string
   grantCount: number
+  capability?: string
 }
 
 type GrantRow = {
@@ -194,6 +212,7 @@ type GrantRow = {
 
 type Option = { id: string; label: string }
 
+const userStore = useUserStore()
 const summary = ref<{ skillCount: number; publishedCount: number; pendingAuditCount: number; invokeTotal: number } | null>(null)
 const rows = ref<Row[]>([])
 const loading = ref(false)
@@ -202,6 +221,9 @@ const formError = ref('')
 const filters = reactive({ skillName: '', status: '' })
 const form = reactive({ skillName: '', category: '内容生产' })
 const disableTarget = ref<Row | null>(null)
+const auditSkill = ref<Row | null>(null)
+const auditNote = ref('')
+const auditError = ref('')
 const grantSkill = ref<Row | null>(null)
 const grants = ref<GrantRow[]>([])
 const grantError = ref('')
@@ -216,6 +238,13 @@ function statusLabel(status: string) {
 
 function auditLabel(status: string) {
   return ({ NONE: '未提交', PENDING: '待审核', APPROVED: '已通过', REJECTED: '已驳回' } as Record<string, string>)[status] || status
+}
+
+function canAudit(row: Row) {
+  if (row.auditStatus !== 'PENDING') return false
+  const mine = userStore.profile?.userId
+  if (mine && String(row.ownerUserId) === String(mine)) return false
+  return true
 }
 
 function grantTypeLabel(item: GrantRow) {
@@ -265,10 +294,30 @@ async function submitAudit(id: number) {
   await loadSummary()
 }
 
-async function audit(id: number, approve: boolean) {
-  await http.put(`/air/skill/${id}/audit`, { approve })
-  await loadList()
-  await loadSummary()
+function openAudit(row: Row) {
+  auditSkill.value = row
+  auditNote.value = ''
+  auditError.value = ''
+}
+
+async function submitAuditDecision(approve: boolean) {
+  if (!auditSkill.value) return
+  auditError.value = ''
+  if (!approve && !auditNote.value.trim()) {
+    auditError.value = '必填项，请填写'
+    return
+  }
+  try {
+    await http.put(`/air/skill/${auditSkill.value.id}/audit`, {
+      approve,
+      auditNote: auditNote.value.trim(),
+    })
+    auditSkill.value = null
+    await loadList()
+    await loadSummary()
+  } catch (error) {
+    auditError.value = errorMessage(error)
+  }
 }
 
 function askDisable(row: Row) {

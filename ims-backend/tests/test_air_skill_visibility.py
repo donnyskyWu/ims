@@ -23,6 +23,20 @@ def headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _hand_off_skill_owner(skill_id: int) -> None:
+    from app.models import AirSkill, User
+
+    db = SessionLocal()
+    try:
+        other = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).one()
+        row = db.get(AirSkill, skill_id)
+        assert row is not None
+        row.owner_user_id = other.id
+        db.commit()
+    finally:
+        db.close()
+
+
 def make_user(auth: dict, prefix: str) -> int:
     suffix = uuid.uuid4().hex[:8]
     created = client.post(
@@ -67,6 +81,7 @@ def publish_skill(auth: dict, name: str) -> dict:
     submitted = client.put(f"/admin-api/ims/air/skill/{skill['id']}/submit-audit", headers=auth)
     assert submitted.json()["data"]["status"] == "PENDING"
     assert submitted.json()["data"]["auditStatus"] == "PENDING"
+    _hand_off_skill_owner(skill["id"])
     approved = client.put(
         f"/admin-api/ims/air/skill/{skill['id']}/audit",
         headers=auth,

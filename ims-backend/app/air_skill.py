@@ -57,9 +57,11 @@ def skill_vo(row: AirSkill, names: dict[int, str]) -> dict:
         "versionLabel": row.version_label,
         "status": row.status,
         "auditStatus": row.audit_status,
+        "ownerUserId": row.owner_user_id,
         "ownerName": names.get(row.owner_user_id, ""),
         "grantCount": row.grant_count,
         "invokeCount": row.invoke_count,
+        "auditNote": row.audit_note or "",
         "createdAt": iso(row.created_at),
     }
 
@@ -181,6 +183,12 @@ def skill_audit(
         return fail(1504, "资源不可用")
     if row.audit_status != "PENDING":
         return fail(1001, "非待审核状态")
+    if row.owner_user_id == actor.id:
+        return fail(1057, "审核人不可审自己提交的内容")
+    note = (body.auditNote or "").strip()
+    if not body.approve and not note:
+        return fail(1001, "驳回须填写意见")
+    row.audit_note = note
     row.updated_at = utcnow()
     if body.approve:
         row.status = "PUBLISHED"
