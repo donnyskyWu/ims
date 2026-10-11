@@ -296,7 +296,7 @@ def test_eff_relation_perms_seed_and_login():
         ensure_role_matrix,
     )
 
-    readers = {"R1", "R2", "R4", "R7", "R9"}
+    readers = {"R1", "R2", "R4", "R5", "R6", "R7", "R9"}
     writers = {"R1", "R2"}
     for key in ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"):
         codes = grants_for(key)
@@ -351,8 +351,13 @@ def test_eff_relation_perms_seed_and_login():
     assert EFF_RELATION_QUERY in r7["permCodes"]
     assert EFF_RELATION_CREATE not in r7["permCodes"]
     r5 = client.get("/admin-api/ims/auth/access", headers=login("tc_r5")).json()["data"]
-    assert EFF_RELATION_QUERY not in r5["permCodes"]
+    assert EFF_RELATION_QUERY in r5["permCodes"]
+    assert EFF_RELATION_CREATE not in r5["permCodes"]
     assert EFF_RELATION_DELETE not in r5["permCodes"]
+    r6 = client.get("/admin-api/ims/auth/access", headers=login("tc_r6")).json()["data"]
+    assert EFF_RELATION_QUERY in r6["permCodes"]
+    assert EFF_RELATION_CREATE not in r6["permCodes"]
+    assert EFF_RELATION_DELETE not in r6["permCodes"]
 
 
 def test_b063_comp_submit_and_first_review_are_allowed():

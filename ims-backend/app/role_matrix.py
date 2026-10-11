@@ -190,12 +190,12 @@ def grants_for(role_key: str) -> dict[str, str]:
     return levels
 
 
-# EFF-001（PRD R1–R11）：查看归属与看板；建立/变更仅 R1、R2；删除仅 R1。
+# EFF-001：查看归属与看板 R1/R2/R4/R5/R6/R7/R9；建立/变更仅 R1、R2；删除仅 R1。
 EFF_RELATION_QUERY = "ims:eff:relation:query"
 EFF_RELATION_CREATE = "ims:eff:relation:create"
 EFF_RELATION_UPDATE = "ims:eff:relation:update"
 EFF_RELATION_DELETE = "ims:eff:relation:delete"
-_EFF_RELATION_READ = frozenset({"R1", "R2", "R4", "R7", "R9"})
+_EFF_RELATION_READ = frozenset({"R1", "R2", "R4", "R5", "R6", "R7", "R9"})
 _EFF_RELATION_WRITE = frozenset({"R1", "R2"})
 
 
