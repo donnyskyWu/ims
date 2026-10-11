@@ -88,7 +88,7 @@
         <div class="card stat"><span class="l">人均 GMV</span><div class="n">¥{{ (board.avgGmvPerCap / 10000).toFixed(1) }} 万</div></div>
         <div class="card stat"><span class="l">人均场次/月</span><div class="n">{{ board.avgSessionsPerMonth }}</div></div>
         <div class="card stat"><span class="l">人均作品/月</span><div class="n">{{ board.avgWorksPerMonth }}</div></div>
-        <div class="card stat"><span class="l">产能利用率</span><div class="n">{{ board.capacityUtilization }}%</div><div class="d">分摊&gt;100% {{ board.overShareUserCount }} 人</div></div>
+        <div class="card stat"><span class="l">产能利用率</span><div class="n">{{ board.capacityUtilization }}%</div><div class="d">分摊&gt;100% {{ board.overShareUserCount }} 人 · 仅统计兼职合计</div></div>
       </div>
     </template>
 

@@ -229,11 +229,8 @@ def metrics_board(db: Session = Depends(db_session), actor: User = Depends(curre
         .distinct()
     ).all()
     for uid in user_ids:
-        total = part_time_sum(db, tenant_id, uid)
-        primary = active_primary(db, tenant_id, uid)
-        if primary:
-            total += float(primary.share_ratio or 0)
-        if total > 100:
+        # BR-213 / EFF-R1：主归属固定 100% 全额，不计入「分摊>100%」。只统计兼职合计超过 100% 的人。
+        if part_time_sum(db, tenant_id, uid) > 100:
             over_ratio_users += 1
     return ok(
         {

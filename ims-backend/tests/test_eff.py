@@ -62,6 +62,54 @@ def test_eff_primary_conflict_1198():
     assert second.json()["code"] == 1198
 
 
+def test_eff_board_primary_100_plus_part_time_60_is_not_over():
+    import random
+
+    from app.core import SessionLocal
+    from app.models import EffRelation, User
+
+    auth = headers()
+    uid = random.randint(900_000, 999_989)
+    before = client.get("/admin-api/ims/eff/metrics/board", headers=auth).json()["data"]["overShareUserCount"]
+    primary = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PRIMARY", "targetName": "主归属", "shareRatio": 100},
+    )
+    assert primary.json()["code"] == 0, primary.json()
+    part = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PART_TIME", "targetName": "兼职", "shareRatio": 60},
+    )
+    assert part.json()["code"] == 0, part.json()
+    after = client.get("/admin-api/ims/eff/metrics/board", headers=auth).json()["data"]["overShareUserCount"]
+    assert after == before
+
+    db = SessionLocal()
+    try:
+        tenant_id = db.query(User).filter(User.username == "admin").one().tenant_id
+        now_rows = [
+            EffRelation(
+                user_id=uid,
+                relation_type="PART_TIME",
+                target_type="IP_GROUP",
+                target_id=2,
+                target_name="绕过校验",
+                share_ratio=50,
+                effective_from="2026-01-01",
+                status="ACTIVE",
+                tenant_id=tenant_id,
+            )
+        ]
+        db.add_all(now_rows)
+        db.commit()
+    finally:
+        db.close()
+    bumped = client.get("/admin-api/ims/eff/metrics/board", headers=auth).json()["data"]["overShareUserCount"]
+    assert bumped == before + 1
+
+
 def test_eff_inventory_snapshot():
     auth = headers()
     snap = client.get("/admin-api/ims/eff/inventory/snapshot", headers=auth)
