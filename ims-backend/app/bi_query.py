@@ -552,6 +552,45 @@ def query_sources(ims: Session = Depends(db_session), actor: User = Depends(curr
     return ok({"list": data})
 
 
+class QueryAdhocBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    entityCode: str
+    config: QueryConfigBody
+    pageNo: int = 1
+    pageSize: int = 20
+
+
+@router.post("/run")
+def query_run_adhoc(
+    body: QueryAdhocBody,
+    ims: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    if not body.entityCode.strip():
+        return fail(1001, "请选择数据源")
+    if not limit_ok(body.config.limit):
+        return fail(1001, "行数上限须为 1~1000")
+    entity, fields, err = load_entity_bundle(ims, actor, body.entityCode)
+    if err:
+        return err
+    assert entity is not None
+    result, run_err = execute_query(
+        ims,
+        ops,
+        entity,
+        fields,
+        body.config,
+        tenant_of(actor),
+        page_no=body.pageNo,
+        page_size=body.pageSize,
+        actor=actor,
+    )
+    if run_err:
+        return run_err
+    return ok(result)
+
+
 @router.post("/preview")
 def query_preview(
     body: QueryPreviewBody,

@@ -370,6 +370,28 @@
       </div>
     </template>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
+
+    <div v-if="saveOpen" class="modal-mask" @click.self="saveOpen = false">
+      <div class="card" style="width: 420px; padding: 20px" data-testid="bi-query-save-modal">
+        <h3 style="margin: 0 0 12px">保存为我的查询</h3>
+        <label class="fld">
+          <span>查询名称 <em class="req">*</em></span>
+          <input v-model="saveName" data-testid="bi-query-save-name" placeholder="请填写查询名称" />
+        </label>
+        <label class="fld">
+          <span>状态</span>
+          <select v-model="saveStatus">
+            <option value="DRAFT">草稿</option>
+            <option value="PUBLISHED">已发布</option>
+          </select>
+        </label>
+        <p v-if="saveError" class="hint bad">{{ saveError }}</p>
+        <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px">
+          <button class="btn btn-sec btn-sm" type="button" @click="saveOpen = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" @click="confirmSave">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -417,6 +439,11 @@ const fields = ref<FieldVo[]>([])
 const fieldHint = ref('')
 const toast = ref('')
 const formError = ref('')
+const saveOpen = ref(false)
+const saveName = ref('')
+const saveStatus = ref('DRAFT')
+const saveError = ref('')
+const adhoc = ref(false)
 const running = ref(false)
 const result = ref<QueryResult | null>(null)
 const previewSql = ref('SELECT … FROM …（执行后展示实际 SQL）')
@@ -701,21 +728,20 @@ async function copySql() {
   }
 }
 
-async function ensureSaved(name: string) {
-  try {
-    const res = await http.post('/bi/query', {
-      queryName: name,
-      entityCode: builder.entityCode,
-      status: 'DRAFT',
-      config: payloadConfig.value,
-    })
-    return res.data.data.id as string
-  } catch (error: unknown) {
-    const msg = rejectedCode(error) === 1261 ? '实体未映射（1261）' : errorMessage(error)
-    formError.value = msg
-    toast.value = msg
-    return null
-  }
+async function fetchAdhoc(pageNo = resultPageNo.value, pageSize = resultPageSize.value) {
+  const run = await http.post('/bi/query/run', {
+    entityCode: builder.entityCode,
+    config: payloadConfig.value,
+    pageNo,
+    pageSize,
+  })
+  result.value = run.data.data
+  previewSql.value = run.data.data.sql || previewSql.value
+  resultPageNo.value = run.data.data.pageNo ?? pageNo
+  resultPageSize.value = run.data.data.pageSize ?? pageSize
+  lastRunQueryId.value = null
+  adhoc.value = true
+  if (run.data.data.columns?.length) resetChartAxes(run.data.data.columns)
 }
 
 async function fetchRunResult(queryId: string, pageNo = resultPageNo.value, pageSize = resultPageSize.value) {
@@ -725,6 +751,7 @@ async function fetchRunResult(queryId: string, pageNo = resultPageNo.value, page
   resultPageNo.value = run.data.data.pageNo ?? pageNo
   resultPageSize.value = run.data.data.pageSize ?? pageSize
   lastRunQueryId.value = queryId
+  adhoc.value = false
   if (run.data.data.columns?.length) resetChartAxes(run.data.data.columns)
 }
 
@@ -754,10 +781,8 @@ async function runAdhoc() {
   }
   running.value = true
   try {
-    const id = await ensureSaved(`临时查询 ${new Date().toLocaleTimeString()}`)
-    if (!id) return
     syncResultFieldMap()
-    await fetchRunResult(id, 1, resultPageSize.value)
+    await fetchAdhoc(1, resultPageSize.value)
   } catch (error: unknown) {
     formError.value = errorMessage(error)
   } finally {
@@ -765,7 +790,7 @@ async function runAdhoc() {
   }
 }
 
-async function saveDraft() {
+function saveDraft() {
   const blocked = dateEdge() || limitEdge()
   if (blocked) {
     formError.value = blocked
@@ -775,10 +800,31 @@ async function saveDraft() {
     formError.value = '请选择数据源'
     return
   }
-  const name = window.prompt('查询名称', '我的查询')
-  if (!name?.trim()) return
-  const id = await ensureSaved(name.trim())
-  if (id) toast.value = '已保存'
+  saveName.value = ''
+  saveStatus.value = 'DRAFT'
+  saveError.value = ''
+  saveOpen.value = true
+}
+
+async function confirmSave() {
+  if (!saveName.value.trim()) {
+    saveError.value = '请填写查询名称'
+    return
+  }
+  saveError.value = ''
+  try {
+    const res = await http.post('/bi/query', {
+      queryName: saveName.value.trim(),
+      entityCode: builder.entityCode,
+      status: saveStatus.value,
+      config: payloadConfig.value,
+    })
+    saveOpen.value = false
+    toast.value = '已保存'
+    lastRunQueryId.value = res.data.data.id
+  } catch (error: unknown) {
+    saveError.value = errorMessage(error)
+  }
 }
 
 async function loadMine() {
@@ -801,10 +847,12 @@ function switchMine() {
 }
 
 async function gotoResultPage(page: number) {
-  if (!lastRunQueryId.value || page < 1 || page > resultPageCount.value || page === resultPageNo.value) return
+  if (page < 1 || page > resultPageCount.value || page === resultPageNo.value) return
+  if (!adhoc.value && !lastRunQueryId.value) return
   running.value = true
   try {
-    await fetchRunResult(lastRunQueryId.value, page, resultPageSize.value)
+    if (adhoc.value) await fetchAdhoc(page, resultPageSize.value)
+    else await fetchRunResult(lastRunQueryId.value as string, page, resultPageSize.value)
   } catch (error: unknown) {
     formError.value = errorMessage(error)
   } finally {
@@ -814,12 +862,13 @@ async function gotoResultPage(page: number) {
 
 async function changeResultPageSize(ev: Event) {
   const size = Number((ev.target as HTMLSelectElement).value)
-  if (!lastRunQueryId.value || !size) return
+  if ((!adhoc.value && !lastRunQueryId.value) || !size) return
   resultPageSize.value = size
   resultPageNo.value = 1
   running.value = true
   try {
-    await fetchRunResult(lastRunQueryId.value, 1, size)
+    if (adhoc.value) await fetchAdhoc(1, size)
+    else await fetchRunResult(lastRunQueryId.value as string, 1, size)
   } catch (error: unknown) {
     formError.value = errorMessage(error)
   } finally {

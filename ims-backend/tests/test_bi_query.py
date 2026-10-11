@@ -224,6 +224,28 @@ def test_bi_query_sources_and_agg_join_preview():
     assert "电竞一组" not in sql
 
 
+def test_bi_query_adhoc_run_does_not_create_row():
+    auth = headers()
+    client.get("/admin-api/ims/bi/query/sources", headers=auth)
+    before = client.get("/admin-api/ims/bi/query/page", headers=auth, params={"pageNo": 1, "pageSize": 1})
+    before_total = before.json()["data"]["total"]
+    run = client.post(
+        "/admin-api/ims/bi/query/run",
+        headers=auth,
+        json={
+            "entityCode": "IP_GROUP",
+            "config": {"selectFields": ["group_name"], "limit": 10},
+            "pageNo": 1,
+            "pageSize": 5,
+        },
+    )
+    assert run.json()["code"] == 0, run.json()
+    assert "queryCostMs" in run.json()["data"]
+    assert "临时查询" not in str(run.json()["data"])
+    after = client.get("/admin-api/ims/bi/query/page", headers=auth, params={"pageNo": 1, "pageSize": 1})
+    assert after.json()["data"]["total"] == before_total
+
+
 def test_bi_query_save_and_publish():
     auth = headers()
     seed_platform_account_entity(auth)
