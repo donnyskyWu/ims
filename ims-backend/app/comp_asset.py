@@ -118,6 +118,23 @@ def _lock_fresh_seq(tenant_id: int, day: str) -> tuple[Session, CompAssetSeq]:
     raise RuntimeError("竞品单号序号行不存在") from last
 
 
+def _session_seq(db: Session, tenant_id: int, prefix: str) -> int:
+    """本事务里已经看见的档案号。不再对调用方连接发查询，避免和序号锁互相等待。"""
+    best = 0
+    seen = list(db.new) + list(db.dirty)
+    seen.extend(db.identity_map.values())
+    for obj in seen:
+        if not isinstance(obj, CompAsset) or int(obj.tenant_id or 0) != int(tenant_id):
+            continue
+        number = str(obj.asset_no or "")
+        if not number.startswith(prefix):
+            continue
+        tail = number[len(prefix) :]
+        if tail.isdigit():
+            best = max(best, int(tail))
+    return best
+
+
 def next_asset_no(db: Session, tenant_id: int) -> str:
     """锁当日序号行后取下一个空号。已有单号（含软删）只参与占号，不会被改写。
 
@@ -127,7 +144,7 @@ def next_asset_no(db: Session, tenant_id: int) -> str:
     prefix = f"CP{day}"
     alloc, row = _lock_fresh_seq(tenant_id, day)
     try:
-        floor = max(_used_seq(alloc, tenant_id, prefix), _used_seq(db, tenant_id, prefix))
+        floor = max(_used_seq(alloc, tenant_id, prefix), _session_seq(db, tenant_id, prefix))
         if int(row.seq_val or 0) < floor:
             row.seq_val = floor
         row.seq_val = int(row.seq_val or 0) + 1

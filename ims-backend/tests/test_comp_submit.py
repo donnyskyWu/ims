@@ -264,6 +264,77 @@ def test_final_approve_succeeds_on_first_call_from_clean_seq():
             engine.dispose()
 
 
+def test_final_approve_once_when_monitor_account_was_removed():
+    """软删的监控账号仍占唯一键。终审不能因此回滚，再点一次也不再加审核轮次。"""
+    from datetime import datetime, timedelta, timezone
+
+    from app.ops_db import ops_session
+    from app.ops_models import ExternalAccount
+
+    seed_roles()
+    created = client.post(
+        "/admin-api/ims/comp/analysis",
+        headers=headers("tc_r6"),
+        json={**BODY, "compName": "TB竞品B077终审"},
+    ).json()
+    assert created["code"] == 0, created
+    no = created["data"]["analysisNo"]
+    first = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r8"),
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    assert first.json()["code"] == 0, first.json()
+
+    day = datetime.now(timezone(timedelta(hours=8))).strftime("%Y%m%d")
+    ident = f"ca-CP{day}001"
+    ops = ops_session()
+    try:
+        ops.add(
+            ExternalAccount(
+                account_identifier=ident,
+                account_name="已停用监控",
+                platform_type="DOUYIN",
+                deleted=1,
+                tenant_id=0,
+            )
+        )
+        ops.commit()
+    finally:
+        ops.close()
+
+    final = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r4"),
+        json={"auditLevel": "FINAL", "conclusion": "STORED"},
+    )
+    final_body = final.json()
+    assert final.status_code == 200
+    assert final_body["code"] == 0, final_body
+    assert final_body["data"]["newStatus"] == "STORED"
+    assert final_body["data"]["mergeInfo"]["assetNo"] == f"CP{day}001"
+    assert len(final_body["data"]["auditRounds"]) == 2
+
+    again = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r4"),
+        json={"auditLevel": "FINAL", "conclusion": "STORED"},
+    )
+    again_body = again.json()
+    assert again.status_code == 200
+    assert again_body["code"] == 0, again_body
+    assert again_body["data"]["newStatus"] == "STORED"
+    assert len(again_body["data"]["auditRounds"]) == 2
+
+    ops = ops_session()
+    try:
+        account = ops.scalar(select(ExternalAccount).where(ExternalAccount.account_identifier == ident))
+        assert account is not None
+        assert account.deleted == 0
+    finally:
+        ops.close()
+
+
 def test_reject_requires_reason_and_resubmit_keeps_timeline():
     seed_roles()
     r6 = headers("tc_r6")

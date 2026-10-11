@@ -7,12 +7,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.comp_asset import asset_vo, assign_and_flush, enrich_metrics
 from app.core import utcnow
-from app.corp import check_enum, ops_db, page_args, paged, tenant_of
+from app.corp import check_enum, page_args, paged, tenant_of
 from app.models import CompAnalysis, CompAsset, Role, Todo, User, UserRole, WorkMessage
 from app.ops_models import ExternalAccount
 from app.scope import enabled_roles
@@ -328,7 +329,17 @@ def essentials_block(source: str, dimension: dict, conclusion: str):
     return None
 
 
-def subscribe_monitor(ops: Session, tenant_id: int, asset: CompAsset, homepage: str) -> None:
+def _db_retryable(exc: BaseException) -> bool:
+    message = str(getattr(exc, "orig", exc))
+    return any(code in message for code in ("1020", "1213", "1205"))
+
+
+def subscribe_monitor(tenant_id: int, asset: CompAsset, homepage: str) -> None:
+    """监控账号写在独立短事务里。
+
+    终审请求自己的业务事务还没提交。若把外部账号插进请求附带的另一个库会话，
+    唯一键冲突、死锁或锁等待会先于业务提交失败，整单回滚，页面仍停在待终审。
+    """
     info = dict(asset.base_info or {})
     tomorrow = (datetime.now(BJ) + timedelta(days=1)).strftime("%Y-%m-%d")
     info["monitorSubscribed"] = True
@@ -339,32 +350,59 @@ def subscribe_monitor(ops: Session, tenant_id: int, asset: CompAsset, homepage: 
     ident = (asset.comp_account_id or f"ca-{asset.asset_no}")[:128]
     if not ident:
         return
-    exists = ops.scalar(
-        select(ExternalAccount.id).where(
-            ExternalAccount.deleted == 0,
-            ExternalAccount.tenant_id == tenant_id,
-            ExternalAccount.platform_type == asset.platform,
-            ExternalAccount.account_identifier == ident,
-        )
-    )
-    if exists:
-        return
-    ops.add(
-        ExternalAccount(
-            account_identifier=ident,
-            account_name=asset.comp_name_std[:128],
-            platform_type=asset.platform,
-            follower_count=int(info.get("followerCount") or 0),
-            work_count=int(info.get("works30d") or 0),
-            last_synced_at="",
-            tenant_id=tenant_id,
-        )
-    )
+    _ensure_external_account(tenant_id, asset, ident, info)
+
+
+def _ensure_external_account(tenant_id: int, asset: CompAsset, ident: str, info: dict) -> None:
+    from app.ops_db import ops_session
+
+    last: Exception | None = None
+    for _ in range(3):
+        ops = ops_session()
+        try:
+            row = ops.scalar(
+                select(ExternalAccount).where(
+                    ExternalAccount.tenant_id == tenant_id,
+                    ExternalAccount.platform_type == asset.platform,
+                    ExternalAccount.account_identifier == ident,
+                )
+            )
+            if row is not None:
+                row.deleted = 0
+                row.account_name = (asset.comp_name_std or "")[:128]
+                row.follower_count = int(info.get("followerCount") or 0)
+                row.work_count = int(info.get("works30d") or 0)
+                ops.commit()
+                return
+            ops.add(
+                ExternalAccount(
+                    account_identifier=ident,
+                    account_name=(asset.comp_name_std or "")[:128],
+                    platform_type=asset.platform,
+                    follower_count=int(info.get("followerCount") or 0),
+                    work_count=int(info.get("works30d") or 0),
+                    last_synced_at="",
+                    tenant_id=tenant_id,
+                )
+            )
+            ops.commit()
+            return
+        except IntegrityError:
+            ops.rollback()
+            return
+        except OperationalError as exc:
+            ops.rollback()
+            last = exc
+            if not _db_retryable(exc):
+                raise
+        finally:
+            ops.close()
+    if last is not None:
+        raise last
 
 
 def store_asset(
     db: Session,
-    ops: Session,
     tenant_id: int,
     actor_id: int,
     row: CompAnalysis,
@@ -420,7 +458,7 @@ def store_asset(
         asset.latest_version = version_entry["version"]
         asset.status = "TRACKING"
         asset.updated_at = utcnow()
-    subscribe_monitor(ops, tenant_id, asset, row.homepage_url)
+    subscribe_monitor(tenant_id, asset, row.homepage_url)
     return asset
 
 
@@ -744,26 +782,50 @@ def audit_analysis(
     analysis_no: str,
     body: AuditBody,
     db: Session = Depends(db_session),
-    ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            result = _audit_once(db, actor, analysis_no, body)
+            if isinstance(result, dict):
+                db.flush()
+                return ok(result)
+            return result
+        except OperationalError as exc:
+            db.rollback()
+            last = exc
+            if attempt == 2 or not _db_retryable(exc):
+                raise
+    if last is not None:
+        raise last
+    return fail(1001, "审核失败")
+
+
+def _audit_once(db: Session, actor: User, analysis_no: str, body: AuditBody):
     tenant_id = tenant_of(actor)
     row = db.scalar(
-        select(CompAnalysis).where(
+        select(CompAnalysis)
+        .where(
             CompAnalysis.deleted == 0,
             CompAnalysis.tenant_id == tenant_id,
             CompAnalysis.analysis_no == analysis_no,
         )
+        .with_for_update()
     )
     if row is None:
         return fail(1504, "资源不可用")
-    if row.submit_status != "SUBMITTED":
-        return fail(1001, "当前状态不可审核")
     level = (body.auditLevel or "").strip().upper()
     conclusion = (body.conclusion or "").strip().upper()
     if level not in {"FIRST", "FINAL"} or conclusion not in {PASS, BACK}:
         return fail(1001, "审核参数不合法")
     caps = actor_caps(db, actor)
+    if level == "FINAL" and conclusion == PASS and row.submit_status == "STORED":
+        if not caps["canFinalAudit"]:
+            return fail(1176, "越级审核：终审仅运营总监")
+        return _stored_result(db, tenant_id, row)
+    if row.submit_status != "SUBMITTED":
+        return fail(1001, "当前状态不可审核")
     if level == "FIRST" and not caps["canFirstAudit"]:
         return fail(1176, "越级审核：初审仅内容审核员")
     if level == "FINAL" and not caps["canFinalAudit"]:
@@ -832,7 +894,7 @@ def audit_analysis(
                 tenant_id=tenant_id,
             )
     else:
-        asset = store_asset(db, ops, tenant_id, actor.id, row)
+        asset = store_asset(db, tenant_id, actor.id, row)
         row.submit_status = "STORED"
         row.audit_stage = "DONE"
         row.asset_no = asset.asset_no
@@ -863,4 +925,31 @@ def audit_analysis(
     }
     if merge_info:
         result["mergeInfo"] = merge_info
-    return ok(result)
+    return result
+
+
+def _stored_result(db: Session, tenant_id: int, row: CompAnalysis) -> dict:
+    asset = None
+    if row.asset_no:
+        asset = db.scalar(
+            select(CompAsset).where(
+                CompAsset.deleted == 0,
+                CompAsset.tenant_id == tenant_id,
+                CompAsset.asset_no == row.asset_no,
+            )
+        )
+    result = {
+        "analysisNo": row.analysis_no,
+        "newStatus": "STORED",
+        "auditStatusLabel": "已入库",
+        "nextAction": "MERGE_STORED",
+        "auditRounds": list(row.audit_rounds or []),
+    }
+    if asset is not None:
+        result["mergeInfo"] = {
+            "assetNo": asset.asset_no,
+            "compNameStd": asset.comp_name_std,
+            "newVersion": asset.latest_version,
+            "monitorSubscribed": bool((asset.base_info or {}).get("monitorSubscribed", True)),
+        }
+    return result

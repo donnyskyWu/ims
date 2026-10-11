@@ -284,6 +284,7 @@
           class="btn btn-pri btn-sm"
           type="button"
           data-testid="comp-resubmit"
+          :disabled="acting"
           @click="resubmit"
         >
           重新提交
@@ -295,6 +296,7 @@
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="comp-reject-confirm"
+            :disabled="acting"
             @click="confirmReject"
           >
             确认驳回
@@ -304,6 +306,7 @@
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="comp-first-pass"
+            :disabled="acting"
             @click="passAudit('FIRST')"
           >
             初审通过
@@ -313,6 +316,7 @@
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="comp-final-pass"
+            :disabled="acting"
             @click="passAudit('FINAL')"
           >
             终审通过
@@ -326,7 +330,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const router = useRouter()
@@ -410,6 +414,7 @@ const active = ref<Card | null>(null)
 const basket = ref<{ assetNo: string; compName: string }[]>([])
 const showRejectBox = ref(false)
 const rejectReason = ref('')
+const acting = ref(false)
 
 function roundTitle(item: Round) {
   if (item.auditLevel === 'RESUBMIT' || item.conclusion === 'RESUBMITTED') return '重新提交'
@@ -498,12 +503,8 @@ function statusStyle(status: string) {
 }
 
 function apiMessage(error: unknown, fallback: string) {
-  if (error && typeof error === 'object' && 'msg' in error) {
-    const msg = (error as { msg?: string }).msg
-    if (msg) return msg
-  }
-  if (error instanceof Error && error.message) return error.message
-  return fallback
+  const msg = errorMessage(error)
+  return msg && msg !== '加载失败' ? msg : fallback
 }
 
 function assetCard(row: Record<string, unknown>): Card {
@@ -760,12 +761,13 @@ async function exportCompare() {
 }
 
 async function passAudit(level: 'FIRST' | 'FINAL') {
-  if (!active.value?.analysisNo) return
+  if (!active.value?.analysisNo || acting.value) return
+  acting.value = true
   try {
     const res = await http.put(`/comp/audit/${active.value.analysisNo}`, {
       auditLevel: level,
       conclusion: 'STORED',
-    })
+    }, { timeout: 30000 })
     const data = res.data.data
     note.value =
       data.nextAction === 'MERGE_STORED'
@@ -775,6 +777,8 @@ async function passAudit(level: 'FIRST' | 'FINAL') {
     await loadList()
   } catch (e: unknown) {
     note.value = apiMessage(e, '审核失败')
+  } finally {
+    acting.value = false
   }
 }
 
@@ -784,11 +788,12 @@ function beginReject() {
 }
 
 async function confirmReject() {
-  if (!active.value?.analysisNo || !auditLevel.value) return
+  if (!active.value?.analysisNo || !auditLevel.value || acting.value) return
   if (!rejectReason.value.trim()) {
     rejectError.value = '驳回原因必填'
     return
   }
+  acting.value = true
   try {
     const res = await http.put(`/comp/audit/${active.value.analysisNo}`, {
       auditLevel: auditLevel.value,
@@ -800,11 +805,14 @@ async function confirmReject() {
     await loadList()
   } catch (e: unknown) {
     rejectError.value = apiMessage(e, '驳回失败')
+  } finally {
+    acting.value = false
   }
 }
 
 async function resubmit() {
-  if (!active.value?.analysisNo) return
+  if (!active.value?.analysisNo || acting.value) return
+  acting.value = true
   try {
     const res = await http.put(`/comp/analysis/${active.value.analysisNo}`, {
       compName: active.value.compName,
@@ -820,6 +828,8 @@ async function resubmit() {
     await loadList()
   } catch (e: unknown) {
     note.value = apiMessage(e, '重新提交失败')
+  } finally {
+    acting.value = false
   }
 }
 
