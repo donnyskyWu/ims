@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.account import load_scope_ip_groups, scope_ip_groups
 from app.api import current_user, db_session, fail, ok
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
-from app.models import User
+from app.models import DictData, User
 from app.ops_models import InternalAccount, InternalContent, IpGroup, ThresholdConfig
 
 router = APIRouter(prefix="/int-analysis", tags=["int-analysis"])
@@ -134,13 +134,37 @@ def classify_account(row: object, high_fans: float, low_fans: float) -> tuple[bo
     return is_high, is_low
 
 
-def work_vo(row: InternalContent, *, segment: str, hit_play: float, low_completion: float) -> dict:
+def platform_label_map(db: Session) -> dict[str, str]:
+    rows = db.scalars(
+        select(DictData).where(
+            DictData.dict_type == "dict_platform_type",
+            DictData.deleted == 0,
+            DictData.status == "ENABLED",
+        )
+    ).all()
+    return {row.dict_value: row.dict_label for row in rows}
+
+
+def platform_label(labels: dict[str, str], code: str) -> str:
+    return labels.get(code) or code or ""
+
+
+def work_vo(
+    row: InternalContent,
+    *,
+    segment: str,
+    hit_play: float,
+    low_completion: float,
+    labels: dict[str, str],
+) -> dict:
     is_hit, is_low = classify(row, hit_play, low_completion)
+    code = row.platform_type or ""
     return {
         "id": str(row.id),
         "title": row.title,
         "accountName": row.account_name,
-        "platformType": row.platform_type,
+        "platformType": code,
+        "platformTypeLabel": platform_label(labels, code),
         "publishTime": row.publish_time,
         "readCount": row.play_count,
         "playCount": row.play_count,
@@ -203,6 +227,7 @@ def work_page(
         stmt = stmt.where(InternalContent.ip_group_id.in_(scoped_groups))
 
     rows = list(ops.scalars(stmt.order_by(InternalContent.publish_time.desc())).all())
+    labels = platform_label_map(db)
     filtered: list[dict] = []
     for row in rows:
         hit_play, low_completion, _ = work_thresholds(ops, tenant_id, row.platform_type or "")
@@ -211,7 +236,9 @@ def work_page(
             continue
         if seg == "LOW_SCORE" and not is_low:
             continue
-        filtered.append(work_vo(row, segment=seg, hit_play=hit_play, low_completion=low_completion))
+        filtered.append(
+            work_vo(row, segment=seg, hit_play=hit_play, low_completion=low_completion, labels=labels)
+        )
 
     page_no, size = page_args(pageNo, pageSize)
     start = (page_no - 1) * size
@@ -226,12 +253,15 @@ def account_vo(
     high_fans: float,
     low_fans: float,
     ip_group_name: str = "",
+    labels: dict[str, str] | None = None,
 ) -> dict:
     is_high, is_low = classify_account(row, high_fans, low_fans)
+    code = row.platform_type or ""
     return {
         "id": str(row.id),
         "accountName": row.account_name,
-        "platformType": row.platform_type,
+        "platformType": code,
+        "platformTypeLabel": platform_label(labels or {}, code),
         "ipGroupName": ip_group_name,
         "followerCount": row.follower_count,
         "contentCount": row.content_count,
@@ -295,6 +325,7 @@ def account_page(
         stmt = stmt.where(InternalAccount.ip_group_id.in_(scoped_groups))
 
     rows = list(ops.scalars(stmt.order_by(InternalAccount.follower_count.desc())).all())
+    labels = platform_label_map(db)
     group_names: dict[int, str] = {}
     group_ids = {row.ip_group_id for row in rows if row.ip_group_id}
     if group_ids:
@@ -311,7 +342,14 @@ def account_page(
             continue
         ip_name = group_names.get(row.ip_group_id or 0, "")
         filtered.append(
-            account_vo(row, segment=seg, high_fans=high_fans, low_fans=low_fans, ip_group_name=ip_name)
+            account_vo(
+                row,
+                segment=seg,
+                high_fans=high_fans,
+                low_fans=low_fans,
+                ip_group_name=ip_name,
+                labels=labels,
+            )
         )
 
     page_no, size = page_args(pageNo, pageSize)

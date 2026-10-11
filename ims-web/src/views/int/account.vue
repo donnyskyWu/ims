@@ -54,18 +54,19 @@
               <th>粉丝数</th>
               <th>作品数</th>
               <th>标签</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无内部账号' }}</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无内部账号' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td style="font-weight: 500">{{ row.accountName }}</td>
-              <td>{{ row.platformType }}</td>
+              <td>{{ platformLabel(row) }}</td>
               <td>{{ row.ipGroupName || '—' }}</td>
               <td class="num">{{ formatFans(row.followerCount) }}</td>
               <td class="num">{{ row.contentCount }}</td>
@@ -78,11 +79,28 @@
                 >低粉</span>
                 <span v-else class="tag" style="background: rgba(52, 199, 89, 0.12); color: #1e8e3e">正常</span>
               </td>
+              <td>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="int-account-detail" @click="active = row">
+                  详情
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
+    <ProtoDrawer :open="!!active" title="账号详情" width="480px" @close="active = null">
+      <div v-if="active" class="kv" data-testid="int-account-drawer">
+        <div><div class="k">账号</div><div class="v">{{ active.accountName }}</div></div>
+        <div><div class="k">平台</div><div class="v">{{ platformLabel(active) }}</div></div>
+        <div><div class="k">IP 组</div><div class="v">{{ active.ipGroupName || '—' }}</div></div>
+        <div><div class="k">粉丝数</div><div class="v">{{ formatFans(active.followerCount) }}</div></div>
+        <div><div class="k">作品数</div><div class="v">{{ active.contentCount }}</div></div>
+      </div>
+      <template #footer>
+        <button class="btn btn-sec btn-sm" type="button" @click="active = null">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -90,6 +108,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const router = useRouter()
 const tabs = [
@@ -97,19 +116,27 @@ const tabs = [
   { value: 'HIGH_FANS', label: '高粉' },
   { value: 'LOW_FANS', label: '低粉' },
 ]
+const platforms: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  WECHAT_OFFICIAL: '公众号',
+  XIAOHONGSHU: '小红书',
+}
+type AccountRow = {
+  id: string
+  accountName: string
+  platformType: string
+  platformTypeLabel?: string
+  ipGroupName: string
+  followerCount: number
+  contentCount: number
+  isHighFans: boolean
+  isLowFans: boolean
+}
 const segment = ref('ALL')
-const rows = ref<
-  {
-    id: string
-    accountName: string
-    platformType: string
-    ipGroupName: string
-    followerCount: number
-    contentCount: number
-    isHighFans: boolean
-    isLowFans: boolean
-  }[]
->([])
+const rows = ref<AccountRow[]>([])
+const active = ref<AccountRow | null>(null)
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
@@ -117,6 +144,10 @@ const filters = reactive({ platformType: '', ipGroupId: null as number | null, k
 
 function go(path: string) {
   router.push(path)
+}
+
+function platformLabel(row: { platformType: string; platformTypeLabel?: string }) {
+  return row.platformTypeLabel || platforms[row.platformType] || row.platformType || '—'
 }
 
 function formatFans(n: number) {

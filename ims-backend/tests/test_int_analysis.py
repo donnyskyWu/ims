@@ -77,6 +77,10 @@ def test_int_work_page_all_and_hit():
     assert body["code"] == 0
     assert body["data"]["total"] == 3
     assert any(row["isHit"] for row in body["data"]["list"])
+    douyin = next(row for row in body["data"]["list"] if row["platformType"] == "DOUYIN")
+    assert douyin["platformTypeLabel"] == "抖音"
+    kuaishou = next(row for row in body["data"]["list"] if row["platformType"] == "KUAISHOU")
+    assert kuaishou["platformTypeLabel"] == "快手"
 
     hit_resp = client.get(
         "/admin-api/ims/int-analysis/work/page",
@@ -171,6 +175,8 @@ def test_int_account_page_all_and_high_fans():
     assert body["data"]["total"] == 2
     assert any(row["tagHighFans"] for row in body["data"]["list"])
     assert body["data"]["list"][0]["ipGroupName"] == "内部账号组"
+    douyin = next(row for row in body["data"]["list"] if row["platformType"] == "DOUYIN")
+    assert douyin["platformTypeLabel"] == "抖音"
 
     high_resp = client.get(
         "/admin-api/ims/int-analysis/account/page",

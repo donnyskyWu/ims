@@ -53,19 +53,20 @@
               <th>播放</th>
               <th>完播率</th>
               <th>标签</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6"><div class="empty"><div class="et">{{ error || '暂无作品' }}</div></div></td>
+              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无作品' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td style="font-weight: 500">{{ row.title }}</td>
               <td>{{ row.accountName }}</td>
-              <td>{{ row.platformType }}</td>
+              <td>{{ platformLabel(row) }}</td>
               <td class="num">{{ formatPlay(row.playCount) }}</td>
               <td class="num">{{ row.completionRate }}%</td>
               <td>
@@ -77,11 +78,28 @@
                 >低分</span>
                 <span v-else class="tag" style="background: rgba(52, 199, 89, 0.12); color: #1e8e3e">正常</span>
               </td>
+              <td>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="int-work-detail" @click="active = row">
+                  详情
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
+    <ProtoDrawer :open="!!active" title="作品详情" width="480px" @close="active = null">
+      <div v-if="active" class="kv" data-testid="int-work-drawer">
+        <div><div class="k">作品</div><div class="v">{{ active.title }}</div></div>
+        <div><div class="k">内部账号</div><div class="v">{{ active.accountName }}</div></div>
+        <div><div class="k">平台</div><div class="v">{{ platformLabel(active) }}</div></div>
+        <div><div class="k">播放</div><div class="v">{{ formatPlay(active.playCount) }}</div></div>
+        <div><div class="k">完播率</div><div class="v">{{ active.completionRate }}%</div></div>
+      </div>
+      <template #footer>
+        <button class="btn btn-sec btn-sm" type="button" @click="active = null">关闭</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -89,6 +107,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const router = useRouter()
 const tabs = [
@@ -96,19 +115,27 @@ const tabs = [
   { value: 'HIT', label: '爆款' },
   { value: 'LOW_SCORE', label: '低分' },
 ]
+const platforms: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  WECHAT_OFFICIAL: '公众号',
+  XIAOHONGSHU: '小红书',
+}
+type WorkRow = {
+  id: string
+  title: string
+  accountName: string
+  platformType: string
+  platformTypeLabel?: string
+  playCount: number
+  completionRate: number
+  isHit: boolean
+  isLowScore: boolean
+}
 const segment = ref('ALL')
-const rows = ref<
-  {
-    id: string
-    title: string
-    accountName: string
-    platformType: string
-    playCount: number
-    completionRate: number
-    isHit: boolean
-    isLowScore: boolean
-  }[]
->([])
+const rows = ref<WorkRow[]>([])
+const active = ref<WorkRow | null>(null)
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
@@ -116,6 +143,10 @@ const filters = reactive({ platformType: '', ipGroupId: null as number | null, k
 
 function go(path: string) {
   router.push(path)
+}
+
+function platformLabel(row: { platformType: string; platformTypeLabel?: string }) {
+  return row.platformTypeLabel || platforms[row.platformType] || row.platformType || '—'
 }
 
 function formatPlay(n: number) {

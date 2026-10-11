@@ -61,4 +61,24 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await page.getByTestId('mon-source-INTERNAL').click()
   await expect(page).toHaveURL(/\/ims\/monitor\/theme/)
   await expect(page.getByTestId('mon-source-INTERNAL')).toHaveClass(/on/)
+
+  await page.goto('/ims/int/work')
+  await expect(page.getByRole('heading', { name: '内部作品' })).toBeVisible()
+  await expect(page.locator('td', { hasText: /^DOUYIN$/ })).toHaveCount(0)
+  const workDetail = page.getByTestId('int-work-detail')
+  if (await workDetail.count()) {
+    await workDetail.first().click()
+    await expect(page.getByTestId('int-work-drawer')).toBeVisible()
+    await expect(page.getByTestId('int-work-drawer')).not.toContainText('DOUYIN')
+  }
+
+  await page.goto('/ims/int/account')
+  await expect(page.getByRole('heading', { name: '内部账号' })).toBeVisible()
+  await expect(page.locator('td', { hasText: /^DOUYIN$/ })).toHaveCount(0)
+  const accountDetail = page.getByTestId('int-account-detail')
+  if (await accountDetail.count()) {
+    await accountDetail.first().click()
+    await expect(page.getByTestId('int-account-drawer')).toBeVisible()
+    await expect(page.getByTestId('int-account-drawer')).not.toContainText('DOUYIN')
+  }
 })
