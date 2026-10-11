@@ -330,9 +330,36 @@ def rule_vo(row: AlertRule) -> dict:
     }
 
 
+def object_label(row: AlertRecord) -> str:
+    stored = (getattr(row, "object_label", None) or "").strip()
+    if stored:
+        return stored
+    ref_type = (row.source_ref_type or "").strip()
+    ref_id = int(row.source_ref_id or 0)
+    if ref_type and ref_id:
+        return f"{ref_type}:{ref_id}"
+    return ""
+
+
+def duration_text(row: AlertRecord) -> str:
+    if row.occurred_at is None:
+        return ""
+    minutes = max(int((utcnow() - row.occurred_at).total_seconds() // 60), 0)
+    if row.response_status in TERMINAL_STATUS:
+        return "已处置"
+    if minutes < 60:
+        return f"{minutes} 分钟"
+    hours, rest = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} 小时 {rest} 分钟" if rest else f"{hours} 小时"
+    days, hours = divmod(hours, 24)
+    return f"{days} 天 {hours} 小时" if hours else f"{days} 天"
+
+
 def record_vo(row: AlertRecord, rule: AlertRule | None = None) -> dict:
     rule_code = rule.rule_code if rule else ""
     ref = f"{row.source_ref_type or ''}:{row.source_ref_id or 0}"
+    merged = int(getattr(row, "merged_count", None) or 1)
     return {
         "id": row.id,
         "alertNo": row.alert_no,
@@ -341,10 +368,12 @@ def record_vo(row: AlertRecord, rule: AlertRule | None = None) -> dict:
         "ruleName": rule.rule_name if rule else "",
         "level": row.level,
         "content": row.content,
+        "objectLabel": object_label(row),
+        "durationText": duration_text(row),
         "sourceRefType": row.source_ref_type or None,
         "sourceRefId": row.source_ref_id or None,
         "dedupKey": f"{rule_code}+{ref}" if rule_code else ref,
-        "mergedCount": 1,
+        "mergedCount": merged,
         "notifyTargetUserIds": [],
         "pushStatus": PUSH_LABELS.get(row.push_status, "PENDING"),
         "pushChannels": push_channels(row),
@@ -598,7 +627,9 @@ def check_records(
         ).all()
     )
     rules = _rules_for(db, rows)
-    return paged([record_vo(r, rules.get(r.rule_id)) for r in rows], total, page_no, size)
+    payload = paged([record_vo(r, rules.get(r.rule_id)) for r in rows], total, page_no, size)
+    payload["data"]["levelCounts"] = level_counts(db, tenant_id)
+    return payload
 
 
 def _find_record(db: Session, tenant_id: int, alert_no: str) -> AlertRecord | None:
@@ -752,27 +783,37 @@ def seed_dedup_policies(db: Session, tenant_id: int) -> None:
             AlertDedupPolicy.deleted == 0, AlertDedupPolicy.tenant_id == tenant_id
         )
     )
-    if has:
-        return
     now = utcnow()
-    for code, name, window, expr in (
-        ("DEDUP-LIVE", "直播指标窗口去重", 15, "ruleId+sourceRefId"),
-        ("DEDUP-COLLECT", "采集异常合并", 30, "ruleId+metricType"),
-    ):
-        db.add(
-            AlertDedupPolicy(
-                policy_code=code,
-                policy_name=name,
-                window_minutes=window,
-                merge_key_expr=expr,
-                enabled=1,
-                merged_count=0,
-                tenant_id=tenant_id,
-                created_at=now,
-                updated_at=now,
+    if not has:
+        for code, name, window, expr in (
+            ("DEDUP-LIVE", "直播指标窗口去重", MERGE_WINDOW_MINUTES, "ruleId+sourceRefId"),
+            ("DEDUP-COLLECT", "采集异常合并", MERGE_WINDOW_MINUTES, "ruleId+metricType"),
+        ):
+            db.add(
+                AlertDedupPolicy(
+                    policy_code=code,
+                    policy_name=name,
+                    window_minutes=window,
+                    merge_key_expr=expr,
+                    enabled=1,
+                    merged_count=0,
+                    tenant_id=tenant_id,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
+        db.flush()
+    live = db.scalar(
+        select(AlertDedupPolicy).where(
+            AlertDedupPolicy.deleted == 0,
+            AlertDedupPolicy.tenant_id == tenant_id,
+            AlertDedupPolicy.policy_code == "DEDUP-LIVE",
         )
-    db.flush()
+    )
+    if live is not None and live.window_minutes != MERGE_WINDOW_MINUTES:
+        live.window_minutes = MERGE_WINDOW_MINUTES
+        live.updated_at = now
+        db.flush()
 
 
 def dedup_vo(row: AlertDedupPolicy) -> dict:
@@ -803,7 +844,76 @@ def dedup_list(
     rows = list(
         db.scalars(stmt.order_by(AlertDedupPolicy.enabled.desc(), AlertDedupPolicy.id).offset((page_no - 1) * size).limit(size)).all()
     )
-    return paged([dedup_vo(r) for r in rows], total, page_no, size)
+    payload = paged([dedup_vo(r) for r in rows], total, page_no, size)
+    groups, summary = dedup_groups(db, tenant_id)
+    payload["data"]["groups"] = groups
+    payload["data"]["summary"] = summary
+    return payload
+
+
+LEVEL_CARD = {1: "提示", 2: "警告", 3: "严重"}
+
+
+def level_counts(db: Session, tenant_id: int) -> dict[str, int]:
+    counts = {"L1": 0, "L2": 0, "L3": 0}
+    grouped = db.execute(
+        select(AlertRecord.level, func.count())
+        .where(AlertRecord.deleted == 0, AlertRecord.tenant_id == tenant_id)
+        .group_by(AlertRecord.level)
+    ).all()
+    for level, count in grouped:
+        key = {1: "L1", 2: "L2", 3: "L3"}.get(int(level or 0))
+        if key:
+            counts[key] = int(count)
+    return counts
+
+
+def dedup_groups(db: Session, tenant_id: int) -> tuple[list[dict], dict]:
+    """同规则+同对象、30 分钟窗口内的同源组。单条不进组。"""
+    rows = list(
+        db.scalars(
+            select(AlertRecord).where(AlertRecord.deleted == 0, AlertRecord.tenant_id == tenant_id)
+        ).all()
+    )
+    rules = _rules_for(db, rows)
+    groups: list[dict] = []
+    for cluster in _cluster_records(rows):
+        master = cluster[0]
+        extra = max(0, int(getattr(master, "merged_count", None) or 1) - 1)
+        size = len(cluster) + extra
+        if size < 2:
+            continue
+        rule = rules.get(master.rule_id)
+        labels: list[str] = []
+        for item in cluster:
+            label = object_label(item) or (rule.rule_name if rule else item.alert_no)
+            if label not in labels:
+                labels.append(label)
+        groups.append(
+            {
+                "ruleCode": rule.rule_code if rule else "",
+                "ruleName": rule.rule_name if rule else "",
+                "level": master.level,
+                "levelLabel": LEVEL_CARD.get(master.level, ""),
+                "count": size,
+                "objectLabels": labels,
+                "alertNos": [item.alert_no for item in cluster],
+                "openAlertNos": [item.alert_no for item in cluster if item.response_status == 0],
+                "windowMinutes": MERGE_WINDOW_MINUTES,
+                "masterAlertNo": master.alert_no,
+            }
+        )
+    groups.sort(key=lambda item: (-item["count"], item["ruleCode"], item["masterAlertNo"]))
+    involved = sum(item["count"] for item in groups)
+    saved = sum(item["count"] - 1 for item in groups)
+    summary = {
+        "groupCount": len(groups),
+        "involvedCount": involved,
+        "savedCount": saved,
+        "windowMinutes": MERGE_WINDOW_MINUTES,
+        "ruleText": "同规则 + 同对象 · 30 分钟（BR-114）",
+    }
+    return groups, summary
 
 
 @router.get("/history/summary")

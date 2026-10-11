@@ -2046,7 +2046,7 @@ class AlertDedupPolicy(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     policy_code: Mapped[str] = mapped_column(String(32), default="", index=True)
     policy_name: Mapped[str] = mapped_column(String(128), default="")
-    window_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    window_minutes: Mapped[int] = mapped_column(Integer, default=30)
     merge_key_expr: Mapped[str] = mapped_column(String(256), default="")
     enabled: Mapped[int] = mapped_column(Integer, default=1)
     merged_count: Mapped[int] = mapped_column(Integer, default=0)
