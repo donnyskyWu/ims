@@ -1,4 +1,7 @@
-"""BUG-047 引擎分成：核准后按规则生成分成单并从净利扣除。"""
+"""BUG-050 分成引擎：核准并算完利润后生成分成单，从净利润扣除。
+
+同一范围、同一对象只命中优先级最高的一条。佣金基数、核准前改成本、净利率分母仍保持现有实现。
+"""
 
 import os
 import uuid
@@ -83,24 +86,26 @@ def submit_engine(auth: dict, code: str, **costs) -> dict:
     return created.json()["data"]
 
 
+ALL_SCOPE = {"platforms": [], "accountIds": [], "ipGroupIds": []}
+
+
 def test_engine_daren_share_on_dys0003():
+    """IMS20261011DYS0003：GMV 5000、退款 0、固定 8000、佣金 5%，达人分成 4750×10%=475，净利 -3725。"""
     auth = headers()
     code = "IMS20261011DYS0003"
-    account_id = 91003
-    scope = {"platforms": ["DYS"], "accountIds": [account_id], "ipGroupIds": []}
     create_rule(
         auth,
-        ruleName="达人毛利一成",
+        ruleName="TC-达人分成B",
         shareTarget="DAREN",
         baseType="GROSS_PROFIT",
         fixedRate=0.1,
         priority=10,
-        scope=scope,
+        scope=ALL_SCOPE,
     )
-    seed_confirmed_session(code, account_id, 10000, 0)
-    saved = submit_engine(auth, code, commissionRate=0.525, fixedCost=8000)
+    seed_confirmed_session(code, 91003, 5000, 0)
+    saved = submit_engine(auth, code, commissionRate=0.05, fixedCost=8000)
     assert saved["shareDaren"] == 475
-    assert saved["commissionAmount"] == 5250
+    assert saved["commissionAmount"] == 250
     profit = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()["data"]
     assert profit["grossProfit"] == 4750
     assert profit["netProfit"] == -3725
@@ -109,40 +114,47 @@ def test_engine_daren_share_on_dys0003():
     assert len(daren) == 1
     assert daren[0]["shareAmount"] == 475
     assert daren[0]["shareBase"] == 4750
+    assert daren[0]["ruleName"] == "TC-达人分成B"
+    assert daren[0]["status"] == "PENDING_AUDIT"
 
 
 def test_engine_keeps_higher_priority_rule_on_dys0004():
+    """IMS20261011DYS0004：只命中 TC-达人高优 9500×12%=1140，不叠加 TC-达人分成B，净利 7360。"""
     auth = headers()
     code = "IMS20261011DYS0004"
-    account_id = 91004
-    scope = {"platforms": ["DYS"], "accountIds": [account_id], "ipGroupIds": []}
     create_rule(
         auth,
-        ruleName="达人毛利一成",
+        ruleName="TC-达人分成B",
         shareTarget="DAREN",
         baseType="GROSS_PROFIT",
         fixedRate=0.1,
         priority=10,
-        scope=scope,
+        scope=ALL_SCOPE,
     )
     create_rule(
         auth,
-        ruleName="达人毛利一二",
+        ruleName="TC-达人高优",
         shareTarget="DAREN",
         baseType="GROSS_PROFIT",
         fixedRate=0.12,
         priority=20,
-        scope=scope,
+        scope=ALL_SCOPE,
         confirmConflict=True,
     )
-    seed_confirmed_session(code, account_id, 10000, 0)
-    saved = submit_engine(auth, code, commissionRate=0.05)
+    seed_confirmed_session(code, 91004, 10000, 0)
+    saved = submit_engine(auth, code, commissionRate=0.05, fixedCost=1000)
     assert saved["shareDaren"] == 1140
+    profit = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()["data"]
+    assert profit["grossProfit"] == 9500
+    assert profit["netProfit"] == 7360
     bills = client.get("/admin-api/ims/fin/share/results", headers=auth, params={"sessionCode": code}).json()["data"]["list"]
     daren = [row for row in bills if row["shareTarget"] == "DAREN"]
     assert len(daren) == 1
     assert daren[0]["shareAmount"] == 1140
-    assert daren[0]["ruleName"] == "达人毛利一二"
+    assert daren[0]["shareBase"] == 9500
+    assert daren[0]["ruleName"] == "TC-达人高优"
+    assert daren[0]["status"] == "PENDING_AUDIT"
+    assert all(row["ruleName"] != "TC-达人分成B" for row in bills)
 
 
 def test_engine_ls1_daren_share_is_gross_times_ten_percent():
