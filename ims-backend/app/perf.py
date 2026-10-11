@@ -298,15 +298,29 @@ def result_vo(db: Session, row: PerfRecord, scheme: PerfScheme | None = None) ->
     return base
 
 
+def person_dept(db: Session, user_id: int) -> tuple[int, str]:
+    if not user_id:
+        return 0, "未分配"
+    user = db.get(User, user_id)
+    if user is None or user.deleted:
+        return 0, "未分配"
+    from app.perf_calc import dept_of
+
+    return dept_of(db, user)
+
+
 def record_vo(db: Session, row: PerfRecord, scheme: PerfScheme | None = None) -> dict:
     if scheme is None and row.scheme_id:
         scheme = db.get(PerfScheme, row.scheme_id)
     position = position_label(scheme.position_code) if scheme else "—"
+    dept_id, dept_name = person_dept(db, row.target_user_id)
     return {
         "id": row.id,
         "recordNo": row.record_no,
         "targetUserId": row.target_user_id,
         "evaluateeName": user_label(db, row.target_user_id),
+        "deptId": dept_id,
+        "deptName": dept_name,
         "position": position,
         "positionCode": scheme.position_code if scheme else "",
         "cycleDisplay": cycle_display(row.period_type, row.period_start, row.period_end),
@@ -620,6 +634,7 @@ def result_list(
     evaluateeName: str | None = None,
     grade: str | None = None,
     recordNo: str | None = None,
+    deptId: int | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
     db: Session = Depends(db_session),
@@ -640,18 +655,39 @@ def result_list(
     )
     if err:
         return fail(1001, err)
-    total = len(rows)
-    page_rows = rows[(page_no - 1) * size : page_no * size]
-    schemes = scheme_map(db, page_rows)
-    payload = paged(
-        [result_vo(db, row, schemes.get(row.scheme_id)) for row in page_rows],
-        total,
-        page_no,
-        size,
-    )
+    schemes = scheme_map(db, rows)
+    listed = [result_vo(db, row, schemes.get(row.scheme_id)) for row in rows]
+    dept_options: list[dict] = []
+    seen_depts: set[int] = set()
+    for item in listed:
+        dept_key = int(item.get("deptId") or 0)
+        if dept_key in seen_depts:
+            continue
+        seen_depts.add(dept_key)
+        dept_options.append({"deptId": dept_key, "deptName": item.get("deptName") or "未分配"})
+    if deptId is not None:
+        listed = [item for item in listed if int(item.get("deptId") or 0) == int(deptId)]
+        counts = {level: 0 for level in ("EXCELLENT", "QUALIFIED", "IMPROVE")}
+        for item in listed:
+            level = item.get("grade")
+            if level in counts:
+                counts[level] += 1
+    for index, item in enumerate(listed, start=1):
+        item["rank"] = index
+    total = len(listed)
+    page_rows = listed[(page_no - 1) * size : page_no * size]
+    scored = [item for item in listed if item.get("totalScore") is not None]
+    average = round(sum(float(item["totalScore"]) for item in scored) / len(scored), 2) if scored else None
+    payload = paged(page_rows, total, page_no, size)
     excellent, qualified = grade_lines(db)
     payload["data"]["gradeCounts"] = counts
     payload["data"]["gradeLine"] = grade_line_text(excellent, qualified)
+    payload["data"]["depts"] = dept_options
+    payload["data"]["resultBoard"] = {
+        "top3": scored[:3],
+        "tail": [item for item in scored if item.get("grade") == "IMPROVE"],
+        "deptAverage": average,
+    }
     return payload
 
 
