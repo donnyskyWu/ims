@@ -195,6 +195,7 @@ def grants_for(role_key: str) -> dict[str, str]:
             put(_button(perm, "remove"), "R")
     _apply_eff_relation(role_key, levels)
     _apply_comp_review(role_key, levels)
+    _apply_dict_data_read(levels)
     return levels
 
 
@@ -223,6 +224,38 @@ def _apply_eff_relation(role_key: str, levels: dict[str, str]) -> None:
     if role_key == "R1":
         _raise(levels, "menu:eff:remove", "R")
         levels[EFF_RELATION_DELETE] = "R"
+
+
+# 能打开会读字典的页面，就给字典数据读取。不给 system:dict:query，避免放出字典管理菜单。
+_DICT_PAGE_PERMS = frozenset({
+    "menu:crCompany:query",
+    "menu:crRealname:query",
+    "menu:crSim:query",
+    "menu:crCert:query",
+    "menu:cdOffice:query",
+    "menu:cdLive:query",
+    "menu:cdPhone:query",
+    "system:dict:query",
+})
+
+
+def _apply_dict_data_read(levels: dict[str, str]) -> None:
+    if _DICT_PAGE_PERMS & set(levels):
+        _raise(levels, "system:dict:data:query", "R")
+
+
+def grant_dict_data_readers(db: Session) -> None:
+    """非标准角色同样补字典数据读取。标准角色已由矩阵写入。"""
+    menu = db.scalar(select(Menu).where(Menu.deleted == 0, Menu.perm_code == "system:dict:data:query"))
+    if menu is None:
+        return
+    roles = db.scalars(select(Role).where(Role.deleted == 0)).all()
+    for role in roles:
+        held = set(db.scalars(select(RolePerm.perm_code).where(RolePerm.role_id == role.id)).all())
+        if "system:dict:data:query" in held or not (_DICT_PAGE_PERMS & held):
+            continue
+        _link(db, role, menu, "R")
+    db.flush()
 
 
 def _apply_comp_review(role_key: str, levels: dict[str, str]) -> None:
@@ -471,4 +504,5 @@ def ensure_role_matrix(db: Session) -> None:
     _backfill_full_clones(db)
     _ensure_accounts(db)
     normalize_e2e_legacy_roles(db)
+    grant_dict_data_readers(db)
     db.flush()

@@ -14,6 +14,8 @@ WHITELIST_PREFIXES = (
     "/admin-api/ims/home",
     # 与功能白名单一致：待办查询已按 assignee 限定本人，不按流程表的数据范围再拦一层。
     "/admin-api/ims/flow/task/my-todo",
+    # 字典数据是页面下拉的公共参照，不按 SELF/DEPT 拦。字典类型和删除仍走数据范围。
+    "/admin-api/ims/system/dict-data/list",
 )
 
 
