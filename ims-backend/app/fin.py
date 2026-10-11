@@ -1560,10 +1560,13 @@ def cost_submit(
         return fail(1141, "成本已核准，请走更正单")
     existed = row is not None
     before = cost_edit_snapshot(row) if existed else None
+    keep_submitted = existed and row.entry_status == "SUBMITTED"
     if row is None:
         row = FinCost(session_code=session_code, tenant_id=tenant_id, client_token=clientToken)
         db.add(row)
     apply_cost_row(db, row, session, report, body, actor)
+    if keep_submitted:
+        row.entry_status = "SUBMITTED"
     if existed and before is not None:
         append_cost_edits(db, row, before, actor)
     row.client_token = clientToken
@@ -1614,10 +1617,14 @@ def cost_update(
         return fail(1141, "成本未录入")
     from app.fin_policy import EDIT_COST_BEFORE_CONFIRM
 
+    # 已提交未核准可改。已核准只能走更正单。
     if row.entry_status == "CONFIRMED" or (row.entry_status == "SUBMITTED" and not EDIT_COST_BEFORE_CONFIRM):
         return fail(1141, "成本已核准，请走更正单")
     before = cost_edit_snapshot(row)
+    keep_submitted = row.entry_status == "SUBMITTED"
     apply_cost_row(db, row, session, report, body, actor)
+    if keep_submitted:
+        row.entry_status = "SUBMITTED"
     append_cost_edits(db, row, before, actor)
     db.flush()
     return ok(cost_vo(db, row, with_edits=True))

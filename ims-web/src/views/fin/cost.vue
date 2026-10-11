@@ -257,9 +257,7 @@
     >
       <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
       <p v-if="error" data-testid="fin-cost-entry-error" class="hint" style="color: var(--red)">{{ error }}</p>
-      <p v-if="entryLocked" class="hint" data-testid="fin-cost-entry-readonly">
-        {{ form.entryStatus === 'CONFIRMED' ? '已核准，修改请走更正单' : '已提交，详情只读' }}
-      </p>
+      <p v-if="entryLocked" class="hint" data-testid="fin-cost-entry-readonly">已核准，修改请走更正单</p>
       <fieldset class="form-grid" :disabled="entryLocked" style="border: 0; padding: 0; margin: 0; min-width: 0">
         <div>
           <label>平台<input :value="platformLabel(form.platform)" data-testid="fin-cost-platform" disabled /></label>
@@ -336,12 +334,21 @@
         </table>
       </div>
       <template #footer>
-        <template v-if="!entryLocked">
+        <button
+          v-if="form.entryStatus === 'SUBMITTED'"
+          class="btn btn-pri"
+          type="button"
+          data-testid="fin-cost-save-edit"
+          @click="saveSubmitted"
+        >
+          保存修改
+        </button>
+        <template v-else-if="!entryLocked">
           <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
           <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
         </template>
         <button
-          v-else-if="form.entryStatus === 'CONFIRMED'"
+          v-else
           class="btn btn-pri"
           type="button"
           data-testid="fin-cost-detail-correct"
@@ -530,7 +537,7 @@ const form = reactive({
   remark: '',
 })
 
-const entryLocked = computed(() => form.entryStatus === 'SUBMITTED' || form.entryStatus === 'CONFIRMED')
+const entryLocked = computed(() => form.entryStatus === 'CONFIRMED')
 
 const shareRules = ref<Array<Record<string, any>>>([])
 
@@ -864,8 +871,23 @@ function openEntry(row: Record<string, unknown>) {
   drawerOpen.value = true
 }
 
+function entryPayload(asDraft: boolean) {
+  return {
+    commissionRate: percentToRate(form.commissionRate),
+    adCost: Number(form.adCost || 0),
+    rechargeCost: Number(form.rechargeCost || 0),
+    fixedCost: Number(form.fixedCost || 0),
+    sampleCost: Number(form.sampleCost || 0),
+    shareCostType: form.shareCostType,
+    shareDaren: form.shareCostType === 'ENGINE' ? 0 : Number(form.shareDaren || 0),
+    shareRealname: form.shareCostType === 'ENGINE' ? 0 : Number(form.shareRealname || 0),
+    remark: form.remark,
+    asDraft,
+  }
+}
+
 async function submitEntry(asDraft: boolean) {
-  if (entryLocked.value) return
+  if (entryLocked.value || form.entryStatus === 'SUBMITTED') return
   const invalid = entryFormError()
   if (invalid) {
     error.value = invalid
@@ -876,18 +898,7 @@ async function submitEntry(asDraft: boolean) {
   try {
   const res = await http.post(
     `/fin/cost/${form.sessionCode}`,
-    {
-      commissionRate: percentToRate(form.commissionRate),
-      adCost: Number(form.adCost || 0),
-      rechargeCost: Number(form.rechargeCost || 0),
-      fixedCost: Number(form.fixedCost || 0),
-      sampleCost: Number(form.sampleCost || 0),
-      shareCostType: form.shareCostType,
-      shareDaren: form.shareCostType === 'ENGINE' ? 0 : Number(form.shareDaren || 0),
-      shareRealname: form.shareCostType === 'ENGINE' ? 0 : Number(form.shareRealname || 0),
-      remark: form.remark,
-      asDraft,
-    },
+    entryPayload(asDraft),
     { headers: { clientToken: token } },
   )
   if (res.data?.code !== 0) {
@@ -899,6 +910,28 @@ async function submitEntry(asDraft: boolean) {
   await loadTab()
   } catch (err) {
     error.value = failMsg(err, '提交失败')
+  }
+}
+
+async function saveSubmitted() {
+  if (form.entryStatus !== 'SUBMITTED') return
+  const invalid = entryFormError()
+  if (invalid) {
+    error.value = invalid
+    return
+  }
+  error.value = ''
+  try {
+    const res = await http.put(`/fin/cost/${form.sessionCode}`, entryPayload(false))
+    if (res.data?.code !== 0) {
+      error.value = res.data?.msg || '保存失败'
+      return
+    }
+    assignFormFromCost(res.data.data)
+    editLogs.value = res.data.data.editLogs || []
+    await loadTab()
+  } catch (err) {
+    error.value = failMsg(err, '保存失败')
   }
 }
 

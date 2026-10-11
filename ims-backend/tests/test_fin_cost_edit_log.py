@@ -119,5 +119,45 @@ def test_draft_and_submitted_edits_keep_field_history():
         json=cost_body(adCost=1, rechargeCost=30, sampleCost=12, asDraft=False),
     )
     assert blocked.json()["code"] == 1141
+    assert blocked.json()["msg"] == "成本已核准，请走更正单"
     _, after_confirm = detail_logs(auth, code)
     assert [row["field"] for row in after_confirm] == fields
+
+
+def test_submitted_edit_keeps_status_and_approved_update_is_rejected():
+    auth = headers()
+    code = approved_session(auth)
+    created = post_cost(auth, code, asDraft=False, adCost=10)
+    assert created["entryStatus"] == "SUBMITTED"
+
+    updated = client.put(
+        f"/admin-api/ims/fin/cost/{code}",
+        headers=auth,
+        json=cost_body(adCost=40, asDraft=True),
+    )
+    body = updated.json()
+    assert body["code"] == 0
+    assert body["data"]["entryStatus"] == "SUBMITTED"
+    assert body["data"]["adCost"] == 40
+    log = next(row for row in body["data"]["editLogs"] if row["field"] == "投放成本")
+    assert log["oldValue"] == "10.00"
+    assert log["newValue"] == "40.00"
+    assert log["editorName"]
+    assert "T" not in log["editedAt"]
+    shown = datetime.strptime(log["editedAt"], "%Y-%m-%d %H:%M:%S")
+    now_bj = datetime.now(timezone.utc).astimezone(BJ).replace(tzinfo=None)
+    assert abs((now_bj - shown).total_seconds()) < 180
+
+    confirmed = client.put(f"/admin-api/ims/fin/cost/{code}/confirm", headers=auth)
+    assert confirmed.json()["code"] == 0
+    blocked = client.put(
+        f"/admin-api/ims/fin/cost/{code}",
+        headers=auth,
+        json=cost_body(adCost=1, asDraft=False),
+    )
+    assert blocked.json()["code"] == 1141
+    assert blocked.json()["msg"] == "成本已核准，请走更正单"
+    data, logs = detail_logs(auth, code)
+    assert data["entryStatus"] == "CONFIRMED"
+    assert data["adCost"] == 40
+    assert [row["field"] for row in logs] == ["投放成本"]

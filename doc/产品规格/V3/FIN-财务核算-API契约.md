@@ -125,7 +125,7 @@ interface FinCostVO {
 
 #### 2.1.4 PUT /admin-api/ims/fin/cost/{sessionCode} — 编辑成本（核准前）
 
-**请求**：`FinCostEntryReq` → **响应** `data`：`FinCostVO`。仅 `DRAFT`/`SUBMITTED` 状态可编辑；核准后修改走更正单（2.1.6）。
+**请求**：`FinCostEntryReq` → **响应** `data`：`FinCostVO`。`DRAFT` 与已提交未核准（`SUBMITTED`）可编辑，保存后状态保持原值（已提交不会退回草稿）。已核准（`CONFIRMED`）拒绝更新，`msg` 为「成本已核准，请走更正单」，改数走更正单（2.1.6）。
 
 草稿和已提交状态下的每次编辑，按实际变更字段写入修改记录（修改人、北京时间、字段、旧值、新值）。同一 `clientToken` 的幂等重放不新增记录。记录随 `GET /fin/cost/{sessionCode}` 的 `editLogs` 返回，在成本详情中展示。核准后的红冲蓝补仍走更正单，不写这条记录。
 
