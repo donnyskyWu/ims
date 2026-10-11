@@ -309,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
@@ -385,6 +385,16 @@ const form = ref({
   sopLevel: 'STANDARD',
   marketingPlan: '',
 })
+watch(
+  () => form.value.sopName,
+  (value) => {
+    if (!value.trim()) return
+    nameError.value = ''
+    if (saveError.value === '请填写 SOP 名称' || saveError.value === '请填写 SOP 名称与内容类型') {
+      saveError.value = ''
+    }
+  },
+)
 const typeChoices = computed(() => {
   const options = contentTypeOptions.value.map((item) => ({ ...item }))
   const current = form.value.contentType
@@ -693,10 +703,11 @@ async function saveSop() {
   const contentTypeName = form.value.contentType.trim()
   if (!name) nameError.value = '请填写 SOP 名称'
   if (!contentTypeName) typeError.value = '必填'
-  if (!name || !contentTypeName) {
-    saveError.value = !name && !contentTypeName ? '请填写 SOP 名称与内容类型' : nameError.value || typeError.value
+  if (!name && !contentTypeName) {
+    saveError.value = '请填写 SOP 名称与内容类型'
     return
   }
+  if (!name || !contentTypeName) return
   if (dagError.value) return
   saving.value = true
   try {

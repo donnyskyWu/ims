@@ -45,6 +45,8 @@ test.describe('content TC-07 P1', () => {
     await expect(drawer.getByTestId('sop-type-error')).toHaveText('必填')
 
     await drawer.getByTestId('sop-name').fill(sopName)
+    await expect(drawer.getByTestId('sop-name-error')).toHaveCount(0)
+    await expect(drawer.getByTestId('sop-dag-error')).toHaveCount(0)
     await drawer.getByTestId('sop-save').click()
     await expect(drawer.getByTestId('sop-type-error')).toHaveText('必填')
     await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
