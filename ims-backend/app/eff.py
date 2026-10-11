@@ -45,6 +45,27 @@ class ChangeBody(BaseModel):
     changeReason: str = ""
 
 
+LIST_ALL_ROLES = frozenset({"r1", "r2", "r4", "r9"})
+LIST_SELF_ROLES = frozenset({"r5", "r6", "r7"})
+
+
+def _tag_role(tags: set[str], key: str, name: str) -> None:
+    if key in {"sys:admin", "r1"} or key.endswith(":r1") or "系统管理员" in name:
+        tags.add("r1")
+    if key == "r2" or key.endswith(":r2") or "行政" in name:
+        tags.add("r2")
+    if key == "r4" or key.endswith(":r4") or "运营总监" in name:
+        tags.add("r4")
+    if key == "r5" or key.endswith(":r5"):
+        tags.add("r5")
+    if key == "r6" or key.endswith(":r6"):
+        tags.add("r6")
+    if key == "r7" or key.endswith(":r7"):
+        tags.add("r7")
+    if key == "r9" or key.endswith(":r9") or "数据分析" in name:
+        tags.add("r9")
+
+
 def actor_tags(db: Session, actor: User) -> set[str]:
     from app.scope import enabled_roles
 
@@ -52,13 +73,18 @@ def actor_tags(db: Session, actor: User) -> set[str]:
     if actor.username == "admin":
         tags.add("r1")
     for role in enabled_roles(db, actor):
-        key = (role.role_key or "").strip().lower()
-        name = role.role_name or ""
-        if key in {"sys:admin", "r1"} or key.endswith(":r1") or "系统管理员" in name:
-            tags.add("r1")
-        if key == "r2" or key.endswith(":r2") or "行政" in name:
-            tags.add("r2")
+        _tag_role(tags, (role.role_key or "").strip().lower(), role.role_name or "")
     return tags
+
+
+def relation_list_scope(db: Session, actor: User) -> str:
+    """归属列表数据范围。多角色取最宽：全量优先于仅本人。"""
+    tags = actor_tags(db, actor)
+    if tags & LIST_ALL_ROLES:
+        return "ALL"
+    if tags & LIST_SELF_ROLES:
+        return "SELF"
+    return "NONE"
 
 
 def can_manage_relation(db: Session, actor: User) -> bool:
@@ -159,6 +185,12 @@ def relation_list(
 ):
     tenant_id = tenant_of(actor)
     q = select(EffRelation).where(EffRelation.deleted == 0, EffRelation.tenant_id == tenant_id)
+    scope = relation_list_scope(db, actor)
+    if scope == "NONE":
+        page_no, size = page_args(pageNo, pageSize)
+        return paged([], 0, page_no, size)
+    if scope == "SELF":
+        q = q.where(EffRelation.user_id == actor.id)
     if userId is not None:
         q = q.where(EffRelation.user_id == userId)
     if relationType:

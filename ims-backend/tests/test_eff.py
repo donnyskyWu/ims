@@ -310,3 +310,110 @@ def test_eff_inventory_snapshot():
     data = snap.json()["data"]
     assert "coverageRate" in data
     assert "period" in data
+
+
+def _role_user(db, username: str, role_key: str, data_scope: str, mobile: str):
+    from app.models import Role, RolePerm, User, UserRole
+    from app.security import hash_password
+
+    user = User(
+        username=username,
+        nickname=username,
+        mobile=mobile,
+        password_hash=hash_password("Admin@123"),
+        status="ENABLED",
+        tenant_id=0,
+    )
+    role = Role(
+        role_name=username,
+        role_key=role_key,
+        data_scope=data_scope,
+        status="ENABLED",
+        source="MANUAL",
+        tenant_id=0,
+    )
+    db.add_all([user, role])
+    db.flush()
+    db.add(RolePerm(role_id=role.id, module_code="eff", perm_code="ims:eff:relation:query", perm_level="R", tenant_id=0))
+    db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+    return user, role
+
+
+def test_bug_c054_relation_list_scope_r7_self_r4_all():
+    """R7 只看本人归属；R4 看全部。同时持有两角色时取最宽。"""
+    from app.core import SessionLocal
+    from app.models import User, UserRole
+
+    auth = headers()
+    db = SessionLocal()
+    try:
+        r7, role_r7 = _role_user(db, "tc_r7", "r7", "ALL", "13900000071")
+        r4, role_r4 = _role_user(db, "tc_r4", "r4", "SELF", "13900000041")
+        mix = User(
+            username="tc_r7_r4",
+            nickname="tc_r7_r4",
+            mobile="13900000074",
+            password_hash=r7.password_hash,
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(mix)
+        db.flush()
+        db.add(UserRole(user_id=mix.id, role_id=role_r7.id, tenant_id=0))
+        db.add(UserRole(user_id=mix.id, role_id=role_r4.id, tenant_id=0))
+        db.commit()
+        r7_id = r7.id
+        r4_id = r4.id
+    finally:
+        db.close()
+
+    own = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": r7_id, "relationType": "PRIMARY", "targetName": "本人主归属", "shareRatio": 100},
+    )
+    assert own.json()["code"] == 0, own.json()
+    other = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": r4_id, "relationType": "PRIMARY", "targetName": "他人主归属", "shareRatio": 100},
+    )
+    assert other.json()["code"] == 0, other.json()
+
+    r7_headers = headers_for("tc_r7")
+    own_list = client.get("/admin-api/ims/eff/relation/list", headers=r7_headers, params={"pageSize": 50}).json()
+    assert own_list["code"] == 0
+    assert own_list["data"]["total"] >= 1
+    assert {row["userId"] for row in own_list["data"]["list"]} == {r7_id}
+    hidden = client.get(
+        "/admin-api/ims/eff/relation/list",
+        headers=r7_headers,
+        params={"userId": r4_id, "pageSize": 50},
+    ).json()
+    assert hidden["data"]["total"] == 0
+    assert hidden["data"]["list"] == []
+
+    r4_headers = headers_for("tc_r4")
+    seen_own = client.get(
+        "/admin-api/ims/eff/relation/list",
+        headers=r4_headers,
+        params={"userId": r7_id, "pageSize": 50},
+    ).json()["data"]
+    seen_other = client.get(
+        "/admin-api/ims/eff/relation/list",
+        headers=r4_headers,
+        params={"userId": r4_id, "pageSize": 50},
+    ).json()["data"]
+    assert seen_own["total"] >= 1
+    assert {row["userId"] for row in seen_own["list"]} == {r7_id}
+    assert seen_other["total"] >= 1
+    assert {row["userId"] for row in seen_other["list"]} == {r4_id}
+
+    mix_headers = headers_for("tc_r7_r4")
+    widest = client.get(
+        "/admin-api/ims/eff/relation/list",
+        headers=mix_headers,
+        params={"userId": r4_id, "pageSize": 50},
+    ).json()["data"]
+    assert widest["total"] >= 1
+    assert {row["userId"] for row in widest["list"]} == {r4_id}
