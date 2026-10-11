@@ -254,7 +254,9 @@
             <option v-if="ruleForm.ruleType === 'THRESHOLD'" value="viewer_count">场观</option>
             <option v-if="ruleForm.ruleType === 'THRESHOLD'" value="gmv">GMV</option>
             <option v-if="ruleForm.ruleType === 'THRESHOLD'" value="peak_online">峰值在线</option>
-            <option v-if="ruleForm.ruleType === 'EVENT'" value="blacklist">违禁词</option>
+            <option v-if="ruleForm.ruleType === 'EVENT'" value="blacklist">违禁词命中</option>
+            <option v-if="ruleForm.ruleType === 'EVENT'" value="balance">话费余额</option>
+            <option v-if="ruleForm.ruleType === 'EVENT'" value="account_abnormal">账号异常状态</option>
           </select>
         </label>
         <label class="fld">
@@ -281,6 +283,10 @@
             <option value="2">L2 警告</option>
             <option value="3">L3 严重</option>
           </select>
+        </label>
+        <label class="fld">
+          <span>通知人 *</span>
+          <input v-model="ruleForm.notifyText" data-testid="live-alarm-rule-notify" placeholder="用户 id，多个用逗号分隔" />
         </label>
         <p v-if="ruleError" class="hint bad" data-testid="live-alarm-rule-error">{{ ruleError }}</p>
         <div class="drawer-f">
@@ -456,6 +462,7 @@ const ruleForm = reactive({
   level: '2',
   status: 'ENABLED',
   notifyUsers: [] as number[],
+  notifyText: '',
 })
 
 const handleOpen = ref(false)
@@ -592,7 +599,8 @@ function openRule(row?: RuleRow) {
     ruleForm.window = ''
     ruleForm.level = '2'
     ruleForm.status = 'ENABLED'
-    ruleForm.notifyUsers = notifyIds()
+    ruleForm.notifyUsers = []
+    ruleForm.notifyText = ''
   } else {
     editingId.value = row.id
     ruleForm.ruleName = row.ruleName
@@ -603,9 +611,17 @@ function openRule(row?: RuleRow) {
     ruleForm.window = row.ruleExpr.window ? String(row.ruleExpr.window) : ''
     ruleForm.level = String(row.level)
     ruleForm.status = row.status
-    ruleForm.notifyUsers = row.notifyUsers?.length ? [...row.notifyUsers] : notifyIds()
+    ruleForm.notifyUsers = row.notifyUsers?.length ? [...row.notifyUsers] : []
+    ruleForm.notifyText = ruleForm.notifyUsers.join(',')
   }
   ruleOpen.value = true
+}
+
+function notifyFromText() {
+  return String(ruleForm.notifyText || '')
+    .split(/[,，\s]+/)
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item > 0)
 }
 
 function rulePayload() {
@@ -620,7 +636,7 @@ function rulePayload() {
     ruleType: ruleForm.ruleType,
     ruleExpr: expr,
     level: Number(ruleForm.level),
-    notifyUsers: ruleForm.notifyUsers.length ? ruleForm.notifyUsers : notifyIds(),
+    notifyUsers: notifyFromText(),
     status: ruleForm.status,
   }
 }
@@ -629,6 +645,10 @@ async function saveRule() {
   ruleError.value = ''
   if (!ruleForm.ruleName.trim()) {
     ruleError.value = '规则名必填'
+    return
+  }
+  if (!notifyFromText().length) {
+    ruleError.value = '通知人必填'
     return
   }
   try {
