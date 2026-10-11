@@ -7,7 +7,7 @@
       </div>
       <div class="acts">
         <button v-if="canWriteRole" class="btn btn-pri" type="button" data-testid="role-create-open" @click="openCreate">新建角色</button>
-        <input v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
+        <input v-if="canEditRole" v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
         <button v-if="canWriteRole" class="btn btn-pri" type="button" @click="fromPosition">从岗位生成角色</button>
       </div>
     </div>
@@ -16,8 +16,8 @@
       <input v-model="keyword" data-testid="role-filter-keyword" placeholder="角色名 / 编码 / 岗位" style="width: 180px" />
       <select v-model="sourceFilter" data-testid="role-filter-source" style="width: 140px">
         <option value="">全部来源</option>
-        <option value="MANUAL">自建</option>
-        <option value="DINGTALK_AUTO">自动创建</option>
+        <option value="MANUAL">手工</option>
+        <option value="DINGTALK_AUTO">钉钉自动</option>
       </select>
       <button class="btn btn-sec btn-sm" type="button" data-testid="role-filter-reset" @click="resetFilters">重置</button>
     </form>
@@ -27,7 +27,7 @@
     <div class="g4">
       <div class="card stat"><span class="l">角色总数</span><div class="n">{{ ready && !error ? rows.length : '—' }}</div><div class="d">{{ error || 'GET /system/role/list' }}</div></div>
       <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">PENDING_CONFIG</div></div>
-      <div class="card stat"><span class="l">自动创建</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
+      <div class="card stat"><span class="l">钉钉自动</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
       <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">ENABLED</div></div>
     </div>
     <div class="cattabs" data-testid="role-status-tabs">
@@ -184,6 +184,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 import { asList, cell, readData } from '../../api/read'
+import { roleSourceLabel } from '../../roleSource'
 import { useUserStore } from '../../stores/user'
 
 type MenuNode = { id: number; name: string; permCode?: string; menuType?: string; children?: MenuNode[]; depth?: number }
@@ -211,6 +212,7 @@ const flatMenus = ref<MenuNode[]>([])
 const draft = reactive({ scope: 'SELF', position: '', menuIds: [] as number[], levels: {} as Record<string, string> })
 const user = useUserStore()
 const canWriteRole = computed(() => user.canWrite('system:role:query'))
+const canEditRole = computed(() => user.hasPerm('system:role:edit') || canWriteRole.value)
 
 const pending = computed(() => rows.value.filter((row) => row.status === 'PENDING_CONFIG').length)
 const autoCount = computed(() => rows.value.filter((row) => row.source === 'DINGTALK_AUTO').length)
@@ -231,7 +233,7 @@ const filtered = computed(() => {
 const filterNote = computed(() => {
   const bits: string[] = []
   if (keyword.value.trim()) bits.push(`关键词「${keyword.value.trim()}」`)
-  if (sourceFilter.value) bits.push(sourceFilter.value === 'MANUAL' ? '自建' : '自动创建')
+  if (sourceFilter.value) bits.push(roleSourceLabel(sourceFilter.value))
   if (statusFilter.value === 'PENDING_CONFIG') bits.push('待配置')
   if (statusFilter.value === 'ENABLED') bits.push('启用')
   if (!bits.length) return ''
@@ -278,7 +280,7 @@ function scopeLabel(value: string) {
   return { ALL: '全部', DEPT: '本部门', IP_GROUP: 'IP组', SELF: '本人' }[value] || value || '—'
 }
 function sourceLabel(value: string) {
-  return { MANUAL: '自建', DINGTALK_AUTO: '自动创建' }[value] || value || '—'
+  return roleSourceLabel(value) || value || '—'
 }
 
 function flatten(nodes: MenuNode[], depth = 0): MenuNode[] {

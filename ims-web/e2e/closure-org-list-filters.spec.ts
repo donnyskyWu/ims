@@ -114,7 +114,7 @@ async function filterPositionRules(page: Page, ruleName: string, position: strin
   await expect(page.locator('.tbl-wrap')).not.toContainText('加载中')
   await page.getByTestId('pos-create-name').fill(ruleName)
   await page.getByTestId('pos-create-position').selectOption(position)
-  await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员' })
+  await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员（手工）' })
   const created = page.waitForResponse(
     (r) => r.url().includes('/auth/position/rule') && r.request().method() === 'POST' && r.status() === 200,
   )
@@ -159,7 +159,7 @@ async function filterRolesAndPerms(page: Page) {
   await page.getByTestId('role-filter-source').selectOption('MANUAL')
   const adminRow = page.getByTestId('role-row').filter({ hasText: '系统管理员' })
   await expect(adminRow).toBeVisible()
-  await expect(page.getByTestId('role-filter-summary')).toContainText('自建')
+  await expect(page.getByTestId('role-filter-summary')).toContainText('手工')
 
   await page.getByTestId('role-filter-keyword').fill('不存在角色XYZ212')
   await expect(page.getByTestId('role-list-empty')).toContainText('没有符合条件的角色')

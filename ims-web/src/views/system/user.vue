@@ -119,7 +119,7 @@
           <label>IMS 角色</label>
           <select v-model="form.roleIds" multiple size="5" data-testid="sys-user-form-roles" style="min-height: 120px">
             <option v-for="role in roleOptions" :key="String(role.id)" :value="String(role.id)">
-              {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
+              {{ roleChoiceLabel(role) }}
             </option>
           </select>
         </div>
@@ -146,6 +146,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal, readData } from '../../api/read'
+import { roleChoiceLabel } from '../../roleSource'
 import { useUserStore } from '../../stores/user'
 
 type UserRow = {
@@ -161,7 +162,7 @@ type UserRow = {
   deptNames?: string[]
 }
 
-type RoleOption = { id: number | string; roleName: string; status?: string }
+type RoleOption = { id: number | string; roleName: string; source?: string; status?: string }
 type DeptOption = { id: number; name: string }
 
 const okStyle = 'background:rgba(52,199,89,.12);color:#1e8e3e'

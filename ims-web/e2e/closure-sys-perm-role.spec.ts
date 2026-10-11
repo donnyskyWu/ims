@@ -99,8 +99,8 @@ test.describe('system permission and role create', () => {
     await unionDrawer.getByTestId('sys-user-form-nickname').fill(unionName)
     await unionDrawer.getByTestId('sys-user-form-mobile').fill(`138${stamp}02`)
     await unionDrawer.getByTestId('sys-user-form-roles').selectOption([
-      { label: `菜单用户${stamp}` },
-      { label: `菜单角色${stamp}` },
+      { label: `菜单用户${stamp}（手工）` },
+      { label: `菜单角色${stamp}（手工）` },
     ])
     await unionDrawer.getByTestId('sys-user-form-password').fill('Admin@123')
     await unionDrawer.getByTestId('sys-user-form-save').click()

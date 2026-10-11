@@ -102,13 +102,13 @@ test.describe('org form edges', () => {
     await expect(page.getByTestId('pos-form-error')).toHaveText('说明不能超过 200 字')
 
     await page.getByTestId('pos-create-desc').fill('本地说明')
-    await page.getByTestId('pos-create-role').selectOption({ label: `${position}（钉钉 · 待配置）` })
+    await page.getByTestId('pos-create-role').selectOption({ label: `${position}（钉钉自动 / 待配置）` })
     await page.getByTestId('pos-create-submit').click()
     await expect(page.getByTestId('pos-form-error')).toContainText(`角色「${position}」尚未配置权限，用户将无任何权限`)
     await page.screenshot({ path: `${SHOTS}/07-position-pending-role.png`, fullPage: true })
 
     await page.getByTestId('pos-create-role').selectOption([])
-    await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员' })
+    await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员（手工）' })
     const createdRule = page.waitForResponse(
       (r) => r.url().includes('/auth/position/rule') && r.request().method() === 'POST' && r.status() === 200,
     )
@@ -122,7 +122,7 @@ test.describe('org form edges', () => {
     await page.getByTestId('pos-create-name').fill(`${ruleName}二`)
     await page.getByTestId('pos-create-position').selectOption(position)
     await page.getByTestId('pos-create-desc').fill('')
-    await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员' })
+    await page.getByTestId('pos-create-role').selectOption({ label: '系统管理员（手工）' })
     await page.getByTestId('pos-create-submit').click()
     await expect(page.getByTestId('pos-form-error')).toHaveText('该岗位已有启用版本')
     await expect(page.getByTestId('pos-rule-row').filter({ hasText: position })).toHaveCount(1)

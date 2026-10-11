@@ -55,7 +55,7 @@ test.describe('user add and edit buttons follow button perms', () => {
     await drawer.getByTestId('sys-user-form-username').fill(username)
     await drawer.getByTestId('sys-user-form-nickname').fill(username)
     await drawer.getByTestId('sys-user-form-mobile').fill(`137${stamp}01`)
-    await drawer.getByTestId('sys-user-form-roles').selectOption([{ label: roleName }])
+    await drawer.getByTestId('sys-user-form-roles').selectOption([{ label: `${roleName}（手工）` }])
     await drawer.getByTestId('sys-user-form-password').fill('Admin@123')
     await drawer.getByTestId('sys-user-form-save').click()
     await expect(drawer).toBeHidden({ timeout: 15_000 })
