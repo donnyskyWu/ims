@@ -111,15 +111,19 @@
               <div class="tbl-wrap">
                 <table>
                   <thead>
-                    <tr><th>姓名</th><th>岗位</th><th>主/兼</th><th>组长</th></tr>
+                    <tr><th>姓名</th><th>岗位</th><th>主/兼</th><th>组长</th><th>操作</th></tr>
                   </thead>
                   <tbody>
-                    <tr v-if="!members.length"><td colspan="4"><div class="empty"><div class="et">暂无成员</div></div></td></tr>
-                    <tr v-for="m in members" :key="m.id">
+                    <tr v-if="!members.length"><td colspan="5"><div class="empty"><div class="et">暂无成员</div></div></td></tr>
+                    <tr v-for="m in members" :key="m.id" data-testid="ipg-member-row">
                       <td>{{ m.userName }}</td>
                       <td>{{ m.position }}</td>
                       <td>{{ m.relationType }}</td>
                       <td>{{ m.isLeader ? '是' : '否' }}</td>
+                      <td>
+                        <button class="btn-txt btn" type="button" data-testid="ipg-member-edit" @click="openEditMember(m)">编辑</button>
+                        <button class="btn-txt btn" type="button" data-testid="ipg-member-remove" @click="askRemoveMember(m)">移除</button>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -266,16 +270,17 @@
       </div>
     </div>
     <div v-if="memberOpen" class="drawer on" data-testid="ipg-member-drawer">
-      <div class="drawer-h"><b>添加成员</b></div>
+      <div class="drawer-h"><b>{{ memberMode === 'edit' ? '编辑成员' : '添加成员' }}</b></div>
       <div class="drawer-b">
         <div class="formrow one">
           <div class="fld">
             <label>用户<i class="req">*</i></label>
-            <input v-model="memberKeyword" data-testid="ipg-member-user-search" placeholder="搜索姓名" />
+            <input v-model="memberKeyword" data-testid="ipg-member-user-search" placeholder="搜索姓名" :disabled="memberMode === 'edit'" />
             <select
               v-model="memberForm.userId"
               data-testid="ipg-member-user"
               style="margin-top: 8px"
+              :disabled="memberMode === 'edit'"
               :class="{ err: memberErrors.userId }"
             >
               <option value="">请按姓名选择</option>
@@ -314,8 +319,8 @@
     <div v-if="confirming" class="cfwrap on" data-testid="ipg-confirm">
       <div class="cfmask" @click="confirming = null"></div>
       <div class="cfcard danger">
-        <div class="cf-t">删除确认</div>
-        <div class="cf-m" data-testid="ipg-confirm-text">确认删除 IP 组「{{ confirming.name }}」？</div>
+        <div class="cf-t">{{ confirming.title }}</div>
+        <div class="cf-m" data-testid="ipg-confirm-text">{{ confirming.message }}</div>
         <div class="cf-f">
           <button class="btn btn-sec" type="button" data-testid="ipg-confirm-cancel" @click="confirming = null">取消</button>
           <button class="btn btn-red" type="button" data-testid="ipg-confirm-ok" @click="confirming.run()">确认</button>
@@ -359,7 +364,7 @@ const members = ref<any[]>([])
 const accounts = ref<any[]>([])
 const anchors = ref<any[]>([])
 const stats = ref<Record<string, number>>({})
-const confirming = ref<{ name: string; run: () => void } | null>(null)
+const confirming = ref<{ title: string; message: string; run: () => void } | null>(null)
 const bindAccountId = ref<number | undefined>()
 const bindAuthorId = ref<number | undefined>()
 const creating = ref(false)
@@ -376,6 +381,8 @@ const users = ref<{ id: number; nickname: string; username: string }[]>([])
 const levels = ref<{ dictValue: string; dictLabel: string }[]>([])
 const positions = ref<{ dictValue: string; dictLabel: string }[]>([])
 const memberOpen = ref(false)
+const memberMode = ref<'add' | 'edit'>('add')
+const editingMemberId = ref<number | null>(null)
 const memberKeyword = ref('')
 const memberForm = ref({ userId: '', position: '', relationType: 'PRIMARY' })
 const memberErrors = ref<Record<string, string>>({})
@@ -622,7 +629,23 @@ async function submitGroup() {
 }
 
 function openAddMember() {
+  memberMode.value = 'add'
+  editingMemberId.value = null
   memberForm.value = { userId: '', position: '', relationType: 'PRIMARY' }
+  memberErrors.value = {}
+  memberKeyword.value = ''
+  memberOpen.value = true
+  loadUsers()
+}
+
+function openEditMember(member: { id: number; userId: number; position: string; relationType: string }) {
+  memberMode.value = 'edit'
+  editingMemberId.value = member.id
+  memberForm.value = {
+    userId: String(member.userId),
+    position: member.position || '',
+    relationType: member.relationType || 'PRIMARY',
+  }
   memberErrors.value = {}
   memberKeyword.value = ''
   memberOpen.value = true
@@ -637,20 +660,55 @@ function validateMember() {
   return Object.keys(errors).length === 0
 }
 
+async function refreshMembers() {
+  const current = selectedId.value
+  await loadTree()
+  selectedId.value = current
+  await loadDetailTabs()
+}
+
 async function submitMember() {
   if (!selectedId.value || !validateMember()) return
   try {
-    await http.post(`/ip-group/${selectedId.value}/members`, {
-      userId: Number(memberForm.value.userId),
-      position: memberForm.value.position,
-      relationType: memberForm.value.relationType || 'PRIMARY',
-    })
+    if (memberMode.value === 'edit' && editingMemberId.value) {
+      await http.put(`/ip-group/${selectedId.value}/members/${editingMemberId.value}`, {
+        position: memberForm.value.position,
+        relationType: memberForm.value.relationType || 'PRIMARY',
+      })
+      msg.value = '成员已保存'
+    } else {
+      await http.post(`/ip-group/${selectedId.value}/members`, {
+        userId: Number(memberForm.value.userId),
+        position: memberForm.value.position,
+        relationType: memberForm.value.relationType || 'PRIMARY',
+      })
+      msg.value = '已添加成员'
+    }
     memberOpen.value = false
-    msg.value = '已添加成员'
-    const current = selectedId.value
-    await loadTree()
-    selectedId.value = current
-    await loadDetailTabs()
+    await refreshMembers()
+  } catch (e) {
+    msg.value = apiError(e)
+  }
+}
+
+function askRemoveMember(member: { id: number; userName: string }) {
+  if (!selectedId.value) return
+  const groupId = selectedId.value
+  confirming.value = {
+    title: '移除成员',
+    message: `确认移除成员「${member.userName || ''}」？`,
+    run: () => {
+      confirming.value = null
+      removeMember(groupId, member.id)
+    },
+  }
+}
+
+async function removeMember(groupId: number, memberId: number) {
+  try {
+    await http.delete(`/ip-group/${groupId}/members/${memberId}`)
+    msg.value = '成员已移除'
+    await refreshMembers()
   } catch (e) {
     msg.value = apiError(e)
   }
@@ -690,7 +748,8 @@ function askRemove() {
   const id = selectedId.value
   const name = detail.value.groupName
   confirming.value = {
-    name,
+    title: '删除确认',
+    message: `确认删除 IP 组「${name}」？`,
     run: () => {
       confirming.value = null
       removeGroup(id)

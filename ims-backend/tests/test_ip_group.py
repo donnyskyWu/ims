@@ -293,6 +293,45 @@ def test_ip_group_member_user_position_and_count():
     assert node["memberCount"] == 1
 
 
+def test_ip_group_member_edit_and_remove():
+    auth = headers()
+    big = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "成员编辑大组", "groupType": "BIG"},
+    )
+    big_id = big.json()["data"]
+    small = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "成员编辑小组", "groupType": "SMALL", "parentId": big_id},
+    )
+    gid = small.json()["data"]
+    added = client.post(
+        f"/admin-api/ims/ip-group/{gid}/members",
+        headers=auth,
+        json={"userId": 1, "position": "EDITOR", "relationType": "PRIMARY"},
+    )
+    assert added.json()["code"] == 0
+    member_id = client.get(f"/admin-api/ims/ip-group/{gid}/members", headers=auth).json()["data"][0]["id"]
+    saved = client.put(
+        f"/admin-api/ims/ip-group/{gid}/members/{member_id}",
+        headers=auth,
+        json={"position": "LIVE_OPS", "relationType": "PART_TIME"},
+    )
+    assert saved.json()["code"] == 0
+    row = client.get(f"/admin-api/ims/ip-group/{gid}/members", headers=auth).json()["data"][0]
+    assert row["position"] == "LIVE_OPS"
+    assert row["relationType"] == "PART_TIME"
+    removed = client.delete(f"/admin-api/ims/ip-group/{gid}/members/{member_id}", headers=auth)
+    assert removed.json()["code"] == 0
+    assert client.get(f"/admin-api/ims/ip-group/{gid}/members", headers=auth).json()["data"] == []
+    tree = client.get("/admin-api/ims/ip-group/tree", headers=auth).json()["data"]
+    parent = next(item for item in tree if item["id"] == big_id)
+    node = next(child for child in parent["children"] if child["id"] == gid)
+    assert node["memberCount"] == 0
+
+
 def test_ip_group_delete_guard_and_duplicate_name():
     auth = headers()
     created = client.post(
