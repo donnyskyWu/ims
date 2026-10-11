@@ -253,6 +253,45 @@ def test_report_audit_1124_reject_reason_required():
     assert bad.json()["code"] == 1124
 
 
+def _grant_role(user_ids: list[int], role_key: str, role_name: str, data_scope: str = "SELF") -> None:
+    from app.core import SessionLocal
+    from app.models import Role, RolePerm, UserRole
+
+    db = SessionLocal()
+    try:
+        role = db.query(Role).filter(Role.role_key == role_key, Role.deleted == 0).one_or_none()
+        if role is None:
+            taken = db.query(Role).filter(Role.dingtalk_position == role_key, Role.deleted == 0).one_or_none()
+            role = Role(
+                role_name=role_name,
+                role_key=role_key,
+                data_scope=data_scope,
+                dingtalk_position=None if taken is not None else role_key,
+                status="ENABLED",
+                source="MANUAL",
+                tenant_id=0,
+            )
+            db.add(role)
+            db.flush()
+        if db.query(RolePerm).filter(RolePerm.role_id == role.id).first() is None:
+            db.add(
+                RolePerm(
+                    role_id=role.id,
+                    module_code="auth",
+                    perm_code="auth:workbench:query",
+                    perm_level="R",
+                    tenant_id=0,
+                )
+            )
+        for uid in user_ids:
+            link = db.query(UserRole).filter(UserRole.user_id == uid, UserRole.role_id == role.id).one_or_none()
+            if link is None:
+                db.add(UserRole(user_id=uid, role_id=role.id, tenant_id=0))
+        db.commit()
+    finally:
+        db.close()
+
+
 def report_user_ids(count: int) -> list[int]:
     from app.core import SessionLocal
     from app.models import User
@@ -280,9 +319,10 @@ def report_user_ids(count: int) -> list[int]:
             row.tenant_id = tenant_id
             ids.append(row.id)
         db.commit()
-        return ids
     finally:
         db.close()
+    _grant_role(ids, "R5", "直播运营")
+    return ids
 
 
 def put_user_assignees(auth: dict, template_id: int, user_ids: list[int], name: str = "填报测试模板") -> None:
@@ -494,7 +534,7 @@ def test_report_stat_position_expands_to_enabled_users():
     auth = headers()
     user_ids = report_user_ids(3)
     holders = user_ids[1:]
-    role_key = "rpt_pos_b047"
+    role_key = "R6"
     db = SessionLocal()
     try:
         admin = db.query(User).filter(User.id == user_ids[0]).one()
@@ -502,7 +542,7 @@ def test_report_stat_position_expands_to_enabled_users():
         role = db.query(Role).filter(Role.role_key == role_key).one_or_none()
         if role is None:
             role = Role(
-                role_name="上报岗位",
+                role_name="短视频运营",
                 role_key=role_key,
                 dingtalk_position=role_key,
                 status="ENABLED",
@@ -721,6 +761,7 @@ def test_report_assignees_create_fill_todos_only_for_selected_users():
     assert created.json()["code"] == 0
     template_id = created.json()["data"]["id"]
     admin_id = created.json()["data"]["createdBy"]
+    _grant_role([admin_id], "R5", "直播运营")
     updated = client.put(
         f"/admin-api/ims/report/template/{template_id}",
         headers=auth,
@@ -927,9 +968,9 @@ def test_report_template_frequency_dept_and_reenable():
     assert enabled.json()["data"]["status"] == "ENABLED"
 
 
-def _dept_user(username: str, mobile: str) -> int:
+def _dept_user(username: str, mobile: str, role_key: str, role_name: str) -> int:
     from app.core import SessionLocal
-    from app.models import Role, RolePerm, User, UserDept, UserRole
+    from app.models import User, UserDept
     from app.security import hash_password
 
     db = SessionLocal()
@@ -942,31 +983,15 @@ def _dept_user(username: str, mobile: str) -> int:
             status="ENABLED",
             tenant_id=0,
         )
-        role = Role(
-            role_name=username,
-            role_key=f"rpt:{username}",
-            data_scope="DEPT",
-            status="ENABLED",
-            source="MANUAL",
-            tenant_id=0,
-        )
-        db.add_all([user, role])
+        db.add(user)
         db.flush()
-        db.add(
-            RolePerm(
-                role_id=role.id,
-                module_code="auth",
-                perm_code="auth:workbench:query",
-                perm_level="R",
-                tenant_id=0,
-            )
-        )
-        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
         db.add(UserDept(user_id=user.id, dept_id=8301, tenant_id=0))
         db.commit()
-        return int(user.id)
+        user_id = int(user.id)
     finally:
         db.close()
+    _grant_role([user_id], role_key, role_name, data_scope="SELF")
+    return user_id
 
 
 def _login(username: str) -> dict:
@@ -978,8 +1003,8 @@ def _login(username: str) -> dict:
 
 
 def test_assigned_dept_filler_can_submit_without_report_menu_perm():
-    filler_id = _dept_user("rpt_fill_b083", "13900008301")
-    outsider_id = _dept_user("rpt_outsider_b083", "13900008302")
+    filler_id = _dept_user("rpt_fill_b083", "13900008301", "R5", "直播运营")
+    outsider_id = _dept_user("rpt_outsider_b083", "13900008302", "R7", "主播")
     assert outsider_id != filler_id
     auth = headers()
     author_id, account_id, _ = seed_author_accounts()
@@ -1045,6 +1070,81 @@ def test_assigned_dept_filler_can_submit_without_report_menu_perm():
         },
     )
     assert blocked.json()["code"] == 1008
+
+
+def test_r7_cannot_be_saved_as_filler_but_existing_assignment_rejects_submit():
+    r7_id = _dept_user("rpt_r7_b083", "13900008303", "R7", "主播")
+    r5_id = _dept_user("rpt_r5_b083", "13900008304", "R5", "直播运营")
+    auth = headers()
+    person = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "不可指派主播",
+            "periodType": "DAILY",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [{"assignType": "USER", "targetIds": [r7_id]}],
+        },
+    )
+    assert person.json()["code"] == 1001
+    assert person.json()["msg"] == "该人员角色不可作为填报人"
+    post = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "不可指派主播岗",
+            "periodType": "DAILY",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [{"assignType": "POSITION", "targetCodes": ["R7"]}],
+        },
+    )
+    assert post.json()["code"] == 1001
+    assert post.json()["msg"] == "该人员角色不可作为填报人"
+
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "历史主播指派",
+            "periodType": "DAILY",
+            "status": "ENABLED",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [{"assignType": "USER", "targetIds": [r5_id]}],
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    template_id = created.json()["data"]["id"]
+    from app.core import SessionLocal
+    from app.models import ReportTemplate
+
+    db = SessionLocal()
+    try:
+        row = db.get(ReportTemplate, template_id)
+        row.assignees = [{"assignType": "USER", "targetIds": [r7_id]}]
+        db.commit()
+    finally:
+        db.close()
+    author_id, account_id, _ = seed_author_accounts()
+    denied = client.post(
+        "/admin-api/ims/report/submit",
+        headers=_login("rpt_r7_b083"),
+        json={
+            "templateId": template_id,
+            "period": "2026-10-11",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"gmv": 1},
+            "asDraft": False,
+        },
+    )
+    assert denied.json()["code"] == 1008
+    assert denied.json()["msg"] == "该人员角色不可作为填报人"
 
 
 def test_seeded_author_exposes_bound_platform_account():

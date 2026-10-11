@@ -253,6 +253,9 @@ def create_template(
     if err:
         return err
     tenant_id = tenant_of(actor)
+    err = validate_filler_assignees(db, body.assignees, tenant_id)
+    if err:
+        return err
     row = ReportTemplate(
         template_no=next_template_no(db, tenant_id),
         created_by=actor.id,
@@ -314,6 +317,9 @@ def update_template(
     if body.businessLine not in BUSINESS_LINES:
         return fail(1001, "businessLine 无效")
     err = validate_fields_schema(body.fieldsSchema)
+    if err:
+        return err
+    err = validate_filler_assignees(db, body.assignees, tenant_of(actor))
     if err:
         return err
     row = db.get(ReportTemplate, template_id)
@@ -1333,13 +1339,73 @@ def scope_kind(request: Request) -> str:
     return str(getattr(scope, "kind", "") or "")
 
 
+FILLER_ROLE_KEYS = frozenset({"R2", "R3", "R5", "R6", "R10"})
+NOT_FILLER_MSG = "该人员角色不可作为填报人"
+
+
+def _enabled_roles(db: Session, user: User) -> list[Role]:
+    from app.scope import enabled_roles
+
+    return enabled_roles(db, user)
+
+
+def is_filler_user(db: Session, user: User | None) -> bool:
+    """契约：可指派填报人只有 R2 / R3 / R5 / R6 / R10。"""
+    if user is None or user.deleted or user.status != "ENABLED":
+        return False
+    for role in _enabled_roles(db, user):
+        marks = {
+            (role.role_key or "").strip().upper(),
+            (role.dingtalk_position or "").strip().upper(),
+        }
+        if marks & FILLER_ROLE_KEYS:
+            return True
+    return False
+
+
+def validate_filler_assignees(db: Session, assignees: list, tenant_id: int):
+    """按人、按岗位、轮值都只接受填报角色。已有的历史指派不在这里改写。"""
+    people: set[int] = set()
+    for item in assignees:
+        raw = item.model_dump() if hasattr(item, "model_dump") else item
+        if not isinstance(raw, dict):
+            continue
+        kind = str(raw.get("assignType") or "USER").upper()
+        if kind == "POSITION":
+            codes = [str(code).strip() for code in (raw.get("targetCodes") or []) if str(code).strip()]
+            if any(code.upper() not in FILLER_ROLE_KEYS for code in codes):
+                return fail(1001, NOT_FILLER_MSG)
+            people.update(users_for_position_codes(db, set(codes), tenant_id))
+        elif kind == "DEPT_ROTATION":
+            rotation = raw.get("rotationList") if isinstance(raw.get("rotationList"), list) else []
+            ids: list[int] = []
+            for entry in rotation:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    uid = int(entry.get("userId"))
+                except (TypeError, ValueError):
+                    continue
+                if uid > 0:
+                    ids.append(uid)
+            people.update(ids or parse_user_ids(raw.get("targetIds")))
+        else:
+            people.update(parse_user_ids(raw.get("targetIds")))
+    for uid in people:
+        if not is_filler_user(db, db.get(User, uid)):
+            return fail(1001, NOT_FILLER_MSG)
+    return None
+
+
 def require_fill_access(request: Request, db: Session, actor: User, template_id: int):
-    """全量范围沿用原权限。其余账号靠填报人指派授权，不看菜单权限码。"""
+    """全量范围沿用原权限。其余账号须是被指派的填报角色，不看菜单权限码。"""
     if scope_kind(request) == "ALL":
         return None
-    if template_id in filler_template_ids(db, actor):
-        return None
-    return fail(1008, "无数据权限")
+    if template_id not in filler_template_ids(db, actor):
+        return fail(1008, "无数据权限")
+    if not is_filler_user(db, actor):
+        return fail(1008, NOT_FILLER_MSG)
+    return None
 
 
 def obliged_for_period(

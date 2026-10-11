@@ -143,9 +143,19 @@ def user_vo(db: Session, user: User, *, mobile_full: bool = False) -> dict:
     tenant_id = user.tenant_id or 0
     role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
     role_names: list[str] = []
+    role_keys: list[str] = []
     if role_ids:
         role_names = list(
             db.scalars(select(Role.role_name).where(Role.id.in_(role_ids), Role.deleted == 0).order_by(Role.id)).all()
+        )
+        role_keys = list(
+            db.scalars(
+                select(Role.role_key).where(
+                    Role.id.in_(role_ids),
+                    Role.deleted == 0,
+                    Role.status == "ENABLED",
+                ).order_by(Role.id)
+            ).all()
         )
     dept_ids, dept_names = user_dept_snapshot(db, user.id, tenant_id)
     return {
@@ -157,6 +167,7 @@ def user_vo(db: Session, user: User, *, mobile_full: bool = False) -> dict:
         "dingtalkUserId": user.dingtalk_user_id,
         "roleIds": role_ids,
         "roleNames": role_names,
+        "roleKeys": role_keys,
         "deptIds": dept_ids,
         "deptNames": dept_names,
     }

@@ -233,13 +233,19 @@
         </div>
 
         <div v-else>
-          <p class="hint">被指定的人会在工作台看到填报待办；未指定的人不会出现。</p>
+          <p class="hint">只有 R2、R3、R5、R6、R10 可以作为填报人。被指定的人会在工作台看到填报待办。</p>
+          <p class="hint">按岗位</p>
+          <label v-for="post in fillerPosts" :key="post.code" class="user-line">
+            <input v-model="selectedPostCodes" type="checkbox" :value="post.code" :data-testid="'tpl-filler-post-' + post.code" />
+            {{ post.label }}（{{ post.code }}）
+          </label>
+          <p class="hint">按人</p>
           <p v-if="usersError" class="hint" style="color: var(--red)">{{ usersError }}</p>
-          <label v-for="user in users" :key="user.id" class="user-line">
+          <label v-for="user in fillerUsers" :key="user.id" class="user-line">
             <input v-model="selectedUserIds" type="checkbox" :value="user.id" />
             {{ user.nickname || user.username }}（{{ user.username }}）
           </label>
-          <p v-if="!users.length && !usersError" class="hint">暂无可选用户</p>
+          <p v-if="!fillerUsers.length && !usersError" class="hint">暂无可选填报人</p>
         </div>
 
         <p v-if="editError" class="hint" style="color: var(--red)" data-testid="tpl-edit-error">{{ editError }}</p>
@@ -253,7 +259,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
 
@@ -279,7 +285,7 @@ type Row = {
   status: string
   businessLine: string
   fieldsSchema: SchemaField[]
-  assignees: Array<{ assignType?: string; targetIds?: number[] }>
+  assignees: Array<{ assignType?: string; targetIds?: number[]; targetCodes?: string[] }>
 }
 
 type EditField = {
@@ -329,9 +335,21 @@ const editTab = ref<'fields' | 'rules' | 'people'>('fields')
 const editFields = ref<EditField[]>([])
 const editRules = ref<Array<{ expression: string; errorMsg: string }>>([])
 const editError = ref('')
-const users = ref<Array<{ id: number; username: string; nickname: string }>>([])
+const FILLER_ROLE_KEYS = ['R2', 'R3', 'R5', 'R6', 'R10']
+const fillerPosts = [
+  { code: 'R2', label: '行政管理员' },
+  { code: 'R3', label: '财务管理员' },
+  { code: 'R5', label: '直播运营' },
+  { code: 'R6', label: '短视频运营' },
+  { code: 'R10', label: '外协人员' },
+]
+const users = ref<Array<{ id: number; username: string; nickname: string; roleKeys?: string[] }>>([])
 const usersError = ref('')
 const selectedUserIds = ref<number[]>([])
+const selectedPostCodes = ref<string[]>([])
+const fillerUsers = computed(() =>
+  users.value.filter((user) => (user.roleKeys || []).some((key) => FILLER_ROLE_KEYS.includes(String(key).toUpperCase()))),
+)
 
 function go(path: string) {
   router.push(path)
@@ -539,8 +557,12 @@ function openEdit(row: Row) {
       expression: item.crossCheck?.expression || '',
       errorMsg: item.crossCheck?.errorMsg || '勾稽校验失败',
     }))
-  const ids = (row.assignees || []).flatMap((item) => (item.assignType === 'USER' ? item.targetIds || [] : []))
+  const ids = (row.assignees || []).flatMap((item) => (item.assignType === 'USER' || !item.assignType ? item.targetIds || [] : []))
   selectedUserIds.value = ids.map((id) => Number(id))
+  selectedPostCodes.value = (row.assignees || [])
+    .flatMap((item) => (item.assignType === 'POSITION' ? item.targetCodes || [] : []))
+    .map((code) => String(code).toUpperCase())
+    .filter((code) => FILLER_ROLE_KEYS.includes(code))
   showEdit.value = true
   loadUsers()
 }
@@ -677,9 +699,10 @@ async function saveEdit() {
       businessLine: row.businessLine || 'BUSINESS',
       status: row.status || 'ENABLED',
       fieldsSchema,
-      assignees: selectedUserIds.value.length
-        ? [{ assignType: 'USER', targetIds: selectedUserIds.value }]
-        : [],
+      assignees: [
+        ...(selectedUserIds.value.length ? [{ assignType: 'USER', targetIds: selectedUserIds.value }] : []),
+        ...(selectedPostCodes.value.length ? [{ assignType: 'POSITION', targetCodes: selectedPostCodes.value }] : []),
+      ],
     })
     showEdit.value = false
     toast.value = '模板已保存'
