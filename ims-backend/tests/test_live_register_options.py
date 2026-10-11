@@ -181,8 +181,10 @@ def test_options_keep_in_use_accounts_phones_and_live_assets():
     assert "AST-LIVE-BACK" not in codes
     assert "AST-OFFICE" not in codes
     names = {item["realName"] for item in data["realnames"]}
-    assert "停用实名人" in names
+    assert "停用实名人" not in names
     assert "在职实名人" in names
+    assert "过期实名人" in names
+    assert "临期实名人" in names
 
 
 def test_cert_preview_warns_expiring_and_blocks_expired():
@@ -217,3 +219,36 @@ def test_cert_preview_warns_expiring_and_blocks_expired():
     assert stopped["data"]["level"] == "FAIL"
     assert stopped["data"]["blocked"] is False
     assert "未在职" in stopped["data"]["detail"]
+
+
+def test_expired_id_person_is_listed_and_registers_red():
+    auth = headers()
+    ids = seed()
+    created = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={
+            "accountId": ids["in_use"],
+            "realnamePersonId": ids["expired"],
+            "responsibleUserId": 1,
+            "deviceAssetIds": [ids["phone"]],
+            "platform": "DOUYIN",
+            "topic": "过期证件仍可登记",
+            "planStartTime": "2026-12-01T20:00:00+08:00",
+            "planEndTime": "",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    data = created.json()["data"]
+    assert data["riskLevel"] == "RED"
+    assert data["sessionStatus"] == "PENDING_RISK_CHECK"
+    checks = {item["checkItem"]: item for item in data["riskCheckResults"]}
+    assert checks["CERT_VALID"]["checkResult"] == "FAIL"
+    assert "过期或锁定" in checks["CERT_VALID"]["detail"]
+    again = client.post(
+        f"/admin-api/ims/live/register/{data['sessionCode']}/risk-check",
+        headers=auth,
+        json={},
+    )
+    assert again.json()["code"] == 1043
+    assert again.json()["data"]["riskLevel"] == "RED"

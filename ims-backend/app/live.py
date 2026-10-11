@@ -317,6 +317,7 @@ def validate_devices(db: Session, ops: Session, actor: User, device_ids) -> bool
 
 
 USABLE_CERT_STATUS = frozenset({"EFFECTIVE", "EXPIRING"})
+HARD_RED_CERT = frozenset({"EXPIRED", "LOCKED"})
 
 
 def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
@@ -324,6 +325,7 @@ def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
 
     没有证件不拦截，避免无档实名人的既有场次被误伤。
     仍有 EXPIRED 档时，旁边即使已有新的 EFFECTIVE 档也不放行，须走换证把旧档改为 RECYCLED。
+    登记本身不拦过期和锁定，由风控直接判红；开播仍走这里。
     """
     name = (person.real_name or "").strip()[:64]
     if not name:
@@ -337,7 +339,7 @@ def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
     ).all()
     if not rows:
         return None
-    if any(row.status == "EXPIRED" for row in rows):
+    if any(row.status in HARD_RED_CERT for row in rows):
         return "实名人证件过期或锁定，禁止开播"
     if any(row.status in USABLE_CERT_STATUS for row in rows):
         return None
@@ -351,6 +353,17 @@ def locked_cert_fail(db: Session, actor: User, person: Realname):
     if reason is None:
         return None
     return fail(1045, reason)
+
+
+def expired_or_locked(db: Session, actor: User, person: Realname) -> bool:
+    return any(row.status in HARD_RED_CERT for row in person_certs(db, actor, person))
+
+
+def reject_unready_cert(db: Session, actor: User, person: Realname):
+    """未生效证件仍拒绝登记。过期和锁定允许提交，风控判红。"""
+    if expired_or_locked(db, actor, person):
+        return None
+    return locked_cert_fail(db, actor, person)
 
 
 def risk_level_of(score: int) -> str:
@@ -445,6 +458,11 @@ def run_risk_checks(
         )
         results.append(row)
     level = risk_level_of(score)
+    if any(
+        item.check_item == "CERT_VALID" and item.check_result == "FAIL" and "过期或锁定" in (item.detail or "")
+        for item in results
+    ):
+        level = "RED"
     return score, level, results
 
 
@@ -1774,7 +1792,7 @@ def cert_signal(db: Session, actor: User, person: Realname) -> tuple[str, str]:
     rows = person_certs(db, actor, person)
     if not rows:
         return "PASS", "未建档，不拦截"
-    expired = next((row for row in rows if row.status == "EXPIRED"), None)
+    expired = next((row for row in rows if row.status in HARD_RED_CERT), None)
     if expired is not None:
         when = expired.expire_date or "—"
         return "FAIL", f"证件 {when} 已到期，实名人证件过期或锁定"
@@ -1820,7 +1838,11 @@ def register_options(
     ).all()
     persons = ops.scalars(
         select(Realname)
-        .where(Realname.deleted == 0, Realname.tenant_id == tenant_id)
+        .where(
+            Realname.deleted == 0,
+            Realname.tenant_id == tenant_id,
+            Realname.status != "DISABLED",
+        )
         .order_by(Realname.id.desc())
         .limit(500)
     ).all()
@@ -1934,7 +1956,7 @@ def register_create(
     person = load_realname(ops, actor, body.realnamePersonId)
     if person is None:
         return fail(1041, "实名人不存在")
-    blocked = locked_cert_fail(db, actor, person)
+    blocked = reject_unready_cert(db, actor, person)
     if blocked is not None:
         return blocked
     if not validate_devices(db, ops, actor, body.deviceAssetIds):
@@ -2040,7 +2062,7 @@ def register_update(
     person = load_realname(ops, actor, body.realnamePersonId)
     if account is None or person is None:
         return fail(1041, "账号或实名人不存在")
-    blocked = locked_cert_fail(db, actor, person)
+    blocked = reject_unready_cert(db, actor, person)
     if blocked is not None:
         return blocked
     if not validate_devices(db, ops, actor, body.deviceAssetIds):
@@ -2079,7 +2101,7 @@ def risk_check(
     person = load_realname(ops, actor, row.realname_person_id)
     if account is None or person is None:
         return fail(1041, "账号或实名人不存在")
-    blocked = locked_cert_fail(db, actor, person)
+    blocked = reject_unready_cert(db, actor, person)
     if blocked is not None:
         return blocked
     device_ids = device_refs_from(row.device_asset_ids or "[]")

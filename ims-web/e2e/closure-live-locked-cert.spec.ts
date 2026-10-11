@@ -131,14 +131,14 @@ test.describe('live locked certificate closure', () => {
     const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
     await expect(drawer).toBeVisible()
     await fillLiveRegisterDrawer(drawer, ids, `E2E 1045 ${Date.now()}`)
+    await expect(drawer.getByTestId('live-reg-cert')).toContainText('过期或锁定')
     const blockedResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
     )
     await drawer.getByRole('button', { name: '提交登记' }).click()
-    const blocked = (await (await blockedResp).json()) as { code: number; msg?: string }
-    expect(blocked.code).toBe(1045)
-    await expect(drawer.getByTestId('live-register-error')).toContainText('1045')
-    await expect(drawer).toBeVisible()
+    const blocked = (await (await blockedResp).json()) as { code: number; data?: { riskLevel?: string } }
+    expect(blocked.code).toBe(0)
+    expect(blocked.data?.riskLevel).toBe('RED')
     await page.screenshot({ path: `${shotDir}/02-register-blocked-1045.png`, fullPage: true })
 
     await page.goto('/ims/corp/resource/certificate')

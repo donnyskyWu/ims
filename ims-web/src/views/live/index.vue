@@ -260,7 +260,7 @@
     </div>
 
     <ProtoDrawer :open="registerOpen" :title="registerTitle" width="720px" :z-index="130" @close="closeRegister">
-      <p class="hint">提交后执行风控。实名人证件过期或锁定会拦截新场次。</p>
+      <p class="hint">提交后执行风控。证件过期或锁定仍可提交，选择后会出现红字，风控判为红色。</p>
       <div class="formrow one">
         <div v-if="editingCode" class="fld">
           <label>场次 ID（不可变更）</label>
