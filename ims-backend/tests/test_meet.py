@@ -582,3 +582,62 @@ def test_meet_minutes_record_action_ai_and_archive_lock():
     assert noted.json()["code"] == 0
     assert "会后更正" in noted.json()["data"]["appendix"]
     assert noted.json()["data"]["summary"] == "会议结论：本周完成联调"
+
+
+def test_meet_review_follow_up_creates_todo_and_closes():
+    auth = headers()
+    day = (datetime.now(BJ) - timedelta(days=4)).strftime("%Y-%m-%d")
+    report_id = seed_submitted_report_for_peer(day)
+    missing = client.put(
+        f"/admin-api/ims/meet/review/{report_id}",
+        headers=auth,
+        json={"reviewLevel": 1, "action": "MARK_FOLLOW_UP", "followUpItems": [{"description": "只写了描述"}]},
+    )
+    assert missing.json()["code"] == 1001
+
+    db = SessionLocal()
+    admin_id = int(db.scalar(select(User.id).where(User.username == "admin")))
+    db.close()
+    marked = client.put(
+        f"/admin-api/ims/meet/review/{report_id}",
+        headers=auth,
+        json={
+            "reviewLevel": 1,
+            "action": "MARK_FOLLOW_UP",
+            "comment": "请补充数据",
+            "followUpItems": [
+                {"description": "补一张截图", "responsibleUserId": admin_id, "dueDate": "2026-10-18"}
+            ],
+        },
+    )
+    assert marked.json()["code"] == 0
+    records = client.get(
+        "/admin-api/ims/meet/review/records",
+        headers=auth,
+        params={"reportId": report_id, "action": "MARK_FOLLOW_UP"},
+    )
+    item = records.json()["data"]["list"][0]["followUpItems"][0]
+    assert item["status"] == "OPEN"
+    item_id = item["itemId"]
+    db = SessionLocal()
+    todo = db.scalar(select(Todo).where(Todo.ref_type == "meet_follow", Todo.ref_id == item_id))
+    assert todo is not None and todo.assignee_user_id == admin_id
+    db.close()
+
+    _scoped_user("meet_follow_stranger", "跟进路人", "SELF")
+    denied = client.put(
+        f"/admin-api/ims/meet/review/follow-up/{item_id}",
+        headers=_auth("meet_follow_stranger"),
+        json={"closeRemark": "不是我的"},
+    )
+    assert denied.json()["code"] == 1115
+    closed = client.put(
+        f"/admin-api/ims/meet/review/follow-up/{item_id}",
+        headers=auth,
+        json={"closeRemark": "截图已补"},
+    )
+    assert closed.json()["code"] == 0
+    db = SessionLocal()
+    todo = db.scalar(select(Todo).where(Todo.ref_type == "meet_follow", Todo.ref_id == item_id))
+    assert todo is not None and todo.status == "DONE"
+    db.close()

@@ -85,7 +85,7 @@
                   去处理
                 </button>
                 <button
-                  v-else-if="row.status === 'PENDING' && row.refType === 'meet_action'"
+                  v-else-if="row.status === 'PENDING' && (row.refType === 'meet_action' || row.refType === 'meet_follow')"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="todo-meet-action"
@@ -313,7 +313,11 @@ async function submitMeetClose() {
     return
   }
   try {
-    await http.put(`/meet/minutes/action-item/${meetClose.value.refId}`, { closeRemark: meetRemark.value.trim() })
+    const path =
+      meetClose.value.refType === 'meet_follow'
+        ? `/meet/review/follow-up/${meetClose.value.refId}`
+        : `/meet/minutes/action-item/${meetClose.value.refId}`
+    await http.put(path, { closeRemark: meetRemark.value.trim() })
     meetClose.value = null
     await load()
   } catch (error: unknown) {

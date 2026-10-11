@@ -61,6 +61,11 @@ class DailyReviewBody(BaseModel):
     followUpItems: list[dict] | None = None
 
 
+class ActionCloseBody(BaseModel):
+    closeRemark: str = ""
+    evidenceUrl: str = ""
+
+
 REPORT_TYPES = {
     "LIVE": "直播",
     "SHORT_VIDEO": "短视频",
@@ -204,6 +209,87 @@ def queue_vo(row: MeetDailyReport, *, review_level: int) -> dict:
     data["waitingHours"] = round(hours, 1)
     data["isTimeout"] = review_level == 1 and hours > 24
     return data
+
+
+def parse_follow_items(db: Session, raw_items: list) -> tuple[str | None, list[dict]]:
+    if not raw_items:
+        return "必填项，请填写", []
+    ids = {
+        int(item.get("responsibleUserId") or 0)
+        for item in raw_items
+        if isinstance(item, dict) and item.get("responsibleUserId")
+    }
+    names = user_names(db, ids)
+    out: list[dict] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            return "必填项，请填写", []
+        description = str(item.get("description") or "").strip()
+        user_id = int(item.get("responsibleUserId") or 0)
+        due = str(item.get("dueDate") or "").strip()[:10]
+        if not description or not user_id or not DATE_RE.match(due):
+            return "必填项，请填写", []
+        out.append(
+            {
+                "description": description,
+                "responsibleUserId": user_id,
+                "responsibleName": names.get(user_id, ""),
+                "dueDate": due,
+                "status": "OPEN",
+            }
+        )
+    return None, out
+
+
+def sync_follow_todos(db: Session, review: MeetDailyReview, report: MeetDailyReport) -> None:
+    now = utcnow()
+    for item in review.follow_up_items or []:
+        if not isinstance(item, dict):
+            continue
+        user_id = int(item.get("responsibleUserId") or 0)
+        item_id = int(item.get("itemId") or 0)
+        if not user_id or not item_id:
+            continue
+        found = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_follow",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == user_id,
+            )
+        )
+        if found is not None:
+            continue
+        due = datetime.strptime(str(item["dueDate"])[:10], "%Y-%m-%d")
+        db.add(
+            Todo(
+                assignee_user_id=user_id,
+                task_type="MEET_FOLLOW",
+                ref_type="meet_follow",
+                ref_id=item_id,
+                title=str(item.get("description") or "日报跟进")[:128],
+                content=f"{report.report_date} {report.user_name}"[:512],
+                status="PENDING",
+                deadline=due,
+                tenant_id=review.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def find_follow_item(db: Session, tenant_id: int, item_id: int) -> tuple[MeetDailyReview | None, dict | None]:
+    rows = list(
+        db.scalars(
+            select(MeetDailyReview).where(
+                MeetDailyReview.deleted == 0,
+                MeetDailyReview.tenant_id == tenant_id,
+            )
+        ).all()
+    )
+    for review in rows:
+        for item in review.follow_up_items or []:
+            if isinstance(item, dict) and int(item.get("itemId") or 0) == item_id:
+                return review, item
+    return None, None
 
 
 def has_review(db: Session, report_id: int, level: int, tenant_id: int) -> bool:
@@ -618,6 +704,40 @@ def review_queue(
     return paged([queue_vo(row, review_level=level) for row in page_rows], total, page_no, size)
 
 
+@router.put("/review/follow-up/{item_id}")
+def review_follow_close(
+    item_id: int,
+    body: ActionCloseBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    review, item = find_follow_item(db, tenant_of(actor), item_id)
+    if review is None or item is None:
+        return fail(1004, "跟进项不存在")
+    if int(item.get("responsibleUserId") or 0) != actor.id:
+        return fail(1115, "非跟进项责任人，无权限回填")
+    remark = (body.closeRemark or "").strip()
+    if not remark:
+        return fail(1001, "必填项，请填写")
+    if item.get("status") != "CLOSED":
+        item["status"] = "CLOSED"
+        item["closeRemark"] = remark
+        review.follow_up_items = list(review.follow_up_items or [])
+        flag_modified(review, "follow_up_items")
+        review.updated_at = utcnow()
+        todo = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_follow",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == actor.id,
+            )
+        )
+        if todo is not None and todo.status == "PENDING":
+            todo.status = "DONE"
+        db.flush()
+    return ok(None)
+
+
 @router.put("/review/{report_id}")
 def review_action(
     report_id: int,
@@ -644,8 +764,11 @@ def review_action(
 
     now = utcnow()
     follow_items = body.followUpItems or []
-    if body.action == "MARK_FOLLOW_UP" and not follow_items:
-        return fail(1001, "标记跟进须填写 followUpItems")
+    parsed_follow: list[dict] = []
+    if body.action == "MARK_FOLLOW_UP":
+        err, parsed_follow = parse_follow_items(db, follow_items)
+        if err:
+            return fail(1001, err)
 
     review = MeetDailyReview(
         report_id=report_id,
@@ -654,13 +777,20 @@ def review_action(
         review_level=body.reviewLevel,
         action=body.action,
         comment=body.comment or "",
-        follow_up_items=follow_items,
+        follow_up_items=[],
         reviewed_at=now,
         tenant_id=tenant_id,
         created_at=now,
         updated_at=now,
     )
     db.add(review)
+    db.flush()
+    if parsed_follow:
+        for index, item in enumerate(parsed_follow, start=1):
+            item["itemId"] = int(review.id) * 100 + index
+        review.follow_up_items = parsed_follow
+        flag_modified(review, "follow_up_items")
+        sync_follow_todos(db, review, row)
     next_level: int | None = None
     if body.reviewLevel == 1 and body.action in ("READ", "COMMENT", "MARK_FOLLOW_UP"):
         next_level = 2
@@ -1150,11 +1280,6 @@ def minutes_participants(db: Session = Depends(db_session), actor: User = Depend
             ]
         }
     )
-
-
-class ActionCloseBody(BaseModel):
-    closeRemark: str = ""
-    evidenceUrl: str = ""
 
 
 @router.put("/minutes/action-item/{item_id}")
