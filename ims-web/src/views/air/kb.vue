@@ -226,17 +226,57 @@
     </div>
 
     <div v-if="showUpload" class="modal-mask" @click.self="showUpload = false">
-      <div class="card" style="width: 420px; padding: 20px">
-        <h3 style="margin: 0 0 12px">上传资料</h3>
-        <p class="hint">文件上传、URL 导入、粘贴文本在下一步完善。当前仍可按标题提交待审批资料。</p>
-        <label class="fld">标题</label>
-        <input v-model="uploadForm.title" class="fld-in" />
-        <label class="fld">fileKey</label>
-        <input v-model="uploadForm.fileKey" class="fld-in" />
-        <p v-if="uploadError" class="hint bad">{{ uploadError }}</p>
+      <div class="card" style="width: 560px; padding: 20px; max-height: 86vh; overflow: auto" data-testid="air-kb-upload-form">
+        <h3 style="margin: 0 0 12px">上传资料到知识库</h3>
+        <div style="font-weight: 600; margin-bottom: 8px">上传方式</div>
+        <div style="display: flex; gap: 8px">
+          <button class="btn btn-sm" :class="upload.mode === 'file' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="air-kb-upload-mode-file" @click="upload.mode = 'file'">文件上传</button>
+          <button class="btn btn-sm" :class="upload.mode === 'url' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="air-kb-upload-mode-url" @click="upload.mode = 'url'">URL 导入</button>
+          <button class="btn btn-sm" :class="upload.mode === 'text' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="air-kb-upload-mode-text" @click="upload.mode = 'text'">粘贴文本</button>
+        </div>
+        <div style="font-weight: 600; margin: 12px 0 8px">入库信息</div>
+        <label class="fld">目标知识库 <i class="req">*</i></label>
+        <select v-model="upload.kbId" class="fld-in" data-testid="air-kb-upload-kb">
+          <option value="">请选择</option>
+          <option v-for="kb in tree" :key="kb.id" :value="String(kb.id)">{{ kb.kbNo }} {{ kb.kbName }}（{{ kb.secretLabel }}）</option>
+        </select>
+        <p v-if="uploadErrors.kbId" class="hint bad">{{ uploadErrors.kbId }}</p>
+        <label class="fld">目标分类</label>
+        <select v-model="upload.categoryId" class="fld-in">
+          <option value="">（根）</option>
+          <option v-for="item in uploadCats" :key="item.id" :value="String(item.id)">{{ item.categoryName }}</option>
+        </select>
+        <label class="fld">密级</label>
+        <select v-model="upload.secretLevel" class="fld-in" data-testid="air-kb-upload-secret">
+          <option value="">继承库密级</option>
+          <option v-for="item in secretOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
+        <p class="hint">不得低于库密级。上传后进入入库审批。</p>
+        <div style="font-weight: 600; margin: 12px 0 8px">内容</div>
+        <template v-if="upload.mode === 'file'">
+          <label class="fld">选择文件 <i class="req">*</i></label>
+          <input class="fld-in" type="file" accept=".pdf,.doc,.docx,.md,.html,.htm,.xls,.xlsx,.txt,.csv" data-testid="air-kb-upload-file" @change="onUploadFile" />
+          <p v-if="upload.fileName" class="hint">{{ upload.fileName }}</p>
+          <p v-if="uploadErrors.file" class="hint bad" data-testid="air-kb-upload-error">{{ uploadErrors.file }}</p>
+        </template>
+        <template v-else-if="upload.mode === 'url'">
+          <label class="fld">URL 地址 <i class="req">*</i></label>
+          <textarea v-model="upload.urls" class="fld-in" rows="4" placeholder="每行一个 URL（http/https）" data-testid="air-kb-upload-urls" />
+          <p v-if="uploadErrors.urls" class="hint bad" data-testid="air-kb-upload-error">{{ uploadErrors.urls }}</p>
+        </template>
+        <template v-else>
+          <label class="fld">标题 <i class="req">*</i></label>
+          <input v-model="upload.title" class="fld-in" maxlength="128" placeholder="≤128 字" data-testid="air-kb-upload-title" />
+          <p v-if="uploadErrors.title" class="hint bad">{{ uploadErrors.title }}</p>
+          <label class="fld">正文 <i class="req">*</i></label>
+          <textarea v-model="upload.content" class="fld-in" rows="5" placeholder="粘贴纯文本 / Markdown 内容" data-testid="air-kb-upload-content" />
+          <p v-if="uploadErrors.content" class="hint bad" data-testid="air-kb-upload-error">{{ uploadErrors.content }}</p>
+        </template>
+        <p class="hint">三种方式统一写入目标知识库并进入「入库审批中」。仅文件管理，不含解析、向量化与检索。</p>
+        <p v-if="uploadErrors.form" class="hint bad" data-testid="air-kb-upload-error">{{ uploadErrors.form }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showUpload = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submitLegacyUpload">提交</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-kb-upload-save" @click="submitUpload">提交入库</button>
         </div>
       </div>
     </div>
@@ -439,9 +479,21 @@ const renameId = ref(0)
 const renameName = ref('')
 const deleteCat = ref<FlatCat | null>(null)
 
+const FILE_EXTS = ['pdf', 'doc', 'docx', 'md', 'html', 'htm', 'xls', 'xlsx', 'txt', 'csv']
 const showUpload = ref(false)
-const uploadForm = reactive({ title: '', fileKey: '' })
-const uploadError = ref('')
+const upload = reactive({
+  mode: 'file' as 'file' | 'url' | 'text',
+  kbId: '',
+  categoryId: '',
+  secretLevel: '',
+  fileName: '',
+  fileSize: 0,
+  contentType: '',
+  urls: '',
+  title: '',
+  content: '',
+})
+const uploadErrors = reactive({ kbId: '', file: '', urls: '', title: '', content: '', form: '' })
 
 const showTransfer = ref(false)
 const transfer = reactive({
@@ -479,6 +531,18 @@ const flatCats = computed(() => {
 
 const transferCats = computed(() => {
   const kb = tree.value.find((item) => String(item.id) === transfer.kbId)
+  const list: FlatCat[] = []
+  for (const node of kb?.children || []) {
+    list.push({ id: node.id, categoryName: node.categoryName, docCount: node.docCount, depth: 0 })
+    for (const child of node.children || []) {
+      list.push({ id: child.id, categoryName: `${node.categoryName} / ${child.categoryName}`, docCount: child.docCount, depth: 1 })
+    }
+  }
+  return list
+})
+
+const uploadCats = computed(() => {
+  const kb = tree.value.find((item) => String(item.id) === upload.kbId)
   const list: FlatCat[] = []
   for (const node of kb?.children || []) {
     list.push({ id: node.id, categoryName: node.categoryName, docCount: node.docCount, depth: 0 })
@@ -711,31 +775,90 @@ async function removeCategory(id: number, moveToRoot: boolean) {
   }
 }
 
+function clearUploadErrors() {
+  uploadErrors.kbId = ''
+  uploadErrors.file = ''
+  uploadErrors.urls = ''
+  uploadErrors.title = ''
+  uploadErrors.content = ''
+  uploadErrors.form = ''
+}
+
 function openUpload() {
-  uploadForm.title = ''
-  uploadForm.fileKey = ''
-  uploadError.value = ''
+  upload.mode = 'file'
+  upload.kbId = selectedKbId.value ? String(selectedKbId.value) : ''
+  upload.categoryId = selectedCateId.value ? String(selectedCateId.value) : ''
+  upload.secretLevel = ''
+  upload.fileName = ''
+  upload.fileSize = 0
+  upload.contentType = ''
+  upload.urls = ''
+  upload.title = ''
+  upload.content = ''
+  clearUploadErrors()
   showUpload.value = true
 }
 
-async function submitLegacyUpload() {
-  uploadError.value = ''
-  if (!uploadForm.title.trim() || !uploadForm.fileKey.trim()) {
-    uploadError.value = '必填项，请填写'
-    return
+function onUploadFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  upload.fileName = file?.name || ''
+  upload.fileSize = file?.size || 0
+  upload.contentType = file?.type || 'application/octet-stream'
+  uploadErrors.file = ''
+}
+
+async function submitUpload() {
+  clearUploadErrors()
+  if (!upload.kbId) uploadErrors.kbId = '必填项，请填写'
+  if (upload.mode === 'file') {
+    if (!upload.fileName) uploadErrors.file = '必填项，请填写'
+    else {
+      const ext = upload.fileName.includes('.') ? upload.fileName.split('.').pop()?.toLowerCase() || '' : ''
+      if (!FILE_EXTS.includes(ext)) uploadErrors.file = '不支持的文件类型'
+    }
+  } else if (upload.mode === 'url') {
+    const lines = upload.urls.split(/\n+/).map((item) => item.trim()).filter(Boolean)
+    if (!lines.length) uploadErrors.urls = '必填项，请填写'
+    else if (lines.some((item) => !item.startsWith('http://') && !item.startsWith('https://'))) {
+      uploadErrors.urls = 'URL 须以 http:// 或 https:// 开头'
+    }
+  } else {
+    if (!upload.title.trim()) uploadErrors.title = '必填项，请填写'
+    if (!upload.content.trim()) uploadErrors.content = '必填项，请填写'
   }
+  if (uploadErrors.kbId || uploadErrors.file || uploadErrors.urls || uploadErrors.title || uploadErrors.content) return
+  const modeName = upload.mode === 'file' ? '文件' : upload.mode === 'url' ? 'URL' : '文本'
   try {
-    await http.post('/air/kb/doc/upload', {
-      title: uploadForm.title.trim(),
-      fileKey: uploadForm.fileKey.trim(),
-      kbId: selectedKbId.value || tree.value[0]?.id || 0,
-      cateId: selectedCateId.value || 0,
-    })
+    const kbId = Number(upload.kbId)
+    const categoryId = upload.categoryId ? Number(upload.categoryId) : undefined
+    const secretLevel = upload.secretLevel || undefined
+    if (upload.mode === 'file') {
+      await http.post('/air/kb/doc/upload', {
+        kbId,
+        categoryId,
+        fileName: upload.fileName,
+        fileSize: upload.fileSize,
+        contentType: upload.contentType || 'application/octet-stream',
+        secretLevel,
+      })
+    } else if (upload.mode === 'url') {
+      const urls = upload.urls.split(/\n+/).map((item) => item.trim()).filter(Boolean)
+      await http.post('/air/kb/doc/import-url', { kbId, categoryId, urls, secretLevel })
+    } else {
+      await http.post('/air/kb/doc/import-text', {
+        kbId,
+        categoryId,
+        title: upload.title.trim(),
+        content: upload.content.trim(),
+        secretLevel,
+      })
+    }
     showUpload.value = false
-    say('已提交入库')
+    say(`已提交 ${modeName}入库`)
     await reload()
   } catch (err) {
-    uploadError.value = errorMessage(err)
+    uploadErrors.form = errorMessage(err)
   }
 }
 

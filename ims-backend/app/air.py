@@ -33,12 +33,36 @@ BJ = timezone(timedelta(hours=8))
 
 class KbUploadBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    title: str
-    fileKey: str
+    title: str = ""
+    fileKey: str = ""
+    fileName: str = ""
+    content: str = ""
     contentType: str = "application/octet-stream"
     fileSize: int = 0
     kbId: int = 0
     cateId: int = 0
+    categoryId: int = 0
+    secretLevel: str = ""
+
+
+class KbImportUrlBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    kbId: int = 0
+    categoryId: int = 0
+    urls: list[str] = Field(default_factory=list)
+    secretLevel: str = ""
+
+
+class KbImportTextBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    kbId: int = 0
+    categoryId: int = 0
+    title: str = ""
+    content: str = ""
+    secretLevel: str = ""
+
+
+FILE_EXTS = frozenset({"pdf", "doc", "docx", "md", "html", "htm", "xls", "xlsx", "txt", "csv"})
 
 
 class KbCategoryBody(BaseModel):
@@ -1012,48 +1036,191 @@ def kb_detail(kb_id: int, db: Session = Depends(db_session), actor: User = Depen
     return ok(data)
 
 
+def extension_of(name: str) -> str:
+    text = (name or "").rsplit("/", 1)[-1]
+    if "." not in text:
+        return ""
+    return text.rsplit(".", 1)[-1].lower()
+
+
+def resolve_upload_kb(
+    db: Session,
+    actor: User,
+    kb_id: int,
+    category_id: int,
+    secret_level: str,
+):
+    tenant_id = tenant_of(actor)
+    if kb_id:
+        kb = load_kb(db, kb_id, tenant_id)
+        if kb is None:
+            return None, None, None, fail(1004, "知识库不存在")
+    else:
+        kb = ensure_default_kb(db, tenant_id, actor.id)
+        ensure_kb_no(db, kb)
+    if category_id:
+        cate = db.get(AirKbCategory, category_id)
+        if cate is None or cate.deleted or cate.kb_id != kb.id or cate.tenant_id != tenant_id:
+            return None, None, None, fail(1004, "分类不存在")
+    secret = normalize_secret(secret_level) if (secret_level or "").strip() else (kb.secret_level or "INTERNAL")
+    if secret not in SECRET_LEVELS:
+        return None, None, None, fail(1001, "密级非法")
+    if SECRET_RANK[secret] < SECRET_RANK.get(kb.secret_level or "INTERNAL", 1):
+        return None, None, None, fail(1001, "密级不得低于库密级")
+    return kb, secret, tenant_id, None
+
+
+def insert_pending_doc(
+    db: Session,
+    *,
+    kb: AirKb,
+    tenant_id: int,
+    actor_id: int,
+    title: str,
+    file_key: str,
+    content_type: str,
+    file_size: int,
+    cate_id: int,
+    secret: str,
+    source_type: str,
+    body: str = "",
+) -> AirKbDoc:
+    now = utcnow()
+    row = AirKbDoc(
+        kb_id=kb.id,
+        title=title[:256],
+        file_key=file_key[:512],
+        content_type=content_type or "application/octet-stream",
+        file_size=max(0, int(file_size or 0)),
+        cate_id=cate_id,
+        secret_level=secret,
+        source_type=source_type,
+        body=body or "",
+        audit_status="PENDING",
+        uploader_user_id=actor_id,
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    kb.updated_at = now
+    db.flush()
+    return row
+
+
 @router.post("/kb/doc/upload")
 def kb_doc_upload(
     body: KbUploadBody,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    title = (body.title or "").strip()
+    file_name = (body.fileName or "").strip()
     file_key = (body.fileKey or "").strip()
+    title = (body.title or "").strip() or file_name
+    if not file_key and not file_name:
+        return fail(1001, "请选择文件")
+    if file_name:
+        ext = extension_of(file_name)
+        if ext not in FILE_EXTS:
+            return fail(1001, "不支持的文件类型")
     if not title:
-        return fail(1001, "title 必填")
+        return fail(1001, "标题必填")
     if not file_key:
-        return fail(1001, "fileKey 必填")
-    now = utcnow()
-    tenant_id = tenant_of(actor)
-    kb = ensure_default_kb(db, tenant_id, actor.id)
-    kb_id = int(body.kbId or kb.id)
-    if kb_id != kb.id:
-        other = db.get(AirKb, kb_id)
-        if other is None or other.deleted or other.tenant_id != tenant_id:
-            return fail(1004, "知识库不存在")
-    cate_id = int(body.cateId or 0)
-    if cate_id:
-        cate = db.get(AirKbCategory, cate_id)
-        if cate is None or cate.deleted or cate.kb_id != kb_id or cate.tenant_id != tenant_id:
-            return fail(1004, "分类不存在")
-    row = AirKbDoc(
-        kb_id=kb_id,
+        safe = file_name.replace("\\", "/").rsplit("/", 1)[-1].replace(" ", "_")
+        file_key = f"kb/{utcnow().astimezone(BJ).year}/{safe}"
+    cate_id = int(body.categoryId or body.cateId or 0)
+    kb, secret, tenant_id, error = resolve_upload_kb(db, actor, int(body.kbId or 0), cate_id, body.secretLevel)
+    if error is not None:
+        return error
+    row = insert_pending_doc(
+        db,
+        kb=kb,
+        tenant_id=tenant_id,
+        actor_id=actor.id,
         title=title,
         file_key=file_key,
         content_type=(body.contentType or "application/octet-stream").strip(),
-        file_size=max(0, int(body.fileSize or 0)),
+        file_size=body.fileSize or len((body.content or "").encode("utf-8")),
         cate_id=cate_id,
-        audit_status="PENDING",
-        uploader_user_id=actor.id,
-        tenant_id=tenant_id,
-        created_at=now,
-        updated_at=now,
+        secret=secret,
+        source_type="FILE",
+        body=body.content or "",
     )
-    db.add(row)
-    db.flush()
     names = user_names(db, {actor.id})
     return ok({"docIds": [row.id], "auditStatus": [row.audit_status], "doc": kb_doc_vo(row, names)})
+
+
+@router.post("/kb/doc/import-url")
+def kb_doc_import_url(
+    body: KbImportUrlBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    urls = [item.strip() for item in body.urls if (item or "").strip()]
+    if not urls:
+        return fail(1001, "URL 地址必填")
+    if any(not (item.startswith("http://") or item.startswith("https://")) for item in urls):
+        return fail(1001, "URL 须以 http:// 或 https:// 开头")
+    kb, secret, tenant_id, error = resolve_upload_kb(db, actor, int(body.kbId or 0), int(body.categoryId or 0), body.secretLevel)
+    if error is not None:
+        return error
+    ids: list[int] = []
+    statuses: list[str] = []
+    for url in urls:
+        row = insert_pending_doc(
+            db,
+            kb=kb,
+            tenant_id=tenant_id,
+            actor_id=actor.id,
+            title=url[:128],
+            file_key=url[:512],
+            content_type="text/uri-list",
+            file_size=len(url.encode("utf-8")),
+            cate_id=int(body.categoryId or 0),
+            secret=secret,
+            source_type="URL",
+            body=url,
+        )
+        ids.append(row.id)
+        statuses.append(row.audit_status)
+    return ok({"docIds": ids, "auditStatus": statuses})
+
+
+@router.post("/kb/doc/import-text")
+def kb_doc_import_text(
+    body: KbImportTextBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    title = (body.title or "").strip()
+    content = (body.content or "").strip()
+    if not title or not content:
+        return fail(1001, "标题和正文必填")
+    if len(title) > 128:
+        return fail(1001, "标题不超过 128 字")
+    kb, secret, tenant_id, error = resolve_upload_kb(db, actor, int(body.kbId or 0), int(body.categoryId or 0), body.secretLevel)
+    if error is not None:
+        return error
+    row = insert_pending_doc(
+        db,
+        kb=kb,
+        tenant_id=tenant_id,
+        actor_id=actor.id,
+        title=title,
+        file_key=f"kb/text/{row_token(title)}",
+        content_type="text/plain",
+        file_size=len(content.encode("utf-8")),
+        cate_id=int(body.categoryId or 0),
+        secret=secret,
+        source_type="TEXT",
+        body=content,
+    )
+    return ok({"docIds": [row.id], "auditStatus": [row.audit_status]})
+
+
+def row_token(title: str) -> str:
+    cleaned = "".join(ch for ch in title if ch.isalnum())[:24] or "note"
+    return f"{cleaned}.txt"
 
 
 @router.post("/kb/doc/audit")
