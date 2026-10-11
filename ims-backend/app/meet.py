@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.api import current_user, db_session, fail, ok
+from app.api import current_user, db_session, fail, ok, user_dept_snapshot
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, Todo, User, WorkMessage
@@ -97,10 +97,28 @@ def iso(dt: datetime | None) -> str | None:
 
 
 def primary_dept(db: Session, user: User) -> tuple[int, str]:
-    dept_ids = dept_ids_of(db, user)
+    dept_ids, names = user_dept_snapshot(db, user.id, tenant_of(user))
+    if not dept_ids:
+        dept_ids = dept_ids_of(db, user)
+        names = [f"部门 {dept_id}" for dept_id in dept_ids]
     if not dept_ids:
         return 0, ""
-    return dept_ids[0], f"部门#{dept_ids[0]}"
+    return dept_ids[0], names[0] if names else f"部门 {dept_ids[0]}"
+
+
+def display_dept_name(db: Session, tenant_id: int, dept_id: int, stored: str, sample_user_id: int) -> str:
+    text = (stored or "").strip()
+    placeholder = text.startswith("部门#") or text.startswith("部门 ")
+    if text and not placeholder:
+        return text
+    if sample_user_id:
+        dept_ids, names = user_dept_snapshot(db, sample_user_id, tenant_id)
+        for dept, name in zip(dept_ids, names):
+            if int(dept) == int(dept_id) and name:
+                return name
+    if dept_id:
+        return f"部门 {dept_id}"
+    return text or "未分配部门"
 
 
 def calc_on_time(report_date: str, submitted_at: datetime) -> bool:
@@ -615,7 +633,8 @@ def stat_on_time_rate(
             row.dept_id,
             {
                 "deptId": row.dept_id,
-                "deptName": row.dept_name or f"部门#{row.dept_id}",
+                "deptName": display_dept_name(db, row.tenant_id, row.dept_id, row.dept_name, row.user_id),
+                "sampleUserId": row.user_id,
                 "onTime": 0,
                 "submitted": 0,
             },
@@ -641,7 +660,7 @@ def stat_on_time_rate(
             {
                 "userId": row.user_id,
                 "userName": row.user_name,
-                "deptName": row.dept_name,
+                "deptName": display_dept_name(db, row.tenant_id, row.dept_id, row.dept_name, row.user_id),
                 "onTimeDays": 0,
                 "submittedDays": 0,
                 "shouldDays": 0,
@@ -660,17 +679,76 @@ def stat_on_time_rate(
         if row.is_on_time:
             bucket["onTime"] += 1
     trend = [
-        {"date": item["date"], "onTimeRate": rate_pct(item["onTime"], item["total"])}
+        {"date": item["date"], "onTimeRate": rate_pct(item["onTime"], item["total"]), "submitCount": item["total"]}
         for item in sorted(trend_map.values(), key=lambda x: x["date"])
     ]
+    end_day = datetime.strptime(end, "%Y-%m-%d").date()
+    trend_by_date = {item["date"]: item for item in trend}
+    trend7 = []
+    for offset in range(6, -1, -1):
+        day = (end_day - timedelta(days=offset)).isoformat()
+        found = trend_by_date.get(day)
+        trend7.append(
+            {
+                "date": day,
+                "onTimeRate": found["onTimeRate"] if found else 0.0,
+                "submitCount": found["submitCount"] if found else 0,
+            }
+        )
+
+    span_days = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")).days + 1
+    prev_end = datetime.strptime(start, "%Y-%m-%d").date() - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=max(span_days - 1, 0))
+    prev_rows = [
+        row
+        for row in db.scalars(
+            restrict_daily(select(MeetDailyReport), actor, request.state.scope, only_mine=False).where(
+                MeetDailyReport.report_date >= prev_start.isoformat(),
+                MeetDailyReport.report_date <= prev_end.isoformat(),
+                MeetDailyReport.submit_status != "DRAFT",
+            )
+        ).all()
+    ]
+    prev_on_time = sum(1 for row in prev_rows if row.is_on_time)
+    prev_rate = rate_pct(prev_on_time, len(prev_rows)) if prev_rows else 0.0
+    completeness_values = [field_completeness(row) for row in rows]
+    completeness_avg = round(sum(completeness_values) / len(completeness_values), 1) if completeness_values else 0.0
+    pending_review = sum(1 for row in rows if row.submit_status == "SUBMITTED")
+    reviewed = sum(1 for row in rows if row.submit_status == "READ")
+    today = datetime.now(BJ).date()
+    week_start = today - timedelta(days=today.weekday())
+    elapsed = min(7, (today - week_start).days + 1)
+    week_rows = list(
+        db.scalars(
+            restrict_daily(select(MeetDailyReport), actor, request.state.scope, only_mine=False).where(
+                MeetDailyReport.report_date >= week_start.isoformat(),
+                MeetDailyReport.report_date <= today.isoformat(),
+                MeetDailyReport.submit_status != "DRAFT",
+            )
+        ).all()
+    )
+    week_people = {row.user_id for row in week_rows}
+    weekdays = sum(1 for index in range(elapsed) if (week_start + timedelta(days=index)).weekday() < 5)
+    week_should = max(len(week_people) * max(weekdays, 1), len(week_rows))
+    for item in by_dept:
+        item.pop("sampleUserId", None)
 
     return ok(
         {
             "totalOnTimeRate": total_on_time_rate,
             "totalSubmitRate": rate_pct(submitted, submitted) if submitted else 0.0,
+            "onTimeRateDelta": round(total_on_time_rate - prev_rate, 1),
+            "weekSubmitCount": len(week_rows),
+            "weekShouldCount": week_should,
+            "weekSubmitRate": rate_pct(len(week_rows), week_should),
+            "fieldCompletenessAvg": completeness_avg,
+            "reviewDoneRate": rate_pct(reviewed, pending_review + reviewed),
+            "pendingReviewCount": pending_review,
+            "returnedCount": 0,
             "byDept": by_dept,
             "byPerson": by_person,
             "trend": trend,
+            "trend7": trend7,
             "dateFrom": start,
             "dateTo": end,
         }

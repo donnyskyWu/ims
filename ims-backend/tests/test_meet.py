@@ -329,8 +329,12 @@ def test_meet_stat_on_time_rate_after_submit():
         params={"dateFrom": today, "dateTo": today},
     )
     assert stat.json()["code"] == 0
-    assert stat.json()["data"]["totalOnTimeRate"] >= 0
-    assert stat.json()["data"]["byPerson"]
+    data = stat.json()["data"]
+    assert data["totalOnTimeRate"] >= 0
+    assert data["byPerson"]
+    assert "weekSubmitCount" in data
+    assert len(data["trend7"]) == 7
+    assert "fieldCompletenessAvg" in data
 
 
 def test_meet_minutes_register_requires_title_time_attendees():
