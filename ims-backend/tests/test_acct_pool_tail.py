@@ -193,3 +193,38 @@ def test_recycle_returned_account_to_pool_and_export_voucher():
         params={"token": "missing-token"},
     )
     assert expired.json()["code"] == 1002
+
+
+def test_handover_export_font_error_is_5005_not_http_500(monkeypatch):
+    """坏字体以前抛 TTFError，接口直接 HTTP 500，页面没有任何 5005 提示。"""
+    from reportlab.pdfbase.ttfonts import TTFError
+
+    auth = headers()
+    account_id = make_account(f"AC-PY-PDF-{uuid.uuid4().hex[:8]}")
+
+    def boom(_lines):
+        raise TTFError("Not a recognized TrueType font")
+
+    monkeypatch.setattr("app.acct_pool.build_pdf", boom)
+    exported = client.get(f"/admin-api/ims/account/timeline/{account_id}/export", headers=auth)
+    body = exported.json()
+    assert exported.status_code == 200, body
+    assert body["code"] == 5005
+    assert "交接凭证生成失败" in body["msg"]
+
+
+def test_register_cjk_skips_unreadable_font_and_still_builds_pdf(monkeypatch, tmp_path):
+    from reportlab.pdfbase import pdfmetrics
+
+    from app.acct_pool import build_pdf
+
+    bad = tmp_path / "bad.ttc"
+    bad.write_bytes(b"not a font")
+    good = "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"
+    pdfmetrics._fonts.pop("IMS-CJK", None)
+    monkeypatch.setattr(
+        "app.acct_pool.FONT_CANDIDATES",
+        (str(bad), good),
+    )
+    body = build_pdf(["账号交接凭证", "已归还"])
+    assert body.startswith(b"%PDF")

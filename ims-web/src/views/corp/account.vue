@@ -781,7 +781,14 @@
             导出交接凭证
           </button>
         </div>
-        <p v-if="timelineExportNote" class="hint" data-testid="acct-timeline-export-note">{{ timelineExportNote }}</p>
+        <p
+          v-if="timelineExportNote"
+          class="hint"
+          :class="{ bad: timelineExportNote.includes('失败') }"
+          data-testid="acct-timeline-export-note"
+        >
+          {{ timelineExportNote }}
+        </p>
         <p v-if="timelineLoading" class="hint">加载时间线…</p>
         <p v-else-if="timelineRangeHint" class="hint" data-testid="acct-timeline-range-hint">{{ timelineRangeHint }}</p>
         <p v-else-if="timelineError" class="hint" data-testid="acct-timeline-error">{{ timelineError }}</p>
@@ -2778,7 +2785,8 @@ async function exportTimeline() {
     timelineExportNote.value = `${data.message || '交接凭证已生成'} · ${fileName}`
   } catch (e: unknown) {
     const message = bizMessage(e)
-    timelineExportNote.value = message.includes('5005') ? '交接凭证生成失败，请稍后重试（5005）' : message
+    const vague = !message || message.includes('5005') || message.includes('请求失败（500）')
+    timelineExportNote.value = vague ? '交接凭证生成失败，请稍后重试（5005）' : message
   } finally {
     timelineExportBusy.value = false
   }
