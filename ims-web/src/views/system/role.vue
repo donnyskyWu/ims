@@ -26,9 +26,9 @@
     <p v-if="error" class="hint bad" data-testid="role-form-error">{{ error }}</p>
     <div class="g4">
       <div class="card stat"><span class="l">角色总数</span><div class="n">{{ ready && !error ? rows.length : '—' }}</div><div class="d">{{ error || 'GET /system/role/list' }}</div></div>
-      <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">PENDING_CONFIG</div></div>
-      <div class="card stat"><span class="l">钉钉自动</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
-      <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">ENABLED</div></div>
+      <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">{{ roleStatusLabel('PENDING_CONFIG') }}</div></div>
+      <div class="card stat"><span class="l">钉钉自动</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">{{ roleSourceLabel('DINGTALK_AUTO') }}</div></div>
+      <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">{{ roleStatusLabel('ENABLED') }}</div></div>
     </div>
     <div class="cattabs" data-testid="role-status-tabs">
       <button class="cattab" :class="{ on: statusFilter === '' }" type="button" @click="statusFilter = ''">全部</button>
@@ -77,7 +77,7 @@
               <td><span class="tag">{{ sourceLabel(String(row.source || '')) }}</span></td>
               <td>
                 <span class="tag" :style="row.status === 'PENDING_CONFIG' ? 'background:rgba(255,149,0,.12);color:#c46a00' : 'background:rgba(52,199,89,.12);color:#1e8e3e'">
-                  {{ row.status === 'PENDING_CONFIG' ? '待配置' : '启用' }}
+                  {{ roleStatusLabel(row.status) || '—' }}
                 </span>
               </td>
               <td>
@@ -184,7 +184,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 import { asList, cell, readData } from '../../api/read'
-import { roleSourceLabel } from '../../roleSource'
+import { roleSourceLabel, roleStatusLabel } from '../../roleSource'
 import { useUserStore } from '../../stores/user'
 
 type MenuNode = { id: number; name: string; permCode?: string; menuType?: string; children?: MenuNode[]; depth?: number }
