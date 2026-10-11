@@ -51,7 +51,7 @@ test.describe('bi local tails 240', () => {
     await expect(page.locator('h1')).toContainText('元数据维护')
     await page.getByRole('button', { name: '新建实体' }).click()
     const createDrawer = page.locator('.drawer').filter({ hasText: '新建实体' })
-    await createDrawer.getByTestId('metadata-create-table').selectOption('oa_platform_account')
+    await createDrawer.locator('select').selectOption('oa_platform_account')
     await createDrawer.getByRole('button', { name: '创建' }).click()
     await expect(createDrawer).toBeHidden({ timeout: 15_000 })
     const entityRow = page.locator('tbody tr', { hasText: 'PLATFORM_ACCOUNT' })
