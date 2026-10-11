@@ -990,13 +990,96 @@ def aggregate_submission_stats(db: Session, rows: list[ReportSubmission]) -> dic
         1 for r in rows if r.submit_status in ("SUBMITTED", "APPROVED", "REJECTED")
     )
     on_time = sum(1 for r in rows if r.is_on_time and r.submit_status != "DRAFT")
+    rejected = sum(1 for r in rows if r.submit_status == "REJECTED")
     return {
         "shouldCount": should,
         "submittedCount": submitted,
         "onTimeCount": on_time,
         "approvedCount": approved,
+        "rejectCount": rejected,
         "completeRate": rate_pct(approved, should),
+        "passRate": rate_pct(approved, submitted),
     }
+
+
+def bj_day(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BJ).strftime("%Y-%m-%d")
+
+
+def field_value_ok(item: dict, value) -> bool:
+    if item.get("required") and (value is None or value == ""):
+        return False
+    if value is None or value == "":
+        return True
+    rng = item.get("range") if isinstance(item.get("range"), dict) else {}
+    ftype = str(item.get("fieldType") or "TEXT")
+    if ftype in {"NUMBER", "INTEGER", "MONEY"}:
+        num = _num(value)
+        if num is None:
+            return False
+        if ftype == "INTEGER" and num != int(num):
+            return False
+        if rng.get("min") is not None and num < float(rng["min"]):
+            return False
+        if rng.get("max") is not None and num > float(rng["max"]):
+            return False
+    if ftype == "TEXT" and rng.get("maxLength") is not None and len(str(value)) > int(rng["maxLength"]):
+        return False
+    return True
+
+
+def field_check_hit_rate(db: Session, rows: list[ReportSubmission]) -> float:
+    hits = 0
+    checks = 0
+    for row in rows:
+        template = db.get(ReportTemplate, row.template_id)
+        fields = template.fields_schema if template and isinstance(template.fields_schema, list) else []
+        data = row.data_content if isinstance(row.data_content, dict) else {}
+        for item in business_fields(fields):
+            if not isinstance(item, dict):
+                continue
+            if not (item.get("required") or item.get("range") or validate_expr_of(item)):
+                continue
+            checks += 1
+            if field_value_ok(item, data.get(item.get("fieldKey"))):
+                hits += 1
+    return rate_pct(hits, checks)
+
+
+def average_audit_hours(db: Session, rows: list[ReportSubmission]) -> float:
+    submitted_at = {row.id: row.submitted_at for row in rows if row.submitted_at}
+    if not submitted_at:
+        return 0.0
+    audits = list(
+        db.scalars(
+            select(ReportAudit).where(
+                ReportAudit.deleted == 0,
+                ReportAudit.submission_id.in_(list(submitted_at)),
+            )
+        ).all()
+    )
+    latest: dict[int, datetime] = {}
+    for audit in audits:
+        if audit.audited_at is None:
+            continue
+        prev = latest.get(audit.submission_id)
+        if prev is None or audit.audited_at > prev:
+            latest[audit.submission_id] = audit.audited_at
+    hours: list[float] = []
+    for submission_id, audited_at in latest.items():
+        start = submitted_at.get(submission_id)
+        if start is None:
+            continue
+        delta = (audited_at - start).total_seconds() / 3600.0
+        if delta >= 0:
+            hours.append(delta)
+    if not hours:
+        return 0.0
+    return round(sum(hours) / len(hours), 2)
 
 
 @router.get("/stat/complete-rate")
@@ -1047,9 +1130,19 @@ def stat_complete_rate(
         )
     by_dept_list.sort(key=lambda item: item["completeRate"], reverse=True)
 
+    today = datetime.now(BJ).strftime("%Y-%m-%d")
+    today_rows = [row for row in rows if row.period == today or bj_day(row.submitted_at) == today]
+    today_stats = aggregate_submission_stats(db, today_rows)
+
     return ok(
         {
             "totalCompleteRate": total["completeRate"],
+            "passRate": total["passRate"],
+            "rejectCount": total["rejectCount"],
+            "todayCount": len(today_rows),
+            "todayCompleteRate": today_stats["completeRate"],
+            "fieldCheckHitRate": field_check_hit_rate(db, rows),
+            "avgAuditHours": average_audit_hours(db, rows),
             "byTemplate": by_template,
             "byDept": by_dept_list,
         }

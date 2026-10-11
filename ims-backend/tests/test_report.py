@@ -283,6 +283,43 @@ def test_report_stat_complete_rate_after_approve():
     assert any(row["statPeriod"] == period for row in trend.json()["data"])
 
 
+def test_report_stat_pass_rate_excludes_reject_from_completion():
+    auth = headers()
+    author_id, account_id, _ = seed_author_accounts()
+    template_id = create_enabled_template(auth)
+    approved = submit_one(auth, template_id, author_id, account_id, "2026-11-01")
+    rejected = submit_one(auth, template_id, author_id, account_id, "2026-11-02")
+    assert (
+        client.put(
+            f"/admin-api/ims/report/audit/{approved['id']}",
+            headers=auth,
+            json={"conclusion": "APPROVED"},
+        ).json()["code"]
+        == 0
+    )
+    assert (
+        client.put(
+            f"/admin-api/ims/report/audit/{rejected['id']}",
+            headers=auth,
+            json={"conclusion": "REJECTED", "rejectReason": "勾稽不平"},
+        ).json()["code"]
+        == 0
+    )
+    stat = client.get(
+        "/admin-api/ims/report/stat/complete-rate",
+        headers=auth,
+        params={"templateId": template_id},
+    )
+    body = stat.json()
+    assert body["code"] == 0
+    assert body["data"]["totalCompleteRate"] == 50.0
+    assert body["data"]["passRate"] == 50.0
+    assert body["data"]["rejectCount"] == 1
+    assert body["data"]["todayCount"] == 2
+    assert body["data"]["fieldCheckHitRate"] == 100.0
+    assert body["data"]["avgAuditHours"] >= 0
+
+
 def test_report_template_expr_rejects_delete_and_drop():
     auth = headers()
     base = {
