@@ -531,7 +531,7 @@ def ip_group_update(
     if body.status is not None:
         row.status = status_store(body.status)
     row.updated_at = utcnow()
-    return ok(True)
+    return ok({"id": row.id, "status": status_api(row.status)})
 
 
 @router.delete("/delete")

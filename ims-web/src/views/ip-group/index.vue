@@ -554,13 +554,21 @@ function askToggleStatus() {
   }
 }
 
-async function applyStatus(id: number, next: number) {
-  const label = next === 1 ? '启用' : '停用'
+function appliedStatus(data: unknown, target: number): number {
+  if (data && typeof data === 'object' && 'status' in data) {
+    const status = Number((data as { status: unknown }).status)
+    if (status === 0 || status === 1) return status
+  }
+  return target === 1 ? 1 : 0
+}
+
+async function applyStatus(id: number, target: number) {
   try {
-    await http.put('/ip-group/update', { id, status: next })
-    msg.value = `状态已更新为「${label}」`
+    const res = await http.put('/ip-group/update', { id, status: target })
+    const applied = appliedStatus(res.data?.data, target)
+    msg.value = applied === 1 ? '已启用' : '已停用'
     const node = nodeMap.value.get(id)
-    if (node) node.status = next
+    if (node) node.status = applied
     await nextTick()
     await loadTree()
     selectedId.value = id

@@ -220,6 +220,7 @@ def test_disabled_ip_group_hidden_from_selectors_and_reference_1501():
     gid = small.json()["data"]
     off = client.put("/admin-api/ims/ip-group/update", headers=auth, json={"id": gid, "status": 0})
     assert off.json()["code"] == 0
+    assert off.json()["data"]["status"] == 0
     hidden = client.get("/admin-api/ims/ip-group/list", headers=auth, params={"keyword": "停用引用组"})
     assert all(row["groupName"] != "停用引用组" for row in hidden.json()["data"]["list"])
     shown = client.get(
@@ -240,6 +241,7 @@ def test_disabled_ip_group_hidden_from_selectors_and_reference_1501():
     assert sheet.json()["code"] == 1501
     on = client.put("/admin-api/ims/ip-group/update", headers=auth, json={"id": gid, "status": 1})
     assert on.json()["code"] == 0
+    assert on.json()["data"]["status"] == 1
     visible = client.get("/admin-api/ims/ip-group/list", headers=auth, params={"keyword": "停用引用组"})
     assert any(row["id"] == gid and row["status"] == 1 for row in visible.json()["data"]["list"])
 
