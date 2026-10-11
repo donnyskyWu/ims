@@ -214,6 +214,41 @@ def test_comp_work_low_score_requires_threshold():
     assert low_body["data"]["list"][0]["title"] == "对手日常更新"
 
 
+def test_comp_work_article_filter_and_summary():
+    ops = ops_session()
+    try:
+        ops.add(
+            ExternalWork(
+                platform_work_id="article-001",
+                title="图文测评",
+                account_name="公众号竞品",
+                platform_type="WECHAT_OFFICIAL",
+                content_type="ARTICLE",
+                play_count=20_000,
+                like_count=300,
+                completion_rate=0,
+                publish_time="2026-10-03 09:00:00",
+                tenant_id=0,
+            )
+        )
+        ops.commit()
+    finally:
+        ops.close()
+    auth = headers()
+    resp = client.get(
+        "/admin-api/ims/comp-analysis/work/page",
+        headers=auth,
+        params={"segment": "ALL", "contentType": "ARTICLE", "pageNo": 1, "pageSize": 10},
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    assert body["data"]["total"] == 1
+    assert body["data"]["list"][0]["rank"] == 1
+    assert body["data"]["list"][0]["contentType"] == "ARTICLE"
+    assert body["data"]["summary"]["totalPlay"] == 20_000
+    assert "avgShare" in body["data"]["summary"]
+
+
 def test_comp_work_and_account_export_follow_filter():
     seed_external_works()
     seed_external_accounts()
