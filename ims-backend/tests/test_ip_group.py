@@ -155,6 +155,48 @@ def test_ip_group_create_field_rules():
     assert plain_row["leaderUserId"] in (None, 0)
 
 
+def test_ip_group_update_fields_without_changing_type():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "待编辑大组", "groupType": "BIG", "level": "A"},
+    )
+    gid = created.json()["data"]
+    before = client.get("/admin-api/ims/ip-group/tree", headers=auth).json()["data"]
+    node = next(row for row in before if row["id"] == gid)
+    assert node["groupType"] == "BIG"
+    updated = client.put(
+        "/admin-api/ims/ip-group/update",
+        headers=auth,
+        json={
+            "id": gid,
+            "groupName": "已编辑大组",
+            "leaderUserId": 1,
+            "level": "B",
+            "remark": "改后备注",
+            "sortOrder": 8,
+        },
+    )
+    assert updated.json()["code"] == 0
+    after = client.get("/admin-api/ims/ip-group/tree", headers=auth).json()["data"]
+    node = next(row for row in after if row["id"] == gid)
+    assert node["groupName"] == "已编辑大组"
+    assert node["groupType"] == "BIG"
+    assert node["level"] == "B"
+    assert node["remark"] == "改后备注"
+    assert node["sortOrder"] == 8
+    assert node["leaderUserName"] == "管理员"
+    assert node["updatedAt"]
+    assert node["createdAt"]
+    blocked = client.put(
+        "/admin-api/ims/ip-group/update",
+        headers=auth,
+        json={"id": gid, "level": "Z"},
+    )
+    assert blocked.json()["code"] == 1503
+
+
 def test_ip_group_delete_guard_and_duplicate_name():
     auth = headers()
     created = client.post(

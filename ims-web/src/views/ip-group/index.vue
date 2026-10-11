@@ -67,6 +67,7 @@
                 <button v-if="detail.groupType === 'BIG'" class="btn btn-sec btn-sm" type="button" @click="openCreate('SMALL', detail.id)">
                   + 新建小组
                 </button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-edit" @click="openEdit">编辑</button>
                 <button class="btn btn-sec btn-sm" type="button" @click="removeGroup">删除</button>
               </div>
             </div>
@@ -75,14 +76,16 @@
             <div class="tabs">
               <div v-for="t in tabs" :key="t" class="tab" :class="{ on: tab === t }" @click="tab = t">{{ t }}</div>
             </div>
-            <table v-if="tab === '基本信息'" class="ipg-info-grid">
+            <table v-if="tab === '基本信息'" class="ipg-info-grid" data-testid="ipg-basic">
               <tbody>
                 <tr><td class="lbl">组名</td><td>{{ detail.groupName }}</td></tr>
                 <tr><td class="lbl">组类型</td><td>{{ detail.groupType === 'BIG' ? '大组' : '小组' }}</td></tr>
                 <tr><td class="lbl">组长</td><td>{{ detail.leaderUserName || '—' }}</td></tr>
                 <tr><td class="lbl">等级</td><td>{{ levelText(detail.level) }}</td></tr>
                 <tr><td class="lbl">状态</td><td>{{ detail.status === 1 ? '启用' : '停用' }}</td></tr>
-                <tr><td class="lbl">备注</td><td>{{ detail.remark || '—' }}</td></tr>
+                <tr><td class="lbl">排序</td><td data-testid="ipg-sort">{{ detail.sortOrder ?? 0 }}</td></tr>
+                <tr><td class="lbl">备注</td><td data-testid="ipg-remark">{{ detail.remark || '—' }}</td></tr>
+                <tr><td class="lbl">更新时间</td><td data-testid="ipg-updated">{{ detail.updatedAt || '—' }}</td></tr>
               </tbody>
             </table>
             <div v-else-if="tab === '成员管理'" class="tbl-block">
@@ -165,7 +168,7 @@
     </div>
     <div v-if="creating" class="drawer on" data-testid="ipg-group-drawer">
       <div class="drawer-h">
-        <b>{{ createType === 'BIG' ? '新建大组' : '新建小组' }}</b>
+        <b>{{ drawerTitle }}</b>
       </div>
       <div class="drawer-b">
         <div class="formrow one">
@@ -180,11 +183,11 @@
             <label>组类型</label>
             <div class="pills" data-testid="ipg-type">
               <label class="pill">
-                <input v-model="createType" type="radio" value="BIG" :disabled="createType !== 'BIG'" />
+                <input v-model="createType" type="radio" value="BIG" :disabled="groupMode === 'edit' || createType !== 'BIG'" />
                 <span>大组</span>
               </label>
               <label class="pill">
-                <input v-model="createType" type="radio" value="SMALL" :disabled="createType !== 'SMALL'" />
+                <input v-model="createType" type="radio" value="SMALL" :disabled="groupMode === 'edit' || createType !== 'SMALL'" />
                 <span>小组</span>
               </label>
             </div>
@@ -234,10 +237,16 @@
             <div v-if="formErrors.description" class="ferr" data-testid="ipg-desc-err">{{ formErrors.description }}</div>
           </div>
         </div>
+        <div v-if="groupMode === 'edit'" class="formrow one">
+          <div class="fld">
+            <label>排序</label>
+            <input v-model="createForm.sortOrder" data-testid="ipg-sort-input" />
+          </div>
+        </div>
       </div>
       <div class="drawer-f">
         <button class="btn btn-sec" type="button" @click="creating = false">取消</button>
-        <button class="btn btn-pri" type="button" data-testid="ipg-group-submit" @click="submitCreate">确认</button>
+        <button class="btn btn-pri" type="button" data-testid="ipg-group-submit" @click="submitGroup">确认</button>
       </div>
     </div>
   </div>
@@ -256,9 +265,13 @@ type TreeNode = {
   memberCount: number
   accountCount: number
   anchorCount: number
+  leaderUserId?: number | null
   level?: string
+  sortOrder?: number
   status?: number
   remark?: string
+  createdAt?: string
+  updatedAt?: string
   children?: TreeNode[]
 }
 
@@ -276,8 +289,13 @@ const stats = ref<Record<string, number>>({})
 const bindAccountId = ref<number | undefined>()
 const bindAuthorId = ref<number | undefined>()
 const creating = ref(false)
+const groupMode = ref<'create' | 'edit'>('create')
 const createType = ref<'BIG' | 'SMALL'>('BIG')
-const createForm = ref({ groupName: '', parentId: '', leaderUserId: '', level: '', description: '' })
+const createForm = ref({ groupName: '', parentId: '', leaderUserId: '', level: '', description: '', sortOrder: '0' })
+const drawerTitle = computed(() => {
+  if (groupMode.value === 'edit') return '编辑 IP 组'
+  return createType.value === 'BIG' ? '新建大组' : '新建小组'
+})
 const formErrors = ref<Record<string, string>>({})
 const leaderKeyword = ref('')
 const users = ref<{ id: number; nickname: string; username: string }[]>([])
@@ -406,6 +424,7 @@ async function loadLevels() {
 }
 
 function openCreate(type: 'BIG' | 'SMALL', parentId?: number) {
+  groupMode.value = 'create'
   createType.value = type
   createForm.value = {
     groupName: '',
@@ -413,6 +432,25 @@ function openCreate(type: 'BIG' | 'SMALL', parentId?: number) {
     leaderUserId: '',
     level: '',
     description: '',
+    sortOrder: '0',
+  }
+  formErrors.value = {}
+  leaderKeyword.value = ''
+  creating.value = true
+  loadUsers()
+}
+
+function openEdit() {
+  if (!detail.value) return
+  groupMode.value = 'edit'
+  createType.value = detail.value.groupType === 'BIG' ? 'BIG' : 'SMALL'
+  createForm.value = {
+    groupName: detail.value.groupName,
+    parentId: detail.value.parentId ? String(detail.value.parentId) : '',
+    leaderUserId: detail.value.leaderUserId ? String(detail.value.leaderUserId) : '',
+    level: detail.value.level || '',
+    description: detail.value.remark || '',
+    sortOrder: String(detail.value.sortOrder ?? 0),
   }
   formErrors.value = {}
   leaderKeyword.value = ''
@@ -431,17 +469,30 @@ function validateCreate() {
   return Object.keys(errors).length === 0
 }
 
-async function submitCreate() {
+async function submitGroup() {
   if (!validateCreate()) return
   const leader = createForm.value.leaderUserId ? Number(createForm.value.leaderUserId) : null
+  const payload = {
+    groupName: createForm.value.groupName.trim(),
+    parentId: createType.value === 'SMALL' ? Number(createForm.value.parentId) : null,
+    leaderUserId: leader,
+    level: createForm.value.level,
+    description: createForm.value.description.trim(),
+    sortOrder: Number(createForm.value.sortOrder || 0),
+  }
   try {
+    if (groupMode.value === 'edit' && selectedId.value) {
+      await http.put('/ip-group/update', { id: selectedId.value, ...payload })
+      creating.value = false
+      msg.value = '已保存'
+      const current = selectedId.value
+      await loadTree()
+      selectedId.value = current
+      return
+    }
     const res = await http.post('/ip-group/create', {
-      groupName: createForm.value.groupName.trim(),
+      ...payload,
       groupType: createType.value,
-      parentId: createType.value === 'SMALL' ? Number(createForm.value.parentId) : null,
-      leaderUserId: leader,
-      level: createForm.value.level,
-      description: createForm.value.description.trim(),
       status: 1,
     })
     creating.value = false

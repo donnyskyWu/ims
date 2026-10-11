@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -12,6 +14,13 @@ from app.models import User
 from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, IpGroupMember, PlatformAccount
 
 router = APIRouter(prefix="/ip-group", tags=["ip-group"])
+BJ = timezone(timedelta(hours=8))
+
+
+def bj_text(value) -> str:
+    if value is None:
+        return ""
+    return value.replace(tzinfo=timezone.utc).astimezone(BJ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def status_api(value: str) -> int:
@@ -225,8 +234,13 @@ def tree_nodes(
                     "memberCount": cnt.get("memberCount", 0),
                     "accountCount": cnt.get("accountCount", 0),
                     "anchorCount": cnt.get("anchorCount", 0),
+                    "leaderUserId": row.leader_user_id,
                     "level": row.level or "",
+                    "sortOrder": row.sort_order,
+                    "remark": row.remark or "",
                     "status": status_api(row.status),
+                    "createdAt": bj_text(row.created_at),
+                    "updatedAt": bj_text(row.updated_at),
                     "children": build(row.id),
                 }
             )
@@ -434,11 +448,12 @@ def ip_group_update(
     row = get_group(ops, actor, body.id)
     if row is None:
         return fail(1504, "资源不可用")
-    leader_id = body.leaderUserId if body.leaderUserId is not None else body.leaderId
-    if leader_id is not None:
-        err = check_local_user(db, actor, leader_id)
-        if err is not None:
-            return err
+    if "leaderUserId" in body.model_fields_set or "leaderId" in body.model_fields_set:
+        leader_id = body.leaderUserId if "leaderUserId" in body.model_fields_set else body.leaderId
+        if leader_id is not None:
+            err = check_local_user(db, actor, leader_id)
+            if err is not None:
+                return err
         row.leader_user_id = leader_id
     parent_id = row.parent_id if body.parentId is None else body.parentId
     if body.parentId is not None:
