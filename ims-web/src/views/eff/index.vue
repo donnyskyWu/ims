@@ -287,6 +287,7 @@
           <option value="">请选择人员</option>
           <option v-for="item in users" :key="item.id" :value="item.id">{{ userLabel(item) }}</option>
         </select>
+        <p v-if="userError" class="hint" style="color: var(--red)" data-testid="eff-user-error">{{ userError }}</p>
         <label class="fld">类型</label>
         <select v-model="form.relationType" class="fld-in" @change="onTypeChange">
           <option value="PRIMARY">主归属</option>
@@ -407,6 +408,7 @@ const inventory = ref<{
 } | null>(null)
 const showForm = ref(false)
 const formError = ref('')
+const userError = ref('')
 const filters = reactive({ userId: '', relationType: '' })
 const form = reactive({
   userId: '',
@@ -493,11 +495,17 @@ function onTypeChange() {
 }
 
 async function loadUsers() {
+  userError.value = ''
   try {
-    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } })
+    // brief=1：只要 id/姓名。完整用户页会按人查组织事件，超时或连接被掐断时这里只能得到「网络异常」。
+    const res = await http.get('/system/user/page', {
+      params: { pageNo: 1, pageSize: 100, status: 'ENABLED', brief: 1 },
+    })
     users.value = (res.data.data?.list || []) as NamedUser[]
+    if (!users.value.length) userError.value = '没有可选人员'
   } catch (error) {
-    formError.value = errorMessage(error)
+    users.value = []
+    userError.value = errorMessage(error)
   }
 }
 
@@ -697,6 +705,7 @@ async function loadInventory() {
 
 function openCreate() {
   formError.value = ''
+  userError.value = ''
   form.relationType = 'PRIMARY'
   form.shareRatio = 100
   changing.value = null

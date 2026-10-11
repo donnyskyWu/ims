@@ -304,8 +304,66 @@ def test_bug_c055_primary_and_part_time_messages():
         headers=auth,
         json={"userId": uid, "relationType": "PART_TIME", "targetName": "兼职乙", "shareRatio": 50},
     )
+    assert over.status_code != 422
     assert over.json()["code"] == 1199
     assert over.json()["msg"] == "兼职分摊合计 110% 超 100%"
+    lone = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid + 1, "relationType": "PART_TIME", "targetName": "单条超限", "shareRatio": 150},
+    )
+    assert lone.status_code != 422
+    assert lone.json()["code"] == 1199
+    assert lone.json()["msg"] == "兼职分摊合计 150% 超 100%"
+    primary_over = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid + 2, "relationType": "PRIMARY", "targetName": "主超限", "shareRatio": 150},
+    )
+    assert primary_over.status_code != 422
+    assert primary_over.json()["code"] == 1001
+    changed = client.put(
+        f"/admin-api/ims/eff/relation/{part.json()['data']['id']}",
+        headers=auth,
+        json={"action": "TO_PART_TIME", "newShareRatio": 150, "effectiveDate": "2026-10-12"},
+    )
+    assert changed.status_code != 422
+    assert changed.json()["code"] == 1199
+    assert changed.json()["msg"] == "兼职分摊合计 150% 超 100%"
+    people = client.get(
+        "/admin-api/ims/system/user/page",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 100, "status": "ENABLED", "brief": 1},
+    )
+    assert people.status_code == 200
+    body = people.json()
+    assert body["code"] == 0
+    names = {row.get("nickname") or row.get("username") for row in body["data"]["list"]}
+    assert "管理员" in names
+    assert "mobile" not in body["data"]["list"][0]
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.models import User, UserMapping
+
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        db.add(UserMapping(user_id=admin.id, dingtalk_user_id="c055-dept-int", dept_ids=12, tenant_id=0))
+        db.commit()
+        admin_id = admin.id
+    finally:
+        db.close()
+    full = client.get(
+        "/admin-api/ims/system/user/page",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 100, "status": "ENABLED", "username": "admin"},
+    )
+    assert full.status_code == 200, full.text
+    assert full.json()["code"] == 0, full.text
+    row = full.json()["data"]["list"][0]
+    assert row["id"] == str(admin_id)
+    assert row["deptIds"] == [12]
 
 
 def test_eff_inventory_snapshot():

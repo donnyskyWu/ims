@@ -30,7 +30,7 @@ class RelationBody(BaseModel):
     targetType: str = "IP_GROUP"
     targetId: int = 0
     targetName: str = ""
-    shareRatio: float = Field(default=100.0, ge=0, le=100)
+    shareRatio: float = Field(default=100.0, ge=0)
     effectiveFrom: str = ""
 
 
@@ -40,7 +40,7 @@ class ChangeBody(BaseModel):
     newTargetType: str = ""
     newTargetId: int = 0
     newTargetName: str = ""
-    newShareRatio: float | None = Field(default=None, ge=0, le=100)
+    newShareRatio: float | None = Field(default=None, ge=0)
     effectiveDate: str = ""
     changeReason: str = ""
 
