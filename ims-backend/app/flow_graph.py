@@ -75,8 +75,12 @@ def nodes_from_chain(names: list[str], sla_hours: int) -> list[dict]:
             preview = "发起人"
         else:
             node_type = "APPROVE"
-            rule = {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]}
-            preview = "岗位·部门负责人"
+            if "无审批人" in name:
+                rule = {"assignType": ""}
+                preview = ""
+            else:
+                rule = {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]}
+                preview = "岗位·部门负责人"
         nodes.append(
             {
                 "nodeOrder": index,
@@ -89,8 +93,12 @@ def nodes_from_chain(names: list[str], sla_hours: int) -> list[dict]:
         )
     if total == 1:
         nodes[0]["nodeType"] = "APPROVE"
-        nodes[0]["assigneeRule"] = {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]}
-        nodes[0]["assigneePreview"] = "岗位·部门负责人"
+        if "无审批人" in nodes[0]["nodeName"]:
+            nodes[0]["assigneeRule"] = {"assignType": ""}
+            nodes[0]["assigneePreview"] = ""
+        else:
+            nodes[0]["assigneeRule"] = {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]}
+            nodes[0]["assigneePreview"] = "岗位·部门负责人"
     return nodes
 
 
@@ -138,7 +146,10 @@ def validate_dag(nodes: list[dict]) -> str | None:
         return "缺起止节点"
     if any(not str(node.get("nodeName") or "").strip() for node in nodes):
         return "节点名称必填"
-    if any(len(str(node.get("nodeName") or "")) > 64 for node in nodes):
+    names = [str(node.get("nodeName") or "").strip() for node in nodes]
+    if len(set(names)) != len(names):
+        return "节点名称重复"
+    if any(len(name) > 64 for name in names):
         return "节点名称不能超过 64 字"
     order_set = set(orders)
     adj: dict[int, list[int]] = {order: [] for order in orders}

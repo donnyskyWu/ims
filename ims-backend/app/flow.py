@@ -2204,6 +2204,7 @@ def flow_template_update(
         checked = _check_graph(nodes)
         if checked:
             return fail(checked[0], checked[1])
+        tpl.version_no = int(tpl.version_no or 1) + 1
         _apply_nodes(tpl, nodes, sla)
     tpl.template_name = name
     tpl.updated_at = utcnow()
@@ -2232,11 +2233,11 @@ def flow_template_publish(
     nodes = incoming or previous
     if not nodes:
         return fail(1131, "DAG 校验失败：缺起止节点")
-    if previous and incoming and ends_moved(previous, incoming):
-        return fail(1001, "首 / 尾节点不可移动")
     checked = _check_graph(nodes)
     if checked:
         return fail(checked[0], checked[1])
+    if previous and incoming and ends_moved(previous, incoming):
+        return fail(1001, "首 / 尾节点不可移动")
     if (payload.templateName or "").strip():
         tpl.template_name = payload.templateName.strip()
     if tpl.status == "PUBLISHED" and not incoming:

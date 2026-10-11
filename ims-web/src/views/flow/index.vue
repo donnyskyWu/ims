@@ -366,6 +366,8 @@
               <th>业务域</th>
               <th>版本</th>
               <th>节点数</th>
+              <th>超时规则</th>
+              <th>累计发起</th>
               <th>状态</th>
               <th>更新</th>
               <th>操作</th>
@@ -373,10 +375,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="10"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!tplRows.length">
-              <td colspan="8">
+              <td colspan="10">
                 <div class="empty" data-testid="flow-template-empty">
                   <div class="et">{{ templateEmptyText }}</div>
                   <div v-if="!error && templateEmptyHint" class="es">{{ templateEmptyHint }}</div>
@@ -389,6 +391,8 @@
               <td>{{ row.businessDomainLabel }}</td>
               <td>{{ row.versionLabel }}</td>
               <td class="num">{{ row.nodeCount }}</td>
+              <td>{{ row.slaHours }} 小时</td>
+              <td class="num">{{ row.startCount ?? 0 }}</td>
               <td><span class="tag tag-info">{{ row.statusLabel }}</span></td>
               <td class="csub">{{ row.updatedAt }}</td>
               <td>
@@ -647,7 +651,17 @@
         <label>节点链</label>
         <input v-model="designerChain" data-testid="flow-node-chain" />
       </div>
-      <p class="hint">首节点和尾节点不可移动。中间节点用顿号调整顺序或插入。</p>
+      <div v-for="(node, index) in designerNodes" :key="`${node.name}-${index}`" class="fld">
+        <label>{{ node.name }}</label>
+        <span v-if="index === 0" class="csub">发起人</span>
+        <select v-else v-model="node.assign" data-testid="flow-node-approver">
+          <option value="DEPT_LEADER">部门负责人</option>
+          <option value="FINANCE">财务</option>
+          <option value="INITIATOR_SUPERIOR">发起人上级</option>
+          <option value="">不指定</option>
+        </select>
+      </div>
+      <p class="hint">首节点和尾节点不可移动。中间节点用顿号调整顺序或插入。审批节点未指定处理人时不能发布。</p>
       <p v-if="designerMsg" class="hint" :class="{ err: designerErr }" data-testid="flow-designer-msg">{{ designerMsg }}</p>
       <template #foot>
         <button class="btn btn-sec btn-sm" type="button" data-testid="flow-template-save" @click="saveDesigner">保存</button>
@@ -666,6 +680,9 @@
         <input v-model.number="versionTarget" data-testid="flow-version-target" type="number" min="1" />
       </div>
       <p v-if="versionMsg" class="hint" :class="{ err: versionErr }" data-testid="flow-version-msg">{{ versionMsg }}</p>
+      <ul v-if="versionDiffs.length" data-testid="flow-version-diff-list" style="margin: 8px 0 0; padding-left: 18px">
+        <li v-for="(line, index) in versionDiffs" :key="index">{{ line }}</li>
+      </ul>
       <template #foot>
         <button class="btn btn-sec btn-sm" type="button" data-testid="flow-version-diff" @click="diffVersion">对比</button>
         <button class="btn btn-pri btn-sm" type="button" data-testid="flow-version-rollback" @click="rollbackVersion">回滚</button>
@@ -952,6 +969,7 @@ const designerId = ref(0)
 const designerName = ref('')
 const designerStatus = ref('')
 const designerChain = ref('')
+const designerNodes = ref<{ name: string; assign: string }[]>([])
 const designerMsg = ref('')
 const designerErr = ref(false)
 const versionOpen = ref(false)
@@ -960,6 +978,7 @@ const versions = ref<{ version: number; status: string; changeDesc?: string }[]>
 const versionTarget = ref(1)
 const versionMsg = ref('')
 const versionErr = ref(false)
+const versionDiffs = ref<string[]>([])
 const transferOpen = ref(false)
 const transferSaving = ref(false)
 const transferTo = ref('')
@@ -1056,6 +1075,35 @@ async function submitCreateTemplate() {
   }
 }
 
+function splitChain(text: string) {
+  return text.replace(/，/g, '、').split('、').map((part) => part.trim()).filter(Boolean)
+}
+
+watch(designerChain, (text) => {
+  const names = splitChain(text)
+  const prev = new Map(designerNodes.value.map((node) => [node.name, node.assign]))
+  designerNodes.value = names.map((name, index) => ({
+    name,
+    assign: index === 0 ? 'INITIATOR' : (prev.get(name) ?? (name.includes('无审批人') ? '' : 'DEPT_LEADER')),
+  }))
+})
+
+function designerNodesPayload() {
+  return designerNodes.value.map((node, index) => ({
+    nodeOrder: index + 1,
+    nodeName: node.name,
+    nodeType: index === 0 ? 'TASK' : 'APPROVE',
+    assigneeRule:
+      index === 0
+        ? { assignType: 'USER', targetIds: [] }
+        : node.assign === 'INITIATOR_SUPERIOR'
+          ? { assignType: 'INITIATOR_SUPERIOR' }
+          : node.assign
+            ? { assignType: 'POSITION', targetPositionCodes: [node.assign] }
+            : { assignType: '' },
+  }))
+}
+
 function openDesigner(row: Record<string, unknown>) {
   designerId.value = Number(row.id)
   designerName.value = String(row.templateName || '')
@@ -1071,7 +1119,7 @@ async function saveDesigner() {
   try {
     const res = await http.put(`/flow/template/${designerId.value}`, {
       templateName: designerName.value,
-      nodeChain: designerChain.value,
+      nodes: designerNodesPayload(),
     })
     if (res.data.code !== 0) {
       designerErr.value = true
@@ -1091,7 +1139,7 @@ async function publishDesigner() {
   designerErr.value = false
   try {
     const res = await http.post(`/flow/template/${designerId.value}/publish`, {
-      nodeChain: designerChain.value,
+      nodes: designerNodesPayload(),
       changeDesc: '发布',
     })
     if (res.data.code !== 0) {
@@ -1128,10 +1176,23 @@ async function toggleTemplate(row: Record<string, unknown>) {
   }
 }
 
+const DIFF_KIND: Record<string, string> = { ADDED: '新增', REMOVED: '删除', MODIFIED: '修改' }
+const DIFF_FIELD: Record<string, string> = { nodeName: '名称', nodeType: '类型', assigneeRule: '处理人', slaHours: '超时' }
+
+function diffLine(change: { changeType?: string; nodeOrder?: number; nodeName?: string; detail?: Record<string, { oldValue?: unknown; newValue?: unknown }> }) {
+  const head = `${DIFF_KIND[change.changeType || ''] || change.changeType || '变更'} 节点${change.nodeOrder ?? ''} ${change.nodeName || ''}`.trim()
+  const parts = Object.entries(change.detail || {}).map(([key, value]) => {
+    const label = DIFF_FIELD[key] || key
+    return `${label} ${JSON.stringify(value?.oldValue ?? '')} → ${JSON.stringify(value?.newValue ?? '')}`
+  })
+  return parts.length ? `${head}：${parts.join('；')}` : head
+}
+
 async function openVersions(row: Record<string, unknown>) {
   versionTemplateId.value = Number(row.id)
   versionMsg.value = ''
   versionErr.value = false
+  versionDiffs.value = []
   versionOpen.value = true
   const res = await http.get('/flow/version/list', { params: { templateId: versionTemplateId.value } })
   versions.value = res.data.code === 0 ? res.data.data || [] : []
@@ -1143,8 +1204,10 @@ async function diffVersion() {
   const res = await http.get('/flow/version/diff', {
     params: { templateId: versionTemplateId.value, fromVersion: versionTarget.value, toVersion: current },
   })
-  versionErr.value = res.data.code !== 0
-  versionMsg.value = res.data.code === 0 ? `差异 ${res.data.data?.nodeChanges?.length || 0} 处` : res.data.msg || '对比失败'
+  const changes = res.data.data?.nodeChanges || []
+  versionDiffs.value = changes.map((change: { changeType?: string; nodeOrder?: number; nodeName?: string; detail?: Record<string, { oldValue?: unknown; newValue?: unknown }> }) => diffLine(change))
+  versionErr.value = false
+  versionMsg.value = `差异 ${changes.length} 处`
 }
 
 async function rollbackVersion() {
@@ -1153,9 +1216,11 @@ async function rollbackVersion() {
       targetVersion: versionTarget.value,
       changeDesc: '回滚',
     })
-    versionErr.value = false
-    versionMsg.value = `已生成 v${res.data.data?.newVersion}`
+    const newVersion = res.data.data?.newVersion
     await openVersions({ id: versionTemplateId.value })
+    versionErr.value = false
+    versionMsg.value = `已生成 v${newVersion}`
+    await loadTemplates()
   } catch (e: unknown) {
     const body = rejectedBody(e)
     versionErr.value = true

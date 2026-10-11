@@ -424,6 +424,120 @@ def test_c025_template_publish_version_and_disable():
     assert enabled["data"]["status"] == "PUBLISHED"
 
 
+def test_c025_draft_version_and_publish_guards():
+    """草稿每次保存升版本；重名链 1131、无审批人 1132，发布前拦住。"""
+    admin = login()
+    created = client.post(
+        "/admin-api/ims/flow/template",
+        headers=admin,
+        json={
+            "templateName": "C025 草稿升版",
+            "businessDomain": "ADMIN",
+            "slaHours": 24,
+            "nodeChain": "发起申请、部门审批、归档确认",
+        },
+    ).json()
+    assert created["code"] == 0, created
+    tpl_id = created["data"]["id"]
+    assert created["data"]["version"] == 1
+
+    first = client.put(
+        f"/admin-api/ims/flow/template/{tpl_id}",
+        headers=admin,
+        json={"templateName": "C025 草稿升版", "nodeChain": "发起申请、部门审批、归档确认"},
+    ).json()
+    assert first["code"] == 0, first
+    assert first["data"]["version"] == 2
+    second = client.put(
+        f"/admin-api/ims/flow/template/{tpl_id}",
+        headers=admin,
+        json={"templateName": "C025 草稿升版", "nodeChain": "发起申请、部门审批、归档确认"},
+    ).json()
+    assert second["code"] == 0, second
+    assert second["data"]["version"] == 3
+
+    published = client.post(
+        f"/admin-api/ims/flow/template/{tpl_id}/publish",
+        headers=admin,
+        json={"changeDesc": "首发"},
+    ).json()
+    assert published["code"] == 0, published
+    assert published["data"]["version"] == 3
+
+    duplicate = client.post(
+        f"/admin-api/ims/flow/template/{tpl_id}/publish",
+        headers=admin,
+        json={"nodeChain": "发起申请、部门审批、部门审批、归档确认", "changeDesc": "重名"},
+    ).json()
+    assert duplicate["code"] == 1131
+    assert "重复" in duplicate["msg"]
+
+    missing_approver = client.post(
+        f"/admin-api/ims/flow/template/{tpl_id}/publish",
+        headers=admin,
+        json={"nodeChain": "发起申请、TC_C无审批人节点、归档确认", "changeDesc": "无审批人"},
+    ).json()
+    assert missing_approver["code"] == 1132
+
+    empty_rule = client.post(
+        f"/admin-api/ims/flow/template/{tpl_id}/publish",
+        headers=admin,
+        json={
+            "nodes": [
+                {
+                    "nodeOrder": 1,
+                    "nodeName": "发起申请",
+                    "nodeType": "TASK",
+                    "assigneeRule": {"assignType": "USER", "targetIds": []},
+                },
+                {
+                    "nodeOrder": 2,
+                    "nodeName": "TC_C无审批人节点",
+                    "nodeType": "APPROVE",
+                    "assigneeRule": {"assignType": ""},
+                },
+                {
+                    "nodeOrder": 3,
+                    "nodeName": "归档确认",
+                    "nodeType": "APPROVE",
+                    "assigneeRule": {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]},
+                },
+            ]
+        },
+    ).json()
+    assert empty_rule["code"] == 1132
+
+    stayed = client.get(
+        "/admin-api/ims/flow/template/list",
+        headers=admin,
+        params={"templateName": "C025 草稿升版", "pageNo": 1, "pageSize": 10},
+    ).json()
+    row = next(item for item in stayed["data"]["list"] if item["id"] == tpl_id)
+    assert row["version"] == 3
+    assert row["slaHours"] == 24
+    assert "startCount" in row
+
+    bumped = client.post(
+        f"/admin-api/ims/flow/template/{tpl_id}/publish",
+        headers=admin,
+        json={"nodeChain": "发起申请、财务复核、归档确认", "changeDesc": "换中节点"},
+    ).json()
+    assert bumped["code"] == 0, bumped
+    assert bumped["data"]["version"] == 4
+    diff = client.get(
+        "/admin-api/ims/flow/version/diff",
+        headers=admin,
+        params={"templateId": tpl_id, "fromVersion": 3, "toVersion": 4},
+    ).json()
+    assert diff["code"] == 0, diff
+    changes = diff["data"]["nodeChanges"]
+    assert changes
+    assert all(item.get("changeType") and item.get("nodeName") for item in changes)
+    modified = next(item for item in changes if item["changeType"] == "MODIFIED")
+    assert modified["detail"]["nodeName"]["oldValue"] == "部门审批"
+    assert modified["detail"]["nodeName"]["newValue"] == "财务复核"
+
+
 def test_c026_kanban_advance_then_finish():
     admin = login()
     leader_id = create_user(admin, "c026_r4", "13616000031")
