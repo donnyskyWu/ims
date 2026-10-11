@@ -29,7 +29,8 @@ def test_c058_dedup_live_window_and_real_groups():
     assert live["windowMinutes"] == 30
     assert body["data"]["summary"]["windowMinutes"] == 30
     assert body["data"]["summary"]["groupCount"] == 0
-    assert "30 分钟" in body["data"]["summary"]["ruleText"]
+    assert body["data"]["summary"]["ruleText"] == "同规则 + 同对象 · 30 分钟"
+    assert "BR-114" not in body["data"]["summary"]["ruleText"]
 
     from app.core import SessionLocal
     from app.models import AlertDedupPolicy

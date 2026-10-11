@@ -1137,7 +1137,7 @@ def dedup_groups(db: Session, tenant_id: int) -> tuple[list[dict], dict]:
         "involvedCount": involved,
         "savedCount": saved,
         "windowMinutes": MERGE_WINDOW_MINUTES,
-        "ruleText": "同规则 + 同对象 · 30 分钟（BR-114）",
+        "ruleText": "同规则 + 同对象 · 30 分钟",
     }
     return groups, summary
 

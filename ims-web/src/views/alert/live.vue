@@ -169,7 +169,7 @@
       <div class="card stat">
         <span class="l">合并后可减</span>
         <div class="n">{{ dedupSummary.savedCount }}</div>
-        <div class="d">BR-114 去重收益</div>
+        <div class="d">去重收益</div>
       </div>
       <div class="card stat">
         <span class="l">去重规则</span>
@@ -430,7 +430,7 @@
       @close="dedupDetail = null"
     >
       <div v-if="dedupDetail" data-testid="alert-dedup-drawer">
-        <p>条数 ×{{ dedupDetail.count }} · 窗口 {{ dedupDetail.windowMinutes }} 分钟（BR-114）</p>
+        <p>条数 ×{{ dedupDetail.count }} · 窗口 {{ dedupDetail.windowMinutes }} 分钟</p>
         <p class="hint">对象：{{ dedupDetail.objectLabels.join('、') || '—' }}</p>
         <p class="hint">预警编号：{{ dedupDetail.alertNos.join('、') }}</p>
         <button class="btn btn-sec btn-sm" type="button" @click="dedupDetail = null">关闭</button>
@@ -574,7 +574,7 @@ const tab = ref<'live' | 'history' | 'dedup'>('live')
 const rows = ref<Row[]>([])
 const dedupRows = ref<DedupRow[]>([])
 const dedupGroups = ref<DedupGroup[]>([])
-const dedupSummary = ref({ groupCount: 0, involvedCount: 0, savedCount: 0, windowMinutes: 30, ruleText: '同规则 + 同对象 · 30 分钟（BR-114）' })
+const dedupSummary = ref({ groupCount: 0, involvedCount: 0, savedCount: 0, windowMinutes: 30, ruleText: '同规则 + 同对象 · 30 分钟' })
 const dedupMin = ref(2)
 const dedupDetail = ref<DedupGroup | null>(null)
 const levelCounts = ref({ L1: 0, L2: 0, L3: 0 })
