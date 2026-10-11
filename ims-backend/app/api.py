@@ -61,8 +61,10 @@ def current_user(
     request.state.operator_id = user.id
     request.state.operator_name = user.nickname or user.username
     request.state.tenant_id = user.tenant_id or 0
+    from app.perm import enforce_function
     from app.scope import gate
 
+    enforce_function(db, request, user)
     gate(db, request, user)
     return user
 

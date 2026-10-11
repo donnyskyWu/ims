@@ -200,7 +200,7 @@
         </p>
       </div>
     </div>
-    <div v-else class="empty"><div class="et">加载中…</div></div>
+    <div v-else-if="!loadError" class="empty"><div class="et">加载中…</div></div>
 
     <div v-if="showQuizConfirm" class="modal-mask" @click.self="showQuizConfirm = false">
       <div class="card" style="width: 360px; padding: 20px">

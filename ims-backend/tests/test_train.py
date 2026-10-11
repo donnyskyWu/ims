@@ -20,6 +20,7 @@ from app.models import (
     PerfRank,
     Role,
     RoleMenu,
+    RolePerm,
     Todo,
     TrainMaterial,
     TrainMaterialCate,
@@ -982,17 +983,29 @@ def test_train_study_todo_without_record_opens_and_backfills():
     assert denied.json()["code"] == 0
 
 
-def test_train_study_todo_ignores_data_scope():
-    """没有菜单权限的被指派人仍可学习。其它培训接口继续被数据范围拒绝。"""
+def test_train_study_without_train_menu_opens_from_todo():
+    """没有 menu:trainTask:query 的用户，只要有学习待办就能学习。任务列表仍无操作权限。"""
     auth = headers()
     learner_auth, learner_id = _scope_blocked_learner("TC-短视频")
     stranger_auth, _stranger_id = _scope_blocked_learner("旁听")
     target_auth, target_id = _dept_learner("目标")
+    db = SessionLocal()
+    try:
+        role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == learner_id)).all())
+        menu_codes = list(
+            db.scalars(select(RoleMenu.perm_code).where(RoleMenu.role_id.in_(role_ids))).all()
+        )
+        perm_codes = list(
+            db.scalars(select(RolePerm.perm_code).where(RolePerm.role_id.in_(role_ids))).all()
+        )
+        assert "menu:trainTask:query" not in set(menu_codes) | set(perm_codes)
+    finally:
+        db.close()
     blocked = client.get("/admin-api/ims/train/task/list", headers=learner_auth)
     blocked_body = blocked.json()
     assert blocked.status_code == 403, blocked_body
-    assert blocked_body["code"] == 1008
-    assert blocked_body["msg"] == "无数据权限"
+    assert blocked_body["code"] == 403
+    assert blocked_body["msg"] == "无操作权限"
 
     material_id = _published_material(auth, f"范围外学习 {uuid.uuid4().hex[:6]}")
     created = client.post(
