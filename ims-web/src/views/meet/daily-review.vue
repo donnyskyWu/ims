@@ -60,6 +60,8 @@
           <button type="button" class="btn btn-sec btn-sm" @click="drawerOpen = false">关闭</button>
         </div>
         <div v-if="active" class="drawer-b">
+          <p data-testid="review-submitter"><strong>提交人</strong> {{ active.userName || '—' }}</p>
+          <p data-testid="review-completeness"><strong>字段完成度</strong> {{ active.fieldCompleteness ?? '—' }}%</p>
           <p><strong>今日完成</strong><br />{{ active.contentDone }}</p>
           <p><strong>明日计划</strong><br />{{ active.contentPlan }}</p>
           <p><strong>问题与风险</strong><br />{{ active.contentIssue }}</p>
@@ -115,6 +117,7 @@ type QueueRow = {
   id: number
   reportDate: string
   userName: string
+  fieldCompleteness?: number
   contentDone: string
   contentPlan: string
   contentIssue: string
