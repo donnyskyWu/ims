@@ -6,7 +6,7 @@
         <div class="sub">ACCT-003 · 归还单未闭环时关闭权限返回 1024</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri" type="button" data-testid="return-generate-open" @click="openGenerate">手动补建</button>
+        <button v-if="canGenerate" class="btn btn-pri" type="button" data-testid="return-generate-open" @click="openGenerate">手动补建归还单</button>
       </div>
     </div>
     <p class="hint">离职归还单由钉钉离职事件自动生成。名下账号、资产、证件未全部归还或转交时，不能关闭权限。</p>
@@ -45,16 +45,18 @@
             <tr>
               <th>归还单号</th>
               <th>离职人</th>
+              <th>部门</th>
               <th>离职生效日</th>
-              <th>进度</th>
+              <th>归还项进度</th>
               <th>状态</th>
               <th>逾期</th>
+              <th>闭环时间</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!orders.length">
-              <td colspan="7" style="white-space: normal">
+              <td colspan="9" style="white-space: normal">
                 <div class="empty" data-testid="return-list-empty">
                   <div class="et">{{ returnEmptyTitle }}</div>
                   <div class="es">{{ returnEmptyHint }}</div>
@@ -64,6 +66,7 @@
             <tr v-for="row in orders" :key="String(row.id)" data-testid="return-order-row">
               <td class="mono" data-testid="return-order-no">{{ row.returnNo }}</td>
               <td>{{ row.userName || row.userNickname }}</td>
+              <td data-testid="return-order-dept">{{ row.deptName || '—' }}</td>
               <td>{{ row.resignDate }}</td>
               <td data-testid="return-order-progress">{{ progressText(row) }}</td>
               <td data-testid="return-order-status">
@@ -71,7 +74,8 @@
                   <span class="dot"></span>{{ statusText(String(row.status || '')) }}
                 </span>
               </td>
-              <td data-testid="return-order-overdue">{{ row.overdue ? '逾期' : '—' }}</td>
+              <td data-testid="return-order-overdue">{{ overdueText(row) }}</td>
+              <td data-testid="return-order-closed">{{ closedText(row.closedAt) }}</td>
               <td><button class="btn btn-txt" type="button" data-testid="return-order-open" @click="openOrder(row)">处理</button></td>
             </tr>
           </tbody>
@@ -107,28 +111,44 @@
         <p class="hint" data-testid="return-detail-head">
           {{ detail.returnNo }} · {{ detail.userName || detail.userNickname }} · {{ detail.resignDate }} · {{ statusText(String(detail.status || '')) }}
         </p>
-        <p v-if="detail.status !== 'CLOSED'" class="hint bad">未闭环期间不能关闭该离职人的权限。名下账号保持冻结。</p>
+        <p class="hint">{{ detail.deptName || '—' }}</p>
+        <p v-if="detail.status !== 'CLOSED'" class="hint bad" data-testid="return-freeze-banner">未闭环期间离职人 IMS 登录受限，名下账号/资产冻结</p>
+        <div class="acts" style="margin-bottom: 8px">
+          <button class="btn btn-sm" :class="itemTab === 'ALL' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="return-item-tab-all" @click="itemTab = 'ALL'">全部</button>
+          <button class="btn btn-sm" :class="itemTab === 'ACCOUNT' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="return-item-tab-account" @click="itemTab = 'ACCOUNT'">账号</button>
+          <button class="btn btn-sm" :class="itemTab === 'ASSET' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="return-item-tab-asset" @click="itemTab = 'ASSET'">资产</button>
+          <button class="btn btn-sm" :class="itemTab === 'CERT' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="return-item-tab-cert" @click="itemTab = 'CERT'">证件</button>
+        </div>
         <table data-testid="return-item-table">
           <thead>
             <tr>
               <th>类型</th>
               <th>名称</th>
+              <th>当前持有人</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="!items.length">
-              <td colspan="4">没有待归还的账号、资产或证件</td>
+            <tr v-if="!visibleItems.length">
+              <td colspan="5">没有待归还的账号、资产或证件</td>
             </tr>
-            <tr v-for="item in items" :key="String(item.id)" data-testid="return-item-row">
+            <tr v-for="item in visibleItems" :key="String(item.id)" data-testid="return-item-row">
               <td>{{ typeText(String(item.itemType || '')) }}</td>
               <td data-testid="return-item-label">{{ item.itemLabel || item.itemSnapshot }}</td>
+              <td data-testid="return-item-holder">{{ item.currentHolder || '—' }}</td>
               <td data-testid="return-item-status">
                 <span class="tag" :style="itemStyle(String(item.itemStatus || ''))">{{ itemText(String(item.itemStatus || '')) }}</span>
               </td>
               <td>
                 <button class="btn btn-txt" type="button" data-testid="return-item-returned" :disabled="detail.status === 'CLOSED' || item.itemStatus === 'RETURNED'" @click="markReturned(item)">确认归还</button>
+                <select v-model="transferUser[String(item.id)]" data-testid="return-item-transfer-user" :disabled="detail.status === 'CLOSED'">
+                  <option value="">转交给</option>
+                  <option v-for="user in users" :key="String(user.id)" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+                </select>
+                <button class="btn btn-txt" type="button" data-testid="return-item-transfer" :disabled="detail.status === 'CLOSED'" @click="markTransferred(item)">转交</button>
+                <input v-model="disputeRemark[String(item.id)]" data-testid="return-item-dispute-remark" placeholder="争议说明" :disabled="detail.status === 'CLOSED'" />
+                <button class="btn btn-txt" type="button" data-testid="return-item-dispute" :disabled="detail.status === 'CLOSED'" @click="markDisputed(item)">标记争议</button>
               </td>
             </tr>
           </tbody>
@@ -137,20 +157,23 @@
       </template>
       <template #foot>
         <button class="btn btn-sec" type="button" data-testid="return-disable-user" :disabled="busy || !detail" @click="disableUser">关闭权限</button>
-        <button class="btn btn-pri" type="button" data-testid="return-close" :disabled="busy || !detail" @click="closeOrder">全部闭环确认</button>
+        <button class="btn btn-pri" type="button" data-testid="return-close" :disabled="busy || !detail || !canClose" :title="closeTitle" @click="closeOrder">全部闭环确认</button>
       </template>
     </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 type Row = Record<string, unknown>
 type UserOpt = { id: number; username?: string; nickname?: string }
 
+const actor = useUserStore()
+const canGenerate = ref(actor.profile?.username === 'admin')
 const orders = ref<Row[]>([])
 const users = ref<UserOpt[]>([])
 const listError = ref('')
@@ -166,10 +189,22 @@ const generateDate = ref('')
 const generateError = ref('')
 const detailOpen = ref(false)
 const detail = ref<Row | null>(null)
+const itemTab = ref('ALL')
+const transferUser = reactive<Record<string, string>>({})
+const disputeRemark = reactive<Record<string, string>>({})
 const detailError = ref('')
 const busy = ref(false)
 
 const items = computed(() => ((detail.value?.items as Row[]) || []))
+const visibleItems = computed(() => {
+  if (itemTab.value === 'ALL') return items.value
+  return items.value.filter((item) => item.itemType === itemTab.value)
+})
+const canClose = computed(() => items.value.every((item) => ['RETURNED', 'TRANSFERRED'].includes(String(item.itemStatus || ''))))
+const closeTitle = computed(() => {
+  const disputed = items.value.filter((item) => item.itemStatus === 'DISPUTED').length
+  return disputed ? `${disputed} 项争议待裁决` : ''
+})
 const returnFiltered = computed(
   () => !!(returnNo.value.trim() || status.value || filterUserId.value || timeFrom.value || timeTo.value),
 )
@@ -216,6 +251,18 @@ function itemText(value: string) {
 function typeText(value: string) {
   const labels: Record<string, string> = { ACCOUNT: '账号', ASSET: '资产', CERT: '证件' }
   return labels[value] || value
+}
+
+function overdueText(row: Row) {
+  if (!row.overdue) return '—'
+  const days = Number(row.overdueDays || 0)
+  return days > 0 ? `逾期 ${days} 天` : '逾期'
+}
+
+function closedText(value: unknown) {
+  const text = String(value || '')
+  if (!text) return '—'
+  return text.replace('T', ' ').slice(0, 16)
 }
 
 function progressText(row: Row) {
@@ -308,7 +355,7 @@ function openGenerate() {
 async function generate() {
   generateError.value = ''
   if (!generateUserId.value || !generateDate.value) {
-    generateError.value = '离职人和离职日期必填'
+    generateError.value = '必填项，请填写'
     return
   }
   busy.value = true
@@ -331,6 +378,7 @@ async function generate() {
 
 async function openOrder(row: Row) {
   detailError.value = ''
+  itemTab.value = 'ALL'
   detailOpen.value = true
   try {
     const res = await http.get(`/account/return/${row.id}`)
@@ -347,6 +395,46 @@ async function markReturned(item: Row) {
   busy.value = true
   try {
     await http.put(`/account/return/item/${item.id}`, { itemStatus: 'RETURNED' })
+    await openOrder(detail.value)
+    await loadList()
+  } catch (error) {
+    detailError.value = rejectText(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function markTransferred(item: Row) {
+  if (!detail.value) return
+  const target = transferUser[String(item.id)]
+  detailError.value = ''
+  if (!target) {
+    detailError.value = '必填项，请填写'
+    return
+  }
+  busy.value = true
+  try {
+    await http.put(`/account/return/item/${item.id}`, { itemStatus: 'TRANSFERRED', transferToUserId: Number(target) })
+    await openOrder(detail.value)
+    await loadList()
+  } catch (error) {
+    detailError.value = rejectText(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function markDisputed(item: Row) {
+  if (!detail.value) return
+  const remark = (disputeRemark[String(item.id)] || '').trim()
+  detailError.value = ''
+  if (!remark) {
+    detailError.value = '必填项，请填写'
+    return
+  }
+  busy.value = true
+  try {
+    await http.put(`/account/return/item/${item.id}`, { itemStatus: 'DISPUTED', remark })
     await openOrder(detail.value)
     await loadList()
   } catch (error) {
@@ -385,7 +473,23 @@ async function disableUser() {
   }
 }
 
+async function loadActor() {
+  const id = actor.profile?.userId
+  if (!id || actor.profile?.username === 'admin') {
+    canGenerate.value = true
+    return
+  }
+  try {
+    const res = await http.get(`/system/user/${id}`)
+    const names = ((res.data?.data?.roleNames as string[]) || []).join(' ')
+    canGenerate.value = /管理员|行政/.test(names)
+  } catch {
+    canGenerate.value = false
+  }
+}
+
 onMounted(async () => {
+  await loadActor()
   await loadUsers()
   await loadList()
 })

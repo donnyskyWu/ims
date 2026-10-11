@@ -136,6 +136,8 @@ def test_close_and_disable_return_1024_until_items_are_returned():
     created = _generate(auth, user_id)
     assert created["code"] == 0, created
     assert created["data"]["returnNo"].startswith("RT20261009")
+    assert "deptName" in created["data"]
+    assert all(item.get("currentHolder") for item in created["data"]["items"])
     kinds = {item["itemType"] for item in created["data"]["items"]}
     assert kinds == {"ACCOUNT", "ASSET", "CERT"}
     order_id = created["data"]["id"]

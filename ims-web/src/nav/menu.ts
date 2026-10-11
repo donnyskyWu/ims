@@ -132,6 +132,7 @@ export const IMPLEMENTED: Record<string, string> = {
   caDouyin: '/ims/corp/account/douyin',
   caKuaishou: '/ims/corp/account/kuaishou',
   caXhs: '/ims/corp/account/xiaohongshu',
+  caReturn: '/ims/account/return',
   crCompany: '/ims/corp/resource/company',
   crRealname: '/ims/corp/resource/realname',
   crSim: '/ims/corp/resource/sim-card',
