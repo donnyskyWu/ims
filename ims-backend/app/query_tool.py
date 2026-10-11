@@ -204,6 +204,22 @@ def template_detail(
 
 
 @router.post("/template")
+def payload_error(mode: str, payload: dict) -> str:
+    if mode == "DRILL":
+        levels = payload.get("levels") or []
+        if not isinstance(levels, list):
+            return "下钻层级无效"
+        if len(levels) > 5:
+            return "分级下钻最多 5 层"
+    if mode == "TRACE":
+        steps = payload.get("pathSteps") or []
+        if not isinstance(steps, list):
+            return "穿透步骤无效"
+        if len(steps) > 6:
+            return "逐级穿透最多 6 步"
+    return ""
+
+
 def template_create(
     body: TemplateBody,
     db: Session = Depends(db_session),
@@ -215,6 +231,11 @@ def template_create(
     mode = body.mode.strip().upper()
     if mode not in MODES:
         return fail(1001, "模式无效")
+    if mode == "FLAT":
+        return fail(1001, "平铺查询请使用自定义查询")
+    err = payload_error(mode, body.payloadJson or {})
+    if err:
+        return fail(1001, err)
     tenant_id = tenant_of(actor)
     now = utcnow()
     row = QueryTemplate(
@@ -254,6 +275,9 @@ def template_update(
     if body.desc is not None:
         row.desc = body.desc.strip()
     if body.payloadJson is not None:
+        err = payload_error(row.mode, body.payloadJson)
+        if err:
+            return fail(1001, err)
         row.payload_json = body.payloadJson
     row.updated_at = utcnow()
     names = user_names(db, [row.owner_user_id])

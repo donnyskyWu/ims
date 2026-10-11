@@ -47,3 +47,21 @@ def test_query_tool_template_page_and_run():
     assert run.json()["code"] == 0
     assert run.json()["data"]["queryMode"] == "SYNC"
     assert len(run.json()["data"]["rows"]) >= 1
+
+
+def test_query_tool_name_and_drill_depth():
+    auth = headers()
+    empty = client.post(
+        "/admin-api/ims/analysis/query-tool/template",
+        headers=auth,
+        json={"name": "  ", "mode": "DRILL"},
+    )
+    assert empty.json()["code"] == 1001
+    levels = [{"levelIndex": i, "label": f"L{i}", "entityCode": "IP_GROUP"} for i in range(6)]
+    over = client.post(
+        "/admin-api/ims/analysis/query-tool/template",
+        headers=auth,
+        json={"name": "层级过多", "mode": "DRILL", "payloadJson": {"levels": levels}},
+    )
+    assert over.json()["code"] == 1001
+    assert "5" in over.json()["msg"]
