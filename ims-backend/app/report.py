@@ -974,7 +974,6 @@ def submission_stat_filters(
     stmt = select(ReportSubmission).where(
         ReportSubmission.deleted == 0,
         ReportSubmission.tenant_id == tenant_id,
-        ReportSubmission.submit_status != "DRAFT",
     )
     if stat_period:
         stmt = stmt.where(ReportSubmission.period == stat_period.strip())
@@ -984,6 +983,7 @@ def submission_stat_filters(
 
 
 def aggregate_submission_stats(db: Session, rows: list[ReportSubmission]) -> dict:
+    """完成率 = 审核通过 / 应提交（含草稿与迟交，RPT-C-R1）。通过率 = 已通过 / 已提交。"""
     should = len(rows)
     approved = sum(1 for r in rows if r.submit_status == "APPROVED")
     submitted = sum(
@@ -1134,15 +1134,19 @@ def stat_complete_rate(
     today_rows = [row for row in rows if row.period == today or bj_day(row.submitted_at) == today]
     today_stats = aggregate_submission_stats(db, today_rows)
 
+    filed_rows = [row for row in rows if row.submit_status != "DRAFT"]
     return ok(
         {
             "totalCompleteRate": total["completeRate"],
+            "shouldCount": total["shouldCount"],
+            "submittedCount": total["submittedCount"],
+            "approvedCount": total["approvedCount"],
             "passRate": total["passRate"],
             "rejectCount": total["rejectCount"],
-            "todayCount": len(today_rows),
+            "todayCount": sum(1 for row in today_rows if row.submit_status != "DRAFT"),
             "todayCompleteRate": today_stats["completeRate"],
-            "fieldCheckHitRate": field_check_hit_rate(db, rows),
-            "avgAuditHours": average_audit_hours(db, rows),
+            "fieldCheckHitRate": field_check_hit_rate(db, filed_rows),
+            "avgAuditHours": average_audit_hours(db, filed_rows),
             "byTemplate": by_template,
             "byDept": by_dept_list,
         }
@@ -1160,7 +1164,6 @@ def stat_trend(
     stmt = select(ReportSubmission).where(
         ReportSubmission.deleted == 0,
         ReportSubmission.tenant_id == tenant_id,
-        ReportSubmission.submit_status != "DRAFT",
     )
     if templateId:
         stmt = stmt.where(ReportSubmission.template_id == templateId)

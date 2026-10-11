@@ -305,6 +305,19 @@ def test_report_stat_pass_rate_excludes_reject_from_completion():
         ).json()["code"]
         == 0
     )
+    draft = client.post(
+        "/admin-api/ims/report/submit",
+        headers=auth,
+        json={
+            "templateId": template_id,
+            "period": "2026-11-03",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"metric_value": 1},
+            "asDraft": True,
+        },
+    )
+    assert draft.json()["code"] == 0
     stat = client.get(
         "/admin-api/ims/report/stat/complete-rate",
         headers=auth,
@@ -312,8 +325,12 @@ def test_report_stat_pass_rate_excludes_reject_from_completion():
     )
     body = stat.json()
     assert body["code"] == 0
-    assert body["data"]["totalCompleteRate"] == 50.0
+    assert body["data"]["shouldCount"] == 3
+    assert body["data"]["submittedCount"] == 2
+    assert body["data"]["approvedCount"] == 1
+    assert body["data"]["totalCompleteRate"] == 33.33
     assert body["data"]["passRate"] == 50.0
+    assert body["data"]["totalCompleteRate"] != body["data"]["passRate"]
     assert body["data"]["rejectCount"] == 1
     assert body["data"]["todayCount"] == 2
     assert body["data"]["fieldCheckHitRate"] == 100.0

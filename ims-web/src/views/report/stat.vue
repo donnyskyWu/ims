@@ -10,7 +10,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      完成率按已通过单据计算，目标高于 95%。退回的单据不计入完成。
+      完成率 = 审核通过 ÷ 应提交，目标线 95%。通过率 = 已通过 ÷ 已提交，只作辅助，不替代完成率。
     </p>
     <form class="qbar" @submit.prevent="loadAll">
       <input v-model="statPeriod" type="date" data-testid="stat-period" />
@@ -23,17 +23,29 @@
     </form>
 
     <div class="g4" style="margin: 12px 0">
-      <div class="card stat">
-        <span class="l">今日上报</span>
-        <div class="n" data-testid="stat-today">{{ summary?.todayCount ?? 0 }} 单</div>
-        <div class="d">完成率 {{ summary?.todayCompleteRate ?? 0 }}%，目标高于 95%</div>
+      <div class="card stat" data-testid="stat-complete-card">
+        <span class="l">完成率</span>
+        <div class="n" data-testid="stat-complete-rate" :style="{ color: rateColor(summary?.totalCompleteRate ?? 0) }">
+          {{ summary?.totalCompleteRate ?? 0 }}%
+        </div>
+        <div class="d">审核通过 ÷ 应提交（{{ summary?.approvedCount ?? 0 }}/{{ summary?.shouldCount ?? 0 }}）</div>
+        <div class="rate-track" data-testid="stat-target-line">
+          <div class="rate-fill" :style="{ width: barWidth(summary?.totalCompleteRate ?? 0) }"></div>
+          <i class="target-mark" title="目标线 95%"></i>
+        </div>
+        <div class="d">目标线 95%</div>
       </div>
-      <div class="card stat">
+      <div class="card stat aux" data-testid="stat-pass-card">
         <span class="l">通过率</span>
         <div class="n" data-testid="stat-pass-rate" :style="{ color: rateColor(summary?.passRate ?? 0) }">
           {{ summary?.passRate ?? 0 }}%
         </div>
-        <div class="d">退回 {{ summary?.rejectCount ?? 0 }} 单。通过率 = 已通过 / 已提交，退回不计入完成</div>
+        <div class="d">已通过 ÷ 已提交（{{ summary?.approvedCount ?? 0 }}/{{ summary?.submittedCount ?? 0 }}）</div>
+      </div>
+      <div class="card stat">
+        <span class="l">今日上报</span>
+        <div class="n" data-testid="stat-today">{{ summary?.todayCount ?? 0 }} 单</div>
+        <div class="d">当日已提交的填报单</div>
       </div>
       <div class="card stat">
         <span class="l">字段校验命中率</span>
@@ -178,6 +190,9 @@ import { errorMessage, http } from '../../api/http'
 
 type Summary = {
   totalCompleteRate: number
+  shouldCount: number
+  submittedCount: number
+  approvedCount: number
   passRate: number
   rejectCount: number
   todayCount: number
@@ -270,6 +285,11 @@ function rateColor(rate: number) {
   return 'var(--red)'
 }
 
+function barWidth(rate: number) {
+  const width = Math.max(0, Math.min(100, Number(rate) || 0))
+  return `${width}%`
+}
+
 async function loadTemplates() {
   try {
     const res = await http.get('/report/template/list', { params: { pageNo: 1, pageSize: 100 } })
@@ -350,6 +370,29 @@ onMounted(() => {
 .stat .d {
   font-size: 11px;
   color: var(--text2);
+}
+.stat.aux .n {
+  font-size: 22px;
+}
+.rate-track {
+  position: relative;
+  height: 8px;
+  margin: 8px 0 4px;
+  background: rgba(142, 142, 147, 0.18);
+  border-radius: 4px;
+}
+.rate-fill {
+  height: 100%;
+  background: #0071e3;
+  border-radius: 4px;
+}
+.target-mark {
+  position: absolute;
+  top: -3px;
+  left: 95%;
+  width: 2px;
+  height: 14px;
+  background: #c62828;
 }
 .tabs .tab {
   background: none;
