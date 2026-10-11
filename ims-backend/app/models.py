@@ -1310,7 +1310,13 @@ class FinShareResult(Base):
 
     __tablename__ = "ims_fin_share_result"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "session_code", "share_target", name="uk_fin_share_session_target"),
+        UniqueConstraint(
+            "tenant_id",
+            "session_code",
+            "share_target",
+            "archive_key",
+            name="uk_fin_share_session_target",
+        ),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     session_code: Mapped[str] = mapped_column(String(32), index=True)
@@ -1323,6 +1329,7 @@ class FinShareResult(Base):
     share_amount: Mapped[float] = mapped_column(Float, default=0.0)
     calc_detail: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(24), default="PENDING_AUDIT")
+    archive_key: Mapped[int] = mapped_column(BigInteger, default=0)
     fin_audit_passed: Mapped[int] = mapped_column(Integer, default=0)
     biz_audit_passed: Mapped[int] = mapped_column(Integer, default=0)
     audited_by: Mapped[int] = mapped_column(BigInteger, default=0)

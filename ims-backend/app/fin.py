@@ -1740,6 +1740,40 @@ def share_parts(session: LiveSession, cost: FinCost) -> list[dict]:
     return parts
 
 
+def mark_share_replaced(row: FinShareResult, new_amount: float) -> None:
+    detail = dict(row.calc_detail or {})
+    detail["replaced"] = True
+    detail["replacementAmount"] = money(new_amount)
+    detail["replacedNote"] = "已冲销（新单已补）"
+    row.calc_detail = detail
+    row.status = "REVERSED"
+    row.archive_key = int(row.id or 0)
+
+
+def replacement_share_bill(session_code: str, tenant_id: int, part: dict, new_amount: float) -> FinShareResult:
+    amount = money(new_amount)
+    return FinShareResult(
+        session_code=session_code,
+        tenant_id=tenant_id,
+        rule_id=int(part.get("ruleId") or 0),
+        rule_name=part.get("ruleName") or "引擎计算",
+        share_target=part["shareTarget"],
+        target_ref_id=int(part.get("targetRefId") or 0),
+        target_ref_name=part.get("targetRefName") or "",
+        share_base=money(part.get("shareBase") or 0),
+        share_amount=amount,
+        calc_detail={
+            "mode": "ENGINE",
+            "partAmount": amount,
+            "formula": part.get("formula") or "",
+            "shareBase": money(part.get("shareBase") or 0),
+        },
+        status="PENDING_AUDIT",
+        archive_key=0,
+        deleted=0,
+    )
+
+
 def sync_share_results(
     db: Session,
     tenant_id: int,
@@ -1747,7 +1781,11 @@ def sync_share_results(
     cost: FinCost,
     profit: FinProfit,
 ) -> None:
-    """利润落库后按手工分成额生成/刷新待审分成单。已审/已发放不改写。全部已冲销时只标记新单已补。"""
+    """利润落库后生成或刷新待审分成单。已审/已发放不改写。
+
+    引擎分成额变化时，原单标「已冲销（新单已补）」并按规则另开一张待审单。
+    分成单冲销本身不进这里，不反向改成本或利润。
+    """
     session = db.scalar(
         select(LiveSession).where(
             LiveSession.session_code == session_code,
@@ -1779,24 +1817,27 @@ def sync_share_results(
     reversed_rows = [row for row in active if row.status == "REVERSED"]
     pending_rows = [row for row in active if row.status == "PENDING_AUDIT"]
     if reversed_rows and not pending_rows:
-        # 唯一键是场次+对象，不能再插一张待审单。金额变化时在原单留「新单已补」。
         by_part = {part["shareTarget"]: part for part in parts}
         for row in reversed_rows:
             part = by_part.get(row.share_target)
             new_amount = money(part["shareAmount"]) if part else 0.0
             if money(row.share_amount) == new_amount:
                 continue
-            detail = dict(row.calc_detail or {})
-            detail["replaced"] = True
-            detail["replacementAmount"] = new_amount
-            detail["replacedNote"] = "已冲销（新单已补）"
-            row.calc_detail = detail
+            mark_share_replaced(row, new_amount)
+            if engine and part is not None and new_amount > 0:
+                db.flush()
+                db.add(replacement_share_bill(session_code, tenant_id, part, new_amount))
         db.flush()
         return
-    if any(row.status in LOCKED_SHARE_STATUSES for row in active):
+    current_rows = [row for row in active if int(row.archive_key or 0) == 0 and row.status != "REVERSED"]
+    if any(row.status in ("AUDITED", "PAID_OFF") for row in current_rows):
         return
     share_total = money(sum(part["shareAmount"] for part in parts))
-    by_target = {row.share_target: row for row in existing}
+    by_target = {}
+    for row in current_rows:
+        prev = by_target.get(row.share_target)
+        if prev is None or int(row.id or 0) > int(prev.id or 0):
+            by_target[row.share_target] = row
     keep = {part["shareTarget"] for part in parts}
     for part in parts:
         row = by_target.get(part["shareTarget"])
@@ -1822,6 +1863,14 @@ def sync_share_results(
             rule_name = "手工分成"
             share_base = money(profit.net_profit)
         created = row is None
+        amount_changed = (
+            row is not None and row.deleted == 0 and money(row.share_amount) != part["shareAmount"]
+        )
+        if engine and amount_changed and row is not None and row.status == "PENDING_AUDIT":
+            mark_share_replaced(row, part["shareAmount"])
+            db.flush()
+            db.add(replacement_share_bill(session_code, tenant_id, part, part["shareAmount"]))
+            continue
         if row is None:
             row = FinShareResult(
                 session_code=session_code,
@@ -1832,7 +1881,6 @@ def sync_share_results(
                 status="PENDING_AUDIT",
             )
             db.add(row)
-        amount_changed = (not created) and row.deleted == 0 and money(row.share_amount) != part["shareAmount"]
         row.rule_id = rule_id
         row.rule_name = rule_name
         row.target_ref_id = part["targetRefId"]

@@ -293,7 +293,7 @@ interface FinShareResultVO {
 
 **请求**：`{ payoffVoucher?: { fileName: string; fileKey: string }; payoffNote?: string; reverse?: boolean; reverseReason?: string }` → **响应**：`data: null`（状态 → `PAID_OFF`）。
 
-**负向调整（#90，仍走本接口，不另开路径）**：`reverse=true` 时不发放。仅 `AUDITED` / `PAID_OFF` 可冲销，状态改为 `REVERSED`，`shareAmount` 不改，`calcDetail.redEntries` 写入负数红冲分录，并在 `ims_sys_operate_log` 留下 `action=冲销分成单`。原因为空 **1144**。未双审或已冲销再冲 **1150**。驳回仍走 `PUT …/audit` 的 `REJECT`，同样写红冲。全部对象已冲销后若成本更正改变分成额，受唯一键限制不新插单据，原单标记「已冲销（新单已补）」。
+**负向调整（#90，仍走本接口，不另开路径）**：`reverse=true` 时不发放。仅 `AUDITED` / `PAID_OFF` 可冲销，状态改为 `REVERSED`，`shareAmount` 不改，`calcDetail.redEntries` 写入负数红冲分录，并在 `ims_sys_operate_log` 留下 `action=冲销分成单`。原因为空 **1144**。未双审或已冲销再冲 **1150**。驳回仍走 `PUT …/audit` 的 `REJECT`，同样写红冲。成本更正触发利润重算后，若按启用规则算出的分成额变了：原单标「已冲销（新单已补）」（`status=REVERSED` 且 `replacedNote`），并另开一张待审分成单。已审、已发放的分成单不改写。分成单冲销不反向更正成本，也不重算利润。
 
 ### 2.4 利润看板（FIN-004）
 

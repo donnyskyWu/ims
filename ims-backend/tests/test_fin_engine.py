@@ -184,3 +184,65 @@ def test_engine_ls1_daren_share_is_gross_times_ten_percent():
     assert len(daren) == 1
     assert daren[0]["shareAmount"] == 4550
     assert daren[0]["shareBase"] == 45500
+
+
+def test_engine_correction_opens_new_bill_and_marks_original_replaced():
+    """成本更正重算后，分成额变化则按启用规则补待审单，原单标已冲销（新单已补）。"""
+    auth = headers()
+    code = "IMS20261011DYS0005"
+    create_rule(
+        auth,
+        ruleName="TC-达人分成B",
+        shareTarget="DAREN",
+        baseType="GROSS_PROFIT",
+        fixedRate=0.1,
+        priority=10,
+        scope=ALL_SCOPE,
+    )
+    seed_confirmed_session(code, 91005, 10000, 0)
+    submit_engine(auth, code, commissionRate=0.05, fixedCost=1000)
+    before = client.get("/admin-api/ims/fin/profit/" + code, headers=auth).json()["data"]
+    assert before["grossProfit"] == 9500
+    assert before["netProfit"] == 7550
+    first = client.get("/admin-api/ims/fin/share/results", headers=auth, params={"sessionCode": code}).json()["data"]["list"]
+    assert len(first) == 1
+    assert first[0]["status"] == "PENDING_AUDIT"
+    assert first[0]["shareAmount"] == 950
+
+    corrected = client.post(
+        f"/admin-api/ims/fin/cost/{code}/correction",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={
+            "correctionReason": "佣金率改按 10%",
+            "corrected": {
+                "commissionRate": 0.1,
+                "adCost": 0,
+                "rechargeCost": 0,
+                "fixedCost": 1000,
+                "sampleCost": 0,
+                "shareCostType": "ENGINE",
+                "shareDaren": 0,
+                "shareRealname": 0,
+            },
+        },
+    )
+    assert corrected.json()["code"] == 0, corrected.json()
+    assert corrected.json()["data"]["recalcTriggered"] is True
+    assert any(item["item"] == "平台佣金" for item in corrected.json()["data"]["blueEntries"])
+
+    profit = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()["data"]
+    assert profit["calcStatus"] == "RECALCULATED"
+    assert profit["grossProfit"] == 9000
+    assert profit["netProfit"] == 7100
+    bills = client.get("/admin-api/ims/fin/share/results", headers=auth, params={"sessionCode": code}).json()["data"]["list"]
+    original = next(row for row in bills if row["id"] == first[0]["id"])
+    fresh = [row for row in bills if row["status"] == "PENDING_AUDIT" and row["shareTarget"] == "DAREN"]
+    assert original["status"] == "REVERSED"
+    assert original["shareAmount"] == 950
+    assert original["replaced"] is True
+    assert original["replacedNote"] == "已冲销（新单已补）"
+    assert original["replacementAmount"] == 900
+    assert len(fresh) == 1
+    assert fresh[0]["shareAmount"] == 900
+    assert fresh[0]["shareBase"] == 9000
+    assert fresh[0]["ruleName"] == "TC-达人分成B"
