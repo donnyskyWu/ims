@@ -1024,6 +1024,7 @@ function show(row: Row, key: string) {
   const value = row[key]
   if (value === undefined || value === null || value === '') return '—'
   if (key === 'status' && kind.value === 'phone') {
+    if (value === 'IN_USE') return '使用中'
     return phoneStatus.value.find((item) => item.value === value)?.label || String(value)
   }
   if (key === 'status') return statusLabel(String(value))

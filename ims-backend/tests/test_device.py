@@ -86,3 +86,22 @@ def test_phone_follows_master_contract():
         json={"phoneNumber": "13700003333", "keeperId": admin_id, "status": "IN_USE"},
     )
     assert again.json()["code"] == 1001
+
+
+def test_phone_in_use_dict_label_is_using():
+    auth = headers()
+    listed = client.get(
+        "/admin-api/ims/system/dict-data/list",
+        headers=auth,
+        params={"dictType": "dict_phone_status"},
+    ).json()
+    assert listed["code"] == 0, listed
+    labels = {item["dictValue"]: item["dictLabel"] for item in listed["data"]}
+    assert labels["IN_USE"] == "使用中"
+    accounts = client.get(
+        "/admin-api/ims/system/dict-data/list",
+        headers=auth,
+        params={"dictType": "dict_account_status"},
+    ).json()
+    account_labels = {item["dictValue"]: item["dictLabel"] for item in accounts["data"]}
+    assert account_labels["IN_USE"] == "在用"

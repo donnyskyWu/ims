@@ -28,7 +28,7 @@ DICT_SEED = [
     ("dict_industry", "行业", [("SPORT", "体育"), ("ESPORTS", "电竞"), ("MEDIA", "传媒"), ("OTHER", "其他")]),
     ("dict_realname_status", "实名人状态", [("ENABLED", "在职"), ("DISABLED", "离职")]),
     ("dict_id_type", "证件类型", [("ID_CARD", "身份证"), ("PASSPORT", "护照"), ("HK_MACAO", "港澳通行证"), ("TAIWAN", "台湾通行证")]),
-    ("dict_phone_status", "手机状态", [("IN_USE", "在用"), ("IDLE", "闲置"), ("DAMAGED", "损坏"), ("LOST", "丢失")]),
+    ("dict_phone_status", "手机状态", [("IN_USE", "使用中"), ("IDLE", "闲置"), ("DAMAGED", "损坏"), ("LOST", "丢失")]),
     ("dict_asset_type", "资产类型", [("OFFICE", "办公设备"), ("LIVE", "直播设备"), ("SHOOT", "拍摄设备"), ("DIGITAL", "数码设备")]),
     ("dict_asset_status", "资产状态", [("PENDING_REVIEW", "待审核"), ("IN_USE", "使用中"), ("RETURNED", "已归还"), ("SCRAPPED", "已报废")]),
     ("dict_phone_type", "手机类型", [("ANDROID", "Android"), ("IPHONE", "iPhone")]),
@@ -98,6 +98,7 @@ def seed_dict(db: Session) -> None:
         ("dict_realname_status", "ENABLED"): "在职",
         ("dict_realname_status", "DISABLED"): "离职",
         ("dict_asset_status", "IN_USE"): "使用中",
+        ("dict_phone_status", "IN_USE"): "使用中",
     }
     for (dict_type, value), label in label_fixes.items():
         row = db.scalar(
