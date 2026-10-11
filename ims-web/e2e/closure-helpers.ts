@@ -44,7 +44,7 @@ export async function fillMatchSchemeViaUi(
   scope: Locator,
   opts: { matchId: string; homeName: string; awayName: string },
 ) {
-  await scope.getByPlaceholder('matchId').fill(opts.matchId)
+  await scope.getByTestId('match-scheme-id').fill(opts.matchId)
   await scope.getByPlaceholder('主队').fill(opts.homeName)
   await scope.getByPlaceholder('客队').fill(opts.awayName)
   await scope.getByRole('button', { name: '添加场次' }).click()

@@ -1,15 +1,15 @@
 <template>
   <div class="card" style="padding: 12px; margin-top: 8px" data-testid="content-ai-panel">
     <div class="dsec">AI 文案 / 视频</div>
-    <p class="hint" data-testid="gpu-hint">无本机 GPU。生成走管理员配置的第三方地址，或本地桩；此处不显示密钥。</p>
+    <p class="hint" data-testid="gpu-hint">无本机 GPU。生成走管理员配置的第三方地址；此处不显示密钥。</p>
     <p data-testid="ai-copy-provider">文案服务：{{ copyProviderLabel }}</p>
     <p data-testid="comfyui-stub-status">ComfyUI：{{ videoProviderLabel }}</p>
-    <p v-if="copyIsEmpty" class="hint" data-testid="ai-copy-empty">尚未生成文案。预览与正文都还是空的，本地桩不占用本机 GPU。</p>
-    <p v-if="locked" class="hint" data-testid="ai-panel-locked">当前不是草稿或驳回，不能新提交文案或视频。本地桩也不会出新任务。</p>
+    <p v-if="copyIsEmpty" class="hint" data-testid="ai-copy-empty">尚未生成文案。预览与正文都还是空的。</p>
+    <p v-if="locked" class="hint" data-testid="ai-panel-locked">当前不是草稿或驳回，不能新提交文案或视频。</p>
     <p v-if="copyUnconfigured" class="hint bad" data-testid="ai-copy-unconfigured">未配置 AI 文案地址，文案生成不可用。</p>
     <p v-if="videoUnconfigured" class="hint bad" data-testid="comfyui-unconfigured">未配置 ComfyUI 地址，视频生成不可用。</p>
     <p v-if="workflowMissing" class="hint" data-testid="ai-workflow-empty">还没有默认视频工作流，视频任务不可提交。</p>
-    <p v-if="!hasMatch" class="hint bad" data-testid="ai-panel-need-match">请先选择比赛（matchScheme 至少一场）后再生成。本地桩也不会出稿。</p>
+    <p v-if="!hasMatch" class="hint bad" data-testid="ai-panel-need-match">请先选择比赛（至少一场）后再生成。</p>
     <p data-testid="ai-copy-status">
       文案状态：{{ copyLabel }}
       <span v-if="content.aiGenerateError"> · {{ content.aiGenerateError }}</span>
@@ -80,7 +80,7 @@
       </button>
     </div>
     <p v-if="content.videoJobStatus === 'PENDING_FINAL_REVIEW'" class="hint" data-testid="ai-review-reject-hint">
-      打回会记「终审打回，可重新发起」。本地桩不另开 GPU。
+      打回会记「终审打回，可重新发起」。
     </p>
     <ContentVideoDrawer
       v-if="videoOpen"
@@ -111,7 +111,7 @@ const copyLabelMap: Record<string, string> = {
   FAILED: '失败',
 }
 const providerLabels: Record<string, string> = {
-  stub: '桩（不占用本机 GPU）',
+  stub: '本地生成（不占用本机 GPU）',
   remote: '第三方',
   unconfigured: '未配置',
 }
@@ -164,7 +164,7 @@ function noteError(message: string) {
 async function generateCopy() {
   panelError.value = ''
   if (!requirement()) {
-    noteError('标题和正文都为空时不能生成。本地桩也不会出文案。')
+    noteError('标题和正文都为空时不能生成。')
     return
   }
   busy.value = true
@@ -186,7 +186,7 @@ async function generateCopy() {
 async function generateVideo() {
   panelError.value = ''
   if (!requirement()) {
-    noteError('标题和正文都为空时不能生成。本地桩也不会出成片。')
+    noteError('标题和正文都为空时不能生成。')
     return
   }
   busy.value = true

@@ -51,7 +51,7 @@ test.describe('content ComfyUI video drawer closure', () => {
     expect(submitBody.data?.provider).toBe('stub')
     expect(submitBody.data?.queueStatus).toBe('WAITING')
 
-    await expect(videoDrawer.getByTestId('video-provider')).toContainText('桩')
+    await expect(videoDrawer.getByTestId('video-provider')).toContainText('不占用本机 GPU')
     await expect(videoDrawer.getByTestId('video-poll-status')).toContainText('生成中', { timeout: 8_000 })
     await page.screenshot({ path: path.join(SHOTS, '01-video-generating.png'), fullPage: true })
 

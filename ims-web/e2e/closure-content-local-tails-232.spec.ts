@@ -29,7 +29,7 @@ test.describe('content local tails 232', () => {
     const createDrawer = page.locator('.drawer.on').filter({ hasText: '新增内容' })
     await expect(createDrawer.getByTestId('match-scheme-empty')).toContainText('尚未添加场次')
     await createDrawer.getByRole('button', { name: '添加场次' }).click()
-    await expect(createDrawer.getByTestId('match-scheme-error')).toHaveText('请填写 matchId、主队、客队')
+    await expect(createDrawer.getByTestId('match-scheme-error')).toHaveText('请填写关联场次、主队、客队')
     await page.screenshot({ path: path.join(SHOTS, '01-match-fields-empty.png'), fullPage: true })
 
     await createDrawer.locator('.fld').filter({ hasText: '标题' }).locator('input').fill(title)
@@ -44,7 +44,7 @@ test.describe('content local tails 232', () => {
     await expect(row).toBeVisible({ timeout: 15_000 })
     await row.getByRole('button', { name: '编辑' }).click()
     const editDrawer = page.locator('.drawer.on').filter({ hasText: '编辑内容' })
-    await expect(editDrawer.getByTestId('ai-panel-need-match')).toContainText('本地桩也不会出稿')
+    await expect(editDrawer.getByTestId('ai-panel-need-match')).toContainText('请先选择比赛')
     await expect(editDrawer.getByTestId('ai-copy-btn')).toBeDisabled()
     await expect(editDrawer.getByTestId('ai-panel-locked')).toHaveCount(0)
     await page.screenshot({ path: path.join(SHOTS, '02-ai-panel-need-match.png'), fullPage: true })
@@ -66,7 +66,7 @@ test.describe('content local tails 232', () => {
     const genBody = (await (await genResp).json()) as { code: number; data?: { mock?: boolean } }
     expect(genBody.code).toBe(0)
     expect(genBody.data?.mock).toBe(true)
-    await expect(aiDrawer.getByTestId('ai-copy-stub')).toContainText('桩预览')
+    await expect(aiDrawer.getByTestId('ai-copy-stub')).toContainText('不占用本机 GPU')
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })
@@ -141,7 +141,7 @@ test.describe('content local tails 232', () => {
     await expect(row).toContainText('待一级审核', { timeout: 15_000 })
     await row.getByRole('button', { name: '编辑' }).click()
     const editDrawer = page.locator('.drawer.on').filter({ hasText: '编辑内容' })
-    await expect(editDrawer.getByTestId('ai-panel-locked')).toContainText('本地桩也不会出新任务')
+    await expect(editDrawer.getByTestId('ai-panel-locked')).toContainText('不能新提交文案或视频')
     await expect(editDrawer.getByTestId('ai-copy-btn')).toBeDisabled()
     await expect(editDrawer.getByTestId('ai-video-btn')).toBeDisabled()
     await page.screenshot({ path: path.join(SHOTS, '07-ai-panel-locked.png'), fullPage: true })

@@ -209,10 +209,6 @@
           <p v-if="uploadError" class="hint" style="color: var(--red)">{{ uploadError }}</p>
         </div>
         <div class="fld">
-          <label>版式 HTML</label>
-          <textarea v-model="editLayoutHtml" data-testid="content-layout-html" rows="4" readonly />
-        </div>
-        <div class="fld">
           <label>版式预览</label>
           <div data-testid="content-layout-preview" class="content-layout-preview">
             <figure v-for="img in previewImages" :key="img.fileKey">
@@ -227,8 +223,8 @@
           <textarea
             v-model="editLayoutHtml"
             rows="4"
-            data-testid="content-layout-html-input"
-            placeholder="查看与审核按此 HTML 只读渲染；留空则显示正文"
+            data-testid="content-layout-html"
+            placeholder="查看与审核按此版式渲染；留空则显示正文"
           />
         </div>
         <ContentLayoutPanel
@@ -538,7 +534,7 @@ async function onPickImage(ev: Event) {
     const fileUrl = String(data.data?.fileUrl || '')
     const fileName = String(data.data?.fileName || file.name)
     if (!fileKey || !fileUrl) {
-      uploadError.value = '上传回执缺少 fileKey'
+      uploadError.value = '上传没有返回文件，请重试'
       return
     }
     const tag = `<img src="${escapeAttr(fileUrl)}" alt="${escapeAttr(fileName)}" data-file-key="${escapeAttr(fileKey)}" />`
