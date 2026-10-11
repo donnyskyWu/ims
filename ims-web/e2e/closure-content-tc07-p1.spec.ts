@@ -69,11 +69,10 @@ test.describe('content TC-07 P1', () => {
 
     await page.goto('/ims/content/plan')
     await expect(page.locator('h1')).toHaveText('计划管理', { timeout: 15_000 })
-    await page.getByRole('button', { name: '新增计划' }).click()
-    const planDrawer = page.locator('.drawer.on').filter({ hasText: '新增计划' })
     const sopList = page.waitForResponse(
       (r) => r.url().includes('/content/sop/list') && r.url().includes('ENABLED') && r.status() === 200,
     )
+    await page.getByRole('button', { name: '新增计划' }).click()
     await sopList
     await expect(planDrawer.getByText('SOP 模板（启用）')).toBeVisible()
     await expect(planDrawer.getByTestId('plan-sop-enabled')).not.toContainText(sopName)
