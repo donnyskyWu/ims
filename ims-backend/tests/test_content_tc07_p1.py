@@ -72,6 +72,48 @@ def test_b001_sop_platform_and_generation_doc_type():
     )
     assert bad_platform.json()["code"] == 1500
 
+    empty_type = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={"sopName": "TC07 缺内容类型", "contentType": "", "nodes": [_node()]},
+    )
+    assert empty_type.json()["code"] == 1001
+    assert "必填" in empty_type.json()["msg"]
+
+    out_of_dict = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={"sopName": "TC07 越界类型", "contentType": "LIVE_CLIP", "nodes": [_node()]},
+    )
+    assert out_of_dict.json()["code"] == 1503
+
+    video = client.post(
+        "/admin-api/ims/content/sop",
+        headers=auth,
+        json={"sopName": "TC07 视频 SOP", "contentType": "VIDEO", "nodes": [_node()]},
+    )
+    assert video.json()["code"] == 0
+    assert video.json()["data"]["contentType"] == "VIDEO"
+
+    echoed = client.get(
+        "/admin-api/ims/content/sop/list",
+        headers=auth,
+        params={"keyword": "TC07 平台 SOP", "pageSize": 20},
+    )
+    assert echoed.json()["data"]["list"][0]["contentType"] == "ARTICLE"
+
+    options = client.get(
+        "/admin-api/ims/system/dict-data/list",
+        headers=auth,
+        params={"dictType": "dict_content_type"},
+    )
+    enabled = [row for row in options.json()["data"] if row["status"] == "ENABLED"]
+    assert [(row["dictValue"], row["dictLabel"]) for row in enabled] == [
+        ("ARTICLE", "文章"),
+        ("SHORT_VIDEO", "短视频"),
+        ("VIDEO", "视频"),
+    ]
+
 
 def test_b002_sop_status_hides_from_enabled_list():
     auth = headers()

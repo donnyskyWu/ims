@@ -101,7 +101,10 @@
         </div>
         <div class="fld">
           <label>适用内容类型 *</label>
-          <input v-model="form.contentType" data-testid="sop-content-type" placeholder="SHORT_VIDEO" />
+          <select v-model="form.contentType" data-testid="sop-content-type">
+            <option value="">请选择</option>
+            <option v-for="item in typeChoices" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
           <p v-if="typeError" class="hint bad" data-testid="sop-type-error">{{ typeError }}</p>
         </div>
         <div class="fld">
@@ -374,12 +377,21 @@ const nameError = ref('')
 const typeError = ref('')
 const editingId = ref<number | null>(null)
 const editingVersion = ref(1)
+const contentTypeOptions = ref<{ value: string; label: string }[]>([])
 const form = ref({
   sopName: '',
-  contentType: 'SHORT_VIDEO',
+  contentType: '',
   platform: 'DOUYIN',
   sopLevel: 'STANDARD',
   marketingPlan: '',
+})
+const typeChoices = computed(() => {
+  const options = contentTypeOptions.value.map((item) => ({ ...item }))
+  const current = form.value.contentType
+  if (current && !options.some((item) => item.value === current)) {
+    options.push({ value: current, label: current })
+  }
+  return options
 })
 const dagToast = ref('')
 const canvasEl = ref<HTMLElement | null>(null)
@@ -566,6 +578,18 @@ function payloadNodes() {
   }))
 }
 
+async function loadContentTypes() {
+  try {
+    const { data } = await http.get('/system/dict-data/list', { params: { dictType: 'dict_content_type' } })
+    const rows = (data.data || []) as { dictLabel?: string; dictValue?: string; status?: string }[]
+    contentTypeOptions.value = rows
+      .filter((row) => row.status === 'ENABLED' && row.dictValue)
+      .map((row) => ({ value: String(row.dictValue), label: String(row.dictLabel || row.dictValue) }))
+  } catch {
+    contentTypeOptions.value = []
+  }
+}
+
 async function loadList() {
   loading.value = true
   error.value = ''
@@ -602,7 +626,7 @@ function openCreate() {
   saveError.value = ''
   nameError.value = ''
   typeError.value = ''
-  form.value = { sopName: '', contentType: 'SHORT_VIDEO', platform: 'DOUYIN', sopLevel: 'STANDARD', marketingPlan: '' }
+  form.value = { sopName: '', contentType: '', platform: 'DOUYIN', sopLevel: 'STANDARD', marketingPlan: '' }
   dagToast.value = ''
   nodes.value = defaultNodes()
   selectedKey.value = nodes.value[0].key
@@ -668,7 +692,7 @@ async function saveSop() {
   const name = form.value.sopName.trim()
   const contentTypeName = form.value.contentType.trim()
   if (!name) nameError.value = '请填写 SOP 名称'
-  if (!contentTypeName) typeError.value = '请填写内容类型'
+  if (!contentTypeName) typeError.value = '必填'
   if (!name || !contentTypeName) {
     saveError.value = !name && !contentTypeName ? '请填写 SOP 名称与内容类型' : nameError.value || typeError.value
     return
@@ -708,7 +732,7 @@ async function openEdit(row: SopRow) {
   dagToast.value = ''
   form.value = {
     sopName: row.sopName,
-    contentType: row.contentType || 'SHORT_VIDEO',
+    contentType: row.contentType || '',
     platform: row.platform || 'DOUYIN',
     sopLevel: row.sopLevel || 'STANDARD',
     marketingPlan: row.marketingPlan || '',
@@ -795,6 +819,7 @@ async function openNodes(row: SopRow) {
   }
 }
 
+void loadContentTypes()
 loadList()
 </script>
 

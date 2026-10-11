@@ -33,11 +33,21 @@ test.describe('content TC-07 P1', () => {
     await expect(drawer.getByTestId('sop-fit-view')).toBeVisible()
     await expect(drawer.getByTestId('sop-validate-dag')).toBeVisible()
     await expect(drawer.getByTestId('sop-save')).toHaveText('保存为新版本')
+    await expect(drawer.getByTestId('sop-content-type')).toHaveValue('')
+    await expect(drawer.getByTestId('sop-content-type').locator('option:not([value=""])')).toHaveText([
+      '文章',
+      '短视频',
+      '视频',
+    ])
 
     await drawer.getByTestId('sop-save').click()
     await expect(drawer.getByTestId('sop-name-error')).toHaveText('请填写 SOP 名称')
+    await expect(drawer.getByTestId('sop-type-error')).toHaveText('必填')
 
     await drawer.getByTestId('sop-name').fill(sopName)
+    await drawer.getByTestId('sop-save').click()
+    await expect(drawer.getByTestId('sop-type-error')).toHaveText('必填')
+    await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
     await drawer.locator('.fld').filter({ hasText: '首节点类型' }).locator('select').selectOption('CONTENT_GENERATION')
     await drawer.getByTestId('sop-node-doc-type').selectOption('')
     await drawer.getByTestId('sop-validate-dag').click()
@@ -59,6 +69,12 @@ test.describe('content TC-07 P1', () => {
     expect(((await (await createResp).json()) as { code: number }).code).toBe(0)
 
     const sopRow = page.locator('tr', { hasText: sopName }).first()
+    await expect(sopRow).toBeVisible({ timeout: 15_000 })
+    await sopRow.getByRole('button', { name: '编辑' }).click()
+    const editDrawer = page.locator('.drawer.on').filter({ hasText: '编辑 SOP 模板' })
+    await expect(editDrawer.getByTestId('sop-content-type')).toHaveValue('SHORT_VIDEO')
+    await expect(editDrawer.getByTestId('sop-content-type').locator('option:checked')).toHaveText('短视频')
+    await editDrawer.getByRole('button', { name: '取消' }).click()
     await expect(sopRow.getByTestId('sop-status-text')).toHaveText('ENABLED', { timeout: 15_000 })
     const offResp = page.waitForResponse(
       (r) => r.url().includes('/status') && r.request().method() === 'PUT' && r.status() === 200,

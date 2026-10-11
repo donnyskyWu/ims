@@ -34,6 +34,7 @@ test.describe('content sop plan S1 closure', () => {
     const drawer = page.locator('.drawer.on').filter({ hasText: '新增 SOP 模板' })
     await expect(drawer).toBeVisible()
     await drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input').fill(sopName)
+    await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
     await drawer.locator('.fld').filter({ hasText: '首节点名称' }).locator('input').fill(nodeName)
     await drawer.getByRole('button', { name: '内容发布' }).click()
     await expect(drawer.locator('[data-testid="sop-dag-node"]')).toHaveCount(2)

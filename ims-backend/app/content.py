@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.corp import ops_db, page_args, paged, tenant_of
+from app.corp import check_enum, ops_db, page_args, paged, tenant_of
 from app.layout_html import sanitize_layout_html
 from app.models import (
     ContentPlan,
@@ -333,6 +333,15 @@ def normalize_sop_platform(value: str | None) -> str | None:
     if platform not in _SOP_PLATFORMS:
         return None
     return platform
+
+
+def require_sop_content_type(db: Session, value: str | None):
+    """适用内容类型必填，且必须是 dict_content_type 的启用值。"""
+    code = (value or "").strip().upper()
+    err = check_enum(db, "dict_content_type", code or None, True)
+    if err is not None:
+        return None, err
+    return code, None
 
 
 def validate_sop_nodes(nodes: list[SopNodeReq]) -> str | None:
@@ -701,8 +710,11 @@ def sop_list(
 @router.post("/sop")
 def sop_create(body: SopCreateBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
     name = (body.sopName or "").strip()
-    if not name or len(name) > 128 or not (body.contentType or "").strip():
+    if not name or len(name) > 128:
         return fail(1500, "参数校验失败")
+    content_type, type_err = require_sop_content_type(db, body.contentType)
+    if type_err is not None:
+        return type_err
     platform = normalize_sop_platform(body.platform)
     if platform is None:
         return fail(1500, "参数校验失败")
@@ -715,7 +727,7 @@ def sop_create(body: SopCreateBody, db: Session = Depends(db_session), actor: Us
     sop = ContentSop(
         sop_code=code,
         sop_name=name,
-        content_type=body.contentType.strip(),
+        content_type=content_type,
         platform=platform,
         sop_level=body.sopLevel,
         marketing_plan=(body.marketingPlan or "").strip()[:32],
@@ -743,6 +755,9 @@ def sop_update(
     name = (body.sopName or old.sop_name).strip()
     if not name:
         return fail(1500, "参数校验失败")
+    content_type, type_err = require_sop_content_type(db, body.contentType)
+    if type_err is not None:
+        return type_err
     platform = normalize_sop_platform(body.platform if body.platform else old.platform)
     if platform is None:
         return fail(1500, "参数校验失败")
@@ -769,7 +784,7 @@ def sop_update(
     sop = ContentSop(
         sop_code=old.sop_code,
         sop_name=name,
-        content_type=(body.contentType or old.content_type).strip(),
+        content_type=content_type,
         platform=platform,
         sop_level=body.sopLevel if body.sopLevel in ("STANDARD", "GUIDE") else old.sop_level,
         marketing_plan=(body.marketingPlan or old.marketing_plan or "").strip()[:32],

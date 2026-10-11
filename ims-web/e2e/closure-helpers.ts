@@ -105,6 +105,7 @@ export async function createSopViaUi(
 
   const nameInput = drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input')
   await nameInput.fill(opts.sopName)
+  await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
   if (opts.nodeName) {
     await drawer.getByPlaceholder('脚本').fill(opts.nodeName)
   }
@@ -318,6 +319,7 @@ export async function createWorkTaskSopViaUi(
   await expect(drawer).toBeVisible()
 
   await drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input').fill(opts.sopName)
+  await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
   await drawer.locator('.fld').filter({ hasText: '营销计划' }).locator('select').selectOption(opts.marketingPlan ?? 'LIVE_PUBLIC')
   await drawer.locator('.fld').filter({ hasText: '首节点名称' }).locator('input').fill(opts.nodeName)
   await drawer.locator('.fld').filter({ hasText: '首节点类型' }).locator('select').selectOption('CONTENT_GENERATION')
