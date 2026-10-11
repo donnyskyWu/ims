@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import NamedTuple
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
-from app.models import ReportAudit, ReportSubmission, ReportTemplate, Todo, User
+from app.models import ReportAudit, ReportSubmission, ReportTemplate, Role, Todo, User, UserDept, UserRole
 from app.ops_models import AuthorUser, IpGroupAnchorRel, PlatformAccount
 from app.report_expr import ExprError, check_expression, evaluate_expression
 
@@ -971,6 +972,7 @@ def submission_stat_filters(
     stat_period: str | None,
     template_id: int | None,
 ):
+    """已提交单据范围。通过率仍用这批单据，不拿它当完成率分母。"""
     stmt = select(ReportSubmission).where(
         ReportSubmission.deleted == 0,
         ReportSubmission.tenant_id == tenant_id,
@@ -983,7 +985,7 @@ def submission_stat_filters(
 
 
 def aggregate_submission_stats(db: Session, rows: list[ReportSubmission]) -> dict:
-    """完成率 = 审核通过 / 应提交（含草稿与迟交，RPT-C-R1）。通过率 = 已通过 / 已提交。"""
+    """已建单据的计数。完成率分母不使用这里的 shouldCount。"""
     should = len(rows)
     approved = sum(1 for r in rows if r.submit_status == "APPROVED")
     submitted = sum(
@@ -1082,6 +1084,366 @@ def average_audit_hours(db: Session, rows: list[ReportSubmission]) -> float:
     return round(sum(hours) / len(hours), 2)
 
 
+class ExpectSlot(NamedTuple):
+    template_id: int
+    template_name: str
+    dept_name: str
+    deadline_rule: str
+    period: str
+    user_id: int
+
+
+def period_key(period_type: str, day: date) -> str:
+    kind = (period_type or "DAILY").upper()
+    if kind == "WEEKLY":
+        iso = day.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    if kind == "MONTHLY":
+        return f"{day.year:04d}-{day.month:02d}"
+    return day.isoformat()
+
+
+def period_index(period_type: str, day: date) -> int:
+    """轮值下标。同一周、同一月内不变，每日按公历日推进。"""
+    kind = (period_type or "DAILY").upper()
+    if kind == "WEEKLY":
+        iso = day.isocalendar()
+        return iso.year * 53 + iso.week
+    if kind == "MONTHLY":
+        return day.year * 12 + day.month
+    return day.toordinal()
+
+
+def scope_days(stat_period: str | None) -> list[date]:
+    """未传周期时只算北京时间当天，避免把历史每一天都摊进分母。"""
+    raw = (stat_period or "").strip()
+    today = datetime.now(BJ).date()
+    if not raw:
+        return [today]
+    try:
+        if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+            return [date.fromisoformat(raw)]
+        if len(raw) == 7 and raw[4] == "-" and raw[5:].isdigit():
+            year = int(raw[:4])
+            month = int(raw[5:7])
+            if not 1 <= month <= 12:
+                return [today]
+            start = date(year, month, 1)
+            nxt = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+            days: list[date] = []
+            cur = start
+            while cur < nxt:
+                days.append(cur)
+                cur += timedelta(days=1)
+            return days
+        upper = raw.upper()
+        if "-W" in upper:
+            year_s, week_s = upper.split("-W", 1)
+            monday = date.fromisocalendar(int(year_s), int(week_s), 1)
+            return [monday + timedelta(days=offset) for offset in range(7)]
+    except (TypeError, ValueError):
+        return [today]
+    return [today]
+
+
+def days_in_range(date_range: str | None) -> list[date] | None:
+    if not date_range:
+        return None
+    parts = [part.strip() for part in date_range.split(",") if part.strip()]
+    if len(parts) != 2:
+        return None
+    try:
+        start = date.fromisoformat(parts[0][:10])
+        end = date.fromisoformat(parts[1][:10])
+    except ValueError:
+        return None
+    if end < start:
+        start, end = end, start
+    if (end - start).days > 366:
+        end = start + timedelta(days=366)
+    days: list[date] = []
+    cur = start
+    while cur <= end:
+        days.append(cur)
+        cur += timedelta(days=1)
+    return days
+
+
+def periods_in(period_type: str, days: list[date]) -> list[tuple[str, date]]:
+    found: dict[str, date] = {}
+    for day in days:
+        found.setdefault(period_key(period_type, day), day)
+    return list(found.items())
+
+
+def parse_user_ids(raw_list) -> list[int]:
+    ordered: list[int] = []
+    seen: set[int] = set()
+    for raw in raw_list or []:
+        try:
+            uid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if uid > 0 and uid not in seen:
+            seen.add(uid)
+            ordered.append(uid)
+    return ordered
+
+
+def enabled_user_ids(db: Session, ordered: list[int], tenant_id: int) -> list[int]:
+    if not ordered:
+        return []
+    rows = db.scalars(
+        select(User).where(
+            User.id.in_(ordered),
+            User.deleted == 0,
+            User.status == "ENABLED",
+            User.tenant_id == tenant_id,
+        )
+    ).all()
+    alive = {row.id for row in rows}
+    result: list[int] = []
+    seen: set[int] = set()
+    for uid in ordered:
+        if uid in alive and uid not in seen:
+            seen.add(uid)
+            result.append(uid)
+    return result
+
+
+def users_for_position_codes(db: Session, codes: set[str], tenant_id: int) -> list[int]:
+    cleaned = {str(code).strip() for code in codes if str(code).strip()}
+    if not cleaned:
+        return []
+    roles = db.scalars(
+        select(Role).where(
+            Role.deleted == 0,
+            Role.status == "ENABLED",
+            Role.tenant_id == tenant_id,
+        )
+    ).all()
+    role_ids = [
+        role.id
+        for role in roles
+        if (role.dingtalk_position or "") in cleaned or (role.role_key or "") in cleaned
+    ]
+    if not role_ids:
+        return []
+    links = db.scalars(
+        select(UserRole).where(UserRole.role_id.in_(role_ids), UserRole.tenant_id == tenant_id)
+    ).all()
+    return enabled_user_ids(db, sorted({link.user_id for link in links}), tenant_id)
+
+
+def stable_and_rotations(
+    db: Session, template: ReportTemplate, tenant_id: int
+) -> tuple[list[int], list[list[int]]]:
+    """USER / POSITION 展开成稳定名单；DEPT_ROTATION 保留有序花名册，每期再取 1 人。"""
+    assignees = template.assignees if isinstance(template.assignees, list) else []
+    stable: list[int] = []
+    seen: set[int] = set()
+    rotations: list[list[int]] = []
+
+    def add_stable(ids: list[int]) -> None:
+        for uid in ids:
+            if uid not in seen:
+                seen.add(uid)
+                stable.append(uid)
+
+    for item in assignees:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("assignType") or "USER").upper()
+        if kind == "POSITION":
+            codes = {str(code).strip() for code in (item.get("targetCodes") or []) if str(code).strip()}
+            codes.update(str(uid) for uid in parse_user_ids(item.get("targetIds")))
+            add_stable(users_for_position_codes(db, codes, tenant_id))
+        elif kind == "DEPT_ROTATION":
+            rotation = item.get("rotationList") if isinstance(item.get("rotationList"), list) else []
+            pairs: list[tuple[int, int]] = []
+            for entry in rotation:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    uid = int(entry.get("userId"))
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    order = int(entry.get("order") or 0)
+                except (TypeError, ValueError):
+                    order = 0
+                if uid > 0:
+                    pairs.append((order, uid))
+            pairs.sort(key=lambda pair: (pair[0], pair[1]))
+            candidates = [uid for _, uid in pairs] or parse_user_ids(item.get("targetIds"))
+            roster = enabled_user_ids(db, candidates, tenant_id)
+            if roster:
+                rotations.append(roster)
+        else:
+            add_stable(enabled_user_ids(db, parse_user_ids(item.get("targetIds")), tenant_id))
+    return stable, rotations
+
+
+def obliged_for_period(
+    stable: list[int], rotations: list[list[int]], period_type: str, day: date
+) -> list[int]:
+    ordered = list(stable)
+    seen = set(ordered)
+    for roster in rotations:
+        duty = roster[period_index(period_type, day) % len(roster)]
+        if duty not in seen:
+            seen.add(duty)
+            ordered.append(duty)
+    return ordered
+
+
+def user_dept_map(db: Session, user_ids: set[int]) -> dict[int, set[int]]:
+    if not user_ids:
+        return {}
+    rows = db.scalars(select(UserDept).where(UserDept.user_id.in_(user_ids))).all()
+    mapping: dict[int, set[int]] = {}
+    for row in rows:
+        mapping.setdefault(row.user_id, set()).add(row.dept_id)
+    return mapping
+
+
+def enabled_templates(db: Session, tenant_id: int, template_id: int | None) -> list[ReportTemplate]:
+    stmt = select(ReportTemplate).where(
+        ReportTemplate.deleted == 0,
+        ReportTemplate.tenant_id == tenant_id,
+        ReportTemplate.status == "ENABLED",
+    )
+    if template_id:
+        stmt = stmt.where(ReportTemplate.id == template_id)
+    return list(db.scalars(stmt).all())
+
+
+def expectation_slots(
+    db: Session,
+    tenant_id: int,
+    days: list[date],
+    template_id: int | None,
+    dept_id: int | None,
+) -> list[ExpectSlot]:
+    """应提交槽位：启用模板 × 周期 × 责任人。
+
+    V2-A1 周期待办在本仓库不可用。sync_fill_todos 只按模板给 USER 写一条不带周期的待办，
+    不能表达每日/每周/每月，也不展开岗位和部门轮值。这里按模板规则直接推算，不把待办当成分母。
+    """
+    plans = [
+        (tpl, *stable_and_rotations(db, tpl, tenant_id))
+        for tpl in enabled_templates(db, tenant_id, template_id)
+    ]
+    candidate_ids: set[int] = set()
+    for _, stable, rotations in plans:
+        candidate_ids.update(stable)
+        for roster in rotations:
+            candidate_ids.update(roster)
+    depts = user_dept_map(db, candidate_ids) if dept_id else {}
+    slots: list[ExpectSlot] = []
+    for tpl, stable, rotations in plans:
+        period_type = tpl.period_type or "DAILY"
+        for period, day in periods_in(period_type, days):
+            for uid in obliged_for_period(stable, rotations, period_type, day):
+                if dept_id:
+                    owned = depts.get(uid) or set()
+                    if dept_id not in owned:
+                        continue
+                slots.append(
+                    ExpectSlot(
+                        template_id=tpl.id,
+                        template_name=tpl.template_name or "",
+                        dept_name=tpl.dept_name or "",
+                        deadline_rule=(tpl.deadline_rule or "").strip(),
+                        period=period,
+                        user_id=uid,
+                    )
+                )
+    return slots
+
+
+def submissions_for_slots(db: Session, tenant_id: int, slots: list[ExpectSlot]) -> list[ReportSubmission]:
+    if not slots:
+        return []
+    template_ids = {slot.template_id for slot in slots}
+    periods = {slot.period for slot in slots}
+    return list(
+        db.scalars(
+            select(ReportSubmission).where(
+                ReportSubmission.deleted == 0,
+                ReportSubmission.tenant_id == tenant_id,
+                ReportSubmission.template_id.in_(template_ids),
+                ReportSubmission.period.in_(periods),
+            )
+        ).all()
+    )
+
+
+def submission_index(rows: list[ReportSubmission]) -> dict[tuple[int, str, int], list[ReportSubmission]]:
+    grouped: dict[tuple[int, str, int], list[ReportSubmission]] = {}
+    for row in rows:
+        key = (row.template_id, (row.period or "").strip(), row.submitter_user_id)
+        grouped.setdefault(key, []).append(row)
+    return grouped
+
+
+def non_draft(rows: list[ReportSubmission]) -> list[ReportSubmission]:
+    return [row for row in rows if row.submit_status != "DRAFT"]
+
+
+def slot_approved(rows: list[ReportSubmission]) -> bool:
+    return any(row.submit_status == "APPROVED" for row in rows)
+
+
+def missed_status(rows: list[ReportSubmission]) -> str | None:
+    if slot_approved(rows):
+        return None
+    filed = non_draft(rows)
+    if not filed:
+        return "MISSED"
+    if any(not row.is_on_time for row in filed):
+        return "LATE"
+    return "PENDING_AUDIT"
+
+
+def slot_rollup(slots: list[ExpectSlot], index: dict[tuple[int, str, int], list[ReportSubmission]]) -> dict:
+    approved = sum(
+        1 for slot in slots if slot_approved(index.get((slot.template_id, slot.period, slot.user_id), []))
+    )
+    should = len(slots)
+    return {
+        "shouldCount": should,
+        "approvedCount": approved,
+        "completeRate": rate_pct(approved, should),
+    }
+
+
+def filed_slot_counts(
+    slots: list[ExpectSlot], index: dict[tuple[int, str, int], list[ReportSubmission]]
+) -> tuple[int, int]:
+    submitted = 0
+    on_time = 0
+    for slot in slots:
+        filed = non_draft(index.get((slot.template_id, slot.period, slot.user_id), []))
+        if not filed:
+            continue
+        submitted += 1
+        if all(row.is_on_time for row in filed):
+            on_time += 1
+    return submitted, on_time
+
+
+def missed_dept_name(db: Session, slot: ExpectSlot, cache: dict[int, str]) -> str:
+    if slot.dept_name:
+        return slot.dept_name
+    if slot.user_id in cache:
+        return cache[slot.user_id]
+    link = db.scalar(select(UserDept).where(UserDept.user_id == slot.user_id))
+    label = f"部门#{link.dept_id}" if link is not None else ""
+    cache[slot.user_id] = label
+    return label
+
+
 @router.get("/stat/complete-rate")
 def stat_complete_rate(
     statPeriod: str | None = None,
@@ -1090,59 +1452,65 @@ def stat_complete_rate(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    _ = deptId
     tenant_id = tenant_of(actor)
-    rows = list(db.scalars(submission_stat_filters(tenant_id, statPeriod, templateId)).all())
-    total = aggregate_submission_stats(db, rows)
+    slots = expectation_slots(db, tenant_id, scope_days(statPeriod), templateId, deptId)
+    index = submission_index(submissions_for_slots(db, tenant_id, slots))
+    total = slot_rollup(slots, index)
 
-    by_tpl: dict[int, list[ReportSubmission]] = {}
-    for row in rows:
-        by_tpl.setdefault(row.template_id, []).append(row)
     by_template = []
-    for tpl_id, group in by_tpl.items():
-        template = db.get(ReportTemplate, tpl_id)
-        stats = aggregate_submission_stats(db, group)
+    grouped_tpl: dict[int, list[ExpectSlot]] = {}
+    for slot in slots:
+        grouped_tpl.setdefault(slot.template_id, []).append(slot)
+    for tpl_id, group in grouped_tpl.items():
+        stats = slot_rollup(group, index)
+        submitted, on_time = filed_slot_counts(group, index)
         by_template.append(
             {
                 "templateId": tpl_id,
-                "templateName": template.template_name if template else "",
-                **stats,
+                "templateName": group[0].template_name,
+                "shouldCount": stats["shouldCount"],
+                "submittedCount": submitted,
+                "onTimeCount": on_time,
+                "approvedCount": stats["approvedCount"],
+                "completeRate": stats["completeRate"],
             }
         )
-    by_template.sort(key=lambda item: item["completeRate"], reverse=True)
+    by_template.sort(key=lambda item: (-item["completeRate"], item["templateId"]))
 
-    by_dept: dict[str, list[ReportSubmission]] = {}
-    for row in rows:
-        template = db.get(ReportTemplate, row.template_id)
-        dept_key = (template.dept_name if template else "") or "未分配"
-        by_dept.setdefault(dept_key, []).append(row)
+    by_dept_groups: dict[str, list[ExpectSlot]] = {}
+    for slot in slots:
+        by_dept_groups.setdefault(slot.dept_name or "未分配", []).append(slot)
     by_dept_list = []
-    for dept_name, group in by_dept.items():
-        stats = aggregate_submission_stats(db, group)
+    for dept_name, group in by_dept_groups.items():
+        stats = slot_rollup(group, index)
         by_dept_list.append(
             {
-                "deptId": 0,
+                "deptId": deptId or 0,
                 "deptName": dept_name,
                 "shouldCount": stats["shouldCount"],
                 "approvedCount": stats["approvedCount"],
                 "completeRate": stats["completeRate"],
             }
         )
-    by_dept_list.sort(key=lambda item: item["completeRate"], reverse=True)
+    by_dept_list.sort(key=lambda item: (-item["completeRate"], item["deptName"]))
 
+    pass_rows = list(db.scalars(submission_stat_filters(tenant_id, statPeriod, templateId)).all())
+    pass_stats = aggregate_submission_stats(db, pass_rows)
     today = datetime.now(BJ).strftime("%Y-%m-%d")
-    today_rows = [row for row in rows if row.period == today or bj_day(row.submitted_at) == today]
-    today_stats = aggregate_submission_stats(db, today_rows)
+    today_rows = [row for row in pass_rows if row.period == today or bj_day(row.submitted_at) == today]
+    filed_rows = non_draft(pass_rows)
+    today_slots = expectation_slots(db, tenant_id, [datetime.now(BJ).date()], templateId, deptId)
+    today_stats = slot_rollup(today_slots, submission_index(submissions_for_slots(db, tenant_id, today_slots)))
 
-    filed_rows = [row for row in rows if row.submit_status != "DRAFT"]
     return ok(
         {
             "totalCompleteRate": total["completeRate"],
             "shouldCount": total["shouldCount"],
-            "submittedCount": total["submittedCount"],
-            "approvedCount": total["approvedCount"],
-            "passRate": total["passRate"],
-            "rejectCount": total["rejectCount"],
+            "completeApprovedCount": total["approvedCount"],
+            "submittedCount": pass_stats["submittedCount"],
+            "approvedCount": pass_stats["approvedCount"],
+            "passRate": pass_stats["passRate"],
+            "rejectCount": pass_stats["rejectCount"],
             "todayCount": sum(1 for row in today_rows if row.submit_status != "DRAFT"),
             "todayCompleteRate": today_stats["completeRate"],
             "fieldCheckHitRate": field_check_hit_rate(db, filed_rows),
@@ -1169,42 +1537,75 @@ def stat_trend(
         stmt = stmt.where(ReportSubmission.template_id == templateId)
     rows = list(db.scalars(stmt.order_by(ReportSubmission.period.asc())).all())
     if dateRange:
-        parts = [p.strip() for p in dateRange.split(",") if p.strip()]
+        parts = [part.strip() for part in dateRange.split(",") if part.strip()]
         if len(parts) == 2:
-            rows = [r for r in rows if parts[0] <= r.period <= parts[1]]
+            rows = [row for row in rows if parts[0] <= (row.period or "") <= parts[1]]
 
     by_period: dict[str, list[ReportSubmission]] = {}
     for row in rows:
-        by_period.setdefault(row.period, []).append(row)
+        by_period.setdefault(row.period or "", []).append(row)
 
-    submission_ids = [r.id for r in rows]
-    reject_counts: dict[int, int] = {}
-    if submission_ids:
-        audit_rows = list(
-            db.scalars(
-                select(ReportAudit).where(
-                    ReportAudit.deleted == 0,
-                    ReportAudit.submission_id.in_(submission_ids),
-                    ReportAudit.conclusion == "REJECTED",
-                )
-            ).all()
-        )
-        for audit in audit_rows:
-            reject_counts[audit.submission_id] = reject_counts.get(audit.submission_id, 0) + 1
+    range_days = days_in_range(dateRange)
+    slots = expectation_slots(db, tenant_id, range_days, templateId, None) if range_days else []
+    slot_index = submission_index(submissions_for_slots(db, tenant_id, slots))
+    slots_by_period: dict[str, list[ExpectSlot]] = {}
+    for slot in slots:
+        slots_by_period.setdefault(slot.period, []).append(slot)
 
     trend = []
-    for period in sorted(by_period.keys()):
-        group = by_period[period]
-        stats = aggregate_submission_stats(db, group)
-        reject_hits = sum(1 for r in group if reject_counts.get(r.id, 0) > 0)
+    for period in sorted(set(by_period) | set(slots_by_period)):
+        group = by_period.get(period, [])
+        submitted = sum(1 for row in group if row.submit_status != "DRAFT")
+        approved = sum(1 for row in group if row.submit_status == "APPROVED")
+        rejected = sum(1 for row in group if row.submit_status == "REJECTED")
+        rollup = slot_rollup(slots_by_period.get(period, []), slot_index)
         trend.append(
             {
                 "statPeriod": period,
-                "shouldCount": stats["shouldCount"],
-                "submittedCount": stats["submittedCount"],
-                "approvedCount": stats["approvedCount"],
-                "completeRate": stats["completeRate"],
-                "rejectRate": rate_pct(reject_hits, stats["shouldCount"]),
+                "shouldCount": rollup["shouldCount"],
+                "submittedCount": submitted,
+                "approvedCount": approved,
+                "completeRate": rollup["completeRate"],
+                "rejectRate": rate_pct(rejected, submitted),
             }
         )
     return ok(trend)
+
+
+@router.get("/stat/missed")
+def stat_missed(
+    statPeriod: str | None = None,
+    templateId: int | None = None,
+    deptId: int | None = None,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """未交清单。审核通过的槽位不算未交；同一槽位多份填报单只占一行。"""
+    page_no, size = page_args(pageNo, pageSize)
+    tenant_id = tenant_of(actor)
+    slots = expectation_slots(db, tenant_id, scope_days(statPeriod), templateId, deptId)
+    index = submission_index(submissions_for_slots(db, tenant_id, slots))
+    names = user_names(db, {slot.user_id for slot in slots})
+    dept_cache: dict[int, str] = {}
+    items = []
+    for slot in slots:
+        status = missed_status(index.get((slot.template_id, slot.period, slot.user_id), []))
+        if status is None:
+            continue
+        due = f"{slot.period} {slot.deadline_rule}".strip()
+        items.append(
+            {
+                "userId": slot.user_id,
+                "userName": names.get(slot.user_id, ""),
+                "deptName": missed_dept_name(db, slot, dept_cache),
+                "templateName": slot.template_name,
+                "period": slot.period,
+                "dueTime": due,
+                "status": status,
+            }
+        )
+    items.sort(key=lambda row: (row["period"], row["templateName"], row["userId"]))
+    start = (page_no - 1) * size
+    return paged(items[start : start + size], len(items), page_no, size)

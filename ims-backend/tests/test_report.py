@@ -253,10 +253,62 @@ def test_report_audit_1124_reject_reason_required():
     assert bad.json()["code"] == 1124
 
 
+def report_user_ids(count: int) -> list[int]:
+    from app.core import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.username == "admin", User.deleted == 0).one()
+        ids = [admin.id]
+        tenant_id = admin.tenant_id or 0
+        for index in range(1, count):
+            username = f"rpt_expect_{index}"
+            row = db.query(User).filter(User.username == username).one_or_none()
+            if row is None:
+                row = User(
+                    username=username,
+                    nickname=f"应报人{index}",
+                    status="ENABLED",
+                    tenant_id=tenant_id,
+                    deleted=0,
+                )
+                db.add(row)
+                db.flush()
+            row.status = "ENABLED"
+            row.deleted = 0
+            row.tenant_id = tenant_id
+            ids.append(row.id)
+        db.commit()
+        return ids
+    finally:
+        db.close()
+
+
+def put_user_assignees(auth: dict, template_id: int, user_ids: list[int], name: str = "填报测试模板") -> None:
+    updated = client.put(
+        f"/admin-api/ims/report/template/{template_id}",
+        headers=auth,
+        json={
+            "templateName": name,
+            "periodType": "DAILY",
+            "fieldsSchema": [
+                {"fieldKey": "metric_value", "fieldLabel": "指标", "fieldType": "NUMBER", "required": True},
+            ],
+            "status": "ENABLED",
+            "businessLine": "BUSINESS",
+            "assignees": [{"assignType": "USER", "targetIds": user_ids}],
+        },
+    )
+    assert updated.json()["code"] == 0
+
+
 def test_report_stat_complete_rate_after_approve():
     auth = headers()
     author_id, account_id, _ = seed_author_accounts()
     template_id = create_enabled_template(auth)
+    admin_id = report_user_ids(1)[0]
+    put_user_assignees(auth, template_id, [admin_id])
     period = "2026-10-11"
     sub = submit_one(auth, template_id, author_id, account_id, period)
     client.put(
@@ -267,10 +319,12 @@ def test_report_stat_complete_rate_after_approve():
     stat = client.get(
         "/admin-api/ims/report/stat/complete-rate",
         headers=auth,
-        params={"statPeriod": period},
+        params={"statPeriod": period, "templateId": template_id},
     )
     body = stat.json()
     assert body["code"] == 0
+    assert body["data"]["shouldCount"] == 1
+    assert body["data"]["completeApprovedCount"] == 1
     assert body["data"]["totalCompleteRate"] == 100.0
     assert any(row["templateId"] == template_id for row in body["data"]["byTemplate"])
 
@@ -325,16 +379,179 @@ def test_report_stat_pass_rate_excludes_reject_from_completion():
     )
     body = stat.json()
     assert body["code"] == 0
-    assert body["data"]["shouldCount"] == 3
+    assert body["data"]["shouldCount"] == 0
+    assert body["data"]["completeApprovedCount"] == 0
     assert body["data"]["submittedCount"] == 2
     assert body["data"]["approvedCount"] == 1
-    assert body["data"]["totalCompleteRate"] == 33.33
+    assert body["data"]["totalCompleteRate"] == 0.0
     assert body["data"]["passRate"] == 50.0
     assert body["data"]["totalCompleteRate"] != body["data"]["passRate"]
     assert body["data"]["rejectCount"] == 1
     assert body["data"]["todayCount"] == 2
     assert body["data"]["fieldCheckHitRate"] == 100.0
     assert body["data"]["avgAuditHours"] >= 0
+
+
+def test_report_stat_expected_count_includes_people_who_did_not_file():
+    auth = headers()
+    author_id, account_id, _ = seed_author_accounts()
+    author2, account2, _ = seed_author_accounts()
+    user_ids = report_user_ids(3)
+    template_id = create_enabled_template(auth)
+    put_user_assignees(auth, template_id, user_ids)
+    period = "2026-12-01"
+    first = submit_one(auth, template_id, author_id, account_id, period)
+    second = submit_one(auth, template_id, author2, account2, period)
+    for submission in (first, second):
+        assert (
+            client.put(
+                f"/admin-api/ims/report/audit/{submission['id']}",
+                headers=auth,
+                json={"conclusion": "APPROVED"},
+            ).json()["code"]
+            == 0
+        )
+    stat = client.get(
+        "/admin-api/ims/report/stat/complete-rate",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": period},
+    )
+    data = stat.json()["data"]
+    assert stat.json()["code"] == 0
+    assert data["shouldCount"] == 3
+    assert data["completeApprovedCount"] == 1
+    assert data["approvedCount"] == 2
+    assert data["submittedCount"] == 2
+    assert data["totalCompleteRate"] == 33.33
+    assert data["totalCompleteRate"] <= 33.33
+    assert data["passRate"] == 100.0
+    missed = client.get(
+        "/admin-api/ims/report/stat/missed",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": period, "pageNo": 1, "pageSize": 20},
+    )
+    missed_body = missed.json()
+    assert missed_body["code"] == 0
+    rows = missed_body["data"]["list"]
+    missed_ids = {row["userId"] for row in rows if row["status"] == "MISSED"}
+    assert set(user_ids[1:]) <= missed_ids
+    assert user_ids[0] not in {row["userId"] for row in rows}
+    assert all(row["status"] == "MISSED" for row in rows if row["userId"] in user_ids[1:])
+
+
+def test_report_stat_rotation_counts_one_duty_user():
+    from datetime import date
+
+    auth = headers()
+    user_ids = report_user_ids(3)
+    day = date(2026, 12, 2)
+    period = day.isoformat()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "轮值应报",
+            "periodType": "DAILY",
+            "fieldsSchema": [
+                {"fieldKey": "metric_value", "fieldLabel": "指标", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [
+                {
+                    "assignType": "DEPT_ROTATION",
+                    "rotationList": [
+                        {"userId": uid, "order": index + 1} for index, uid in enumerate(user_ids)
+                    ],
+                }
+            ],
+        },
+    )
+    assert created.json()["code"] == 0
+    template_id = created.json()["data"]["id"]
+    duty = user_ids[day.toordinal() % len(user_ids)]
+    stat = client.get(
+        "/admin-api/ims/report/stat/complete-rate",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": period},
+    )
+    data = stat.json()["data"]
+    assert data["shouldCount"] == 1
+    assert data["completeApprovedCount"] == 0
+    assert data["totalCompleteRate"] == 0.0
+    missed = client.get(
+        "/admin-api/ims/report/stat/missed",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": period, "pageNo": 1, "pageSize": 20},
+    )
+    rows = missed.json()["data"]["list"]
+    assert [row["userId"] for row in rows] == [duty]
+    assert rows[0]["status"] == "MISSED"
+
+
+def test_report_stat_position_expands_to_enabled_users():
+    from app.core import SessionLocal
+    from app.models import Role, User, UserRole
+
+    auth = headers()
+    user_ids = report_user_ids(3)
+    holders = user_ids[1:]
+    role_key = "rpt_pos_b047"
+    db = SessionLocal()
+    try:
+        admin = db.query(User).filter(User.id == user_ids[0]).one()
+        tenant_id = admin.tenant_id or 0
+        role = db.query(Role).filter(Role.role_key == role_key).one_or_none()
+        if role is None:
+            role = Role(
+                role_name="上报岗位",
+                role_key=role_key,
+                dingtalk_position=role_key,
+                status="ENABLED",
+                tenant_id=tenant_id,
+                deleted=0,
+            )
+            db.add(role)
+            db.flush()
+        role.status = "ENABLED"
+        role.deleted = 0
+        role.tenant_id = tenant_id
+        role.dingtalk_position = role_key
+        for uid in holders:
+            link = db.query(UserRole).filter(UserRole.user_id == uid, UserRole.role_id == role.id).one_or_none()
+            if link is None:
+                db.add(UserRole(user_id=uid, role_id=role.id, tenant_id=tenant_id))
+        db.commit()
+    finally:
+        db.close()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "岗位应报",
+            "periodType": "DAILY",
+            "fieldsSchema": [
+                {"fieldKey": "metric_value", "fieldLabel": "指标", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [{"assignType": "POSITION", "targetCodes": [role_key]}],
+        },
+    )
+    assert created.json()["code"] == 0
+    template_id = created.json()["data"]["id"]
+    period = "2026-12-03"
+    stat = client.get(
+        "/admin-api/ims/report/stat/complete-rate",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": period},
+    )
+    data = stat.json()["data"]
+    assert data["shouldCount"] == 2
+    assert data["completeApprovedCount"] == 0
+    missed = client.get(
+        "/admin-api/ims/report/stat/missed",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": period, "pageNo": 1, "pageSize": 20},
+    )
+    missed_ids = {row["userId"] for row in missed.json()["data"]["list"]}
+    assert missed_ids == set(holders)
 
 
 def test_report_template_expr_rejects_delete_and_drop():

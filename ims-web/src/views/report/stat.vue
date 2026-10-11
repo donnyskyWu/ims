@@ -28,7 +28,7 @@
         <div class="n" data-testid="stat-complete-rate" :style="{ color: rateColor(summary?.totalCompleteRate ?? 0) }">
           {{ summary?.totalCompleteRate ?? 0 }}%
         </div>
-        <div class="d">审核通过 ÷ 应提交（{{ summary?.approvedCount ?? 0 }}/{{ summary?.shouldCount ?? 0 }}）</div>
+        <div class="d">审核通过 ÷ 应提交（{{ summary?.completeApprovedCount ?? 0 }}/{{ summary?.shouldCount ?? 0 }}）</div>
         <div class="rate-track" data-testid="stat-target-line">
           <div class="rate-fill" :style="{ width: barWidth(summary?.totalCompleteRate ?? 0) }"></div>
           <i class="target-mark" title="目标线 95%"></i>
@@ -97,6 +97,15 @@
       <button type="button" class="tab" :class="{ on: tab === 'trend' }" @click="tab = 'trend'">
         周期趋势
       </button>
+      <button
+        type="button"
+        class="tab"
+        :class="{ on: tab === 'missed' }"
+        data-testid="stat-missed-tab"
+        @click="tab = 'missed'"
+      >
+        未交清单
+      </button>
     </div>
 
     <div v-if="error" class="hint" style="color: var(--red)">{{ error }}</div>
@@ -153,7 +162,7 @@
       </div>
     </div>
 
-    <div v-else class="tbl-block">
+    <div v-else-if="tab === 'trend'" class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -180,6 +189,39 @@
         </table>
       </div>
     </div>
+
+    <div v-else-if="tab === 'missed'" class="tbl-block" data-testid="stat-missed">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>填报人</th>
+              <th>部门</th>
+              <th>模板</th>
+              <th>周期</th>
+              <th>截止</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading">
+              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+            </tr>
+            <tr v-else-if="!missed.length">
+              <td colspan="6"><div class="empty"><div class="et">暂无未交</div></div></td>
+            </tr>
+            <tr v-for="row in missed" v-else :key="`${row.templateName}-${row.period}-${row.userId}`">
+              <td>{{ row.userName }}</td>
+              <td>{{ row.deptName || '—' }}</td>
+              <td>{{ row.templateName }}</td>
+              <td class="mono">{{ row.period }}</td>
+              <td class="mono">{{ row.dueTime }}</td>
+              <td>{{ missedLabel(row.status) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -191,6 +233,7 @@ import { errorMessage, http } from '../../api/http'
 type Summary = {
   totalCompleteRate: number
   shouldCount: number
+  completeApprovedCount: number
   submittedCount: number
   approvedCount: number
   passRate: number
@@ -223,6 +266,16 @@ type TrendRow = {
   rejectRate: number
 }
 
+type MissedRow = {
+  userId: number
+  userName: string
+  deptName: string
+  templateName: string
+  period: string
+  dueTime: string
+  status: string
+}
+
 type TemplateOpt = { id: number; templateName: string }
 
 const router = useRouter()
@@ -231,7 +284,8 @@ const templateId = ref(0)
 const templates = ref<TemplateOpt[]>([])
 const summary = ref<Summary | null>(null)
 const trend = ref<TrendRow[]>([])
-const tab = ref<'template' | 'dept' | 'trend'>('template')
+const missed = ref<MissedRow[]>([])
+const tab = ref<'template' | 'dept' | 'trend' | 'missed'>('template')
 const loading = ref(false)
 const error = ref('')
 
@@ -279,6 +333,12 @@ function go(path: string) {
   router.push(path)
 }
 
+function missedLabel(status: string) {
+  if (status === 'LATE') return '迟交'
+  if (status === 'PENDING_AUDIT') return '待审核'
+  return '未交'
+}
+
 function rateColor(rate: number) {
   if (rate >= 95) return 'var(--green)'
   if (rate >= 90) return 'var(--orange, #e6a700)'
@@ -314,9 +374,12 @@ async function loadAll() {
     if (templateId.value) trendParams.templateId = templateId.value
     const tr = await http.get('/report/stat/trend', { params: trendParams })
     trend.value = tr.data.data || []
+    const missedRes = await http.get('/report/stat/missed', { params: { ...params, pageNo: 1, pageSize: 100 } })
+    missed.value = missedRes.data.data?.list || []
   } catch (err) {
     error.value = errorMessage(err)
     summary.value = null
+    missed.value = []
   } finally {
     loading.value = false
   }
