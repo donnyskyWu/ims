@@ -1618,11 +1618,10 @@ def _is_cert_rule(rule: AlertRule) -> bool:
 
 
 def _is_live_session_rule(rule: AlertRule) -> bool:
-    """直播场次对象。不把「直播数据延迟」这类采集延迟规则当成场次。"""
+    """只把直播风险规则绑到场次。监控对象选「直播管理」仍是模块，不拿最近一场去合并。"""
     text = _rule_text(rule)
     upper = text.upper()
-    module = getattr(rule, "source_module", None) or ""
-    return "LIVE_RISK" in upper or "直播风险" in text or module == "直播管理"
+    return "LIVE_RISK" in upper or "直播风险" in text
 
 
 def _days_limit(expr: str) -> int:

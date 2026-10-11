@@ -38,7 +38,7 @@
     <p v-if="tab === 'live'" class="hint" data-testid="alert-threshold-hint">
       阈值配置在
       <router-link to="/ims/collect/threshold">数据采集 → 阈值规则</router-link>
-      ；本页按级别（严重/警告/提示）展示实例与处置。状态：未响应 / 已确认 / 已处理 / 误报。
+      ；本页按级别（严重/警告/提示）展示实例与处置。
     </p>
 
     <div v-if="tab === 'live'" class="g2" style="margin: 12px 0">

@@ -29,7 +29,7 @@ test.describe('alert rule create trial closure', () => {
 
     const row = page.locator('tbody tr').filter({ hasText: code })
     await expect(row).toBeVisible({ timeout: 15_000 })
-    const hitCell = row.locator('td.num').nth(1)
+    const hitCell = row.getByTestId('alert-rule-hit')
     await expect(hitCell).toHaveText('0')
 
     await row.getByRole('button', { name: '试跑' }).click()

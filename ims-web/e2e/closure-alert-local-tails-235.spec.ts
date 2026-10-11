@@ -23,7 +23,7 @@ test.describe('alert local form and receipt edges', () => {
     await page.getByRole('button', { name: '新建规则' }).click()
     const modal = page.locator('.card').filter({ has: page.locator('h3', { hasText: '注册预警规则' }) })
     await modal.getByRole('button', { name: '保存' }).click()
-    await expect(modal.getByTestId('alert-rule-form-error')).toContainText('规则编码或名称至少填一项')
+    await expect(modal.getByTestId('alert-rule-name-error')).toContainText('必填项，请填写')
     await page.screenshot({ path: `${shotDir}/01-rule-required.png` })
 
     await modal.locator('input[placeholder="live.data.delay"]').fill(code)
@@ -50,7 +50,7 @@ test.describe('alert local form and receipt edges', () => {
     const edit = page.locator('.card').filter({ has: page.locator('h3', { hasText: '编辑预警规则' }) })
     await edit.getByTestId('alert-rule-name').fill('')
     await edit.getByRole('button', { name: '保存' }).click()
-    await expect(edit.getByTestId('alert-rule-name-error')).toContainText('规则名称不能为空')
+    await expect(edit.getByTestId('alert-rule-name-error')).toContainText('必填项，请填写')
     await page.screenshot({ path: `${shotDir}/04-name-required.png` })
     await edit.getByRole('button', { name: '取消' }).click()
 

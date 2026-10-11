@@ -64,7 +64,7 @@
               <td class="mono" data-testid="alert-rule-trigger">{{ row.thresholdExpr || '—' }}</td>
               <td>{{ levelLabel(row.level) }}</td>
               <td data-testid="alert-rule-chain-cell">{{ row.escalationChain || '30/60 分钟 · 严重从二级起跳' }}</td>
-              <td class="num">{{ row.hitCount }}</td>
+              <td class="num" data-testid="alert-rule-hit">{{ row.hitCount }}</td>
               <td>{{ row.enabled ? '启用' : '停用' }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="toggle(row)">
