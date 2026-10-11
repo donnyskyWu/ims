@@ -123,6 +123,17 @@ def active_primary(db: Session, tenant_id: int, user_id: int) -> EffRelation | N
     )
 
 
+def share_text(value: float) -> str:
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def part_time_over_msg(total: float) -> str:
+    return f"该人员兼职分摊合计 {share_text(total)}% 超 100%"
+
+
 def part_time_sum(db: Session, tenant_id: int, user_id: int) -> float:
     rows = db.scalars(
         select(EffRelation).where(
@@ -183,11 +194,11 @@ def relation_create(
         if body.shareRatio != 100:
             return fail(1001, "主归属分摊比例必须为 100%")
         if active_primary(db, tenant_id, body.userId) is not None:
-            return fail(1198, "在职人员已存在主归属")
+            return fail(1198, "该人员已有生效主归属（BR-213 在职唯一主归属）")
     else:
         total = part_time_sum(db, tenant_id, body.userId) + body.shareRatio
         if total > 100:
-            return fail(1199, "兼职分摊比例合计超过 100%")
+            return fail(1199, part_time_over_msg(total))
     now = utcnow()
     eff_from = body.effectiveFrom.strip() or datetime.now(BJ).strftime("%Y-%m-%d")
     row = EffRelation(
@@ -247,7 +258,7 @@ def relation_change(
         if row.relation_type == "PART_TIME":
             existing -= float(row.share_ratio or 0)
         if existing + new_ratio > 100:
-            return fail(1199, "兼职分摊比例合计超过 100%")
+            return fail(1199, part_time_over_msg(existing + new_ratio))
     now = utcnow()
     row.effective_to = effective
     row.status = "HISTORICAL"

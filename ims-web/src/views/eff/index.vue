@@ -34,6 +34,7 @@
     </div>
 
     <template v-if="tab === 'relation'">
+      <p v-if="relationToast" class="hint" data-testid="eff-save-toast">{{ relationToast }}</p>
       <p v-if="listError" class="hint" style="color: var(--red)" data-testid="eff-list-error">{{ listError }}</p>
       <form class="qbar" @submit.prevent="loadRelations">
         <select v-model="filters.userId" style="width: 160px" data-testid="eff-filter-user">
@@ -67,11 +68,11 @@
               <tr v-else-if="!relations.length"><td colspan="7"><div class="empty"><div class="et">暂无归属</div></div></td></tr>
               <tr v-for="row in relations" v-else :key="row.id">
                 <td>{{ row.userName || row.userId }}</td>
-                <td>{{ row.relationType }}</td>
-                <td>{{ row.targetName }}</td>
+                <td>{{ typeLabel(row.relationType) }}</td>
+                <td>{{ targetLabel(row) }}</td>
                 <td class="num">{{ row.shareRatio }}%</td>
                 <td>{{ row.effectiveFrom }}</td>
-                <td>{{ row.status }}</td>
+                <td>{{ statusLabel(row.status) }}</td>
                 <td>
                   <button v-if="showCreate && row.status === 'ACTIVE'" class="btn btn-sec btn-sm" type="button" data-testid="eff-change" @click="openChange(row)">变更</button>
                   <button v-if="canDelete" class="btn btn-sec btn-sm" type="button" data-testid="eff-delete" @click="removeRelation(row)">删除</button>
@@ -289,6 +290,7 @@ const coverage = ref<{
 const users = ref<NamedUser[]>([])
 const targets = ref<TargetOption[]>([])
 const listError = ref('')
+const relationToast = ref('')
 const changing = ref<Relation | null>(null)
 const changeError = ref('')
 const changeForm = reactive({
@@ -383,6 +385,31 @@ async function loadCoverage() {
 
 function userLabel(item: NamedUser) {
   return item.nickname || item.username || item.id
+}
+
+function typeLabel(value: string) {
+  if (value === 'PRIMARY') return '主归属'
+  if (value === 'PART_TIME') return '兼职'
+  return value || '—'
+}
+
+function statusLabel(value: string) {
+  if (value === 'ACTIVE') return '生效'
+  if (value === 'HISTORICAL') return '历史'
+  return value || '—'
+}
+
+function targetTypeLabel(value: string) {
+  if (value === 'IP_GROUP') return 'IP组'
+  if (value === 'TEAM') return '小组'
+  if (value === 'ACCOUNT') return '账号'
+  return value || ''
+}
+
+function targetLabel(row: Relation) {
+  const prefix = targetTypeLabel(row.targetType)
+  const name = row.targetName || '—'
+  return prefix ? `${prefix} · ${name}` : name
 }
 
 function onTypeChange() {
@@ -579,6 +606,7 @@ async function submitCreate() {
       shareRatio: form.relationType === 'PRIMARY' ? 100 : form.shareRatio,
     })
     showForm.value = false
+    relationToast.value = '归属已建立'
     await loadCoverage()
     await loadRelations()
     if (tab.value === 'board') await loadBoard()
@@ -616,6 +644,7 @@ async function submitChange() {
       effectiveDate: changeForm.effectiveDate,
     })
     changing.value = null
+    relationToast.value = '变更已生效，历史归属保留（时间段留痕）'
     await loadRelations()
     await loadCoverage()
   } catch (error) {

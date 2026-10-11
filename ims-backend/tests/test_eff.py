@@ -270,6 +270,39 @@ def test_bug_c054_change_delete_and_permission_message():
     assert blocked.json()["msg"]
 
 
+def test_bug_c055_primary_and_part_time_messages():
+    import random
+
+    auth = headers()
+    uid = random.randint(900_000, 999_989)
+    first = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PRIMARY", "targetName": "主", "shareRatio": 100},
+    )
+    assert first.json()["code"] == 0, first.json()
+    second = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PRIMARY", "targetName": "又一个主", "shareRatio": 100},
+    )
+    assert second.json()["code"] == 1198
+    assert second.json()["msg"] == "该人员已有生效主归属（BR-213 在职唯一主归属）"
+    part = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PART_TIME", "targetName": "兼职甲", "shareRatio": 60},
+    )
+    assert part.json()["code"] == 0, part.json()
+    over = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": uid, "relationType": "PART_TIME", "targetName": "兼职乙", "shareRatio": 50},
+    )
+    assert over.json()["code"] == 1199
+    assert over.json()["msg"] == "该人员兼职分摊合计 110% 超 100%"
+
+
 def test_eff_inventory_snapshot():
     auth = headers()
     snap = client.get("/admin-api/ims/eff/inventory/snapshot", headers=auth)
