@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>学习任务管理</h1>
-        <div class="sub">TRAIN-002 · 资料多选 · DURATION/QUIZ · 02 TRAIN</div>
+        <div class="sub">资料可多选 · 按时长或测验</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">下达学习任务</button>

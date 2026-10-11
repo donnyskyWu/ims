@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>上报模板</h1>
-        <div class="sub">REPORT-001 · /admin-api/ims/report/template · 09 REPORT</div>
+        <div class="sub">维护数据上报模板</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建模板</button>

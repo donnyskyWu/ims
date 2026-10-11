@@ -3,14 +3,14 @@
     <div class="pg-h">
       <div>
         <h1>我的日报</h1>
-        <div class="sub">MEET-001 · 三段式日报 · 与 09 数据上报分离</div>
+        <div class="sub">三段式日报 · 与数据上报分离</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="goSubmit">填写今日日报</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      截止 {{ templateInfo.deadlineTime || '22:00' }} · 已提交后正文只读，修改走补充说明（1112）。
+      截止 {{ templateInfo.deadlineTime || '22:00' }} · 已提交后正文只读，修改走补充说明。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.dateFrom" type="date" style="width: 140px" />

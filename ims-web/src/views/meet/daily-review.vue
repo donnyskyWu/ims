@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>待我审阅</h1>
-        <div class="sub">MEET-002 · 一级 24h 超时标红 · 二级审阅完成后状态 READ</div>
+        <div class="sub">一级超过 24 小时标红 · 二级审阅完成后为已审阅</div>
       </div>
     </div>
     <div class="tabs">

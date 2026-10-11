@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>完成率统计</h1>
-        <div class="sub">REPORT-004 · BR-106 质量口径 · 09 REPORT</div>
+        <div class="sub">完成率与质量口径</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/report/submission')">填报单管理</button>

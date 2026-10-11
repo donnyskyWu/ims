@@ -3,11 +3,11 @@
     <div class="pg-h">
       <div>
         <h1>提交率统计</h1>
-        <div class="sub">MEET-003 · BR-103 按时提交率</div>
+        <div class="sub">按时提交率</div>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      分子 = 22:00 前提交（isOnTime）；分母 = 已提交日报（非草稿）。目标 &gt;95%（BR-103）。
+      分子 = 当日 22:00 前提交；分母 = 已提交日报（不含草稿）。目标大于 95%。
     </p>
     <form class="qbar" @submit.prevent="load">
       <input v-model="dateFrom" placeholder="起始 yyyy-MM-dd" style="width: 140px" />

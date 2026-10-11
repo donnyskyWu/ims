@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>学习中心</h1>
-        <div class="sub">TRAIN-002 · 任务 #{{ taskId }} · 学习执行</div>
+        <div class="sub">任务 #{{ taskId }} · 学习执行</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="router.push('/ims/train/task')">返回任务列表</button>

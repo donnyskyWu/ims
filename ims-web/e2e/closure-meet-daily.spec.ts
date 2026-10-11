@@ -5,6 +5,8 @@ test('会议预约空表单提示必填，日报填写页有类型且正文可�
   const pageErrors = attachClosurePageHooks(page)
   await loginAdmin(page)
   await expect(page.locator('.nc', { hasText: '03 MEET' })).toHaveCount(0)
+  await expect(page.locator('.nc', { hasText: '09 REPORT' })).toHaveCount(0)
+  await expect(page.locator('.nc', { hasText: '02 TRAIN' })).toHaveCount(0)
 
   await page.goto('/ims/meet/minutes')
   await expect(page.getByTestId('meet-book')).toBeVisible()
@@ -30,6 +32,9 @@ test('会议预约空表单提示必填，日报填写页有类型且正文可�
   await expect(teamStatus.getByRole('option', { name: '已审阅' })).toHaveCount(1)
 
   await page.goto('/ims/meet/daily/submit')
+  await expect(page.locator('.crumb')).toContainText('日报中心 / 填写日报')
+  await expect(page.locator('.crumb')).not.toContainText('建设中')
+  await expect(page.locator('.sub')).not.toContainText('MEET-')
   await expect(page.getByTestId('daily-type')).toBeVisible()
   await expect(page.getByText('今日完成 *')).toBeVisible()
   await expect(page.getByText('明日计划 *')).toHaveCount(0)

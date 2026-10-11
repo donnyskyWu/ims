@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>会议管理</h1>
-        <div class="sub">MEET-004 · 纪要登记</div>
+        <div class="sub">纪要登记</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="meet-book" @click="openCreate">预约会议</button>

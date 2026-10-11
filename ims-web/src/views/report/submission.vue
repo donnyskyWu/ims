@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>填报单管理</h1>
-        <div class="sub">REPORT-002/003 · 审核队列 SLA 24h · 09 REPORT</div>
+        <div class="sub">审核队列 · 24 小时内处理</div>
       </div>
       <div class="acts">
         <button v-if="tab === 'list'" class="btn btn-pri btn-sm" type="button" @click="openSubmit">提交填报单</button>

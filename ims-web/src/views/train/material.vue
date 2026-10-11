@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>培训资料库</h1>
-        <div class="sub">TRAIN-001 · DOC/VIDEO/LINK · 02 TRAIN</div>
+        <div class="sub">文档、视频或链接</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>

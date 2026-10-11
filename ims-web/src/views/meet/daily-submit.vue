@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>填写日报</h1>
-        <div class="sub">MEET-001 · 草稿自动保存 · 正式提交</div>
+        <div class="sub">草稿自动保存 · 正式提交</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goBack">返回我的日报</button>

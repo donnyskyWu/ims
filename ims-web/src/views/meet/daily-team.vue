@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>团队日报</h1>
-        <div class="sub">MEET-002 · 本部门/权限范围内他人日报（不含本人）</div>
+        <div class="sub">本部门/权限范围内他人日报（不含本人）</div>
       </div>
     </div>
     <form class="qbar" @submit.prevent="loadList">

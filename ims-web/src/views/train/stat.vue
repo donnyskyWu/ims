@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>培训统计看板</h1>
-        <div class="sub">TRAIN-003 · BR-102 完成率 / 逾期督办 · 02 TRAIN</div>
+        <div class="sub">完成率与逾期督办</div>
       </div>
       <router-link class="btn btn-sec btn-sm" to="/ims/train/task">学习任务</router-link>
     </div>
