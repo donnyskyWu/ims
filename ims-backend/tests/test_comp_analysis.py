@@ -212,3 +212,26 @@ def test_comp_work_low_score_requires_threshold():
     assert low_body["code"] == 0
     assert low_body["data"]["total"] == 1
     assert low_body["data"]["list"][0]["title"] == "对手日常更新"
+
+
+def test_comp_work_and_account_export_follow_filter():
+    seed_external_works()
+    seed_external_accounts()
+    auth = headers()
+    exported = client.get(
+        "/admin-api/ims/comp-analysis/work/export",
+        headers=auth,
+        params={"segment": "HIT", "platformType": "DOUYIN"},
+    )
+    assert exported.status_code == 200
+    assert exported.headers["x-export-rows"] == "1"
+    assert "对手爆款复盘" in exported.text
+
+    accounts = client.get(
+        "/admin-api/ims/comp-analysis/account/export",
+        headers=auth,
+        params={"segment": "ALL", "accountName": "高粉"},
+    )
+    assert accounts.status_code == 200
+    assert accounts.headers["x-export-rows"] == "1"
+    assert "竞品高粉号" in accounts.text

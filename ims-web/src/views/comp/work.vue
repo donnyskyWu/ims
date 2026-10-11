@@ -6,10 +6,12 @@
         <div class="sub">Tab：全部/爆款/低分 · oa_external_work · 18a COMPA</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="comp-work-export" @click="exportCsv">导出</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/collect/threshold')">阈值规则</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/collect/external/account')">竞品账号配置</button>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="comp-work-export-note">{{ exportNote }}</p>
     <p class="hint" style="margin-bottom: 8px">
       爆款默认播放 ≥100w · 低分完播 &lt;20% · 阈值只读引用 COLLECT WORK 规则。
     </p>
@@ -89,6 +91,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import { downloadAdminCsv } from '../../utils/downloadExport'
 
 const router = useRouter()
 const tabs = [
@@ -112,6 +115,7 @@ const rows = ref<
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
+const exportNote = ref('')
 const filters = reactive({ platformType: '', ipGroupId: null as number | null, accountIdentifier: '' })
 
 function go(path: string) {
@@ -154,6 +158,21 @@ async function loadList() {
 function switchSegment(value: string) {
   segment.value = value
   loadList()
+}
+
+async function exportCsv() {
+  exportNote.value = ''
+  const result = await downloadAdminCsv(
+    '/comp-analysis/work/export',
+    {
+      segment: segment.value,
+      platformType: filters.platformType,
+      ipGroupId: filters.ipGroupId,
+      accountIdentifier: filters.accountIdentifier,
+    },
+    'comp_works.csv',
+  )
+  exportNote.value = result.message
 }
 
 function resetFilters() {

@@ -6,10 +6,12 @@
         <div class="sub">IP 主题/行业 · oa_external_account/work · 18 MON</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="mon-export" @click="exportCsv">导出</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/int/work')">内部作品</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/comp/work')">竞品作品</button>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="mon-export-note">{{ exportNote }}</p>
     <p class="hint" style="margin-bottom: 8px">
       内部作品/账号 → <b>内部分析</b>；外部竞品 → <b>竞品分析</b>；本页仅 IP 主题/行业聚合（UX-M7）。
     </p>
@@ -77,6 +79,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import { downloadRowsCsv } from '../../utils/downloadExport'
 
 const router = useRouter()
 const tabs = [
@@ -96,6 +99,7 @@ const rows = ref<
 const total = ref(0)
 const loading = ref(false)
 const error = ref('')
+const exportNote = ref('')
 const filters = reactive({ platformType: '', ipGroupId: null as number | null, keyword: '' })
 
 const dimensionLabel = computed(() => (dimension.value === 'IP_THEME' ? 'IP 主题' : '行业'))
@@ -132,6 +136,40 @@ async function loadList() {
 function switchDimension(value: string) {
   dimension.value = value
   loadList()
+}
+
+async function exportCsv() {
+  exportNote.value = ''
+  const path = dimension.value === 'IP_THEME' ? '/monitor/ip-theme/page' : '/monitor/industry/page'
+  const collected: typeof rows.value = []
+  let page = 1
+  let expected = 0
+  try {
+    while (page <= 50) {
+      const params: Record<string, string | number> = { pageNo: page, pageSize: 100 }
+      if (filters.platformType) params.platformType = filters.platformType
+      if (filters.ipGroupId) params.ipGroupId = filters.ipGroupId
+      if (filters.keyword) params.keyword = filters.keyword
+      const res = await http.get(path, { params })
+      if (res.data.code !== 0) {
+        exportNote.value = res.data.msg || '导出失败'
+        return
+      }
+      const list = res.data.data.list || []
+      expected = res.data.data.total || 0
+      collected.push(...list)
+      if (collected.length >= expected || !list.length) break
+      page += 1
+    }
+    const count = downloadRowsCsv(
+      'monitor.csv',
+      ['维度', '外部账号数', '作品数', '爆款数'],
+      collected.map((row) => [row.dimensionLabel, row.externalAccountCount, row.workCount, row.hitCount]),
+    )
+    exportNote.value = `已导出 ${count} 条，与当前筛选 ${expected} 条一致`
+  } catch (e: unknown) {
+    exportNote.value = e instanceof Error ? e.message : '导出失败'
+  }
 }
 
 function resetFilters() {
