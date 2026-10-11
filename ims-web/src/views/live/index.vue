@@ -1454,10 +1454,7 @@ async function submitRegister() {
   hint.value = ''
   registerError.value = ''
   regGaps.value = collectRegGaps()
-  if (regGaps.value.length) {
-    registerError.value = '必填项，请填写'
-    return
-  }
+  if (regGaps.value.length) return
   if (String(reg.topic).trim().length > 256) {
     registerError.value = '主题不能超过 256 字'
     return

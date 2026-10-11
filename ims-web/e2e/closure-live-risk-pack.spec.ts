@@ -104,7 +104,6 @@ test.describe('live risk pack closure', () => {
       }
     })
     await drawer.getByRole('button', { name: '提交登记' }).click()
-    await expect(drawer.getByTestId('live-register-error')).toContainText('必填项，请填写')
     await expect(drawer.getByTestId('live-reg-gap-account')).toContainText('必填项，请填写')
     await expect(drawer.getByTestId('live-reg-gap-topic')).toContainText('必填项，请填写')
     const accountText = await drawer.getByTestId('live-reg-account').innerText()
