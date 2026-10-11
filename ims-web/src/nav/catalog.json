@@ -332,6 +332,15 @@
       "parent": "直播管理",
       "desc": "LIVE-003 · 规则命中、处置、只读统计与 30 分钟升级桩（站内，不外发）"
     },
+    "liveLedger": {
+      "no": "10",
+      "name": "直播台账",
+      "code": "LIVE",
+      "icon": "video",
+      "page": "直播台账",
+      "parent": "直播管理",
+      "desc": "场次台账查询、导出、历史补录和穿透详情"
+    },
     "content": {
       "no": "15",
       "name": "内容生产",
@@ -1191,6 +1200,7 @@
         "ipg",
         "live",
         "liveAlarm",
+        "liveLedger",
         {
           "type": "sub",
           "id": "content",

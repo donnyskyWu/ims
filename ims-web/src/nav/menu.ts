@@ -34,6 +34,7 @@ export const IMPLEMENTED: Record<string, string> = {
   ipg: '/ims/ip-group',
   live: '/ims/live/sessions',
   liveAlarm: '/ims/live/alarm',
+  liveLedger: '/ims/live/ledger',
   cost: '/ims/cost',
   finCost: '/ims/fin/cost',
   finProfit: '/ims/fin/profit',

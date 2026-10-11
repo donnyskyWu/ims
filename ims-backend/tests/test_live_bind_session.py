@@ -249,3 +249,36 @@ def test_tagged_asset_is_not_replaced_by_a_phone_with_the_same_id():
     assert "iPhone 15" not in {item["assetName"] for item in detail["boundDevices"]}
     timeline = client.get(f"/admin-api/ims/asset/ledger/{decoy_id}", headers=auth).json()["data"]["timeline"]
     assert any(item["eventType"] == "BIND_SESSION" and code in item["remark"] for item in timeline)
+
+
+def test_supplement_plan_on_another_date_does_not_fail():
+    auth = headers()
+    account_id, person_id, phone_id, _asset_id = seed()
+    created = client.post(
+        "/admin-api/ims/live/ledger/supplement",
+        headers=auth,
+        json={
+            "sessionCreate": {
+                "accountId": account_id,
+                "realnamePersonId": person_id,
+                "responsibleUserId": 1,
+                "deviceAssetIds": [phone_id],
+                "platform": "DOUYIN",
+                "topic": "改期补录",
+                "planStartTime": "2020-02-02T20:00",
+            },
+            "sessionReport": {
+                "actualStart": "2020-02-02T20:00",
+                "actualEnd": "2020-01-15T22:00:00+08:00",
+                "gmv": 10,
+                "refundAmount": 0,
+                "orderCount": 1,
+                "viewerCount": 10,
+                "peakOnline": 5,
+                "newFans": 1,
+                "adCost": 0,
+            },
+            "supplementReason": "改到二月",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()

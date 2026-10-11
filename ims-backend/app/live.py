@@ -640,6 +640,24 @@ def risk_payload(score: int, level: str, checks: list[LiveRiskCheck]) -> dict:
     }
 
 
+def as_bj(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=BJ)
+    return value.astimezone(BJ)
+
+
+def normalize_plan_time(value: str) -> str | None:
+    text = (value or "").strip()
+    if len(text) == 16:
+        text = f"{text}:00+08:00"
+    elif len(text) == 10:
+        text = f"{text}T00:00:00+08:00"
+    parsed = parse_iso(text)
+    if parsed is None:
+        return None
+    return as_bj(parsed).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
 def biz_date_of(plan_start: str) -> str | None:
     parsed = parse_iso(plan_start)
     if parsed is None:
@@ -1056,7 +1074,7 @@ def reject_report_body(body: ReportBody):
     end = parse_iso(body.actualEnd)
     if start is None or end is None:
         return fail(1001, "时间格式无效")
-    if end <= start:
+    if as_bj(end) <= as_bj(start):
         return fail(1001, "实际结束须晚于实际开始")
     rejected = reject_cost_details(body.costDetails)
     if rejected is not None:
@@ -2525,6 +2543,15 @@ def ledger_supplement(
         return fail(1001, "补录说明过长")
     create = body.sessionCreate
     report_body = body.sessionReport
+    planned = normalize_plan_time(create.planStartTime)
+    if planned is None:
+        return fail(1001, "计划开播时间无效")
+    create.planStartTime = planned
+    report_body.actualStart = planned
+    start = parse_iso(planned)
+    end = parse_iso(report_body.actualEnd)
+    if start is not None and (end is None or as_bj(end) <= as_bj(start)):
+        report_body.actualEnd = (as_bj(start) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     rejected = reject_report_body(report_body)
     if rejected is not None:
         return rejected

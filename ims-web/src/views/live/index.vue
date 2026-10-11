@@ -2,7 +2,7 @@
   <div class="page">
     <div class="pg-h">
       <div>
-        <h1>直播管理</h1>
+        <h1>{{ ledgerMode ? '直播台账' : '直播管理' }}</h1>
         <div class="sub">场次中心：列表→详情 Tab（数据/风控/下播） · 10 LIVE</div>
       </div>
       <div class="acts">
@@ -125,6 +125,15 @@
               <td>{{ syncLabel(row.footballSyncStatus) }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
+                <button
+                  v-if="ledgerMode"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="live-ledger-penetrate"
+                  @click="openDetail(row)"
+                >
+                  穿透详情
+                </button>
                 <button
                   v-if="row.sessionStatus === 'APPROVED' && row.startAllowed"
                   class="btn btn-pri btn-sm"
@@ -364,7 +373,7 @@
         </div>
         <div class="fld">
           <label>计划开播 *</label>
-          <input v-model="sup.planStartTime" data-testid="live-supplement-plan" :data-missing="supplementGap('plan') ? '1' : '0'" :style="supplementGap('plan') ? 'border-color: var(--red)' : ''" />
+          <input v-model="sup.planStartTime" type="datetime-local" data-testid="live-supplement-plan" :data-missing="supplementGap('plan') ? '1' : '0'" :style="supplementGap('plan') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>补录说明 *</label>
@@ -676,6 +685,7 @@ async function apiPut(url: string, body?: unknown) {
 }
 
 const route = useRoute()
+const ledgerMode = computed(() => route.path.includes('/live/ledger'))
 const loading = ref(false)
 const error = ref('')
 const hint = ref('')
@@ -759,7 +769,7 @@ const sup = reactive({
   realnamePersonId: '',
   deviceId: '',
   topic: '历史场次补录',
-  planStartTime: '2020-01-15T20:00:00+08:00',
+  planStartTime: '2020-01-15T20:00',
   supplementReason: '',
   gmv: 100,
 })
@@ -1320,6 +1330,23 @@ function planIso(local: string) {
   return local.length === 16 ? `${local}:00+08:00` : local
 }
 
+function supplementEndIso(local: string) {
+  const start = new Date(planIso(local))
+  if (Number.isNaN(start.getTime())) return ''
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000)
+  const text = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(end)
+  return `${text.replace(' ', 'T')}+08:00`
+}
+
 function planIsFuture(local: string) {
   if (!local) return false
   const parsed = new Date(planIso(local))
@@ -1815,12 +1842,12 @@ async function submitSupplement() {
         deviceAssetIds: [Number(sup.deviceId)],
         platform: regOptions.accounts.find((item) => String(item.id) === sup.accountId)?.platform || 'DOUYIN',
         topic: sup.topic,
-        planStartTime: sup.planStartTime,
+        planStartTime: planIso(sup.planStartTime),
         planEndTime: '',
       },
       sessionReport: {
-        actualStart: sup.planStartTime,
-        actualEnd: '2020-01-15T22:00:00+08:00',
+        actualStart: planIso(sup.planStartTime),
+        actualEnd: supplementEndIso(sup.planStartTime),
         durationMinutes: 120,
         gmv: sup.gmv,
         refundAmount: 0,
