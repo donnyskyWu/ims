@@ -756,6 +756,82 @@ def test_train_study_assignee_reads_own_task_stranger_forbidden():
     assert admin_body["msg"] == "仅被指派人可学习本任务"
 
 
+def test_train_study_assignee_without_record_can_open_stranger_forbidden():
+    """按岗位指派后记录漏建、或记录被软删，被指派人仍可学习并幂等补记录。"""
+    auth = headers()
+    assignee_auth, assignee_id = _dept_learner("TC-短视频")
+    stranger_auth, _stranger_id = _dept_learner("旁听")
+    db = SessionLocal()
+    try:
+        role_id = db.scalar(select(UserRole.role_id).where(UserRole.user_id == assignee_id))
+        role = db.get(Role, role_id)
+        role.role_key = f"R6{uuid.uuid4().hex[:6]}"
+        role.role_name = "内容运营"
+        role.dingtalk_position = None
+        code = role.role_key
+        db.commit()
+    finally:
+        db.close()
+    material_id = _published_material(auth, f"岗位学习 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": f"岗位任务 {uuid.uuid4().hex[:6]}",
+            "materialIds": [material_id],
+            "assignScope": "BY_POSITION",
+            "assignTargetPositionCodes": [code],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    db = SessionLocal()
+    try:
+        rows = list(
+            db.scalars(select(TrainTaskRecord).where(TrainTaskRecord.task_id == task_id)).all()
+        )
+        assert any(row.user_id == assignee_id for row in rows)
+        for row in rows:
+            if row.user_id == assignee_id:
+                row.deleted = 1
+                row.tenant_id = 7
+        db.commit()
+    finally:
+        db.close()
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=assignee_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    assert opened_body["data"]["task"]["id"] == task_id
+    again = client.get(f"/admin-api/ims/train/study/{task_id}", headers=assignee_auth)
+    assert again.status_code == 200
+    assert again.json()["code"] == 0
+    db = SessionLocal()
+    try:
+        live = list(
+            db.scalars(
+                select(TrainTaskRecord).where(
+                    TrainTaskRecord.task_id == task_id,
+                    TrainTaskRecord.user_id == assignee_id,
+                    TrainTaskRecord.deleted == 0,
+                )
+            ).all()
+        )
+        assert len(live) == 1
+    finally:
+        db.close()
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+
+
 SAMPLE_QUIZ = [
     {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"], "answerIndex": 0},
     {"question": "话术可以照着念吗", "options": ["可以", "不行"], "answerIndex": 1},

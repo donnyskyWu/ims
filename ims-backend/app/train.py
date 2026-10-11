@@ -1558,13 +1558,69 @@ def users_in_positions(db: Session, tenant_id: int, codes: list[str]) -> list[in
     ).all()
     matched.update(int(row.user_id) for row in mappings)
     roles = db.scalars(
-        select(Role).where(Role.deleted == 0, Role.dingtalk_position.in_(wanted))
+        select(Role).where(
+            Role.deleted == 0,
+            Role.status == "ENABLED",
+            (Role.dingtalk_position.in_(wanted)) | (Role.role_key.in_(wanted)) | (Role.role_name.in_(wanted)),
+        )
     ).all()
     role_ids = [row.id for row in roles]
     if role_ids:
         linked = db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all()
         matched.update(int(uid) for uid in linked)
     return sorted(uid for uid in matched if uid in enabled)
+
+
+def position_codes_of_user(db: Session, user: User) -> set[str]:
+    """岗位码、角色键、角色名、钉钉岗位，用来判断按岗位指派是否包含此人。"""
+    codes: set[str] = set()
+    mapping = db.scalar(
+        select(UserMapping).where(UserMapping.user_id == user.id, UserMapping.deleted == 0)
+    )
+    if mapping is not None:
+        text = (mapping.dingtalk_position or "").strip()
+        if text:
+            codes.add(text)
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+    if not role_ids:
+        return codes
+    roles = db.scalars(
+        select(Role).where(Role.id.in_(role_ids), Role.deleted == 0, Role.status == "ENABLED")
+    ).all()
+    for role in roles:
+        for raw in (role.dingtalk_position, role.role_key, role.role_name):
+            text = (raw or "").strip()
+            if text:
+                codes.add(text)
+    return codes
+
+
+def task_target_user_ids(task: TrainTask) -> set[int]:
+    targets = task.assign_targets if isinstance(task.assign_targets, list) else []
+    ids: set[int] = set()
+    for item in targets:
+        if isinstance(item, int) or (isinstance(item, str) and item.isdigit()):
+            ids.add(int(item))
+    return ids
+
+
+def task_target_codes(task: TrainTask) -> set[str]:
+    targets = task.assign_targets if isinstance(task.assign_targets, list) else []
+    return {str(item).strip() for item in targets if str(item).strip() and not str(item).isdigit()}
+
+
+def user_is_assignee(db: Session, task: TrainTask, user: User) -> bool:
+    if task.assign_scope == "BY_USER" and user.id in task_target_user_ids(task):
+        return True
+    codes = task_target_codes(task)
+    if task.assign_scope == "BY_POSITION" and codes:
+        if ALL_STAFF in codes and user.deleted == 0 and user.status == "ENABLED":
+            return True
+        if codes & position_codes_of_user(db, user):
+            return True
+        if user.id in set(users_in_positions(db, task.tenant_id or 0, list(codes))):
+            return True
+    return False
 
 
 def expand_assignees(db: Session, tenant_id: int, body: TaskBody) -> list[int] | dict:
@@ -2041,14 +2097,26 @@ def task_list(
 def record_for_user(
     db: Session, tenant_id: int, task_id: int, user_id: int
 ) -> TrainTaskRecord | None:
-    return db.scalar(
-        select(TrainTaskRecord).where(
-            TrainTaskRecord.deleted == 0,
-            TrainTaskRecord.tenant_id == tenant_id,
-            TrainTaskRecord.task_id == task_id,
-            TrainTaskRecord.user_id == user_id,
-        )
+    """先按租户找未删除记录。对不上时仍认同一任务、同一用户的记录（含软删）。"""
+    rows = list(
+        db.scalars(
+            select(TrainTaskRecord)
+            .where(
+                TrainTaskRecord.task_id == task_id,
+                TrainTaskRecord.user_id == user_id,
+            )
+            .order_by(TrainTaskRecord.deleted.asc(), TrainTaskRecord.id.asc())
+        ).all()
     )
+    if not rows:
+        return None
+    for row in rows:
+        if row.deleted == 0 and (row.tenant_id or 0) == (tenant_id or 0):
+            return row
+    for row in rows:
+        if row.deleted == 0:
+            return row
+    return rows[0]
 
 
 def confirm_status_label(status: int) -> str:
@@ -2170,8 +2238,24 @@ def open_assignee(db: Session, actor: User, task_id: int, denied_code: int, deni
     if task is None or task.deleted or task.tenant_id != tenant_id:
         return None, None, fail(1500, "任务不存在")
     record = record_for_user(db, tenant_id, task_id, actor.id)
-    if record is None:
+    assignee = user_is_assignee(db, task, actor) or (record is not None and record.deleted == 0)
+    if not assignee:
         return None, None, fail(denied_code, denied_msg)
+    if record is not None and record.deleted:
+        record.deleted = 0
+        record.updated_at = utcnow()
+        db.flush()
+    if record is None:
+        record = TrainTaskRecord(
+            task_id=task.id,
+            user_id=actor.id,
+            tenant_id=task.tenant_id or 0,
+        )
+        db.add(record)
+        task.assigned_count = int(task.assigned_count or 0) + 1
+        task.updated_at = utcnow()
+        db.flush()
+        upsert_study_todos(db, task.tenant_id or 0, task, [actor.id])
     return task, record, None
 
 
