@@ -21,7 +21,7 @@ from app.corp import page_args, tenant_of, user_names
 from app.dc_profit_trace import cost_detail_rows, parse_asset_ids
 from app.fin import approved_report, load_fin_cost, load_profit, money, net_profit_rate, operating_profit
 from app.live import get_session, role_tags
-from app.models import DcTraceLog, FinCost, FinProfit, LiveReport, LiveSession, User, UserDept
+from app.models import DcTraceLog, FinCost, FinProfit, LiveCost, LiveReport, LiveSession, User, UserDept
 from app.ops_db import ops_session
 from app.ops_models import IpGroup, Phone, PlatformAccount
 
@@ -91,6 +91,106 @@ def range_too_wide(date_range: list[str] | None) -> bool:
     start = datetime.strptime((date_range[0] or "")[:10], "%Y-%m-%d")
     end = datetime.strptime((date_range[1] or "")[:10], "%Y-%m-%d")
     return (end - start).days > WIDE_RANGE_DAYS
+
+
+class CostSnapshot:
+    """只读成本视图。财务核准行优先；没有核准行时用下播成本，不写入 ims_fin_cost。"""
+
+    def __init__(self) -> None:
+        self.commission_amount = 0.0
+        self.ad_cost = 0.0
+        self.recharge_cost = 0.0
+        self.fixed_cost = 0.0
+        self.sample_cost = 0.0
+        self.gift_cost = 0.0
+        self.share_daren = 0.0
+        self.share_realname = 0.0
+        self.total_cost = 0.0
+
+
+LIVE_COST_FIELDS = {
+    "AD": "ad_cost",
+    "RECHARGE": "recharge_cost",
+    "SAMPLE": "sample_cost",
+    "GIFT": "gift_cost",
+}
+
+
+def live_cost_snapshot(report: LiveReport | None, rows: list[LiveCost]) -> CostSnapshot | None:
+    """下播成本明细优先；没有明细时用报告上的投放成本。全空则没有可展示的成本。"""
+    snap = CostSnapshot()
+    if rows:
+        for row in rows:
+            field = LIVE_COST_FIELDS.get((row.cost_type or "").strip().upper())
+            if not field:
+                continue
+            setattr(snap, field, money(getattr(snap, field) + float(row.amount or 0)))
+        snap.total_cost = money(
+            snap.commission_amount
+            + snap.ad_cost
+            + snap.recharge_cost
+            + snap.fixed_cost
+            + snap.sample_cost
+            + snap.gift_cost
+            + snap.share_daren
+            + snap.share_realname
+        )
+        return snap
+    if report is not None and money(report.ad_cost) != 0:
+        snap.ad_cost = money(report.ad_cost)
+        snap.total_cost = snap.ad_cost
+        return snap
+    return None
+
+
+def profit_figures(
+    report: LiveReport | None,
+    cost: FinCost | CostSnapshot | None,
+    profit: FinProfit | None,
+    masked: bool,
+) -> tuple[float | None, float | None, float | None, float | None, int]:
+    """毛利 / 经营利润 / 净利润 / 净利率 / 计算版本。已有利润行沿用核准值，否则按同一公式现算。"""
+    version = int(profit.calc_version or 1) if profit is not None else 0
+    if masked:
+        return None, None, None, None, version
+    if profit is not None:
+        gross = money(profit.gross_profit)
+        net = money(profit.net_profit)
+        operating = operating_profit(gross or 0, cost)  # type: ignore[arg-type]
+        rate = net_profit_rate(float(profit.revenue or 0), float(profit.refund_amount or 0), net)
+        return gross, operating, net, rate, version
+    if report is None or cost is None:
+        return None, None, None, None, 0
+    revenue = money(report.gmv)
+    refund = money(report.refund_amount)
+    commission = money(getattr(cost, "commission_amount", 0) or 0)
+    gross = money(revenue - refund - commission)
+    operating = operating_profit(gross, cost)  # type: ignore[arg-type]
+    net = money(revenue - refund - money(getattr(cost, "total_cost", 0) or 0))
+    return gross, operating, net, net_profit_rate(revenue, refund, net), 0
+
+
+def trace_cost_lines(cost: FinCost | CostSnapshot | None, *, masked: bool) -> list[dict]:
+    if cost is None:
+        return []
+    if isinstance(cost, FinCost):
+        return cost_detail_rows(cost, masked=masked)
+    items = [
+        ("commission", "平台佣金", money(cost.commission_amount)),
+        ("ad", "投流成本", money(cost.ad_cost)),
+        ("recharge", "充值成本", money(cost.recharge_cost)),
+        ("fixed", "固定成本", money(cost.fixed_cost)),
+        ("sample", "样品成本", money(cost.sample_cost)),
+        ("gift", "礼物成本", money(cost.gift_cost)),
+        ("shareDaren", "达人分成", money(cost.share_daren)),
+        ("shareRealname", "实名人分成", money(cost.share_realname)),
+    ]
+    rows: list[dict] = []
+    for key, label, amount in items:
+        if amount == 0:
+            continue
+        rows.append({"costItem": key, "costItemLabel": label, "amount": None if masked else amount})
+    return rows
 
 
 def filter_by_date(sessions: list[LiveSession], date_range: list[str] | None) -> list[LiveSession]:
@@ -200,7 +300,7 @@ def build_graph_from_sessions(
     sessions: list[LiveSession],
     labels: dict[int, str] | None = None,
     reports: dict[str, LiveReport] | None = None,
-    costs: dict[str, FinCost] | None = None,
+    costs: dict[str, FinCost | CostSnapshot] | None = None,
     profits: dict[str, FinProfit] | None = None,
     *,
     masked: bool = False,
@@ -240,8 +340,8 @@ def build_graph_from_sessions(
         cost = cost_map.get(row.session_code)
         profit = profit_map.get(row.session_code)
         gmv = money(report.gmv) if report is not None else None
+        _gross, _operating, net, _rate, _version = profit_figures(report, cost, profit, masked)
         total_cost = None if masked or cost is None else money(cost.total_cost)
-        net = None if masked or profit is None else money(profit.net_profit)
         session_id = add_node("SESSION", row.session_code, row.topic or row.session_code, platform=row.platform)
         cost_id = add_node(
             "COST",
@@ -476,17 +576,22 @@ def attach_drill_fields(
     groups: dict[int, tuple[int, str]],
     labels: dict[int, str],
     masked: bool,
+    costs: dict[str, FinCost | CostSnapshot] | None = None,
 ) -> None:
     """在既有明细行上补资产 / 责任人 / IP 组，供再次 POST /dc/trace/query，不新增接口。"""
     by_code = {row.session_code: row for row in sessions}
+    cost_map = costs or {}
     for item in rows:
         session = by_code.get(item["sessionCode"])
         if session is None:
             continue
         report = reports.get(session.session_code)
         profit = profits.get(session.session_code)
+        cost = cost_map.get(session.session_code)
+        _gross, _operating, net, _rate, _version = profit_figures(report, cost, profit, masked)
         item["gmv"] = money(report.gmv) if report is not None else None
-        item["netProfit"] = None if masked or profit is None else money(profit.net_profit)
+        item["netProfit"] = net
+        item["totalCost"] = None if masked or cost is None else money(cost.total_cost)
         user_id = int(session.responsible_user_id or 0)
         item["responsibleUserId"] = user_id
         item["responsibleUserName"] = names.get(user_id, "") if user_id else ""
@@ -522,19 +627,31 @@ def detail_from_sessions(sessions: list[LiveSession], page_no: int, size: int) -
     return rows, total
 
 
+def resolved_cost(
+    db: Session, tenant_id: int, session_code: str, report: LiveReport | None
+) -> FinCost | CostSnapshot | None:
+    """成本核算核准行优先；没有核准行时接下播成本明细或报告投放成本。"""
+    cost = load_fin_cost(db, tenant_id, session_code)
+    if cost is not None:
+        return cost
+    rows = list(
+        db.scalars(
+            select(LiveCost).where(
+                LiveCost.session_code == session_code,
+                LiveCost.deleted == 0,
+                LiveCost.tenant_id == tenant_id,
+            )
+        ).all()
+    )
+    return live_cost_snapshot(report, rows)
+
+
 def session_detail(db: Session, tenant_id: int, session: LiveSession, *, masked: bool) -> dict:
     report = approved_report(db, session.session_code, tenant_id)
-    cost = load_fin_cost(db, tenant_id, session.session_code)
+    cost = resolved_cost(db, tenant_id, session.session_code, report)
     profit = load_profit(db, tenant_id, session.session_code)
     names = user_names(db, {session.responsible_user_id} if session.responsible_user_id else set())
-    gross = money(profit.gross_profit) if profit is not None else None
-    net = money(profit.net_profit) if profit is not None else None
-    operating = operating_profit(gross or 0, cost) if profit is not None else None
-    rate = None
-    if profit is not None and net is not None:
-        rate = net_profit_rate(float(profit.revenue or 0), float(profit.refund_amount or 0), net)
-    if masked:
-        gross = operating = net = rate = None
+    gross, operating, net, rate, version = profit_figures(report, cost, profit, masked)
     realname = session.realname_name or ""
     if masked and realname:
         realname = mask_name(realname)
@@ -580,9 +697,9 @@ def session_detail(db: Session, tenant_id: int, session: LiveSession, *, masked:
             "operatingProfit": operating,
             "netProfit": net,
             "netProfitRate": rate,
-            "calcVersion": int(profit.calc_version or 1) if profit is not None else 0,
+            "calcVersion": version,
         },
-        "costDetail": cost_detail_rows(cost, masked=masked),
+        "costDetail": trace_cost_lines(cost, masked=masked),
         "persons": persons,
         "account": {
             "accountId": int(session.account_id or 0),
@@ -602,9 +719,12 @@ def export_matrix(db: Session, tenant_id: int, sessions: list[LiveSession], elap
         ["queryCostMs", str(elapsed)],
         ["sessionCode", "sessionTitle", "platform", "accountNo", "gmv", "netProfit"],
     ]
+    reports, costs, profits = finance_index(db, tenant_id, [row.session_code for row in sessions])
     for row in sessions:
-        report = approved_report(db, row.session_code, tenant_id)
-        profit = load_profit(db, tenant_id, row.session_code)
+        report = reports.get(row.session_code)
+        cost = costs.get(row.session_code)
+        profit = profits.get(row.session_code)
+        _gross, _operating, net, _rate, _version = profit_figures(report, cost, profit, False)
         rows.append(
             [
                 row.session_code,
@@ -612,7 +732,7 @@ def export_matrix(db: Session, tenant_id: int, sessions: list[LiveSession], elap
                 row.platform or "",
                 row.account_no or "",
                 "" if report is None else str(money(report.gmv)),
-                "" if profit is None else str(money(profit.net_profit)),
+                "" if net is None else str(net),
             ]
         )
     return rows
@@ -789,7 +909,7 @@ def parse_range_param(raw: str | None) -> tuple[list[str] | None, str | None]:
 
 def finance_index(
     db: Session, tenant_id: int, codes: list[str]
-) -> tuple[dict[str, LiveReport], dict[str, FinCost], dict[str, FinProfit]]:
+) -> tuple[dict[str, LiveReport], dict[str, FinCost | CostSnapshot], dict[str, FinProfit]]:
     unique = [code for code in dict.fromkeys(codes) if code]
     if not unique:
         return {}, {}, {}
@@ -804,7 +924,7 @@ def finance_index(
             )
         ).all()
     }
-    costs = {
+    costs: dict[str, FinCost | CostSnapshot] = {
         row.session_code: row
         for row in db.scalars(
             select(FinCost).where(
@@ -824,6 +944,21 @@ def finance_index(
             )
         ).all()
     }
+    missing = [code for code in unique if code not in costs]
+    if missing:
+        grouped: dict[str, list[LiveCost]] = {}
+        for row in db.scalars(
+            select(LiveCost).where(
+                LiveCost.deleted == 0,
+                LiveCost.tenant_id == tenant_id,
+                LiveCost.session_code.in_(missing),
+            )
+        ).all():
+            grouped.setdefault(row.session_code, []).append(row)
+        for code in missing:
+            snap = live_cost_snapshot(reports.get(code), grouped.get(code) or [])
+            if snap is not None:
+                costs[code] = snap
     return reports, costs, profits
 
 
@@ -1006,15 +1141,14 @@ def aggregate_rows(
         report = reports.get(row.session_code)
         cost = costs.get(row.session_code)
         profit = profits.get(row.session_code)
+        _gross, _operating, net, _rate, _version = profit_figures(report, cost, profit, masked)
         bucket["sessionCount"] += 1
         bucket["gmv"] = add_amount(bucket["gmv"], money(report.gmv) if report is not None else None)
         if not masked:
             bucket["totalCost"] = add_amount(
                 bucket["totalCost"], money(cost.total_cost) if cost is not None else None
             )
-            bucket["netProfit"] = add_amount(
-                bucket["netProfit"], money(profit.net_profit) if profit is not None else None
-            )
+            bucket["netProfit"] = add_amount(bucket["netProfit"], net)
         person_key = str(row.realname_person_id or 0) if row.realname_person_id else (row.realname_name or "")
         if person_key:
             bucket["_persons"].add(person_key)
@@ -1174,6 +1308,7 @@ def trace_query(
             sessions,
             reports=reports,
             profits=profits,
+            costs=costs,
             names=user_names(db, {int(row.responsible_user_id or 0) for row in sessions}),
             groups=safe_account_groups(tenant_id, {int(row.account_id or 0) for row in sessions}),
             labels=labels,
