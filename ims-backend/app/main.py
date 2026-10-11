@@ -241,6 +241,9 @@ def seed() -> None:
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
         refresh_wechat_channels_collect_seed()
+        from app.report import purge_non_filler_assignees
+
+        purge_non_filler_assignees(db)
         db.commit()
     finally:
         db.close()

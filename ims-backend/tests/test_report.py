@@ -1223,3 +1223,126 @@ def test_template_keeps_min_constraint_and_validate_expr():
     assert kept["range"]["min"] == 0
     assert kept["range"]["constraint"] == "≥0"
     assert kept["validateExpr"] == ">=0"
+
+
+def test_purge_voids_non_filler_todo_and_excludes_them_from_expected(caplog):
+    import logging
+
+    from app.core import SessionLocal
+    from app.models import ReportSubmission, ReportTemplate, Todo
+    from app.report import FILL_VOID_REMARK, FILL_VOID_STATUS, purge_non_filler_assignees
+
+    r7_id = _dept_user("rpt_purge_r7", "13900008305", "R7", "主播")
+    r5_id = _dept_user("rpt_purge_r5", "13900008306", "R5", "直播运营")
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "历史不合规填报人",
+            "periodType": "DAILY",
+            "status": "ENABLED",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            ],
+            "assignees": [{"assignType": "USER", "targetIds": [r5_id]}],
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    template_id = created.json()["data"]["id"]
+    author_id, account_id, _ = seed_author_accounts()
+    db = SessionLocal()
+    try:
+        row = db.get(ReportTemplate, template_id)
+        row.assignees = [
+            {"assignType": "USER", "targetIds": [r5_id, r7_id]},
+            {"assignType": "POSITION", "targetCodes": ["R7"]},
+        ]
+        db.add(
+            Todo(
+                assignee_user_id=r7_id,
+                task_type="report_fill",
+                ref_type="report_template",
+                ref_id=template_id,
+                title="填报待办 · 历史不合规填报人",
+                content="请按上报模板完成填报",
+                status="PENDING",
+                tenant_id=0,
+            )
+        )
+        submission = ReportSubmission(
+            submission_no="RS-KEEP-R7",
+            template_id=template_id,
+            template_version=1,
+            period="2026-10-11",
+            submitter_user_id=r7_id,
+            author_id=author_id,
+            account_id=account_id,
+            data_content={"gmv": 8},
+            attachments=[],
+            submit_status="SUBMITTED",
+            is_on_time=1,
+            tenant_id=0,
+        )
+        db.add(submission)
+        db.commit()
+        submission_id = int(submission.id)
+        with caplog.at_level(logging.INFO, logger="app.report"):
+            changes = purge_non_filler_assignees(db)
+            db.commit()
+        assert changes
+        assert any(item.template_id == template_id and "rpt_purge_r7" in item.person for item in changes)
+        assert any(
+            "填报人配置清理" in rec.message and str(template_id) in rec.message and "rpt_purge_r7" in rec.message
+            for rec in caplog.records
+        )
+        todo = db.query(Todo).filter(Todo.assignee_user_id == r7_id, Todo.ref_id == template_id).one()
+        assert todo.status == FILL_VOID_STATUS
+        assert todo.content == FILL_VOID_REMARK
+        kept = db.get(ReportSubmission, submission_id)
+        assert kept is not None
+        assert kept.deleted == 0
+        assert kept.submit_status == "SUBMITTED"
+        assert kept.submission_no == "RS-KEEP-R7"
+        fresh = db.get(ReportTemplate, template_id)
+        kept_ids = [uid for item in fresh.assignees for uid in (item.get("targetIds") or [])]
+        kept_codes = [str(code).upper() for item in fresh.assignees for code in (item.get("targetCodes") or [])]
+        assert r7_id not in kept_ids
+        assert r5_id in kept_ids
+        assert "R7" not in kept_codes
+        r5_todo = db.query(Todo).filter(Todo.assignee_user_id == r5_id, Todo.ref_id == template_id).one()
+        assert r5_todo.status == "PENDING"
+    finally:
+        db.close()
+
+    stat = client.get(
+        "/admin-api/ims/report/stat/complete-rate",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": "2026-10-11"},
+    )
+    assert stat.json()["code"] == 0
+    assert stat.json()["data"]["shouldCount"] == 1
+    missed = client.get(
+        "/admin-api/ims/report/stat/missed",
+        headers=auth,
+        params={"templateId": template_id, "statPeriod": "2026-10-11", "pageNo": 1, "pageSize": 20},
+    )
+    missed_ids = [item["userId"] for item in missed.json()["data"]["list"]]
+    assert r7_id not in missed_ids
+    assert r5_id in missed_ids
+
+    db = SessionLocal()
+    try:
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="app.report"):
+            again = purge_non_filler_assignees(db)
+            db.commit()
+        assert again == []
+        assert not any("填报人配置清理" in rec.message for rec in caplog.records)
+        todo = db.query(Todo).filter(Todo.assignee_user_id == r7_id, Todo.ref_id == template_id).one()
+        assert todo.status == FILL_VOID_STATUS
+        kept = db.get(ReportSubmission, submission_id)
+        assert kept.submit_status == "SUBMITTED"
+        assert kept.submission_no == "RS-KEEP-R7"
+    finally:
+        db.close()

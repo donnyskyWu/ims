@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import NamedTuple
 
@@ -10,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
@@ -19,6 +21,7 @@ from app.ops_models import AuthorUser, IpGroupAnchorRel, PlatformAccount
 from app.report_expr import ExprError, check_expression, evaluate_expression
 
 router = APIRouter(prefix="/report", tags=["report"])
+logger = logging.getLogger("app.report")
 
 BJ = timezone(timedelta(hours=8))
 PERIOD_TYPES = frozenset({"DAILY", "WEEKLY", "MONTHLY"})
@@ -1341,6 +1344,9 @@ def scope_kind(request: Request) -> str:
 
 FILLER_ROLE_KEYS = frozenset({"R2", "R3", "R5", "R6", "R10"})
 NOT_FILLER_MSG = "该人员角色不可作为填报人"
+FILL_VOID_STATUS = "已作废"
+FILL_VOID_REMARK = "填报人角色不合规"
+_OPEN_FILL_STATUSES = ("PENDING", "EXPIRED")
 
 
 def _enabled_roles(db: Session, user: User) -> list[Role]:
@@ -1395,6 +1401,177 @@ def validate_filler_assignees(db: Session, assignees: list, tenant_id: int):
         if not is_filler_user(db, db.get(User, uid)):
             return fail(1001, NOT_FILLER_MSG)
     return None
+
+
+class FillerPurgeChange(NamedTuple):
+    template_id: int
+    template_name: str
+    person: str
+    original: str
+
+
+def _person_label(db: Session, user_id: int) -> str:
+    user = db.get(User, user_id)
+    if user is None:
+        return f"userId={user_id}"
+    name = user.nickname or user.username or ""
+    return f"{name}(id={user.id},username={user.username})"
+
+
+def _split_filler_ids(db: Session, user_ids: list[int]) -> tuple[list[int], list[int]]:
+    keep: list[int] = []
+    drop: list[int] = []
+    for uid in user_ids:
+        if is_filler_user(db, db.get(User, uid)):
+            keep.append(uid)
+        elif uid not in drop:
+            drop.append(uid)
+    return keep, drop
+
+
+def purge_non_filler_assignees(db: Session) -> list[FillerPurgeChange]:
+    """启动时清掉不合规填报人。统计查询不写库。
+
+    已作废写在待办现有 status 列，备注写在现有 content 列。不新增列，也不写字典。
+    已提交的填报单不动。
+    """
+    templates = list(db.scalars(select(ReportTemplate).where(ReportTemplate.deleted == 0)).all())
+    changes: list[FillerPurgeChange] = []
+    for template in templates:
+        original = template.assignees if isinstance(template.assignees, list) else []
+        if not original:
+            continue
+        snapshot = json.dumps(original, ensure_ascii=False)
+        tenant_id = template.tenant_id or 0
+        rewritten: list[dict] = []
+        dropped_ids: list[int] = []
+        bare_posts: list[str] = []
+        changed = False
+        for item in original:
+            if not isinstance(item, dict):
+                rewritten.append(item)
+                continue
+            kind = str(item.get("assignType") or "USER").upper()
+            if kind == "POSITION":
+                codes = [str(code).strip() for code in (item.get("targetCodes") or []) if str(code).strip()]
+                keep_codes = [code for code in codes if code.upper() in FILLER_ROLE_KEYS]
+                for code in codes:
+                    if code.upper() in FILLER_ROLE_KEYS:
+                        continue
+                    people = users_for_position_codes(db, {code}, tenant_id)
+                    non_fillers = [uid for uid in people if not is_filler_user(db, db.get(User, uid))]
+                    if non_fillers:
+                        for uid in non_fillers:
+                            if uid not in dropped_ids:
+                                dropped_ids.append(uid)
+                    elif code not in bare_posts:
+                        bare_posts.append(code)
+                if keep_codes != codes:
+                    changed = True
+                if keep_codes:
+                    copied = dict(item)
+                    copied["targetCodes"] = keep_codes
+                    rewritten.append(copied)
+                continue
+            if kind == "DEPT_ROTATION":
+                rotation = item.get("rotationList") if isinstance(item.get("rotationList"), list) else []
+                kept_rotation = []
+                for entry in rotation:
+                    if not isinstance(entry, dict):
+                        continue
+                    try:
+                        uid = int(entry.get("userId"))
+                    except (TypeError, ValueError):
+                        continue
+                    if uid <= 0:
+                        continue
+                    if is_filler_user(db, db.get(User, uid)):
+                        kept_rotation.append(entry)
+                    elif uid not in dropped_ids:
+                        dropped_ids.append(uid)
+                        changed = True
+                kept_targets, dropped_targets = _split_filler_ids(db, parse_user_ids(item.get("targetIds")))
+                for uid in dropped_targets:
+                    if uid not in dropped_ids:
+                        dropped_ids.append(uid)
+                        changed = True
+                if len(kept_rotation) != len([entry for entry in rotation if isinstance(entry, dict)]):
+                    changed = True
+                if kept_targets != parse_user_ids(item.get("targetIds")):
+                    changed = True
+                if not kept_rotation and not kept_targets:
+                    continue
+                copied = dict(item)
+                copied["rotationList"] = kept_rotation
+                if item.get("targetIds") is not None:
+                    copied["targetIds"] = kept_targets
+                rewritten.append(copied)
+                continue
+            keep_ids, drop_ids = _split_filler_ids(db, parse_user_ids(item.get("targetIds")))
+            for uid in drop_ids:
+                if uid not in dropped_ids:
+                    dropped_ids.append(uid)
+            if drop_ids:
+                changed = True
+            if keep_ids:
+                copied = dict(item)
+                copied["targetIds"] = keep_ids
+                rewritten.append(copied)
+        if not changed and not dropped_ids and not bare_posts:
+            continue
+        template.assignees = rewritten
+        flag_modified(template, "assignees")
+        template.updated_at = utcnow()
+        for uid in dropped_ids:
+            label = _person_label(db, uid)
+            change = FillerPurgeChange(template.id, template.template_name or "", label, snapshot)
+            changes.append(change)
+            logger.info(
+                "填报人配置清理 templateId=%s templateName=%s person=%s original=%s",
+                change.template_id,
+                change.template_name,
+                change.person,
+                change.original,
+            )
+        for code in bare_posts:
+            label = f"岗位 {code}"
+            change = FillerPurgeChange(template.id, template.template_name or "", label, snapshot)
+            changes.append(change)
+            logger.info(
+                "填报人配置清理 templateId=%s templateName=%s person=%s original=%s",
+                change.template_id,
+                change.template_name,
+                change.person,
+                change.original,
+            )
+        if dropped_ids:
+            open_todos = list(
+                db.scalars(
+                    select(Todo).where(
+                        Todo.task_type == "report_fill",
+                        Todo.ref_type == "report_template",
+                        Todo.ref_id == template.id,
+                        Todo.assignee_user_id.in_(dropped_ids),
+                        Todo.status.in_(_OPEN_FILL_STATUSES),
+                    )
+                ).all()
+            )
+            for todo in open_todos:
+                todo.status = FILL_VOID_STATUS
+                todo.content = FILL_VOID_REMARK
+    return changes
+
+
+def voided_fill_pairs(db: Session, tenant_id: int) -> set[tuple[int, int]]:
+    rows = db.execute(
+        select(Todo.ref_id, Todo.assignee_user_id).where(
+            Todo.task_type == "report_fill",
+            Todo.ref_type == "report_template",
+            Todo.status == FILL_VOID_STATUS,
+            Todo.tenant_id == tenant_id,
+        )
+    ).all()
+    return {(int(ref_id), int(user_id)) for ref_id, user_id in rows}
 
 
 def require_fill_access(request: Request, db: Session, actor: User, template_id: int):
@@ -1453,7 +1630,9 @@ def expectation_slots(
 
     V2-A1 周期待办在本仓库不可用。sync_fill_todos 只按模板给 USER 写一条不带周期的待办，
     不能表达每日/每周/每月，也不展开岗位和部门轮值。这里按模板规则直接推算，不把待办当成分母。
+    已作废的填报待办只读排除，不在查询里改配置。
     """
+    voided = voided_fill_pairs(db, tenant_id)
     plans = [
         (tpl, *stable_and_rotations(db, tpl, tenant_id))
         for tpl in enabled_templates(db, tenant_id, template_id)
@@ -1469,6 +1648,8 @@ def expectation_slots(
         period_type = tpl.period_type or "DAILY"
         for period, day in periods_in(period_type, days):
             for uid in obliged_for_period(stable, rotations, period_type, day):
+                if (tpl.id, uid) in voided:
+                    continue
                 if dept_id:
                     owned = depts.get(uid) or set()
                     if dept_id not in owned:
