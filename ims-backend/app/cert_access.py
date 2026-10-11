@@ -123,6 +123,8 @@ def view_level_of(db: Session, actor: User) -> int:
             granted = 1
         if code and code in codes:
             level = max(level, granted)
+    if can_cert_r1(db, actor):
+        level = 3
     if actor.id in config_whitelist(row):
         level = 3
     return level
@@ -140,10 +142,10 @@ def whitelist_user(db: Session, actor: User, user_id: int) -> User | None:
 
 
 def watermark_of(actor: User, opacity: float, position: str) -> dict:
-    tail = (actor.mobile or "")[-4:]
-    name = (actor.nickname or actor.username or "").strip()
+    employee_no = (actor.username or "").strip()
+    name = (actor.nickname or "").strip()
     stamp = utcnow().isoformat(sep=" ", timespec="seconds")
-    text = " ".join(part for part in (name, tail, stamp) if part)
+    text = " ".join(part for part in (employee_no, name, stamp) if part)
     return {"text": text, "opacity": opacity, "position": position}
 
 
@@ -187,6 +189,11 @@ def digital_metrics(db: Session = Depends(db_session), actor: User = Depends(cur
     )
     rate = 1.0 if total == 0 else round(digital / total, 4)
     return ok({"totalExpected": total, "digitalizedCount": digital, "digitalizedRate": rate})
+
+
+@router.get("/cert/security/my-view-level")
+def my_view_level(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    return ok({"viewLevel": view_level_of(db, actor)})
 
 
 @router.get("/cert/archive/{cert_id}/file-url")

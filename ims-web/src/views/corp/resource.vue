@@ -144,6 +144,8 @@
                   class="btn btn-txt btn-sm"
                   type="button"
                   data-testid="corp-cert-file-btn"
+                  :disabled="certViewLevel < 2"
+                  :title="certViewLevel < 2 ? '无原图查看权限，仅索引可见' : undefined"
                   @click="openFileUrl(row)"
                 >
                   原图
@@ -910,6 +912,7 @@ const detailAuditLoading = ref(false)
 const digitalOpen = ref(false)
 const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
 const digitalReady = ref(false)
+const certViewLevel = ref(1)
 const digitalError = ref('')
 const fileOpen = ref(false)
 const fileLoading = ref(false)
@@ -2156,6 +2159,15 @@ function changeSize(event: Event) {
   load()
 }
 
+async function loadCertViewLevel() {
+  try {
+    const res = await http.get('/cert/security/my-view-level')
+    certViewLevel.value = Number(res.data?.data?.viewLevel || 1)
+  } catch {
+    certViewLevel.value = 1
+  }
+}
+
 async function loadDigital() {
   digitalError.value = ''
   try {
@@ -2625,7 +2637,7 @@ watch(kind, async () => {
   load()
   if (kind.value === 'certificate') {
     await loadAuditUsers()
-    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig()])
+    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig(), loadCertViewLevel()])
   }
 })
 
@@ -2642,7 +2654,7 @@ onMounted(async () => {
   await load()
   if (kind.value === 'certificate') {
     await loadAuditUsers()
-    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig()])
+    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig(), loadCertViewLevel()])
   }
 })
 </script>

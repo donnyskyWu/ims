@@ -105,18 +105,16 @@ test.describe('corp certificate level style and audit filter closure', () => {
       data?: { watermark?: { text?: string; opacity?: number; position?: string }; signedUrl?: string }
     }
     expect(file.code).toBe(0)
-    expect(file.data?.watermark?.opacity).toBeCloseTo(0.2, 2)
-    expect(file.data?.watermark?.position).toBe('top-left')
+    expect(file.data?.watermark).toBeUndefined()
     expect(JSON.stringify(file)).not.toContain(number)
     const fileDrawer = page.locator('.drawer.on').filter({ hasText: '原图链接' })
-    await expect(fileDrawer.getByTestId('corp-cert-file-style')).toContainText('0.20')
-    await expect(fileDrawer.getByTestId('corp-cert-file-style')).toContainText('左上')
+    await expect(fileDrawer.getByTestId('corp-cert-file-plain')).toContainText('明文预览，禁止下载')
     await expect(fileDrawer.getByTestId('corp-cert-file-ttl')).toContainText('禁止下载')
     await page.screenshot({ path: `${shotDir}/cert-169-file-watermark.png`, fullPage: true })
     await fileDrawer.getByRole('button', { name: '关闭' }).click()
 
     await page.getByTestId('corp-cert-audit-holder').fill(holder)
-    await page.getByTestId('corp-cert-audit-level').selectOption('2')
+    await page.getByTestId('corp-cert-audit-level').selectOption('3')
     await page.getByTestId('corp-cert-audit-from').fill(ymd(0))
     await page.getByTestId('corp-cert-audit-to').fill('')
     await page.getByTestId('corp-cert-audit-search').click()
@@ -124,7 +122,7 @@ test.describe('corp certificate level style and audit filter closure', () => {
 
     await page.getByTestId('corp-cert-audit-from').fill('')
     const auditResp = page.waitForResponse(
-      (r) => r.url().includes('/cert/security/view-logs') && r.url().includes('viewLevel=2') && r.status() === 200,
+      (r) => r.url().includes('/cert/security/view-logs') && r.url().includes('viewLevel=3') && r.status() === 200,
     )
     await page.getByTestId('corp-cert-audit-search').click()
     const audited = (await (await auditResp).json()) as { code: number; data?: { total?: number } }
@@ -133,7 +131,7 @@ test.describe('corp certificate level style and audit filter closure', () => {
     const auditTable = page.getByTestId('corp-cert-audit-table')
     await expect(auditTable).toContainText('IP/设备')
     const hit = auditTable.locator('tbody tr', { hasText: holder })
-    await expect(hit).toContainText('L2')
+    await expect(hit).toContainText('L3')
     await expect(hit.getByTestId('corp-cert-audit-ip')).not.toHaveText('—')
     await expect(page.getByTestId('corp-cert-audit-pager')).toContainText('第 1 / 1 页')
     await page.screenshot({ path: `${shotDir}/cert-169-audit-level.png`, fullPage: true })
