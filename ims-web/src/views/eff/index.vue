@@ -11,10 +11,10 @@
       </div>
     </div>
 
-    <div class="tabs">
-      <div class="tab" :class="{ on: tab === 'relation' }" @click="switchTab('relation')">归属关系</div>
-      <div class="tab" :class="{ on: tab === 'inventory' }" @click="switchTab('inventory')">人效盘点</div>
-      <div class="tab" :class="{ on: tab === 'board' }" @click="switchTab('board')">人效看板</div>
+    <div class="tabs" role="tablist">
+      <button class="tab" type="button" role="tab" :aria-selected="tab === 'relation'" :class="{ on: tab === 'relation' }" data-testid="eff-tab-relation" @click="switchTab('relation')">归属关系</button>
+      <button class="tab" type="button" role="tab" :aria-selected="tab === 'inventory'" :class="{ on: tab === 'inventory' }" data-testid="eff-tab-inventory" @click="switchTab('inventory')">人效盘点</button>
+      <button class="tab" type="button" role="tab" :aria-selected="tab === 'board'" :class="{ on: tab === 'board' }" data-testid="eff-tab-board" @click="switchTab('board')">人效看板</button>
     </div>
 
     <div v-if="coverage && tab === 'relation'" class="g4" style="margin: 12px 0">
@@ -33,7 +33,7 @@
       </div>
     </div>
 
-    <template v-if="tab === 'relation'">
+    <section v-if="tab === 'relation'" data-testid="eff-panel-relation">
       <p v-if="relationToast" class="hint" data-testid="eff-save-toast">{{ relationToast }}</p>
       <p v-if="listError" class="hint" style="color: var(--red)" data-testid="eff-list-error">{{ listError }}</p>
       <form class="qbar" @submit.prevent="loadRelations">
@@ -82,19 +82,37 @@
           </table>
         </div>
       </div>
-    </template>
+    </section>
 
-    <template v-else-if="tab === 'inventory'">
-      <div v-if="inventory" class="g4" style="margin-top: 12px">
-        <div class="card stat"><span class="l">周期</span><div class="n mono">{{ inventory.period }}</div></div>
-        <div class="card stat"><span class="l">覆盖率</span><div class="n">{{ inventory.coverageRate }}%</div></div>
-        <div class="card stat"><span class="l">状态</span><div class="n">{{ inventory.status }}</div></div>
-        <div class="card stat"><span class="l">可发布</span><div class="n">{{ inventory.canPublish ? '是' : '否' }}</div></div>
+    <section v-if="tab === 'inventory'" data-testid="eff-panel-inventory">
+      <p class="hint" style="margin: 8px 0">人效盘点与看板分开。本页只显示盘点快照，不展示人均卡片和人员表。</p>
+      <div class="tbl-block">
+        <div class="tbl-wrap">
+          <table data-testid="eff-inventory-table">
+            <thead>
+              <tr>
+                <th>周期</th>
+                <th>状态</th>
+                <th>覆盖率</th>
+                <th>可发布</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!inventory"><td colspan="4"><div class="empty"><div class="et">加载中</div></div></td></tr>
+              <tr v-else>
+                <td class="mono">{{ inventory.period }}</td>
+                <td>{{ inventoryStatusLabel(inventory.status) }}</td>
+                <td class="num">{{ inventory.coverageRate }}%</td>
+                <td>{{ inventory.canPublish ? '是' : '否' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div class="card hint" style="padding: 16px; margin-top: 12px">{{ inventory?.note || '加载中…' }}</div>
-    </template>
+      <p class="hint">{{ inventory?.note || '加载中…' }}</p>
+    </section>
 
-    <template v-else>
+    <section v-if="tab === 'board'" data-testid="eff-panel-board">
       <p class="hint" style="margin: 8px 0">IP 组维护在日常运营 · IP 组。人均指标按当月直播报告与内容作品、除以已建主归属人数；没有台账时显示「—」。</p>
       <p v-if="boardError" class="hint" style="color: var(--red)" data-testid="eff-board-error">{{ boardError }}</p>
       <div v-if="board" class="g4" style="margin-top: 12px">
@@ -103,13 +121,49 @@
         <div class="card stat"><span class="l">人均作品/月</span><div class="n">{{ plainText(board.avgWorksPerMonth) }}</div><div class="d">内容作品口径</div></div>
         <div class="card stat"><span class="l">产能利用率</span><div class="n">{{ pctText(board.capacityUtilization) }}</div><div class="d">分摊&gt;100% {{ board.overShareUserCount }} 人 · 仅统计兼职合计</div></div>
       </div>
-      <div v-if="board" class="card" data-testid="eff-board-chart" style="margin-top: 12px; padding: 12px">
-        <b style="font-size: 13px">主归属 GMV</b>
-        <div v-if="!chartBars.length" class="hint" data-testid="eff-chart-empty">—</div>
-        <div v-for="bar in chartBars" :key="bar.label" class="rowline" style="margin-top: 8px">
-          <span style="width: 140px">{{ bar.label }}</span>
-          <span class="pg" style="width: 160px"><i :style="{ width: bar.width }"></i></span>
-          <span class="num">{{ moneyText(bar.gmv) }}</span>
+      <div v-if="board" class="eff-charts" data-testid="eff-board-charts">
+        <div class="bi-chartbox" data-testid="eff-board-chart">
+          <div class="t">{{ chartTitle }}<span class="s">柱状图</span></div>
+          <svg v-if="barShapes.length" viewBox="0 0 360 168" width="100%" height="168" role="img" aria-label="主归属柱状图">
+            <line x1="12" y1="136" x2="348" y2="136" stroke="#d0d5dd" />
+            <g v-for="bar in barShapes" :key="bar.label">
+              <rect :x="bar.x" :y="bar.y" :width="bar.w" :height="bar.h" fill="#0071e3" rx="2" />
+              <text :x="bar.x + bar.w / 2" y="152" text-anchor="middle" font-size="10" fill="#667085">{{ bar.short }}</text>
+            </g>
+          </svg>
+          <div v-else class="hint" data-testid="eff-chart-empty">暂无台账，柱状图为空</div>
+        </div>
+        <div class="bi-chartbox" data-testid="eff-board-pie">
+          <div class="t">分摊状态占比<span class="s">饼图</span></div>
+          <svg viewBox="0 0 220 140" width="100%" height="140" role="img" aria-label="分摊状态饼图">
+            <circle cx="64" cy="70" r="46" fill="none" stroke="#d0d5dd" stroke-width="18" />
+            <circle
+              v-if="!pie.empty"
+              cx="64"
+              cy="70"
+              r="46"
+              fill="none"
+              stroke="#34c759"
+              stroke-width="18"
+              :stroke-dasharray="`${pie.normalLen} ${pie.circ}`"
+              stroke-dashoffset="0"
+              transform="rotate(-90 64 70)"
+            />
+            <circle
+              v-if="!pie.empty && pie.over > 0"
+              cx="64"
+              cy="70"
+              r="46"
+              fill="none"
+              stroke="#ff3b30"
+              stroke-width="18"
+              :stroke-dasharray="`${pie.overLen} ${pie.circ}`"
+              :stroke-dashoffset="String(-pie.normalLen)"
+              transform="rotate(-90 64 70)"
+            />
+            <text x="130" y="62" font-size="12" fill="#1e8e3e">正常 {{ pie.normal }}</text>
+            <text x="130" y="84" font-size="12" fill="#d70015">超 100% {{ pie.over }}</text>
+          </svg>
         </div>
       </div>
       <form v-if="board" class="qbar" style="margin-top: 12px" @submit.prevent="loadBoard">
@@ -159,23 +213,30 @@
           </table>
         </div>
       </div>
-    </template>
+    </section>
 
-    <div v-if="person" class="modal-mask" data-testid="eff-person-drawer" @click.self="person = null">
-      <div class="card" style="width: 420px; padding: 20px">
-        <h3 style="margin: 0 0 12px">{{ person.userName }}</h3>
-        <p class="hint">部门 {{ person.deptName || '—' }}</p>
-        <p class="hint">主归属 {{ person.primaryName || '—' }}</p>
-        <p class="hint">兼职归属 {{ person.partTimeNames.length ? person.partTimeNames.join('、') : '—' }}</p>
-        <p class="hint">主归属工时占比 {{ pctText(person.primaryShare) }}</p>
-        <p class="hint">分摊合计 {{ person.shareTotal }}%（仅统计兼职合计）</p>
-        <p class="hint">人效得分 {{ plainText(person.score) }}</p>
-        <p class="hint" data-testid="eff-person-comment">评价 {{ person.comment || '—' }}</p>
-        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
-          <button class="btn btn-sec btn-sm" type="button" @click="person = null">关闭</button>
+    <div v-if="person" class="mask on" @click="person = null"></div>
+    <aside v-if="person" class="drawer on" data-testid="eff-person-drawer" style="width: 640px">
+      <div class="drawer-h">
+        <b>人效详情 · {{ person.userName }}</b>
+        <button class="btn btn-sec btn-sm" type="button" @click="person = null">关闭</button>
+      </div>
+      <div class="drawer-b">
+        <div class="kv">
+          <div><div class="k">姓名</div><div class="v">{{ person.userName }}</div></div>
+          <div><div class="k">部门</div><div class="v">{{ person.deptName || '—' }}</div></div>
+          <div><div class="k">主归属</div><div class="v"><span class="chip">{{ person.primaryName || '—' }}</span></div></div>
+          <div><div class="k">兼职归属</div><div class="v">{{ person.partTimeNames.length ? person.partTimeNames.join('、') : '—' }}</div></div>
+          <div><div class="k">主归属工时占比</div><div class="v num">{{ pctText(person.primaryShare) }}</div></div>
+          <div><div class="k">分摊合计</div><div class="v num" :style="person.overShare ? 'color: var(--red)' : ''">{{ person.shareTotal }}%</div></div>
+          <div><div class="k">人效得分</div><div class="v num">{{ plainText(person.score) }}</div></div>
+          <div><div class="k">评价</div><div class="v" data-testid="eff-person-comment">{{ person.comment || '—' }}</div></div>
         </div>
       </div>
-    </div>
+      <div class="drawer-f">
+        <button class="btn btn-sec" type="button" @click="person = null">关闭</button>
+      </div>
+    </aside>
 
     <div v-if="changing" class="modal-mask" data-testid="eff-change-dialog" @click.self="changing = null">
       <div class="card" style="width: 420px; padding: 20px">
@@ -488,13 +549,60 @@ function pctText(value: number | null | undefined) {
   return `${value}%`
 }
 
-const chartBars = computed(() => {
-  const rows = board.value?.chart || []
-  const max = Math.max(0, ...rows.map((item) => item.gmv))
-  return rows.map((item) => ({
-    ...item,
-    width: max > 0 ? `${Math.max(4, Math.round((item.gmv / max) * 100))}%` : '0%',
-  }))
+function inventoryStatusLabel(value: string) {
+  if (value === 'PUBLISHED') return '已发布'
+  if (value === 'DRAFT') return '草稿'
+  if (value === 'CALCULATING') return '盘点中'
+  if (value === 'PENDING_APPROVE') return '待发布'
+  return value || '—'
+}
+
+const chartSeries = computed(() => {
+  const gmvRows = board.value?.chart || []
+  if (gmvRows.length) {
+    return { title: '主归属 GMV', rows: gmvRows.map((item) => ({ label: item.label, value: item.gmv })) }
+  }
+  const counts = new Map<string, number>()
+  for (const person of board.value?.people || []) {
+    const label = person.primaryName || person.deptName || '未归属'
+    counts.set(label, (counts.get(label) || 0) + 1)
+  }
+  return {
+    title: '主归属人数',
+    rows: [...counts.entries()].map(([label, value]) => ({ label, value })),
+  }
+})
+
+const chartTitle = computed(() => chartSeries.value.title)
+
+const barShapes = computed(() => {
+  const rows = chartSeries.value.rows.slice(0, 8)
+  if (!rows.length) return []
+  const max = Math.max(1, ...rows.map((item) => item.value))
+  const slot = 336 / rows.length
+  const w = Math.max(8, Math.min(28, slot - 10))
+  return rows.map((item, index) => {
+    const h = Math.max(4, Math.round((item.value / max) * 112))
+    return {
+      label: item.label,
+      short: item.label.length > 4 ? `${item.label.slice(0, 4)}…` : item.label,
+      x: 16 + index * slot + (slot - w) / 2,
+      y: 136 - h,
+      h,
+      w,
+    }
+  })
+})
+
+const pie = computed(() => {
+  const people = board.value?.people || []
+  const over = people.filter((item) => item.overShare).length
+  const normal = Math.max(0, people.length - over)
+  const total = normal + over
+  const circ = 2 * Math.PI * 46
+  const normalLen = total ? (normal / total) * circ : 0
+  const overLen = total ? (over / total) * circ : 0
+  return { normal, over, empty: total === 0, circ, normalLen, overLen }
 })
 
 function csvCell(value: string) {
@@ -681,3 +789,17 @@ onMounted(async () => {
   else await loadBoard()
 })
 </script>
+
+<style scoped>
+.tab {
+  background: transparent;
+  border: 0;
+  font: inherit;
+}
+.eff-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.8fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+</style>
