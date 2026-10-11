@@ -73,6 +73,7 @@ class UploadBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     holderUserId: int | None = None
     holderName: str | None = None
+    holderMode: str | None = None
     certType: str
     certNoPlain: str
     fileKey: str
@@ -126,7 +127,8 @@ def renewal_date_error(new_expire: date, old_expire: date, today: date) -> str |
 @router.post("/cert/archive/upload")
 def archive_upload(body: UploadBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
     holder = (body.holderName or "").strip()
-    if not holder:
+    mode = (body.holderMode or "").strip().upper()
+    if mode != "INTERNAL" and not holder:
         return fail(1001, "持有人必填")
     if body.certType not in CERT_TYPES:
         return fail(1001, "证件类型不合法")
@@ -141,6 +143,25 @@ def archive_upload(body: UploadBody, db: Session = Depends(db_session), actor: U
         return fail(1001, "日期须为 yyyy-MM-dd")
     if expire < issue:
         return fail(1001, "有效期须不早于签发日期")
+    mode = (body.holderMode or "").strip().upper()
+    holder_user = None
+    if mode == "INTERNAL":
+        if not body.holderUserId:
+            return fail(1001, "持有人必填")
+        holder_user = db.get(User, body.holderUserId)
+        if holder_user is None or holder_user.deleted or (holder_user.tenant_id or 0) != tenant_of(actor):
+            return fail(1500, "持有人不存在")
+        if not holder:
+            holder = (holder_user.nickname or holder_user.username or "").strip()
+    elif mode == "EXTERNAL":
+        holder_user = None
+    else:
+        holder_user_id = body.holderUserId if body.holderUserId else actor.id
+        holder_user = db.get(User, holder_user_id)
+        if holder_user is None or holder_user.deleted or (holder_user.tenant_id or 0) != tenant_of(actor):
+            return fail(1500, "持有人不存在")
+    if not holder:
+        return fail(1001, "持有人必填")
     existing = blocking_archives(db, actor, holder, body.certType)
     if len(existing) >= 2 or (len(existing) == 1 and existing[0].status in ("PENDING_REVIEW", "EFFECTIVE")):
         return fail(1032, "已存在同类型档案，请走换证")
@@ -151,12 +172,8 @@ def archive_upload(body: UploadBody, db: Session = Depends(db_session), actor: U
         date_error = renewal_date_error(expire, old_expire, date.today())
         if date_error:
             return fail(1001, date_error)
-    holder_user_id = body.holderUserId if body.holderUserId else actor.id
-    holder_user = db.get(User, holder_user_id)
-    if holder_user is None or holder_user.deleted or (holder_user.tenant_id or 0) != tenant_of(actor):
-        return fail(1500, "持有人不存在")
     row = CertArchive(
-        holder_user_id=holder_user.id,
+        holder_user_id=holder_user.id if holder_user is not None else None,
         holder_name=holder[:64],
         cert_type=body.certType,
         cert_no_enc=encrypt_text(plain),

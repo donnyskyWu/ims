@@ -222,10 +222,13 @@ def sim_vo(row: SimCard, names: dict[int, str], persons: dict[int, str], linked:
 
 def cert_vo(row: CertArchive) -> dict:
     plain = decrypt_text(row.cert_no_enc) if row.cert_no_enc else ""
+    holder_name = row.holder_name or ""
+    if row.holder_user_id is None and holder_name and "（外协）" not in holder_name:
+        holder_name = f"{holder_name}（外协）"
     return {
         "id": row.id,
         "holderUserId": row.holder_user_id,
-        "holderName": row.holder_name,
+        "holderName": holder_name,
         "certType": row.cert_type,
         "certNoMasked": mask_cert_no(plain),
         "certNoHashPrefix": (row.cert_no_hash or "")[:16],

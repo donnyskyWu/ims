@@ -719,7 +719,30 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="certFormOpen" title="录入证件" width="480px" @close="certFormOpen = false">
-      <div class="formrow one"><div class="fld"><label>持有人<i class="req">*</i></label><input v-model="certForm.holderName" data-testid="corp-cert-holder" placeholder="姓名" /></div></div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>持有人<i class="req">*</i></label>
+          <select v-model="certForm.holderMode" data-testid="corp-cert-holder-mode">
+            <option value="EXTERNAL">外协</option>
+            <option value="INTERNAL">内部人员</option>
+          </select>
+        </div>
+      </div>
+      <div v-if="certForm.holderMode === 'INTERNAL'" class="formrow one">
+        <div class="fld">
+          <label>内部人员<i class="req">*</i></label>
+          <select v-model="certForm.holderUserId" data-testid="corp-cert-holder-user">
+            <option value="">请选择人员</option>
+            <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+          </select>
+        </div>
+      </div>
+      <div v-else class="formrow one">
+        <div class="fld">
+          <label>外协姓名<i class="req">*</i></label>
+          <input v-model="certForm.holderName" data-testid="corp-cert-holder" placeholder="姓名" />
+        </div>
+      </div>
       <div class="formrow one">
         <div class="fld">
           <label>证件类型<i class="req">*</i></label>
@@ -948,6 +971,8 @@ const certFormOpen = ref(false)
 const certSaving = ref(false)
 const certFormError = ref('')
 const certForm = reactive({
+  holderMode: 'EXTERNAL',
+  holderUserId: '',
   holderName: '',
   certType: 'IDCARD',
   certNoPlain: '',
@@ -1348,6 +1373,8 @@ function expireStatusStyle(value: string) {
 }
 
 function openCertCreate() {
+  certForm.holderMode = 'EXTERNAL'
+  certForm.holderUserId = ''
   certForm.holderName = ''
   certForm.certType = 'IDCARD'
   certForm.certNoPlain = ''
@@ -1438,7 +1465,9 @@ async function saveCert() {
   certFormError.value = ''
   try {
     const res = await http.post('/cert/archive/upload', {
-      holderName: certForm.holderName.trim(),
+      holderMode: certForm.holderMode,
+      holderUserId: certForm.holderMode === 'INTERNAL' ? Number(certForm.holderUserId) : undefined,
+      holderName: certForm.holderMode === 'INTERNAL' ? undefined : certForm.holderName.trim(),
       certType: certForm.certType,
       certNoPlain: certForm.certNoPlain.trim(),
       fileKey: certForm.fileKey.trim(),
@@ -1633,10 +1662,11 @@ function renewWindowProblem(expireDate: string, oldExpire: string) {
 }
 
 function uploadProblem(
-  input: { holderName?: string; certType: string; certNoPlain: string; issueDate: string; expireDate: string; fileKey: string },
+  input: { holderMode?: string; holderUserId?: string; holderName?: string; certType: string; certNoPlain: string; issueDate: string; expireDate: string; fileKey: string },
   requireHolder: boolean,
 ) {
-  if (requireHolder && !(input.holderName || '').trim()) return '持有人必填'
+  if (requireHolder && input.holderMode === 'INTERNAL' && !input.holderUserId) return '持有人必填'
+  if (requireHolder && input.holderMode !== 'INTERNAL' && !(input.holderName || '').trim()) return '持有人必填'
   const number = certNoProblem(input.certNoPlain)
   if (number) return number
   const dates = certDateProblem(input.issueDate, input.expireDate)
