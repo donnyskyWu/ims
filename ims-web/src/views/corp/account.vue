@@ -57,10 +57,9 @@
       <p v-else-if="!poolEvents.length" class="hint" data-testid="acct-pool-event-empty">{{ poolEventEmpty }}</p>
       <ul v-else class="pool-event-list">
         <li v-for="ev in poolEvents" :key="ev.id" data-testid="acct-pool-event">
-          <span class="mono">{{ ev.eventTime }}</span>
+          <span class="mono">{{ ev.eventTimeText || timelineTimeText(ev.eventTime) }}</span>
           <span class="tag" :style="eventStyle(ev.eventType)">{{ ev.eventLabel || eventLabel(ev.eventType) }}</span>
-          <strong>{{ ev.eventType }}</strong>
-          {{ ev.snapshotSummary }}
+          {{ ev.snapshotText || timelineSummaryText(ev) }}
           <span v-if="ev.operatorName" class="hint" data-testid="acct-pool-operator"> · {{ ev.operatorName }}</span>
         </li>
       </ul>
@@ -795,9 +794,8 @@
         <ul v-else-if="timelineEvents.length" class="timeline-list">
           <li v-for="ev in timelineEvents" :key="ev.id" data-testid="acct-timeline-event">
             <span class="tag" data-testid="acct-timeline-label" :style="eventStyle(ev.eventType)">{{ ev.eventLabel || eventLabel(ev.eventType) }}</span>
-            <span class="mono">{{ ev.eventTime }}</span>
-            <strong>{{ ev.eventType }}</strong>
-            {{ ev.snapshotSummary }}
+            <span class="mono" data-testid="acct-timeline-time">{{ ev.eventTimeText || timelineTimeText(ev.eventTime) }}</span>
+            <span data-testid="acct-timeline-summary">{{ ev.snapshotText || timelineSummaryText(ev) }}</span>
             <span v-if="ev.operatorName" class="hint" data-testid="acct-timeline-operator"> · {{ ev.operatorName }}</span>
             <span v-if="ev.refNo" class="hint">（{{ ev.refNo }}）</span>
           </li>
@@ -1553,7 +1551,10 @@ const timelineEvents = ref<
     eventLabel?: string
     refNo: string
     snapshotSummary: string
+    snapshotText?: string
     eventTime: string
+    eventTimeText?: string
+    operatorUserId?: number
     operatorName?: string
   }[]
 >([])
@@ -1800,7 +1801,10 @@ const poolEvents = ref<
     eventType: string
     eventLabel?: string
     eventTime: string
+    eventTimeText?: string
     snapshotSummary: string
+    snapshotText?: string
+    operatorUserId?: number
     operatorName?: string
   }>
 >([])
@@ -1952,6 +1956,47 @@ function eventLabel(code: string) {
     RECYCLE: '回收回池',
   }
   return labels[code] || code
+}
+
+const timelineStatusLabel: Record<string, string> = {
+  IN_POOL: '池可领用',
+  IN_USE: '在用',
+  FROZEN: '冻结',
+  RETURNED: '已归还',
+  CANCELLED: '已注销',
+}
+
+function timelineTimeText(value: string) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T')
+  const utc = /Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`
+  const date = new Date(utc)
+  if (Number.isNaN(date.getTime())) return text.replace('T', ' ').slice(0, 16)
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
+function timelineSummaryText(ev: { snapshotSummary?: string; operatorUserId?: number; operatorName?: string }) {
+  let text = String(ev.snapshotSummary || '')
+  text = text.replace(/\b(IN_POOL|IN_USE|FROZEN|RETURNED|CANCELLED)\b/g, (code) => timelineStatusLabel[code] || code)
+  text = text.replace(/userId=(\d+)/g, (_, id: string) => {
+    const person = holders.value.find((item) => String(item.id) === id)
+    const named = String(person?.nickname || person?.username || '').trim()
+    if (named) return named
+    if (ev.operatorName && String(ev.operatorUserId || '') === id) return ev.operatorName
+    return '未知'
+  })
+  return text
 }
 
 function channelLabel(code: string) {

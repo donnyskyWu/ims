@@ -163,8 +163,10 @@ def event_vo(row: AccountTimelineEvent, names: dict[int, str]) -> dict:
         "operatorUserId": row.operator_user_id,
         "operatorName": names.get(row.operator_user_id, ""),
         "snapshotSummary": row.snapshot_summary,
+        "snapshotText": render_summary(row.snapshot_summary or "", names),
         "remark": row.remark,
         "eventTime": iso(row.event_time),
+        "eventTimeText": beijing_clock(row.event_time),
     }
 
 
@@ -287,11 +289,7 @@ def timeline_events(
         stmt = stmt.where(AccountTimelineEvent.event_time >= start, AccountTimelineEvent.event_time <= end)
     total = count_of(db, stmt)
     rows = db.scalars(stmt.order_by(AccountTimelineEvent.id.desc()).offset((page_no - 1) * size).limit(size)).all()
-    ids = {row.operator_user_id for row in rows if row.operator_user_id}
-    names: dict[int, str] = {}
-    if ids:
-        for user in db.scalars(select(User).where(User.id.in_(ids))).all():
-            names[user.id] = user.nickname or user.username
+    names = user_names(db, summary_user_ids(list(rows)))
     return paged([event_vo(row, names) for row in rows], total, page_no, size)
 
 

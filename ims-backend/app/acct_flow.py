@@ -395,7 +395,10 @@ def timeline(
     if start is not None and end is not None:
         stmt = stmt.where(AccountTimelineEvent.event_time >= start, AccountTimelineEvent.event_time <= end)
     rows = list(db.scalars(stmt.order_by(AccountTimelineEvent.event_time.desc())).all())
-    names = _timeline_operator_names(db, rows)
+    # 显示字段在读出时格式化。snapshot_summary / event_time 仍是原值，不改正文、不改全局时区。
+    from app.acct_pool import beijing_clock, render_summary, summary_user_ids, user_names
+
+    names = user_names(db, summary_user_ids(rows))
     return ok(
         {
             "list": [
@@ -409,8 +412,10 @@ def timeline(
                     "operatorUserId": r.operator_user_id,
                     "operatorName": names.get(int(r.operator_user_id or 0), ""),
                     "snapshotSummary": r.snapshot_summary,
+                    "snapshotText": render_summary(r.snapshot_summary or "", names),
                     "remark": r.remark,
                     "eventTime": r.event_time.strftime("%Y-%m-%dT%H:%M:%S") if r.event_time else "",
+                    "eventTimeText": beijing_clock(r.event_time),
                 }
                 for r in rows
             ],

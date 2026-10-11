@@ -63,7 +63,9 @@ test.describe('account local tails', () => {
     if (await timeline.count()) {
       const event = detail.getByTestId('acct-timeline-event').first()
       await expect(event.getByTestId('acct-timeline-label')).toHaveText(/登记|领用|流转|归还|冲话费|冻结|解冻|注销|回收回池/)
-      await expect(event).toContainText(/APPLY|RETURN|TRANSFER|FREEZE|UNFREEZE|RECHARGE|REGISTER|RECYCLE|CANCEL/)
+      await expect(event.getByTestId('acct-timeline-time')).toHaveText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+      await expect(event.getByTestId('acct-timeline-summary')).not.toContainText(/userId=|RETURNED|IN_POOL|IN_USE|FROZEN|CANCELLED/)
+      await expect(event).not.toContainText(/\b(APPLY|RETURN|TRANSFER|FREEZE|UNFREEZE|RECHARGE|REGISTER|RECYCLE|CANCEL)\b/)
     } else {
       await expect(empty).toBeVisible()
     }
