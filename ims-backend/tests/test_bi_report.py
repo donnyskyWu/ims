@@ -51,6 +51,30 @@ def test_bi_report_manage_create_list():
     assert "未分类" in names
 
 
+def test_bi_report_create_requires_scope_and_note():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={
+            "reportName": "口径报表",
+            "reportType": "REPORT",
+            "category": "运营",
+            "subCategory": "日报",
+            "shareScope": "PRIVATE",
+            "metricNote": "GMV 为支付金额",
+        },
+    )
+    assert created.json()["code"] == 0
+    data = created.json()["data"]
+    assert data["status"] == "DRAFT"
+    assert data["shareScope"] == "PRIVATE"
+    assert data["metricNote"] == "GMV 为支付金额"
+    assert data["category"] == "运营"
+    assert data["subCategory"] == "日报"
+    assert data["version"] == 1
+
+
 def test_bi_report_category_import_and_filters():
     auth = headers()
     empty = client.post("/admin-api/ims/bi/report/category", headers=auth, json={"action": "add", "name": "  ", "parentId": 0})

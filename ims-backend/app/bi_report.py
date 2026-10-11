@@ -30,6 +30,8 @@ class ReportCreateBody(BaseModel):
     reportType: str = "REPORT"
     category: str = "内容分析"
     subCategory: str = ""
+    shareScope: str = "PRIVATE"
+    metricNote: str = ""
 
 
 class ReportUpdateBody(BaseModel):
@@ -671,14 +673,20 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
     rtype = body.reportType.strip().upper() or "REPORT"
     if rtype not in {"REPORT", "DASHBOARD"}:
         return fail(1001, "报表类型无效")
+    scope = body.shareScope.strip().upper() or "PRIVATE"
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        return fail(1001, "可见范围无效")
     now = utcnow()
     row = BiReportDef(
         report_no=next_report_no(db, tenant_id),
         report_name=name,
         report_type=rtype,
-        category=body.category.strip() or "内容分析",
+        category=body.category.strip() or "未分类",
         sub_category=body.subCategory.strip(),
         status="DRAFT",
+        share_scope=scope,
+        metric_note=body.metricNote.strip(),
+        version_no=1,
         layout_json="{}",
         creator_id=actor.id,
         dept_id=primary_dept_id(db, actor.id, tenant_id),

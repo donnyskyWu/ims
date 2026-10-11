@@ -130,7 +130,7 @@
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">新建报表</h3>
-        <label class="fld">报表类型</label>
+        <label class="fld">报表类型<span style="color: var(--red)">*</span></label>
         <div class="rowline" style="gap: 8px; margin-bottom: 10px">
           <button
             type="button"
@@ -149,16 +149,26 @@
             大屏
           </button>
         </div>
-        <label class="fld">名称</label>
-        <input v-model="form.reportName" class="fld-in" />
+        <p v-if="typeError" class="hint bad">{{ typeError }}</p>
+        <label class="fld">报表名称<span style="color: var(--red)">*</span></label>
+        <input v-model="form.reportName" class="fld-in" data-testid="bi-new-name" />
+        <p v-if="nameError" class="hint bad" data-testid="bi-new-name-error">{{ nameError }}</p>
         <label class="fld">分类</label>
-        <select v-model="form.category" class="fld-in">
-          <option v-for="c in categories" :key="c.name" :value="c.name">{{ c.name }}</option>
+        <select v-model="form.categoryKey" class="fld-in" data-testid="bi-new-category">
+          <option v-for="opt in categoryOptions" :key="opt.key" :value="opt.key">{{ opt.label }}</option>
         </select>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <label class="fld">可见范围</label>
+        <select v-model="form.shareScope" class="fld-in" data-testid="bi-new-scope">
+          <option value="PRIVATE">私有</option>
+          <option value="SPECIFIED">指定人·角色</option>
+          <option value="ALL">公开</option>
+        </select>
+        <label class="fld">指标口径说明</label>
+        <textarea v-model="form.metricNote" class="fld-in" rows="3" data-testid="bi-new-note" placeholder="引用已登记指标口径，不自造口径"></textarea>
+        <p v-if="formError" class="hint bad">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存草稿</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-new-submit" @click="submitCreate">创建并进入设计器</button>
         </div>
       </div>
     </div>
@@ -260,13 +270,36 @@ const showForm = ref(false)
 const showCat = ref(false)
 const showImport = ref(false)
 const formError = ref('')
+const nameError = ref('')
+const typeError = ref('')
 const catNameError = ref('')
 const importError = ref('')
 const importPreview = ref<ImportPreview | null>(null)
 const filters = reactive({ keyword: '', reportType: '', category: '', subCategory: '', shareScope: '', status: '' })
 const listFiltered = ref(false)
 const emptyText = computed(() => (listFiltered.value ? '当前筛选下暂无报表' : '暂无报表，点击新建'))
-const form = reactive({ reportName: '', reportType: 'REPORT', category: '内容' })
+const form = reactive({
+  reportName: '',
+  reportType: 'REPORT',
+  categoryKey: '内容',
+  shareScope: 'PRIVATE',
+  metricNote: '',
+})
+const categoryOptions = computed(() => {
+  const options: Array<{ key: string; label: string; category: string; sub: string }> = []
+  for (const cat of categories.value) {
+    options.push({ key: cat.name, label: cat.name, category: cat.name, sub: '' })
+    for (const child of childNodes(cat)) {
+      options.push({
+        key: `${cat.name}/${child.name}`,
+        label: `${cat.name} / ${child.name}`,
+        category: cat.name,
+        sub: child.name,
+      })
+    }
+  }
+  return options
+})
 const catForm = reactive({ name: '', parentId: 0 })
 const activeCatLabel = computed(() => filters.subCategory || filters.category || '全部')
 
@@ -317,21 +350,37 @@ function pickCat(category: string, subCategory: string) {
 function openCreate() {
   form.reportName = ''
   form.reportType = 'REPORT'
-  form.category = categories.value[0]?.name || '内容'
+  form.categoryKey = categoryOptions.value[0]?.key || '内容'
+  form.shareScope = 'PRIVATE'
+  form.metricNote = ''
   formError.value = ''
+  nameError.value = ''
+  typeError.value = ''
   showForm.value = true
 }
 
 async function submitCreate() {
   formError.value = ''
-  if (!form.reportName.trim()) {
-    formError.value = '请输入名称'
-    return
+  nameError.value = ''
+  typeError.value = ''
+  let invalid = false
+  if (!form.reportType) {
+    typeError.value = '必填项，请填写'
+    invalid = true
   }
+  if (!form.reportName.trim()) {
+    nameError.value = '必填项，请填写'
+    invalid = true
+  }
+  if (invalid) return
+  const picked = categoryOptions.value.find((opt) => opt.key === form.categoryKey) || categoryOptions.value[0]
   const res = await http.post('/bi/report', {
     reportName: form.reportName.trim(),
     reportType: form.reportType,
-    category: form.category,
+    category: picked?.category || '未分类',
+    subCategory: picked?.sub || '',
+    shareScope: form.shareScope,
+    metricNote: form.metricNote.trim(),
   })
   if (res.data.code !== 0) {
     formError.value = res.data.msg || '保存失败'
