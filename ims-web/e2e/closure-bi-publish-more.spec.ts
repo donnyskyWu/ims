@@ -26,6 +26,7 @@ test.describe('bi publish config C036', () => {
     await expect(drawer.getByTestId('bi-publish-scope')).toBeVisible()
     await expect(drawer.getByTestId('bi-publish-op')).toBeVisible()
     await expect(drawer.getByTestId('bi-publish-row')).toBeVisible()
+    await expect(drawer.getByTestId('bi-publish-scope').locator('option')).toHaveText(['私有', '指定人', '全员'])
     await drawer.getByTestId('bi-publish-scope').selectOption('ALL')
     await drawer.getByTestId('bi-publish-op').selectOption('EXPORT')
     await drawer.getByTestId('bi-publish-row').selectOption('INHERIT')
@@ -55,7 +56,9 @@ test.describe('bi publish config C036', () => {
     const manage = page.getByTestId('bi-publish-manage')
     await expect(manage).toContainText('发布管理')
     await expect(manage.getByTestId('bi-publish-row').first()).toContainText('报表中心')
-    await expect(manage.getByTestId('bi-publish-row').first()).toContainText('公开')
+    await expect(page.getByTestId('bi-filter-scope').locator('option', { hasText: '全员' })).toHaveCount(1)
+    await expect(card).toContainText('全员')
+    await expect(manage.getByTestId('bi-publish-row').first()).toContainText('全员')
     await manage.getByRole('button', { name: '关闭' }).click()
 
     await card.getByTestId('bi-more').click()

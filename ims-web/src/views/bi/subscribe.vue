@@ -306,7 +306,14 @@
       <div class="card" style="width: 420px; padding: 18px">
         <h3 style="margin: 0 0 10px">生成分享链接</h3>
         <label class="fld">报表 ID</label>
-        <input v-model.number="shareForm.reportId" class="fld-in" type="number" />
+        <input v-model.number="shareForm.reportId" class="fld-in" type="number" @change="syncShareScope" />
+        <label class="fld">可见范围</label>
+        <select v-model="shareForm.shareScope" class="fld-in" data-testid="bi-share-scope">
+          <option value="PRIVATE">私有</option>
+          <option value="SPECIFIED">指定人</option>
+          <option value="ALL">全员</option>
+        </select>
+        <p class="csub">沿用这张报表已保存的可见范围：私有 / 指定人 / 全员。</p>
         <label class="fld">有效期（天）</label>
         <input v-model.number="shareForm.expireDays" class="fld-in" type="number" min="7" max="30" />
         <p v-if="shareExpireError" class="hint" data-testid="bi-share-expire-error" style="color: var(--red)">
@@ -383,11 +390,11 @@ const snapshot = ref<{
 const showForm = ref(false)
 const showShareForm = ref(false)
 const form = reactive({ subName: '', reportId: '', period: 'DAILY', pushTime: '09:00', channels: 'SITE+DING' })
-const reportOptions = ref<{ id: number; reportName: string }[]>([])
+const reportOptions = ref<{ id: number; reportName: string; shareScope?: string }[]>([])
 const editingId = ref(0)
 const statusTarget = ref<SubRow | null>(null)
 const statusToast = ref('')
-const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
+const shareForm = reactive({ reportId: 0, shareScope: 'PRIVATE', sensitive: false, expireDays: 7 })
 const shareExpireError = ref('')
 const formError = ref('')
 const createdHint = ref('')
@@ -670,11 +677,19 @@ async function confirmPush() {
   }
 }
 
-function openShare() {
+function syncShareScope() {
+  const found = reportOptions.value.find((item) => item.id === Number(shareForm.reportId))
+  if (found?.shareScope) shareForm.shareScope = found.shareScope
+}
+
+async function openShare() {
   shareForm.reportId = Number(form.reportId) || shareForm.reportId || 0
+  shareForm.shareScope = 'PRIVATE'
   shareForm.sensitive = false
   shareForm.expireDays = 7
   shareExpireError.value = ''
+  await loadReportOptions()
+  syncShareScope()
   showShareForm.value = true
 }
 

@@ -247,7 +247,7 @@
         <select v-model="publishForm.shareScope" class="fld-in" data-testid="bi-publish-scope">
           <option value="PRIVATE">私有</option>
           <option value="SPECIFIED">指定人</option>
-          <option value="ALL">公开</option>
+          <option value="ALL">全员</option>
         </select>
         <template v-if="publishForm.shareScope === 'SPECIFIED'">
           <label class="fld">可见用户</label>

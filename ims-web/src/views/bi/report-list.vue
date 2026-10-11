@@ -70,7 +70,7 @@
             <option value="">全部可见范围</option>
             <option value="PRIVATE">私有</option>
             <option value="SPECIFIED">指定人</option>
-            <option value="ALL">公开</option>
+            <option value="ALL">全员</option>
           </select>
           <select v-model="filters.status" data-testid="bi-filter-status" style="width: 110px">
             <option value="">全部状态</option>
@@ -92,7 +92,7 @@
             </div>
             <div class="csub" style="margin-top: 6px">{{ row.category }} / {{ row.subCategory || '—' }}</div>
             <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ statusText(row.status) }} · v{{ row.version || 1 }}</div>
-            <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }} · {{ opText(row.opPerm) }} · {{ rowPermText(row.rowPerm) }}</div>
+            <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }} · {{ scopeText(row.shareScope) }} · {{ opText(row.opPerm) }} · {{ rowPermText(row.rowPerm) }}</div>
             <div class="rowline" style="margin-top: 10px; gap: 8px">
               <button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑设计</button>
               <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="toggleMore(row.id)">更多</button>
@@ -118,6 +118,7 @@
                   <th>名称</th>
                   <th>类型</th>
                   <th>分类</th>
+                  <th>可见范围</th>
               <th>状态</th>
               <th>版本</th>
               <th>更新</th>
@@ -125,13 +126,14 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-if="loading"><td colspan="8"><div class="empty"><div class="et">加载中</div></div></td></tr>
-                <tr v-else-if="!rows.length"><td colspan="8"><div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div></td></tr>
+                <tr v-if="loading"><td colspan="9"><div class="empty"><div class="et">加载中</div></div></td></tr>
+                <tr v-else-if="!rows.length"><td colspan="9"><div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div></td></tr>
                 <tr v-for="row in rows" v-else :key="row.id">
                   <td class="mono">{{ row.reportNo }}</td>
                   <td>{{ row.reportName }}</td>
                   <td>{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</td>
                   <td>{{ row.category }}</td>
+                  <td>{{ scopeText(row.shareScope) }}</td>
               <td>{{ statusText(row.status) }}</td>
               <td>v{{ row.version || 1 }}</td>
               <td class="csub">{{ formatShanghai(row.updatedAt) }}</td>
@@ -208,7 +210,7 @@
         <select v-model="form.shareScope" class="fld-in" data-testid="bi-new-scope">
           <option value="PRIVATE">私有</option>
           <option value="SPECIFIED">指定人</option>
-          <option value="ALL">公开</option>
+          <option value="ALL">全员</option>
         </select>
         <label class="fld">指标口径说明</label>
         <textarea v-model="form.metricNote" class="fld-in" data-testid="bi-new-note" rows="3" />
@@ -409,7 +411,7 @@ function destText(value?: string) {
 }
 
 function scopeText(value?: string) {
-  if (value === 'ALL') return '公开'
+  if (value === 'ALL') return '全员'
   if (value === 'SPECIFIED') return '指定人'
   return '私有'
 }
