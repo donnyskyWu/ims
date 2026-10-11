@@ -461,11 +461,12 @@
           <div class="es">五项检查待落库：证件、账号、话费、违禁词、设备</div>
         </div>
         <table v-else>
-          <thead><tr><th>检查项</th><th>结果</th><th>权重分</th></tr></thead>
+          <thead><tr><th>检查项</th><th>结果</th><th>说明</th><th>权重分</th></tr></thead>
           <tbody>
             <tr v-for="c in detail.riskCheckResults" :key="c.checkItem" data-testid="live-risk-check" :data-result="c.checkResult">
               <td>{{ checkItemLabel(c.checkItem) }}</td>
               <td :style="{ color: checkColor(c.checkResult), fontWeight: 600 }">{{ checkResultLabel(c.checkResult) }}</td>
+              <td data-testid="live-risk-detail">{{ c.detail || '—' }}</td>
               <td>{{ c.scoreWeight }}</td>
             </tr>
           </tbody>

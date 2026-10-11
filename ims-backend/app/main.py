@@ -317,6 +317,19 @@ def ensure_cert_file_key_column() -> None:
         conn.execute(text("ALTER TABLE ims_cert_archive ADD COLUMN file_key VARCHAR(512) NOT NULL DEFAULT ''"))
 
 
+def ensure_live_risk_detail_column() -> None:
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_live_risk_check" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_live_risk_check")}
+    if "detail" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_live_risk_check ADD COLUMN detail VARCHAR(512) NOT NULL DEFAULT ''"))
+
+
 def ensure_live_approve_comment_column() -> None:
     from sqlalchemy import inspect, text
 
@@ -509,6 +522,7 @@ def init_db() -> None:
     ensure_exam_question_answer_columns()
     ensure_content_review_remark_column()
     ensure_live_approve_comment_column()
+    ensure_live_risk_detail_column()
     ensure_cert_file_key_column()
     ensure_air_key_columns()
     ensure_air_slice92_columns()

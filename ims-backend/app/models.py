@@ -461,6 +461,7 @@ class LiveRiskCheck(Base):
     check_item: Mapped[str] = mapped_column(String(32))
     check_result: Mapped[str] = mapped_column(String(16))
     score_weight: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[str] = mapped_column(String(512), default="")
     checked_at: Mapped[str] = mapped_column(String(32), default="")
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)

@@ -352,19 +352,28 @@ def run_risk_checks(
     score = 0
     for item in RISK_ITEMS:
         result = "PASS"
+        detail = ""
         if item == "CERT_VALID":
-            result, _detail = cert_signal(db, actor, person)
+            result, detail = cert_signal(db, actor, person)
         elif item == "ACCOUNT_STATUS":
             if account.status != "IN_USE":
                 result = "FAIL"
+            detail = "账号使用中" if result == "PASS" else "账号不在使用中"
         elif item == "BALANCE":
             if airtime_blocked(ops, actor, account):
                 result = "FAIL"
+            detail = "话费余额正常" if result == "PASS" else "话费余额不足或 SIM 未在用"
         elif item == "BLACKLIST":
             if topic_hits_blacklist(session.topic):
                 result = "FAIL"
+            detail = "未命中违禁词" if result == "PASS" else "主题命中违禁词"
         elif item == "DEVICE_OWNER":
             result = device_outcome(db, ops, actor, device_ids)
+            detail = {
+                "PASS": "设备归属正常",
+                "WARN": "设备未完整登记",
+                "FAIL": "设备不在用或不归属本场",
+            }.get(result, "")
         added = points_for(item, result)
         score += added
         row = LiveRiskCheck(
@@ -372,6 +381,7 @@ def run_risk_checks(
             check_item=item,
             check_result=result,
             score_weight=added,
+            detail=(detail or "")[:512],
             checked_at=now,
             tenant_id=session.tenant_id,
         )
@@ -556,6 +566,7 @@ def check_results_vo(checks: list[LiveRiskCheck]) -> list[dict]:
             "checkItem": item.check_item,
             "checkResult": item.check_result,
             "scoreWeight": item.score_weight,
+            "detail": item.detail or "",
             "checkedAt": item.checked_at,
         }
         for item in checks
@@ -692,6 +703,7 @@ def session_vo(
                 "checkItem": item.check_item,
                 "checkResult": item.check_result,
                 "scoreWeight": item.score_weight,
+                "detail": item.detail or "",
                 "checkedAt": item.checked_at,
             }
             for item in risk_checks
