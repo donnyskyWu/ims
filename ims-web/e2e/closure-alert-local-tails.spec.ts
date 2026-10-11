@@ -81,8 +81,7 @@ test.describe('alert local tails closure', () => {
     await page.getByRole('button', { name: '查询' }).click()
     const liveRow = page.locator('tbody tr').filter({ hasText: codeL1 })
     await expect(liveRow).toBeVisible({ timeout: 15_000 })
-    await expect(liveRow).toContainText('OPEN')
-    await expect(liveRow).toContainText('未响应')
+    await expect(liveRow).toContainText('未处理')
 
     await page.getByTestId('alert-filter-level').selectOption('L3')
     await page.getByRole('button', { name: '查询' }).click()

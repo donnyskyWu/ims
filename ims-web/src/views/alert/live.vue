@@ -93,9 +93,9 @@
       <div class="card" data-testid="alert-my-card">
         <div class="hd-row">
           <h3>我的预警</h3>
-          <span class="csub">{{ myAlerts.length }} 条未响应</span>
+          <span class="csub">{{ myAlerts.length }} 条未处理</span>
         </div>
-        <div v-if="!myAlerts.length" class="empty"><div class="et">暂无待响应预警</div></div>
+        <div v-if="!myAlerts.length" class="empty"><div class="et">暂无未处理预警</div></div>
         <div
           v-for="item in myAlerts"
           :key="item.alertNo"
@@ -134,11 +134,11 @@
         <option value="L1">低(黄)</option>
       </select>
       <select v-model="filters.responseStatus" data-testid="alert-history-status" style="width: 120px">
-        <option value="">全部处置</option>
-        <option v-if="tab === 'live'" value="OPEN">未响应</option>
-        <option value="CONFIRMED">已确认</option>
-        <option value="RESOLVED">已处理</option>
-        <option value="FALSE_ALARM">误报</option>
+        <option value="">全部状态</option>
+        <option value="OPEN">未处理</option>
+        <option value="CONFIRMED">处理中</option>
+        <option value="RESOLVED">已恢复</option>
+        <option value="FALSE_ALARM">已忽略</option>
       </select>
       <select v-model="filters.pushStatus" data-testid="alert-filter-push" style="width: 120px">
         <option value="">全部推送</option>
@@ -632,10 +632,14 @@ const PUSH_LABELS: Record<string, string> = {
   FAILED: '失败',
 }
 const STATUS_TEXT: Record<string, string> = {
-  OPEN: '未响应',
-  CONFIRMED: '已确认 · 处理中',
-  RESOLVED: '已处理 · 已恢复',
-  FALSE_ALARM: '误报',
+  OPEN: '未处理',
+  ACK: '处理中',
+  CONFIRMED: '处理中',
+  HANDLED: '已恢复',
+  RESOLVED: '已恢复',
+  FALSE_POSITIVE: '已忽略',
+  MISREPORT: '已忽略',
+  FALSE_ALARM: '已忽略',
 }
 const HANDLE_CHAIN = [
   { level: 1, title: '一级 · 责任人 · 30 分钟' },
@@ -692,8 +696,7 @@ function pushLabel(status: string) {
 }
 
 function statusText(status: string) {
-  const label = STATUS_TEXT[status]
-  return label ? `${label}（${status}）` : status || '—'
+  return STATUS_TEXT[status] || '—'
 }
 
 function channelName(channel: string) {
@@ -1002,12 +1005,7 @@ async function respond(
       return
     }
     const status = res.data.data?.responseStatus || ''
-    const labels: Record<string, string> = {
-      CONFIRMED: '已确认',
-      RESOLVED: '已解决',
-      FALSE_ALARM: '已标记误报',
-    }
-    toast.value = `处置成功：${labels[status] || status}（${alertNo}）`
+    toast.value = `处置成功：${statusText(status)}（${alertNo}）`
     if (res.data.data?.escalationStopped) {
       toast.value += ' · 响应成功，后续升级已停止'
     }

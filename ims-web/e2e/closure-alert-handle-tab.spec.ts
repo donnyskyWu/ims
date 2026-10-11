@@ -44,7 +44,7 @@ test.describe('alert handle tab closure S11', () => {
 
     const liveRow = page.locator('tbody tr').filter({ hasText: alertNo! })
     await expect(liveRow).toBeVisible({ timeout: 15_000 })
-    await expect(liveRow).toContainText('OPEN')
+    await expect(liveRow).toContainText('未处理')
 
     await liveRow.getByRole('button', { name: '处理' }).click()
     const drawer = page.getByTestId('alert-handle-drawer')
@@ -61,7 +61,6 @@ test.describe('alert handle tab closure S11', () => {
 
     await expect(page.locator('p.hint').filter({ hasText: /处理中/ })).toBeVisible({ timeout: 10_000 })
     await expect(liveRow).toContainText('处理中')
-    await expect(liveRow).toContainText('CONFIRMED')
 
     const recoverResp = page.waitForResponse(
       (r) => r.url().includes('/alert/check/') && r.url().includes('/respond') && r.request().method() === 'PUT',
@@ -70,7 +69,7 @@ test.describe('alert handle tab closure S11', () => {
     const recoverBody = (await (await recoverResp).json()) as { code: number; data?: { responseStatus?: string } }
     expect(recoverBody.code).toBe(0)
     expect(recoverBody.data?.responseStatus).toBe('RESOLVED')
-    await expect(liveRow).toContainText('RESOLVED')
+    await expect(liveRow).toContainText('已恢复')
 
     await page.locator('.tab', { hasText: '处置记录' }).click()
     await expect(page.locator('.g4 .stat').filter({ hasText: '已处置' }).locator('.n')).not.toHaveText('0', {
@@ -79,7 +78,7 @@ test.describe('alert handle tab closure S11', () => {
 
     const historyRow = page.locator('tbody tr').filter({ hasText: alertNo! })
     await expect(historyRow).toBeVisible({ timeout: 15_000 })
-    await expect(historyRow).toContainText('RESOLVED')
+    await expect(historyRow).toContainText('已恢复')
     await historyRow.getByTestId('alert-record-no').click()
     const timeline = page.getByTestId('alert-record-timeline')
     await expect(timeline).toBeVisible()
