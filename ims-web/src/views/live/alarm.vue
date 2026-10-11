@@ -88,7 +88,7 @@
                 <td class="mono">
                   <router-link :to="{ path: '/ims/live/sessions', query: { sessionCode: row.sessionCode } }">{{ row.sessionCode }}</router-link>
                 </td>
-                <td data-testid="live-alarm-occur">{{ row.occurAt || '—' }}</td>
+                <td data-testid="live-alarm-occur">{{ minuteText(row.occurAt) }}</td>
                 <td>{{ row.ruleName }}</td>
                 <td>L{{ row.alarmLevel }}</td>
                 <td>
@@ -351,7 +351,7 @@
           <p>场次 {{ active.sessionCode }}</p>
           <p>规则 {{ active.ruleName }} · L{{ active.alarmLevel }}</p>
           <p>内容 {{ active.alarmContent }}<template v-if="active.mergeCount > 1"> ×{{ active.mergeCount }}</template></p>
-          <p>发生 {{ active.occurAt || '—' }}</p>
+          <p>发生 {{ minuteText(active.occurAt) }}</p>
           <p>处置 {{ statusLabel(active.handleStatus) }} · {{ active.handlerName || '—' }}</p>
           <p>说明 {{ active.handleRemark || '—' }}</p>
           <p class="hint">通知方式：站内记录。不外发钉钉或短信，也不升级推送。</p>
@@ -428,6 +428,12 @@ const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '', ti
 const ruleFilters = reactive({ keyword: '', ruleType: '', status: '' })
 const unhandledCount = computed(() => Number(stats.value?.byHandleStatus?.UNHANDLED || 0))
 const severeOpen = ref(false)
+
+function minuteText(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return '—'
+  return text.replace('T', ' ').slice(0, 16)
+}
 
 function pageHasSevere(list: AlarmRow[]) {
   return list.some((row) => row.alarmLevel === 3 && row.handleStatus === 'UNHANDLED')

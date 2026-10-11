@@ -84,7 +84,7 @@
               <th>计划开播</th>
               <th>风险级别</th>
               <th>场次状态</th>
-              <th>Football</th>
+              <th>同步状态</th>
               <th>操作</th>
             </tr>
           </thead>
