@@ -684,6 +684,93 @@ def submit_list(
     return paged([submission_vo(db, ops, row) for row in rows], total, page_no, size)
 
 
+@router.get("/submit/context")
+def submit_context(
+    templateId: int | None = None,
+    authorId: int | None = None,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    """填报下拉。先选启用中的模板，再给出作者，账号只含该作者 IP 组已绑定账号。"""
+    tenant_id = tenant_of(actor)
+    templates = list(
+        db.scalars(
+            select(ReportTemplate)
+            .where(
+                ReportTemplate.deleted == 0,
+                ReportTemplate.tenant_id == tenant_id,
+                ReportTemplate.status == "ENABLED",
+            )
+            .order_by(ReportTemplate.id.desc())
+        ).all()
+    )
+    template_rows = [
+        {
+            "id": row.id,
+            "templateNo": row.template_no,
+            "templateName": row.template_name,
+            "periodType": row.period_type,
+            "deadlineRule": row.deadline_rule,
+            "deptName": row.dept_name,
+            "fieldsSchema": business_fields(row.fields_schema if isinstance(row.fields_schema, list) else []),
+        }
+        for row in templates
+    ]
+    authors: list[dict] = []
+    accounts: list[dict] = []
+    if templateId:
+        chosen = next((row for row in templates if row.id == templateId), None)
+        if chosen is None:
+            raw = db.get(ReportTemplate, templateId)
+            if raw is None or raw.deleted or raw.tenant_id != tenant_id:
+                return fail(1500, "模板不存在")
+            return fail(1501, "模板已停用")
+        author_rows = list(
+            ops.scalars(
+                select(AuthorUser)
+                .where(
+                    AuthorUser.deleted == 0,
+                    AuthorUser.tenant_id == tenant_id,
+                    AuthorUser.status == "ENABLED",
+                )
+                .order_by(AuthorUser.author_name.asc(), AuthorUser.id.asc())
+            ).all()
+        )
+        authors = [
+            {"id": row.id, "authorName": row.author_name, "ipGroupId": row.ip_group_id or 0}
+            for row in author_rows
+        ]
+        if authorId:
+            author = next((row for row in author_rows if row.id == authorId), None)
+            if author is None:
+                return fail(1500, "作者不存在")
+            group_id = author.ip_group_id or 0
+            if group_id:
+                account_rows = list(
+                    ops.scalars(
+                        select(PlatformAccount)
+                        .where(
+                            PlatformAccount.deleted == 0,
+                            PlatformAccount.tenant_id == tenant_id,
+                            PlatformAccount.ip_group_id == group_id,
+                            PlatformAccount.status != "DISABLED",
+                        )
+                        .order_by(PlatformAccount.account_name.asc(), PlatformAccount.id.asc())
+                    ).all()
+                )
+                accounts = [
+                    {
+                        "id": row.id,
+                        "accountName": row.account_name,
+                        "accountNo": row.account_no,
+                        "label": row.account_name or row.account_no,
+                    }
+                    for row in account_rows
+                ]
+    return ok({"templates": template_rows, "authors": authors, "accounts": accounts})
+
+
 @router.get("/submit/{submission_no}")
 def submit_detail(
     submission_no: str,

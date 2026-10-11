@@ -483,3 +483,93 @@ def test_report_assignees_create_fill_todos_only_for_selected_users():
     pending = [row for row in rows if row.status == "PENDING"]
     assert [row.assignee_user_id for row in pending] == [admin_id]
     assert any("填报待办" in row.title for row in pending)
+
+
+def test_report_submit_context_cascades_enabled_templates_and_author_pool():
+    auth = headers()
+    author_id, account_id, bad_account_id = seed_author_accounts()
+    template_id = create_enabled_template(auth)
+    disabled = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "已停用模板",
+            "status": "DISABLED",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "NUMBER", "required": True},
+            ],
+        },
+    )
+    assert disabled.json()["code"] == 0
+    disabled_id = disabled.json()["data"]["id"]
+
+    bare = client.get("/admin-api/ims/report/submit/context", headers=auth)
+    assert bare.json()["code"] == 0
+    template_ids = [row["id"] for row in bare.json()["data"]["templates"]]
+    assert template_id in template_ids
+    assert disabled_id not in template_ids
+    assert bare.json()["data"]["authors"] == []
+    assert bare.json()["data"]["accounts"] == []
+
+    by_template = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=auth,
+        params={"templateId": template_id},
+    )
+    assert by_template.json()["code"] == 0
+    assert any(row["id"] == author_id and row["authorName"] == "上报作者" for row in by_template.json()["data"]["authors"])
+    assert by_template.json()["data"]["accounts"] == []
+
+    pooled = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=auth,
+        params={"templateId": template_id, "authorId": author_id},
+    )
+    assert pooled.json()["code"] == 0
+    account_ids = [row["id"] for row in pooled.json()["data"]["accounts"]]
+    assert account_id in account_ids
+    assert bad_account_id not in account_ids
+
+    stopped = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=auth,
+        params={"templateId": disabled_id},
+    )
+    assert stopped.json()["code"] == 1501
+
+
+def test_report_submit_1122_rejects_value_below_min():
+    auth = headers()
+    author_id, account_id, _ = seed_author_accounts()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "非负金额",
+            "fieldsSchema": [
+                {
+                    "fieldKey": "gmv",
+                    "fieldLabel": "当日GMV",
+                    "fieldType": "MONEY",
+                    "required": True,
+                    "range": {"min": 0},
+                }
+            ],
+        },
+    )
+    assert created.json()["code"] == 0
+    bad = client.post(
+        "/admin-api/ims/report/submit",
+        headers=auth,
+        json={
+            "templateId": created.json()["data"]["id"],
+            "period": "2026-10-11",
+            "authorId": author_id,
+            "accountId": account_id,
+            "dataContent": {"gmv": -1},
+            "asDraft": False,
+        },
+    )
+    body = bad.json()
+    assert body["code"] == 1122
+    assert body["data"]["errors"][0]["fieldKey"] == "gmv"

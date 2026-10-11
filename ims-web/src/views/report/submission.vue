@@ -6,10 +6,11 @@
         <div class="sub">REPORT-002/003 · 审核队列 SLA 24h · 09 REPORT</div>
       </div>
       <div class="acts">
-        <button v-if="tab === 'list'" class="btn btn-pri btn-sm" type="button" @click="openSubmit">提交填报单</button>
+        <button v-if="tab === 'list'" class="btn btn-pri btn-sm" type="button" data-testid="submit-open" @click="openSubmit">提交填报单</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/report/template')">上报模板</button>
       </div>
     </div>
+    <p v-if="toast" class="hint" data-testid="submit-toast">{{ toast }}</p>
     <div class="tab-bar">
       <button type="button" class="tab-btn" :class="{ active: tab === 'list' }" @click="switchTab('list')">填报列表</button>
       <button type="button" class="tab-btn" :class="{ active: tab === 'audit' }" @click="switchTab('audit')">审核队列</button>
@@ -139,23 +140,67 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 420px; padding: 20px">
+      <div class="card submit-modal" data-testid="submit-dialog">
         <h3 style="margin: 0 0 12px">提交填报单</h3>
-        <label class="fld">模板 ID</label>
-        <input v-model.number="form.templateId" type="number" class="fld-in" />
-        <label class="fld">周期</label>
-        <input v-model="form.period" class="fld-in" placeholder="2026-10-07" />
-        <label class="fld">作者 ID（AuthorSelect）</label>
-        <input v-model.number="form.authorId" type="number" class="fld-in" />
-        <label class="fld">账号 ID（AccountSelect · IP 组池）</label>
-        <input v-model.number="form.accountId" type="number" class="fld-in" />
-        <label class="fld">指标值</label>
-        <input v-model.number="form.metricValue" type="number" class="fld-in" />
-        <p v-if="formError" class="hint" style="color: var(--red); margin-top: 8px">{{ formError }}</p>
+        <label class="fld">选择模板 <span class="req">*</span></label>
+        <select v-model.number="form.templateId" class="fld-in" data-testid="submit-template" @change="onTemplateChange">
+          <option :value="0">请选择模板</option>
+          <option v-for="tpl in templates" :key="tpl.id" :value="tpl.id">{{ tpl.templateName }}</option>
+        </select>
+        <label class="fld">作者 <span class="req">*</span></label>
+        <select
+          v-model.number="form.authorId"
+          class="fld-in"
+          data-testid="submit-author"
+          :disabled="!form.templateId"
+          @change="onAuthorChange"
+        >
+          <option :value="0">请选择作者（AuthorSelect）</option>
+          <option v-for="author in authors" :key="author.id" :value="author.id">{{ author.authorName }}</option>
+        </select>
+        <label class="fld">平台账号 <span class="req">*</span></label>
+        <select v-model.number="form.accountId" class="fld-in" data-testid="submit-account" :disabled="!form.authorId">
+          <option :value="0">{{ form.authorId ? '请选择平台账号' : '请先选择作者' }}</option>
+          <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.label || acc.accountName }}</option>
+        </select>
+        <label class="fld">数据日期 <span class="req">*</span></label>
+        <input v-model="form.period" type="date" class="fld-in" data-testid="submit-date" />
+        <template v-for="field in activeFields" :key="field.fieldKey">
+          <label class="fld">
+            {{ field.fieldLabel || field.fieldKey }}
+            <span v-if="field.required" class="req">*</span>
+          </label>
+          <select
+            v-if="field.options?.length"
+            v-model="fieldValues[field.fieldKey]"
+            class="fld-in"
+            :class="{ bad: fieldErrors[field.fieldKey] }"
+            :data-testid="`submit-field-${field.fieldKey}`"
+          >
+            <option value="">请选择</option>
+            <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
+          <input
+            v-else
+            v-model="fieldValues[field.fieldKey]"
+            class="fld-in"
+            :class="{ bad: fieldErrors[field.fieldKey] }"
+            :type="inputType(field.fieldType)"
+            :data-testid="`submit-field-${field.fieldKey}`"
+          />
+          <p v-if="fieldErrors[field.fieldKey]" class="field-err">{{ fieldErrors[field.fieldKey] }}</p>
+        </template>
+        <label class="fld">数据附件（按模板 CSV）</label>
+        <input class="fld-in" type="file" accept=".csv,text/csv" data-testid="submit-file" @change="onAttachment" />
+        <p v-if="attachmentName" class="hint">已选择 {{ attachmentName }}</p>
+        <label class="fld">数据行数</label>
+        <input v-model="form.rowCount" type="number" min="0" class="fld-in" data-testid="submit-rows" />
+        <label class="fld">数据说明</label>
+        <textarea v-model="form.remark" class="fld-in" rows="2" data-testid="submit-remark"></textarea>
+        <p v-if="formError" class="hint" style="color: var(--red); margin-top: 8px" data-testid="submit-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 16px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-sec btn-sm" type="button" @click="doSubmit(true)">存草稿</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="doSubmit(false)">正式提交</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="submit-send" @click="doSubmit(false)">提交并送审</button>
         </div>
       </div>
     </div>
@@ -187,7 +232,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -223,14 +268,39 @@ const rejectReason = ref('')
 const queueFilters = reactive({ businessLine: '' })
 const showForm = ref(false)
 const formError = ref('')
+const toast = ref('')
 const detail = ref<Row | null>(null)
 const filters = reactive({ submissionNo: '', period: '', submitStatus: '' })
+
+type FieldDef = {
+  fieldKey: string
+  fieldLabel: string
+  fieldType: string
+  required?: boolean
+  options?: string[]
+}
+type TemplateOpt = {
+  id: number
+  templateName: string
+  fieldsSchema: FieldDef[]
+}
+type AuthorOpt = { id: number; authorName: string; ipGroupId: number }
+type AccountOpt = { id: number; accountName: string; accountNo: string; label: string }
+
+const templates = ref<TemplateOpt[]>([])
+const authors = ref<AuthorOpt[]>([])
+const accounts = ref<AccountOpt[]>([])
+const activeFields = ref<FieldDef[]>([])
+const fieldValues = reactive<Record<string, string>>({})
+const fieldErrors = reactive<Record<string, string>>({})
+const attachmentName = ref('')
 const form = reactive({
   templateId: 0,
   period: '',
   authorId: 0,
   accountId: 0,
-  metricValue: 0,
+  rowCount: '',
+  remark: '',
 })
 
 function go(path: string) {
@@ -294,40 +364,153 @@ function resetFilters() {
   loadList()
 }
 
-function openSubmit() {
-  form.templateId = rows.value[0]?.id ? 0 : 0
+function inputType(fieldType: string) {
+  if (fieldType === 'DATE') return 'date'
+  if (fieldType === 'NUMBER' || fieldType === 'INTEGER' || fieldType === 'MONEY') return 'number'
+  return 'text'
+}
+
+function clearFieldState() {
+  for (const key of Object.keys(fieldValues)) delete fieldValues[key]
+  for (const key of Object.keys(fieldErrors)) delete fieldErrors[key]
+}
+
+function applyTemplateFields(templateId: number) {
+  const tpl = templates.value.find((item) => item.id === templateId)
+  activeFields.value = tpl?.fieldsSchema || []
+  clearFieldState()
+  for (const field of activeFields.value) fieldValues[field.fieldKey] = ''
+}
+
+function describeError(error: unknown): string {
+  if (error && typeof error === 'object' && 'msg' in error) {
+    const body = error as { code?: number; msg?: string }
+    if (body.msg) return body.code ? `${body.msg}（${body.code}）` : body.msg
+  }
+  return errorMessage(error)
+}
+
+function applyFieldErrors(error: unknown) {
+  for (const key of Object.keys(fieldErrors)) delete fieldErrors[key]
+  if (!error || typeof error !== 'object' || !('data' in error)) return
+  const data = (error as { data?: { errors?: { fieldKey?: string; errorMsg?: string }[] } }).data
+  for (const item of data?.errors || []) {
+    if (item.fieldKey) fieldErrors[item.fieldKey] = item.errorMsg || '校验未通过'
+  }
+}
+
+async function loadContext(templateId?: number, authorId?: number) {
+  const params: Record<string, number> = {}
+  if (templateId) params.templateId = templateId
+  if (authorId) params.authorId = authorId
+  const res = await http.get('/report/submit/context', { params })
+  const data = res.data.data || {}
+  templates.value = data.templates || []
+  authors.value = data.authors || []
+  accounts.value = data.accounts || []
+}
+
+async function openSubmit() {
+  form.templateId = 0
   form.period = new Date().toISOString().slice(0, 10)
   form.authorId = 0
   form.accountId = 0
-  form.metricValue = 0
+  form.rowCount = ''
+  form.remark = ''
   formError.value = ''
+  attachmentName.value = ''
+  authors.value = []
+  accounts.value = []
+  activeFields.value = []
+  clearFieldState()
   showForm.value = true
+  try {
+    await loadContext()
+  } catch (error) {
+    formError.value = describeError(error)
+  }
+}
+
+async function onTemplateChange() {
+  form.authorId = 0
+  form.accountId = 0
+  authors.value = []
+  accounts.value = []
+  applyTemplateFields(form.templateId)
+  if (!form.templateId) return
+  try {
+    await loadContext(form.templateId)
+    applyTemplateFields(form.templateId)
+  } catch (error) {
+    formError.value = describeError(error)
+  }
+}
+
+async function onAuthorChange() {
+  form.accountId = 0
+  accounts.value = []
+  if (!form.templateId || !form.authorId) return
+  try {
+    await loadContext(form.templateId, form.authorId)
+  } catch (error) {
+    formError.value = describeError(error)
+  }
+}
+
+function onAttachment(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  attachmentName.value = file?.name || ''
 }
 
 async function doSubmit(asDraft: boolean) {
   formError.value = ''
-  if (!form.templateId || !form.period || !form.authorId || !form.accountId) {
-    formError.value = '模板、周期、作者、账号必填'
+  for (const key of Object.keys(fieldErrors)) delete fieldErrors[key]
+  const missing: string[] = []
+  if (!form.authorId) missing.push('请选择作者（AuthorSelect）')
+  if (!form.templateId) missing.push('请选择模板')
+  if (!form.accountId) missing.push('请选择平台账号')
+  if (!form.period) missing.push('请选择数据日期')
+  let fieldMissing = false
+  for (const field of activeFields.value) {
+    if (field.required && !String(fieldValues[field.fieldKey] ?? '').trim()) {
+      fieldErrors[field.fieldKey] = '必填项，请填写'
+      fieldMissing = true
+    }
+  }
+  if (missing.length || fieldMissing) {
+    formError.value = missing.join('；') || '请填写必填字段'
     return
   }
+  const dataContent: Record<string, string | number> = { _dataDate: form.period }
+  for (const field of activeFields.value) {
+    const raw = String(fieldValues[field.fieldKey] ?? '').trim()
+    if (!raw) continue
+    if (field.fieldType === 'NUMBER' || field.fieldType === 'INTEGER' || field.fieldType === 'MONEY') {
+      dataContent[field.fieldKey] = Number(raw)
+    } else {
+      dataContent[field.fieldKey] = raw
+    }
+  }
+  if (form.rowCount !== '') dataContent._rowCount = Number(form.rowCount)
+  if (form.remark.trim()) dataContent._remark = form.remark.trim()
   try {
     const res = await http.post('/report/submit', {
       templateId: form.templateId,
       period: form.period,
       authorId: form.authorId,
       accountId: form.accountId,
-      dataContent: { metric_value: form.metricValue },
-      attachments: [],
+      dataContent,
+      attachments: attachmentName.value ? [{ fileName: attachmentName.value, fileKey: attachmentName.value }] : [],
       asDraft,
     })
-    if (res.data.code !== 0) {
-      formError.value = `[${res.data.code}] ${res.data.msg}`
-      return
-    }
+    const no = res.data.data?.submissionNo || ''
+    const status = statusLabel(res.data.data?.submitStatus || 'SUBMITTED')
+    toast.value = `已提交 ${no}，状态${status}`
     showForm.value = false
     await loadList()
-  } catch {
-    formError.value = '网络错误'
+  } catch (error) {
+    applyFieldErrors(error)
+    formError.value = describeError(error)
   }
 }
 
@@ -421,6 +604,23 @@ onMounted(loadList)
 .fld-in {
   width: 100%;
   box-sizing: border-box;
+}
+.submit-modal {
+  width: 480px;
+  max-height: 86vh;
+  overflow: auto;
+  padding: 20px;
+}
+.req {
+  color: #c62828;
+}
+.fld-in.bad {
+  border-color: #c62828;
+}
+.field-err {
+  margin: 4px 0 0;
+  color: #c62828;
+  font-size: 12px;
 }
 .tab-bar {
   display: flex;
