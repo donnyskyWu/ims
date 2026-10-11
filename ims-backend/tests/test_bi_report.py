@@ -236,6 +236,7 @@ def test_bi_category_tree_import_and_scope_filter():
     assert imported.json()["code"] == 0
     assert imported.json()["data"]["compCount"] == 1
     assert imported.json()["data"]["warnings"]
+    assert imported.json()["data"]["reportName"] == "导入日报(导入)"
 
 
 def test_bi_publish_config_grants_tc_r6_and_card_actions():

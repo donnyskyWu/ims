@@ -817,6 +817,32 @@ def report_category_save(body: CategoryBody, db: Session = Depends(db_session), 
     return fail(1001, "分类操作无效")
 
 
+def imported_report_name(db: Session, tenant_id: int, name: str) -> str:
+    """导入报表在原名后加「(导入)」，避免和导出来源重名。"""
+
+    def taken(label: str) -> bool:
+        count = db.scalar(
+            select(func.count())
+            .select_from(BiReportDef)
+            .where(
+                BiReportDef.deleted == 0,
+                BiReportDef.tenant_id == tenant_id,
+                BiReportDef.report_name == label,
+            )
+        )
+        return int(count or 0) > 0
+
+    first = f"{name}(导入)"[:128]
+    if not taken(first):
+        return first
+    seq = 2
+    while True:
+        label = f"{name}(导入{seq})"[:128]
+        if not taken(label):
+            return label
+        seq += 1
+
+
 @router.post("/import")
 def report_import(body: ImportBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
     template = body.template
@@ -842,6 +868,7 @@ def report_import(body: ImportBody, db: Session = Depends(db_session), actor: Us
             seen.add(dataset)
             warnings.append({"key": dataset, "message": f"数据源 {dataset} 需重新配置"})
     tenant_id = tenant_of(actor)
+    name = imported_report_name(db, tenant_id, name)
     rtype = str(template.get("reportType") or "REPORT").strip().upper() or "REPORT"
     if rtype not in {"REPORT", "DASHBOARD"}:
         rtype = "REPORT"
