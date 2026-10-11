@@ -1204,6 +1204,69 @@ def correction_rows(db: Session, session_code: str) -> list[LiveReportCorrection
     )
 
 
+CHANGE_FIELDS = (
+    ("actualStart", "实际开始"),
+    ("actualEnd", "实际结束"),
+    ("durationMinutes", "时长"),
+    ("gmv", "GMV"),
+    ("refundAmount", "退款"),
+    ("orderCount", "订单数"),
+    ("viewerCount", "观看人数"),
+    ("peakOnline", "峰值在线"),
+    ("newFans", "涨粉"),
+    ("adCost", "投放成本"),
+)
+
+
+def _same_value(left, right) -> bool:
+    def norm(value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return round(float(text), 2)
+            except ValueError:
+                return text
+        if isinstance(value, (int, float)):
+            return round(float(value), 2)
+        return value
+
+    return norm(left) == norm(right)
+
+
+def _show_value(value) -> str:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            number = float(text)
+        except ValueError:
+            return text or "—"
+    else:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.2f}"
+
+
+def correction_changes(before: dict, after: dict) -> list[str]:
+    lines = []
+    for key, label in CHANGE_FIELDS:
+        left = before.get(key)
+        right = after.get(key)
+        if _same_value(left, right):
+            continue
+        lines.append(f"{label} {_show_value(left)} → {_show_value(right)}")
+    return lines
+
+
 def correction_vo(row: LiveReportCorrection) -> dict:
     try:
         before = json.loads(row.before_json or "{}")
@@ -1218,6 +1281,7 @@ def correction_vo(row: LiveReportCorrection) -> dict:
         "correctionReason": row.correction_reason,
         "before": before,
         "after": after,
+        "changes": correction_changes(before, after),
         "operatorUserId": row.operator_user_id,
         "createdAt": iso(row.created_at),
     }
@@ -2357,7 +2421,14 @@ def report_correction(
     )
     db.add(saved)
     db.flush()
-    return ok({"correctionId": saved.id, "before": before, "after": after})
+    return ok(
+        {
+            "correctionId": saved.id,
+            "before": before,
+            "after": after,
+            "changes": correction_changes(before, after),
+        }
+    )
 
 
 @router.put("/report/{session_code}/confirm")

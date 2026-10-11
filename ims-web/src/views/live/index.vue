@@ -530,6 +530,9 @@
             </select>
             <input v-model="costDraft.amount" type="number" step="0.01" placeholder="金额" data-testid="live-cost-amount" :style="fieldMissing('amount') ? 'border-color: var(--red)' : ''" />
           </div>
+          <div v-if="correcting" class="hint" data-testid="live-correction-original">
+            原值：GMV {{ originalReport.gmv || '—' }} · 订单 {{ originalReport.orderCount || '—' }} · 观看 {{ originalReport.viewerCount || '—' }} · 峰值 {{ originalReport.peakOnline || '—' }} · 涨粉 {{ originalReport.newFans || '—' }} · 退款 {{ originalReport.refundAmount || '—' }} · 投放 {{ originalReport.adCost || '—' }}
+          </div>
           <div v-if="correcting" class="fld">
             <label>更正原因 *</label>
             <input
@@ -548,7 +551,8 @@
         <p v-else-if="report" class="hint" data-testid="live-cost-empty">暂无成本明细</p>
         <p v-if="reportError" class="hint bad" data-testid="live-report-error">{{ reportError }}</p>
         <p v-if="correctionTrace" class="hint" data-testid="live-correction-trace">
-          更正单 {{ correctionTrace.correctionId }} · GMV {{ correctionTrace.before?.gmv }} → {{ correctionTrace.after?.gmv }}
+          更正单 {{ correctionTrace.correctionId }}
+          <span v-for="line in correctionTrace.changes || []" :key="line" data-testid="live-correction-change">{{ line }}</span>
         </p>
         <div data-testid="live-correction-slips" style="margin-top: 8px">
           <div v-if="!correctionSlips.length" class="empty" data-testid="live-correction-empty">
@@ -558,6 +562,7 @@
           <ul v-else>
             <li v-for="slip in correctionSlips" :key="slip.id" data-testid="live-correction-slip">
               更正单 {{ slip.id }} · {{ slip.correctionReason || '—' }}
+              <div v-for="line in slip.changes || []" :key="line" data-testid="live-correction-change">{{ line }}</div>
             </li>
           </ul>
         </div>
@@ -666,6 +671,15 @@ const reportBadField = ref('')
 const slowQueryHint = ref('')
 const correcting = ref(false)
 const correctionReason = ref('')
+const originalReport = reactive({
+  gmv: '',
+  orderCount: '',
+  viewerCount: '',
+  peakOnline: '',
+  newFans: '',
+  refundAmount: '',
+  adCost: '',
+})
 const correctionTrace = ref<any>(null)
 const correctionSlips = ref<any[]>([])
 const query = reactive({
@@ -1801,6 +1815,13 @@ async function directSave() {
 }
 
 function openCorrection() {
+  originalReport.gmv = reportForm.gmv
+  originalReport.orderCount = reportForm.orderCount
+  originalReport.viewerCount = reportForm.viewerCount
+  originalReport.peakOnline = reportForm.peakOnline
+  originalReport.newFans = reportForm.newFans
+  originalReport.refundAmount = reportForm.refundAmount
+  originalReport.adCost = reportForm.adCost
   correcting.value = true
   correctionReason.value = ''
   reportError.value = ''
