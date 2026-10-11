@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.account import COLLECT_PLATFORMS
 from app.api import current_user, db_session, fail, ok
+from app.clock import format_iso
 from app.core import IMS_DB, utcnow
 from app.corp import check_enum, count_of, ops_db, page_args, paged, tenant_of, visible
 from app.models import MetadataEntity, MetadataField, User
@@ -120,7 +121,7 @@ def external_account_vo(row: CollectConfig) -> dict:
         "accountIdentifier": row.account_identifier,
         "collectEnabled": bool(row.collect_enabled),
         "status": row.status,
-        "updatedAt": row.updated_at.strftime("%Y-%m-%d %H:%M:%S") if row.updated_at else "",
+        "updatedAt": format_iso(row.updated_at) if row.updated_at else "",
     }
 
 

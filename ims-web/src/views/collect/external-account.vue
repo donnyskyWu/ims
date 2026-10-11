@@ -64,7 +64,7 @@
               <td class="mono">{{ row.accountIdentifier }}</td>
               <td data-testid="acct-collect-cell">{{ row.collectEnabled ? '是' : '否' }}</td>
               <td><span class="chip">{{ statusLabel(row.status) }}</span></td>
-              <td class="num" style="font-size: 11px">{{ row.updatedAt || '—' }}</td>
+              <td class="num" data-testid="acct-updated" style="font-size: 11px">{{ formatDateTime(row.updatedAt) || '—' }}</td>
               <td>
                 <button class="btn-txt btn" type="button" @click="openEdit(row)">编辑</button>
                 <button class="btn-txt btn" type="button" @click="remove(row)">删除</button>
@@ -119,6 +119,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import { formatDateTime } from '../../utils/time'
 
 type AccountRow = {
   id: string
