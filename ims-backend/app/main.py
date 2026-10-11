@@ -142,7 +142,7 @@ def seed() -> None:
         ensure_bi_br212_seed(db)
         from app.workbench_seed import refresh_workbench_e2e_seed
         from app.acct_seed import ensure_acct_e2e_pool_account, ensure_acct_schema, refresh_acct_e2e_pool
-        from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, refresh_live_fin_e2e_deps
+        from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, ensure_stub_live_room, refresh_live_fin_e2e_deps
         from app.cert_e2e_seed import refresh_cert_e2e_seed
         from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
         from app.perf_e2e_seed import refresh_perf_e2e_seed
@@ -159,6 +159,7 @@ def seed() -> None:
             _ensure_fin_r9_user(db)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
+            ensure_stub_live_room()
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
             refresh_perf_e2e_seed(db, admin)

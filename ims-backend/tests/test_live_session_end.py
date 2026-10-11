@@ -329,3 +329,59 @@ def test_r5_cannot_approve_supplement():
     landed = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
     assert landed["sessionStatus"] == "ENDED"
     assert landed["approverUserId"]
+
+
+def _open_session(auth: dict, ids: dict[str, int], topic: str) -> str:
+    created = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={
+            "accountId": ids["account"],
+            "realnamePersonId": ids["person"],
+            "responsibleUserId": 1,
+            "deviceAssetIds": [ids["phone"]],
+            "platform": "DOUYIN",
+            "topic": topic,
+            "planStartTime": "2026-10-20T20:00:00+08:00",
+            "planEndTime": "",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    return created.json()["data"]["sessionCode"]
+
+
+def test_stub_room_syncs_by_code_and_numeric_id():
+    from app.live_fin_e2e_seed import STUB_ROOM_CODE, STUB_ROOM_ID, ensure_stub_live_room
+
+    ensure_stub_live_room()
+    auth = headers()
+    ids = seed()
+    by_code = _open_session(auth, ids, "桩房间号同步")
+    synced = client.post(
+        f"/admin-api/ims/live/sessions/{by_code}/football-sync",
+        headers=auth,
+        json={"footballRoomId": STUB_ROOM_CODE},
+    )
+    assert synced.json()["code"] == 0, synced.json()
+    basic = synced.json()["data"]["footballRoomBasic"]
+    assert basic["liveId"] == STUB_ROOM_CODE
+    assert basic["roomId"] == str(STUB_ROOM_ID)
+    assert basic["status"] == 2
+    assert basic["liveName"] == "桩直播间"
+    still = client.get(f"/admin-api/ims/live/sessions/{by_code}", headers=auth).json()["data"]
+    assert still["sessionStatus"] == "APPROVED"
+    assert still["footballRoomId"] == STUB_ROOM_CODE
+    assert still["footballSyncStatus"] == "SYNCED"
+
+    by_id = _open_session(auth, ids, "桩主键同步")
+    synced_id = client.post(
+        f"/admin-api/ims/live/sessions/{by_id}/football-sync",
+        headers=auth,
+        json={"footballRoomId": str(STUB_ROOM_ID)},
+    )
+    assert synced_id.json()["code"] == 0, synced_id.json()
+    assert synced_id.json()["data"]["footballRoomBasic"]["roomId"] == str(STUB_ROOM_ID)
+    kept = client.get(f"/admin-api/ims/live/sessions/{by_id}", headers=auth).json()["data"]
+    assert kept["footballRoomId"] == str(STUB_ROOM_ID)
+    assert kept["footballSyncStatus"] == "SYNCED"
+    assert kept["sessionStatus"] == "APPROVED"

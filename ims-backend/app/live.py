@@ -795,16 +795,25 @@ def ledger_vo(db: Session, row: LiveSession, report: LiveReport | None, actor: U
 
 
 def read_live_room(ops: Session, actor: User, room_id: str) -> LiveRoom | None:
-    try:
-        rid = int(room_id)
-    except ValueError:
+    text = (room_id or "").strip()
+    if not text:
         return None
-    row = ops.get(LiveRoom, rid)
-    if row is None or row.deleted:
-        return None
-    if (row.tenant_id or 0) != tenant_of(actor):
-        return None
-    return row
+
+    def usable(row: LiveRoom | None) -> bool:
+        return row is not None and not row.deleted and (row.tenant_id or 0) == tenant_of(actor)
+
+    if text.isdigit():
+        found = ops.get(LiveRoom, int(text))
+        if usable(found):
+            return found
+    found = ops.scalar(
+        select(LiveRoom).where(
+            LiveRoom.deleted == 0,
+            LiveRoom.tenant_id == tenant_of(actor),
+            LiveRoom.live_id == text,
+        )
+    )
+    return found if usable(found) else None
 
 
 def room_basic_vo(room: LiveRoom) -> dict:
