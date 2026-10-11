@@ -87,6 +87,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { http } from '../api/http'
 import Ico from '../components/Ico.vue'
 import MessageBell from '../components/MessageBell.vue'
 import { codeLabel, crumbOf, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
@@ -107,6 +108,7 @@ const roleBtn = ref<HTMLElement | null>(null)
 const menuEl = ref<HTMLElement | null>(null)
 const closedGroups = ref<Record<string, boolean>>({})
 const closedSubs = ref<Record<string, boolean>>({})
+const seededQueries = ref<{ id: string; label: string }[]>([])
 
 const currentId = computed(() => modIdFromPath(route.path))
 const crumb = computed(() => crumbOf(currentId.value))
@@ -133,6 +135,14 @@ const visibleGroups = computed(() => {
         const children = item.children
           .filter((id) => hit(mods[id]?.name || id) || hit(item.label) || hit(name))
           .map((id) => ({ id, label: mods[id]?.name || id, icon: mods[id]?.icon || 'doc' }))
+        if (item.id === 'biAnalysisMgmt') {
+          for (const extra of seededQueries.value) {
+            if (!hit(extra.label) && !hit(item.label) && !hit(name)) continue
+            if (!children.some((child) => child.id === extra.id)) {
+              children.push({ id: extra.id, label: extra.label, icon: 'doc' })
+            }
+          }
+        }
         if (children.length) {
           visible.push({
             kind: 'folder',
@@ -177,9 +187,27 @@ async function exit() {
   await user.logout()
   router.push('/login')
 }
+async function loadSeededQueries() {
+  try {
+    const res = await http.get('/analysis/query-tool/template/page', {
+      params: { pageNo: 1, pageSize: 100, status: 'PUBLISHED' },
+    })
+    const list = res.data.data?.list || []
+    seededQueries.value = list
+      .filter((row: { menuSeed?: boolean; menuRoute?: string }) => row.menuSeed && row.menuRoute)
+      .map((row: { templateCode: string; menuTitle?: string; name: string }) => ({
+        id: `qtSeed_${row.templateCode}`,
+        label: row.menuTitle || row.name,
+      }))
+  } catch {
+    seededQueries.value = []
+  }
+}
+
 onMounted(() => {
   window.addEventListener('resize', onResize)
   document.addEventListener('click', onDoc)
+  loadSeededQueries()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
