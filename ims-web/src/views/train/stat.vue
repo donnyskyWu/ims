@@ -69,7 +69,7 @@
               <div class="n" data-testid="train-stat-total-rate" :style="{ color: rateColor(finish.totalFinishRate) }">
                 {{ finish.totalFinishRate }}%
               </div>
-              <div class="d">BR-102 目标 &gt;90%</div>
+              <div class="d">目标 &gt;90%</div>
             </div>
             <div class="card stat">
               <span class="l">按任务条目</span>

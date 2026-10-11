@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      状态 ADR-IMS-005 · canonical 七态 · P2 列表 Tag 四别名（草稿/计算中/已计算/已确认）
+      列表按草稿、计算中、已计算、已确认展示考核状态。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.evaluateeName" placeholder="被考核人" style="width: 110px" />

@@ -10,7 +10,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      从已发布资料多选关联；按人指派；完成率 = 已完成人次 / 应完成人次（BR-102）。
+      从已发布资料多选关联；按人指派；完成率 = 已完成人次 / 应完成人次。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input

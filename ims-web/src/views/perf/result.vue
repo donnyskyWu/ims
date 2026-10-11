@@ -17,7 +17,7 @@
       <div class="pg-h" style="margin-bottom: 8px">
         <div>
           <div class="sub">排名 · {{ gradeLine }}</div>
-          <p class="hint">V2 排名不含竞品分析维度（BR-110）。</p>
+          <p class="hint">排名不含竞品分析维度。</p>
         </div>
         <div class="acts">
           <label>

@@ -11,10 +11,7 @@
         <button class="btn btn-pri btn-sm" type="button" disabled>新建大屏</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">
-      PRD v2.6.27 侧栏归一化到 <code>biList</code>；本页供深链 <code>go('bi0Screen')</code> 兼容 · API
-      <code>/admin-api/ims/bi/screen/*</code>（只读）。
-    </p>
+    <p class="hint" style="margin-bottom: 8px">本页只读查看大屏。新建和编辑请到报表管理。</p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.keyword" data-testid="bi-screen-keyword" placeholder="名称/编号" style="width: 140px" />
       <select v-model="filters.status" style="width: 110px">

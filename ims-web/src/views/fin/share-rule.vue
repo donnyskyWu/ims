@@ -272,7 +272,7 @@
     <div v-if="disableOpen" class="mask on" style="z-index: 140" data-testid="fin-share-rule-disable-dialog">
       <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 400px; padding: 16px">
         <b>停用规则</b>
-        <p>历史分成单引用不受影响（FIN-S-R5）</p>
+        <p>历史分成单不受影响</p>
         <div class="acts" style="gap: 8px">
           <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-disable-confirm" @click="confirmDisable">
             确认停用

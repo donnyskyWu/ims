@@ -141,7 +141,7 @@
     <div v-if="grantExpert" class="modal-mask" @click.self="grantExpert = null">
       <div class="card" style="width: 520px; padding: 20px" data-testid="air-expert-grant-form">
         <h3 style="margin: 0 0 8px">专家授权</h3>
-        <p class="hint">{{ grantExpert.expertName }} · 授权落库后网关按表实时校验（BR-024）</p>
+        <p class="hint">{{ grantExpert.expertName }} · 授权保存后立即按授权表校验</p>
         <label class="fld">授权类型</label>
         <select v-model="grantForm.grantType" class="fld-in" data-testid="air-expert-grant-type" @change="onGrantType">
           <option value="DEPT">部门</option>

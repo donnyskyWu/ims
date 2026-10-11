@@ -12,9 +12,7 @@
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新增竞品</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">
-      V3 COMP-003 · API <code>/admin-api/ims/comp/asset/*</code>（与 M7 comp-analysis 监测 BFF 分离 · 走查 #9）。
-    </p>
+    <p class="hint" style="margin-bottom: 8px">竞品素材审核后入库，与竞品监测分开维护。</p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.compName" placeholder="竞品名称" style="width: 140px" />
       <select v-model="filters.platform" style="width: 120px">
@@ -77,7 +75,7 @@
               <option value="WECHAT_CHANNELS">视频号</option>
             </select>
           </label>
-          <label>监测账号标识（可选）<input v-model="createForm.compAccountId" placeholder="与 COLLECT 外部账号一致" /></label>
+          <label>监测账号标识（可选）<input v-model="createForm.compAccountId" placeholder="与外部竞品账号一致" /></label>
           <div class="rowline" style="gap: 8px; margin-top: 12px">
             <button class="btn btn-pri btn-sm" type="submit" :disabled="creating">保存</button>
             <button class="btn btn-sec btn-sm" type="button" @click="showCreate = false">取消</button>

@@ -141,7 +141,7 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="receiptOpen" title="回填发布链接" width="480px" @close="receiptOpen = false">
-      <p class="hint">回填后自动归档打包（PUB-R3）</p>
+      <p class="hint">回填后会自动归档打包</p>
       <label class="rowline" style="flex-direction: column; align-items: stretch; gap: 4px">
         发布链接
         <input v-model="receiptForm.publishUrl" data-testid="publish-receipt-url" placeholder="https://..." />

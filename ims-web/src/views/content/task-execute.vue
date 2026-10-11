@@ -107,7 +107,7 @@
       </div>
       <div v-else class="card" style="padding: 12px 16px; margin-bottom: 12px">
         <div class="dsec">工作说明</div>
-        <textarea v-model="deliverables" style="width: 100%; min-height: 90px" placeholder="完成必填（ADR-079）" />
+        <textarea v-model="deliverables" style="width: 100%; min-height: 90px" placeholder="完成说明（必填）" />
       </div>
       <div class="acts" style="margin-top: 12px">
         <button class="btn btn-sec" type="button" :disabled="uploading" @click="saveExecute">保存</button>

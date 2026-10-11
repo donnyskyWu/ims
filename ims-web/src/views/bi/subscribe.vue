@@ -70,7 +70,7 @@
 
     <div v-else-if="tab === 'share'" class="tbl-block">
       <div class="hint" style="margin-bottom: 8px">
-        分享不突破数据权限：链接列表按 BR-212 过滤，仅展示您有权查看的分享行
+        分享不突破数据权限，仅展示您有权查看的分享行
       </div>
       <div class="acts" style="margin-bottom: 8px">
         <input
@@ -132,7 +132,7 @@
 
     <div v-else-if="tab === 'approve'" class="tbl-block">
       <div class="hint" style="margin-bottom: 8px">
-        敏感报表（含成本/利润）分享须 R4 审批 · 通过后链接生效（BIS-R3）
+        含成本或利润的报表分享须审批，通过后链接才生效
       </div>
       <div class="tbl-wrap">
         <table>
@@ -169,7 +169,7 @@
     </div>
 
     <div v-else class="tbl-block">
-      <div class="hint" style="margin-bottom: 8px">发布管理仅展示按您的数据权限可见的已发布报表（BR-212）</div>
+      <div class="hint" style="margin-bottom: 8px">发布管理仅展示按您的数据权限可见的已发布报表</div>
       <div class="tbl-wrap">
         <table>
           <thead>
@@ -293,7 +293,7 @@
           含成本/利润等敏感数据（须审批）
         </label>
         <p v-if="shareForm.sensitive" class="csub" style="margin: 8px 0 0">
-          提交后进入「分享审批」Tab，R4 通过前链接不可用（BIS-R3）
+          提交后进入「分享审批」，审批通过前链接不可用
         </p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showShareForm = false">取消</button>

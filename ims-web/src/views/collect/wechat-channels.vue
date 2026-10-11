@@ -11,8 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      凭证加密入库，页面只显示掩码和凭证引用。作品写入 <code>oa_wechat_video_work</code>，粉丝日统计写入
-      <code>oa_wechat_follower_daily</code>。同一天重复采集按日更新。Cookie 已失效、浏览器引擎不可用与粉丝统计失败分开显示。
+      凭证加密保存，页面只显示掩码和凭证引用。同一天重复采集会按日更新作品和粉丝日统计。登录凭证失效、浏览器引擎不可用和粉丝统计失败会分开显示。
     </p>
 
     <form class="qbar" style="align-items: flex-end" @submit.prevent="saveAccount">

@@ -10,7 +10,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      创建为草稿（DRAFT）；草稿可「启动」→ IN_PROGRESS；执行中可申请终止 → TERMINATE_PENDING，审批通过后 TERMINATED 并终止关联任务。进度按同名计划下未删除任务的完成率。
+      新建后是草稿，可以启动为执行中。执行中可以申请终止，审批通过后计划终止，并终止关联任务。进度按同名计划下未删除任务的完成率计算。
     </p>
     <form class="qbar" data-testid="plan-filters" @submit.prevent="loadList">
       <input v-model="planName" data-testid="plan-filter-name" placeholder="计划名称" style="width: 160px" />

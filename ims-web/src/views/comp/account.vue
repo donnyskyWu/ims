@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      高粉默认粉丝 ≥10w · 低粉 &lt;1000 · 阈值只读引用 COLLECT FANS 规则。
+      高粉默认粉丝达到 10 万，低粉低于 1000。阈值只读引用采集规则。
     </p>
     <div class="cattabs">
       <button

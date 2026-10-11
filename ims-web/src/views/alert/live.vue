@@ -51,7 +51,7 @@
           data-testid="alert-delivery-ok"
           style="color: var(--green, #15803d)"
         >
-          达标（BR-111）
+          达标
         </p>
         <p
           v-else-if="delivery && delivery.deliveryRate < (delivery.target || 99)"
@@ -59,11 +59,11 @@
           style="color: var(--red)"
           data-testid="alert-delivery-short"
         >
-          <span data-testid="alert-delivery-miss">未达标（BR-111）</span>
+          <span data-testid="alert-delivery-miss">未达标</span>
         </p>
         <div v-if="delivery?.failedAlerts?.length" data-testid="alert-delivery-failed">
           <div v-for="item in delivery.failedAlerts" :key="item.alertNo" class="hint">
-            {{ item.alertNo }} · {{ channelName(item.failedChannel) }}失败 · 已自动补发 {{ item.retryCount }} 次（ALR-P-R2）
+            {{ item.alertNo }} · {{ channelName(item.failedChannel) }}失败 · 已自动补发 {{ item.retryCount }} 次
           </div>
         </div>
       </div>
@@ -265,7 +265,7 @@
         </p>
         <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
         <p v-if="detail.priorityNote || detail.level === 3" class="hint" data-testid="alert-receipt-priority">
-          {{ detail.priorityNote || '严重级按工作台与钉钉本地桩优先，短信仅兜底，不外发（ALR-P-R1）' }}
+          {{ detail.priorityNote || '严重级优先走工作台和钉钉，短信仅作兜底，不外发' }}
         </p>
         <div v-if="detail.receiptEmpty" class="empty" data-testid="alert-receipt-empty">
           <div class="et">暂无通道回执（待推送，钉钉/短信不外发）</div>
@@ -292,7 +292,7 @@
           </tbody>
         </table>
         <p v-if="detail.retryNote || detail.retryCount" class="hint" style="color: var(--red)" data-testid="alert-receipt-retry">
-          {{ detail.retryNote || '已自动补发 1 次（ALR-P-R2）' }}
+          {{ detail.retryNote || '已自动补发 1 次' }}
         </p>
         <p v-if="detail.sourceJumpUrl" class="hint">
           <router-link data-testid="alert-receipt-source" :to="detail.sourceJumpUrl">查看来源</router-link>
@@ -304,7 +304,7 @@
     <div v-if="falseTarget" class="modal-mask" @click.self="falseTarget = ''">
       <div class="card" style="width: 480px; padding: 20px" data-testid="alert-false-modal">
         <h3 style="margin: 0 0 8px">标记误报</h3>
-        <p class="hint">误报反馈将用于规则阈值复核，连续误报 ≥5 次建议管理员复核阈值（ALR-S-R3）。</p>
+        <p class="hint">误报反馈将用于规则阈值复核。连续误报达到 5 次时，建议管理员复核阈值。</p>
         <label class="fld">误报原因（选填）</label>
         <input v-model="falseReason" class="fld-in" data-testid="alert-false-reason" />
         <label class="fld">处理说明（选填）</label>

@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      模板字段配置后，上报人按模板逐项填报；提交进入审核流（REPORT-002/003）。
+      模板字段配置后，上报人按模板逐项填报，提交后进入审核。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.templateName" placeholder="模板名称" style="width: 160px" />

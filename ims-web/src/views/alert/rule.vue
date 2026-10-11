@@ -121,7 +121,7 @@
                   <span
                     v-if="row.falseAlarmCount >= 5"
                     data-testid="alert-hit-false-mark"
-                    title="连续误报 ≥5 次建议复核阈值（ALR-S-R3）"
+                    title="连续误报达到 5 次时建议复核阈值"
                     style="color: var(--orange, #d97706); margin-left: 6px"
                   >
                     复核阈值
@@ -132,7 +132,7 @@
             </tbody>
           </table>
         </div>
-        <p class="hint">响应率 &lt; 90% 为橙色（BR-112）。钉钉/短信不在本弹窗外发。</p>
+        <p class="hint">响应率低于 90% 为橙色。钉钉和短信不在本弹窗外发。</p>
       </div>
     </div>
 
@@ -354,19 +354,19 @@ function validateForm() {
   const op = form.dslOp.trim().toUpperCase()
   const raw = form.dslValue.trim()
   if (!source || !field || !form.dslOp.trim() || raw === '') {
-    dslError.value = '触发条件未填完整（1009）'
+    dslError.value = '触发条件未填完整'
     return false
   }
   if (!IDENT_RE.test(source) || !IDENT_RE.test(field)) {
-    dslError.value = '数据源或字段名非法（1009）'
+    dslError.value = '数据源或字段名不正确'
     return false
   }
   if (!DSL_OPS.has(op)) {
-    dslError.value = '操作符非法（1009），允许 GT、GTE、LT、LTE、EQ、NEQ'
+    dslError.value = '操作符不正确'
     return false
   }
   if (!/^-?\d+(\.\d+)?$/.test(raw)) {
-    dslError.value = '条件值须为数字（1009）'
+    dslError.value = '条件值须为数字'
     return false
   }
   form.dslOp = op

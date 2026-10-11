@@ -104,7 +104,7 @@
     <div v-if="grantSkill" class="modal-mask" @click.self="grantSkill = null">
       <div class="card" style="width: 520px; padding: 20px" data-testid="air-skill-grant-form">
         <h3 style="margin: 0 0 8px">技能授权</h3>
-        <p class="hint">{{ grantSkill.skillName }} · 授权事件驱动同步，生效延迟 &lt;5 分钟（BR-024）</p>
+        <p class="hint">{{ grantSkill.skillName }} · 授权后同步生效，延迟不超过 5 分钟</p>
         <label class="fld">授权类型</label>
         <select v-model="grantForm.grantType" class="fld-in" data-testid="air-grant-type" @change="onGrantType">
           <option value="DEPT">部门</option>

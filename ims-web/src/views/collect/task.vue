@@ -15,7 +15,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      Channel-A 默认租户级统一采集（02:00）；Channel-D 外部竞品统一任务（22:00）。启动后按「下次执行」由本地定时器触发，停止后不再调度。编辑抽屉<strong>无 Cookie</strong>，凭证见公司资产账号 · 采集 Tab（ADR-047）。失败日志在采集日志页重试，不依赖真实快手引擎。
+      内部统一采集默认每天 02:00；外部竞品统一任务默认每天 22:00。启动后按「下次执行」由本地定时器触发，停止后不再调度。编辑时不填写登录凭证，凭证在公司资产账号的采集页维护。失败日志在采集日志页重试。
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.taskName" data-testid="task-name" placeholder="任务名" style="width: 140px" />
@@ -193,7 +193,7 @@
         </label>
         <label>
           账号 ID（AccountSelect · 单账号）
-          <input v-model.number="form.accountId" type="number" placeholder="oa_platform_account.id" required />
+          <input v-model.number="form.accountId" type="number" placeholder="平台账号编号" required />
         </label>
         <label>
           频率
@@ -215,7 +215,7 @@
             <option value="DISABLED">DISABLED</option>
           </select>
         </label>
-        <p class="hint">本表单不含 Cookie/Token；Channel-D 外部任务请用 API 指定 collectConfigId。</p>
+        <p class="hint">本表单不填写登录凭证。外部统一任务在外部账号配置里维护。</p>
         <p v-if="saveWarning" class="hint" style="color: var(--orange)">{{ saveWarning }}</p>
         <div class="drawer-actions">
           <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
@@ -304,7 +304,7 @@ const taskEmptyTitle = computed(() => {
 })
 const taskEmptyHint = computed(() => {
   if (filters.status === 'RUNNING') {
-    return '启停只在启用和停用之间切换。停止后下次执行为空，执行过程中也不会标成运行中。本地桩不改这个状态。'
+    return '启停只在启用和停用之间切换。停止后下次执行为空，执行过程中也不会标成运行中。'
   }
   if (filters.platformType === 'MULTI') return '多平台只对应外部统一任务。还没有时，先点「确保外部统一任务」。'
   if (filtersActive.value) return '换个条件，或重置筛选后再看排期。外部统一任务在「多平台」里。'

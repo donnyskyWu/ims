@@ -10,10 +10,7 @@
         <button class="btn btn-pri" type="button" @click="loadList">刷新</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 10px">
-      GET <code>/admin-api/ims/content/fb-sync/outbox/page</code> · POST
-      <code>…/fb-sync/outbox/{id}/retry</code>
-    </p>
+    <p class="hint" style="margin-bottom: 10px">同步失败的记录可以在这里重试，保存内容时不会回滚。</p>
     <form class="qbar" data-testid="fb-sync-filters" @submit.prevent="loadList">
       <select v-model="statusFilter" data-testid="fb-sync-filter-status" style="width: 140px">
         <option value="">全部状态</option>

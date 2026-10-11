@@ -214,7 +214,7 @@
                 <td
                   class="num"
                   :class="{ 'switch-hot': row.switchScreenCount >= 3 }"
-                  :title="row.switchScreenCount >= 3 ? '切屏 ≥3 次强制交卷，按已答计分（PER-E-R1）' : ''"
+                  :title="row.switchScreenCount >= 3 ? '切屏达到 3 次会强制交卷，按已答计分' : ''"
                 >
                   {{ row.switchScreenCount }}
                 </td>
@@ -252,7 +252,7 @@
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card compose" style="width: 760px; padding: 20px; max-height: 88vh; overflow: auto">
         <h3 style="margin: 0 0 8px">创建试卷</h3>
-        <p class="hint">抽题按知识域和题型，同一题不重复计入。契约没有难度字段。</p>
+        <p class="hint">抽题按知识域和题型，同一题不重复计入，不按难度区分。</p>
         <label class="fld">试卷名称</label>
         <input v-model="form.paperName" class="fld-in" placeholder="如 10 月合规抽测" />
         <label class="fld">组卷方式</label>
@@ -303,7 +303,7 @@
           <button class="btn btn-sec btn-sm" type="button" @click="addStrategy">添加策略行</button>
         </div>
 
-        <p class="sum-line" :class="{ bad: totalMismatch }">Σ = {{ sigma }} 分<span v-if="totalMismatch">，与总分 {{ form.totalScore }} 不一致（1159）</span></p>
+        <p class="sum-line" :class="{ bad: totalMismatch }">Σ = {{ sigma }} 分<span v-if="totalMismatch">，与总分 {{ form.totalScore }} 不一致</span></p>
         <p v-if="formError" class="hint stock-err">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
@@ -326,7 +326,7 @@
     <div v-if="assignTarget" class="modal-mask" @click.self="assignTarget = null">
       <div class="card" style="width: 460px; padding: 20px">
         <h3 style="margin: 0 0 8px">指派考生</h3>
-        <p class="hint">{{ assignTarget.paperName }} · 仅窗口内可开考（1161）</p>
+        <p class="hint">{{ assignTarget.paperName }} · 仅在考试窗口内可以开考</p>
         <label class="fld">考生用户 ID</label>
         <input v-model="assignForm.userIdsText" class="fld-in" />
         <label class="fld">窗口开始</label>
@@ -399,7 +399,7 @@
       <div class="card" style="width: 640px; padding: 20px; max-height: 88vh; overflow: auto">
         <h3 style="margin: 0 0 8px">阅卷 · {{ grading.userName }}</h3>
         <p class="hint">{{ grading.paperName }} · 客观得分 {{ grading.objectiveScore ?? 0 }}</p>
-        <p class="hint">阅卷成绩将自动计入「考试成绩」类绩效指标取数（PER-E-R4）。主观题须 48 小时内完成。</p>
+        <p class="hint">阅卷成绩将自动计入「考试成绩」类绩效指标。主观题须在 48 小时内完成。</p>
         <div v-for="item in grading.subjectiveItems || []" :key="item.questionId" class="quiz-q">
           <div class="q-title">{{ item.content }} <small>满分 {{ item.maxScore }}</small></div>
           <p>考生作答：{{ item.answer || '（未作答）' }}</p>
@@ -447,7 +447,7 @@
     <div v-if="takePhase === 'makeup' && taking" class="modal-mask">
       <div class="card" style="width: 440px; padding: 20px">
         <h3 style="margin: 0 0 8px">确认补考</h3>
-        <p>补考仅一次，新成绩将覆盖原成绩（PER-E-R3）。</p>
+        <p>补考仅一次，新成绩将覆盖原成绩。</p>
         <div class="acts" style="justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="takePhase = 'result'">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="applyMakeup">确认补考</button>

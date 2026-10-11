@@ -58,7 +58,7 @@
       <div class="card stat">
         <span class="l">目标 P95</span>
         <div class="n" data-testid="dc-trace-perf-target">{{ fmtMs(metrics.targetP95Ms) }}</div>
-        <div class="d">BR-205</div>
+        <div class="d">穿透查询</div>
       </div>
       <div class="card stat" :style="!metrics.dailyPressureTestPassed ? { outline: '1px solid var(--red)' } : undefined">
         <span class="l">每日压测</span>
@@ -135,7 +135,7 @@ const overP99 = computed(() => (metrics.value?.p99Ms ?? 0) > 8000)
 const alertText = computed(() => {
   if (!metrics.value) return ''
   if (metrics.value.p95Ms > 3000) {
-    return '穿透 P95 超标（BR-205 目标 < 3000ms），已自动告警并出具慢查询清单'
+    return '穿透 P95 超过 3000ms，已自动告警并出具慢查询清单'
   }
   return ''
 })

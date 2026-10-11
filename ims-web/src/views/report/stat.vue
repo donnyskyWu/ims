@@ -10,7 +10,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      分子 = 审核通过（APPROVED）填报单；分母 = 非草稿应报单数。目标 &gt;95%（BR-106）。
+      分子是审核通过的填报单，分母是非草稿的应报单数。目标 &gt;95%。
     </p>
     <form class="qbar" @submit.prevent="loadAll">
       <input v-model="statPeriod" placeholder="统计周期 YYYY-MM-DD" style="width: 160px" />
@@ -25,7 +25,7 @@
         <div class="n" :style="{ color: rateColor(summary.totalCompleteRate) }">
           {{ summary.totalCompleteRate }}%
         </div>
-        <div class="d">BR-106 目标 &gt;95%</div>
+        <div class="d">目标 &gt;95%</div>
       </div>
     </div>
 

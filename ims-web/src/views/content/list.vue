@@ -10,10 +10,11 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      契约 GET/POST/PUT/DELETE <code>/admin-api/ims/content</code> · Football
-      <code>GET|POST …/{id}/fb-sync</code>（CONTENT-109）。保存成功即 200，HTTP 失败进
-      <router-link to="/ims/content/fb-sync">补偿队列</router-link> · 审核通过后
-      <router-link to="/ims/content/publish">发布管理</router-link>（回填/督办）。
+      保存成功后同步到 Football；失败可到
+      <router-link to="/ims/content/fb-sync">补偿队列</router-link>
+      重试。审核通过后到
+      <router-link to="/ims/content/publish">发布管理</router-link>
+      回填或督办。
     </p>
     <form class="qbar" data-testid="content-filters" @submit.prevent="loadList">
       <input v-model="titleKw" data-testid="content-filter-title" placeholder="标题" style="width: 160px" />
@@ -163,7 +164,7 @@
         </div>
         <div class="fld">
           <label>版式图片</label>
-          <p class="hint">POST /content/file/upload · scene=content_image，写入 layout_html</p>
+          <p class="hint">上传后的图片会写入版式。</p>
           <input
             data-testid="content-image-file"
             type="file"

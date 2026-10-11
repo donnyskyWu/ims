@@ -85,12 +85,12 @@
       <div class="card stat">
         <span class="l">成功率</span>
         <div class="n">{{ metricReady && !metricError && metrics.successRate != null ? percent(metrics.successRate) : '—' }}</div>
-        <div class="d">GET /auth/org/sync-metrics</div>
+        <div class="d">同步成功占比</div>
       </div>
       <div class="card stat">
         <span class="l">事件数</span>
         <div class="n">{{ eventReady && !eventError ? total : '—' }}</div>
-        <div class="d">{{ eventError || 'GET /auth/org/events' }}</div>
+        <div class="d">{{ eventError || '同步事件' }}</div>
       </div>
     </div>
     <div class="card" data-testid="org-report" style="margin: 12px 0">
@@ -531,10 +531,10 @@ const eventEmptyHint = computed(() => {
 })
 
 const levelText = computed(() => {
-  if (!metricReady.value || metricError.value) return 'GET /auth/org/sync-metrics'
+  if (!metricReady.value || metricError.value) return '同步水位'
   if (metrics.level === 'red') return '超过 5 分钟，红色'
   if (metrics.level === 'green') return '5 分钟内，绿色'
-  return metrics.level || 'GET /auth/org/sync-metrics'
+  return metrics.level || '同步水位'
 })
 
 function statusText(value: unknown) {

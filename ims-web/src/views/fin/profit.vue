@@ -273,7 +273,7 @@
           <p v-if="detailAmountsMasked" class="hint" data-testid="fin-profit-detail-mask">金额已脱敏 ***</p>
           <section v-else data-testid="fin-profit-waterfall">
             <b>三级口径瀑布</b>
-            <p class="hint">FIN-P-R2 · GMV 逐项扣至净利润（BR-108）。悬停每级查看公式。</p>
+            <p class="hint">成交额逐项扣减到净利润。悬停每一级可查看公式。</p>
             <ol class="wf-list">
               <li
                 v-for="step in waterfall"
@@ -344,14 +344,14 @@
           </ol>
         </div>
         <div class="drawer-f">
-          <p v-if="periodLocked" class="hint" data-testid="fin-profit-recalc-locked">财务期间已结账，重算冻结（1142）</p>
+          <p v-if="periodLocked" class="hint" data-testid="fin-profit-recalc-locked">财务期间已结账，重算已冻结</p>
           <p v-if="recalcNote" class="hint" data-testid="fin-profit-recalc-done">{{ recalcNote }}</p>
           <button
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="fin-profit-recalc-open"
             :disabled="periodLocked || recalcBusy"
-            :title="periodLocked ? '财务期间已结账，重算冻结（1142）' : '手动触发重算'"
+            :title="periodLocked ? '财务期间已结账，重算已冻结' : '手动触发重算'"
             @click="askRecalc"
           >
             手动触发重算
@@ -363,8 +363,8 @@
     <div v-if="recalcOpen && detail" class="modal-mask" data-testid="fin-profit-recalc-dialog">
       <div class="modal-card" data-testid="fin-profit-recalc-confirm">
         <b>确认重算</b>
-        <p>重算将生成新版本 V{{ nextVersion }}，旧结果留痕（FIN-P-R3）</p>
-        <p class="hint">重算生成新版本，旧结果留痕（FIN-P-R3）</p>
+        <p>重算将生成新版本 V{{ nextVersion }}，旧结果会保留</p>
+        <p class="hint">重算生成新版本，旧结果会保留</p>
         <p v-if="recalcError" class="hint" style="color: var(--red)" data-testid="fin-profit-recalc-error">{{ recalcError }}</p>
         <div class="modal-acts">
           <button class="btn btn-sec btn-sm" type="button" :disabled="recalcBusy" @click="recalcOpen = false">取消</button>
@@ -377,7 +377,7 @@
       <div class="card" style="width: 400px; padding: 20px">
         <h3 style="margin: 0 0 12px">确认重算</h3>
         <p style="margin: 0">
-          重算将生成新版本 V{{ nextVersion }}，旧结果留痕（FIN-P-R3）
+          重算将生成新版本 V{{ nextVersion }}，旧结果会保留
         </p>
         <p class="hint" style="margin: 8px 0 0">{{ recalcTarget.sessionCode }}</p>
         <div class="acts" style="margin-top: 16px; justify-content: flex-end">
@@ -593,7 +593,7 @@ function buildWaterfall(row: ProfitDetail): WfStep[] {
     level: 'NET',
     delta: 0,
     running: net,
-    formula: '净利润 = GMV − 退款 − 佣金 − 投放 − 冲话费 − 固定 − 样品 − 达人分成 − 实名人分成（BR-108）',
+    formula: '净利润 = 成交额 − 退款 − 佣金 − 投放 − 冲话费 − 固定 − 样品 − 达人分成 − 实名人分成',
   })
   return steps
 }
@@ -634,8 +634,8 @@ function money(n: unknown) {
 }
 
 function recalcTitle(row: ProfitRow) {
-  if (row.financeStatus === 'LOCKED') return '财务期间已结账，重算冻结（1142）'
-  return '手动触发重算（FIN-P-R3）'
+  if (row.financeStatus === 'LOCKED') return '财务期间已结账，重算已冻结'
+  return '手动触发重算'
 }
 
 function fmt(n: unknown) {
@@ -866,7 +866,7 @@ async function confirmRecalc() {
     const code = res.data?.code
     if (code === 1142) {
       row.financeStatus = 'LOCKED'
-      error.value = res.data?.msg || '财务期间已结账，重算冻结（1142）'
+      error.value = res.data?.msg || '财务期间已结账，重算已冻结'
       recalcTarget.value = null
       return
     }
@@ -925,7 +925,7 @@ async function doRecalc() {
     const body = res.data
     if (body?.code === 1142) {
       detail.value = { ...detail.value, financeStatus: 'LOCKED' }
-      recalcError.value = body.msg || '财务期间已结账，重算冻结（1142）'
+      recalcError.value = body.msg || '财务期间已结账，重算已冻结'
       recalcOpen.value = false
       return
     }

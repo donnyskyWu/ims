@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      内部作品/账号 → <b>内部分析</b>；外部竞品 → <b>竞品分析</b>；本页仅 IP 主题/行业聚合（UX-M7）。
+      内部作品和账号在内部分析，外部竞品在竞品分析。本页只做 IP 主题和行业聚合。
     </p>
     <div class="cattabs">
       <button

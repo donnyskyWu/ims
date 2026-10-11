@@ -39,7 +39,7 @@
       <div class="card stat">
         <span class="l">P95</span>
         <div class="n" data-testid="bi-perf-p95">{{ fmtMs(stats.p95CostMs) }}</div>
-        <div class="d">BR-204</div>
+        <div class="d">30 秒内</div>
       </div>
       <div class="card stat" :style="stats.over30sCount > 0 ? { outline: '1px solid var(--red)' } : undefined">
         <span class="l">超 30 秒</span>
@@ -120,7 +120,7 @@ const error = ref('')
 
 const alertText = computed(() => {
   if (!stats.value || stats.value.over30sCount <= 0) return ''
-  return '有查询超过 30 秒已终止（BR-204），建议缩小筛选范围'
+  return '有查询超过 30 秒已终止，建议缩小筛选范围'
 })
 
 function ymd(date: Date) {

@@ -8,7 +8,7 @@
     </div>
 
     <div v-if="dataAsOf" class="hint" style="margin-bottom: 10px">
-      DC-002 · perm <code>ims:fin:profit-trace:query</code> · 数据截至 {{ dataAsOf }}
+      DC 利润反查 · 数据截至 {{ dataAsOf }}
     </div>
 
     <div class="tabs" style="margin-bottom: 8px">
@@ -249,7 +249,7 @@
           <span class="hint">{{ queryCostMs }} ms</span>
           <button type="button" class="btn btn-sec btn-sm" @click="closeDrawer">关闭</button>
         </div>
-        <p class="hint">BR-209：利润 → 场次 → 账号/资产/责任人/实名人 → 成本明细</p>
+        <p class="hint">利润可以追到场次、账号、资产、责任人、实名人和成本明细</p>
         <div class="g2" style="margin-bottom: 12px">
           <div class="card stat"><span class="l">净利润</span><div class="n">¥{{ fmt(chain.chain?.profit?.netProfit) }}</div></div>
           <div class="card stat"><span class="l">场次</span><div class="n" style="font-size: 14px">{{ chain.chain?.session?.sessionTitle }}</div></div>

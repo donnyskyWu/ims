@@ -15,10 +15,10 @@
       <button type="button" class="tab-btn" :class="{ active: tab === 'audit' }" @click="switchTab('audit')">审核队列</button>
     </div>
     <p v-if="tab === 'list'" class="hint" style="margin-bottom: 8px">
-      作者与账号须同属 IP 组账号池，否则后端返回 <strong>1127</strong>；去重键：模板+周期+填报人+作者+账号。
+      作者与账号须属于同一个 IP 组。同一模板、周期、填报人、作者和账号不能重复提交。
     </p>
     <p v-else class="hint" style="margin-bottom: 8px">
-      REPORT-003：<code>GET /report/audit/queue</code> · 退回须填原因（<strong>1124</strong>）· SLA 超时行标红。
+      退回须填写原因。超时未审的行会标红。
     </p>
     <form v-if="tab === 'list'" class="qbar" @submit.prevent="loadList">
       <input v-model="filters.submissionNo" placeholder="上报单号" style="width: 130px" />
@@ -163,7 +163,7 @@
     <div v-if="rejectRow" class="modal-mask" @click.self="rejectRow = null">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 8px">退回 · {{ rejectRow.submissionNo }}</h3>
-        <label class="fld">退回原因（必填 · 1124）</label>
+        <label class="fld">退回原因（必填）</label>
         <textarea v-model="rejectReason" class="fld-in" rows="4" placeholder="如：数据来源不明、勾稽不平"></textarea>
         <p v-if="auditError" class="hint" style="color: var(--red); margin-top: 8px">{{ auditError }}</p>
         <div class="acts" style="margin-top: 16px; justify-content: flex-end">
@@ -383,7 +383,7 @@ function openReject(row: QueueRow) {
 async function confirmReject() {
   if (!rejectRow.value) return
   if (!rejectReason.value.trim()) {
-    auditError.value = '退回原因必填（1124）'
+    auditError.value = '退回原因必填'
     return
   }
   const ok = await doAudit(rejectRow.value, 'REJECTED', rejectReason.value.trim())

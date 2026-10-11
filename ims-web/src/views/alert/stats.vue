@@ -53,7 +53,7 @@
         >
           {{ overview.responseRate }}%
         </div>
-        <div class="d">已响应 {{ overview.respondedCount }} / {{ overview.totalAlertCount }} · BR-112 &gt;90%</div>
+        <div class="d">已响应 {{ overview.respondedCount }} / {{ overview.totalAlertCount }} · 目标 &gt;90%</div>
       </div>
       <div class="card stat">
         <span class="l">解决率</span>
@@ -178,7 +178,7 @@
             <div class="n" data-testid="alert-weekly-response" :style="{ color: rateColor(weekly.responseRate, 90) }">
               {{ weekly.responseRate }}%
             </div>
-            <div class="d">BR-112 &gt;90%</div>
+            <div class="d">目标 &gt;90%</div>
           </div>
           <div class="card stat">
             <span class="l">送达率</span>
@@ -422,7 +422,7 @@ const ruleCode = ref('')
 
 const falseHint = computed(() => {
   if (!overview.value || overview.value.totalAlertCount === 0) return '当前范围内没有误报样本'
-  if (overview.value.falseAlarmRate > 5) return '超过 5%，建议复核阈值（ALR-S-R3）'
+  if (overview.value.falseAlarmRate > 5) return '超过 5%，建议复核阈值'
   return '未超过 5% 复核线'
 })
 

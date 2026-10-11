@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      爆款默认播放 ≥100w · 低分完播 &lt;20% · 阈值只读引用 COLLECT WORK 规则。
+      爆款默认播放达到 100 万，低完播低于 20%。阈值只读引用采集规则。
     </p>
     <div class="cattabs">
       <button

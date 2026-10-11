@@ -86,7 +86,7 @@
         <div class="n" :style="{ color: rate.completeRate >= 95 ? 'var(--green)' : 'var(--orange)' }">
           {{ rate.completeRate }}%
         </div>
-        <div class="d">BR-107 目标 &gt;95%</div>
+        <div class="d">目标 &gt;95%</div>
       </div>
     </div>
 
@@ -233,7 +233,7 @@
       width="720px"
       @close="drawerOpen = false"
     >
-      <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
+      <p class="hint">成交额和退款来自直播下播核准数据，财务侧只读</p>
       <p v-if="error" data-testid="fin-cost-entry-error" class="hint" style="color: var(--red)">{{ error }}</p>
       <div class="form-grid">
         <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
@@ -260,7 +260,7 @@
       data-testid="fin-cost-correction-drawer"
       @close="correctionOpen = false"
     >
-      <p class="hint">核准后修改走更正单（红冲+蓝补），自动触发利润重算（FIN-P-R3）</p>
+      <p class="hint">核准后的修改走更正单（红冲后蓝补），并自动触发利润重算</p>
       <div v-if="sessionLocked" data-testid="fin-lock-adjust-panel" class="hint" style="margin-bottom: 8px">
         <div>期间已结账。锁后更正须 R4 审批通过后才能红冲调整。</div>
         <div data-testid="fin-lock-adjust-status">{{ lockAdjustStatus || '未申请' }}</div>

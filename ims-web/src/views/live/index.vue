@@ -509,7 +509,7 @@
         </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
-        <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
+        <p class="hint">告警摘要</p>
         <table v-if="alarms.length">
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
           <tbody>

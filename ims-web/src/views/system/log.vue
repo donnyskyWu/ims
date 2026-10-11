@@ -69,7 +69,7 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
-    <p class="hint">GET /system/operate-log/page · GET /system/login-log/page。契约没有导出接口。</p>
+    <p class="hint">操作日志和登录日志只支持查询，不能导出。</p>
   </div>
 </template>
 

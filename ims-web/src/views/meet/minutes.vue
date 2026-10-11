@@ -12,7 +12,7 @@
     <div class="g3" style="margin-bottom: 12px">
       <div class="card stat"><span class="l">会议总数</span><div class="n">{{ archiveStat.totalMeetings }}</div></div>
       <div class="card stat"><span class="l">已归档</span><div class="n">{{ archiveStat.archivedCount }}</div></div>
-      <div class="card stat"><span class="l">留痕率 BR-116</span><div class="n">{{ archiveStat.traceRate }}%</div></div>
+      <div class="card stat"><span class="l">留痕率</span><div class="n">{{ archiveStat.traceRate }}%</div></div>
     </div>
     <form class="qbar" @submit.prevent="search">
       <input v-model="filters.meetingTitle" placeholder="主题" style="width: 140px" />
