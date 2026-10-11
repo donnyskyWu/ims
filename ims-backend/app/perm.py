@@ -17,6 +17,8 @@ FUNCTION_SKIP = (
     # 个人工作台「流程待办」只返回当前用户的任务，不要求流程菜单。其余 /flow 仍校验 menu:flow:query。
     "/admin-api/ims/flow/task/my-todo",
     "/admin-api/ims/health",
+    # 学习只认被指派人，不要求培训菜单。
+    "/admin-api/ims/train/study",
 )
 # 菜单表尚未覆盖的功能点 → 前端路由。只登记已有种子在用的码，避免把未授权业务页放出来。
 EXTRA_ROUTES = {
