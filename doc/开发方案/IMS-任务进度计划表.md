@@ -94,6 +94,11 @@
 
 ## 更新日志
 
+### 2026-10-11 · 数据分析缺陷批（不新增 #）
+
+- BUG-C043–C048、C053 在分支 `cursor/bi-query-defects-7a9f`。不新增计划表序号。
+- 定向 pytest **16 passed**。UAT 未测，非已验收。
+
 ### 2026-10-07 · 初版
 
 - 建表；回填 W0–W9-14、E2E、pytest 外置待签收、sysTenant 批次外、overview/FIN 修复、并行 pytest 运维口径。
