@@ -272,7 +272,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Field = {
   name: string
@@ -575,22 +575,22 @@ async function refreshComp(comp: Comp) {
     series.value = { ...series.value, [comp.id]: { rows: [], total: 0, error: '' } }
     return
   }
-  const res = await http.post('/bi/report/query', {
-    reportId: reportId.value || undefined,
-    compId: comp.id,
-    components: comps.value,
-  })
-  if (res.data.code !== 0) {
+  try {
+    const res = await http.post('/bi/report/query', {
+      reportId: reportId.value || undefined,
+      compId: comp.id,
+      components: comps.value,
+    })
+    const rows = (res.data.data.rows || []) as Array<Record<string, string | number>>
     series.value = {
       ...series.value,
-      [comp.id]: { rows: [], total: 0, error: res.data.msg || '字段引用非法（1191）' },
+      [comp.id]: { rows, total: Number(res.data.data.metricTotal ?? 0), error: '' },
     }
-    return
-  }
-  const rows = (res.data.data.rows || []) as Array<Record<string, string | number>>
-  series.value = {
-    ...series.value,
-    [comp.id]: { rows, total: Number(res.data.data.metricTotal ?? 0), error: '' },
+  } catch (error) {
+    series.value = {
+      ...series.value,
+      [comp.id]: { rows: [], total: 0, error: errorMessage(error) || '字段引用非法（1191）' },
+    }
   }
 }
 
@@ -653,19 +653,18 @@ async function saveLayout() {
       reportName: report.value?.reportName,
       layoutJson: { layoutMode: layoutMode.value, comps: comps.value },
     })
-    if (res.data.code !== 0) {
-      previewMsg.value = res.data.msg || '保存失败'
-      if (selected.value && (res.data.code === 1191 || res.data.code === 1192)) {
-        series.value = {
-          ...series.value,
-          [selected.value.id]: { rows: [], total: 0, error: res.data.msg },
-        }
-      }
-      return
-    }
     report.value = { ...report.value!, ...res.data.data, reportName: report.value?.reportName || res.data.data.reportName }
     previewMsg.value = '已保存'
     markClean()
+  } catch (error) {
+    const msg = errorMessage(error) || '保存失败'
+    previewMsg.value = msg
+    if (selected.value) {
+      series.value = {
+        ...series.value,
+        [selected.value.id]: { rows: [], total: 0, error: msg },
+      }
+    }
   } finally {
     saving.value = false
   }
@@ -685,23 +684,23 @@ async function openDrill() {
 async function publish() {
   await saveLayout()
   if (previewMsg.value !== '已保存') return
-  const res = await http.post(`/bi/report/${reportId.value}/publish`)
-  if (res.data.code === 0) {
+  try {
+    const res = await http.post(`/bi/report/${reportId.value}/publish`)
     previewMsg.value = `已发布 · v${res.data.data.version || 1}`
     report.value = { ...report.value!, status: res.data.data.status }
     markClean()
-  } else {
-    previewMsg.value = res.data.msg || '发布失败'
+  } catch (error) {
+    previewMsg.value = errorMessage(error) || '发布失败'
   }
 }
 
 async function runPreview() {
-  const res = await http.post('/bi/report/query', {
-    reportId: reportId.value,
-    compId: selectedId.value || 'preview',
-    components: comps.value,
-  })
-  if (res.data.code === 0) {
+  try {
+    const res = await http.post('/bi/report/query', {
+      reportId: reportId.value,
+      compId: selectedId.value || 'preview',
+      components: comps.value,
+    })
     previewMsg.value = `预览 ${res.data.data.total} 行 · ${res.data.data.status}`
     if (selected.value) {
       series.value = {
@@ -713,11 +712,14 @@ async function runPreview() {
         },
       }
     }
-  } else if (selected.value) {
-    previewMsg.value = res.data.msg || '预览失败'
-    series.value = {
-      ...series.value,
-      [selected.value.id]: { rows: [], total: 0, error: res.data.msg || '字段引用非法（1191）' },
+  } catch (error) {
+    const msg = errorMessage(error) || '预览失败'
+    previewMsg.value = msg
+    if (selected.value) {
+      series.value = {
+        ...series.value,
+        [selected.value.id]: { rows: [], total: 0, error: msg },
+      }
     }
   }
 }

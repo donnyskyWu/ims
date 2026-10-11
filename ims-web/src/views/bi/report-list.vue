@@ -239,7 +239,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 const router = useRouter()
 
@@ -401,16 +401,18 @@ async function submitCreate() {
   }
   if (invalid) return
   const picked = categoryOptions.value.find((opt) => opt.key === form.categoryKey) || categoryOptions.value[0]
-  const res = await http.post('/bi/report', {
-    reportName: form.reportName.trim(),
-    reportType: form.reportType,
-    category: picked?.category || '未分类',
-    subCategory: picked?.sub || '',
-    shareScope: form.shareScope,
-    metricNote: form.metricNote.trim(),
-  })
-  if (res.data.code !== 0) {
-    formError.value = res.data.msg || '保存失败'
+  let res
+  try {
+    res = await http.post('/bi/report', {
+      reportName: form.reportName.trim(),
+      reportType: form.reportType,
+      category: picked?.category || '未分类',
+      subCategory: picked?.sub || '',
+      shareScope: form.shareScope,
+      metricNote: form.metricNote.trim(),
+    })
+  } catch (error) {
+    formError.value = errorMessage(error) || '保存失败'
     return
   }
   showForm.value = false
@@ -439,13 +441,15 @@ async function addCategory() {
     catNameError.value = '必填项，请填写'
     return
   }
-  const res = await http.post('/bi/report/category', {
-    action: 'add',
-    name: catForm.name.trim(),
-    parentId: catForm.parentId || 0,
-  })
-  if (res.data.code !== 0) {
-    catNameError.value = res.data.msg || '新增失败'
+  let res
+  try {
+    res = await http.post('/bi/report/category', {
+      action: 'add',
+      name: catForm.name.trim(),
+      parentId: catForm.parentId || 0,
+    })
+  } catch (error) {
+    catNameError.value = errorMessage(error) || '新增失败'
     return
   }
   categories.value = res.data.data.categories || []
@@ -454,9 +458,11 @@ async function addCategory() {
 
 async function deleteCat(id: number, name: string) {
   if (!window.confirm(`删除分类「${name}」？其下报表将移入「未分类」。`)) return
-  const res = await http.post('/bi/report/category', { action: 'delete', id })
-  if (res.data.code !== 0) {
-    catNameError.value = res.data.msg || '删除失败'
+  let res
+  try {
+    res = await http.post('/bi/report/category', { action: 'delete', id })
+  } catch (error) {
+    catNameError.value = errorMessage(error) || '删除失败'
     return
   }
   categories.value = res.data.data.categories || []
@@ -490,9 +496,11 @@ async function onImportFile(event: Event) {
     importError.value = '文件格式不正确'
     return
   }
-  const res = await http.post('/bi/report/import', { template })
-  if (res.data.code !== 0) {
-    importError.value = res.data.msg || '文件格式不正确'
+  let res
+  try {
+    res = await http.post('/bi/report/import', { template })
+  } catch (error) {
+    importError.value = errorMessage(error) || '文件格式不正确'
     return
   }
   importPreview.value = res.data.data
