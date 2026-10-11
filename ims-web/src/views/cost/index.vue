@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>账号成本与 ROI</h1>
-        <div class="sub">采购/过程成本；营收来自 Football 订单 WebAPI · 08b COST</div>
+        <div class="sub">采购成本和过程成本。营收来自订单日汇总。</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec" type="button" disabled>导出</button>
@@ -71,7 +71,7 @@
           </table>
         </div>
         <p class="hint" style="margin-top: 8px">
-          合计成本 ¥{{ fmt(costDetail.totalCost) }}（与场次财务 FIN 分菜单，禁止混读）
+          合计成本 ¥{{ fmt(costDetail.totalCost) }}
         </p>
       </div>
       <div v-else class="empty" style="margin-top: 24px">
@@ -92,7 +92,7 @@
         <span class="sp"></span>
         <button class="btn btn-pri btn-sm" type="submit">查询</button>
       </form>
-      <p class="hint">账号粒度；营收来自 Football 订单 WebAPI 日汇总</p>
+      <p class="hint">按账号汇总。营收来自订单日汇总。</p>
       <div v-if="roi?.revenueDelayed" class="hint" style="color: var(--orange); margin-bottom: 8px">
         {{ roi.revenueDelayHint || '数据延迟' }}（营收不可用，未写入 0）
       </div>

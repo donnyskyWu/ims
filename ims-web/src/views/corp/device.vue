@@ -761,7 +761,7 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有直播设备',
     emptyHint: '登记时类型选直播设备或拍摄设备。流转与办公设备相同。',
-    hint: 'GET /corp/device/live/page 合并 assetType=LIVE 与 SHOOT。类型、责任人和待补关联可筛选，导出台账沿用当前条件。',
+    hint: '直播设备和拍摄设备在同一张台账。可按类型、责任人和待补关联筛选，并按当前条件导出。',
     columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人', '绑定账号数'],
     keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName', 'bindCount'],
   },

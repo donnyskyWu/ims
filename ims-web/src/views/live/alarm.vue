@@ -184,7 +184,7 @@
           </table>
         </div>
       </div>
-      <p class="hint" data-testid="live-alarm-rule-hint">ALM-R4 规则保存后下一次读取即新表达式</p>
+      <p class="hint" data-testid="live-alarm-rule-hint">规则保存后，下一次读取即按新表达式生效</p>
     </template>
 
     <template v-else>
@@ -246,7 +246,7 @@
           <b>{{ editingId ? '编辑规则' : '新建规则' }}</b>
           <button type="button" class="btn btn-sec btn-sm" @click="ruleOpen = false">关闭</button>
         </div>
-        <p class="hint">保存后立即参与下一次命中扫描（ALM-R4）。通知只记站内。</p>
+        <p class="hint">保存后立即参与下一次命中扫描。通知只记站内。</p>
         <label class="fld">
           <span>规则名</span>
           <input v-model="ruleForm.ruleName" data-testid="live-alarm-rule-name" maxlength="64" :style="ruleNameBad ? 'border-color: var(--red)' : ''" />

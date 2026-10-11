@@ -82,7 +82,7 @@ test.describe('live alarm 30 minute escalate stub', () => {
     expect(createBody.code).toBe(0)
     const ruleRow = page.getByTestId('live-alarm-rule-row').filter({ hasText: '场观骤降热更新' })
     await expect(ruleRow.getByTestId('live-alarm-rule-summary')).toContainText('30')
-    await expect(page.getByTestId('live-alarm-rule-hint')).toContainText('ALM-R4')
+    await expect(page.getByTestId('live-alarm-rule-hint')).toContainText('新表达式')
 
     await ruleRow.getByRole('button', { name: '编辑' }).click()
     await page.getByTestId('live-alarm-rule-threshold').fill('40')
