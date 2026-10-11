@@ -6,7 +6,7 @@
         <div class="sub">{{ meta.sub }}</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri" type="button" @click="openCreate">登记账号</button>
+        <button class="btn btn-pri" type="button" data-testid="acct-register-open" @click="openCreate">登记账号</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
@@ -33,6 +33,7 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
     </form>
+    <p v-if="registerToast" class="hint" data-testid="acct-register-toast">{{ registerToast }}</p>
     <p v-if="ipGroupMiss" class="hint" data-testid="acct-ip-group-msg">{{ ipGroupMiss }}</p>
     <p class="hint" data-testid="acct-pool-status">
       池状态 · 可领用 {{ poolCounts.IN_POOL }} · 在用 {{ poolCounts.IN_USE }} · 冻结 {{ poolCounts.FROZEN }} · 已归还
@@ -1292,17 +1293,87 @@
       </template>
     </ProtoDrawer>
 
-    <ProtoDrawer :open="formOpen" title="登记平台账号" width="480px" @close="formOpen = false">
-      <div class="formrow one"><div class="fld"><label>昵称<i class="req">*</i></label><input v-model="form.accountName" /></div></div>
-      <div class="formrow one"><div class="fld"><label>公司 ID<i class="req">*</i></label><input v-model.number="form.companyId" placeholder="选择器：填已有公司 id" /></div></div>
-      <div class="formrow one"><div class="fld"><label>IP 组 ID<i class="req">*</i></label><input v-model.number="form.ipGroupId" placeholder="选择器：填已有 IP 组 id" /></div></div>
-      <div class="formrow one"><div class="fld"><label>实名人 ID</label><input v-model.number="form.realnameId" placeholder="可选" /></div></div>
-      <div class="formrow one"><div class="fld"><label>责任人 ID<i class="req">*</i></label><input v-model.number="form.holderUserId" placeholder="ims_sys_user.id" /></div></div>
-      <div class="formrow one"><div class="fld"><label>状态</label><select v-model="form.status"><option v-for="item in statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></div></div>
-      <p class="hint">强关联须通过选择器；手输非法 id 时后端返回 1500/1501/1504。</p>
+    <ProtoDrawer :open="formOpen" title="登记平台账号" width="520px" @close="formOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>平台<i class="req">*</i></label>
+          <input :value="meta.title" data-testid="acct-register-platform" readonly />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>账号名<i class="req">*</i></label>
+          <input v-model="form.accountName" data-testid="acct-register-name" :class="{ err: fieldErrors.accountName }" />
+          <div v-if="fieldErrors.accountName" class="ferr" data-testid="acct-register-error-name">{{ fieldErrors.accountName }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>账号 ID</label>
+          <input v-model="form.platformAccountId" data-testid="acct-register-platform-id" placeholder="同平台内唯一，可空" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>公司<i class="req">*</i></label>
+          <select v-model="form.companyId" data-testid="acct-register-company" :class="{ err: fieldErrors.companyId }">
+            <option value="">请选择公司</option>
+            <option v-for="item in companyOptions" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+          <div v-if="fieldErrors.companyId" class="ferr" data-testid="acct-register-error-company">{{ fieldErrors.companyId }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>IP 组<i class="req">*</i></label>
+          <select v-model="form.ipGroupId" data-testid="acct-register-ip-group" :class="{ err: fieldErrors.ipGroupId }">
+            <option value="">请选择小组</option>
+            <option v-for="item in ipGroupOptions" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+          <div v-if="fieldErrors.ipGroupId" class="ferr" data-testid="acct-register-error-ip-group">{{ fieldErrors.ipGroupId }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>实名人<i class="req">*</i></label>
+          <select v-model="form.realnameId" data-testid="acct-register-realname" :class="{ err: fieldErrors.realnameId }">
+            <option value="">请选择实名人</option>
+            <option v-for="item in realnameOptions" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+          <div v-if="fieldErrors.realnameId" class="ferr" data-testid="acct-register-error-realname">{{ fieldErrors.realnameId }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>手机</label>
+          <select v-model="form.phoneId" data-testid="acct-register-phone">
+            <option value="">请选择手机</option>
+            <option v-for="item in phoneOptions" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>手机卡</label>
+          <select v-model="form.simCardId" data-testid="acct-register-sim">
+            <option value="">请选择手机卡</option>
+            <option v-for="item in simOptions" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>责任人</label>
+          <select v-model="form.holderUserId" data-testid="acct-register-holder">
+            <option value="">请选择责任人</option>
+            <option v-for="user in holders" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">保存后编号自动生成，状态为「池可领用」。IP 组只能选小组。</p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="formOpen = false">取消</button>
-        <button class="btn btn-pri" type="button" @click="submitCreate">保存</button>
+        <button class="btn btn-pri" type="button" data-testid="acct-register-save" @click="submitCreate">保存</button>
       </template>
     </ProtoDrawer>
 
@@ -1736,13 +1807,29 @@ const rechargeNeedsVoucher = computed(() => {
 })
 
 const formOpen = ref(false)
+const registerToast = ref('')
+const REQUIRED_MSG = '必填项，请填写'
+type NameOption = { id: number | string; label: string }
+const companyOptions = ref<NameOption[]>([])
+const ipGroupOptions = ref<NameOption[]>([])
+const realnameOptions = ref<NameOption[]>([])
+const phoneOptions = ref<NameOption[]>([])
+const simOptions = ref<NameOption[]>([])
 const form = reactive({
   accountName: '',
-  companyId: undefined as number | undefined,
-  ipGroupId: undefined as number | undefined,
-  realnameId: undefined as number | undefined,
-  holderUserId: 1,
-  status: 'IN_USE',
+  platformAccountId: '',
+  companyId: '',
+  ipGroupId: '',
+  realnameId: '',
+  phoneId: '',
+  simCardId: '',
+  holderUserId: '',
+})
+const fieldErrors = reactive({
+  accountName: '',
+  companyId: '',
+  ipGroupId: '',
+  realnameId: '',
 })
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
@@ -3173,28 +3260,100 @@ async function submitRecharge() {
   }
 }
 
+function resetRegisterErrors() {
+  fieldErrors.accountName = ''
+  fieldErrors.companyId = ''
+  fieldErrors.ipGroupId = ''
+  fieldErrors.realnameId = ''
+}
+
+function listOf(payload: unknown): Record<string, unknown>[] {
+  const data = (payload as { data?: { list?: Record<string, unknown>[] } })?.data
+  return data?.list || []
+}
+
+async function loadRegisterOptions() {
+  const [companies, groups, persons, phones, sims] = await Promise.all([
+    http.get('/corp/resource/company/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } }).catch(() => null),
+    http.get('/ip-group/list', { params: { pageNo: 1, pageSize: 200, groupType: 'SMALL', status: 'ENABLED' } }).catch(() => null),
+    http.get('/corp/resource/realname/page', { params: { pageNo: 1, pageSize: 100, status: 'ENABLED' } }).catch(() => null),
+    http.get('/master/phone/page', { params: { pageNo: 1, pageSize: 100 } }).catch(() => null),
+    http.get('/corp/resource/sim-card/page', { params: { pageNo: 1, pageSize: 100 } }).catch(() => null),
+  ])
+  companyOptions.value = listOf(companies?.data).map((row) => ({
+    id: row.id as number,
+    label: String(row.companyName || row.id),
+  }))
+  ipGroupOptions.value = listOf(groups?.data)
+    .filter((row) => String(row.groupType || 'SMALL') === 'SMALL')
+    .map((row) => ({ id: row.id as number, label: String(row.groupName || row.id) }))
+  realnameOptions.value = listOf(persons?.data).map((row) => ({
+    id: row.id as number,
+    label: String(row.realName || row.id),
+  }))
+  phoneOptions.value = listOf(phones?.data)
+    .filter((row) => !row.status || row.status === 'IN_USE' || row.status === 'IDLE')
+    .map((row) => ({
+      id: row.id as number,
+      label: [row.phoneNumber, row.phoneCode].filter(Boolean).join(' · ') || String(row.id),
+    }))
+  simOptions.value = listOf(sims?.data)
+    .filter((row) => !row.status || row.status === 'IN_USE' || row.status === 'IDLE')
+    .map((row) => ({
+      id: row.id as number,
+      label: [row.phoneNumber, row.operator, row.packageName].filter(Boolean).join(' · ') || String(row.id),
+    }))
+}
+
 function openCreate() {
   form.accountName = ''
-  form.companyId = undefined
-  form.ipGroupId = undefined
-  form.realnameId = undefined
-  form.holderUserId = 1
-  form.status = 'IN_USE'
+  form.platformAccountId = ''
+  form.companyId = ''
+  form.ipGroupId = ''
+  form.realnameId = ''
+  form.phoneId = ''
+  form.simCardId = ''
+  form.holderUserId = ''
+  resetRegisterErrors()
+  registerToast.value = ''
   formOpen.value = true
+  void loadRegisterOptions()
+  void loadHolders()
+}
+
+function registerInvalid() {
+  fieldErrors.accountName = form.accountName.trim() ? '' : REQUIRED_MSG
+  fieldErrors.companyId = form.companyId ? '' : REQUIRED_MSG
+  fieldErrors.ipGroupId = form.ipGroupId ? '' : REQUIRED_MSG
+  fieldErrors.realnameId = form.realnameId ? '' : REQUIRED_MSG
+  return !!(fieldErrors.accountName || fieldErrors.companyId || fieldErrors.ipGroupId || fieldErrors.realnameId)
 }
 
 async function submitCreate() {
-  await http.post('/master/platform-account', {
-    platformType: meta.value.platform,
-    accountName: form.accountName,
-    companyId: form.companyId,
-    ipGroupId: form.ipGroupId,
-    realnameId: form.realnameId || undefined,
-    holderUserId: form.holderUserId,
-    status: form.status,
-  })
-  formOpen.value = false
-  load()
+  registerToast.value = ''
+  if (registerInvalid()) {
+    registerToast.value = '请先完成必填项'
+    return
+  }
+  try {
+    await http.post('/master/platform-account', {
+      platformType: meta.value.platform,
+      accountName: form.accountName.trim(),
+      platformAccountId: form.platformAccountId.trim() || undefined,
+      companyId: Number(form.companyId),
+      ipGroupId: Number(form.ipGroupId),
+      realnameId: Number(form.realnameId),
+      phoneId: form.phoneId ? Number(form.phoneId) : undefined,
+      simCardId: form.simCardId ? Number(form.simCardId) : undefined,
+      holderUserId: form.holderUserId ? Number(form.holderUserId) : undefined,
+    })
+    formOpen.value = false
+    registerToast.value = '账号已登记'
+    pageNo.value = 1
+    await load()
+  } catch (e: unknown) {
+    registerToast.value = bizMessage(e)
+  }
 }
 
 async function applyDeepLink() {

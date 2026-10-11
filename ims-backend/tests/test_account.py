@@ -137,3 +137,102 @@ def test_platform_account_write_rejects_bad_company():
     )
     assert bad.json()["code"] == 1500
     assert bad.json()["msg"] == "公司不存在"
+
+
+def test_platform_account_create_lands_in_pool_and_rejects_big_group():
+    auth = headers()
+    ops = ops_session()
+    try:
+        company = Company(company_name="登记公司", status="ENABLED", tenant_id=0)
+        small = IpGroup(group_name="登记小组", group_type="SMALL", status="ENABLED", tenant_id=0)
+        big = IpGroup(group_name="登记大组", group_type="BIG", status="ENABLED", tenant_id=0)
+        person = Realname(
+            real_name="李四",
+            id_type="ID_CARD",
+            id_card_enc=encrypt_text("330101199003031234"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        ops.add_all([company, small, big, person])
+        ops.commit()
+        company_id, small_id, big_id, person_id = company.id, small.id, big.id, person.id
+    finally:
+        ops.close()
+
+    missing_person = client.post(
+        "/admin-api/ims/master/platform-account",
+        headers=auth,
+        json={
+            "platformType": "DOUYIN",
+            "accountName": "缺实名",
+            "ipGroupId": small_id,
+            "companyId": company_id,
+            "status": "IN_USE",
+        },
+    )
+    assert missing_person.json()["code"] == 1001
+    assert missing_person.json()["msg"] == "实名人必填"
+
+    blocked = client.post(
+        "/admin-api/ims/master/platform-account",
+        headers=auth,
+        json={
+            "platformType": "DOUYIN",
+            "accountName": "大组号",
+            "platformAccountId": "DY-REG-1",
+            "ipGroupId": big_id,
+            "companyId": company_id,
+            "realnameId": person_id,
+        },
+    )
+    assert blocked.json()["code"] == 1203
+
+    created = client.post(
+        "/admin-api/ims/master/platform-account",
+        headers=auth,
+        json={
+            "platformType": "DOUYIN",
+            "accountName": "池内新号",
+            "platformAccountId": "DY-REG-1",
+            "ipGroupId": small_id,
+            "companyId": company_id,
+            "realnameId": person_id,
+            "status": "IN_USE",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0
+    assert body["data"]["status"] == "IN_POOL"
+    assert body["data"]["accountNo"].startswith("ACCT-")
+    assert not body["data"].get("holderUserId")
+    assert body["data"]["platformAccountId"] == "DY-REG-1"
+
+    dup = client.post(
+        "/admin-api/ims/master/platform-account",
+        headers=auth,
+        json={
+            "platformType": "DOUYIN",
+            "accountName": "重复号",
+            "platformAccountId": "DY-REG-1",
+            "ipGroupId": small_id,
+            "companyId": company_id,
+            "realnameId": person_id,
+        },
+    )
+    assert dup.json()["code"] == 1001
+    assert "账号 ID" in dup.json()["msg"]
+
+    other = client.post(
+        "/admin-api/ims/master/platform-account",
+        headers=auth,
+        json={
+            "platformType": "KUAISHOU",
+            "accountName": "跨平台同号",
+            "platformAccountId": "DY-REG-1",
+            "ipGroupId": small_id,
+            "companyId": company_id,
+            "realnameId": person_id,
+        },
+    )
+    assert other.json()["code"] == 0
+    assert other.json()["data"]["status"] == "IN_POOL"
