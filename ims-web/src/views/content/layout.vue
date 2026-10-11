@@ -34,20 +34,22 @@
         <table>
           <thead>
             <tr>
-              <th>编号</th>
-              <th>名称</th>
+              <th>模板名称</th>
+              <th>预览</th>
+              <th>文档类型</th>
               <th>来源</th>
               <th>状态</th>
-              <th>使用</th>
+              <th>创建人</th>
+              <th>更新时间</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="6">
+              <td colspan="8">
                 <div class="empty" data-testid="layout-list-empty">
                   <div class="et">{{ error || layoutEmptyTitle }}</div>
                   <div v-if="!error" class="es">{{ layoutEmptyHint }}</div>
@@ -55,11 +57,13 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
-              <td class="mono">{{ row.templateNo }}</td>
-              <td style="font-weight: 500">{{ row.templateName }}</td>
+              <td style="font-weight: 500" data-testid="layout-name">{{ row.templateName }}</td>
+              <td class="hint" data-testid="layout-preview-cell">{{ previewText(row.previewHtml) }}</td>
+              <td>{{ docLabel(row.documentType) }}</td>
               <td>{{ row.source }}</td>
               <td>{{ row.status }}</td>
-              <td class="num">{{ row.usageCount }}</td>
+              <td>{{ row.creatorName || '—' }}</td>
+              <td class="mono">{{ formatTime(row.updatedAt) }}</td>
               <td>
                 <button class="btn btn-txt btn-sm" type="button" @click="openPreview(row)">预览</button>
                 <button
@@ -232,8 +236,10 @@
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">新建公推模板</h3>
-        <label class="fld">模板名称</label>
+        <label class="fld">模板名称<span class="req">*</span></label>
         <input v-model="form.templateName" class="fld-in" data-testid="layout-create-name" />
+        <label class="fld">标签</label>
+        <input v-model="form.tags" class="fld-in" data-testid="layout-create-tags" placeholder="多个标签用逗号分隔" />
         <label class="fld">预览 HTML（可选）</label>
         <textarea v-model="form.previewHtml" class="fld-in" rows="3" />
         <p v-if="formError" class="hint bad" data-testid="layout-name-error">{{ formError }}</p>
@@ -256,8 +262,30 @@ type Row = {
   templateName: string
   source: string
   status: string
+  documentType?: string
+  tags?: string
   usageCount: number
   previewHtml?: string
+  creatorName?: string
+  updatedAt?: string
+}
+
+const docLabels: Record<string, string> = { SCRIPT: '脚本', COPY: '文案' }
+
+function docLabel(code?: string) {
+  if (!code) return '通用'
+  return docLabels[code] || code
+}
+
+function previewText(html?: string) {
+  const text = (html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!text) return '—'
+  return text.length > 24 ? `${text.slice(0, 24)}…` : text
+}
+
+function formatTime(value?: string) {
+  if (!value) return '—'
+  return value.replace('T', ' ').slice(0, 16)
 }
 
 const rows = ref<Row[]>([])
@@ -290,7 +318,7 @@ const layoutEmptyTitle = computed(() => (filtering.value ? '没有符合筛选�
 const layoutEmptyHint = computed(() =>
   filtering.value ? '换名称、状态或来源，或重置筛选' : '点「新建模板」。预览 HTML 留空时，预览窗会说明版式还没写',
 )
-const form = reactive({ templateName: '', previewHtml: '' })
+const form = reactive({ templateName: '', previewHtml: '', tags: '' })
 const editForm = reactive({ templateName: '', previewHtml: '' })
 
 async function loadList() {
@@ -330,6 +358,7 @@ function resetFilters() {
 function openCreate() {
   form.templateName = ''
   form.previewHtml = ''
+  form.tags = ''
   formError.value = ''
   showForm.value = true
 }
@@ -337,13 +366,14 @@ function openCreate() {
 async function submitCreate() {
   formError.value = ''
   if (!form.templateName.trim()) {
-    formError.value = '请填写模板名称'
+    formError.value = '必填项，请填写'
     return
   }
   try {
     const res = await http.post('/content/layout-template', {
       templateName: form.templateName.trim(),
       previewHtml: form.previewHtml,
+      tags: form.tags.trim(),
     })
     if (res.data.code !== 0) {
       formError.value = res.data.msg || '保存失败'
@@ -505,3 +535,10 @@ async function submitImport() {
 
 onMounted(loadList)
 </script>
+
+<style scoped>
+.req {
+  color: #d92d20;
+  margin-left: 2px;
+}
+</style>

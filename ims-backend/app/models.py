@@ -1582,6 +1582,8 @@ class ContentLayoutTemplate(Base):
     preview_html: Mapped[str] = mapped_column(Text, default="")
     layout_json: Mapped[str] = mapped_column(Text, default="")
     preset_code: Mapped[str] = mapped_column(String(32), default="")
+    document_type: Mapped[str] = mapped_column(String(32), default="")
+    tags: Mapped[str] = mapped_column(String(256), default="")
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)

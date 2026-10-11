@@ -238,6 +238,40 @@ def test_b005_preset_copy_and_draft_delete():
     assert gone.json()["code"] != 0
 
 
+def test_b006_layout_tags_and_meta():
+    auth = headers()
+    empty = client.post(
+        "/admin-api/ims/content/layout-template",
+        headers=auth,
+        json={"templateName": "  "},
+    )
+    assert empty.json()["code"] == 1001
+    assert empty.json()["msg"] == "必填项，请填写"
+
+    created = client.post(
+        "/admin-api/ims/content/layout-template",
+        headers=auth,
+        json={"templateName": "TC07 标签模板", "tags": "赛后,复盘", "documentType": "COPY", "previewHtml": "<p>预览</p>"},
+    )
+    data = created.json()["data"]
+    assert created.json()["code"] == 0
+    assert data["tags"] == "赛后,复盘"
+    assert data["documentType"] == "COPY"
+    assert data["creatorName"]
+    assert data["updatedAt"]
+
+    listed = client.get(
+        "/admin-api/ims/content/layout-template/list",
+        headers=auth,
+        params={"templateName": "TC07 标签模板"},
+    )
+    row = listed.json()["data"]["list"][0]
+    assert row["tags"] == "赛后,复盘"
+    assert row["documentType"] == "COPY"
+    assert row["creatorName"]
+    assert row["updatedAt"]
+
+
 def test_b007_export_and_batch():
     auth = headers()
     title = "TC07 批量内容"

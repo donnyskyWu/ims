@@ -130,7 +130,7 @@ test.describe('content TC-07 P1', () => {
     const preset = page.locator('tr', { hasText: 'PRESET' }).first()
     await expect(preset.getByRole('button', { name: '编辑' })).toHaveCount(0)
     await expect(preset.getByTestId('layout-delete')).toHaveCount(0)
-    const presetName = (await preset.locator('td').nth(1).innerText()).trim()
+    const presetName = (await preset.getByTestId('layout-name').innerText()).trim()
     await preset.getByTestId('layout-view').click()
     await expect(page.getByTestId('layout-view-dialog')).toContainText('只读')
     await page.getByTestId('layout-view-dialog').getByRole('button', { name: '关闭' }).click()

@@ -28,6 +28,8 @@ class LayoutBody(BaseModel):
     templateName: str
     previewHtml: str = ""
     source: str = "CUSTOM"
+    documentType: str | None = None
+    tags: str | None = None
 
 
 class ImportUrlBody(BaseModel):
@@ -99,18 +101,39 @@ def next_template_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
-def layout_vo(row: ContentLayoutTemplate) -> dict:
+def creator_name(db: Session, user_id: int) -> str:
+    if not user_id:
+        return ""
+    user = db.get(User, int(user_id))
+    if user is None:
+        return ""
+    return (user.nickname or user.username or "").strip()
+
+
+def creator_names(db: Session, user_ids: set[int]) -> dict[int, str]:
+    wanted = {int(item) for item in user_ids if int(item) > 0}
+    if not wanted:
+        return {}
+    rows = db.scalars(select(User).where(User.id.in_(wanted))).all()
+    return {row.id: (row.nickname or row.username or "").strip() for row in rows}
+
+
+def layout_vo(row: ContentLayoutTemplate, creator: str = "") -> dict:
     return {
         "id": row.id,
         "templateNo": row.template_no,
         "templateName": row.template_name,
         "source": row.source,
         "status": row.status,
+        "documentType": row.document_type or "",
+        "tags": row.tags or "",
         "previewHtml": row.preview_html or "",
         "layoutJson": row.layout_json or "",
         "presetCode": row.preset_code or "",
         "usageCount": row.usage_count,
+        "creatorName": creator,
         "createdAt": iso(row.created_at),
+        "updatedAt": iso(row.updated_at),
     }
 
 
@@ -148,7 +171,8 @@ def layout_list(
             .limit(size)
         ).all()
     )
-    return paged([layout_vo(row) for row in rows], total, page_no, size)
+    names = creator_names(db, {row.created_by for row in rows})
+    return paged([layout_vo(row, names.get(row.created_by, "")) for row in rows], total, page_no, size)
 
 
 @router.post("")
@@ -159,7 +183,7 @@ def create_layout(
 ):
     name = body.templateName.strip()
     if not name:
-        return fail(1001, "templateName 必填")
+        return fail(1001, "必填项，请填写")
     src = body.source if body.source in SOURCES else "CUSTOM"
     tenant_id = tenant_of(actor)
     row = ContentLayoutTemplate(
@@ -168,12 +192,14 @@ def create_layout(
         source=src,
         status="DRAFT",
         preview_html=body.previewHtml or "",
+        document_type=(body.documentType or "").strip()[:32],
+        tags=(body.tags or "").strip()[:256],
         created_by=actor.id,
         tenant_id=tenant_id,
     )
     db.add(row)
     db.flush()
-    return ok(layout_vo(row))
+    return ok(layout_vo(row, creator_name(db, actor.id)))
 
 
 @router.get("/{template_id}")
@@ -186,7 +212,7 @@ def layout_detail(
     row = db.get(ContentLayoutTemplate, template_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1500, "模板不存在")
-    return ok(layout_vo(row))
+    return ok(layout_vo(row, creator_name(db, row.created_by)))
 
 
 @router.put("/{template_id}")
@@ -204,12 +230,16 @@ def update_layout(
         return fail(1001, "预置模板不可编辑")
     name = body.templateName.strip()
     if not name:
-        return fail(1001, "templateName 必填")
+        return fail(1001, "必填项，请填写")
     row.template_name = name[:128]
     row.preview_html = body.previewHtml or ""
+    if body.documentType is not None:
+        row.document_type = body.documentType.strip()[:32]
+    if body.tags is not None:
+        row.tags = body.tags.strip()[:256]
     row.updated_at = utcnow()
     db.flush()
-    return ok(layout_vo(row))
+    return ok(layout_vo(row, creator_name(db, row.created_by)))
 
 
 @router.post("/{template_id}/publish")
@@ -227,7 +257,7 @@ def publish_layout(
     row.status = "ENABLED"
     row.updated_at = utcnow()
     db.flush()
-    return ok(layout_vo(row))
+    return ok(layout_vo(row, creator_name(db, row.created_by)))
 
 
 @router.put("/{template_id}/enable")
@@ -244,7 +274,7 @@ def enable_layout(
     row.status = "ENABLED" if enabled else "DISABLED"
     row.updated_at = utcnow()
     db.flush()
-    return ok(layout_vo(row))
+    return ok(layout_vo(row, creator_name(db, row.created_by)))
 
 
 @router.post("/import-url")
@@ -272,7 +302,7 @@ def import_layout_paste(
     if not name or not raw:
         return fail(1001, "必填项，请填写")
     row = new_import_template(db, actor, name=name, preview_html=raw)
-    return ok({"jobId": new_job_id(), "template": layout_vo(row)})
+    return ok({"jobId": new_job_id(), "template": layout_vo(row, creator_name(db, row.created_by))})
 
 
 @router.post("/import-mhtml")
@@ -308,7 +338,7 @@ async def import_layout_mhtml(
         db.flush()
     else:
         row = new_import_template(db, actor, name=name, preview_html=preview)
-    return ok({"jobId": new_job_id(), "template": layout_vo(row)})
+    return ok({"jobId": new_job_id(), "template": layout_vo(row, creator_name(db, row.created_by))})
 
 
 @router.post("/{template_id}/copy")
@@ -330,12 +360,14 @@ def copy_layout(
         preview_html=src.preview_html or "",
         layout_json=src.layout_json or "",
         preset_code="",
+        document_type=src.document_type or "",
+        tags=src.tags or "",
         created_by=actor.id,
         tenant_id=tenant_id,
     )
     db.add(row)
     db.flush()
-    return ok(layout_vo(row))
+    return ok(layout_vo(row, creator_name(db, actor.id)))
 
 
 @router.delete("/{template_id}")
