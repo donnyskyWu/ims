@@ -1,18 +1,30 @@
-"""AIR 知识库文件管理（KNOW-002/005 · 无检索）。"""
+"""AIR 知识库文件管理（KNOW-001/002/004/005/006 · 无检索）。"""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.air_skill import parse_expire, resolve_grant_target, write_event
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import AirKb, AirKbCategory, AirKbDoc
+from app.models import (
+    AirKb,
+    AirKbCategory,
+    AirKbDoc,
+    AirKbGrant,
+    ContentProject,
+    PerfScheme,
+    Role,
+    TrainMaterial,
+    User,
+    UserRole,
+)
 
 router = APIRouter(prefix="/air", tags=["air"])
 
@@ -44,6 +56,137 @@ class KbAuditBody(BaseModel):
     auditNote: str = ""
 
 
+class KbCreateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    kbName: str = ""
+    desc: str = ""
+    secretLevel: str = ""
+    ownerUserId: int = 0
+
+
+class KbLibAuditBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    kbId: int
+    approve: bool
+    auditNote: str = ""
+
+
+class KbCategoryRenameBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    kbId: int
+    categoryName: str = ""
+
+
+class KbGrantBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    kbId: int
+    grantType: str = ""
+    grantId: int = 0
+    expireAt: str = ""
+
+
+class KbTransferBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    sourceType: str = ""
+    sourceIds: list[int] = Field(default_factory=list)
+    targetKbId: int = 0
+    targetCategoryId: int = 0
+    secretLevel: str = ""
+    clientToken: str = ""
+
+
+SECRET_LEVELS = ("PUBLIC", "INTERNAL", "CONFIDENTIAL", "TOP_SECRET")
+SECRET_RANK = {name: index for index, name in enumerate(SECRET_LEVELS)}
+SECRET_LABEL = {
+    "PUBLIC": "公开",
+    "INTERNAL": "内部",
+    "CONFIDENTIAL": "机密",
+    "TOP_SECRET": "绝密",
+}
+KB_STATUS_LABEL = {"DRAFT": "草稿", "PENDING": "入库审批中", "PUBLISHED": "已发布"}
+SOURCE_LABEL = {
+    "FILE": "文件",
+    "URL": "URL",
+    "TEXT": "文本",
+    "TRAIN": "培训资料",
+    "PERF": "绩效考核模板",
+    "CONTENT": "内容记录",
+}
+
+
+def iso_min(dt: datetime | None) -> str:
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=BJ)
+    return dt.astimezone(BJ).strftime("%Y-%m-%d %H:%M")
+
+
+def format_size(size: int) -> str:
+    value = max(0, int(size or 0))
+    if value < 1024:
+        return f"{value} B"
+    units = ["KB", "MB", "GB"]
+    number = float(value)
+    unit = "B"
+    for unit in units:
+        number /= 1024
+        if number < 1024:
+            break
+    return f"{number:.1f} {unit}"
+
+
+def normalize_secret(value: str) -> str:
+    text = (value or "").strip().upper()
+    alias = {
+        "公开": "PUBLIC",
+        "内部": "INTERNAL",
+        "机密": "CONFIDENTIAL",
+        "绝密": "TOP_SECRET",
+        "PUBLIC": "PUBLIC",
+        "INTERNAL": "INTERNAL",
+        "CONFIDENTIAL": "CONFIDENTIAL",
+        "TOP_SECRET": "TOP_SECRET",
+    }
+    return alias.get(text, alias.get((value or "").strip(), ""))
+
+
+def grants_limit_text(secret: str) -> str:
+    if secret == "CONFIDENTIAL":
+        return "仅 R1/R3/R4 可授权"
+    if secret == "TOP_SECRET":
+        return "仅 R1 可授权"
+    return ""
+
+
+def role_tags_of(db: Session, user: User) -> set[str]:
+    tags: set[str] = set()
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+    if not role_ids:
+        return tags
+    roles = db.scalars(select(Role).where(Role.id.in_(role_ids), Role.deleted == 0)).all()
+    for role in roles:
+        key = (role.role_key or "").strip().lower()
+        name = role.role_name or ""
+        if key:
+            tags.add(key)
+        if key == "sys:admin" or "系统管理员" in name:
+            tags.add("r1")
+        if key == "r3" or key.endswith(":r3") or "财务" in name:
+            tags.add("r3")
+        if key == "r4" or key.endswith(":r4") or "运营总监" in name:
+            tags.add("r4")
+    return tags
+
+
+def target_allowed(secret: str, tags: set[str]) -> bool:
+    if secret == "TOP_SECRET":
+        return bool(tags & {"r1", "sys:admin"})
+    if secret == "CONFIDENTIAL":
+        return bool(tags & {"r1", "r3", "r4", "sys:admin"})
+    return True
+
+
 def kb_doc_vo(row: AirKbDoc, names: dict[int, str]) -> dict:
     return {
         "id": row.id,
@@ -53,6 +196,14 @@ def kb_doc_vo(row: AirKbDoc, names: dict[int, str]) -> dict:
         "contentType": row.content_type,
         "fileSize": int(row.file_size or 0),
         "cateId": row.cate_id,
+        "categoryId": row.cate_id,
+        "secretLevel": row.secret_level or "",
+        "secretLabel": SECRET_LABEL.get(row.secret_level or "", row.secret_level or ""),
+        "sourceType": row.source_type or "FILE",
+        "sourceLabel": SOURCE_LABEL.get(row.source_type or "FILE", row.source_type or ""),
+        "sourceRef": row.source_ref or "",
+        "body": row.body or "",
+        "auditNote": row.audit_note or "",
         "auditStatus": row.audit_status,
         "uploaderUserId": row.uploader_user_id,
         "uploaderName": names.get(row.uploader_user_id, ""),
@@ -132,7 +283,6 @@ def cate_doc_count(db: Session, cate_id: int, tenant_id: int, kb_id: int) -> int
                 AirKbDoc.tenant_id == tenant_id,
                 AirKbDoc.kb_id == kb_id,
                 AirKbDoc.cate_id == cate_id,
-                AirKbDoc.audit_status == "PUBLISHED",
             )
         )
         or 0
@@ -172,36 +322,144 @@ def build_category_nodes(db: Session, kb_id: int, tenant_id: int) -> list[dict]:
     return [build(item) for item in by_parent.get(None, [])]
 
 
-@router.get("/kb/tree")
-def kb_tree(db: Session = Depends(db_session), actor: User = Depends(current_user)):
-    tenant_id = tenant_of(actor)
-    kb = ensure_default_kb(db, tenant_id, actor.id)
-    ensure_default_categories(db, kb.id, tenant_id)
-    children = build_category_nodes(db, kb.id, tenant_id)
-    doc_total = int(
+def kb_doc_total(db: Session, kb_id: int, tenant_id: int) -> int:
+    return int(
         db.scalar(
             select(func.count())
             .select_from(AirKbDoc)
             .where(
                 AirKbDoc.deleted == 0,
                 AirKbDoc.tenant_id == tenant_id,
-                AirKbDoc.kb_id == kb.id,
-                AirKbDoc.audit_status == "PUBLISHED",
+                AirKbDoc.kb_id == kb_id,
             )
         )
         or 0
     )
-    return ok(
-        [
-            {
-                "id": kb.id,
-                "kbName": kb.kb_name,
-                "secretLevel": kb.secret_level,
-                "docCount": doc_total,
-                "children": children,
-            }
-        ]
+
+
+def kb_size_total(db: Session, kb_id: int, tenant_id: int) -> int:
+    return int(
+        db.scalar(
+            select(func.coalesce(func.sum(AirKbDoc.file_size), 0)).where(
+                AirKbDoc.deleted == 0,
+                AirKbDoc.tenant_id == tenant_id,
+                AirKbDoc.kb_id == kb_id,
+            )
+        )
+        or 0
     )
+
+
+def grant_count_of(db: Session, kb_id: int, tenant_id: int) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(AirKbGrant)
+            .where(
+                AirKbGrant.deleted == 0,
+                AirKbGrant.tenant_id == tenant_id,
+                AirKbGrant.kb_id == kb_id,
+                AirKbGrant.status == "ACTIVE",
+            )
+        )
+        or 0
+    )
+
+
+def ensure_kb_no(db: Session, row: AirKb) -> None:
+    if (row.kb_no or "").strip():
+        return
+    row.kb_no = f"KB-{row.id:04d}"
+    row.updated_at = utcnow()
+
+
+def next_kb_no(db: Session, tenant_id: int) -> str:
+    rows = db.scalars(
+        select(AirKb.kb_no).where(AirKb.deleted == 0, AirKb.tenant_id == tenant_id)
+    ).all()
+    highest = 0
+    for item in rows:
+        text = (item or "").strip()
+        if not text.startswith("KB-"):
+            continue
+        tail = text.split("-", 1)[1]
+        if tail.isdigit():
+            highest = max(highest, int(tail))
+    return f"KB-{highest + 1:04d}"
+
+
+def load_kb(db: Session, kb_id: int, tenant_id: int) -> AirKb | None:
+    row = db.get(AirKb, kb_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    ensure_kb_no(db, row)
+    return row
+
+
+def list_kbs(db: Session, tenant_id: int, owner_user_id: int) -> list[AirKb]:
+    ensure_default_kb(db, tenant_id, owner_user_id)
+    rows = list(
+        db.scalars(
+            select(AirKb)
+            .where(AirKb.deleted == 0, AirKb.tenant_id == tenant_id)
+            .order_by(AirKb.id.asc())
+        ).all()
+    )
+    if len(rows) == 1:
+        ensure_default_categories(db, rows[0].id, tenant_id)
+    for row in rows:
+        ensure_kb_no(db, row)
+        if not (row.status or "").strip():
+            row.status = "PUBLISHED"
+        if not (row.provider or "").strip():
+            row.provider = "LOCAL"
+    return rows
+
+
+def kb_vo(db: Session, row: AirKb, names: dict[int, str]) -> dict:
+    secret = row.secret_level or "INTERNAL"
+    size = kb_size_total(db, row.id, row.tenant_id)
+    return {
+        "id": row.id,
+        "kbCode": row.kb_no,
+        "kbNo": row.kb_no,
+        "kbName": row.kb_name,
+        "desc": row.description or "",
+        "secretLevel": secret,
+        "secretLabel": SECRET_LABEL.get(secret, secret),
+        "grantsLimit": grants_limit_text(secret),
+        "docCount": kb_doc_total(db, row.id, row.tenant_id),
+        "totalSize": size,
+        "sizeLabel": format_size(size),
+        "status": row.status or "PUBLISHED",
+        "statusLabel": KB_STATUS_LABEL.get(row.status or "PUBLISHED", row.status or ""),
+        "provider": row.provider or "LOCAL",
+        "ownerUserId": row.owner_user_id,
+        "ownerName": names.get(row.owner_user_id, ""),
+        "grantCount": grant_count_of(db, row.id, row.tenant_id),
+        "updatedAt": iso_min(row.updated_at),
+    }
+
+
+def tree_node(db: Session, row: AirKb, tenant_id: int) -> dict:
+    secret = row.secret_level or "INTERNAL"
+    return {
+        "id": row.id,
+        "kbNo": row.kb_no,
+        "kbName": row.kb_name,
+        "secretLevel": secret,
+        "secretLabel": SECRET_LABEL.get(secret, secret),
+        "status": row.status or "PUBLISHED",
+        "docCount": kb_doc_total(db, row.id, tenant_id),
+        "children": build_category_nodes(db, row.id, tenant_id),
+    }
+
+
+@router.get("/kb/tree")
+def kb_tree(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    rows = list_kbs(db, tenant_id, actor.id)
+    return ok([tree_node(db, row, tenant_id) for row in rows])
 
 
 @router.get("/kb/category/tree")
@@ -278,11 +536,366 @@ def kb_category_create(
     return ok({"categoryId": row.id, "sortNo": row.sort_no})
 
 
+@router.put("/kb/category/{category_id}")
+def kb_category_rename(
+    category_id: int,
+    body: KbCategoryRenameBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    name = (body.categoryName or "").strip()
+    if not name:
+        return fail(1001, "分类名称必填")
+    if len(name) > 64:
+        return fail(1001, "分类名称不超过 64 字")
+    tenant_id = tenant_of(actor)
+    row = db.get(AirKbCategory, category_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id or row.kb_id != body.kbId:
+        return fail(1004, "分类不存在")
+    dup = db.scalar(
+        select(AirKbCategory.id).where(
+            AirKbCategory.deleted == 0,
+            AirKbCategory.tenant_id == tenant_id,
+            AirKbCategory.kb_id == row.kb_id,
+            AirKbCategory.parent_id == row.parent_id,
+            AirKbCategory.category_name == name,
+            AirKbCategory.id != row.id,
+        )
+    )
+    if dup:
+        return fail(1001, "同级分类名称重复")
+    row.category_name = name
+    row.updated_at = utcnow()
+    return ok({"categoryId": row.id, "categoryName": row.category_name})
+
+
+@router.delete("/kb/category/{category_id}")
+def kb_category_delete(
+    category_id: int,
+    kbId: int,
+    moveToRoot: bool = False,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(AirKbCategory, category_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id or row.kb_id != kbId:
+        return fail(1004, "分类不存在")
+    child_ids = [
+        row.id,
+        *list(
+            db.scalars(
+                select(AirKbCategory.id).where(
+                    AirKbCategory.deleted == 0,
+                    AirKbCategory.tenant_id == tenant_id,
+                    AirKbCategory.parent_id == row.id,
+                )
+            ).all()
+        ),
+    ]
+    doc_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(AirKbDoc)
+            .where(
+                AirKbDoc.deleted == 0,
+                AirKbDoc.tenant_id == tenant_id,
+                AirKbDoc.cate_id.in_(child_ids),
+            )
+        )
+        or 0
+    )
+    if doc_count and not moveToRoot:
+        return fail(1001, "该分类下有知识条目，删除后条目将改挂根分类")
+    moved = 0
+    if doc_count:
+        docs = db.scalars(
+            select(AirKbDoc).where(
+                AirKbDoc.deleted == 0,
+                AirKbDoc.tenant_id == tenant_id,
+                AirKbDoc.cate_id.in_(child_ids),
+            )
+        ).all()
+        now = utcnow()
+        for doc in docs:
+            doc.cate_id = 0
+            doc.updated_at = now
+            moved += 1
+    now = utcnow()
+    nodes = db.scalars(
+        select(AirKbCategory).where(
+            AirKbCategory.deleted == 0,
+            AirKbCategory.tenant_id == tenant_id,
+            AirKbCategory.id.in_(child_ids),
+        )
+    ).all()
+    for node in nodes:
+        node.deleted = 1
+        node.updated_at = now
+    return ok({"categoryId": row.id, "movedDocCount": moved})
+
+
+def role_tags_for_role(role: Role) -> set[str]:
+    tags: set[str] = set()
+    key = (role.role_key or "").strip().lower()
+    name = role.role_name or ""
+    if key:
+        tags.add(key)
+    if key == "sys:admin" or "系统管理员" in name:
+        tags.add("r1")
+    if key == "r3" or key.endswith(":r3") or "财务" in name:
+        tags.add("r3")
+    if key == "r4" or key.endswith(":r4") or "运营总监" in name:
+        tags.add("r4")
+    return tags
+
+
+@router.post("/kb/grant")
+def kb_grant(body: KbGrantBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    row = load_kb(db, body.kbId, tenant_id)
+    if row is None:
+        return fail(1004, "知识库不存在")
+    if row.status != "PUBLISHED":
+        return fail(1001, "知识库未发布不可授权")
+    grant_type = (body.grantType or "").strip().upper()
+    if grant_type not in {"DEPT", "ROLE", "PERSON"}:
+        return fail(1001, "授权类型仅支持 DEPT、ROLE、PERSON")
+    expire_at = None
+    if (body.expireAt or "").strip():
+        expire_at = parse_expire(body.expireAt)
+        if expire_at is None:
+            return fail(1001, "有效期格式应为 YYYY-MM-DD")
+    secret = row.secret_level or "INTERNAL"
+    limit = grants_limit_text(secret)
+    if secret in {"CONFIDENTIAL", "TOP_SECRET"}:
+        if grant_type == "PERSON":
+            user = db.get(User, body.grantId)
+            tags = role_tags_of(db, user) if user is not None else set()
+            if not target_allowed(secret, tags):
+                return fail(1001, limit)
+        elif grant_type == "ROLE":
+            role = db.get(Role, body.grantId)
+            tags = role_tags_for_role(role) if role is not None else set()
+            if not target_allowed(secret, tags):
+                return fail(1001, limit)
+        else:
+            return fail(1001, limit)
+    grant_name, error = resolve_grant_target(db, tenant_id, grant_type, body.grantId)
+    if error:
+        return fail(1001, error)
+    now = utcnow()
+    grant = AirKbGrant(
+        kb_id=row.id,
+        grant_type=grant_type,
+        grant_id_ref=body.grantId,
+        grant_name=grant_name or "",
+        status="ACTIVE",
+        expire_at=expire_at,
+        granted_by=actor.id,
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(grant)
+    db.flush()
+    sync_id = write_event(
+        db,
+        tenant_id,
+        "KB_GRANT",
+        {"kbId": row.id, "grantId": grant.id, "grantType": grant_type, "grantIdRef": body.grantId},
+    )
+    return ok({"grantId": grant.id, "status": grant.status, "syncEventId": sync_id, "grantName": grant.grant_name})
+
+
+def transfer_rows(db: Session, tenant_id: int, source_type: str, keyword: str) -> list[dict]:
+    text = keyword.strip()
+    items: list[dict] = []
+    if source_type == "TRAIN":
+        stmt = select(TrainMaterial).where(TrainMaterial.deleted == 0, TrainMaterial.tenant_id == tenant_id)
+        if text:
+            stmt = stmt.where(TrainMaterial.title.like(f"%{text}%"))
+        for row in db.scalars(stmt.order_by(TrainMaterial.id.desc()).limit(50)).all():
+            items.append(
+                {
+                    "id": row.id,
+                    "title": row.title,
+                    "category": row.material_type or "",
+                    "secretLevel": "INTERNAL",
+                    "updatedAt": iso_min(row.updated_at),
+                }
+            )
+    elif source_type == "PERF":
+        stmt = select(PerfScheme).where(PerfScheme.deleted == 0, PerfScheme.tenant_id == tenant_id)
+        if text:
+            stmt = stmt.where(PerfScheme.template_name.like(f"%{text}%"))
+        for row in db.scalars(stmt.order_by(PerfScheme.id.desc()).limit(50)).all():
+            items.append(
+                {
+                    "id": row.id,
+                    "title": row.template_name,
+                    "category": row.position_code or "",
+                    "secretLevel": "INTERNAL",
+                    "updatedAt": iso_min(row.updated_at),
+                }
+            )
+    elif source_type == "CONTENT":
+        stmt = select(ContentProject).where(ContentProject.deleted == 0, ContentProject.tenant_id == tenant_id)
+        if text:
+            stmt = stmt.where(ContentProject.title.like(f"%{text}%"))
+        for row in db.scalars(stmt.order_by(ContentProject.id.desc()).limit(50)).all():
+            items.append(
+                {
+                    "id": row.id,
+                    "title": row.title,
+                    "category": row.content_type or "",
+                    "secretLevel": "INTERNAL",
+                    "updatedAt": iso_min(row.created_at),
+                }
+            )
+    imported = set(
+        db.scalars(
+            select(AirKbDoc.source_ref).where(
+                AirKbDoc.deleted == 0,
+                AirKbDoc.tenant_id == tenant_id,
+                AirKbDoc.source_type == source_type,
+            )
+        ).all()
+    )
+    for item in items:
+        item["imported"] = str(item["id"]) in {str(value) for value in imported}
+        item["secretLabel"] = SECRET_LABEL.get(item["secretLevel"], item["secretLevel"])
+    return items
+
+
+@router.get("/kb/transfer-source")
+def kb_transfer_source(
+    sourceType: str = "",
+    keyword: str = "",
+    pageNo: int = 1,
+    pageSize: int = 20,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    kind = (sourceType or "").strip().upper()
+    if kind not in {"TRAIN", "PERF", "CONTENT"}:
+        return fail(1001, "请先选择来源模块")
+    tenant_id = tenant_of(actor)
+    items = transfer_rows(db, tenant_id, kind, keyword or "")
+    page_no, size = page_args(pageNo, pageSize)
+    total = len(items)
+    return paged(items[(page_no - 1) * size : page_no * size], total, page_no, size)
+
+
+@router.post("/kb/doc/import-from")
+def kb_import_from(body: KbTransferBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    kind = (body.sourceType or "").strip().upper()
+    if kind not in {"TRAIN", "PERF", "CONTENT"}:
+        return fail(1001, "请先选择来源模块")
+    if not body.sourceIds:
+        return fail(1001, "请至少勾选 1 条来源条目")
+    tenant_id = tenant_of(actor)
+    kb = load_kb(db, body.targetKbId, tenant_id)
+    if kb is None:
+        return fail(1001, "目标知识库必填")
+    if body.targetCategoryId:
+        cate = db.get(AirKbCategory, body.targetCategoryId)
+        if cate is None or cate.deleted or cate.kb_id != kb.id or cate.tenant_id != tenant_id:
+            return fail(1004, "分类不存在")
+    secret = normalize_secret(body.secretLevel) if (body.secretLevel or "").strip() else ""
+    if secret and secret not in SECRET_LEVELS:
+        return fail(1001, "密级非法")
+    if secret and SECRET_RANK[secret] < SECRET_RANK.get(kb.secret_level or "INTERNAL", 1):
+        return fail(1001, "密级不得低于库密级")
+    sources = {item["id"]: item for item in transfer_rows(db, tenant_id, kind, "")}
+    now = utcnow()
+    doc_ids: list[int] = []
+    statuses: list[str] = []
+    for source_id in body.sourceIds:
+        item = sources.get(int(source_id))
+        if item is None:
+            return fail(1001, "来源条目不存在")
+        existed = db.scalar(
+            select(AirKbDoc).where(
+                AirKbDoc.deleted == 0,
+                AirKbDoc.tenant_id == tenant_id,
+                AirKbDoc.source_type == kind,
+                AirKbDoc.source_ref == str(source_id),
+                AirKbDoc.kb_id == kb.id,
+            )
+        )
+        if existed is not None:
+            doc_ids.append(existed.id)
+            statuses.append(existed.audit_status)
+            continue
+        doc_secret = secret or item["secretLevel"]
+        if SECRET_RANK.get(doc_secret, 0) < SECRET_RANK.get(kb.secret_level or "INTERNAL", 1):
+            doc_secret = kb.secret_level or "INTERNAL"
+        row = AirKbDoc(
+            kb_id=kb.id,
+            title=item["title"][:256],
+            file_key=f"kb/transfer/{kind.lower()}/{source_id}",
+            content_type="text/plain",
+            file_size=len(item["title"].encode("utf-8")),
+            cate_id=int(body.targetCategoryId or 0),
+            secret_level=doc_secret,
+            source_type=kind,
+            source_ref=str(source_id),
+            body=item["title"],
+            audit_status="PENDING",
+            uploader_user_id=actor.id,
+            tenant_id=tenant_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(row)
+        db.flush()
+        doc_ids.append(row.id)
+        statuses.append(row.audit_status)
+    kb.updated_at = now
+    return ok({"docIds": doc_ids, "auditStatus": statuses})
+
+
 @router.get("/kb/page")
 def kb_page(
     pageNo: int = 1,
     pageSize: int = 10,
+    keyword: str = "",
+    kbId: int | None = None,
+    secretLevel: str = "",
+    status: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    rows = list_kbs(db, tenant_id, actor.id)
+    secret = normalize_secret(secretLevel)
+    wanted = (status or "").strip().upper()
+    text = (keyword or "").strip().lower()
+    filtered: list[AirKb] = []
+    for row in rows:
+        if kbId and row.id != kbId:
+            continue
+        if secret and (row.secret_level or "") != secret:
+            continue
+        if wanted and (row.status or "") != wanted:
+            continue
+        if text and text not in f"{row.kb_no} {row.kb_name}".lower():
+            continue
+        filtered.append(row)
+    page_no, size = page_args(pageNo, pageSize)
+    total = len(filtered)
+    page_rows = list(reversed(filtered))[(page_no - 1) * size : page_no * size]
+    names = user_names(db, {row.owner_user_id for row in page_rows})
+    return paged([kb_vo(db, row, names) for row in page_rows], total, page_no, size)
+
+
+@router.get("/kb/doc/page")
+def kb_doc_page(
+    pageNo: int = 1,
+    pageSize: int = 10,
     title: str = "",
+    keyword: str = "",
     kbId: int | None = None,
     categoryId: int | None = None,
     docStatus: str = "",
@@ -295,19 +908,108 @@ def kb_page(
         stmt = stmt.where(AirKbDoc.kb_id == kbId)
     if categoryId:
         stmt = stmt.where(AirKbDoc.cate_id == categoryId)
-    if title.strip():
-        stmt = stmt.where(AirKbDoc.title.like(f"%{title.strip()}%"))
+    text = (title or keyword or "").strip()
+    if text:
+        stmt = stmt.where(AirKbDoc.title.like(f"%{text}%"))
     if docStatus:
         stmt = stmt.where(AirKbDoc.audit_status == docStatus)
     page_no, size = page_args(pageNo, pageSize)
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(
-        db.scalars(
-            stmt.order_by(AirKbDoc.id.desc()).offset((page_no - 1) * size).limit(size)
-        ).all()
+        db.scalars(stmt.order_by(AirKbDoc.id.desc()).offset((page_no - 1) * size).limit(size)).all()
     )
     names = user_names(db, {r.uploader_user_id for r in rows})
     return paged([kb_doc_vo(r, names) for r in rows], total, page_no, size)
+
+
+@router.post("/kb")
+def kb_create(body: KbCreateBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    name = (body.kbName or "").strip()
+    if not name:
+        return fail(1001, "知识库名称必填")
+    if len(name) > 128:
+        return fail(1001, "知识库名称不超过 128 字")
+    secret = normalize_secret(body.secretLevel)
+    if secret not in SECRET_LEVELS:
+        return fail(1001, "密级必填")
+    if body.ownerUserId <= 0:
+        return fail(1001, "责任人必填")
+    tenant_id = tenant_of(actor)
+    owner = db.get(User, body.ownerUserId)
+    if owner is None or owner.deleted or (owner.tenant_id or 0) != tenant_id:
+        return fail(1001, "责任人不存在")
+    now = utcnow()
+    status = "PENDING" if secret in {"CONFIDENTIAL", "TOP_SECRET"} else "PUBLISHED"
+    row = AirKb(
+        kb_no=next_kb_no(db, tenant_id),
+        kb_name=name,
+        description=(body.desc or "").strip()[:512],
+        secret_level=secret,
+        status=status,
+        provider="LOCAL",
+        owner_user_id=owner.id,
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    names = user_names(db, {owner.id})
+    return ok(kb_vo(db, row, names))
+
+
+@router.post("/kb/audit")
+def kb_lib_audit(body: KbLibAuditBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    row = load_kb(db, body.kbId, tenant_id)
+    if row is None:
+        return fail(1004, "知识库不存在")
+    if row.status != "PENDING":
+        return fail(1001, "仅入库审批中的知识库可审批")
+    if not body.approve and not (body.auditNote or "").strip():
+        return fail(1001, "驳回须填写意见")
+    row.status = "PUBLISHED" if body.approve else "DRAFT"
+    row.updated_at = utcnow()
+    names = user_names(db, {row.owner_user_id})
+    data = kb_vo(db, row, names)
+    data["auditNote"] = (body.auditNote or "").strip()
+    return ok(data)
+
+
+@router.get("/kb/{kb_id}")
+def kb_detail(kb_id: int, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    row = load_kb(db, kb_id, tenant_id)
+    if row is None:
+        return fail(1004, "知识库不存在")
+    names = user_names(db, {row.owner_user_id})
+    data = kb_vo(db, row, names)
+    docs = list(
+        db.scalars(
+            select(AirKbDoc)
+            .where(AirKbDoc.deleted == 0, AirKbDoc.tenant_id == tenant_id, AirKbDoc.kb_id == row.id)
+            .order_by(AirKbDoc.id.desc())
+        ).all()
+    )
+    uploaders = user_names(db, {item.uploader_user_id for item in docs})
+    data["docs"] = [kb_doc_vo(item, uploaders) for item in docs]
+    data["fileOnly"] = True
+    grants = db.scalars(
+        select(AirKbGrant)
+        .where(AirKbGrant.deleted == 0, AirKbGrant.tenant_id == tenant_id, AirKbGrant.kb_id == row.id)
+        .order_by(AirKbGrant.id.desc())
+    ).all()
+    data["grants"] = [
+        {
+            "grantId": item.id,
+            "grantType": item.grant_type,
+            "grantName": item.grant_name,
+            "status": item.status,
+            "expireAt": iso_min(item.expire_at) if item.expire_at else "",
+        }
+        for item in grants
+    ]
+    return ok(data)
 
 
 @router.post("/kb/doc/upload")

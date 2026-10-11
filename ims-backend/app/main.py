@@ -365,6 +365,46 @@ def ensure_air_key_columns() -> None:
             conn.execute(text("CREATE INDEX idx_air_api_key_hash ON ims_air_api_key (key_hash)"))
 
 
+def ensure_air_kb_library_columns() -> None:
+    """已有库补知识库编号、状态、文档密级与来源。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "ims_kb" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_kb")}
+        alters: list[str] = []
+        if "kb_no" not in cols:
+            alters.append("ADD COLUMN kb_no VARCHAR(32) NOT NULL DEFAULT ''")
+        if "description" not in cols:
+            alters.append("ADD COLUMN description VARCHAR(512) NOT NULL DEFAULT ''")
+        if "status" not in cols:
+            alters.append("ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'PUBLISHED'")
+        if "provider" not in cols:
+            alters.append("ADD COLUMN provider VARCHAR(16) NOT NULL DEFAULT 'LOCAL'")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_kb {', '.join(alters)}"))
+    if "ims_kb_doc" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_kb_doc")}
+        alters = []
+        if "secret_level" not in cols:
+            alters.append("ADD COLUMN secret_level VARCHAR(24) NOT NULL DEFAULT ''")
+        if "source_type" not in cols:
+            alters.append("ADD COLUMN source_type VARCHAR(16) NOT NULL DEFAULT 'FILE'")
+        if "source_ref" not in cols:
+            alters.append("ADD COLUMN source_ref VARCHAR(64) NOT NULL DEFAULT ''")
+        if "audit_note" not in cols:
+            alters.append("ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_kb_doc {', '.join(alters)}"))
+        cols = {c["name"] for c in insp.get_columns("ims_kb_doc")}
+        if "body" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE ims_kb_doc ADD COLUMN body TEXT NULL"))
+
+
 def ensure_air_slice92_columns() -> None:
     """已有库补审计列与冻结原因。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -511,6 +551,7 @@ def init_db() -> None:
     ensure_live_approve_comment_column()
     ensure_cert_file_key_column()
     ensure_air_key_columns()
+    ensure_air_kb_library_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     from app.ops_db import ensure_ops

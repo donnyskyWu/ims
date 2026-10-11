@@ -50,9 +50,13 @@ def test_air_kb_upload_page_download_stub():
     assert audit.json()["code"] == 0
     assert audit.json()["data"]["auditStatus"] == "PUBLISHED"
 
-    page = client.get("/admin-api/ims/air/kb/page", headers=auth, params={"pageNo": 1, "pageSize": 5})
+    page = client.get("/admin-api/ims/air/kb/doc/page", headers=auth, params={"pageNo": 1, "pageSize": 20})
     assert page.json()["code"] == 0
     assert any(r["id"] == doc_id for r in page.json()["data"]["list"])
+    libs = client.get("/admin-api/ims/air/kb/page", headers=auth, params={"pageNo": 1, "pageSize": 5})
+    assert libs.json()["code"] == 0
+    assert libs.json()["data"]["list"]
+    assert libs.json()["data"]["list"][0]["kbName"]
 
     dl = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
     assert dl.json()["code"] == 0

@@ -317,6 +317,8 @@ PREFIXES = [
     ("GET", "/admin-api/ims/meet/stat", "ims_meet_daily_report"),
     ("GET", "/admin-api/ims/air/kb", "ims_kb_doc"),
     ("POST", "/admin-api/ims/air/kb", "ims_kb_doc"),
+    ("PUT", "/admin-api/ims/air/kb", "ims_kb_doc"),
+    ("DELETE", "/admin-api/ims/air/kb", "ims_kb_doc"),
     ("GET", "/admin-api/ims/air/kb/category", "ims_kb_category"),
     ("POST", "/admin-api/ims/air/kb/category", "ims_kb_category"),
     ("POST", "/admin-api/ims/air/kb/doc/audit", "ims_kb_doc"),

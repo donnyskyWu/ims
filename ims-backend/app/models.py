@@ -1059,8 +1059,12 @@ class MeetMinutes(Base):
 class AirKb(Base):
     __tablename__ = "ims_kb"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kb_no: Mapped[str] = mapped_column(String(32), default="")
     kb_name: Mapped[str] = mapped_column(String(128), default="")
+    description: Mapped[str] = mapped_column(String(512), default="")
     secret_level: Mapped[str] = mapped_column(String(24), default="INTERNAL")
+    status: Mapped[str] = mapped_column(String(16), default="PUBLISHED")
+    provider: Mapped[str] = mapped_column(String(16), default="LOCAL")
     owner_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
@@ -1090,8 +1094,31 @@ class AirKbDoc(Base):
     content_type: Mapped[str] = mapped_column(String(64), default="application/octet-stream")
     file_size: Mapped[int] = mapped_column(BigInteger, default=0)
     cate_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    secret_level: Mapped[str] = mapped_column(String(24), default="")
+    source_type: Mapped[str] = mapped_column(String(16), default="FILE")
+    source_ref: Mapped[str] = mapped_column(String(64), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    audit_note: Mapped[str] = mapped_column(String(512), default="")
     audit_status: Mapped[str] = mapped_column(String(16), default="PUBLISHED")
     uploader_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class AirKbGrant(Base):
+    """知识库授权。机密仅 R1/R3/R4，绝密仅 R1。"""
+
+    __tablename__ = "ims_kb_grant"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kb_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    grant_type: Mapped[str] = mapped_column(String(16), default="")
+    grant_id_ref: Mapped[int] = mapped_column(BigInteger, default=0)
+    grant_name: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    expire_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    granted_by: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
