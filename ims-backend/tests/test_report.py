@@ -1045,3 +1045,25 @@ def test_assigned_dept_filler_can_submit_without_report_menu_perm():
         },
     )
     assert blocked.json()["code"] == 1008
+
+
+def test_seeded_author_exposes_bound_platform_account():
+    auth = headers()
+    template_id = create_enabled_template(auth)
+    by_template = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=auth,
+        params={"templateId": template_id},
+    )
+    assert by_template.json()["code"] == 0
+    author = next(row for row in by_template.json()["data"]["authors"] if row["authorName"] == "TC-作者甲")
+    assert author["ipGroupId"]
+
+    pooled = client.get(
+        "/admin-api/ims/report/submit/context",
+        headers=auth,
+        params={"templateId": template_id, "authorId": author["id"]},
+    )
+    assert pooled.json()["code"] == 0
+    names = [row["accountName"] for row in pooled.json()["data"]["accounts"]]
+    assert "TC-账号甲" in names

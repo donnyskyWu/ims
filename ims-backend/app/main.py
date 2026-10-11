@@ -14,6 +14,69 @@ from app.security import hash_password
 E2E_OPS_AUTHOR_ID = 900_001
 
 
+def _ensure_tc_fill_author(ops) -> None:
+    """回归填报：作者绑定 IP 组，组内有平台账号，供被指派填报人级联选择。"""
+    from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, PlatformAccount
+
+    group = ops.scalar(select(IpGroup).where(IpGroup.group_name == "TC填报组", IpGroup.deleted == 0))
+    if group is None:
+        group = IpGroup(group_name="TC填报组", group_type="SMALL", status="ENABLED", tenant_id=0)
+        ops.add(group)
+        ops.flush()
+
+    author = ops.scalar(select(AuthorUser).where(AuthorUser.author_name == "TC-作者甲", AuthorUser.deleted == 0))
+    if author is None:
+        author = AuthorUser(
+            author_name="TC-作者甲",
+            ip_group_id=group.id,
+            status="ENABLED",
+            tenant_id=0,
+        )
+        ops.add(author)
+        ops.flush()
+    else:
+        author.ip_group_id = group.id
+        author.status = "ENABLED"
+
+    account = ops.scalar(
+        select(PlatformAccount).where(PlatformAccount.account_no == "TC-ACCT-JIA", PlatformAccount.deleted == 0)
+    )
+    if account is None:
+        account = PlatformAccount(
+            account_no="TC-ACCT-JIA",
+            account_name="TC-账号甲",
+            platform_type="DOUYIN",
+            ip_group_id=group.id,
+            status="IN_USE",
+            tenant_id=0,
+        )
+        ops.add(account)
+        ops.flush()
+    else:
+        account.account_name = "TC-账号甲"
+        account.platform_type = "DOUYIN"
+        account.ip_group_id = group.id
+        account.status = "IN_USE"
+
+    author.primary_account_id = account.id
+    rel = ops.scalar(
+        select(IpGroupAnchorRel).where(
+            IpGroupAnchorRel.ip_group_id == group.id,
+            IpGroupAnchorRel.anchor_user_id == author.id,
+            IpGroupAnchorRel.deleted == 0,
+        )
+    )
+    if rel is None:
+        ops.add(
+            IpGroupAnchorRel(
+                ip_group_id=group.id,
+                anchor_user_id=author.id,
+                is_primary=1,
+                tenant_id=0,
+            )
+        )
+
+
 def _ensure_e2e_ops_author(ops) -> None:
     """Playwright 工作任务 closure：固定 ops 作者 id，供 IP 组「关联作者」纯 UI 绑定。"""
     from app.ops_models import AuthorUser
@@ -127,6 +190,7 @@ def seed() -> None:
         try:
             _ensure_e2e_douyin_account(db, ops)
             _ensure_e2e_ops_author(ops)
+            _ensure_tc_fill_author(ops)
             ops.commit()
         finally:
             ops.close()
