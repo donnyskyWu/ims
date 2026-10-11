@@ -34,7 +34,7 @@ test('会议预约空表单提示必填，日报填写页有类型且正文可�
   await page.goto('/ims/meet/daily/submit')
   await expect(page.locator('.crumb')).toContainText('日报中心 / 填写日报')
   await expect(page.locator('.crumb')).not.toContainText('建设中')
-  await expect(page.locator('.sub')).not.toContainText('MEET-')
+  await expect(page.locator('.pg-h .sub')).not.toContainText('MEET-')
   await expect(page.getByTestId('daily-type')).toBeVisible()
   await expect(page.getByText('今日完成 *')).toBeVisible()
   await expect(page.getByText('明日计划 *')).toHaveCount(0)
