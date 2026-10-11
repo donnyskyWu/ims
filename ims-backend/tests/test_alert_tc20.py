@@ -259,3 +259,84 @@ def test_c060_handle_drawer_flow_keeps_direct_resolve():
     )
     assert closed.json()["code"] == 0
     assert closed.json()["data"]["responseStatus"] == "RESOLVED"
+
+
+def test_c056_rule_fields_and_finance_module():
+    auth = headers()
+    listed = client.get("/admin-api/ims/alert/rule/list", headers=auth, params={"pageNo": 1, "pageSize": 5})
+    assert listed.json()["code"] == 0
+    assert listed.json()["data"]["financeOnly"] is False
+    assert "直播管理" in listed.json()["data"]["monitorModules"]
+    assert "财务核算" in listed.json()["data"]["monitorModules"]
+
+    code = f"c056.{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": code,
+            "ruleName": "证件规则字段",
+            "thresholdExpr": "days_left<=30",
+            "level": 2,
+            "enabled": False,
+            "sourceModule": "证件档案",
+            "notifyMode": "BOTH",
+            "ruleDesc": "证件剩余天数",
+        },
+    )
+    assert created.json()["code"] == 0
+    data = created.json()["data"]
+    assert data["sourceModule"] == "证件档案"
+    assert data["notifyMode"] == "BOTH"
+    assert data["notifyModeLabel"] == "站内+钉钉"
+    assert data["ruleDesc"] == "证件剩余天数"
+    assert data["escalationChain"] == "30/60 分钟 · 严重从二级起跳"
+
+    bad = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": f"{code}.bad", "ruleName": "非法对象", "sourceModule": "不存在的模块", "enabled": False},
+    )
+    assert bad.json()["code"] == 1001
+
+    omitted = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": f"{code}.plain", "ruleName": "不带来源", "thresholdExpr": "delayMinutes>1", "enabled": False},
+    )
+    assert omitted.json()["code"] == 0
+    assert omitted.json()["data"]["sourceModule"] == ""
+
+    fin_login = client.post("/admin-api/ims/auth/login", json={"username": "e2e_acct_r3", "password": "Admin@123"})
+    assert fin_login.json()["code"] == 0
+    fin = {"Authorization": f"Bearer {fin_login.json()['data']['accessToken']}"}
+    fin_list = client.get("/admin-api/ims/alert/rule/list", headers=fin, params={"pageNo": 1, "pageSize": 5})
+    assert fin_list.json()["code"] == 0
+    assert fin_list.json()["data"]["financeOnly"] is True
+    assert fin_list.json()["data"]["monitorModules"] == ["财务核算"]
+    denied = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=fin,
+        json={
+            "ruleCode": f"{code}.live",
+            "ruleName": "财务越权对象",
+            "thresholdExpr": "delayMinutes>1",
+            "sourceModule": "直播管理",
+            "enabled": False,
+        },
+    )
+    assert denied.json()["code"] == 1001
+    allowed = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=fin,
+        json={
+            "ruleCode": f"{code}.fin",
+            "ruleName": "财务成本规则",
+            "thresholdExpr": "delayMinutes>1",
+            "sourceModule": "财务核算",
+            "notifyMode": "IN_APP",
+            "enabled": False,
+        },
+    )
+    assert allowed.json()["code"] == 0
+    assert allowed.json()["data"]["sourceModule"] == "财务核算"

@@ -455,6 +455,28 @@ def ensure_asset_verify_schedule_columns() -> None:
             conn.execute(text(f"ALTER TABLE ims_asset_verify_batch {clause}"))
 
 
+def ensure_alert_rule_columns() -> None:
+    """已有库补规则监控对象、通知方式与说明。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_alert_rule" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_alert_rule")}
+    alters = []
+    if "source_module" not in cols:
+        alters.append("ADD COLUMN source_module VARCHAR(32) NOT NULL DEFAULT ''")
+    if "notify_mode" not in cols:
+        alters.append("ADD COLUMN notify_mode VARCHAR(16) NOT NULL DEFAULT 'IN_APP'")
+    if "rule_desc" not in cols:
+        alters.append("ADD COLUMN rule_desc VARCHAR(512) NOT NULL DEFAULT ''")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_alert_rule {clause}"))
+
+
 def ensure_alert_record_columns() -> None:
     """已有库补预警对象与合并次数。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -536,6 +558,7 @@ def init_db() -> None:
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     ensure_alert_record_columns()
+    ensure_alert_rule_columns()
     from app.ops_db import ensure_ops
 
     ensure_ops()

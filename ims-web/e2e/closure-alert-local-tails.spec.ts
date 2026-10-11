@@ -30,7 +30,7 @@ test.describe('alert local tails closure', () => {
       const modal = page.locator('.card').filter({ has: page.locator('h3', { hasText: '注册预警规则' }) })
       await modal.locator('input[placeholder="live.data.delay"]').fill(code)
       await modal.locator('input.fld-in').nth(1).fill(`E2E 边角 ${code}`)
-      await modal.getByTestId('alert-rule-form-level').selectOption(level)
+      await modal.getByTestId('alert-rule-level').selectOption(level)
       await modal.locator('input[placeholder="delayMinutes>30"]').fill('delayMinutes>0')
       await modal.locator('label').filter({ hasText: '创建后立即启用' }).locator('input[type="checkbox"]').check()
       await modal.getByRole('button', { name: '保存' }).click()

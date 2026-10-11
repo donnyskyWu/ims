@@ -39,8 +39,10 @@
             <tr>
               <th>编码</th>
               <th>名称</th>
+              <th>所属模块</th>
+              <th>触发条件</th>
               <th>级别</th>
-              <th>阈值/表达式</th>
+              <th>升级链</th>
               <th>命中</th>
               <th>启停</th>
               <th>操作</th>
@@ -48,18 +50,20 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7">
+              <td colspan="9">
                 <div class="empty" data-testid="alert-rule-empty"><div class="et">{{ ruleEmptyText }}</div></div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.ruleCode }}</td>
               <td style="font-weight: 500">{{ row.ruleName }}</td>
-              <td class="num">L{{ row.level }}</td>
-              <td class="mono">{{ row.thresholdExpr || '—' }}</td>
+              <td data-testid="alert-rule-module">{{ row.sourceModule || '—' }}</td>
+              <td class="mono" data-testid="alert-rule-trigger">{{ row.thresholdExpr || '—' }}</td>
+              <td>{{ levelLabel(row.level) }}</td>
+              <td data-testid="alert-rule-chain-cell">{{ row.escalationChain || '30/60 分钟 · 严重从二级起跳' }}</td>
               <td class="num">{{ row.hitCount }}</td>
               <td>{{ row.enabled ? '启用' : '停用' }}</td>
               <td>
@@ -142,21 +146,33 @@
         <label class="fld">规则编码</label>
         <input v-model="form.ruleCode" class="fld-in" placeholder="live.data.delay" :readonly="editingId !== null" />
         <p v-if="codeError" data-testid="alert-rule-code-error" class="hint" style="color: var(--red)">{{ codeError }}</p>
-        <label class="fld">规则名称</label>
+        <label class="fld">规则名称 <span class="req">*</span></label>
         <input v-model="form.ruleName" data-testid="alert-rule-name" class="fld-in" />
         <p v-if="nameError" data-testid="alert-rule-name-error" class="hint" style="color: var(--red)">{{ nameError }}</p>
-        <label class="fld">级别</label>
+        <label class="fld">预警级别 <span class="req">*</span></label>
         <select v-model.number="form.level" data-testid="alert-rule-level" class="fld-in">
-          <option :value="1">L1 提示</option>
-          <option :value="2">L2 警告</option>
-          <option :value="3">L3 严重</option>
+          <option :value="1">L1 提示（黄）</option>
+          <option :value="2">L2 警告（橙）</option>
+          <option :value="3">L3 严重（红）</option>
         </select>
-        <select v-model.number="form.level" data-testid="alert-rule-form-level" class="fld-in">
-          <option :value="1">L1 提示</option>
-          <option :value="2">L2 警告</option>
-          <option :value="3">L3 严重</option>
+        <label class="fld">监控对象 <span class="req">*</span></label>
+        <select v-model="form.sourceModule" data-testid="alert-rule-object" class="fld-in">
+          <option value="">请选择</option>
+          <option v-for="item in moduleOptions" :key="item" :value="item">{{ item }}</option>
         </select>
-        <label class="fld">阈值表达式</label>
+        <p v-if="moduleError" data-testid="alert-rule-object-error" class="hint" style="color: var(--red)">{{ moduleError }}</p>
+        <label class="fld">通知方式</label>
+        <select v-model="form.notifyMode" data-testid="alert-rule-notify" class="fld-in">
+          <option value="IN_APP">站内</option>
+          <option value="DINGTALK">钉钉</option>
+          <option value="BOTH">站内+钉钉</option>
+        </select>
+        <label class="fld">规则说明</label>
+        <textarea v-model="form.ruleDesc" data-testid="alert-rule-desc" class="fld-in" rows="2" />
+        <p class="hint" data-testid="alert-rule-chain">
+          升级链：30 分钟责任人 → 再 60 分钟部门负责人 → 三级运营总监 + 系统管理员。严重级从二级起跳。
+        </p>
+        <label class="fld">触发条件 <span class="req">*</span></label>
         <input v-model="form.thresholdExpr" data-testid="alert-rule-threshold" class="fld-in" placeholder="delayMinutes>30" />
         <p v-if="thresholdError" data-testid="alert-rule-threshold-error" class="hint" style="color: var(--red)">
           {{ thresholdError }}
@@ -194,7 +210,13 @@ type Row = {
   thresholdExpr: string
   hitCount: number
   enabled: boolean
+  sourceModule?: string
+  notifyMode?: string
+  ruleDesc?: string
+  escalationChain?: string
 }
+
+const ALL_MODULES = ['账号管理', '证件档案', '工作流', '日报', '会议', '财务核算', '组织人效', '直播管理']
 
 const rows = ref<Row[]>([])
 const loading = ref(false)
@@ -204,13 +226,18 @@ const editingId = ref<number | null>(null)
 const formError = ref('')
 const codeError = ref('')
 const nameError = ref('')
+const moduleError = ref('')
 const thresholdError = ref('')
 const dslError = ref('')
+const financeOnly = ref(false)
 const filters = reactive({ ruleName: '', level: '', enabled: '' })
 const form = reactive({
   ruleCode: '',
   ruleName: '',
   level: 2,
+  sourceModule: '直播管理',
+  notifyMode: 'IN_APP',
+  ruleDesc: '',
   thresholdExpr: '',
   dslSource: '',
   dslField: '',
@@ -218,6 +245,7 @@ const form = reactive({
   dslValue: '',
   enabled: false,
 })
+const moduleOptions = computed(() => (financeOnly.value ? ['财务核算'] : ALL_MODULES))
 const toast = ref('')
 const showHits = ref(false)
 const hitRows = ref<HitRow[]>([])
@@ -293,6 +321,7 @@ async function loadList() {
       rows.value = []
       return
     }
+    financeOnly.value = !!res.data.data?.financeOnly
     rows.value = res.data.data?.list || []
   } catch {
     error.value = '网络错误'
@@ -309,10 +338,18 @@ function resetFilters() {
   loadList()
 }
 
+function levelLabel(level: number) {
+  const names: Record<number, string> = { 1: 'L1 提示（黄）', 2: 'L2 警告（橙）', 3: 'L3 严重（红）' }
+  return names[level] || `L${level}`
+}
+
 function resetForm() {
   form.ruleCode = ''
   form.ruleName = ''
   form.level = 2
+  form.sourceModule = financeOnly.value ? '财务核算' : '直播管理'
+  form.notifyMode = 'IN_APP'
+  form.ruleDesc = ''
   form.thresholdExpr = ''
   form.dslSource = ''
   form.dslField = ''
@@ -322,28 +359,34 @@ function resetForm() {
   formError.value = ''
   codeError.value = ''
   nameError.value = ''
+  moduleError.value = ''
   thresholdError.value = ''
   dslError.value = ''
 }
 
 function validateForm() {
   nameError.value = ''
+  moduleError.value = ''
   thresholdError.value = ''
   formError.value = ''
   codeError.value = ''
   dslError.value = ''
-  const code = form.ruleCode.trim()
   const name = form.ruleName.trim()
-  if (editingId.value) {
-    if (!name) {
-      nameError.value = '规则名称不能为空'
-      return false
-    }
-  } else if (!code && !name) {
-    formError.value = '规则编码或名称至少填一项'
+  let ok = true
+  if (!name) {
+    nameError.value = '必填项，请填写'
+    ok = false
+  }
+  if (!form.sourceModule) {
+    moduleError.value = '必填项，请填写'
+    ok = false
+  }
+  if (!ok) return false
+  const expr = form.thresholdExpr.trim()
+  if (!expr && !dslTouched.value) {
+    thresholdError.value = '必填项，请填写'
     return false
   }
-  const expr = form.thresholdExpr.trim()
   if (expr && !dslTouched.value && !EXPR_RE.test(expr)) {
     thresholdError.value = '阈值表达式须为字段、比较符和数字，例如 delayMinutes>30'
     return false
@@ -385,6 +428,9 @@ function openEdit(row: Row) {
   form.ruleCode = row.ruleCode
   form.ruleName = row.ruleName
   form.level = row.level || 2
+  form.sourceModule = row.sourceModule || (financeOnly.value ? '财务核算' : '直播管理')
+  form.notifyMode = row.notifyMode || 'IN_APP'
+  form.ruleDesc = row.ruleDesc || ''
   form.thresholdExpr = row.thresholdExpr || ''
   form.enabled = row.enabled
   showForm.value = true
@@ -395,6 +441,9 @@ async function submitCreate() {
   const payload: Record<string, unknown> = {
     ruleName: form.ruleName,
     level: form.level,
+    sourceModule: form.sourceModule,
+    notifyMode: form.notifyMode,
+    ruleDesc: form.ruleDesc,
     thresholdExpr: form.thresholdExpr,
     enabled: form.enabled,
   }
@@ -497,6 +546,9 @@ onMounted(loadList)
   align-items: center;
   justify-content: center;
   z-index: 1000;
+}
+.req {
+  color: var(--red);
 }
 .hit-modal {
   width: 800px;

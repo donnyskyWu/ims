@@ -63,6 +63,21 @@ CHANNEL_STUBS = [
 ]
 
 
+MONITOR_MODULES = (
+    "账号管理",
+    "证件档案",
+    "工作流",
+    "日报",
+    "会议",
+    "财务核算",
+    "组织人效",
+    "直播管理",
+)
+NOTIFY_MODES = {"IN_APP": "站内", "DINGTALK": "钉钉", "BOTH": "站内+钉钉"}
+ESCALATION_CHAIN = "30/60 分钟 · 严重从二级起跳"
+FINANCE_MODULE = "财务核算"
+
+
 class RuleBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     ruleCode: str
@@ -73,6 +88,9 @@ class RuleBody(BaseModel):
     cronExpr: str = "0 */15 * * *"
     enabled: bool = False
     triggerConfig: Any = None
+    sourceModule: str = ""
+    notifyMode: str = "IN_APP"
+    ruleDesc: str = ""
 
 
 class RuleUpdateBody(BaseModel):
@@ -86,6 +104,9 @@ class RuleUpdateBody(BaseModel):
     cronExpr: str | None = None
     enabled: bool | None = None
     triggerConfig: Any = None
+    sourceModule: str | None = None
+    notifyMode: str | None = None
+    ruleDesc: str | None = None
 
 
 class RespondBody(BaseModel):
@@ -316,7 +337,37 @@ def next_alert_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
+def finance_only(db: Session, actor: User) -> bool:
+    """纯财务角色只能配财务核算。管理员与运营总监不受限。不新增权限码。"""
+    from app.live import role_tags
+
+    tags = role_tags(db, actor)
+    if tags & {"r1", "r4", "sys:admin"}:
+        return False
+    return "r3" in tags
+
+
+def normalize_monitor(db: Session, actor: User, raw: str, *, default_when_empty: bool) -> tuple[str, str | None]:
+    module = (raw or "").strip()
+    if not module and default_when_empty:
+        module = FINANCE_MODULE if finance_only(db, actor) else ""
+    if module and module not in MONITOR_MODULES:
+        return "", "监控对象无效"
+    if finance_only(db, actor) and module and module != FINANCE_MODULE:
+        return "", "财务角色只能配置财务核算监控对象"
+    return module, None
+
+
+def normalize_notify(raw: str | None) -> tuple[str, str | None]:
+    mode = (raw or "IN_APP").strip().upper() or "IN_APP"
+    if mode not in NOTIFY_MODES:
+        return "", "通知方式无效"
+    return mode, None
+
+
 def rule_vo(row: AlertRule) -> dict:
+    module = getattr(row, "source_module", None) or ""
+    mode = getattr(row, "notify_mode", None) or "IN_APP"
     return {
         "id": row.id,
         "ruleCode": row.rule_code,
@@ -327,6 +378,11 @@ def rule_vo(row: AlertRule) -> dict:
         "cronExpr": row.cron_expr,
         "enabled": bool(row.enabled),
         "hitCount": row.hit_count,
+        "sourceModule": module,
+        "notifyMode": mode,
+        "notifyModeLabel": NOTIFY_MODES.get(mode, mode),
+        "ruleDesc": getattr(row, "rule_desc", None) or "",
+        "escalationChain": ESCALATION_CHAIN,
         "createdAt": iso(row.created_at),
     }
 
@@ -518,7 +574,10 @@ def rule_list(
             .limit(size)
         ).all()
     )
-    return paged([rule_vo(row) for row in rows], total, page_no, size)
+    data = paged([rule_vo(row) for row in rows], total, page_no, size)
+    data["data"]["financeOnly"] = finance_only(db, actor)
+    data["data"]["monitorModules"] = [FINANCE_MODULE] if data["data"]["financeOnly"] else list(MONITOR_MODULES)
+    return data
 
 
 @router.post("/rule")
@@ -554,6 +613,12 @@ def create_rule(
         reason = legacy_expr_error(stored_expr)
         if reason:
             return fail_dsl(reason)
+    module, module_error = normalize_monitor(db, actor, body.sourceModule, default_when_empty=True)
+    if module_error:
+        return fail(1001, module_error)
+    notify, notify_error = normalize_notify(body.notifyMode)
+    if notify_error:
+        return fail(1001, notify_error)
     row = AlertRule(
         rule_code=code,
         rule_name=name or code,
@@ -561,6 +626,9 @@ def create_rule(
         level=body.level,
         threshold_expr=stored_expr,
         cron_expr=body.cronExpr.strip() or "0 */15 * * *",
+        source_module=module,
+        notify_mode=notify,
+        rule_desc=(body.ruleDesc or "").strip()[:512],
         enabled=1 if body.enabled else 0,
         created_by=actor.id,
         tenant_id=tenant_id,
@@ -608,6 +676,20 @@ def update_rule(
                 if reason:
                     return fail_dsl(reason)
             row.threshold_expr = expr
+    if body.sourceModule is not None:
+        module, module_error = normalize_monitor(db, actor, body.sourceModule, default_when_empty=False)
+        if module_error:
+            return fail(1001, module_error)
+        row.source_module = module
+    elif finance_only(db, actor) and (row.source_module or "") not in ("", FINANCE_MODULE):
+        return fail(1001, "财务角色只能配置财务核算监控对象")
+    if body.notifyMode is not None:
+        notify, notify_error = normalize_notify(body.notifyMode)
+        if notify_error:
+            return fail(1001, notify_error)
+        row.notify_mode = notify
+    if body.ruleDesc is not None:
+        row.rule_desc = body.ruleDesc.strip()[:512]
     row.updated_at = utcnow()
     db.flush()
     return ok(rule_vo(row))
