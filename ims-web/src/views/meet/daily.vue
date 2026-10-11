@@ -22,12 +22,11 @@
         <option value="OPS">运营</option>
         <option value="ADMIN">行政</option>
       </select>
-      <select v-model="filters.submitStatus" style="width: 120px">
+      <select v-model="filters.submitStatus" style="width: 120px" data-testid="daily-status-filter">
         <option value="">全部状态</option>
-        <option value="SUBMITTED">已提交</option>
         <option value="DRAFT">草稿</option>
-        <option value="SUPPLEMENT">已补交</option>
-        <option value="LATE">迟交</option>
+        <option value="SUBMITTED">已提交</option>
+        <option value="READ">已审阅</option>
       </select>
       <select v-model="filters.reviewState" style="width: 120px">
         <option value="">全部审阅</option>
@@ -47,7 +46,7 @@
               <th>类型</th>
               <th>状态</th>
               <th>审阅</th>
-              <th>按时</th>
+              <th>按时/迟交</th>
               <th>今日完成</th>
               <th>提交时间</th>
               <th>操作</th>
@@ -65,7 +64,7 @@
               <td>{{ row.reportTypeLabel || '—' }}</td>
               <td><span class="tag" :class="statusClass(row.submitStatus)">{{ displayStatus(row) }}</span></td>
               <td>{{ reviewLabel(row.reviewStatus) }}</td>
-              <td>{{ row.submitStatus === 'SUBMITTED' || row.submitStatus === 'READ' ? (row.isOnTime ? '是' : '否') : '—' }}</td>
+              <td><span v-if="punctualityLabel(row) !== '—'" class="tag" :class="punctualityClass(row)">{{ punctualityLabel(row) }}</span><span v-else>—</span></td>
               <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ row.contentDone }}</td>
               <td class="num" style="font-size: 12px">{{ row.submittedAt || '—' }}</td>
               <td>
@@ -155,10 +154,20 @@ const reviewSteps = computed(() => {
 
 function displayStatus(row: DailyRow) {
   if (row.submitStatus === 'DRAFT') return '草稿'
-  if (row.supplement) return '已补交'
-  if (row.submitStatus !== 'DRAFT' && row.isOnTime === false) return '迟交'
-  if (row.submitStatus === 'SUBMITTED' || row.submitStatus === 'READ') return '已提交'
+  if (row.submitStatus === 'READ') return '已审阅'
+  if (row.submitStatus === 'SUBMITTED') return '已提交'
   return row.submitStatus
+}
+
+function punctualityLabel(row: DailyRow) {
+  if (row.submitStatus !== 'SUBMITTED' && row.submitStatus !== 'READ') return '—'
+  return row.isOnTime ? '按时' : '迟交'
+}
+
+function punctualityClass(row: DailyRow) {
+  if (punctualityLabel(row) === '按时') return 'tag-ok'
+  if (punctualityLabel(row) === '迟交') return 'tag-warn'
+  return ''
 }
 
 function reviewLabel(state?: string) {

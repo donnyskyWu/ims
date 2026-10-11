@@ -16,8 +16,18 @@ test('会议预约空表单提示必填，日报填写页有类型且正文可�
 
   await page.goto('/ims/meet/daily')
   await expect(page.getByRole('option', { name: '已退回' })).toHaveCount(0)
+  const mineStatus = page.getByTestId('daily-status-filter')
+  await expect(mineStatus.getByRole('option', { name: '草稿' })).toHaveCount(1)
+  await expect(mineStatus.getByRole('option', { name: '已提交' })).toHaveCount(1)
+  await expect(mineStatus.getByRole('option', { name: '已审阅' })).toHaveCount(1)
+  await expect(mineStatus.getByRole('option', { name: '已补交' })).toHaveCount(0)
+  await expect(mineStatus.getByRole('option', { name: '迟交' })).toHaveCount(0)
   await page.goto('/ims/meet/daily/team')
   await expect(page.getByRole('option', { name: '已退回' })).toHaveCount(0)
+  const teamStatus = page.getByTestId('daily-team-status-filter')
+  await expect(teamStatus.getByRole('option', { name: '已补交' })).toHaveCount(0)
+  await expect(teamStatus.getByRole('option', { name: '迟交' })).toHaveCount(0)
+  await expect(teamStatus.getByRole('option', { name: '已审阅' })).toHaveCount(1)
 
   await page.goto('/ims/meet/daily/submit')
   await expect(page.getByTestId('daily-type')).toBeVisible()

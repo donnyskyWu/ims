@@ -16,11 +16,11 @@
         <option value="OPS">运营</option>
         <option value="ADMIN">行政</option>
       </select>
-      <select v-model="filters.submitStatus" style="width: 120px">
+      <select v-model="filters.submitStatus" style="width: 120px" data-testid="daily-team-status-filter">
         <option value="">全部状态</option>
+        <option value="DRAFT">草稿</option>
         <option value="SUBMITTED">已提交</option>
-        <option value="SUPPLEMENT">已补交</option>
-        <option value="LATE">迟交</option>
+        <option value="READ">已审阅</option>
       </select>
       <select v-model="filters.reviewState" style="width: 120px">
         <option value="">全部审阅</option>
@@ -42,16 +42,17 @@
               <th>字段完成度</th>
               <th>提交时间</th>
               <th>状态</th>
+              <th>按时/迟交</th>
               <th>审阅状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无团队日报' }}</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无团队日报' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="num">{{ row.reportDate }}</td>
@@ -60,6 +61,7 @@
               <td class="num">{{ row.fieldCompleteness ?? '—' }}%</td>
               <td class="num" style="font-size: 12px">{{ formatShanghaiMinute(row.submittedAt) }}</td>
               <td><span class="tag" :class="statusClass(row.submitStatus)">{{ displayStatus(row) }}</span></td>
+              <td><span v-if="punctualityLabel(row) !== '—'" class="tag" :class="punctualityClass(row)">{{ punctualityLabel(row) }}</span><span v-else>—</span></td>
               <td>{{ reviewLabel(row.reviewStatus) }}</td>
               <td><button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">查看</button></td>
             </tr>
@@ -150,9 +152,21 @@ function formatShanghaiMinute(value?: string) {
 }
 
 function displayStatus(row: DailyRow) {
-  if (row.supplement) return '已补交'
-  if (!row.isOnTime) return '迟交'
-  return '已提交'
+  if (row.submitStatus === 'DRAFT') return '草稿'
+  if (row.submitStatus === 'READ') return '已审阅'
+  if (row.submitStatus === 'SUBMITTED') return '已提交'
+  return row.submitStatus
+}
+
+function punctualityLabel(row: DailyRow) {
+  if (row.submitStatus !== 'SUBMITTED' && row.submitStatus !== 'READ') return '—'
+  return row.isOnTime ? '按时' : '迟交'
+}
+
+function punctualityClass(row: DailyRow) {
+  if (punctualityLabel(row) === '按时') return 'tag-ok'
+  if (punctualityLabel(row) === '迟交') return 'tag-warn'
+  return ''
 }
 
 function reviewLabel(state?: string) {
