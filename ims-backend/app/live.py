@@ -19,6 +19,7 @@ from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import (
     AssetLedger,
+    AssetLifecycleEvent,
     CertArchive,
     LiveAlarmRecord,
     LiveCost,
@@ -188,6 +189,63 @@ def device_kind(db: Session, ops: Session, actor: User, device_id: int) -> str |
     if asset.status != "IN_USE":
         return None
     return "ASSET"
+
+
+def bind_session_assets(db: Session, ops: Session, actor: User, session: LiveSession, device_ids: list[int]) -> None:
+    """在用直播/拍摄资产写入流转时间线。手机不进资产台账。"""
+    remark = f"绑定场次 {session.session_code}"[:256]
+    for device_id in device_ids:
+        if device_kind(db, ops, actor, device_id) != "ASSET":
+            continue
+        asset = load_asset(db, actor, device_id)
+        if asset is None:
+            continue
+        db.add(
+            AssetLifecycleEvent(
+                asset_id=asset.id,
+                event_type="BIND_SESSION",
+                from_status=asset.status or "",
+                to_status=asset.status or "",
+                actor_user_id=actor.id,
+                owner_user_id=asset.owner_user_id,
+                remark=remark,
+                tenant_id=tenant_of(actor),
+            )
+        )
+
+
+def bound_devices(db: Session, ops: Session, actor: User, device_ids: list[int]) -> list[dict]:
+    rows: list[dict] = []
+    for device_id in device_ids:
+        kind = device_kind(db, ops, actor, device_id)
+        if kind == "ASSET":
+            asset = load_asset(db, actor, device_id)
+            if asset is None:
+                continue
+            rows.append(
+                {
+                    "id": asset.id,
+                    "kind": "ASSET",
+                    "assetCode": asset.asset_code,
+                    "assetName": asset.asset_name or asset.asset_code,
+                    "assetType": asset.asset_type,
+                }
+            )
+        elif kind == "PHONE":
+            phone = ops.get(Phone, device_id)
+            if not visible(phone, actor):
+                continue
+            label = phone.phone_code or phone.device_number or phone.phone_model or f"手机#{phone.id}"
+            rows.append(
+                {
+                    "id": phone.id,
+                    "kind": "PHONE",
+                    "assetCode": phone.phone_code or "",
+                    "assetName": label,
+                    "assetType": "PHONE",
+                }
+            )
+    return rows
 
 
 def validate_devices(db: Session, ops: Session, actor: User, device_ids: list[int]) -> bool:
@@ -1420,6 +1478,7 @@ def sessions_detail(
     data["corrections"] = [
         shape_correction(correction_vo(item), view) for item in correction_rows(db, session_code)
     ]
+    data["boundDevices"] = bound_devices(db, ops, actor, json.loads(row.device_asset_ids or "[]"))
     return ok(data)
 
 
@@ -1698,6 +1757,7 @@ def register_create(
     db.add(LiveSessionToken(client_token=clientToken, session_code=session_code, tenant_id=tenant_id))
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, body.deviceAssetIds)
     apply_risk(db, row, score, level, checks)
+    bind_session_assets(db, ops, actor, row, body.deviceAssetIds)
     db.flush()
     for item in checks:
         db.refresh(item)
@@ -1790,6 +1850,7 @@ def register_update(
         row.football_sync_status = "UNLINKED" if not body.footballRoomId else "PENDING"
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, body.deviceAssetIds)
     apply_risk(db, row, score, level, checks, release=risk_release_allowed(row))
+    bind_session_assets(db, ops, actor, row, body.deviceAssetIds)
     return ok(None)
 
 
@@ -2319,6 +2380,7 @@ def ledger_supplement(
     )
     db.add(row)
     db.flush()
+    bind_session_assets(db, ops, actor, row, create.deviceAssetIds)
     upsert_report(db, row, report_body, actor, submit=True, end_session=False)
     db.flush()
     return ok({"supplementId": row.id, "sessionCode": session_code, "message": "补录已提交，待审批"})

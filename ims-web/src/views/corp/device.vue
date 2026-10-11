@@ -347,7 +347,13 @@
           <tr v-for="event in timeline" :key="String(event.id)">
             <td>{{ eventLabel(String(event.eventType || '')) }}</td>
             <td>{{ statusLabel(String(event.toStatus || '')) }}</td>
-            <td>{{ event.remark || '—' }}</td>
+            <td>
+              <router-link
+                v-if="sessionCodeOf(String(event.remark || ''))"
+                :to="{ path: '/ims/live/sessions', query: { sessionCode: sessionCodeOf(String(event.remark || '')) } }"
+              >{{ event.remark }}</router-link>
+              <template v-else>{{ event.remark || '—' }}</template>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -726,6 +732,7 @@ const eventLabels: Record<string, string> = {
   USE: '使用',
   RETURN: '归还',
   SCRAP: '报废',
+  BIND_SESSION: '绑定场次',
 }
 
 const specs: Record<string, {
@@ -868,6 +875,11 @@ function typeLabel(value: string) {
 
 function eventLabel(value: string) {
   return eventLabels[value] || value
+}
+
+function sessionCodeOf(remark: string) {
+  const hit = remark.match(/IMS\d{8}[A-Z]{3}\d{4,5}/)
+  return hit ? hit[0] : ''
 }
 
 function bindLabel(value: string) {

@@ -564,6 +564,14 @@
         </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
+        <h3 style="margin: 0 0 8px">绑定设备</h3>
+        <ul v-if="detail.boundDevices?.length" data-testid="live-bound-devices">
+          <li v-for="item in detail.boundDevices" :key="`${item.kind}-${item.id}`">
+            <router-link v-if="item.kind === 'ASSET'" :to="'/ims/corp/device/live'">{{ item.assetName }}（{{ item.assetCode }}）</router-link>
+            <span v-else>{{ item.assetName }}</span>
+          </li>
+        </ul>
+        <p v-else class="hint" data-testid="live-bound-empty">暂无绑定设备</p>
         <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
         <table v-if="alarms.length">
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
