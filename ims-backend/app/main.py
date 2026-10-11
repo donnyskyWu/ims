@@ -73,7 +73,7 @@ def _ensure_fin_r9_user(db) -> None:
         nickname="财务数据分析师",
         mobile="13900000146",
         role_key="fin:r9",
-        role_name="数据分析师",
+        role_name="E2E专用-数据分析师",
     )
 
 
@@ -178,6 +178,9 @@ def seed() -> None:
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
         refresh_wechat_channels_collect_seed()
+        from app.role_matrix import normalize_e2e_legacy_roles
+
+        normalize_e2e_legacy_roles(db)
         db.commit()
     finally:
         db.close()

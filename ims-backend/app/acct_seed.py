@@ -196,7 +196,7 @@ def ensure_acct_finance_user(db: Session) -> None:
         nickname="财务管理员",
         mobile="13900000058",
         role_key=FINANCE_ROLE_KEY,
-        role_name="财务管理员",
+        role_name="E2E专用-财务管理员",
     )
 
 
@@ -208,7 +208,7 @@ def ensure_acct_peer_user(db: Session) -> None:
         nickname=E2E_ACCT_PEER_NICK,
         mobile="13900000060",
         role_key=PEER_ROLE_KEY,
-        role_name="账号流转同事",
+        role_name="E2E专用-账号流转同事",
     )
 
 
@@ -220,7 +220,7 @@ def ensure_acct_sum_user(db: Session) -> User:
         nickname=E2E_SUM_DEPT_NICK,
         mobile="13900000070",
         role_key="acct:sum",
-        role_name="账号汇总同事",
+        role_name="E2E专用-账号汇总同事",
     )
     user = db.scalar(select(User).where(User.username == E2E_SUM_DEPT_USER, User.deleted == 0))
     assert user is not None

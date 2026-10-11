@@ -417,6 +417,53 @@ def _ensure_accounts(db: Session) -> None:
         refresh_user_scope(db, user.id)
 
 
+# 给 E2E 留的非标准角色。不删除（e2e_fin_r9 / e2e_acct_r3 等仍登录），只改显示名并去掉组织人效写权限。
+E2E_LEGACY_ROLE_NAMES = {
+    "fin:r9": "E2E专用-数据分析师",
+    "acct:r3": "E2E专用-财务管理员",
+    "acct:peer": "E2E专用-账号流转同事",
+    "acct:sum": "E2E专用-账号汇总同事",
+    "bi:dept-viewer": "E2E专用-BI 本部门查看",
+    "live:r4": "E2E专用-运营总监",
+}
+_EFF_WRITE_CODES = (
+    EFF_RELATION_CREATE,
+    EFF_RELATION_UPDATE,
+    EFF_RELATION_DELETE,
+    "menu:eff:add",
+    "menu:eff:edit",
+    "menu:eff:remove",
+)
+
+
+def normalize_e2e_legacy_roles(db: Session) -> None:
+    """幂等：显示名加「E2E专用-」，去掉这些角色的组织人效建立/变更/删除。"""
+    for role_key, display in E2E_LEGACY_ROLE_NAMES.items():
+        role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
+        if role is None:
+            continue
+        if role.role_name != display:
+            role.role_name = display
+        for row in list(
+            db.scalars(
+                select(RolePerm).where(RolePerm.role_id == role.id, RolePerm.perm_code.in_(_EFF_WRITE_CODES))
+            ).all()
+        ):
+            db.delete(row)
+        for row in list(
+            db.scalars(
+                select(RoleMenu).where(RoleMenu.role_id == role.id, RoleMenu.perm_code.in_(_EFF_WRITE_CODES))
+            ).all()
+        ):
+            db.delete(row)
+        query = db.scalar(
+            select(RolePerm).where(RolePerm.role_id == role.id, RolePerm.perm_code == "menu:eff:query")
+        )
+        if query is not None and ("W" in (query.perm_level or "") or "D" in (query.perm_level or "")):
+            query.perm_level = "R"
+    db.flush()
+
+
 def ensure_role_matrix(db: Session) -> None:
     ensure_menus(db)
     _grant_admin(db)
@@ -424,4 +471,5 @@ def ensure_role_matrix(db: Session) -> None:
         _ensure_role(db, role_key)
     _backfill_full_clones(db)
     _ensure_accounts(db)
+    normalize_e2e_legacy_roles(db)
     db.flush()

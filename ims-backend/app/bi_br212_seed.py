@@ -78,7 +78,7 @@ def ensure_bi_r4_viewer(db) -> None:
     role = db.scalar(select(Role).where(Role.role_key == "bi:dept-viewer", Role.deleted == 0))
     if role is None:
         role = Role(
-            role_name="BI 本部门查看",
+            role_name="E2E专用-BI 本部门查看",
             role_key="bi:dept-viewer",
             data_scope="DEPT",
             source="MANUAL",

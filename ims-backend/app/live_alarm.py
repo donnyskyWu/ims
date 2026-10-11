@@ -825,7 +825,7 @@ def refresh_live_alarm_e2e(db: Session) -> None:
     role = db.scalar(select(Role).where(Role.role_key == "live:r4", Role.deleted == 0))
     if role is None:
         role = Role(
-            role_name="运营总监",
+            role_name="E2E专用-运营总监",
             role_key="live:r4",
             data_scope="ALL",
             source="MANUAL",
