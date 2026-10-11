@@ -49,7 +49,7 @@
       </div>
     </div>
     <div v-if="drawerOpen" class="drawer-mask" @click.self="drawerOpen = false">
-      <div class="drawer">
+      <div class="drawer on" data-testid="daily-review-drawer" style="width: min(720px, 100vw)">
         <div class="drawer-h">
           <b>审阅 · {{ active?.userName }} · {{ active?.reportDate }}</b>
           <button type="button" class="btn btn-sec btn-sm" @click="drawerOpen = false">关闭</button>
@@ -149,3 +149,12 @@ async function submit(action: string) {
 
 onMounted(loadQueue)
 </script>
+
+<style scoped>
+.drawer-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 90;
+}
+</style>
