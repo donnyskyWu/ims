@@ -71,10 +71,11 @@
       </div>
     </div>
 
-    <div v-if="previewResult" class="card hint" style="margin-top: 12px; padding: 12px">
+    <div v-if="previewResult" class="card hint" data-testid="bi-metric-preview-result" style="margin-top: 12px; padding: 12px">
       试算 · {{ previewResult.metricName }} = {{ previewResult.value }} {{ previewResult.unit }}
       <span class="csub">（{{ previewResult.note }}）</span>
     </div>
+    <p v-if="previewError" class="hint" data-testid="bi-metric-preview-error" style="color: var(--red)">{{ previewError }}</p>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
@@ -94,8 +95,8 @@
           <option value="财务效率">财务效率</option>
         </select>
         <label class="fld">公式（复合可选）</label>
-        <input v-model="form.formula" class="fld-in" placeholder="如 A + B" />
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <input v-model="form.formula" class="fld-in" data-testid="bi-metric-formula" placeholder="如 A + B" />
+        <p v-if="formError" class="hint" data-testid="bi-metric-form-error" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存</button>
@@ -107,7 +108,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -124,6 +125,7 @@ const rows = ref<Row[]>([])
 const loading = ref(false)
 const showForm = ref(false)
 const formError = ref('')
+const previewError = ref('')
 const previewResult = ref<{ metricName: string; value: number; unit: string; note: string } | null>(null)
 const filters = reactive({ keyword: '', metricType: '', category: '', status: '' })
 const listFiltered = ref(false)
@@ -169,23 +171,34 @@ async function submitCreate() {
     formError.value = '请输入指标名称'
     return
   }
-  const res = await http.post('/bi/metric', {
-    metricName: form.metricName.trim(),
-    metricType: form.metricType,
-    category: form.category,
-    formula: form.formula.trim(),
-  })
-  if (res.data.code !== 0) {
-    formError.value = res.data.msg || '保存失败'
-    return
+  try {
+    const res = await http.post('/bi/metric', {
+      metricName: form.metricName.trim(),
+      metricType: form.metricType,
+      category: form.category,
+      formula: form.formula.trim(),
+    })
+    if (res.data.code !== 0) {
+      formError.value = res.data.msg || '保存失败'
+      return
+    }
+    showForm.value = false
+    await loadList()
+  } catch (error: unknown) {
+    formError.value = errorMessage(error)
   }
-  showForm.value = false
-  await loadList()
 }
 
 async function preview(id: number) {
-  const res = await http.post(`/bi/metric/${id}/preview`, {})
-  if (res.data.code === 0) previewResult.value = res.data.data
+  previewError.value = ''
+  previewResult.value = null
+  try {
+    const res = await http.post(`/bi/metric/${id}/preview`, {})
+    if (res.data.code === 0) previewResult.value = res.data.data
+    else previewError.value = res.data.msg || '试算失败'
+  } catch (error: unknown) {
+    previewError.value = errorMessage(error)
+  }
 }
 
 async function remove(row: Row) {
