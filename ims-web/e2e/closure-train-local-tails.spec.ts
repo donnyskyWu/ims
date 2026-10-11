@@ -144,14 +144,14 @@ async function composeQuiz(
   const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
   await expect(modal).toBeVisible()
   await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(opts.quizName)
-  await modal.locator('label.mat-opt').filter({ hasText: `#${opts.materialId}` }).locator('input[type="checkbox"]').check()
-  await modal.locator('input[placeholder="如 1"]').fill('1')
-  await modal.locator('select').selectOption('QUIZ')
+  await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${opts.materialId}` }).locator('input[type="checkbox"]').check()
+  await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+  await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
   const first = modal.locator('.quiz-block').nth(0)
   await first.locator('input[placeholder="请输入题目"]').fill(opts.questionA)
   await first.locator('input[placeholder="选项内容"]').nth(0).fill('相同')
   await first.locator('input[placeholder="选项内容"]').nth(1).fill('相同')
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   await expect(modal.getByTestId('train-task-form-error')).toHaveText('选项内容不能重复')
   await page.screenshot({ path: `${SHOT}/train-quiz-duplicate-option.png`, fullPage: true })
 
@@ -162,7 +162,7 @@ async function composeQuiz(
   await second.locator('input[placeholder="选项内容"]').nth(0).fill('是')
   await second.locator('input[placeholder="选项内容"]').nth(1).fill('否')
   await second.locator('input[type="radio"]').nth(1).check()
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   await expect(modal.getByTestId('train-task-form-error')).toHaveText('题目不能重复')
 
   await second.locator('input[placeholder="请输入题目"]').fill(opts.questionB)
@@ -171,7 +171,7 @@ async function composeQuiz(
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   const created = (await (await createResp).json()) as { code: number }
   expect(created.code).toBe(0)
   await expect(page.locator('tr', { hasText: opts.quizName })).toBeVisible({ timeout: 15_000 })

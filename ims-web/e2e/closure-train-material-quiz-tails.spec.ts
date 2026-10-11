@@ -126,14 +126,14 @@ test.describe('train material preview and quiz tails', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(taskName)
-    await modal.locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
-    await modal.locator('input[placeholder="如 1"]').fill('1')
-    await modal.locator('select').selectOption('QUIZ')
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
     const block = modal.locator('.quiz-block').first()
     await block.locator('input[placeholder="请输入题目"]').fill(question)
     await block.locator('input[placeholder="选项内容"]').nth(0).fill('相同')
     await block.locator('input[placeholder="选项内容"]').nth(1).fill('相同')
-    await modal.getByRole('button', { name: '保存' }).click()
+    await modal.getByRole('button', { name: '提交任务' }).click()
     await expect(modal.getByTestId('train-task-form-error')).toContainText('选项内容不能重复')
     await shot(page, '06-quiz-duplicate')
 
@@ -141,7 +141,7 @@ test.describe('train material preview and quiz tails', () => {
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await modal.getByRole('button', { name: '保存' }).click()
+    await modal.getByRole('button', { name: '提交任务' }).click()
     const created = (await (await createResp).json()) as { code: number; data?: { id?: number } }
     expect(created.code).toBe(0)
     const taskId = created.data?.id
@@ -150,7 +150,7 @@ test.describe('train material preview and quiz tails', () => {
     await page.goto(`/ims/train/study/${taskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
     await expect(page.getByText(question)).toBeVisible()
-    await expect(page.getByText('文件留档 demo/file.pdf')).toBeVisible()
+    await expect(page.getByText(/文件留档/)).toBeVisible()
     await expect(page.getByTestId('train-quiz-unanswered')).toContainText('还有 1 题未作答')
     await expect(page.getByRole('button', { name: '提交问卷' })).toBeDisabled()
     await expect(page.getByRole('button', { name: '重新作答' })).toHaveCount(0)

@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import Todo, TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserRole
+from app.models import Todo, TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserMapping, UserRole
 
 client = TestClient(app)
 
@@ -1336,6 +1336,79 @@ def test_train_offline_keeps_referenced_material():
         assert material_id in list(task.material_ids or [])
     finally:
         db.close()
+
+
+def test_train_assign_by_position_preview_and_filter():
+    auth = headers()
+    material_id = _published_material(auth, f"岗位指派 {uuid.uuid4().hex[:6]}")
+    username = f"pos_{uuid.uuid4().hex[:8]}"
+    created_user = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": "岗位学员", "mobile": f"136{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    assert created_user.json()["code"] == 0, created_user.json()
+    user_id = int(created_user.json()["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(
+            UserMapping(
+                user_id=user_id,
+                dingtalk_user_id=f"dt-{username}",
+                dingtalk_position="编导",
+                tenant_id=0,
+                deleted=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    preview = client.get(
+        "/admin-api/ims/train/task/assign-preview",
+        headers=auth,
+        params={"positionCodes": "编导"},
+    )
+    assert preview.json()["code"] == 0, preview.json()
+    assert preview.json()["data"]["count"] >= 1
+    everyone = client.get(
+        "/admin-api/ims/train/task/assign-preview",
+        headers=auth,
+        params={"positionCodes": "全员通用"},
+    )
+    assert everyone.json()["data"]["count"] >= preview.json()["data"]["count"]
+
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": f"按岗位 {uuid.uuid4().hex[:6]}",
+            "materialIds": [material_id],
+            "assignScope": "BY_POSITION",
+            "assignTargetPositionCodes": ["编导"],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    assert body["data"]["assignedCount"] == preview.json()["data"]["count"]
+    assert body["data"]["assignScope"] == "BY_POSITION"
+
+    missing = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "空岗位",
+            "materialIds": [material_id],
+            "assignScope": "BY_POSITION",
+            "assignTargetPositionCodes": ["没有这个岗位"],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert missing.json()["code"] == 1001
+    assert missing.json()["msg"] == "岗位下无可用用户"
 
 
 def test_train_quiz_ai_generate_stub_and_adopt():

@@ -52,17 +52,17 @@ test.describe('train local edges 215', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const taskForm = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await fieldAfter(taskForm, '任务名称').fill('任'.repeat(129))
-    await taskForm.locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input').check()
-    await taskForm.locator('input[placeholder="如 1"]').fill('1')
-    await taskForm.getByRole('button', { name: '保存' }).click()
+    await taskForm.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input').check()
+    await taskForm.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await taskForm.getByRole('button', { name: '提交任务' }).click()
     await expect(taskForm.getByTestId('train-task-form-error')).toHaveText('任务名称不超过 128 字')
     await page.screenshot({ path: `${SHOT}/train-215-task-name-too-long.png`, fullPage: true })
     await fieldAfter(taskForm, '任务名称').fill(taskName)
-    await fieldAfter(taskForm, '截止时间').fill(deadlineInHours(6))
+    await taskForm.getByTestId('train-form-deadline').fill(deadlineInHours(6).slice(0, 16))
     const created = page.waitForResponse(
       (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await taskForm.getByRole('button', { name: '保存' }).click()
+    await taskForm.getByRole('button', { name: '提交任务' }).click()
     const createdBody = (await (await created).json()) as { code: number; data?: { id?: number } }
     expect(createdBody.code).toBe(0)
     const taskId = createdBody.data?.id

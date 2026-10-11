@@ -169,22 +169,44 @@
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto">
         <h3 style="margin: 0 0 12px">{{ editingId ? '编辑学习任务' : '下达学习任务' }}</h3>
-        <label class="fld">任务名称</label>
-        <input v-model="form.taskName" class="fld-in" />
-        <label class="fld">已发布资料（多选）</label>
-        <div v-if="publishedMaterials.length" class="mat-pick">
+        <label class="fld">任务名称<span class="req">*</span></label>
+        <input v-model="form.taskName" class="fld-in" data-testid="train-form-task-name" />
+        <p v-if="fieldErrors.taskName" class="hint err" data-testid="train-form-task-name-error">{{ fieldErrors.taskName }}</p>
+        <label class="fld">指派范围<span class="req">*</span></label>
+        <select v-model="form.assignScope" class="fld-in" data-testid="train-form-scope" @change="onScopeChange">
+          <option value="BY_USER">按人</option>
+          <option value="BY_POSITION">按岗位</option>
+        </select>
+        <label class="fld">指派对象<span class="req">*</span></label>
+        <div v-if="form.assignScope === 'BY_USER'" class="mat-pick" data-testid="train-form-users">
+          <label v-for="person in people" :key="person.id" class="mat-opt">
+            <input v-model="form.userIds" type="checkbox" :value="person.id" />
+            {{ person.nickname }} <small class="mono">#{{ person.id }}</small>
+          </label>
+          <p v-if="!people.length" class="hint">暂无可选人员</p>
+        </div>
+        <div v-else class="mat-pick" data-testid="train-form-assign-positions">
+          <label v-for="item in assignPositions" :key="item.code" class="mat-opt">
+            <input v-model="form.positionCodes" type="checkbox" :value="item.code" @change="refreshAssignPreview" />
+            {{ item.name }}
+          </label>
+          <p v-if="form.positionCodes.length" class="hint" data-testid="train-assign-preview">目标人数 {{ assignPreview }}</p>
+        </div>
+        <p v-if="fieldErrors.target" class="hint err" data-testid="train-form-target-error">{{ fieldErrors.target }}</p>
+        <label class="fld">截止时间<span class="req">*</span></label>
+        <input v-model="form.deadline" class="fld-in" type="datetime-local" data-testid="train-form-deadline" />
+        <p v-if="fieldErrors.deadline" class="hint err" data-testid="train-form-deadline-error">{{ fieldErrors.deadline }}</p>
+        <label class="fld">学习资料<span class="req">*</span></label>
+        <div v-if="publishedMaterials.length" class="mat-pick" data-testid="train-form-materials">
           <label v-for="m in publishedMaterials" :key="m.id" class="mat-opt">
             <input v-model="form.materialIds" type="checkbox" :value="m.id" />
             {{ m.title }} <small class="mono">#{{ m.id }}</small>
           </label>
         </div>
         <p v-else class="hint">暂无已发布资料，请先在资料库发布</p>
-        <label class="fld">指派用户 ID（逗号）</label>
-        <input v-model="form.userIdsText" class="fld-in" placeholder="如 1" />
-        <label class="fld">截止时间 ISO</label>
-        <input v-model="form.deadline" class="fld-in" placeholder="2026-12-31T18:00:00+08:00" />
-        <label class="fld">确认方式</label>
-        <select v-model="form.confirmType" class="fld-in">
+        <p v-if="fieldErrors.material" class="hint err" data-testid="train-form-material-error">{{ fieldErrors.material }}</p>
+        <label class="fld">确认方式<span class="req">*</span></label>
+        <select v-model="form.confirmType" class="fld-in" data-testid="train-form-confirm">
           <option value="DURATION">学时达标</option>
           <option value="QUIZ">自测问卷</option>
         </select>
@@ -221,7 +243,7 @@
         <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-task-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="train-task-submit" @click="submit">提交任务</button>
         </div>
       </div>
     </div>
@@ -325,7 +347,9 @@ type Row = {
   taskNo: string
   taskName: string
   materialIds?: number[]
+  assignScope?: string
   assignTargetUserIds?: number[]
+  assignTargetPositionCodes?: string[]
   materialCount: number
   assignedCount: number
   finishRate: number
@@ -354,7 +378,13 @@ const editingId = ref(0)
 const formError = ref('')
 const filters = reactive({ taskName: '', status: '', confirmType: '' })
 type MatPick = { id: number; title: string }
+type PersonOpt = { id: number; nickname: string }
+type PositionOpt = { code: string; name: string }
 const publishedMaterials = ref<MatPick[]>([])
+const people = ref<PersonOpt[]>([])
+const assignPositions = ref<PositionOpt[]>([])
+const assignPreview = ref(0)
+const fieldErrors = reactive({ taskName: '', target: '', deadline: '', material: '' })
 const showRecords = ref(false)
 const recordsLoading = ref(false)
 const recordsTaskId = ref(0)
@@ -410,8 +440,10 @@ function blankQuestion(): QuizDraft {
 const form = reactive({
   taskName: '',
   materialIds: [] as number[],
-  userIdsText: '1',
-  deadline: '2026-12-31T18:00:00+08:00',
+  assignScope: 'BY_USER',
+  userIds: [] as number[],
+  positionCodes: [] as string[],
+  deadline: '',
   confirmType: 'DURATION',
   passScore: 1,
   quiz: [blankQuestion()] as QuizDraft[],
@@ -465,10 +497,62 @@ function quizError(): string {
 }
 
 function defaultDeadline() {
-  const d = new Date()
-  d.setMonth(d.getMonth() + 3)
+  const d = new Date(Date.now() + 7 * 24 * 3600 * 1000)
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00:00+08:00`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00`
+}
+
+function toLocalDeadline(raw: string) {
+  if (!raw) return defaultDeadline()
+  return raw.slice(0, 16)
+}
+
+function clearFieldErrors() {
+  fieldErrors.taskName = ''
+  fieldErrors.target = ''
+  fieldErrors.deadline = ''
+  fieldErrors.material = ''
+}
+
+async function loadPeople() {
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50, status: 'ENABLED' } })
+    people.value = (res.data.data.list || []).map((row: { id: string | number; nickname?: string; username?: string }) => ({
+      id: Number(row.id),
+      nickname: row.nickname || row.username || `用户${row.id}`,
+    }))
+  } catch {
+    people.value = []
+  }
+}
+
+async function loadAssignPositions() {
+  try {
+    const res = await http.get('/train/material/positions')
+    assignPositions.value = res.data.data || []
+  } catch {
+    assignPositions.value = []
+  }
+}
+
+async function refreshAssignPreview() {
+  if (form.assignScope !== 'BY_POSITION' || !form.positionCodes.length) {
+    assignPreview.value = 0
+    return
+  }
+  try {
+    const res = await http.get('/train/task/assign-preview', {
+      params: { positionCodes: form.positionCodes.join(',') },
+    })
+    assignPreview.value = Number(res.data.data?.count || 0)
+  } catch {
+    assignPreview.value = 0
+  }
+}
+
+function onScopeChange() {
+  fieldErrors.target = ''
+  void refreshAssignPreview()
 }
 
 async function loadPublishedMaterials() {
@@ -601,11 +685,10 @@ function openEdit(row: Row) {
   editingId.value = row.id
   form.taskName = row.taskName
   form.materialIds = [...(row.materialIds || [])]
-  form.userIdsText = (row.assignTargetUserIds && row.assignTargetUserIds.length
-    ? row.assignTargetUserIds
-    : [1]
-  ).join(',')
-  form.deadline = row.deadline || defaultDeadline()
+  form.assignScope = row.assignScope || 'BY_USER'
+  form.userIds = [...(row.assignTargetUserIds || [])]
+  form.positionCodes = [...(row.assignTargetPositionCodes || [])]
+  form.deadline = toLocalDeadline(row.deadline || '')
   form.confirmType = row.confirmType || 'DURATION'
   form.passScore = row.passScore || 1
   form.quiz =
@@ -617,7 +700,11 @@ function openEdit(row: Row) {
         }))
       : [blankQuestion()]
   formError.value = ''
+  clearFieldErrors()
   void loadPublishedMaterials()
+  void loadPeople()
+  void loadAssignPositions()
+  void refreshAssignPreview()
   showForm.value = true
 }
 
@@ -695,53 +782,65 @@ function openCreate() {
   editingId.value = 0
   form.taskName = ''
   form.materialIds = []
-  form.userIdsText = '1'
+  form.assignScope = 'BY_USER'
+  form.userIds = []
+  form.positionCodes = []
   form.deadline = defaultDeadline()
   form.confirmType = 'DURATION'
   form.passScore = 1
   form.quiz = [blankQuestion()]
   formError.value = ''
+  clearFieldErrors()
+  assignPreview.value = 0
   void loadPublishedMaterials()
+  void loadPeople()
+  void loadAssignPositions()
   showForm.value = true
 }
 
 async function submit() {
   formError.value = ''
+  clearFieldErrors()
   const materialIds = [...form.materialIds]
-  const userIds = parseIds(form.userIdsText)
-  if (!form.taskName.trim()) {
-    formError.value = '任务名称必填'
-    return
+  let bad = false
+  const name = form.taskName.trim()
+  if (!name) {
+    fieldErrors.taskName = '必填项，请填写'
+    bad = true
+  } else if (name.length > 128) {
+    fieldErrors.taskName = '任务名称不超过 128 字'
+    formError.value = '任务名称不超过 128 字'
+    bad = true
   }
   if (!materialIds.length) {
-    formError.value = '请选择已发布资料'
-    return
+    fieldErrors.material = '必填项，请填写'
+    bad = true
   }
-  if (!form.userIdsText.trim()) {
-    formError.value = '请填写指派用户'
-    return
+  if (form.assignScope === 'BY_USER' && !form.userIds.length) {
+    fieldErrors.target = '必填项，请填写'
+    bad = true
   }
-  if (!userIds.length) {
-    formError.value = '指派用户 ID 无效'
-    return
+  if (form.assignScope === 'BY_POSITION' && !form.positionCodes.length) {
+    fieldErrors.target = '必填项，请填写'
+    bad = true
   }
-  const deadlineBad = deadlineFormatError(form.deadline)
-  if (deadlineBad) {
-    formError.value = deadlineBad
-    return
+  if (!form.deadline) {
+    fieldErrors.deadline = '必填项，请填写'
+    bad = true
   }
-  if (form.taskName.trim().length > 128) {
-    formError.value = '任务名称不超过 128 字'
+  if (bad) {
+    formError.value = formError.value || '请完善必填项'
     return
   }
   const payload: Record<string, unknown> = {
-    taskName: form.taskName.trim(),
+    taskName: name,
     materialIds,
-    assignScope: 'BY_USER',
-    assignTargetUserIds: userIds,
+    assignScope: form.assignScope,
     deadline: form.deadline,
     confirmType: form.confirmType,
   }
+  if (form.assignScope === 'BY_POSITION') payload.assignTargetPositionCodes = [...form.positionCodes]
+  else payload.assignTargetUserIds = [...form.userIds]
   if (form.confirmType === 'QUIZ') {
     const invalid = quizError()
     if (invalid) {
@@ -804,6 +903,13 @@ onMounted(async () => {
 .fld-in {
   width: 100%;
   box-sizing: border-box;
+}
+.req {
+  color: var(--red);
+  margin-left: 2px;
+}
+.hint.err {
+  color: var(--red);
 }
 .mat-pick {
   max-height: 160px;

@@ -21,6 +21,7 @@ from app.bi_br212 import primary_dept_id
 from app.models import (
     DictData,
     ImsFile,
+    Role,
     Todo,
     TrainMaterial,
     TrainMaterialCate,
@@ -29,6 +30,8 @@ from app.models import (
     TrainTask,
     TrainTaskRecord,
     User,
+    UserMapping,
+    UserRole,
 )
 
 router = APIRouter(prefix="/train", tags=["train"])
@@ -1375,6 +1378,7 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "materialIds": material_ids,
         "assignScope": row.assign_scope,
         "assignTargetUserIds": user_ids if row.assign_scope == "BY_USER" else [],
+        "assignTargetPositionCodes": [str(item) for item in targets] if row.assign_scope == "BY_POSITION" else [],
         "assignedCount": row.assigned_count,
         "deadline": iso(row.deadline),
         "confirmType": row.confirm_type,
@@ -1384,6 +1388,44 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "status": resolve_task_status(row),
         "createdAt": iso(row.created_at),
     }
+
+
+def enabled_user_ids(db: Session, tenant_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(User.id).where(
+                User.deleted == 0,
+                User.tenant_id == tenant_id,
+                User.status == "ENABLED",
+            )
+        ).all()
+    )
+
+
+def users_in_positions(db: Session, tenant_id: int, codes: list[str]) -> list[int]:
+    wanted = {code.strip() for code in codes if code and code.strip()}
+    enabled = set(enabled_user_ids(db, tenant_id))
+    if not wanted or not enabled:
+        return []
+    if ALL_STAFF in wanted:
+        return sorted(enabled)
+    matched: set[int] = set()
+    mappings = db.scalars(
+        select(UserMapping).where(
+            UserMapping.deleted == 0,
+            UserMapping.tenant_id == tenant_id,
+            UserMapping.dingtalk_position.in_(wanted),
+        )
+    ).all()
+    matched.update(int(row.user_id) for row in mappings)
+    roles = db.scalars(
+        select(Role).where(Role.deleted == 0, Role.dingtalk_position.in_(wanted))
+    ).all()
+    role_ids = [row.id for row in roles]
+    if role_ids:
+        linked = db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all()
+        matched.update(int(uid) for uid in linked)
+    return sorted(uid for uid in matched if uid in enabled)
 
 
 def expand_assignees(db: Session, tenant_id: int, body: TaskBody) -> list[int] | dict:
@@ -1397,18 +1439,23 @@ def expand_assignees(db: Session, tenant_id: int, body: TaskBody) -> list[int] |
     codes = [c.strip() for c in (body.assignTargetPositionCodes or []) if c and c.strip()]
     if not codes:
         return fail(1001, "assignTargetPositionCodes 必填")
-    users = list(
-        db.scalars(
-            select(User.id).where(
-                User.deleted == 0,
-                User.tenant_id == tenant_id,
-                User.status == "ENABLED",
-            )
-        ).all()
-    )
+    users = users_in_positions(db, tenant_id, codes)
     if not users:
         return fail(1001, "岗位下无可用用户")
     return users
+
+
+@router.get("/task/assign-preview")
+def assign_preview(
+    positionCodes: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    codes = [part.strip() for part in (positionCodes or "").split(",") if part.strip()]
+    if not codes:
+        return fail(1001, "岗位必填")
+    users = users_in_positions(db, tenant_of(actor), codes)
+    return ok({"count": len(users), "positionCodes": codes})
 
 
 def validate_materials(db: Session, tenant_id: int, material_ids: list[int]) -> dict | None:
@@ -1451,7 +1498,7 @@ def create_task(
     else:
         quiz_rows, pass_score = [], 0
     assignees = expand_assignees(db, tenant_id, body)
-    if isinstance(assignees, dict):
+    if not isinstance(assignees, list):
         return assignees
     unique_users = sorted(set(assignees))
     row = TrainTask(

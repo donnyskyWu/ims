@@ -558,14 +558,16 @@ export async function createTrainTaskViaUi(
     .fill(opts.taskName)
 
   for (const mid of opts.materialIds) {
-    await modal.locator('label.mat-opt').filter({ hasText: `#${mid}` }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${mid}` }).locator('input[type="checkbox"]').check()
   }
-  await modal.locator('input[placeholder="如 1"]').fill(opts.assignUserIds.join(','))
+  for (const uid of opts.assignUserIds) {
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: `#${uid}` }).locator('input').check()
+  }
 
   const createResp = page.waitForResponse(
-    (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
+    (r) => r.url().includes('/train/task') && !r.url().includes('/assign-preview') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: { id?: number } }
   expect(body.code).toBe(0)
   const taskId = body.data?.id

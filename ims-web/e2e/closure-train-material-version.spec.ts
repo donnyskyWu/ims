@@ -78,7 +78,7 @@ test.describe('train material version and task edit closure', () => {
     const saveResp = page.waitForResponse(
       (r) => /\/train\/task\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await editor.getByRole('button', { name: '保存' }).click()
+    await editor.getByRole('button', { name: '提交任务' }).click()
     const saved = (await (await saveResp).json()) as { code: number; data?: { taskName?: string } }
     expect(saved.code).toBe(0)
     expect(saved.data?.taskName).toBe(renamed)
@@ -92,14 +92,11 @@ test.describe('train material version and task edit closure', () => {
 
     await renamedRow.getByTestId('train-task-edit').click()
     const again = page.locator('.modal-mask .card').filter({ hasText: '编辑学习任务' })
-    await again
-      .locator('label.fld', { hasText: '截止时间 ISO' })
-      .locator('xpath=following-sibling::input[1]')
-      .fill('2020-01-01T00:00:00+08:00')
+    await again.getByTestId('train-form-deadline').fill('2020-01-01T00:00')
     const blockedResp = page.waitForResponse(
       (r) => /\/train\/task\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await again.getByRole('button', { name: '保存' }).click()
+    await again.getByRole('button', { name: '提交任务' }).click()
     const blocked = (await (await blockedResp).json()) as { code: number; msg?: string }
     expect(blocked.code).toBe(1102)
     await expect(page.getByTestId('train-task-form-error')).toContainText('截止时间早于当前时间')

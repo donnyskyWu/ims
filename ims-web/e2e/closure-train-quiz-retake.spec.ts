@@ -38,9 +38,9 @@ test.describe('train quiz compose grade and retake', () => {
       .locator('label.fld', { hasText: '任务名称' })
       .locator('xpath=following-sibling::input[1]')
       .fill(taskName)
-    await modal.locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
-    await modal.locator('input[placeholder="如 1"]').fill('1')
-    await modal.locator('select').selectOption('QUIZ')
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
 
     await modal.getByRole('button', { name: '添加题目' }).click()
     const blocks = modal.locator('.quiz-block')
@@ -54,7 +54,7 @@ test.describe('train quiz compose grade and retake', () => {
     await blocks.nth(1).locator('input[type="radio"]').nth(1).check()
 
     await modal.locator('input[type="number"]').fill('3')
-    await modal.getByRole('button', { name: '保存' }).click()
+    await modal.getByRole('button', { name: '提交任务' }).click()
     await expect(modal.getByText('及格分须在 1 到题目数之间')).toBeVisible()
     await shot(page, '01-compose-pass-score-blocked')
 
@@ -62,7 +62,7 @@ test.describe('train quiz compose grade and retake', () => {
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await modal.getByRole('button', { name: '保存' }).click()
+    await modal.getByRole('button', { name: '提交任务' }).click()
     const created = (await (await createResp).json()) as {
       code: number
       data?: { id?: number; questionCount?: number; quiz?: Array<Record<string, unknown>> }
