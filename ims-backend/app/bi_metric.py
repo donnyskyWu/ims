@@ -507,6 +507,18 @@ def metric_delete(metric_id: int, db: Session = Depends(db_session), actor: User
 
 ANALYSIS_FROM = "2026-09-01"
 ANALYSIS_TO = "2026-09-30"
+# 数仓未接时的开发/E2E 种子。只在分析窗口内返回，不读 formula，也不执行 SQL。
+SEED_IP_GROUPS = (("电竞一组", 1284600), ("体育二组", 892400))
+TREND_DAYS = (
+    "2026-09-24",
+    "2026-09-25",
+    "2026-09-26",
+    "2026-09-27",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+)
+TREND_SCALE = (0.767, 0.811, 0.878, 0.844, 0.947, 0.920, 1.0)
 
 
 def analysis_day(raw: str) -> str | None:
@@ -533,26 +545,57 @@ def analysis_window(date_start: str, date_end: str) -> tuple[str, str, str] | tu
     return start, end, ""
 
 
-def mock_series(metric: BiMetric, date_start: str, date_end: str) -> list[dict]:
-    base = 80.0 + (hash(metric.metric_code) % 40)
-    return [
-        {"date": date_start[:10] if date_start else "2026-09-01", "value": round(base, 1)},
-        {"date": date_end[:10] if date_end else "2026-09-30", "value": round(base * 1.12, 1)},
-    ]
+def seed_groups(ip_group_name: str) -> list[tuple[str, int]]:
+    name = (ip_group_name or "").strip()
+    if not name or name == "全部":
+        return list(SEED_IP_GROUPS)
+    return [item for item in SEED_IP_GROUPS if item[0] == name]
 
 
-def analyze_metric_row(metric: BiMetric, date_start: str, date_end: str, ip_group_id: int | None) -> dict:
-    value = 128.6 if metric.metric_type == "BASIC" else 256.3
-    value += (ip_group_id or 0) % 17
-    return {
-        "metricId": metric.id,
-        "metricCode": metric.metric_code,
-        "metricName": metric.metric_name,
-        "value": round(value, 1),
-        "unit": "次" if "互动" in metric.metric_name else "个",
-        "dateStart": date_start,
-        "dateEnd": date_end,
-    }
+def seed_value(metric: BiMetric, base: int, scale: float = 1.0) -> float:
+    raw = base * scale
+    if metric.metric_type == "COMPOSITE":
+        return round(raw / 1_000_000, 2)
+    return round(raw, 1)
+
+
+def seed_detail_rows(metric: BiMetric, date_start: str, date_end: str, ip_group_name: str) -> list[dict]:
+    stat = (date_end or ANALYSIS_TO)[:10] or ANALYSIS_TO
+    if stat > ANALYSIS_TO:
+        stat = ANALYSIS_TO
+    if stat < ANALYSIS_FROM:
+        stat = ANALYSIS_FROM
+    unit = metric.unit or ("次" if "互动" in (metric.metric_name or "") else "个")
+    rows: list[dict] = []
+    for name, base in seed_groups(ip_group_name):
+        rows.append(
+            {
+                "metricId": metric.id,
+                "metricCode": metric.metric_code,
+                "metricName": metric.metric_name,
+                "statDate": stat,
+                "ipGroupName": name,
+                "value": seed_value(metric, base),
+                "unit": unit,
+                "dateStart": date_start,
+                "dateEnd": date_end,
+            }
+        )
+    return rows
+
+
+def seed_series(metric: BiMetric, date_start: str, date_end: str, ip_group_name: str) -> list[dict]:
+    start = (date_start or ANALYSIS_FROM)[:10]
+    end = (date_end or ANALYSIS_TO)[:10]
+    series: list[dict] = []
+    for name, base in seed_groups(ip_group_name):
+        points = []
+        for day, scale in zip(TREND_DAYS, TREND_SCALE, strict=True):
+            if day < start or day > end:
+                continue
+            points.append({"date": day, "value": seed_value(metric, base, scale), "ipGroupName": name})
+        series.append({"metricCode": metric.metric_code, "metricName": metric.metric_name, "ipGroupName": name, "points": points})
+    return series
 
 
 @router.get("/{metric_id}/analyze")
@@ -564,6 +607,7 @@ def metric_analyze(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
+    del ipGroupId  # 分析按 IP 组名称过滤；保留该查询参数以免旧调用 422
     tenant_id = tenant_of(actor)
     row = db.get(BiMetric, metric_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
@@ -573,8 +617,16 @@ def metric_analyze(
         return fail(1192, blocked)
     if row.status != "ENABLED":
         return fail(1001, "指标未启用")
-    detail = analyze_metric_row(row, dateStart, dateEnd, ipGroupId)
-    return ok({"view": "DETAIL", "rows": [detail], "series": mock_series(row, dateStart, dateEnd)})
+    start = dateStart or ANALYSIS_FROM
+    end = dateEnd or ANALYSIS_TO
+    return ok(
+        {
+            "view": "DETAIL",
+            "rows": seed_detail_rows(row, start, end, ""),
+            "series": seed_series(row, start, end, ""),
+            "note": "",
+        }
+    )
 
 
 @router.post("/analysis/run")
@@ -610,6 +662,9 @@ def metric_analysis_run(
                 "view": view,
                 "rows": [],
                 "series": [],
+                "total": 0,
+                "pageNo": 1,
+                "pageSize": body.pageSize,
                 "note": "",
                 "empty": True,
                 "emptyReason": "当前日期下暂无分析数据",
@@ -618,16 +673,25 @@ def metric_analysis_run(
     rows_out: list[dict] = []
     series: list[dict] = []
     for row in found:
-        rows_out.append(analyze_metric_row(row, body.dateStart, body.dateEnd, body.ipGroupId))
-        series.append({"metricCode": row.metric_code, "points": mock_series(row, body.dateStart, body.dateEnd)})
+        rows_out.extend(seed_detail_rows(row, body.dateStart, body.dateEnd, body.ipGroupName))
+        series.extend(seed_series(row, body.dateStart, body.dateEnd, body.ipGroupName))
+    page_no = body.pageNo if body.pageNo > 0 else 1
+    page_size = body.pageSize if body.pageSize > 0 else 20
+    page_size = min(page_size, 100)
+    start_at = (page_no - 1) * page_size
+    page_rows = rows_out[start_at : start_at + page_size]
+    empty = len(rows_out) == 0
     return ok(
         {
             "view": view,
-            "rows": rows_out,
-            "series": series if view == "TREND" else [],
-            "note": "分析占位 · 未接 DW",
-            "empty": False,
-            "emptyReason": "",
+            "rows": page_rows,
+            "series": series,
+            "total": len(rows_out),
+            "pageNo": page_no,
+            "pageSize": page_size,
+            "note": "",
+            "empty": empty,
+            "emptyReason": "当前日期下暂无分析数据" if empty else "",
         }
     )
 
@@ -653,7 +717,7 @@ def metric_preview(
             "metricName": row.metric_name,
             "sampleDate": body.sampleDate,
             "value": value,
-            "unit": "次" if "互动" in row.metric_name else "个",
-            "note": "试算占位 · 未接 DW",
+            "unit": row.unit or ("次" if "互动" in row.metric_name else "个"),
+            "note": "",
         }
     )
