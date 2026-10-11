@@ -1360,10 +1360,8 @@ async function saveAsset() {
     if (assetForm.accountNo.trim()) payload.accountNo = assetForm.accountNo.trim()
     const session = assetForm.sessionCode.trim().toUpperCase()
     if (session) payload.sessionCode = session
-    const res = await http.post('/asset/ledger', payload)
-    const created = (res.data?.data || {}) as Row
+    await http.post('/asset/ledger', payload)
     assetCreateOpen.value = false
-    keyword.value = String(created.assetCode || assetForm.assetCode.trim())
     await load()
   } catch (e: unknown) {
     formError.value = bizError(e)
