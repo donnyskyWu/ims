@@ -93,6 +93,15 @@
                 >
                   停用
                 </button>
+                <button
+                  v-else
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-share-rule-enable"
+                  @click="enableRule(row)"
+                >
+                  启用
+                </button>
               </td>
             </tr>
           </tbody>
@@ -834,6 +843,16 @@ async function runSimulate() {
 function askDisable(row: RuleRow) {
   disableRow.value = row
   disableOpen.value = true
+}
+
+async function enableRule(row: RuleRow) {
+  error.value = ''
+  try {
+    await http.put(`/fin/share/rule/${row.id}/enable`)
+    await loadList()
+  } catch (err) {
+    error.value = errText(err)
+  }
 }
 
 async function confirmDisable() {

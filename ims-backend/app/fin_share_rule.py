@@ -532,6 +532,47 @@ def share_rule_update(
     return ok(rule_vo(row))
 
 
+def payload_from_row(row: FinShareRule) -> dict:
+    scope, _err = norm_scope(row.rule_scope or {})
+    return {
+        "shareTarget": row.share_target,
+        "baseType": row.base_type,
+        "rateType": row.rate_type,
+        "fixedRate": None if row.fixed_rate is None else q_rate(dec(row.fixed_rate)),
+        "scope": scope or {"platforms": [], "accountIds": [], "ipGroupIds": []},
+        "priority": int(row.priority or 0),
+    }
+
+
+@router.put("/share/rule/{rule_id}/enable")
+def share_rule_enable(
+    rule_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    denied = reject_writer(db, actor)
+    if denied is not None:
+        return denied
+    tenant_id = tenant_of(actor)
+    row = load_rule(db, tenant_id, rule_id)
+    if row is None:
+        return fail(1504, "分成规则不存在")
+    if row.status == "ENABLED":
+        return ok(rule_vo(row))
+    payload = payload_from_row(row)
+    rows = enabled_rules(db, tenant_id)
+    summed = sum_error(winning_rates(rows, payload, row.id))
+    if summed:
+        return fail(1146, summed)
+    hit = conflicts_of(rows, payload, row.id)
+    if hit:
+        return fail(1147, MSG_1147, {"conflictRuleIds": hit})
+    row.status = "ENABLED"
+    row.updated_at = utcnow()
+    db.flush()
+    return ok(rule_vo(row))
+
+
 @router.delete("/share/rule/{rule_id}")
 def share_rule_disable(
     rule_id: int,

@@ -343,6 +343,80 @@ def test_fin_share_rule_ip_group_scope_roundtrip_and_distinct():
     assert other.json()["data"]["scope"]["ipGroupIds"] == [88009]
 
 
+def test_fin_share_rule_enable_roundtrip_and_disabled_edit_keeps_bills():
+    auth = headers()
+    scope = {"platforms": ["OTA"], "accountIds": [86001], "ipGroupIds": []}
+    created = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="可再启用", shareTarget="TEAM", fixedRate=0.3, priority=4, scope=scope),
+    )
+    assert created.json()["code"] == 0
+    rule_id = created.json()["data"]["id"]
+    version = created.json()["data"]["version"]
+
+    from app.core import SessionLocal
+    from app.models import FinShareResult
+
+    db = SessionLocal()
+    try:
+        share = FinShareResult(
+            session_code="IMS20261008OTA0460",
+            rule_id=rule_id,
+            rule_name="手工分成",
+            share_target="TEAM",
+            target_ref_name="团队",
+            share_base=1000,
+            share_amount=300,
+            calc_detail={"formula": "keep"},
+            status="PENDING_AUDIT",
+            tenant_id=0,
+        )
+        db.add(share)
+        db.commit()
+        share_id = share.id
+    finally:
+        db.close()
+
+    disabled = client.delete(f"/admin-api/ims/fin/share/rule/{rule_id}", headers=auth)
+    assert disabled.json()["code"] == 0
+    edited = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}",
+        headers=auth,
+        json=rule_body(ruleName="停用中修订", shareTarget="TEAM", fixedRate=0.25, priority=4, scope=scope),
+    )
+    assert edited.json()["code"] == 0
+    assert edited.json()["data"]["status"] == "DISABLED"
+    assert edited.json()["data"]["version"] == version + 1
+    enabled = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert enabled.json()["code"] == 0
+    assert enabled.json()["data"]["status"] == "ENABLED"
+    assert enabled.json()["data"]["version"] == version + 1
+    again = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert again.json()["code"] == 0
+    assert again.json()["data"]["status"] == "ENABLED"
+
+    assert client.delete(f"/admin-api/ims/fin/share/rule/{rule_id}", headers=auth).json()["code"] == 0
+    blocked = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="同基数占位", shareTarget="DAREN", fixedRate=0.9, priority=6, scope=scope),
+    )
+    assert blocked.json()["code"] == 0
+    crowded = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert crowded.json()["code"] == 1146
+
+    db = SessionLocal()
+    try:
+        kept = db.get(FinShareResult, share_id)
+        assert kept is not None
+        assert kept.rule_name == "手工分成"
+        assert float(kept.share_amount) == 300
+        assert kept.status == "PENDING_AUDIT"
+    finally:
+        db.close()
+
+
 def test_fin_share_rule_sum_is_per_base_and_shortfall_allowed():
     auth = headers()
     scope = {"platforms": ["WX"], "accountIds": [85021], "ipGroupIds": []}

@@ -26,6 +26,7 @@
 | 14 | POST | `/admin-api/ims/fin/share/rule` | 创建分成规则 | R3（主责） |
 | 15 | PUT | `/admin-api/ims/fin/share/rule/{id}` | 编辑规则（生成新版本） | R3 |
 | 16 | DELETE | `/admin-api/ims/fin/share/rule/{id}` | 停用规则 | R3/R1 |
+| 16a | PUT | `/admin-api/ims/fin/share/rule/{id}/enable` | 重新启用（不递增版本） | R3/R1 |
 | 17 | POST | `/admin-api/ims/fin/share/simulate` | 规则试算（给定基数预估） | R3/R4 |
 | 18 | GET | `/admin-api/ims/fin/share/results` | 分成单列表（分页） | R1/R3/R4/R7（本人分成单）/R9（脱敏） |
 | 19 | PUT | `/admin-api/ims/fin/share/result/{id}/audit` | 分成单审批（双审之一） | R3（财务审）+ R4（业务审） |
@@ -235,7 +236,11 @@ interface FinShareRuleVO {
 
 #### 2.3.4 DELETE /admin-api/ims/fin/share/rule/{id} — 停用规则
 
-**响应**：`data: null`（状态 → `DISABLED`，历史分成单引用不受影响）。
+**响应**：`data: null`（状态 → `DISABLED`，不递增 version，历史分成单引用不受影响）。
+
+#### 2.3.4a PUT /admin-api/ims/fin/share/rule/{id}/enable — 重新启用
+
+已停用规则可重新启用。启用前按当前规则重查 1146（同一范围同一基数合计超过 1）和 1147（同范围同对象冲突）。不递增 version，不改写历史分成单。已是 `ENABLED` 时幂等返回当前规则。
 
 #### 2.3.5 POST /admin-api/ims/fin/share/simulate — 规则试算
 
@@ -338,7 +343,7 @@ PENDING_AUDIT ──财务审（R3）+业务审（R4）双审通过──▶ AUD
       └──任一环节驳回──────────────────────────────────┴──冲销──▶ REVERSED（红冲分录）
 ```
 
-**分成规则（FinShareRuleVO.status）**：`ENABLED ↔ DISABLED`（变更生成新版本，历史分成单不受影响）。
+**分成规则（FinShareRuleVO.status）**：`ENABLED ↔ DISABLED`（启用与停用不生成新版本；编辑生成新版本并沿用当前状态。历史分成单不受影响）。
 
 ### 3.2 业务规则引用（PRD）
 
