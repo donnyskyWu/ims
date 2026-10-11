@@ -247,6 +247,56 @@ def test_cert_e2e_seed_watermark_view():
     assert "signedUrl" not in view.text
 
 
+def test_company_detail_links_wechat_official_account():
+    from app.ops_models import IpGroup, PlatformAccount
+
+    auth = headers()
+    ops = ops_session()
+    try:
+        company = Company(company_name="公众号公司", credit_code="91330100MP0000001", mp_capacity_standard=1, status="ENABLED", tenant_id=0)
+        group = IpGroup(group_name="公众号组", group_type="SMALL", status="ENABLED", tenant_id=0)
+        ops.add_all([company, group])
+        ops.flush()
+        first = PlatformAccount(
+            account_no="ACCT-MP-1",
+            account_name="一号公众号",
+            platform_type="WECHAT_OFFICIAL",
+            ip_group_id=group.id,
+            status="IN_POOL",
+            tenant_id=0,
+        )
+        second = PlatformAccount(
+            account_no="ACCT-MP-2",
+            account_name="二号公众号",
+            platform_type="WECHAT_OFFICIAL",
+            ip_group_id=group.id,
+            status="IN_POOL",
+            tenant_id=0,
+        )
+        ops.add_all([first, second])
+        ops.commit()
+        company_id, first_id, second_id = company.id, first.id, second.id
+    finally:
+        ops.close()
+
+    linked = client.post(
+        f"/admin-api/ims/corp/resource/company/{company_id}/official-accounts",
+        headers=auth,
+        json={"accountId": first_id},
+    )
+    assert linked.json()["code"] == 0
+    assert linked.json()["data"]["linkedOfficialAccounts"][0]["nickname"] == "一号公众号"
+    detail = client.get(f"/admin-api/ims/corp/resource/company/{company_id}", headers=auth)
+    assert detail.json()["data"]["usedTotal"] == "1 / 1"
+    full = client.post(
+        f"/admin-api/ims/corp/resource/company/{company_id}/official-accounts",
+        headers=auth,
+        json={"accountId": second_id},
+    )
+    assert full.json()["code"] == 1001
+    assert full.json()["msg"] == "公众号容量已满"
+
+
 def test_realname_create_encrypts_id_card_and_keeps_status_codes():
     auth = headers()
     missing = client.post("/admin-api/ims/corp/resource/realname", headers=auth, json={"realName": "王五"})

@@ -94,6 +94,14 @@
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
+      <FilteredExportButton
+        v-if="kind === 'company' || kind === 'realname' || kind === 'sim-card'"
+        :url="`/corp/resource/${kind}/export`"
+        :params="exportParams"
+        :test-id="`corp-${kind}-export`"
+        @done="onExportDone"
+        @error="onExportDone"
+      />
     </form>
     <p v-if="kind === 'realname'" class="hint" data-testid="master-realname-idtype-hint">{{ idTypeHint }}</p>
     <p v-if="kind === 'certificate' && originalNote" class="hint" data-testid="corp-cert-original-note">{{ originalNote }}</p>
@@ -169,6 +177,7 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="corp-list-export-note">{{ exportNote }}</p>
     <p v-if="companyToast" class="hint" data-testid="corp-company-toast">{{ companyToast }}</p>
     <p v-if="realnameToast" class="hint" data-testid="corp-realname-toast">{{ realnameToast }}</p>
     <p v-if="kind === 'company'" class="hint" data-testid="master-company-industry-hint">
@@ -450,6 +459,25 @@
             <ul v-else data-testid="master-company-expansion">
               <li v-for="(item, index) in expansionItems" :key="index">{{ expansionText(item) }}</li>
             </ul>
+          </div>
+          <div class="fld">
+            <label>关联公众号</label>
+            <ul v-if="officialItems.length" data-testid="corp-company-official-list">
+              <li v-for="item in officialItems" :key="String(item.accountId)">
+                {{ item.accountNo || item.accountId }} · {{ item.nickname || '—' }}
+              </li>
+            </ul>
+            <div v-else class="empty" data-testid="corp-company-official-empty">
+              <div class="et">暂无关联公众号</div>
+            </div>
+            <select v-model="officialAccountId" data-testid="corp-company-official-pick">
+              <option value="">请选择公众号</option>
+              <option v-for="item in officialChoices" :key="String(item.id)" :value="String(item.id)">
+                {{ item.nickname || item.accountNo || item.id }}
+              </option>
+            </select>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="corp-company-official-link" @click="linkOfficial">关联</button>
+            <p v-if="officialMsg" class="hint" data-testid="corp-company-official-msg">{{ officialMsg }}</p>
           </div>
         </template>
       </div>
@@ -813,6 +841,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import FilteredExportButton from '../../components/FilteredExportButton.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal } from '../../api/read'
@@ -1182,6 +1211,13 @@ const pageList = computed(() => {
   return list
 })
 const detailReady = computed(() => detail.value?.id != null)
+const officialAccountId = ref('')
+const officialMsg = ref('')
+const officialChoices = ref<Row[]>([])
+const officialItems = computed(() => {
+  const list = detail.value?.linkedOfficialAccounts
+  return Array.isArray(list) ? (list as Row[]) : []
+})
 const linkedItems = computed(() => {
   const list = detail.value?.linkedAccounts
   return Array.isArray(list) ? (list as Row[]) : []
@@ -2007,6 +2043,27 @@ function typeLabel(value: string) {
   return map[value] || value
 }
 
+const exportNote = ref('')
+
+function onExportDone(message: string) {
+  exportNote.value = message
+}
+
+const exportParams = computed(() => {
+  const query: Record<string, string | number> = {}
+  const text = keyword.value.trim()
+  if (text && kind.value === 'company') query.companyName = text
+  if (text && kind.value === 'realname') query.realName = text
+  if (text && kind.value === 'sim-card' && /^1\d{10}$/.test(text)) query.phoneNumber = text
+  if (kind.value === 'company' && creditCode.value.trim()) query.creditCode = creditCode.value.trim()
+  if (kind.value === 'company' && industry.value) query.industry = industry.value
+  if (kind.value === 'realname' && idType.value) query.idType = idType.value
+  if (kind.value === 'sim-card' && operator.value) query.operator = operator.value
+  if (kind.value === 'sim-card' && realnameId.value) query.realnameId = Number(realnameId.value)
+  if (status.value) query.status = status.value
+  return query
+})
+
 function params() {
   phoneHint.value = ''
   certRangeHint.value = ''
@@ -2276,7 +2333,12 @@ async function openDetail(row: Row) {
   detailOpen.value = true
   const id = row.id
   const url = kind.value === 'certificate' ? `/corp/resource/certificate/${id}/view` : `/corp/resource/${kind.value}/${id}`
-  if (kind.value === 'company') void ensureIndustryDict()
+  if (kind.value === 'company') {
+    void ensureIndustryDict()
+    officialAccountId.value = ''
+    officialMsg.value = ''
+    void loadOfficialChoices()
+  }
   try {
     const res = await http.get(url)
     const data = res.data?.data || {}
@@ -2292,6 +2354,36 @@ async function openDetail(row: Row) {
   if (kind.value === 'certificate') {
     const certId = Number(id)
     if (Number.isFinite(certId)) await loadDetailAudit(certId)
+  }
+}
+
+async function loadOfficialChoices() {
+  try {
+    const res = await http.get('/corp/account/page', {
+      params: { pageNo: 1, pageSize: 100, platformType: 'WECHAT_OFFICIAL' },
+    })
+    officialChoices.value = asList(res.data?.data)
+  } catch {
+    officialChoices.value = []
+  }
+}
+
+async function linkOfficial() {
+  const companyId = detail.value?.id
+  if (!companyId || !officialAccountId.value) {
+    officialMsg.value = '请选择公众号'
+    return
+  }
+  try {
+    await http.post(`/corp/resource/company/${companyId}/official-accounts`, {
+      accountId: Number(officialAccountId.value),
+    })
+    officialMsg.value = '已关联公众号'
+    const res = await http.get(`/corp/resource/company/${companyId}`)
+    detail.value = res.data?.data || detail.value
+    await load()
+  } catch (e: unknown) {
+    officialMsg.value = errorMessage(e)
   }
 }
 

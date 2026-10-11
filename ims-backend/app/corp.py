@@ -397,13 +397,127 @@ def company_create(body: CompanyBody, ops: Session = Depends(ops_db), actor: Use
     return ok(company_vo(row, 0))
 
 
+@router.get("/corp/resource/company/export/file")
+@router.get("/corp/resource/realname/export/file")
+@router.get("/corp/resource/sim-card/export/file")
+def corp_export_file(token: str, actor: User = Depends(current_user)):
+    from app.list_export import take_csv
+
+    return take_csv(token, actor)
+
+
+@router.get("/corp/resource/company/export")
+def company_export(
+    companyName: str = "",
+    creditCode: str = "",
+    industry: str = "",
+    status: str = "",
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(Company).where(Company.deleted == 0, Company.tenant_id == tenant_of(actor))
+    if companyName:
+        stmt = stmt.where(Company.company_name.like(f"%{companyName}%"))
+    if creditCode:
+        stmt = stmt.where(Company.credit_code.like(f"%{creditCode}%"))
+    if industry.strip():
+        stmt = stmt.where(Company.industry == industry.strip())
+    if status:
+        stmt = stmt.where(Company.status == status)
+    rows = ops.scalars(stmt.order_by(Company.id).limit(5000)).all()
+    counts = official_counts(ops, actor, [row.id for row in rows])
+    matrix = [["公司ID", "公司", "信用代码", "行业", "法人", "已用/总量", "容量/扩容说明", "状态"]]
+    for row in rows:
+        item = company_vo(row, counts.get(row.id, 0))
+        matrix.append(
+            [
+                str(item["id"]),
+                item["companyName"],
+                item["creditCode"],
+                item["industry"] or "",
+                item["legalName"] or "",
+                item["usedTotal"],
+                item["capacityNote"],
+                "启用" if item["status"] == "ENABLED" else "停用",
+            ]
+        )
+    return ok(
+        issue_list_csv(
+            actor.id,
+            "companies.csv",
+            matrix,
+            "/admin-api/ims/corp/resource/company/export/file",
+        )
+    )
+
+
 @router.get("/corp/resource/company/{company_id}")
 def company_detail(company_id: int, ops: Session = Depends(ops_db), actor: User = Depends(current_user)):
     row = ops.get(Company, company_id)
     if not visible(row, actor):
         return fail(1504, "资源不可用")
     counts = official_counts(ops, actor, [row.id])
-    return ok(company_vo(row, counts.get(row.id, 0)))
+    data = company_vo(row, counts.get(row.id, 0))
+    data["linkedOfficialAccounts"] = linked_official_accounts(ops, actor, row.id)
+    return ok(data)
+
+
+class OfficialLinkBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    accountId: int | None = None
+
+
+def linked_official_accounts(ops: Session, actor: User, company_id: int) -> list[dict]:
+    rows = ops.scalars(
+        select(PlatformAccount)
+        .where(
+            PlatformAccount.deleted == 0,
+            PlatformAccount.tenant_id == tenant_of(actor),
+            PlatformAccount.platform_type == "WECHAT_OFFICIAL",
+            PlatformAccount.company_id == company_id,
+        )
+        .order_by(PlatformAccount.id)
+    ).all()
+    return [
+        {
+            "accountId": item.id,
+            "accountNo": item.account_no,
+            "nickname": item.account_name,
+            "status": item.status,
+        }
+        for item in rows
+    ]
+
+
+@router.post("/corp/resource/company/{company_id}/official-accounts")
+def company_link_official(
+    company_id: int,
+    body: OfficialLinkBody,
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = ops.get(Company, company_id)
+    if not visible(row, actor):
+        return fail(1504, "资源不可用")
+    if not body.accountId:
+        return fail(1001, "公众号必填")
+    account = ops.get(PlatformAccount, body.accountId)
+    if account is None or account.deleted or (account.tenant_id or 0) != tenant_of(actor):
+        return fail(1500, "公众号不存在")
+    if account.platform_type != "WECHAT_OFFICIAL":
+        return fail(1001, "只能关联公众号")
+    if account.company_id == row.id:
+        return ok({"linkedOfficialAccounts": linked_official_accounts(ops, actor, row.id)})
+    used = official_counts(ops, actor, [row.id]).get(row.id, 0)
+    capacity = row.mp_capacity_standard or 0
+    if used >= capacity:
+        return fail(1001, "公众号容量已满")
+    account.company_id = row.id
+    account.updated_at = utcnow()
+    ops.flush()
+    return ok({"linkedOfficialAccounts": linked_official_accounts(ops, actor, row.id)})
 
 
 @router.get("/corp/resource/realname/page")
@@ -427,6 +541,87 @@ def realname_page(
     total = count_of(ops, stmt)
     rows = ops.scalars(stmt.order_by(Realname.id).offset((page_no - 1) * size).limit(size)).all()
     return paged([realname_vo(row) for row in rows], total, page_no, size)
+
+
+@router.get("/corp/resource/realname/export")
+def realname_export(
+    realName: str = "",
+    status: str = "",
+    idType: str = "",
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(Realname).where(Realname.deleted == 0, Realname.tenant_id == tenant_of(actor))
+    if realName:
+        stmt = stmt.where(Realname.real_name.like(f"%{realName}%"))
+    if status:
+        stmt = stmt.where(Realname.status == status)
+    if idType:
+        stmt = stmt.where(Realname.id_type == idType)
+    rows = ops.scalars(stmt.order_by(Realname.id).limit(5000)).all()
+    matrix = [["实名人ID", "姓名", "证件类型", "证件号", "手机", "中介人", "状态"]]
+    for row in rows:
+        item = realname_vo(row)
+        matrix.append(
+            [
+                str(item["id"]),
+                item["realName"],
+                item["idType"],
+                item["idCardMasked"],
+                item["phoneMasked"],
+                item.get("intermediary") or "",
+                "在职" if item["status"] == "ENABLED" else "离职",
+            ]
+        )
+    return ok(
+        issue_list_csv(actor.id, "realnames.csv", matrix, "/admin-api/ims/corp/resource/realname/export/file")
+    )
+
+
+@router.get("/corp/resource/sim-card/export")
+def sim_export(
+    phoneNumber: str = "",
+    operator: str = "",
+    status: str = "",
+    realnameId: int | None = None,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(SimCard).where(SimCard.deleted == 0, SimCard.tenant_id == tenant_of(actor))
+    number = phoneNumber.strip()
+    if number:
+        if PHONE_RE.match(number):
+            stmt = stmt.where(SimCard.phone_sha256 == sha256_hex(number))
+        else:
+            stmt = stmt.where(SimCard.id < 0)
+    if operator:
+        stmt = stmt.where(SimCard.operator == operator)
+    if status:
+        stmt = stmt.where(SimCard.status == status)
+    if realnameId:
+        stmt = stmt.where(SimCard.realname_id == realnameId)
+    rows = ops.scalars(stmt.order_by(SimCard.id).limit(5000)).all()
+    names = user_names(db, {row.assigned_user_id for row in rows if row.assigned_user_id})
+    persons = realname_masked(ops, {row.realname_id for row in rows if row.realname_id})
+    matrix = [["号码", "实名人", "运营商", "归属人", "月租", "状态"]]
+    for row in rows:
+        item = sim_vo(row, names, persons)
+        matrix.append(
+            [
+                item["phoneNumber"],
+                item["realNameMasked"],
+                item["operator"],
+                item["assignedUserName"],
+                str(item["monthlyRent"] or ""),
+                item["status"],
+            ]
+        )
+    return ok(issue_list_csv(actor.id, "sim-cards.csv", matrix, "/admin-api/ims/corp/resource/sim-card/export/file"))
 
 
 @router.get("/corp/resource/realname/{realname_id}")
