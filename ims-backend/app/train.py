@@ -789,6 +789,10 @@ def user_dept_view(db: Session, user_id: int, tenant_id: int, cache: dict[int, t
     return cache[user_id]
 
 
+# 完成率汇总只排除草稿和已撤销。进行中、已结束、逾期都算已发布。
+EXCLUDED_ROLLUP_STATUSES = frozenset({"DRAFT", "REVOKED"})
+
+
 def stat_pairs(
     db: Session,
     tenant_id: int,
@@ -796,7 +800,7 @@ def stat_pairs(
     end: datetime | None,
     user_id: int | None,
 ) -> list[tuple[TrainTaskRecord, TrainTask]]:
-    """与 finish-rate 相同的取数：任务创建时间落在范围内的指派记录。user_id 非空时只看本人。"""
+    """部门/排行/热度仍按任务发布时间落在所选日期内取数。user_id 非空时只看本人。"""
     stmt = (
         select(TrainTaskRecord, TrainTask)
         .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
@@ -804,6 +808,7 @@ def stat_pairs(
             TrainTaskRecord.deleted == 0,
             TrainTaskRecord.tenant_id == tenant_id,
             TrainTask.deleted == 0,
+            TrainTask.status.notin_(tuple(EXCLUDED_ROLLUP_STATUSES)),
         )
     )
     if start and end:
@@ -811,6 +816,37 @@ def stat_pairs(
     if user_id is not None:
         stmt = stmt.where(TrainTaskRecord.user_id == user_id)
     return list(db.execute(stmt).all())
+
+
+def finish_rollup_pairs(
+    db: Session,
+    tenant_id: int,
+    cutoff: datetime,
+    user_id: int | None,
+) -> list[tuple[TrainTaskRecord, TrainTask]]:
+    """TRN-S-R1：发布时间不晚于统计截至的任务全部计入，不按近 N 天裁切。"""
+    stmt = (
+        select(TrainTaskRecord, TrainTask)
+        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
+        .where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTask.deleted == 0,
+            TrainTask.created_at <= cutoff,
+            TrainTask.status.notin_(tuple(EXCLUDED_ROLLUP_STATUSES)),
+        )
+    )
+    if user_id is not None:
+        stmt = stmt.where(TrainTaskRecord.user_id == user_id)
+    return list(db.execute(stmt).all())
+
+
+def refresh_train_finish_rollup(db: Session, tenant_id: int, cutoff: datetime | None = None) -> datetime:
+    """启动或手动刷新时重写部门日汇总。完成率看板读同一次截至时刻的全量指派。"""
+    moment = cutoff or utcnow()
+    pairs = finish_rollup_pairs(db, tenant_id, moment, None)
+    persist_dept_daily(db, tenant_id, None, None, aggregate_dept_daily(db, tenant_id, pairs))
+    return moment
 
 
 def scoped_user_id(actor: User) -> int | None:
@@ -1082,6 +1118,15 @@ def deadline_text(dt: datetime | None) -> str:
     else:
         dt = dt.astimezone(BJ)
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def bj_clock(dt: datetime | None) -> str:
+    """Naive values are UTC instants. Display is Beijing yyyy-MM-dd HH:mm."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BJ).strftime("%Y-%m-%d %H:%M")
 
 
 def overdue_day_count(deadline: datetime, now: datetime) -> int:
@@ -1644,22 +1689,24 @@ def stat_summary(
     tenant_id = tenant_of(actor)
     rows = list(
         db.scalars(
-            select(TrainTask).where(TrainTask.deleted == 0, TrainTask.tenant_id == tenant_id)
+            select(TrainTask).where(
+                TrainTask.deleted == 0,
+                TrainTask.tenant_id == tenant_id,
+                TrainTask.status.notin_(tuple(EXCLUDED_ROLLUP_STATUSES)),
+            )
         ).all()
     )
     in_progress = 0
-    rates: list[float] = []
     for row in rows:
-        st = resolve_task_status(row)
-        if st == "IN_PROGRESS":
+        if resolve_task_status(row) == "IN_PROGRESS":
             in_progress += 1
-        rates.append(finish_rate(db, row.id, row.assigned_count))
-    avg = round(sum(rates) / len(rates), 2) if rates else 0.0
+    pairs = finish_rollup_pairs(db, tenant_id, utcnow(), None)
+    finished = sum(1 for rec, _task in pairs if rec.confirm_status == 1)
     return ok(
         {
             "taskCount": len(rows),
             "inProgress": in_progress,
-            "avgFinishRate": avg,
+            "avgFinishRate": rate_pct(finished, len(pairs)),
         }
     )
 
@@ -1670,12 +1717,19 @@ def stat_finish_rate(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    """TRAIN-003 · BR-102 完成率（分母含未确认指派记录）。"""
+    """TRAIN-003 · BR-102。已完成人次 / 应完成人次，含进行中与逾期。
+
+    dateRange 仍校验格式，但不按创建时间裁掉更早发布的任务。看板数字来自
+    截至此刻的日汇总，启动时会先算一遍，页面刷新会再算一遍。
+    """
     tenant_id = tenant_of(actor)
-    start, end, error = parse_bounded_range(dateRange)
+    _start, _end, error = parse_bounded_range(dateRange)
     if error:
         return fail(1001, error)
-    rows = stat_pairs(db, tenant_id, start, end, scoped_user_id(actor))
+    cutoff = utcnow()
+    if actor.username == "admin":
+        refresh_train_finish_rollup(db, tenant_id, cutoff)
+    rows = finish_rollup_pairs(db, tenant_id, cutoff, scoped_user_id(actor))
 
     total_assigned = len(rows)
     total_finished = sum(1 for rec, _ in rows if rec.confirm_status == 1)
@@ -1749,6 +1803,7 @@ def stat_finish_rate(
     return ok(
         {
             "totalFinishRate": total_finish_rate,
+            "asOf": bj_clock(cutoff),
             "byTask": task_items,
             "byDept": dept_items,
             "byPerson": person_items,

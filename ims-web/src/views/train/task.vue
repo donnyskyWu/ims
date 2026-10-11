@@ -55,16 +55,17 @@
               <th>完成率</th>
               <th>确认方式</th>
               <th>截止时间</th>
+              <th>发布时间</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="12"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="11">
+              <td colspan="12">
                 <div class="empty" data-testid="train-task-empty">
                   <div class="et">{{ error || (hasActiveFilters ? '没有符合筛选的任务' : '暂无任务') }}</div>
                   <div v-if="!error && hasActiveFilters" class="es">调整任务名称、状态或确认方式后再查询</div>
@@ -98,6 +99,7 @@
                 <span v-if="deadlineTone(row) === 'soon'" class="tag due-tag" data-testid="train-task-due-soon">即将到期</span>
                 <span v-else-if="deadlineTone(row) === 'over'" class="tag due-tag over" data-testid="train-task-overdue">已逾期</span>
               </td>
+              <td class="mono" data-testid="train-task-published">{{ fmtBj(row.createdAt) }}</td>
               <td>{{ statusLabel(row.status) }}</td>
               <td>
                 <button
@@ -374,6 +376,7 @@ type Row = {
   finishRate: number
   confirmType: string
   deadline: string
+  createdAt?: string
   status: string
   passScore?: number
   quiz?: QuizDraft[]

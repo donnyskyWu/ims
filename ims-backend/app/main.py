@@ -162,6 +162,9 @@ def seed() -> None:
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
             refresh_perf_e2e_seed(db, admin)
+            from app.train import refresh_train_finish_rollup
+
+            refresh_train_finish_rollup(db, int(admin.tenant_id or 0))
         from app.live_alarm import refresh_live_alarm_e2e
 
         refresh_live_alarm_e2e(db)

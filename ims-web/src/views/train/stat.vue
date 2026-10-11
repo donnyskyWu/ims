@@ -47,7 +47,7 @@
         data-testid="train-stat-range"
       />
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">刷新</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="train-stat-refresh">刷新</button>
     </form>
     <p v-if="rangeError" class="hint" style="color: var(--red)" data-testid="train-stat-range-error">{{ rangeError }}</p>
 
@@ -84,8 +84,8 @@
             </div>
             <div class="card stat">
               <span class="l">统计截至</span>
-              <div class="n" data-testid="train-stat-as-of-card">{{ asOf || '—' }}</div>
-              <div class="d">部门日汇总</div>
+              <div class="n as-of" data-testid="train-stat-as-of-card">{{ asOf || '—' }}</div>
+              <div class="d">每日凌晨汇总，刷新可重算</div>
             </div>
           </div>
 
@@ -507,6 +507,7 @@ type PersonRow = {
 }
 type FinishResp = {
   totalFinishRate: number
+  asOf?: string
   byTask: FinishRow[]
   byDept: DeptFinishRow[]
   byPerson: PersonRow[]
@@ -585,7 +586,7 @@ const personPageRows = computed(() => {
   return all.slice(start, start + personPageSize)
 })
 
-const asOf = computed(() => deptRows.value[0]?.statDate || '')
+const asOf = computed(() => finish.value?.asOf || deptRows.value[0]?.statDate || '')
 
 const overdueFilterOn = computed(() => Boolean(overdueTaskId.value.trim() || overdueDeptId.value.trim()))
 
@@ -929,6 +930,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.as-of {
+  font-size: 18px;
+  line-height: 1.3;
+}
 .stat-body {
   display: flex;
   gap: 16px;
