@@ -100,6 +100,26 @@ def test_cost_purchase_process_and_missing_account():
     assert after["processTotal"] == 0
 
 
+def test_purchase_rejects_negative_and_accepts_zero():
+    auth = headers()
+    account_id = seed_account()
+    negative = client.put(
+        f"/admin-api/ims/cost/account/{account_id}/purchase",
+        headers=auth,
+        json={"amount": -1, "period": "2026-09"},
+    )
+    assert negative.json()["code"] == 1001
+    assert negative.json()["msg"] == "金额须为非负数"
+
+    zero = client.put(
+        f"/admin-api/ims/cost/account/{account_id}/purchase",
+        headers=auth,
+        json={"amount": 0, "period": "2026-09"},
+    )
+    assert zero.json()["code"] == 0
+    assert zero.json()["data"]["amount"] == 0
+
+
 def test_roi_revenue_delay_without_football():
     auth = headers()
     account_id = seed_account()

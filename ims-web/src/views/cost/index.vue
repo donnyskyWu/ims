@@ -35,11 +35,37 @@
             </div>
             <button class="btn btn-sec btn-sm" type="button" @click="savePurchase">保存采购</button>
           </div>
-          <div class="qbar" style="margin-top: 10px; padding: 0">
-            <input v-model.number="purchaseForm.amount" type="number" step="0.01" placeholder="金额" style="width: 120px" />
-            <input v-model="purchaseForm.period" placeholder="期间 YYYY-MM" style="width: 120px" />
-            <input v-model="purchaseForm.payMethod" placeholder="支付方式" style="width: 100px" />
+          <div class="qbar" style="margin-top: 10px; padding: 0; align-items: flex-start">
+            <div class="fld" style="width: 160px; margin-bottom: 0">
+              <label for="cost-purchase-amount">金额<i class="req">*</i></label>
+              <input
+                id="cost-purchase-amount"
+                v-model="purchaseForm.amount"
+                type="number"
+                step="0.01"
+                placeholder="金额"
+                data-testid="cost-purchase-amount"
+                :class="{ err: purchaseErrors.amount }"
+              />
+              <div v-if="purchaseErrors.amount" class="ferr" data-testid="cost-purchase-amount-error">{{ purchaseErrors.amount }}</div>
+            </div>
+            <div class="fld" style="width: 160px; margin-bottom: 0">
+              <label for="cost-purchase-period">期间<i class="req">*</i></label>
+              <input
+                id="cost-purchase-period"
+                v-model="purchaseForm.period"
+                placeholder="YYYY-MM"
+                data-testid="cost-purchase-period"
+                :class="{ err: purchaseErrors.period }"
+              />
+              <div v-if="purchaseErrors.period" class="ferr" data-testid="cost-purchase-period-error">{{ purchaseErrors.period }}</div>
+            </div>
+            <div class="fld" style="width: 140px; margin-bottom: 0">
+              <label for="cost-purchase-pay">支付方式</label>
+              <input id="cost-purchase-pay" v-model="purchaseForm.payMethod" placeholder="支付方式" />
+            </div>
           </div>
+          <p v-if="purchaseHint" class="hint" style="margin-top: 8px; color: var(--green)" data-testid="cost-purchase-hint">{{ purchaseHint }}</p>
           <p v-if="costDetail.purchase" class="hint" style="margin-top: 8px">
             当前 ¥{{ fmt(costDetail.purchase.amount) }} · {{ costDetail.purchase.period || '—' }}
           </p>
@@ -261,7 +287,13 @@ const hint = ref('')
 const accountOptions = ref<{ id: string; label: string }[]>([])
 const selectedAccountId = ref('')
 const costDetail = ref<any>(null)
-const purchaseForm = ref({ amount: 0, period: '', payMethod: '' })
+const purchaseForm = ref<{ amount: string | number; period: string; payMethod: string }>({
+  amount: '',
+  period: '',
+  payMethod: '',
+})
+const purchaseErrors = ref({ amount: '', period: '' })
+const purchaseHint = ref('')
 const processOpen = ref(false)
 const processEditingId = ref('')
 const processForm = ref({ amount: '' as string | number, period: '', processSubtype: '', handlerUserId: '' })
@@ -331,14 +363,44 @@ async function loadAccountCost() {
       period: res.data.purchase.period || '',
       payMethod: res.data.purchase.payMethod || '',
     }
+  } else {
+    purchaseForm.value = { amount: '', period: '', payMethod: '' }
   }
+}
+
+function validatePurchase() {
+  const errors = { amount: '', period: '' }
+  const raw = purchaseForm.value.amount
+  if (raw === '' || raw === null || raw === undefined || Number.isNaN(Number(raw))) {
+    errors.amount = '必填项，请填写'
+  } else if (Number(raw) < 0) {
+    errors.amount = '金额须为非负数'
+  }
+  if (!String(purchaseForm.value.period || '').trim()) errors.period = '必填项，请填写'
+  purchaseErrors.value = errors
+  return !errors.amount && !errors.period
 }
 
 async function savePurchase() {
   if (!selectedAccountId.value) return
-  const res = await apiPut(`/cost/account/${selectedAccountId.value}/purchase`, purchaseForm.value)
-  hint.value = res.code === 0 ? '采购成本已保存' : res.msg
-  if (res.code === 0) await loadAccountCost()
+  purchaseHint.value = ''
+  if (!validatePurchase()) return
+  const res = await apiPut(`/cost/account/${selectedAccountId.value}/purchase`, {
+    amount: Number(purchaseForm.value.amount),
+    period: purchaseForm.value.period,
+    payMethod: purchaseForm.value.payMethod,
+  })
+  if (res.code === 0) {
+    await loadAccountCost()
+    purchaseHint.value = '采购成本已保存'
+    purchaseErrors.value = { amount: '', period: '' }
+    return
+  }
+  if (res.code === 1001 && String(res.msg || '').includes('非负')) {
+    purchaseErrors.value = { ...purchaseErrors.value, amount: '金额须为非负数' }
+  }
+  purchaseHint.value = ''
+  hint.value = res.msg
 }
 
 function blankProcessForm() {

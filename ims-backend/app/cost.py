@@ -163,8 +163,8 @@ def upsert_purchase(
     account = load_account(ops, actor, account_id)
     if account is None:
         return fail(1231, "账号不存在")
-    if body.amount is None or body.amount < 0.01:
-        return fail(2015, "金额非法")
+    if body.amount is None or body.amount < 0:
+        return fail(1001, "金额须为非负数")
     if body.payDate and not _date_ok(body.payDate):
         return fail(2016, "日期范围非法")
     if body.period and not _period_ok(body.period):
