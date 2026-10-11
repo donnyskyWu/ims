@@ -140,12 +140,30 @@ SOURCE_LABEL = {
 }
 
 
-def iso_min(dt: datetime | None) -> str:
+def as_utc(dt: datetime) -> datetime:
+    """库内 DateTime 不带时区，写入值为 UTC。"""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def iso_shanghai(dt: datetime | None, *, clock: bool = False) -> str:
+    """naive UTC → Asia/Shanghai。clock 为表格 yyyy-MM-dd HH:mm，否则带 +08:00。"""
     if dt is None:
         return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%d %H:%M")
+    local = as_utc(dt).astimezone(BJ)
+    if clock:
+        return local.strftime("%Y-%m-%d %H:%M")
+    return local.strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def iso_min(dt: datetime | None) -> str:
+    """授权到期等日历钟面，按录入时刻格式化，不当作 UTC。"""
+    if dt is None:
+        return ""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(BJ).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def format_size(size: int) -> str:
@@ -233,7 +251,7 @@ def kb_doc_vo(row: AirKbDoc, names: dict[int, str]) -> dict:
         "auditStatus": row.audit_status,
         "uploaderUserId": row.uploader_user_id,
         "uploaderName": names.get(row.uploader_user_id, ""),
-        "createdAt": row.created_at.strftime("%Y-%m-%dT%H:%M:%S+08:00") if row.created_at else "",
+        "createdAt": iso_shanghai(row.created_at),
     }
 
 
@@ -463,7 +481,7 @@ def kb_vo(db: Session, row: AirKb, names: dict[int, str]) -> dict:
         "ownerUserId": row.owner_user_id,
         "ownerName": names.get(row.owner_user_id, ""),
         "grantCount": grant_count_of(db, row.id, row.tenant_id),
-        "updatedAt": iso_min(row.updated_at),
+        "updatedAt": iso_shanghai(row.updated_at, clock=True),
     }
 
 
@@ -748,7 +766,7 @@ def transfer_rows(db: Session, tenant_id: int, source_type: str, keyword: str) -
                     "title": row.title,
                     "category": row.material_type or "",
                     "secretLevel": "INTERNAL",
-                    "updatedAt": iso_min(row.updated_at),
+                    "updatedAt": iso_shanghai(row.updated_at, clock=True),
                 }
             )
     elif source_type == "PERF":
@@ -762,7 +780,7 @@ def transfer_rows(db: Session, tenant_id: int, source_type: str, keyword: str) -
                     "title": row.template_name,
                     "category": row.position_code or "",
                     "secretLevel": "INTERNAL",
-                    "updatedAt": iso_min(row.updated_at),
+                    "updatedAt": iso_shanghai(row.updated_at, clock=True),
                 }
             )
     elif source_type == "CONTENT":
@@ -776,7 +794,7 @@ def transfer_rows(db: Session, tenant_id: int, source_type: str, keyword: str) -
                     "title": row.title,
                     "category": row.content_type or "",
                     "secretLevel": "INTERNAL",
-                    "updatedAt": iso_min(row.created_at),
+                    "updatedAt": iso_shanghai(row.created_at, clock=True),
                 }
             )
     imported = set(

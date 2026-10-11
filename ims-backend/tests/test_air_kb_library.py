@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -308,3 +309,34 @@ def test_kb_doc_download_content_disposition():
     assert disposition.startswith("attachment;")
     assert "body.txt" in disposition
     assert downloaded.content == "hello-c065-body".encode()
+
+
+def test_kb_timestamps_use_shanghai():
+    auth = headers()
+    owner_id = int(
+        client.get(
+            "/admin-api/ims/system/user/page",
+            headers=auth,
+            params={"pageNo": 1, "pageSize": 5, "username": "admin"},
+        ).json()["data"]["list"][0]["id"]
+    )
+    created = client.post(
+        "/admin-api/ims/air/kb",
+        headers=auth,
+        json={"kbName": "TC时区单测", "secretLevel": "INTERNAL", "ownerUserId": owner_id},
+    )
+    assert created.json()["code"] == 0
+    bj = timezone(timedelta(hours=8))
+    shown = datetime.strptime(created.json()["data"]["updatedAt"], "%Y-%m-%d %H:%M").replace(tzinfo=bj)
+    assert abs((datetime.now(bj) - shown).total_seconds()) < 120
+
+    uploaded = client.post(
+        "/admin-api/ims/air/kb/doc/upload",
+        headers=auth,
+        json={"title": "TC时区资料", "fileKey": "kb/c084/clock.txt", "content": "clock", "kbId": created.json()["data"]["id"]},
+    )
+    assert uploaded.json()["code"] == 0
+    stamp = uploaded.json()["data"]["doc"]["createdAt"]
+    assert stamp.endswith("+08:00")
+    parsed = datetime.fromisoformat(stamp)
+    assert abs((datetime.now(bj) - parsed).total_seconds()) < 120
