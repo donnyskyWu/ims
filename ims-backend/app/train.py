@@ -664,6 +664,8 @@ def offline_material(
     row = db.get(TrainMaterial, material_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1500, "资料不存在")
+    if row.status != "PUBLISHED":
+        return fail(1001, "仅已发布资料可下架")
     row.status = "OFFLINE"
     row.updated_at = utcnow()
     db.flush()

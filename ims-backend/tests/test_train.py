@@ -1324,6 +1324,37 @@ def test_train_title_and_task_name_length():
     assert edited.json()["msg"] == "任务名称不超过 128 字"
 
 
+def test_train_draft_material_cannot_offline():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    created = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "TB资料草稿",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/draft.pdf",
+            "publish": False,
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    assert body["data"]["status"] == "DRAFT"
+    material_id = body["data"]["id"]
+    offline = client.delete(f"/admin-api/ims/train/material/{material_id}", headers=auth)
+    assert offline.json()["code"] == 1001
+    assert offline.json()["msg"] == "仅已发布资料可下架"
+    db = SessionLocal()
+    try:
+        row = db.get(TrainMaterial, material_id)
+        assert row is not None
+        assert row.status == "DRAFT"
+    finally:
+        db.close()
+
+
 def test_train_offline_keeps_referenced_material():
     auth = headers()
     material_id = _published_material(auth, f"引用下架 {uuid.uuid4().hex[:6]}")

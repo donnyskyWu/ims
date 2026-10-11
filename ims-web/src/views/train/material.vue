@@ -175,7 +175,7 @@
                       编辑
                     </button>
                     <button
-                      v-if="row.status !== 'OFFLINE'"
+                      v-if="row.status === 'PUBLISHED'"
                       class="btn btn-sec btn-sm"
                       type="button"
                       data-testid="train-material-offline"
@@ -323,7 +323,7 @@
             编辑（新版本）
           </button>
           <button
-            v-if="detail.status !== 'OFFLINE'"
+            v-if="detail.status === 'PUBLISHED'"
             class="btn btn-sec btn-sm"
             type="button"
             data-testid="train-detail-offline"
