@@ -787,11 +787,21 @@ def placeholder_dept_name(name: str, dept_id: int) -> bool:
     return match is not None and int(match.group(1)) == int(dept_id or 0)
 
 
+def remember_dept_name(found: dict[int, str], dept_id, name: str) -> None:
+    if not str(dept_id).isdigit():
+        return
+    dept = int(dept_id)
+    text = (name or "").strip()
+    if dept and text and not placeholder_dept_name(text, dept):
+        found[dept] = text
+
+
 def dept_name_catalog(db: Session) -> dict[int, str]:
-    """部门编号 → 名称。来自组织事件，后发生的事件覆盖先发生的。"""
+    """部门编号 → 名称。组织事件、日报和绩效里的真名都算，占位「部门 {编号}」不算。"""
     stored = getattr(db, "_train_dept_catalog", None)
     if isinstance(stored, dict):
         return stored
+    from app.models import MeetDailyReport, PerfCalcResult, PerfRank
     from app.org_sync import read_payload
 
     found: dict[int, str] = {}
@@ -802,18 +812,33 @@ def dept_name_catalog(db: Session) -> dict[int, str]:
         payload = read_payload(payload_json or "")
         raw_ids = payload.get("deptIds") or []
         raw_names = payload.get("deptNames") or []
-        if not isinstance(raw_ids, list):
-            continue
-        dept_ids = [int(item) for item in raw_ids if str(item).isdigit()]
-        labels = [str(item).strip() for item in raw_names] if isinstance(raw_names, list) else []
-        for index, dept_id in enumerate(dept_ids):
-            label = labels[index] if index < len(labels) else ""
-            if label and not placeholder_dept_name(label, dept_id):
-                found[dept_id] = label
-        if len(dept_ids) == 1:
-            after = (after_dept or "").strip() or str(payload.get("afterDept") or "").strip()
-            if after and not placeholder_dept_name(after, dept_ids[0]):
-                found[dept_ids[0]] = after
+        if isinstance(raw_ids, list):
+            dept_ids = [int(item) for item in raw_ids if str(item).isdigit()]
+            labels = [str(item).strip() for item in raw_names] if isinstance(raw_names, list) else []
+            for index, dept_id in enumerate(dept_ids):
+                label = labels[index] if index < len(labels) else ""
+                remember_dept_name(found, dept_id, label)
+            if len(dept_ids) == 1:
+                after = (after_dept or "").strip() or str(payload.get("afterDept") or "").strip()
+                remember_dept_name(found, dept_ids[0], after)
+        for key in ("departments", "deptList", "depts"):
+            block = payload.get(key)
+            if not isinstance(block, list):
+                continue
+            for item in block:
+                if not isinstance(item, dict):
+                    continue
+                remember_dept_name(
+                    found,
+                    item.get("deptId") or item.get("dept_id") or item.get("id"),
+                    str(item.get("deptName") or item.get("dept_name") or item.get("name") or ""),
+                )
+    for model in (MeetDailyReport, PerfCalcResult, PerfRank):
+        named = db.execute(
+            select(model.dept_id, model.dept_name).where(model.deleted == 0, model.dept_name != "")
+        ).all()
+        for dept_id, dept_name in named:
+            remember_dept_name(found, dept_id, dept_name)
     try:
         setattr(db, "_train_dept_catalog", found)
     except Exception:

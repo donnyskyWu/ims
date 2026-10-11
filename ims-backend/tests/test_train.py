@@ -14,8 +14,10 @@ from sqlalchemy import select
 from app.core import SessionLocal, utcnow
 from app.main import app
 from app.models import (
+    MeetDailyReport,
     Menu,
     OrgEvent,
+    PerfRank,
     Role,
     RoleMenu,
     Todo,
@@ -1836,6 +1838,85 @@ def test_train_record_dept_name_comes_from_org_catalog_not_id():
         assert deadline_text(task.deadline) == "2026-10-18 18:00"
     finally:
         db.close()
+
+
+def test_train_dept_name_from_daily_and_perf_not_id():
+    """组织事件没有部门名时，用日报、绩效里的部门名称。"""
+    auth = headers()
+    material_id = _published_material(auth, f"部门主数据 {uuid.uuid4().hex[:6]}")
+    created_a = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": f"d9501_{uuid.uuid4().hex[:6]}", "nickname": "直播学员", "mobile": f"131{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    created_b = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": f"d7301_{uuid.uuid4().hex[:6]}", "nickname": "内容学员", "mobile": f"132{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    assert created_a.json()["code"] == 0, created_a.json()
+    assert created_b.json()["code"] == 0, created_b.json()
+    user_a = int(created_a.json()["data"]["id"])
+    user_b = int(created_b.json()["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(UserDept(user_id=user_a, dept_id=9501, tenant_id=0))
+        db.add(UserDept(user_id=user_b, dept_id=7301, tenant_id=0))
+        db.add(
+            MeetDailyReport(
+                user_id=user_a,
+                dept_id=9501,
+                user_name="直播学员",
+                dept_name="直播部",
+                report_date="2026-10-01",
+                content_done="底账",
+                content_plan="—",
+                submit_status="SUBMITTED",
+                tenant_id=0,
+            )
+        )
+        db.add(
+            PerfRank(
+                period_month="2026-09",
+                dept_id=7301,
+                dept_name="内容部",
+                user_id=user_b,
+                user_name="内容学员",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    name = f"双部门 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [user_a, user_b],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    task_id = created.json()["data"]["id"]
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    by_user = {row["userId"]: row["deptName"] for row in records.json()["data"]["list"]}
+    assert by_user[user_a] == "直播部"
+    assert by_user[user_b] == "内容部"
+    assert "9501" not in by_user[user_a]
+    assert "7301" not in by_user[user_b]
+    rate = client.get("/admin-api/ims/train/stat/finish-rate", headers=auth)
+    dept_names = {row["deptId"]: row["deptName"] for row in rate.json()["data"]["byDept"]}
+    assert dept_names[9501] == "直播部"
+    assert dept_names[7301] == "内容部"
 
 
 def datetime_from_iso(text: str):
