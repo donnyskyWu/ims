@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -72,26 +73,203 @@ DATASETS = [
         "code": "METRIC_LIB",
         "name": "指标库",
         "fields": [
-            {"name": "metricName", "label": "指标名", "type": "string"},
-            {"name": "metricValue", "label": "指标值", "type": "number"},
+            {"name": "statDate", "label": "统计日期", "type": "date", "fieldType": "DIMENSION", "dataType": "DATE"},
+            {"name": "platform", "label": "平台", "type": "string", "fieldType": "DIMENSION", "dataType": "STRING"},
+            {
+                "name": "gmv",
+                "label": "GMV",
+                "type": "number",
+                "fieldType": "METRIC",
+                "dataType": "NUMBER",
+                "metricCode": "GMV_DAILY",
+            },
+            {
+                "name": "orders",
+                "label": "订单数",
+                "type": "number",
+                "fieldType": "METRIC",
+                "dataType": "NUMBER",
+                "metricCode": "ORDERS",
+            },
+            {
+                "name": "liveCount",
+                "label": "直播场次",
+                "type": "number",
+                "fieldType": "METRIC",
+                "dataType": "NUMBER",
+                "metricCode": "LIVE_COUNT",
+            },
         ],
     },
     {
         "code": "CUSTOM_QUERY",
         "name": "已发布自定义查询",
         "fields": [
-            {"name": "dim", "label": "维度", "type": "string"},
-            {"name": "value", "label": "数值", "type": "number"},
+            {"name": "dim", "label": "维度", "type": "string", "fieldType": "DIMENSION", "dataType": "STRING"},
+            {
+                "name": "value",
+                "label": "数值",
+                "type": "number",
+                "fieldType": "METRIC",
+                "dataType": "NUMBER",
+                "metricCode": "QUERY_VALUE",
+            },
         ],
     },
 ]
 
-COMP_LIB = [
-    {"type": "KPI", "name": "KPI 卡片", "defaultSize": {"w": 240, "h": 120}},
-    {"type": "BAR", "name": "柱状图", "defaultSize": {"w": 480, "h": 280}},
-    {"type": "LINE", "name": "折线图", "defaultSize": {"w": 480, "h": 280}},
-    {"type": "TABLE", "name": "表格", "defaultSize": {"w": 640, "h": 320}},
+# 开发 / E2E 用的少量指标样本，绑定 GMV、平台、统计日期后设计器按此渲染。
+DESIGN_SEED = [
+    {"statDate": "2026-09-01", "platform": "抖音", "gmv": 186400, "orders": 621, "liveCount": 4, "dim": "抖音", "value": 186400},
+    {"statDate": "2026-09-02", "platform": "抖音", "gmv": 192100, "orders": 640, "liveCount": 5, "dim": "抖音", "value": 192100},
+    {"statDate": "2026-09-01", "platform": "视频号", "gmv": 412800, "orders": 1376, "liveCount": 3, "dim": "视频号", "value": 412800},
+    {"statDate": "2026-09-02", "platform": "视频号", "gmv": 398200, "orders": 1302, "liveCount": 3, "dim": "视频号", "value": 398200},
+    {"statDate": "2026-09-03", "platform": "快手", "gmv": 61200, "orders": 204, "liveCount": 2, "dim": "快手", "value": 61200},
 ]
+
+_EXPR_OK = re.compile(
+    r"^(?:\s|\d+\.?\d*|\.?\d+|SUM|AVG|COUNT|MAX|MIN|gmv|orders|liveCount|cost|revenue|value|\+|-|\*|/|\(|\))+$",
+    re.IGNORECASE,
+)
+
+COMP_LIB = [
+    {"type": "LINE", "name": "折线图", "group": "CHART", "defaultSize": {"w": 480, "h": 280}},
+    {"type": "BAR", "name": "柱状图", "group": "CHART", "defaultSize": {"w": 480, "h": 280}},
+    {"type": "PIE", "name": "饼图", "group": "CHART", "defaultSize": {"w": 320, "h": 280}},
+    {"type": "AREA", "name": "面积图", "group": "CHART", "defaultSize": {"w": 480, "h": 280}},
+    {"type": "RADAR", "name": "雷达图", "group": "CHART", "defaultSize": {"w": 320, "h": 280}},
+    {"type": "FUNNEL", "name": "漏斗图", "group": "CHART", "defaultSize": {"w": 320, "h": 280}},
+    {"type": "DONUT", "name": "环形图", "group": "CHART", "defaultSize": {"w": 320, "h": 280}},
+    {"type": "SCATTER", "name": "散点图", "group": "CHART", "defaultSize": {"w": 480, "h": 280}},
+    {"type": "TABLE", "name": "数据表", "group": "CHART", "defaultSize": {"w": 640, "h": 320}},
+    {"type": "DETAIL_TABLE", "name": "明细表", "group": "CHART", "defaultSize": {"w": 640, "h": 320}},
+    {"type": "KPI", "name": "KPI 指标卡", "group": "CHART", "defaultSize": {"w": 240, "h": 120}},
+    {"type": "RICH_TEXT", "name": "文字", "group": "CHART", "defaultSize": {"w": 320, "h": 120}},
+    {"type": "DATE_RANGE", "name": "日期", "group": "FILTER", "defaultSize": {"w": 280, "h": 80}},
+    {"type": "SELECT_SINGLE", "name": "下拉", "group": "FILTER", "defaultSize": {"w": 220, "h": 80}},
+    {"type": "SELECT_MULTI", "name": "下拉多选", "group": "FILTER", "defaultSize": {"w": 220, "h": 80}},
+    {"type": "TEXT_INPUT", "name": "文本", "group": "FILTER", "defaultSize": {"w": 220, "h": 80}},
+    {"type": "CASCADE", "name": "级联", "group": "FILTER", "defaultSize": {"w": 280, "h": 80}},
+    {"type": "NUMBER_RANGE", "name": "数值区间", "group": "FILTER", "defaultSize": {"w": 240, "h": 80}},
+    {"type": "TAB", "name": "Tab", "group": "CONTAINER", "defaultSize": {"w": 480, "h": 280}},
+    {"type": "GROUP", "name": "分组", "group": "CONTAINER", "defaultSize": {"w": 480, "h": 280}},
+    {"type": "CARD", "name": "卡片容器", "group": "CONTAINER", "defaultSize": {"w": 320, "h": 200}},
+    {"type": "BUTTON", "name": "按钮", "group": "ACTION", "defaultSize": {"w": 160, "h": 80}},
+    {"type": "LINK", "name": "超链接", "group": "ACTION", "defaultSize": {"w": 200, "h": 80}},
+    {"type": "JUMP", "name": "跳转", "group": "ACTION", "defaultSize": {"w": 200, "h": 80}},
+    {"type": "TRIGGER", "name": "联动触发", "group": "ACTION", "defaultSize": {"w": 200, "h": 80}},
+]
+
+
+def field_catalog() -> dict[str, dict]:
+    index: dict[str, dict] = {}
+    for dataset in DATASETS:
+        for field in dataset["fields"]:
+            index[field["name"]] = field
+            code = field.get("metricCode")
+            if code:
+                index[str(code)] = field
+    return index
+
+
+def lookup_field(key: str) -> tuple[dict | None, bool]:
+    text = (key or "").strip()
+    if not text:
+        return None, False
+    found = field_catalog().get(text)
+    if found is None:
+        return None, True
+    return found, False
+
+
+def expr_ok(expression: str) -> bool:
+    text = (expression or "").strip()
+    if not text:
+        return True
+    return _EXPR_OK.fullmatch(text) is not None
+
+
+def comp_field_error(comp: dict) -> tuple[int, str] | None:
+    metric_key = str(comp.get("metricKey") or "").strip()
+    dimension_key = str(comp.get("dimensionKey") or "").strip()
+    custom = str(comp.get("customField") or "").strip()
+    datasource = comp.get("datasourceConfig") if isinstance(comp.get("datasourceConfig"), dict) else {}
+    field_key = str((datasource or {}).get("fieldKey") or "").strip()
+    for key, expect in (
+        (metric_key, "METRIC"),
+        (field_key, "METRIC"),
+        (dimension_key, "DIMENSION"),
+        (custom, ""),
+    ):
+        found, illegal = lookup_field(key)
+        if illegal:
+            return 1191, "字段引用非法（1191）"
+        if found is not None and expect and found.get("fieldType") != expect:
+            return 1191, "字段引用非法（1191）"
+    if not expr_ok(str(comp.get("calcExpression") or "")):
+        return 1192, "计算字段表达式非法（1192）"
+    return None
+
+
+def layout_field_error(layout: dict) -> tuple[int, str] | None:
+    comps = layout.get("comps") or []
+    if not isinstance(comps, list):
+        return None
+    for comp in comps:
+        if isinstance(comp, dict):
+            err = comp_field_error(comp)
+            if err is not None:
+                return err
+    return None
+
+
+def _agg_value(values: list[float], agg: str) -> float:
+    if not values:
+        return 0
+    if agg == "AVG":
+        return round(sum(values) / len(values), 2)
+    if agg == "COUNT":
+        return float(len(values))
+    if agg == "MAX":
+        return max(values)
+    if agg == "MIN":
+        return min(values)
+    return round(sum(values), 2)
+
+
+def aggregate_seed(comp: dict) -> list[dict]:
+    metric_key = str(comp.get("metricKey") or comp.get("customField") or "").strip()
+    found, _ = lookup_field(metric_key)
+    metric_name = str(found["name"]) if found else "gmv"
+    dimension_key = str(comp.get("dimensionKey") or "").strip()
+    agg = str(comp.get("agg") or "SUM").strip().upper()
+    buckets: dict[str, list[float]] = {}
+    order: list[str] = []
+    for row in DESIGN_SEED:
+        label = str(row.get(dimension_key, "合计")) if dimension_key else "合计"
+        if label not in buckets:
+            order.append(label)
+            buckets[label] = []
+        buckets[label].append(float(row.get(metric_name) or 0))
+    rows: list[dict] = []
+    for label in order:
+        value = _agg_value(buckets[label], agg)
+        item: dict = {"label": label, "value": value, metric_name: value}
+        if dimension_key:
+            item[dimension_key] = label
+        rows.append(item)
+    return rows
+
+
+def comp_is_bound(comp: dict | None) -> bool:
+    if not comp:
+        return False
+    return bool(
+        str(comp.get("metricKey") or "").strip()
+        or str(comp.get("dimensionKey") or "").strip()
+        or str(comp.get("customField") or "").strip()
+        or str(comp.get("calcExpression") or "").strip()
+    )
 
 
 def iso(dt: datetime | None) -> str:
@@ -330,6 +508,10 @@ def report_design_save(
         layout = body.layoutJson
         if "layoutMode" not in layout:
             layout = {**layout, "layoutMode": "FREE"}
+        blocked = layout_field_error(layout)
+        if blocked is not None:
+            code, msg = blocked
+            return fail(code, msg)
         row.layout_json = json.dumps(layout, ensure_ascii=False)
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
@@ -363,10 +545,29 @@ def report_design_query(
     actor: User = Depends(current_user),
 ):
     comp_id = body.compId or "preview"
-    rows = [
-        {"dim": "示例A", "value": 128},
-        {"dim": "示例B", "value": 96},
-    ]
+    target = None
+    for comp in body.components:
+        if not isinstance(comp, dict):
+            continue
+        cid = str(comp.get("id") or comp.get("compId") or "")
+        if cid == comp_id:
+            target = comp
+            break
+    if target is None and len(body.components) == 1 and isinstance(body.components[0], dict):
+        target = body.components[0]
+    if target is not None:
+        blocked = comp_field_error(target)
+        if blocked is not None:
+            code, msg = blocked
+            return fail(code, msg)
+    if comp_is_bound(target):
+        rows = aggregate_seed(target or {})
+    else:
+        rows = [
+            {"dim": "示例A", "value": 128},
+            {"dim": "示例B", "value": 96},
+        ]
+    metric_total = round(sum(float(r.get("value") or 0) for r in rows), 2)
     started = time.perf_counter()
     elapsed = max(round((time.perf_counter() - started) * 1000, 1), 1)
     record_bi_query(
@@ -388,6 +589,9 @@ def report_design_query(
             "columns": list(rows[0].keys()),
             "rows": rows,
             "total": len(rows),
+            "metricTotal": metric_total,
+            "cacheHit": True,
+            "dataAsOf": "2026-10-03T14:00:00+08:00",
         }
     )
 
