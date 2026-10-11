@@ -479,6 +479,20 @@ def ensure_live_alarm_merge_column() -> None:
             conn.execute(text(f"ALTER TABLE ims_live_alarm_record {clause}"))
 
 
+def ensure_role_remark_column() -> None:
+    """已有库补角色备注。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_sys_role" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_sys_role")}
+    if "remark" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_sys_role ADD COLUMN remark VARCHAR(200) NOT NULL DEFAULT ''"))
+
+
 def ensure_user_mapping_position_column() -> None:
     """已有库补钉钉岗位（通讯录 title）。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -498,6 +512,7 @@ def ensure_user_mapping_position_column() -> None:
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_role_remark_column()
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()

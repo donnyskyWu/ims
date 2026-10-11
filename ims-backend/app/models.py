@@ -77,6 +77,7 @@ class Role(Base):
     dingtalk_position: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     source: Mapped[str] = mapped_column(String(16), default="MANUAL")
     status: Mapped[str] = mapped_column(String(20), default="ENABLED")
+    remark: Mapped[str] = mapped_column(String(200), default="")
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
