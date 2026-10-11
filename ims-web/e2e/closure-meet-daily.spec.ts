@@ -12,7 +12,8 @@ test('会议预约空表单提示必填，日报填写页有类型且正文可�
   await expect(page.getByTestId('meet-book')).toBeVisible()
   await expect(page.getByTestId('meet-timeline')).toBeVisible()
   await page.getByTestId('meet-book').click()
-  await expect(page.getByTestId('meet-book-form').getByText('议程 *')).toBeVisible()
+  await expect(page.getByTestId('meet-book-form').getByText('议程 *')).toHaveCount(0)
+  await expect(page.getByTestId('meet-book-form').getByText('会议主题 *')).toBeVisible()
   await page.getByTestId('meet-submit').click()
   await expect(page.getByTestId('meet-book-form')).toContainText('必填项，请填写')
 

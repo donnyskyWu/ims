@@ -353,8 +353,19 @@ def test_meet_minutes_register_requires_title_time_attendees():
             "attendees": [{"userName": "admin"}],
         },
     )
-    assert blank_agenda.json()["code"] == 1001
-    assert blank_agenda.json()["msg"] == "必填项，请填写"
+    assert blank_agenda.json()["code"] == 0
+    assert blank_agenda.json()["data"]["agenda"] == ""
+    omitted = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "未传议程",
+            "meetingDate": datetime.now(BJ).strftime("%Y-%m-%dT16:45:00+08:00"),
+            "attendees": [{"userName": "admin"}],
+        },
+    )
+    assert omitted.json()["code"] == 0
+    assert omitted.json()["data"]["agenda"] == ""
     named = client.post(
         "/admin-api/ims/meet/minutes",
         headers=auth,

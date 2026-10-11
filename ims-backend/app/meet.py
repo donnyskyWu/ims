@@ -1397,7 +1397,7 @@ def minutes_create(
     when = parse_meeting_date(body.meetingDate)
     agenda = (body.agenda or "").strip()
     attendees = [a.model_dump(exclude_none=True) for a in body.attendees if (a.userName or "").strip() or a.userId]
-    if not title or when is None or not attendees or not agenda:
+    if not title or when is None or not attendees:
         return fail(1001, "必填项，请填写")
     tenant_id = tenant_of(actor)
     if room_taken(db, tenant_id, body.meetingRoom, when, body.durationMinutes):
