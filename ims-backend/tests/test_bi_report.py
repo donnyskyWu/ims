@@ -1,4 +1,5 @@
 import os
+import time
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -94,28 +95,31 @@ def test_bi_report_create_requires_scope_and_note():
 
 def test_bi_report_category_import_and_filters():
     auth = headers()
+    suffix = str(int(time.time() * 1000))
+    parent_name = f"TC分类{suffix}"
+    child_name = f"TC子类{suffix}"
     empty = client.post("/admin-api/ims/bi/report/category", headers=auth, json={"action": "add", "name": "  ", "parentId": 0})
     assert empty.json()["code"] == 1001
 
     added = client.post(
         "/admin-api/ims/bi/report/category",
         headers=auth,
-        json={"action": "add", "name": "TC分类", "parentId": 0},
+        json={"action": "add", "name": parent_name, "parentId": 0},
     )
     assert added.json()["code"] == 0
-    parent = next(item for item in added.json()["data"]["categories"] if item["name"] == "TC分类")
+    parent = next(item for item in added.json()["data"]["categories"] if item["name"] == parent_name)
     child = client.post(
         "/admin-api/ims/bi/report/category",
         headers=auth,
-        json={"action": "add", "name": "TC子类", "parentId": parent["id"]},
+        json={"action": "add", "name": child_name, "parentId": parent["id"]},
     )
     assert child.json()["code"] == 0
     child_row = next(
         item
         for cat in child.json()["data"]["categories"]
-        if cat["name"] == "TC分类"
+        if cat["name"] == parent_name
         for item in cat["children"]
-        if item["name"] == "TC子类"
+        if item["name"] == child_name
     )
     grandchild = client.post(
         "/admin-api/ims/bi/report/category",
@@ -127,7 +131,7 @@ def test_bi_report_category_import_and_filters():
     created = client.post(
         "/admin-api/ims/bi/report",
         headers=auth,
-        json={"reportName": "分类下报表", "reportType": "REPORT", "category": "TC分类", "subCategory": "TC子类"},
+        json={"reportName": f"分类下报表{suffix}", "reportType": "REPORT", "category": parent_name, "subCategory": child_name},
     )
     assert created.json()["code"] == 0
     rid = created.json()["data"]["id"]
@@ -135,14 +139,14 @@ def test_bi_report_category_import_and_filters():
     listed = client.get(
         "/admin-api/ims/bi/report/list",
         headers=auth,
-        params={"subCategory": "TC子类", "shareScope": "PRIVATE", "status": "DRAFT"},
+        params={"subCategory": child_name, "shareScope": "PRIVATE", "status": "DRAFT"},
     )
     assert any(row["id"] == rid for row in listed.json()["data"]["list"])
 
     removed = client.post("/admin-api/ims/bi/report/category", headers=auth, json={"action": "delete", "id": parent["id"]})
     assert removed.json()["code"] == 0
-    assert all(item["name"] != "TC分类" for item in removed.json()["data"]["categories"])
-    moved = client.get("/admin-api/ims/bi/report/list", headers=auth, params={"keyword": "分类下报表"})
+    assert all(item["name"] != parent_name for item in removed.json()["data"]["categories"])
+    moved = client.get("/admin-api/ims/bi/report/list", headers=auth, params={"keyword": f"分类下报表{suffix}"})
     hit = next(row for row in moved.json()["data"]["list"] if row["id"] == rid)
     assert hit["category"] == "未分类"
 

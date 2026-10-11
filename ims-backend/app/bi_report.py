@@ -555,6 +555,7 @@ def report_category_save(body: CategoryBody, db: Session = Depends(db_session), 
         for item in doomed:
             item.deleted = 1
             item.updated_at = now
+        db.flush()
         return ok({"categories": category_payload(db, tenant_id), "moved": moved})
     return fail(1001, "分类操作无效")
 
