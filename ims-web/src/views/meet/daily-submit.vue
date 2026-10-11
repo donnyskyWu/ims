@@ -50,13 +50,13 @@
       <p v-if="msg" class="hint" data-testid="daily-msg" style="margin-top: 8px">{{ msg }}</p>
     </div>
     <div v-if="toast" class="toasts">
-      <div class="toast t-success">{{ toast }}</div>
+      <div class="toast t-success" :class="{ out: toastOut }" data-testid="daily-toast">{{ toast }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 
@@ -68,6 +68,9 @@ const locked = ref(false)
 const saving = ref(false)
 const msg = ref('')
 const toast = ref('')
+const toastOut = ref(false)
+let toastTimer = 0
+let toastHideTimer = 0
 const reportId = ref<number | null>(null)
 const reportTypes = ref<{ value: string; label: string }[]>([
   { value: 'LIVE', label: '直播' },
@@ -84,6 +87,27 @@ const form = reactive({
   supplement: '',
 })
 const fieldErrors = reactive({ contentDone: '', weekSummary: '' })
+
+function clearToast() {
+  window.clearTimeout(toastTimer)
+  window.clearTimeout(toastHideTimer)
+  toast.value = ''
+  toastOut.value = false
+}
+
+function showToast(text: string) {
+  window.clearTimeout(toastTimer)
+  window.clearTimeout(toastHideTimer)
+  toastOut.value = false
+  toast.value = text
+  toastTimer = window.setTimeout(() => {
+    toastOut.value = true
+    toastHideTimer = window.setTimeout(() => {
+      toast.value = ''
+      toastOut.value = false
+    }, 320)
+  }, 3000)
+}
 
 function todayStr() {
   const d = new Date()
@@ -141,7 +165,7 @@ function validate(asDraft: boolean) {
 
 async function save(asDraft: boolean) {
   msg.value = ''
-  toast.value = ''
+  clearToast()
   if (!validate(asDraft)) {
     msg.value = '必填项，请填写'
     return
@@ -165,14 +189,14 @@ async function save(asDraft: boolean) {
     applyRow(res.data.data)
     if (asDraft) {
       msg.value = '草稿已保存'
-      toast.value = '草稿已保存'
+      showToast('草稿已保存')
     } else if (wasLocked) {
       msg.value = '补充说明已保存'
-      toast.value = '补充说明已保存'
+      showToast('补充说明已保存')
     } else {
       const onTime = res.data.data.isOnTime ? '按时' : '迟交'
       msg.value = `已提交 · ${onTime} · 审阅待审阅`
-      toast.value = '已提交'
+      showToast('已提交')
     }
   } catch (e: unknown) {
     const body = e as { code?: number; data?: Record<string, unknown> }
@@ -188,6 +212,7 @@ async function save(asDraft: boolean) {
 }
 
 onMounted(loadTemplateAndToday)
+onBeforeUnmount(clearToast)
 </script>
 
 <style scoped>

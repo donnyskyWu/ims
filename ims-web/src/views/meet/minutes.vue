@@ -198,13 +198,13 @@
       </div>
     </div>
     <div v-if="toast" class="toasts">
-      <div class="toast t-success" data-testid="meet-toast">{{ toast }}</div>
+      <div class="toast t-success" :class="{ out: toastOut }" data-testid="meet-toast">{{ toast }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
 
 type Row = {
@@ -246,6 +246,9 @@ const form = reactive({
 })
 const fieldErrors = reactive({ meetingTitle: '', meetingDate: '', attendees: '' })
 const toast = ref('')
+const toastOut = ref(false)
+let toastTimer = 0
+let toastHideTimer = 0
 const editing = ref(false)
 const editorError = ref('')
 const aiPhase = ref('')
@@ -256,6 +259,27 @@ const editor = reactive({
   decisions: [] as { description: string }[],
   actions: [] as { itemId: number; description: string; responsibleUserId: number; dueDate: string }[],
 })
+
+function clearToast() {
+  window.clearTimeout(toastTimer)
+  window.clearTimeout(toastHideTimer)
+  toast.value = ''
+  toastOut.value = false
+}
+
+function showToast(text: string) {
+  window.clearTimeout(toastTimer)
+  window.clearTimeout(toastHideTimer)
+  toastOut.value = false
+  toast.value = text
+  toastTimer = window.setTimeout(() => {
+    toastOut.value = true
+    toastHideTimer = window.setTimeout(() => {
+      toast.value = ''
+      toastOut.value = false
+    }, 320)
+  }, 3000)
+}
 
 function statusLabel(s: string) {
   const map: Record<string, string> = {
@@ -363,7 +387,7 @@ async function loadPeople() {
 
 function openCreate() {
   formError.value = ''
-  toast.value = ''
+  clearToast()
   fieldErrors.meetingTitle = ''
   fieldErrors.meetingDate = ''
   fieldErrors.attendees = ''
@@ -387,7 +411,7 @@ function validateForm() {
 
 async function submit() {
   formError.value = ''
-  toast.value = ''
+  clearToast()
   if (!validateForm()) {
     formError.value = '必填项，请填写'
     return
@@ -407,7 +431,7 @@ async function submit() {
       attendees,
     })
     const no = res.data.data?.minutesNo || ''
-    toast.value = no ? `会议已登记 · ${no}` : '会议已登记'
+    showToast(no ? `会议已登记 · ${no}` : '会议已登记')
     showForm.value = false
     await loadList()
     await loadTimeline()
@@ -428,7 +452,7 @@ async function openDetail(id: number) {
     appendix.value = ''
     if (!people.value.length) loadPeople()
   } catch (e: unknown) {
-    toast.value = ''
+    clearToast()
     error.value = errorMessage(e)
   }
 }
@@ -476,7 +500,7 @@ async function saveMinutes() {
     })
     detail.value = res.data.data
     editing.value = false
-    toast.value = wasRecorded ? '已更新' : '纪要已录'
+    showToast(wasRecorded ? '已更新' : '纪要已录')
     await loadList()
   } catch (e: unknown) {
     editorError.value = errorMessage(e)
@@ -499,7 +523,7 @@ async function triggerAi() {
     }
     editing.value = true
     aiPhase.value = ''
-    toast.value = '已导入初稿'
+    showToast('已导入初稿')
   } catch (e: unknown) {
     aiPhase.value = ''
     editorError.value = errorMessage(e)
@@ -517,7 +541,7 @@ async function saveAppendix() {
     const res = await http.put(`/meet/minutes/${detail.value.id}`, { appendix: note })
     detail.value = res.data.data
     appendix.value = ''
-    toast.value = '附录说明已保存'
+    showToast('附录说明已保存')
   } catch (e: unknown) {
     editorError.value = errorMessage(e)
   }
@@ -545,7 +569,7 @@ async function archiveDetail() {
     const res = await http.put(`/meet/minutes/${detail.value.id}/archive`)
     detail.value = res.data.data
     editing.value = false
-    toast.value = '已归档'
+    showToast('已归档')
     await loadList()
     await loadArchiveRate()
   } catch (e: unknown) {
@@ -558,6 +582,8 @@ onMounted(() => {
   loadTimeline()
   loadArchiveRate()
 })
+
+onBeforeUnmount(clearToast)
 </script>
 
 <style scoped>
