@@ -5,8 +5,14 @@
         <h1>培训统计看板</h1>
         <div class="sub">TRAIN-003 · BR-102 完成率 / 逾期督办 · 02 TRAIN</div>
       </div>
-      <router-link class="btn btn-sec btn-sm" to="/ims/train/task">学习任务</router-link>
+      <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-stat-export" @click="exportOverdue">
+          导出逾期清单
+        </button>
+        <router-link class="btn btn-sec btn-sm" to="/ims/train/task">学习任务</router-link>
+      </div>
     </div>
+    <p v-if="exportMsg" class="hint" data-testid="train-stat-export-msg">{{ exportMsg }}</p>
 
     <form class="qbar" @submit.prevent="reloadAll">
       <button
@@ -72,13 +78,14 @@
               <div class="d">BR-102 目标 &gt;90%</div>
             </div>
             <div class="card stat">
-              <span class="l">按任务条目</span>
-              <div class="n">{{ finish.byTask.length }}</div>
-              <div class="d">Top10 完成率</div>
+              <span class="l">逾期未完成</span>
+              <div class="n" data-testid="train-stat-overdue-count">{{ overdueTotal ?? '—' }}</div>
+              <div class="d">未确认且已过截止时间</div>
             </div>
             <div class="card stat">
-              <span class="l">按部门</span>
-              <div class="n">{{ finish.byDept.length }}</div>
+              <span class="l">统计截至</span>
+              <div class="n" data-testid="train-stat-as-of-card">{{ asOf || '—' }}</div>
+              <div class="d">部门日汇总</div>
             </div>
           </div>
 
@@ -331,12 +338,7 @@
             <input v-model="overdueTaskId" placeholder="任务 ID" style="width: 120px" data-testid="train-stat-overdue-task" />
             <input v-model="overdueDeptId" placeholder="部门 ID" style="width: 120px" data-testid="train-stat-overdue-dept" />
             <button class="btn btn-pri btn-sm" type="submit">筛选</button>
-            <span class="sp"></span>
-            <button class="btn btn-sec btn-sm" type="button" data-testid="train-stat-export" @click="exportOverdue">
-              导出 Excel
-            </button>
           </form>
-          <p v-if="exportMsg" class="hint" data-testid="train-stat-export-msg">{{ exportMsg }}</p>
           <p v-if="panelError" class="hint" style="color: var(--red)">{{ panelError }}</p>
           <div class="tbl-block">
             <div class="tbl-wrap">
@@ -561,6 +563,7 @@ const rankRows = ref<RankRow[]>([])
 const rankDimension = ref<'DEPT' | 'PERSON'>('DEPT')
 const topN = ref(10)
 const overdueRows = ref<OverdueRow[]>([])
+const overdueTotal = ref<number | null>(null)
 const overdueTaskId = ref('')
 const overdueDeptId = ref('')
 const exportMsg = ref('')
@@ -782,6 +785,15 @@ async function fetchOverduePage(pageNo: number) {
   return res.data.data as { list: OverdueRow[]; total: number }
 }
 
+async function loadOverdueTotal() {
+  try {
+    const res = await http.get('/train/stat/overdue', { params: { pageNo: 1, pageSize: 1 } })
+    overdueTotal.value = Number(res.data.data?.total || 0)
+  } catch {
+    overdueTotal.value = null
+  }
+}
+
 async function loadOverdue() {
   panelLoading.value = true
   panelError.value = ''
@@ -789,6 +801,7 @@ async function loadOverdue() {
   try {
     const data = await fetchOverduePage(1)
     overdueRows.value = data.list || []
+    if (!overdueFilterOn.value) overdueTotal.value = Number(data.total || 0)
   } catch (err) {
     panelError.value = errText(err, '逾期清单加载失败')
     overdueRows.value = []
@@ -905,9 +918,8 @@ async function reloadAll() {
   } else {
     rangeError.value = ''
   }
-  await Promise.all([loadFinishRate(), loadHeat()])
-  if (tab.value === 'dept') await loadDept()
-  else if (tab.value === 'rank') await loadRank()
+  await Promise.all([loadFinishRate(), loadHeat(), loadDept(), loadOverdueTotal()])
+  if (tab.value === 'rank') await loadRank()
   else if (tab.value === 'overdue') await loadOverdue()
 }
 
