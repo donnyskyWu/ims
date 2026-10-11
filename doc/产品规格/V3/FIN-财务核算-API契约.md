@@ -48,7 +48,7 @@
 
 **请求**（Query）：`PageParam` + `{ platform?: PlatformType; sessionCode?: string; approvedDateRange?: [string, string] }`
 
-**响应** `data`：`PageResult<{ sessionCode: string; platform: PlatformType; sessionTitle: string; gmv: number; refund: number; adCost: number; approvedAt: string; hoursSinceApprove: number; isOver48h: boolean }>`（仅 V1 下播数据"已核准"场次，FIN-C-R1；核准后 48 小时未录入触发 BR-118 预警）。
+**响应** `data`：`PageResult<{ sessionCode: string; platform: PlatformType; sessionTitle: string; gmv: number; refund: number; adCost: number; approvedAt: string; hoursSinceApprove: number; isOver48h: boolean }>`（仅 V1 下播数据"已核准"场次，FIN-C-R1；核准后 48 小时未录入触发 BR-118 预警）。R9 的 `gmv`、`refund`、`adCost` 返回 `"***"`。
 
 #### 2.1.2 POST /admin-api/ims/fin/cost/{sessionCode} — 提交成本录入
 
@@ -121,7 +121,7 @@ interface FinCostVO {
 
 #### 2.1.3 GET /admin-api/ims/fin/cost/{sessionCode} — 成本详情
 
-**响应** `data`：`FinCostVO`。
+**响应** `data`：`FinCostVO`。R9 的 `costGmv`、`costRefund` 以及其他金额字段（含 `totalCost`、投放/分成）返回 `"***"`；佣金率等比率保持原值。已录入列表 `GET /fin/cost/list` 对同一批金额字段脱敏。R1/R3/R4 仍返回数字。
 
 #### 2.1.4 PUT /admin-api/ims/fin/cost/{sessionCode} — 编辑成本（核准前）
 

@@ -196,7 +196,7 @@ type ShareCostType = 'MANUAL' | 'ENGINE';   // 手工/引擎
 | sessionTitle | 场次标题 | 自适应 | — | — |
 | platform | 平台 | 90 | — | PlatformType tag |
 | gmv | GMV | 130 | ✓ | ¥ 千分位两位（R9 视角 `***`） |
-| refund | 退款 | 120 | — | ¥ 千分位 |
+| refund | 退款 | 120 | — | ¥ 千分位（R9 视角 `***`） |
 | adCost | 投放(带入) | 120 | — | ¥ 千分位 |
 | approvedAt | 核准时间 | 150 | ✓ 降序 | yyyy-MM-dd HH:mm |
 | isOver48h | 超 48h | 100 | — | tag：是(红)/否(灰)；悬浮"已过 N 小时" |
@@ -208,7 +208,7 @@ type ShareCostType = 'MANUAL' | 'ENGINE';   // 手工/引擎
 |--------|--------|------|------|--------|
 | sessionCode | 场次号 | 190 | — | 等宽字体 |
 | platform | 平台 | 90 | — | tag |
-| totalCost | 成本合计 | 140 | ✓ 降序 | ¥ 千分位 |
+| totalCost | 成本合计 | 140 | ✓ 降序 | ¥ 千分位（R9 视角 `***`） |
 | shareCostType | 分成方式 | 100 | — | 手工(灰)/引擎(青) |
 | entryStatus | 录入状态 | 110 | — | tag：草稿(灰)/已提交(蓝)/已核准(绿) |
 | entryUserName | 录入人 | 100 | — | — |
@@ -220,7 +220,7 @@ type ShareCostType = 'MANUAL' | 'ENGINE';   // 手工/引擎
 | 抽屉/弹窗 | 类型 | 字段与验证 |
 |-----------|------|-----------|
 | 成本录入抽屉 | Drawer 720px | GMV/退款只读；commissionRate 必填 (0,1]；金额字段必填非负两位小数；MANUAL 时 shareDaren/shareRealname 必填；合计实时预览；clientToken 幂等 |
-| 成本详情抽屉 | Drawer 70% | 已提交、已核准全字段只读，不显示保存草稿/提交。已核准只提供更正。草稿仍可保存草稿或提交。含状态/录入人 + 修改记录（修改人、北京时间、字段、旧值、新值；草稿与已提交的每次编辑） |
+| 成本详情抽屉 | Drawer 70% | 已提交、已核准全字段只读，不显示保存草稿/提交。已核准只提供更正。草稿仍可保存草稿或提交。含状态/录入人 + 修改记录（修改人、北京时间、字段、旧值、新值；草稿与已提交的每次编辑）。R9 的 GMV、退款及金额字段展示 `***`，不带 ¥ |
 | 成本更正抽屉 | Drawer 720px | 预填原值可改；Diff 红冲/蓝补实时预览；correctionReason 必填 ≤512；clientToken |
 | 核准确认弹窗 | Modal 400px | 场次号 + 成本合计 + "核准后 5 分钟内自动计算利润"；主按钮「财务核准」 |
 | 超 48h 未录清单抽屉 | Drawer 60% | BR-118 督办清单（场次/平台/核准时间/已过小时数红标） |

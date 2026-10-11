@@ -140,3 +140,49 @@ def test_r9_masks_profit_list_and_dashboard_amounts():
     assert b"***" in file_res.content
     assert b"81400" not in file_res.content
     assert b"100000" not in file_res.content
+
+
+def test_r9_masks_cost_list_and_detail_amounts():
+    auth = headers()
+    code = approved_session(auth)
+    analyst = headers(ANALYST)
+    finance = headers(E2E_ACCT_FINANCE_USER)
+
+    pending = client.get("/admin-api/ims/fin/cost/pending-sessions", headers=analyst).json()
+    assert pending["code"] == 0
+    row = next(item for item in pending["data"]["list"] if item["sessionCode"] == code)
+    assert row["gmv"] == MASK
+    assert row["refund"] == MASK
+    assert row["adCost"] == MASK
+
+    admin_row = next(
+        item
+        for item in client.get("/admin-api/ims/fin/cost/pending-sessions", headers=auth).json()["data"]["list"]
+        if item["sessionCode"] == code
+    )
+    assert admin_row["gmv"] == 100000.0
+    assert admin_row["refund"] == 2000.0
+
+    confirm_cost_for_session(auth, code)
+    listed = client.get("/admin-api/ims/fin/cost/list", headers=analyst, params={"sessionCode": code}).json()
+    assert listed["code"] == 0
+    assert listed["data"]["list"][0]["totalCost"] == MASK
+    assert listed["data"]["list"][0]["commissionAmount"] == MASK
+
+    detail = client.get(f"/admin-api/ims/fin/cost/{code}", headers=analyst).json()
+    assert detail["code"] == 0
+    assert detail["data"]["costGmv"] == MASK
+    assert detail["data"]["costRefund"] == MASK
+    assert detail["data"]["totalCost"] == MASK
+    assert detail["data"]["adCost"] == MASK
+    assert detail["data"]["shareDaren"] == MASK
+    assert detail["data"]["commissionRate"] == 0.05
+
+    admin_detail = client.get(f"/admin-api/ims/fin/cost/{code}", headers=auth).json()["data"]
+    assert admin_detail["costGmv"] == 100000.0
+    assert admin_detail["costRefund"] == 2000.0
+    assert admin_detail["totalCost"] == 16600.0
+
+    finance_detail = client.get(f"/admin-api/ims/fin/cost/{code}", headers=finance).json()["data"]
+    assert finance_detail["costGmv"] == 100000.0
+    assert finance_detail["totalCost"] == 16600.0

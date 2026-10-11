@@ -48,8 +48,10 @@ AMOUNT_MASK = "***"
 FIN_MONEY_KEYS = frozenset(
     {
         "gmv",
+        "costGmv",
         "revenue",
         "refund",
+        "costRefund",
         "totalGmv",
         "totalRefund",
         "totalCost",
@@ -1366,7 +1368,7 @@ def cost_pending_sessions(
     total = len(items)
     start = (page_no - 1) * size
     page_items = items[start : start + size]
-    return ok({"list": page_items, "total": total, "pageNo": page_no, "pageSize": size})
+    return ok(fin_view(db, actor, {"list": page_items, "total": total, "pageNo": page_no, "pageSize": size}))
 
 
 @router.get("/cost/list")
@@ -1408,12 +1410,16 @@ def cost_list(
     start = (page_no - 1) * size
     page_rows = visible[start : start + size]
     return ok(
-        {
-            "list": [cost_vo(db, row) for row in page_rows],
-            "total": total,
-            "pageNo": page_no,
-            "pageSize": size,
-        }
+        fin_view(
+            db,
+            actor,
+            {
+                "list": [cost_vo(db, row) for row in page_rows],
+                "total": total,
+                "pageNo": page_no,
+                "pageSize": size,
+            },
+        )
     )
 
 
@@ -1579,7 +1585,7 @@ def cost_detail(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None:
         return fail(1141, "成本未录入")
-    return ok(cost_vo(db, row, with_edits=True))
+    return ok(fin_view(db, actor, cost_vo(db, row, with_edits=True)))
 
 
 @router.put("/cost/{session_code}")

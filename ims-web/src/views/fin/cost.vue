@@ -166,8 +166,8 @@
               <td class="mono">{{ row.sessionCode }}</td>
               <td>{{ row.sessionTitle }}</td>
               <td>{{ row.platform }}</td>
-              <td class="num">¥{{ fmt(row.gmv) }}</td>
-              <td class="num">¥{{ fmt(row.refund) }}</td>
+              <td class="num">{{ yuan(row.gmv) }}</td>
+              <td class="num">{{ yuan(row.refund) }}</td>
               <td>{{ row.approvedAt || '—' }}</td>
               <td>
                 <span v-if="row.isOver48h" class="tag" style="background: rgba(255, 59, 48, 0.12); color: #c0392b">是</span>
@@ -212,7 +212,7 @@
             <tr v-for="row in enteredRows" v-else :key="row.id">
               <td class="mono">{{ row.sessionCode }}</td>
               <td>{{ row.platform }}</td>
-              <td class="num">¥{{ fmt(row.totalCost) }}</td>
+              <td class="num">{{ yuan(row.totalCost) }}</td>
               <td>{{ statusLabel(row.entryStatus) }}</td>
               <td>{{ row.entryUserName || row.entryUserId }}</td>
               <td>
@@ -265,10 +265,10 @@
           <label>平台<input :value="platformLabel(form.platform)" data-testid="fin-cost-platform" disabled /></label>
         </div>
         <div>
-          <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
+          <label>GMV（只读）<input :value="yuan(form.costGmv)" disabled /></label>
         </div>
         <div>
-          <label>退款（只读）<input :value="'¥' + fmt(form.costRefund)" disabled /></label>
+          <label>退款（只读）<input :value="yuan(form.costRefund)" disabled /></label>
         </div>
         <div>
           <label>分成方式
@@ -283,31 +283,31 @@
           <div v-if="fieldErrors.commissionRate" class="ferr">{{ fieldErrors.commissionRate }}</div>
         </div>
         <div>
-          <label>投放成本<i class="req">*</i><input v-model="form.adCost" type="number" step="0.01" min="0" /></label>
+          <label>投放成本<i class="req">*</i><input v-model="form.adCost" :type="moneyInputType(form.adCost)" step="0.01" min="0" /></label>
           <div v-if="fieldErrors.adCost" class="ferr">{{ fieldErrors.adCost }}</div>
         </div>
         <div>
-          <label>冲话费摊销<i class="req">*</i><input v-model="form.rechargeCost" type="number" step="0.01" min="0" /></label>
+          <label>冲话费摊销<i class="req">*</i><input v-model="form.rechargeCost" :type="moneyInputType(form.rechargeCost)" step="0.01" min="0" /></label>
           <div v-if="fieldErrors.rechargeCost" class="ferr">{{ fieldErrors.rechargeCost }}</div>
         </div>
         <div>
-          <label>固定成本<i class="req">*</i><input v-model="form.fixedCost" type="number" step="0.01" min="0" /></label>
+          <label>固定成本<i class="req">*</i><input v-model="form.fixedCost" :type="moneyInputType(form.fixedCost)" step="0.01" min="0" /></label>
           <div v-if="fieldErrors.fixedCost" class="ferr">{{ fieldErrors.fixedCost }}</div>
         </div>
         <div>
-          <label>样品成本<i class="req">*</i><input v-model="form.sampleCost" type="number" step="0.01" min="0" /></label>
+          <label>样品成本<i class="req">*</i><input v-model="form.sampleCost" :type="moneyInputType(form.sampleCost)" step="0.01" min="0" /></label>
           <div v-if="fieldErrors.sampleCost" class="ferr">{{ fieldErrors.sampleCost }}</div>
         </div>
         <div>
-          <label>达人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareDaren" type="number" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
+          <label>达人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareDaren" :type="moneyInputType(form.shareDaren)" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
           <div v-if="fieldErrors.shareDaren" class="ferr">{{ fieldErrors.shareDaren }}</div>
         </div>
         <div>
-          <label>实名人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareRealname" type="number" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
+          <label>实名人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareRealname" :type="moneyInputType(form.shareRealname)" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
           <div v-if="fieldErrors.shareRealname" class="ferr">{{ fieldErrors.shareRealname }}</div>
         </div>
-        <div v-if="form.shareCostType === 'ENGINE' || Number(form.shareTeam) > 0">
-          <label>团队分成<input :value="form.shareTeam === '' ? '' : fmt(form.shareTeam)" data-testid="fin-cost-share-team" disabled /></label>
+        <div v-if="form.shareCostType === 'ENGINE' || isMask(form.shareTeam) || Number(form.shareTeam) > 0">
+          <label>团队分成<input :value="maskOrFmt(form.shareTeam)" data-testid="fin-cost-share-team" disabled /></label>
         </div>
       </fieldset>
       <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
@@ -383,13 +383,13 @@
       </p>
       <div class="form-grid">
         <label>佣金率（%）<input v-model.number="form.commissionRate" type="number" step="0.01" min="0" max="100" /></label>
-        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
-        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
-        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
-        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
-        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
-        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
-        <label v-if="form.shareCostType === 'ENGINE' || Number(form.shareTeam) > 0">团队分成<input :value="fmt(form.shareTeam)" disabled /></label>
+        <label>投放成本<input v-model="form.adCost" :type="moneyInputType(form.adCost)" step="0.01" min="0" /></label>
+        <label>冲话费摊销<input v-model="form.rechargeCost" :type="moneyInputType(form.rechargeCost)" step="0.01" min="0" /></label>
+        <label>固定成本<input v-model="form.fixedCost" :type="moneyInputType(form.fixedCost)" step="0.01" min="0" /></label>
+        <label>样品成本<input v-model="form.sampleCost" :type="moneyInputType(form.sampleCost)" step="0.01" min="0" /></label>
+        <label>达人分成<input v-model="form.shareDaren" :type="moneyInputType(form.shareDaren)" step="0.01" min="0" /></label>
+        <label>实名人分成<input v-model="form.shareRealname" :type="moneyInputType(form.shareRealname)" step="0.01" min="0" /></label>
+        <label v-if="form.shareCostType === 'ENGINE' || isMask(form.shareTeam) || Number(form.shareTeam) > 0">团队分成<input :value="maskOrFmt(form.shareTeam)" disabled /></label>
         <label style="grid-column: 1 / -1">
           更正原因（必填）
           <input
@@ -448,7 +448,8 @@ const drawerOpen = ref(false)
 const editLogs = ref<Array<{ editorName: string; editedAt: string; field: string; oldValue: string; newValue: string }> | null>(null)
 const confirmOpen = ref(false)
 const confirmTarget = ref('')
-const confirmTotal = ref(0)
+const confirmTotal = ref<number | string>(0)
+const AMOUNT_MASK = '***'
 const correctionOpen = ref(false)
 const correctionReason = ref('')
 const correctionPreview = ref<Record<string, any> | null>(null)
@@ -514,8 +515,8 @@ const form = reactive({
   platform: '',
   accountId: 0,
   ipGroupId: 0,
-  costGmv: 0,
-  costRefund: 0,
+  costGmv: 0 as string | number,
+  costRefund: 0 as string | number,
   commissionRate: '' as string | number,
   adCost: '' as string | number,
   rechargeCost: '' as string | number,
@@ -558,6 +559,7 @@ async function ensureShareRules() {
 
 async function previewEngine() {
   if (form.shareCostType !== 'ENGINE') return
+  if ([form.costGmv, form.costRefund, form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost].some(isMask)) return
   await ensureShareRules()
   const gmv = finite(form.costGmv) || 0
   const refund = finite(form.costRefund) || 0
@@ -618,12 +620,27 @@ function platformLabel(code: string) {
   return platformOptions.find((item) => item.value === code)?.label || ({ DYS: '抖音', KS: '快手', WX: '视频号', TM: '淘宝', OTA: '其他' } as Record<string, string>)[code] || code || '—'
 }
 
+function isMask(n: unknown) {
+  return n === AMOUNT_MASK
+}
+
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function yuan(n: unknown) {
+  if (isMask(n)) return AMOUNT_MASK
   return `¥${fmt(n)}`
+}
+
+function moneyInputType(n: unknown) {
+  return isMask(n) ? 'text' : 'number'
+}
+
+function maskOrFmt(n: unknown) {
+  if (n === '' || n === null || n === undefined) return ''
+  if (isMask(n)) return AMOUNT_MASK
+  return fmt(n)
 }
 
 function round2(n: number) {
@@ -648,6 +665,18 @@ function rateToPercent(raw: unknown) {
 }
 
 const entryTotal = computed(() => {
+  const watched = [
+    form.costGmv,
+    form.costRefund,
+    form.adCost,
+    form.rechargeCost,
+    form.fixedCost,
+    form.sampleCost,
+    form.shareDaren,
+    form.shareRealname,
+    form.shareTeam,
+  ]
+  if (watched.some(isMask)) return AMOUNT_MASK
   const rate = percentToRate(form.commissionRate)
   const gmv = finite(form.costGmv)
   const commission = round2((Number.isFinite(gmv) ? gmv : 0) * rate)
@@ -810,8 +839,8 @@ function openEntry(row: Record<string, unknown>) {
   form.platform = String(row.platform || '')
   form.accountId = Number(row.accountId || 0)
   form.ipGroupId = Number(row.ipGroupId || 0)
-  form.costGmv = Number(row.gmv || 0)
-  form.costRefund = Number(row.refund || 0)
+  form.costGmv = isMask(row.gmv) ? AMOUNT_MASK : Number(row.gmv || 0)
+  form.costRefund = isMask(row.refund) ? AMOUNT_MASK : Number(row.refund || 0)
   form.commissionRate = ''
   form.adCost = ''
   form.rechargeCost = ''
@@ -1084,7 +1113,7 @@ async function submitCorrection() {
 function confirmCost(sessionCode: string) {
   const row = enteredRows.value.find((item) => item.sessionCode === sessionCode)
   confirmTarget.value = sessionCode
-  confirmTotal.value = Number(row?.totalCost || 0)
+  confirmTotal.value = isMask(row?.totalCost) ? AMOUNT_MASK : Number(row?.totalCost || 0)
   confirmOpen.value = true
 }
 
