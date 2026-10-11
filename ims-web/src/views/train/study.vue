@@ -37,16 +37,7 @@
           >
             <div>
               <div>{{ m.title }}</div>
-              <a
-                v-if="m.materialType === 'LINK' && m.linkUrl"
-                class="hint"
-                :href="m.linkUrl"
-                target="_blank"
-                rel="noopener"
-                @click.stop
-              >打开外链</a>
-              <div v-else-if="m.fileKey" class="hint mono">文件留档 {{ m.fileKey }}</div>
-              <div v-else class="hint" data-testid="train-study-material-empty">暂无可预览</div>
+              <div class="hint">{{ materialKindLabel(m) }}</div>
               <div class="hint">要求 {{ m.requiredMinutes || 1 }} 分钟 · 已学 {{ learnedMinutes(m.id) }} 分钟</div>
             </div>
             <span class="mono">{{ materialPct(m.id) }}%</span>
@@ -61,6 +52,61 @@
             <div class="es">请联系培训负责人恢复资料后再学习</div>
           </template>
           <div v-else class="et">无关联资料</div>
+        </div>
+
+        <div v-if="activeMaterial" class="stage" data-testid="train-study-player">
+          <div class="stage-title">{{ activeMaterial.title }}</div>
+          <div v-if="previewMode === 'video'" class="stage-body">
+            <video
+              v-if="previewUrl"
+              ref="videoRef"
+              data-testid="train-study-video"
+              controls
+              playsinline
+              :src="previewUrl"
+              @play="onVideoPlay"
+              @pause="onVideoPause"
+            />
+            <p v-else-if="previewLoading" class="hint">视频加载中</p>
+            <p v-else class="hint" data-testid="train-study-preview-error">{{ previewError || '暂无可播放的视频' }}</p>
+          </div>
+          <div v-else-if="previewMode === 'doc'" class="stage-body">
+            <iframe
+              v-if="previewUrl && docEmbeddable"
+              data-testid="train-study-doc"
+              :src="previewUrl"
+              title="文档预览"
+            />
+            <object
+              v-else-if="previewUrl"
+              data-testid="train-study-doc"
+              :data="previewUrl"
+              :type="previewMime || 'application/octet-stream'"
+            >
+              <p class="hint">当前格式请打开资料查看</p>
+            </object>
+            <p v-else-if="previewLoading" class="hint">文档加载中</p>
+            <p v-else class="hint" data-testid="train-study-preview-error">{{ previewError || '暂无可预览的文档' }}</p>
+            <a v-if="previewUrl" class="linkish" :href="previewUrl" target="_blank" rel="noopener">打开资料</a>
+          </div>
+          <div v-else-if="previewMode === 'link'" class="stage-body">
+            <a class="linkish" :href="activeMaterial.linkUrl" target="_blank" rel="noopener">打开外链</a>
+            <p class="hint">打开资料后点击开始学习，学习时长计入学时</p>
+          </div>
+          <div v-else class="empty" data-testid="train-study-material-empty">
+            <div class="et">暂无可预览</div>
+          </div>
+          <div v-if="confirmStatus !== 'CONFIRMED'" class="acts" style="margin-top: 12px">
+            <button
+              class="btn btn-pri btn-sm"
+              type="button"
+              data-testid="train-study-start"
+              :disabled="busy || (studying && previewMode !== 'video')"
+              @click="startStudy"
+            >
+              {{ studying ? '学习中' : '开始学习' }}
+            </button>
+          </div>
         </div>
 
         <p
@@ -163,7 +209,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
@@ -210,6 +256,13 @@ const busy = ref(false)
 const showQuizConfirm = ref(false)
 const activeMaterialId = ref(0)
 const answers = reactive<(number | null)[]>([])
+const studying = ref(false)
+const previewUrl = ref('')
+const previewError = ref('')
+const previewLoading = ref(false)
+const previewMime = ref('')
+const videoRef = ref<HTMLVideoElement | null>(null)
+let previewBlob = ''
 
 const confirmStatusLabel = computed(() =>
   confirmStatus.value === 'CONFIRMED' ? '已确认' : '未确认',
@@ -263,6 +316,48 @@ const overdueDays = computed(() => {
   const days = Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86400000)
   return days >= 1 ? days : 1
 })
+
+const activeMaterial = computed(
+  () => materials.value.find((item) => item.id === activeMaterialId.value) || null,
+)
+
+const previewMode = computed(() => {
+  const item = activeMaterial.value
+  if (!item) return 'empty'
+  if (item.materialType === 'LINK' && item.linkUrl) return 'link'
+  if (item.materialType === 'VIDEO' || ['mp4', 'mov'].includes(fileExt(item.fileKey || ''))) return 'video'
+  if (item.fileKey) return 'doc'
+  return 'empty'
+})
+
+const docEmbeddable = computed(() => {
+  const ext = fileExt(activeMaterial.value?.fileKey || '')
+  return ext === 'pdf' || previewMime.value.includes('pdf')
+})
+
+const previewKey = computed(() => {
+  const item = activeMaterial.value
+  if (!item) return ''
+  return `${item.id}:${item.materialType}:${item.fileKey || ''}:${item.linkUrl || ''}`
+})
+
+function fileExt(key: string) {
+  const base = key.split('/').pop() || ''
+  const dot = base.lastIndexOf('.')
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+function materialKindLabel(item: MatRow) {
+  if (item.materialType === 'VIDEO') return '视频'
+  if (item.materialType === 'LINK') return '外链'
+  return '文档'
+}
+
+function revokePreview() {
+  if (previewBlob) URL.revokeObjectURL(previewBlob)
+  previewBlob = ''
+  previewUrl.value = ''
+}
 
 function learnedSeconds(id: number) {
   return materialSeconds.value[id] ?? 0
@@ -468,7 +563,7 @@ async function pushProgress(materialId: number, seconds: number) {
 
 let sinceBeat = 0
 function onStudyTick() {
-  if (!task.value || confirmStatus.value === 'CONFIRMED' || !activeMaterialId.value) return
+  if (!studying.value || !task.value || confirmStatus.value === 'CONFIRMED' || !activeMaterialId.value) return
   if (!materials.value.some((item) => item.id === activeMaterialId.value)) return
   const id = activeMaterialId.value
   materialSeconds.value = { ...materialSeconds.value, [id]: learnedSeconds(id) + 1 }
@@ -480,11 +575,69 @@ function onStudyTick() {
   }
 }
 
+function startStudy() {
+  actionError.value = ''
+  studying.value = true
+  if (previewMode.value === 'video') void videoRef.value?.play()
+}
+
+function onVideoPlay() {
+  studying.value = true
+}
+
+function onVideoPause() {
+  studying.value = false
+  sinceBeat = 0
+  const id = activeMaterialId.value
+  if (id) void pushProgress(id, learnedSeconds(id))
+}
+
+async function flushStudy() {
+  const ids = materials.value.map((item) => item.id)
+  for (const id of ids) {
+    if (learnedSeconds(id) > 0) await pushProgress(id, learnedSeconds(id))
+  }
+}
+
+async function loadPreview() {
+  revokePreview()
+  previewError.value = ''
+  previewMime.value = ''
+  const item = activeMaterial.value
+  if (!item || (previewMode.value !== 'doc' && previewMode.value !== 'video') || !item.fileKey) {
+    previewLoading.value = false
+    return
+  }
+  previewLoading.value = true
+  const key = previewKey.value
+  try {
+    const token = localStorage.getItem('ims_access')
+    const res = await fetch(`/admin-api/ims/file/${item.fileKey}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    const mime = res.headers.get('content-type') || ''
+    if (!res.ok || mime.includes('application/json')) {
+      previewError.value = '资料文件暂不可预览'
+      return
+    }
+    if (previewKey.value !== key) return
+    const blob = await res.blob()
+    previewMime.value = blob.type || mime
+    previewBlob = URL.createObjectURL(blob)
+    previewUrl.value = previewBlob
+  } catch {
+    if (previewKey.value === key) previewError.value = '资料文件暂不可预览'
+  } finally {
+    if (previewKey.value === key) previewLoading.value = false
+  }
+}
+
 async function confirmComplete() {
   actionError.value = ''
   notAssignee.value = false
   busy.value = true
   try {
+    await flushStudy()
     const res = await http.post(`/train/task/${taskId.value}/confirm`, {})
     if (res.data.code !== 0) {
       actionError.value = res.data.msg || '确认失败'
@@ -500,11 +653,18 @@ async function confirmComplete() {
 }
 
 let tickHandle = 0
+watch(previewKey, () => {
+  void loadPreview()
+})
 onMounted(async () => {
   await loadTaskAndProgress()
   tickHandle = window.setInterval(onStudyTick, 1000)
 })
-onUnmounted(() => window.clearInterval(tickHandle))
+onUnmounted(() => {
+  window.clearInterval(tickHandle)
+  if (studying.value) void flushStudy()
+  revokePreview()
+})
 </script>
 
 <style scoped>
@@ -532,6 +692,30 @@ onUnmounted(() => window.clearInterval(tickHandle))
   justify-content: space-between;
   padding: 8px 0;
   border-bottom: 1px solid var(--border, #eee);
+  cursor: pointer;
+}
+.mat-list li.on {
+  background: rgba(0, 0, 0, 0.04);
+}
+.stage {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #eee);
+}
+.stage-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.stage-body video,
+.stage-body iframe,
+.stage-body object {
+  width: 100%;
+  min-height: 320px;
+  border: 0;
+  background: #111;
+}
+.stage-body video {
+  background: #000;
 }
 .ok {
   color: var(--green);

@@ -604,6 +604,7 @@ export async function completeTrainStudyViaUi(page: Page, taskId: number, taskNa
   await expect(page.getByText(taskName)).toBeVisible()
   const confirmBtn = page.getByTestId('train-study-confirm')
   await expect(confirmBtn).toBeDisabled()
+  await page.getByTestId('train-study-start').click()
 
   const progressed = page.waitForResponse(async (r) => {
     if (!r.url().includes(`/train/task/${taskId}/progress`) || r.request().method() !== 'PUT' || r.status() !== 200) {

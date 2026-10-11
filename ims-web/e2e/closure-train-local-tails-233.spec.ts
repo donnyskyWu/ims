@@ -118,6 +118,7 @@ test.describe('train local tails 233', () => {
     await page.goto(`/ims/train/study/${strangerTaskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
     await expect(page.getByText(strangerTitle)).toBeVisible()
+    await page.getByTestId('train-study-start').click()
     await page.clock.runFor(16_000)
     await expect(page.getByTestId('train-study-action-error')).toHaveText('仅被指派人可学习本任务', { timeout: 15_000 })
     await expect(page.getByTestId('train-study-back-workbench')).toBeVisible()

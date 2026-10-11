@@ -78,6 +78,7 @@ test.describe('train local edges 215', () => {
     await expect(page.getByTestId('train-study-gap')).toHaveText('还差 1 分钟学时，学时达标后才能完成确认')
     await expect(page.getByTestId('train-study-confirm')).toBeDisabled()
     await page.screenshot({ path: `${SHOT}/train-215-study-gap.png`, fullPage: true })
+    await page.getByTestId('train-study-start').click()
 
     await page.clock.runFor(70_000)
     await expect(page.getByTestId('train-study-gap')).toHaveCount(0)
