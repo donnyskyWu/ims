@@ -406,6 +406,7 @@ def _scoped_user(username: str, nickname: str, scope: str) -> int:
         user = User(
             username=username,
             nickname=nickname,
+            mobile=f"138{abs(hash(username)) % 100000000:08d}",
             password_hash=admin.password_hash,
             status="ENABLED",
             tenant_id=0,
