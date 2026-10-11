@@ -61,6 +61,15 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await page.getByTestId('mon-source-INTERNAL').click()
   await expect(page).toHaveURL(/\/ims\/monitor\/theme/)
   await expect(page.getByTestId('mon-source-INTERNAL')).toHaveClass(/on/)
+  await expect(page.getByTestId('mon-account-col')).toHaveText('内部账号数')
+  const internalDetail = page.getByTestId('mon-detail')
+  if (await internalDetail.count()) {
+    await internalDetail.first().click()
+    await expect(page.getByTestId('mon-go-account')).toHaveText('内部账号')
+    await page.locator('.drawer.on').getByRole('button', { name: '关闭' }).click()
+  }
+  await page.getByTestId('mon-source-EXTERNAL').click()
+  await expect(page.getByTestId('mon-account-col')).toHaveText('外部账号数')
 
   await page.goto('/ims/int/work')
   await expect(page.getByRole('heading', { name: '内部作品' })).toBeVisible()

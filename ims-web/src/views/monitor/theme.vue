@@ -66,7 +66,7 @@
           <thead>
             <tr>
               <th>{{ dimension === 'IP_THEME' ? 'IP 主题' : '行业' }}</th>
-              <th>外部账号数</th>
+              <th data-testid="mon-account-col">{{ accountCountLabel }}</th>
               <th>作品数</th>
               <th>爆款数</th>
               <th>操作</th>
@@ -103,7 +103,7 @@
       </ul>
       <template #footer>
         <button class="btn btn-sec btn-sm" type="button" @click="active = null">关闭</button>
-        <button class="btn btn-pri btn-sm" type="button" data-testid="mon-go-account" @click="go('/ims/comp/account')">竞品账号</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="mon-go-account" @click="go(accountHref)">{{ accountActionLabel }}</button>
       </template>
     </ProtoDrawer>
   </div>
@@ -146,6 +146,10 @@ const exportNote = ref('')
 const filters = reactive({ platformType: '', ipGroupId: '', keyword: '' })
 
 const dimensionLabel = computed(() => (dimension.value === 'IP_THEME' ? 'IP 主题' : '行业'))
+const internalMode = computed(() => source.value === 'INTERNAL')
+const accountCountLabel = computed(() => (internalMode.value ? '内部账号数' : '外部账号数'))
+const accountActionLabel = computed(() => (internalMode.value ? '内部账号' : '竞品账号'))
+const accountHref = computed(() => (internalMode.value ? '/ims/int/account' : '/ims/comp/account'))
 
 function go(path: string) {
   router.push(path)
@@ -238,7 +242,7 @@ async function exportCsv() {
     }
     const count = downloadRowsCsv(
       'monitor.csv',
-      ['维度', '外部账号数', '作品数', '爆款数'],
+      ['维度', accountCountLabel.value, '作品数', '爆款数'],
       collected.map((row) => [row.dimensionLabel, row.externalAccountCount, row.workCount, row.hitCount]),
     )
     exportNote.value = `已导出 ${count} 条，与当前筛选 ${expected} 条一致`
