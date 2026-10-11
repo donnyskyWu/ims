@@ -24,6 +24,26 @@
     <p v-else class="hint" style="margin-bottom: 8px">
       提交后进入两级审核：R8 初审 → R4 终审。终审通过后「已入库」并自动订阅监控。
     </p>
+    <div class="tabs" style="margin-bottom: 12px">
+      <button
+        type="button"
+        class="btn btn-sm"
+        :class="libraryTab === 'archive' ? 'btn-pri' : 'btn-sec'"
+        data-testid="comp-tab-archive"
+        @click="libraryTab = 'archive'"
+      >
+        竞品档案
+      </button>
+      <button
+        type="button"
+        class="btn btn-sm"
+        :class="libraryTab === 'submissions' ? 'btn-pri' : 'btn-sec'"
+        data-testid="comp-tab-submissions"
+        @click="libraryTab = 'submissions'"
+      >
+        我的送审
+      </button>
+    </div>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.compName" placeholder="竞品对象名称" style="width: 140px" />
       <select v-model="filters.platform" style="width: 120px">
@@ -36,6 +56,49 @@
     </form>
     <div v-if="loading" class="empty" style="margin-top: 24px"><div class="et">加载中</div></div>
     <div v-else-if="error" class="empty" style="margin-top: 24px"><div class="et">{{ error }}</div></div>
+    <div v-else-if="libraryTab === 'submissions'" class="tbl-block" data-testid="comp-submission-list">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>送审单号</th>
+              <th>竞品对象名称</th>
+              <th>状态</th>
+              <th>档案</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!submissionRows.length">
+              <td colspan="4"><div class="empty"><div class="et">暂无送审记录</div></div></td>
+            </tr>
+            <tr
+              v-for="row in submissionRows"
+              v-else
+              :key="row.key"
+              data-testid="comp-submission-row"
+              style="cursor: pointer"
+              @click="openCard(row)"
+            >
+              <td class="mono">{{ row.analysisNo }}</td>
+              <td>{{ row.compName }}</td>
+              <td>{{ row.auditStatusLabel }}</td>
+              <td>
+                <button
+                  v-if="row.auditStatus === 'STORED' && row.assetNo"
+                  class="btn-txt btn"
+                  type="button"
+                  data-testid="comp-submission-archive"
+                  @click.stop="openArchive(row.assetNo || '')"
+                >
+                  已入库 → 档案 {{ row.assetNo }}
+                </button>
+                <span v-else>—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <div v-else-if="!cards.length" class="empty" style="margin-top: 24px"><div class="et">暂无竞品档案</div></div>
     <div v-else class="comp-grid">
       <button
@@ -70,7 +133,8 @@
         </div>
         <div class="rowline" style="margin-top: 12px; justify-content: space-between">
           <span style="font-size: 11.5px; color: var(--text2)">{{ row.foot }}</span>
-          <span style="font-size: 11px; color: var(--text2)">{{ row.assetNo || row.analysisNo }}</span>
+          <span v-if="row.cardKind === 'asset'" style="font-size: 11px; color: var(--text2)" data-testid="comp-archive-no">档案编号 {{ row.assetNo }}</span>
+          <span v-else style="font-size: 11px; color: var(--text2)" data-testid="comp-submission-no">送审单号 {{ row.analysisNo }}</span>
         </div>
       </button>
     </div>
@@ -165,7 +229,22 @@
           <div><div class="k">分析周期</div><div class="v">{{ active.periodMonth || '—' }}</div></div>
           <div><div class="k">数据来源</div><div class="v">{{ active.dataSource || '—' }}</div></div>
           <div><div class="k">结论</div><div class="v">{{ active.conclusion || '—' }}</div></div>
-          <div><div class="k">单号</div><div class="v">{{ active.analysisNo || active.assetNo }}</div></div>
+          <div v-if="active.cardKind === 'analysis'">
+            <div class="k">送审单号</div>
+            <div class="v" data-testid="comp-detail-submission-no">{{ active.analysisNo }}</div>
+          </div>
+          <div v-else>
+            <div class="k">档案编号</div>
+            <div class="v" data-testid="comp-detail-archive-no">{{ active.assetNo }}</div>
+          </div>
+          <div v-if="active.cardKind === 'analysis' && active.auditStatus === 'STORED' && active.assetNo">
+            <div class="k">入库</div>
+            <div class="v">
+              <button class="btn-txt btn" type="button" data-testid="comp-open-archive" @click="openArchive(active.assetNo)">
+                已入库 → 档案 {{ active.assetNo }}
+              </button>
+            </div>
+          </div>
         </div>
         <template v-if="active.cardKind === 'asset'">
           <div class="dsec">关联送审</div>
@@ -325,6 +404,7 @@ const mergeHint = ref('')
 const formError = ref('')
 const fieldErrors = reactive<Record<string, string>>({})
 const filters = reactive({ compName: '', platform: '' })
+const libraryTab = ref<'archive' | 'submissions'>('archive')
 const actor = ref<Actor>({ userId: 0, canSubmit: true, canFirstAudit: false, canFinalAudit: false })
 const active = ref<Card | null>(null)
 const basket = ref<{ assetNo: string; compName: string }[]>([])
@@ -353,6 +433,15 @@ const cards = computed(() => {
   const pending = analyses.value.filter((item) => item.auditStatus !== 'STORED')
   const names = new Set(pending.map((item) => item.compName))
   return [...pending, ...rows.value.filter((item) => !names.has(item.compName))]
+})
+
+const submissionRows = computed(() => {
+  const name = filters.compName.trim()
+  return analyses.value.filter((item) => {
+    if (name && !item.compName.includes(name)) return false
+    if (filters.platform && item.platform !== filters.platform) return false
+    return true
+  })
 })
 
 const auditLevel = computed(() => {
@@ -584,6 +673,16 @@ async function submitCreate() {
     else note.value = note.value || apiMessage(e, '已提交，列表刷新失败')
   } finally {
     creating.value = false
+  }
+}
+
+async function openArchive(assetNo: string) {
+  if (!assetNo) return
+  try {
+    const res = await http.get(`/comp/asset/${assetNo}`)
+    active.value = assetCard(res.data.data)
+  } catch (e: unknown) {
+    note.value = apiMessage(e, '加载档案失败')
   }
 }
 

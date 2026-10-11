@@ -387,3 +387,21 @@ def test_archive_detail_lists_merged_submissions_and_review_rounds():
     final_round = next(item for item in rounds if item["analysisNo"] == second_no and item["auditLevel"] == "FINAL")
     assert final_round["auditorName"]
     assert final_round["auditedAt"]
+
+
+def test_stored_submission_exposes_archive_no():
+    seed_roles()
+    analysis_no, asset_no = _store("TC送审指向档案", "2026-08")
+    detail = client.get(f"/admin-api/ims/comp/analysis/{analysis_no}", headers=headers("tc_r6")).json()
+    assert detail["code"] == 0, detail
+    assert detail["data"]["analysisNo"] == analysis_no
+    assert detail["data"]["assetNo"] == asset_no
+    assert detail["data"]["auditStatus"] == "STORED"
+    assert detail["data"]["auditStatusLabel"] == "已入库"
+    listed = client.get(
+        "/admin-api/ims/comp/analysis/list",
+        headers=headers("tc_r6"),
+        params={"pageNo": 1, "pageSize": 20},
+    ).json()
+    row = next(item for item in listed["data"]["list"] if item["analysisNo"] == analysis_no)
+    assert row["assetNo"] == asset_no
