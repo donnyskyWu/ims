@@ -166,7 +166,7 @@ async function composeQuiz(
   await expect(modal.getByTestId('train-task-form-error')).toHaveText('题目不能重复')
 
   await second.locator('input[placeholder="请输入题目"]').fill(opts.questionB)
-  await modal.locator('input[type="number"]').fill('2')
+  await modal.getByTestId('train-form-pass-score').fill('100')
   await expect(modal.getByTestId('train-quiz-all-correct')).toHaveText('须全部答对才能通过')
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,

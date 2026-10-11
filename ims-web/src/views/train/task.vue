@@ -106,7 +106,16 @@
                 >
                   编辑
                 </button>
-                <button class="btn btn-sec btn-sm" type="button" data-testid="train-task-enter-study" @click="goStudy(row)">
+                <button
+                  v-if="row.confirmType === 'QUIZ'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="train-task-enter-quiz"
+                  @click="goStudy(row)"
+                >
+                  进入作答
+                </button>
+                <button v-else class="btn btn-sec btn-sm" type="button" data-testid="train-task-enter-study" @click="goStudy(row)">
                   进入学习
                 </button>
                 <button class="btn btn-sec btn-sm" type="button" @click="openRecords(row)">学习记录</button>
@@ -211,9 +220,9 @@
           <option value="QUIZ">自测问卷</option>
         </select>
         <div v-if="form.confirmType === 'QUIZ'" class="quiz-editor">
-          <p class="hint">手工组卷：每题 1 分。及格分是需要答对的题数，不能超过题目数。</p>
-          <label class="fld">及格分（答对题数）</label>
-          <input v-model.number="form.passScore" class="fld-in" type="number" min="1" />
+          <p class="hint">试卷满分 100，各题平均分配。及格分填写 0～100。</p>
+          <label class="fld">及格分（百分制）</label>
+          <input v-model.number="form.passScore" class="fld-in" type="number" min="0" max="100" data-testid="train-form-pass-score" />
           <div v-for="(q, qi) in form.quiz" :key="qi" class="quiz-block" :data-qi="qi">
             <label class="fld">题目 {{ qi + 1 }}</label>
             <input v-model="q.question" class="fld-in" placeholder="请输入题目" />
@@ -428,7 +437,7 @@ const filterSummary = computed(() => {
 const recordFilterOn = computed(() => Boolean(recordFilters.confirmStatus || recordFilters.overdueOnly))
 
 const mustAnswerAll = computed(
-  () => form.confirmType === 'QUIZ' && form.quiz.length > 0 && form.passScore === form.quiz.length,
+  () => form.confirmType === 'QUIZ' && form.quiz.length > 0 && Number(form.passScore) === 100,
 )
 
 type QuizDraft = { question: string; options: string[]; answerIndex: number }
@@ -445,7 +454,7 @@ const form = reactive({
   positionCodes: [] as string[],
   deadline: '',
   confirmType: 'DURATION',
-  passScore: 1,
+  passScore: 60,
   quiz: [blankQuestion()] as QuizDraft[],
 })
 
@@ -462,7 +471,6 @@ function addQuestion() {
 function removeQuestion(index: number) {
   if (form.quiz.length <= 1) return
   form.quiz.splice(index, 1)
-  if (form.passScore > form.quiz.length) form.passScore = form.quiz.length
 }
 
 function addOption(questionIndex: number) {
@@ -490,8 +498,9 @@ function quizError(): string {
     if (new Set(options).size !== options.length) return '选项内容不能重复'
     if (question.answerIndex < 0 || question.answerIndex >= options.length) return '请设定正确答案'
   }
-  if (!form.passScore || form.passScore < 1 || form.passScore > form.quiz.length) {
-    return '及格分须在 1 到题目数之间'
+  const passScore = Number(form.passScore)
+  if (!Number.isInteger(passScore) || passScore < 0 || passScore > 100) {
+    return '及格分须在 0 到 100 之间'
   }
   return ''
 }
@@ -690,7 +699,7 @@ function openEdit(row: Row) {
   form.positionCodes = [...(row.assignTargetPositionCodes || [])]
   form.deadline = toLocalDeadline(row.deadline || '')
   form.confirmType = row.confirmType || 'DURATION'
-  form.passScore = row.passScore || 1
+  form.passScore = row.passScore ?? 60
   form.quiz =
     row.quiz && row.quiz.length
       ? row.quiz.map((question) => ({
@@ -760,7 +769,7 @@ async function adoptAi() {
   try {
     const res = await http.post('/train/quiz/ai-adopt', { draftId: aiDraftId.value })
     const quiz = (res.data.data.quiz || []) as QuizDraft[]
-    const passScore = Number(res.data.data.passScore || quiz.length)
+    const passScore = Number(res.data.data.passScore ?? 60)
     openCreate()
     form.confirmType = 'QUIZ'
     form.materialIds = [...aiMaterialIds.value]
@@ -769,7 +778,7 @@ async function adoptAi() {
       options: [...(question.options || [])],
       answerIndex: question.answerIndex || 0,
     }))
-    form.passScore = Math.min(Math.max(1, quiz.length), passScore)
+    form.passScore = passScore
     showAi.value = false
   } catch (err) {
     aiError.value = errorMessage(err)
@@ -787,7 +796,7 @@ function openCreate() {
   form.positionCodes = []
   form.deadline = defaultDeadline()
   form.confirmType = 'DURATION'
-  form.passScore = 1
+  form.passScore = 60
   form.quiz = [blankQuestion()]
   formError.value = ''
   clearFieldErrors()

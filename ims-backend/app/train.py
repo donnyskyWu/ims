@@ -1295,14 +1295,22 @@ def public_quiz(raw) -> list[dict]:
     return out
 
 
+def question_points(count: int) -> list[int]:
+    """满分 100，各题均分，余数分给前面的题，合计正好 100。"""
+    if count <= 0:
+        return []
+    base, extra = divmod(100, count)
+    return [base + (1 if index < extra else 0) for index in range(count)]
+
+
 def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
-    """手工组卷：每题 1 分，及格分是需要答对的题数。"""
+    """手工组卷：满分 100，及格分是 0～100 的百分数。"""
     if not quiz:
         return fail(1001, "quiz 必填")
     if pass_score is None:
         return fail(1001, "passScore 必填")
-    if pass_score < 1 or pass_score > len(quiz):
-        return fail(1001, "及格分须在 1 到题目数之间")
+    if pass_score < 0 or pass_score > 100:
+        return fail(1001, "及格分须在 0 到 100 之间")
     normalized: list[dict] = []
     seen_questions: set[str] = set()
     for item in quiz:
@@ -1332,37 +1340,42 @@ def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
 
 
 def parse_quiz_answers(quiz: list, answers: list) -> tuple[dict[int, int] | None, str]:
-    """返回 (作答, 错误文案)。缺题与越界选项分开说明。"""
+    """返回 (作答, 错误文案)。缺题按未作答计数，越界选项单独说明。"""
     found: dict[int, int] = {}
     for raw in answers:
         if not isinstance(raw, dict) or "questionIndex" not in raw or "answerIndex" not in raw:
-            return None, "问卷未答完"
+            continue
         try:
             found[int(raw["questionIndex"])] = int(raw["answerIndex"])
         except (TypeError, ValueError):
-            return None, "问卷未答完"
+            continue
+    missing = 0
     for idx, item in enumerate(quiz):
         options = item.get("options") if isinstance(item, dict) else None
         option_count = len(options) if isinstance(options, list) else 0
         given = found.get(idx)
         if given is None:
-            return None, "问卷未答完"
+            missing += 1
+            continue
         if given < 0 or given >= option_count:
             return None, "选项无效，请重新选择"
+    if missing:
+        return None, f"还有 {missing} 题未作答"
     return found, ""
 
 
 def score_quiz(quiz: list, chosen: dict[int, int]) -> int:
+    points = question_points(len(quiz))
     score = 0
     for idx, item in enumerate(quiz):
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or idx >= len(points):
             continue
         try:
             expected = int(item.get("answerIndex", -1))
         except (TypeError, ValueError):
             continue
         if chosen.get(idx) == expected:
-            score += 1
+            score += points[idx]
     return score
 
 
@@ -2073,9 +2086,9 @@ def confirm_task(
             return fail(1104, "问卷未配置")
         chosen, answer_error = parse_quiz_answers(quiz, (body.answers if body else None) or [])
         if chosen is None:
-            return fail(1001, answer_error or "问卷未答完")
+            return fail(1001, answer_error or "还有 1 题未作答")
         score = score_quiz(quiz, chosen)
-        pass_line = int(task.pass_score or len(quiz))
+        pass_line = int(task.pass_score if task.pass_score is not None else 0)
         now = utcnow()
         record.confirm_score = score
         record.updated_at = now

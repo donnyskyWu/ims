@@ -53,12 +53,12 @@ test.describe('train quiz compose grade and retake', () => {
     await blocks.nth(1).locator('input[placeholder="选项内容"]').nth(1).fill('否')
     await blocks.nth(1).locator('input[type="radio"]').nth(1).check()
 
-    await modal.locator('input[type="number"]').fill('3')
+    await modal.getByTestId('train-form-pass-score').fill('101')
     await modal.getByRole('button', { name: '提交任务' }).click()
-    await expect(modal.getByText('及格分须在 1 到题目数之间')).toBeVisible()
+    await expect(modal.getByText('及格分须在 0 到 100 之间')).toBeVisible()
     await shot(page, '01-compose-pass-score-blocked')
 
-    await modal.locator('input[type="number"]').fill('2')
+    await modal.getByTestId('train-form-pass-score').fill('100')
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
     )
@@ -78,7 +78,7 @@ test.describe('train quiz compose grade and retake', () => {
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
     await expect(page.getByText(questionA)).toBeVisible()
     await expect(page.getByText(questionB)).toBeVisible()
-    await expect(page.getByText('及格 2 分')).toBeVisible()
+    await expect(page.getByTestId('train-quiz-full-score')).toHaveText('满分 100 / 及格分 100 · 共 2 题')
     await expect(page.getByRole('button', { name: '提交问卷' })).toBeDisabled()
     await shot(page, '02-study-quiz-before-answer')
 
@@ -100,7 +100,7 @@ test.describe('train quiz compose grade and retake', () => {
     expect(failed.data?.isPassed).toBe(false)
     expect(failed.data?.confirmScore).toBe(0)
     expect(failed.data?.confirmStatus).toBe('NOT_CONFIRMED')
-    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 2，未通过，可重答')
+    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 100，未通过，可重答')
     await shot(page, '03-retake-not-passed')
 
     await page.locator('.quiz-q').nth(0).locator('label.opt', { hasText: '对' }).locator('input').check()
@@ -117,9 +117,9 @@ test.describe('train quiz compose grade and retake', () => {
     }
     expect(passed.code).toBe(0)
     expect(passed.data?.isPassed).toBe(true)
-    expect(passed.data?.confirmScore).toBe(2)
+    expect(passed.data?.confirmScore).toBe(100)
     expect(passed.data?.confirmStatus).toBe('CONFIRMED')
-    await expect(page.getByText('学习已完成 · CONFIRMED · 得分 2')).toBeVisible()
+    await expect(page.getByText('学习已完成 · CONFIRMED · 得分 100')).toBeVisible()
     await shot(page, '04-passed-score')
 
     await page.goto('/ims/train/task')
@@ -128,7 +128,7 @@ test.describe('train quiz compose grade and retake', () => {
     await taskRow.getByRole('button', { name: '学习记录' }).click()
     const records = page.locator('.modal-mask .card').filter({ hasText: '学习记录' })
     await expect(records.getByText('CONFIRMED')).toBeVisible()
-    await expect(records.locator('td').filter({ hasText: /^2$/ })).toBeVisible()
+    await expect(records.locator('td').filter({ hasText: /^100$/ })).toBeVisible()
     await shot(page, '05-records-latest-score')
 
     expect(pageErrors).toEqual([])

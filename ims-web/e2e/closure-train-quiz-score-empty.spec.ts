@@ -51,7 +51,7 @@ test.describe('train quiz score empty and retake entry', () => {
     await blocks.nth(1).locator('input[placeholder="选项内容"]').nth(0).fill('是')
     await blocks.nth(1).locator('input[placeholder="选项内容"]').nth(1).fill('否')
     await blocks.nth(1).locator('input[type="radio"]').nth(1).check()
-    await modal.locator('input[type="number"]').fill('2')
+    await modal.getByTestId('train-form-pass-score').fill('100')
 
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
@@ -93,16 +93,16 @@ test.describe('train quiz score empty and retake entry', () => {
     expect(failed.code).toBe(0)
     expect(failed.data?.confirmScore).toBe(0)
     expect(failed.data?.confirmStatus).toBe('NOT_CONFIRMED')
-    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 2，未通过，可重答')
+    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 100，未通过，可重答')
     await expect(page.getByTestId('train-quiz-score-empty')).toHaveCount(0)
 
     await page.reload()
-    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 2，未通过，可重答', {
+    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 100，未通过，可重答', {
       timeout: 15_000,
     })
     await page.getByTestId('train-quiz-retake').click()
     await expect(page.getByRole('button', { name: '提交问卷' })).toBeDisabled()
-    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 2，未通过，可重答')
+    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 100，未通过，可重答')
     await shot(page, '03-retake-restored-score')
 
     await page.goto('/ims/train/task')
@@ -113,7 +113,7 @@ test.describe('train quiz score empty and retake entry', () => {
     await shot(page, '04-records-retake-entry')
     await failedRecords.getByTestId('train-record-retake').click()
     await expect(page).toHaveURL(new RegExp(`/ims/train/study/${taskId}`))
-    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 2，未通过，可重答')
+    await expect(page.getByTestId('train-quiz-score-latest')).toHaveText('得分 0，及格 100，未通过，可重答')
 
     await page.locator('.quiz-q').nth(0).locator('label.opt', { hasText: '对' }).locator('input').check()
     await page.locator('.quiz-q').nth(1).locator('label.opt', { hasText: '否' }).locator('input').check()
@@ -129,8 +129,8 @@ test.describe('train quiz score empty and retake entry', () => {
     }
     expect(passed.code).toBe(0)
     expect(passed.data?.isPassed).toBe(true)
-    expect(passed.data?.confirmScore).toBe(2)
-    await expect(page.getByText('学习已完成 · CONFIRMED · 得分 2')).toBeVisible()
+    expect(passed.data?.confirmScore).toBe(100)
+    await expect(page.getByText('学习已完成 · CONFIRMED · 得分 100')).toBeVisible()
     await expect(page.getByTestId('train-quiz-retake')).toHaveCount(0)
     await shot(page, '05-passed-score')
 
@@ -138,7 +138,7 @@ test.describe('train quiz score empty and retake entry', () => {
     await page.locator('tr', { hasText: taskName }).getByRole('button', { name: '学习记录' }).click()
     const passedRecords = page.locator('.modal-mask .card').filter({ hasText: '学习记录' })
     await expect(passedRecords.getByText('CONFIRMED')).toBeVisible()
-    await expect(passedRecords.locator('td').filter({ hasText: /^2$/ })).toBeVisible()
+    await expect(passedRecords.locator('td').filter({ hasText: /^100$/ })).toBeVisible()
     await expect(passedRecords.getByTestId('train-record-retake')).toHaveCount(0)
     await expect(passedRecords.getByTestId('train-record-score-empty')).toHaveCount(0)
     await shot(page, '06-records-latest-score')

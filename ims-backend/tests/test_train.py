@@ -657,7 +657,7 @@ def test_train_quiz_compose_rejects_bad_paper():
     cases = [
         ({"quiz": [], "passScore": 1}, "quiz 必填"),
         ({"quiz": SAMPLE_QUIZ}, "passScore 必填"),
-        ({"quiz": SAMPLE_QUIZ, "passScore": 3}, "及格分须在 1 到题目数之间"),
+        ({"quiz": SAMPLE_QUIZ, "passScore": 101}, "及格分须在 0 到 100 之间"),
         (
             {"quiz": [{"question": "只有一项", "options": ["甲"], "answerIndex": 0}], "passScore": 1},
             "每题选项至少 2 项",
@@ -695,13 +695,13 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     auth = headers()
     material_id = _published_material(auth, "问卷判分资料")
     name = f"问卷判分 {uuid.uuid4().hex[:6]}"
-    created = _quiz_task(auth, material_id, name, SAMPLE_QUIZ, 2)
+    created = _quiz_task(auth, material_id, name, SAMPLE_QUIZ, 100)
     body = created.json()
     assert body["code"] == 0, body
     data = body["data"]
     task_id = data["id"]
     assert data["questionCount"] == 2
-    assert data["passScore"] == 2
+    assert data["passScore"] == 100
     assert data["quiz"][0] == {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"]}
     assert "answerIndex" not in data["quiz"][0]
 
@@ -726,7 +726,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
         json={"answers": [{"questionIndex": 0, "answerIndex": 0}]},
     )
     assert incomplete.json()["code"] == 1001
-    assert incomplete.json()["msg"] == "问卷未答完"
+    assert incomplete.json()["msg"] == "还有 1 题未作答"
 
     failed = client.post(
         f"/admin-api/ims/train/task/{task_id}/confirm",
@@ -738,7 +738,17 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     assert failed_body["data"]["isPassed"] is False
     assert failed_body["data"]["confirmStatus"] == "NOT_CONFIRMED"
     assert failed_body["data"]["confirmScore"] == 0
-    assert failed_body["data"]["passScore"] == 2
+    assert failed_body["data"]["passScore"] == 100
+
+    half = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 0}, {"questionIndex": 1, "answerIndex": 0}]},
+    )
+    half_body = half.json()
+    assert half_body["code"] == 0, half_body
+    assert half_body["data"]["isPassed"] is False
+    assert half_body["data"]["confirmScore"] == 50
 
     records = client.get(
         "/admin-api/ims/train/task/records",
@@ -747,7 +757,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     )
     rec = records.json()["data"]["list"][0]
     assert rec["confirmStatus"] == "NOT_CONFIRMED"
-    assert rec["confirmScore"] == 0
+    assert rec["confirmScore"] == 50
 
     passed = client.post(
         f"/admin-api/ims/train/task/{task_id}/confirm",
@@ -758,7 +768,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     assert passed_body["code"] == 0, passed_body
     assert passed_body["data"]["isPassed"] is True
     assert passed_body["data"]["confirmStatus"] == "CONFIRMED"
-    assert passed_body["data"]["confirmScore"] == 2
+    assert passed_body["data"]["confirmScore"] == 100
 
     again = client.post(
         f"/admin-api/ims/train/task/{task_id}/confirm",
@@ -768,7 +778,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     again_body = again.json()
     assert again_body["code"] == 0, again_body
     assert again_body["data"]["confirmStatus"] == "CONFIRMED"
-    assert again_body["data"]["confirmScore"] == 2
+    assert again_body["data"]["confirmScore"] == 100
 
     listed_after = client.get(
         "/admin-api/ims/train/task/list",

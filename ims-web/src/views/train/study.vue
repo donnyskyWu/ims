@@ -84,7 +84,7 @@
         </div>
 
         <div v-if="task.confirmType === 'QUIZ' && confirmStatus !== 'CONFIRMED'" class="quiz-paper">
-          <div class="quiz-head">自测问卷 · 及格 {{ task.passScore }} 分 · 共 {{ quiz.length }} 题</div>
+          <div class="quiz-head" data-testid="train-quiz-full-score">满分 100 / 及格分 {{ task.passScore }} · 共 {{ quiz.length }} 题</div>
           <p class="hint">全部题目必答。提交后将判分，未及格可重答，成绩保留最新一次。</p>
           <p v-if="mustAllCorrect" class="hint" data-testid="train-study-quiz-all-correct">须全部答对才能通过</p>
           <p v-if="latestScore == null" class="hint score-empty" data-testid="train-quiz-score-empty">暂无成绩</p>
@@ -243,7 +243,7 @@ const unansweredCount = computed(
 const mustAllCorrect = computed(() => {
   const paper = quiz.value
   const line = task.value?.passScore ?? 0
-  return paper.length > 0 && line === paper.length
+  return paper.length > 0 && line === 100
 })
 
 const overdueDays = computed(() => {
