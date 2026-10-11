@@ -111,7 +111,7 @@ def seed() -> None:
                 )
             )
             db.flush()
-        from app.system_dict import seed_dict
+        from app.system_dict import apply_content_type_compat, seed_dict
         from app.system_role import seed_roles
 
         seed_roles(db)
@@ -125,6 +125,7 @@ def seed() -> None:
 
         ops = ops_session()
         try:
+            apply_content_type_compat(db, ops)
             _ensure_e2e_douyin_account(db, ops)
             _ensure_e2e_ops_author(ops)
             ops.commit()

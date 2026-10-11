@@ -23,18 +23,10 @@ from app.int_analysis import (
     fans_thresholds,
     work_thresholds,
 )
-from app.models import User
+from app.models import DictData, User
 from app.ops_models import ExternalAccount, ExternalWork
 
 router = APIRouter(prefix="/comp-analysis", tags=["comp-analysis"])
-
-WORK_CONTENT_TYPES = frozenset({"ARTICLE", "SHORT_VIDEO", "VIDEO", "LIVE_CLIP"})
-CONTENT_LABELS = {
-    "ARTICLE": "图文",
-    "SHORT_VIDEO": "短视频",
-    "VIDEO": "视频",
-    "LIVE_CLIP": "直播切片",
-}
 
 
 def ensure_comp_monitor_stub(ops: Session, tenant_id: int) -> None:
@@ -97,17 +89,36 @@ def ensure_comp_monitor_stub(ops: Session, tenant_id: int) -> None:
         ops.flush()
 
 
-def work_vo(row: ExternalWork, *, segment: str, hit_play: float, low_completion: float) -> dict:
+def content_type_labels(db: Session) -> dict[str, str]:
+    rows = db.scalars(
+        select(DictData).where(
+            DictData.dict_type == "dict_content_type",
+            DictData.status == "ENABLED",
+            DictData.deleted == 0,
+        )
+    ).all()
+    return {row.dict_value: row.dict_label for row in rows}
+
+
+def work_vo(
+    row: ExternalWork,
+    *,
+    segment: str,
+    hit_play: float,
+    low_completion: float,
+    labels: dict[str, str],
+) -> dict:
     is_hit, is_low = classify(row, hit_play, low_completion)
     plays = int(row.play_count or 0)
+    code = row.content_type or ""
     return {
         "id": str(row.id),
         "title": row.title,
         "accountName": row.account_name,
         "accountIdentifier": row.account_identifier,
         "platformType": row.platform_type,
-        "contentType": row.content_type or "",
-        "contentTypeLabel": CONTENT_LABELS.get(row.content_type or "", row.content_type or "—"),
+        "contentType": code,
+        "contentTypeLabel": labels.get(code, code or "—"),
         "publishTime": row.publish_time,
         "playCount": plays,
         "likeCount": int(row.like_count or 0),
@@ -141,8 +152,8 @@ def collect_works(
 
     if err := check_enum(db, "dict_platform_type", platform_type or None, False):
         return None, err
-    if content_type and content_type not in WORK_CONTENT_TYPES:
-        return None, fail(1503, "字典枚举非法")
+    if err := check_enum(db, "dict_content_type", content_type or None, False):
+        return None, err
 
     tenant_id = tenant_of(actor)
     ensure_comp_monitor_stub(ops, tenant_id)
@@ -176,6 +187,7 @@ def collect_works(
         stmt = stmt.where(ExternalWork.ip_group_id.in_(scoped_groups))
 
     rows = list(ops.scalars(stmt.order_by(ExternalWork.play_count.desc())).all())
+    labels = content_type_labels(db)
     filtered: list[dict] = []
     for row in rows:
         hit_play, low_completion, _ = work_thresholds(ops, tenant_id, row.platform_type or "")
@@ -184,7 +196,7 @@ def collect_works(
             continue
         if seg == "LOW_SCORE" and not is_low:
             continue
-        filtered.append(work_vo(row, segment=seg, hit_play=hit_play, low_completion=low_completion))
+        filtered.append(work_vo(row, segment=seg, hit_play=hit_play, low_completion=low_completion, labels=labels))
     filtered.sort(key=lambda item: int(item["playCount"] or 0), reverse=True)
     for index, item in enumerate(filtered, start=1):
         item["rank"] = index

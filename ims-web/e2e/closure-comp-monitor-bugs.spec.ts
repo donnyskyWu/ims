@@ -31,7 +31,8 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
 
   await page.goto('/ims/comp/work')
   await expect(page.getByTestId('comp-work-export')).toBeVisible()
-  await expect(page.getByTestId('comp-work-type')).toBeVisible()
+  const workType = page.getByTestId('comp-work-type')
+  await expect(workType.locator('option')).toHaveText(['作品类型', '文章', '短视频', '视频'])
   await expect(page.getByTestId('comp-work-threshold')).toContainText('播放量')
   await expect(page.getByText('爆款总数')).toBeVisible()
 

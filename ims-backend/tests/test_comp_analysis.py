@@ -5,9 +5,14 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
+from sqlalchemy import select
+
+from app.core import SessionLocal
 from app.main import app
+from app.models import ContentProject, ContentSop, DictData
 from app.ops_db import ops_session
-from app.ops_models import ExternalAccount, ExternalWork, IpGroup
+from app.ops_models import ExternalAccount, ExternalWork, InternalContent, IpGroup
+from app.system_dict import align_dict_content_type, apply_content_type_compat, remap_stored_content_types
 
 client = TestClient(app)
 
@@ -252,6 +257,7 @@ def test_comp_work_article_filter_and_summary():
     assert body["data"]["total"] == 1
     assert body["data"]["list"][0]["rank"] == 1
     assert body["data"]["list"][0]["contentType"] == "ARTICLE"
+    assert body["data"]["list"][0]["contentTypeLabel"] == "文章"
     assert body["data"]["summary"]["totalPlay"] == 20_000
     assert "avgShare" in body["data"]["summary"]
 
@@ -277,3 +283,138 @@ def test_comp_work_and_account_export_follow_filter():
     assert accounts.status_code == 200
     assert accounts.headers["x-export-rows"] == "1"
     assert "竞品高粉号" in accounts.text
+
+
+def test_comp_work_rejects_retired_content_type():
+    auth = headers()
+    rejected = client.get(
+        "/admin-api/ims/comp-analysis/work/page",
+        headers=auth,
+        params={"segment": "ALL", "contentType": "LIVE_CLIP", "pageNo": 1, "pageSize": 10},
+    )
+    body = rejected.json()
+    assert body["code"] == 1503
+    assert body["msg"] == "字典枚举非法"
+
+    listed = client.get(
+        "/admin-api/ims/system/dict-data/list",
+        headers=auth,
+        params={"dictType": "dict_content_type"},
+    )
+    enabled = [row for row in listed.json()["data"] if row["status"] == "ENABLED"]
+    assert [(row["dictValue"], row["dictLabel"]) for row in enabled] == [
+        ("ARTICLE", "文章"),
+        ("SHORT_VIDEO", "短视频"),
+        ("VIDEO", "视频"),
+    ]
+
+
+def test_content_type_remap_is_idempotent():
+    db = SessionLocal()
+    ops = ops_session()
+    try:
+        article = db.scalar(
+            select(DictData).where(DictData.dict_type == "dict_content_type", DictData.dict_value == "ARTICLE")
+        )
+        assert article is not None
+        article.dict_label = "图文"
+        db.add(
+            DictData(
+                dict_type="dict_content_type",
+                dict_label="直播切片",
+                dict_value="LIVE_CLIP",
+                sort=9,
+                status="ENABLED",
+                tenant_id=0,
+            )
+        )
+        db.add(ContentProject(title="旧图文", content_type="GRAPHIC", tenant_id=0))
+        db.add(ContentProject(title="旧图文码", content_type="IMAGE_TEXT", tenant_id=0))
+        db.add(ContentProject(title="旧切片项目", content_type="直播切片", tenant_id=0))
+        db.add(ContentProject(title="保持直播", content_type="LIVE", tenant_id=0))
+        db.add(ContentSop(sop_code="LEGACY-IMG", sop_name="图文SOP", content_type="图文", tenant_id=0))
+        ops.add(
+            ExternalWork(
+                platform_work_id="legacy-clip",
+                title="切片",
+                platform_type="DOUYIN",
+                content_type="LIVE_CLIP",
+                tenant_id=0,
+            )
+        )
+        ops.add(
+            ExternalWork(
+                platform_work_id="legacy-tuwen",
+                title="图文",
+                platform_type="DOUYIN",
+                content_type="图文",
+                tenant_id=0,
+            )
+        )
+        ops.add(
+            ExternalWork(
+                platform_work_id="keep-video",
+                title="视频",
+                platform_type="DOUYIN",
+                content_type="VIDEO",
+                tenant_id=0,
+            )
+        )
+        ops.add(
+            ExternalWork(
+                platform_work_id="keep-live",
+                title="直播",
+                platform_type="KUAISHOU",
+                content_type="直播",
+                tenant_id=0,
+            )
+        )
+        ops.add(InternalContent(title="内部切片", content_type="LIVE_CLIP", platform_type="DOUYIN", tenant_id=0))
+        db.commit()
+        ops.commit()
+
+        align_dict_content_type(db)
+        changed = remap_stored_content_types(db, ContentProject)
+        changed += remap_stored_content_types(db, ContentSop)
+        changed += remap_stored_content_types(ops, ExternalWork)
+        changed += remap_stored_content_types(ops, InternalContent)
+        assert changed == 7
+        db.commit()
+        ops.commit()
+        db.expire_all()
+        ops.expire_all()
+
+        labels = {
+            row.dict_value: (row.dict_label, row.status)
+            for row in db.scalars(select(DictData).where(DictData.dict_type == "dict_content_type")).all()
+        }
+        assert labels["ARTICLE"] == ("文章", "ENABLED")
+        assert labels["SHORT_VIDEO"] == ("短视频", "ENABLED")
+        assert labels["VIDEO"] == ("视频", "ENABLED")
+        assert labels["LIVE_CLIP"][1] == "DISABLED"
+
+        stored = {
+            row.title: row.content_type
+            for row in ops.scalars(select(ExternalWork).where(ExternalWork.platform_work_id.like("legacy-%") | ExternalWork.platform_work_id.like("keep-%"))).all()
+        }
+        assert stored == {"切片": "SHORT_VIDEO", "图文": "ARTICLE", "视频": "VIDEO", "直播": "直播"}
+        internal = ops.scalar(select(InternalContent).where(InternalContent.title == "内部切片"))
+        assert internal is not None and internal.content_type == "SHORT_VIDEO"
+        projects = {
+            row.title: row.content_type
+            for row in db.scalars(select(ContentProject)).all()
+        }
+        assert projects["旧图文"] == "ARTICLE"
+        assert projects["旧图文码"] == "ARTICLE"
+        assert projects["旧切片项目"] == "SHORT_VIDEO"
+        assert projects["保持直播"] == "LIVE"
+        sop = db.scalar(select(ContentSop).where(ContentSop.sop_code == "LEGACY-IMG"))
+        assert sop is not None and sop.content_type == "ARTICLE"
+
+        again = apply_content_type_compat(db, ops)
+        assert again == 0
+        db.commit()
+        ops.commit()
+    finally:
+        db.close()
+        ops.close()

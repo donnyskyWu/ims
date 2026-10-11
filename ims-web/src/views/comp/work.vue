@@ -38,9 +38,7 @@
       </select>
       <select v-model="filters.contentType" style="width: 120px" data-testid="comp-work-type">
         <option value="">作品类型</option>
-        <option value="ARTICLE">ARTICLE</option>
-        <option value="SHORT_VIDEO">SHORT_VIDEO</option>
-        <option value="VIDEO">VIDEO</option>
+        <option v-for="item in contentTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
       <span class="tag" data-testid="comp-work-threshold">爆款阈值 · {{ summary.hitThresholdLabel }}</span>
       <input v-model.number="filters.ipGroupId" type="number" placeholder="IP 组 id" style="width: 110px" />
@@ -159,6 +157,13 @@ const exportNote = ref('')
 const active = ref<WorkRow | null>(null)
 const filters = reactive({ platformType: '', contentType: '', ipGroupId: null as number | null, accountIdentifier: '' })
 const summary = reactive({ hitCount: 0, totalPlay: 0, avgLike: 0, avgShare: 0, hitThresholdLabel: '播放量 ≥ 100w' })
+type ContentTypeOption = { value: string; label: string }
+const fallbackContentTypes: ContentTypeOption[] = [
+  { value: 'ARTICLE', label: '文章' },
+  { value: 'SHORT_VIDEO', label: '短视频' },
+  { value: 'VIDEO', label: '视频' },
+]
+const contentTypes = ref<ContentTypeOption[]>(fallbackContentTypes)
 
 function go(path: string) {
   router.push(path)
@@ -243,5 +248,22 @@ function resetFilters() {
   loadList()
 }
 
-onMounted(loadList)
+async function loadContentTypes() {
+  try {
+    const res = await http.get('/system/dict-data/list', { params: { dictType: 'dict_content_type' } })
+    const rows = ((res.data.data || []) as { status?: string; dictValue: string; dictLabel: string }[]).filter(
+      (row) => row.status === 'ENABLED',
+    )
+    if (rows.length) {
+      contentTypes.value = rows.map((row) => ({ value: row.dictValue, label: row.dictLabel }))
+    }
+  } catch {
+    contentTypes.value = fallbackContentTypes
+  }
+}
+
+onMounted(() => {
+  loadContentTypes()
+  loadList()
+})
 </script>
