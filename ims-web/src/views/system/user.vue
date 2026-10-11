@@ -6,7 +6,7 @@
         <div class="sub">SYS-001 · 手机号由接口脱敏 · GET /system/user/page</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri" type="button" data-testid="sys-user-create-open" @click="openCreate">新建用户</button>
+        <button v-if="canWriteUser" class="btn btn-pri" type="button" data-testid="sys-user-create-open" @click="openCreate">新建用户</button>
       </div>
     </div>
     <form class="qbar" @submit.prevent="search">
@@ -66,7 +66,7 @@
                 </span>
               </td>
               <td>
-                <button class="btn btn-txt" type="button" data-testid="sys-user-edit" @click="openEdit(row)">编辑</button>
+                <button v-if="canWriteUser" class="btn btn-txt" type="button" data-testid="sys-user-edit" @click="openEdit(row)">编辑</button>
               </td>
             </tr>
           </tbody>
@@ -146,6 +146,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal, readData } from '../../api/read'
+import { useUserStore } from '../../stores/user'
 
 type UserRow = {
   id: string
@@ -179,6 +180,8 @@ const saving = ref(false)
 const formError = ref('')
 const roleOptions = ref<RoleOption[]>([])
 const deptOptions = ref<DeptOption[]>([])
+const user = useUserStore()
+const canWriteUser = computed(() => user.canWrite('system:user:query'))
 const form = reactive({
   username: '',
   nickname: '',

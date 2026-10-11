@@ -128,12 +128,14 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const user = useUserStore()
-  if (to.path !== '/login' && !user.accessToken) {
-    return '/login'
-  }
-  return true
+  if (to.path === '/login') return true
+  if (!user.accessToken) return '/login'
+  await user.loadAccess()
+  if (!user.accessToken) return '/login'
+  if (user.canOpen(to.path)) return true
+  return '/ims/workbench'
 })
 
 export default router

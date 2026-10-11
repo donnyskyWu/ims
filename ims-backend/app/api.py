@@ -61,8 +61,10 @@ def current_user(
     request.state.operator_id = user.id
     request.state.operator_name = user.nickname or user.username
     request.state.tenant_id = user.tenant_id or 0
+    from app.perm import enforce_function
     from app.scope import gate
 
+    enforce_function(db, request, user)
     gate(db, request, user)
     return user
 
@@ -287,6 +289,14 @@ def refresh(body: RefreshBody, db: Session = Depends(db_session)):
     if user is None or user.status != "ENABLED":
         return fail(1006, "用户不可登录")
     return ok(issue_tokens(db, user))
+
+
+@router.get("/auth/access")
+def auth_access(db: Session = Depends(db_session), user: User = Depends(current_user)):
+    """当前用户菜单/功能点并集。无角色为空集；R1 标记 admin。"""
+    from app.perm import describe
+
+    return ok(describe(db, user))
 
 
 @router.post("/auth/sso/logout")

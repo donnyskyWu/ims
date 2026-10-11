@@ -10,6 +10,7 @@ VALID_SCOPES = ("ALL", "DEPT", "IP_GROUP", "SELF")
 RANK = {"SELF": 1, "IP_GROUP": 2, "DEPT": 3, "ALL": 4}
 WHITELIST_PREFIXES = (
     "/admin-api/ims/auth/workbench",
+    "/admin-api/ims/auth/access",
     "/admin-api/ims/home",
 )
 

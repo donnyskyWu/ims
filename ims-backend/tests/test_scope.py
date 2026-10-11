@@ -66,12 +66,18 @@ def test_empty_pending_illegal_and_unregistered_are_1008():
     bind(bad_id, key="b9-bad", scope="DEPT_AND_CHILD")
     bind(ip_id, key="b9-ip", scope="IP_GROUP")
 
-    for username in ("bare", "pending", "emptyperm", "badscope", "iponly"):
+    for username, code, msg in (
+        ("bare", 403, "无操作权限"),
+        ("pending", 403, "无操作权限"),
+        ("emptyperm", 403, "无操作权限"),
+        ("badscope", 1008, "无数据权限"),
+        ("iponly", 1008, "无数据权限"),
+    ):
         token = login(username, "Pass@123")
         denied = client.get("/admin-api/ims/system/user/page", headers=auth(token))
         assert denied.status_code == 403
-        assert denied.json()["code"] == 1008
-        assert denied.json()["msg"] == "无数据权限"
+        assert denied.json()["code"] == code
+        assert denied.json()["msg"] == msg
         assert denied.json()["data"] is None
 
     board = client.get("/admin-api/ims/auth/workbench/dashboard", headers=auth(login("bare", "Pass@123")))
@@ -142,7 +148,9 @@ def test_dept_excludes_child_and_materializes_exact_scope():
     assert "dept-child" not in names
     assert "admin" not in names
     logs = client.get("/admin-api/ims/system/operate-log/page", headers=auth(login("dept-viewer", "Pass@123")))
-    assert logs.json()["code"] == 1008
+    assert logs.status_code == 403
+    assert logs.json()["code"] == 403
+    assert logs.json()["msg"] == "无操作权限"
 
 
 def test_br212_intersects_creator_and_viewer_scopes():
