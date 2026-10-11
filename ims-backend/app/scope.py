@@ -11,6 +11,8 @@ RANK = {"SELF": 1, "IP_GROUP": 2, "DEPT": 3, "ALL": 4}
 WHITELIST_PREFIXES = (
     "/admin-api/ims/auth/workbench",
     "/admin-api/ims/home",
+    # 学习只认被指派人（待办 / 记录 / 指派目标），不走部门、IP 组、创建人数据范围。
+    "/admin-api/ims/train/study",
 )
 
 
@@ -96,7 +98,6 @@ SPECS = {
     "ims_train_material_cate": Spec(),
     "ims_train_task": Spec(creator=True, creator_col="creator_user_id"),
     "ims_train_task_record": Spec(creator=True, creator_col="user_id"),
-    "ims_train_study": Spec(dept=True, ip_group=True, creator=True),
     "ims_train_stat_daily": Spec(dept=True),
     "ims_fin_cost": Spec(creator=True, creator_col="entry_user_id"),
     "ims_fin_profit": Spec(),
@@ -330,9 +331,6 @@ PREFIXES = [
     ("GET", "/admin-api/ims/report/audit", "ims_report_submission"),
     ("PUT", "/admin-api/ims/report/audit", "ims_report_submission"),
     ("GET", "/admin-api/ims/report/stat", "ims_report_submission"),
-    ("GET", "/admin-api/ims/train/study", "ims_train_study"),
-    ("PUT", "/admin-api/ims/train/study", "ims_train_study"),
-    ("POST", "/admin-api/ims/train/study", "ims_train_study"),
     ("POST", "/admin-api/ims/train/quiz", "ims_train_task"),
     ("GET", "/admin-api/ims/train/task", "ims_train_task"),
     ("GET", "/admin-api/ims/train/stat", "ims_train_task"),

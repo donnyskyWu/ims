@@ -708,6 +708,41 @@ def _dept_learner(nickname: str) -> tuple[dict, int]:
     return {"Authorization": f"Bearer {token}"}, user_id
 
 
+def _scope_blocked_learner(nickname: str) -> tuple[dict, int]:
+    """有部门角色，但没有任何菜单和功能权限。非白名单接口会被数据范围拒绝。"""
+    username = f"bare_{uuid.uuid4().hex[:8]}"
+    db = SessionLocal()
+    try:
+        user = User(
+            username=username,
+            nickname=nickname,
+            mobile=f"135{uuid.uuid4().int % 10**8:08d}",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+        role = Role(
+            role_name=nickname,
+            role_key=f"bare_{uuid.uuid4().hex[:10]}",
+            data_scope="DEPT",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+        user_id = int(user.id)
+    finally:
+        db.close()
+    logged = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"})
+    token = logged.json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}, user_id
+
+
 def test_train_study_assignee_reads_own_task_stranger_forbidden():
     auth = headers()
     assignee_auth, assignee_id = _dept_learner("内容运营")
@@ -945,6 +980,69 @@ def test_train_study_todo_without_record_opens_and_backfills():
     denied = client.get(f"/admin-api/ims/train/study/{task_id}", headers=target_auth)
     assert denied.status_code == 200
     assert denied.json()["code"] == 0
+
+
+def test_train_study_todo_ignores_data_scope():
+    """没有菜单权限的被指派人仍可学习。其它培训接口继续被数据范围拒绝。"""
+    auth = headers()
+    learner_auth, learner_id = _scope_blocked_learner("TC-短视频")
+    stranger_auth, _stranger_id = _scope_blocked_learner("旁听")
+    target_auth, target_id = _dept_learner("目标")
+    blocked = client.get("/admin-api/ims/train/task/list", headers=learner_auth)
+    blocked_body = blocked.json()
+    assert blocked.status_code == 403, blocked_body
+    assert blocked_body["code"] == 1008
+    assert blocked_body["msg"] == "无数据权限"
+
+    material_id = _published_material(auth, f"范围外学习 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "TB学时任务3",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [target_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    db = SessionLocal()
+    try:
+        db.add(
+            Todo(
+                assignee_user_id=learner_id,
+                task_type="train_study",
+                ref_type="train_task",
+                ref_id=task_id,
+                title="学习待办：TB学时任务3",
+                content="进入学习中心完成本任务",
+                status="PENDING",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    assert opened_body["data"]["progress"]["userId"] == learner_id
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+
+    target = client.get(f"/admin-api/ims/train/study/{task_id}", headers=target_auth)
+    assert target.status_code == 200
+    assert target.json()["code"] == 0
 
 
 SAMPLE_QUIZ = [

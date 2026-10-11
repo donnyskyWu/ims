@@ -420,24 +420,18 @@ const hiddenMaterialCount = computed(() => {
   return ids.filter((id) => !visible.has(id)).length
 })
 
-function failureCode(err: unknown): number {
-  if (!err || typeof err !== 'object') return Number.NaN
-  const direct = (err as { code?: unknown }).code
-  if (typeof direct === 'number') return direct
-  const response = (err as { response?: { status?: number; data?: { code?: unknown } } }).response
-  if (typeof response?.data?.code === 'number') return response.data.code
-  if (response?.status === 403) return 403
-  return Number.NaN
+function isAssigneeDenial(err: unknown): boolean {
+  return errorMessage(err).includes('仅被指派人')
 }
 
 function noteActionFailure(err: unknown, fallback: string) {
-  const code = failureCode(err)
-  if (code === 1105 || code === 403) {
+  const msg = errorMessage(err)
+  if (isAssigneeDenial(err)) {
     notAssignee.value = true
-    actionError.value = '仅被指派人可学习本任务'
+    actionError.value = msg
     return
   }
-  const msg = errorMessage(err)
+  notAssignee.value = false
   actionError.value = msg === '加载失败' ? fallback : msg
 }
 
@@ -497,13 +491,13 @@ async function loadTaskAndProgress() {
     }
   } catch (err) {
     task.value = null
-    const code = failureCode(err)
-    if (code === 403 || code === 1105) {
+    const msg = errorMessage(err)
+    if (isAssigneeDenial(err)) {
       notAssignee.value = true
-      loadError.value = '仅被指派人可学习本任务'
+      loadError.value = msg
       return
     }
-    const msg = errorMessage(err)
+    notAssignee.value = false
     loadError.value = msg === '加载失败' ? '任务加载失败' : msg
   }
 }
