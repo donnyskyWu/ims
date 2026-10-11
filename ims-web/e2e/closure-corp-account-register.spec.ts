@@ -13,6 +13,9 @@ test.describe('platform account register closure', () => {
     await loginAdmin(page)
     await page.goto('/ims/corp/account/douyin')
     await expect(page.locator('h1')).toContainText('抖音')
+    await expect(page.locator('th', { hasText: 'IP 组' })).toBeVisible()
+    await expect(page.locator('th', { hasText: '公司' })).toBeVisible()
+    await expect(page.getByTestId('acct-filter-status').locator('option', { hasText: '已注销' })).toHaveCount(1)
 
     await page.getByTestId('acct-register-open').click()
     const drawer = page.locator('.drawer.on', { hasText: '登记平台账号' })

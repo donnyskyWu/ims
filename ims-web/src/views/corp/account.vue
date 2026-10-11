@@ -72,6 +72,8 @@
             <tr>
               <th>账号编号</th>
               <th>昵称</th>
+              <th>IP 组</th>
+              <th>公司</th>
               <th>责任人</th>
               <th>实名人</th>
               <th>状态</th>
@@ -81,12 +83,12 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7" style="white-space: normal">
+              <td colspan="9" style="white-space: normal">
                 <div class="empty"><div class="et">加载中</div></div>
               </td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7" style="white-space: normal">
+              <td colspan="9" style="white-space: normal">
                 <div class="empty" data-testid="acct-list-empty">
                   <div class="et">{{ emptyTitle }}</div>
                   <div v-if="emptyHint" class="es">{{ emptyHint }}</div>
@@ -96,6 +98,8 @@
             <tr v-for="row in rows" v-else :key="String(row.id)">
               <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">{{ row.accountNo }}</td>
               <td style="font-weight: 500">{{ row.nickname }}</td>
+              <td data-testid="acct-col-ip-group">{{ row.ipGroupName || '—' }}</td>
+              <td data-testid="acct-col-company">{{ row.companyName || '—' }}</td>
               <td>{{ row.holderUserName || '—' }}</td>
               <td>{{ row.realNameMasked || '—' }}</td>
               <td>
@@ -1446,7 +1450,7 @@ const statusOptions = [
   { value: 'RETURNED', label: '已归还' },
   { value: 'CANCELLED', label: '已注销' },
 ]
-const filterStatusOptions = [...statusOptions, { value: 'CANCELLED', label: '已注销' }]
+const filterStatusOptions = statusOptions
 
 const timelineTypes = [
   { value: 'REGISTER', label: '登记' },
