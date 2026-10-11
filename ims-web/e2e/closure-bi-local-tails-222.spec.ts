@@ -67,7 +67,8 @@ test.describe('bi local tails 222', () => {
     await expect(page.locator('h1')).toContainText('指标管理')
     await page.getByRole('button', { name: '新建指标' }).click()
     const metricModal = page.locator('.modal-mask .card').filter({ hasText: '新建指标' })
-    await metricModal.locator('input.fld-in').first().fill(metricName)
+    await metricModal.getByTestId('bi-metric-name').fill(metricName)
+    await metricModal.getByTestId('bi-metric-code').fill(`E2E_M_${Date.now()}`)
     await metricModal.getByRole('button', { name: '保存' }).click()
     await expect(metricModal).toBeHidden({ timeout: 15_000 })
     await page.getByTestId('bi-metric-keyword').fill('no-such-metric-222')
@@ -99,7 +100,7 @@ test.describe('bi local tails 222', () => {
     await page.getByTestId('bi-analysis-from').fill('2026-09-01')
     await page.getByTestId('bi-analysis-to').fill('2026-09-30')
     await page.getByTestId('bi-analysis-run').click()
-    await expect(page.locator('tbody tr', { hasText: metricName })).toBeVisible()
+    await expect(page.locator('tbody tr', { hasText: metricName }).first()).toBeVisible()
 
     await page.goto('/ims/bi/report/preview')
     await expect(page.locator('h1')).toHaveText('预览与下钻')

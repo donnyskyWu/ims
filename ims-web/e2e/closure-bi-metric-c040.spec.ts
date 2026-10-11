@@ -1,33 +1,35 @@
 import { expect, test } from '@playwright/test'
-import { attachClosurePageHooks, loginAs } from './closure-helpers'
+import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
 
 /**
- * BUG-C040 · 复合指标公式白名单（tc_r9）
+ * BUG-C040 · 复合指标公式白名单（admin；tc_r9 走标准 R9，不在此克隆全菜单）
  * 保存 DELETE 被拦；合法公式可保存并试算。存量非法公式的试算拒绝在 pytest 覆盖。
  */
 test.describe('bi metric formula C040', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
 
-  test('tc_r9 cannot save DELETE formula and can preview a whitelist formula', async ({ page }) => {
+  test('cannot save DELETE formula and can preview a whitelist formula', async ({ page }) => {
     test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     const legalName = `C040合法试算${Date.now()}`
 
-    await loginAs(page, 'tc_r9')
+    await loginAdmin(page)
     await page.goto('/ims/bi/metric')
     await expect(page.locator('h1')).toContainText('指标管理')
 
     await page.getByRole('button', { name: '新建指标' }).click()
     const modal = page.locator('.modal-mask .card').filter({ hasText: '新建指标' })
-    await modal.locator('input.fld-in').first().fill('C040注入')
-    await modal.locator('select').first().selectOption('COMPOSITE')
+    await modal.getByTestId('bi-metric-name').fill('C040注入')
+    await modal.getByTestId('bi-metric-code').fill('C040_INJECT')
+    await modal.getByTestId('bi-metric-type').selectOption('COMPOSITE')
     await modal.getByTestId('bi-metric-formula').fill('DELETE FROM x')
     await modal.getByRole('button', { name: '保存' }).click()
     await expect(modal.getByTestId('bi-metric-form-error')).toContainText('1192')
     await expect(modal.getByTestId('bi-metric-form-error')).toContainText('DELETE')
     await expect(page.locator('tbody tr', { hasText: 'C040注入' })).toHaveCount(0)
 
-    await modal.locator('input.fld-in').first().fill(legalName)
+    await modal.getByTestId('bi-metric-name').fill(legalName)
+    await modal.getByTestId('bi-metric-code').fill(`C040_OK_${Date.now()}`)
     await modal.getByTestId('bi-metric-formula').fill('INTERACTION_COUNT / TC_PLAY * 100')
     await modal.getByRole('button', { name: '保存' }).click()
     await expect(modal).toBeHidden({ timeout: 15_000 })

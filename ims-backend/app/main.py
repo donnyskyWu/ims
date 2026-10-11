@@ -1,15 +1,17 @@
 import json
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import AuthError, fail, router
 from app.core import IMS_DB, OPS_DB, SessionLocal, ensure_databases, engine
 from app.core import Base
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from app.models import Role, User, UserRole
+from app.models import Role, RoleMenu, RolePerm, User, UserRole
 from app.security import hash_password
 
+logger = logging.getLogger(__name__)
 
 E2E_OPS_AUTHOR_ID = 900_001
 
@@ -63,18 +65,83 @@ def _ensure_e2e_douyin_account(db, ops) -> None:
     )
 
 
-def _ensure_tc_r9_user(db) -> None:
-    """TC-18 数据分析师。密码与 admin 种子相同，克隆菜单以便指标页纯 UI 登录。"""
-    from app.acct_seed import _ensure_cloned_user
+def _retire_bi_tc_r9(db) -> None:
+    """启动时删除已部署的 bi:tc_r9，并把 tc_r9 改绑到已有的标准 R9。
 
-    _ensure_cloned_user(
-        db,
-        username="tc_r9",
-        nickname="TC-数据分析",
-        mobile="13900001040",
-        role_key="bi:tc_r9",
-        role_name="数据分析师",
+    可重复执行。标准 R9 不存在时不创建，只解绑并记日志。
+    """
+    from app.scope import refresh_user_scope
+
+    roles = list(db.scalars(select(Role).where(Role.role_key == "bi:tc_r9")).all())
+    if not roles:
+        return
+    role_ids = [role.id for role in roles]
+    holder_ids = {int(user_id) for user_id in db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all()}
+    db.execute(delete(RolePerm).where(RolePerm.role_id.in_(role_ids)))
+    db.execute(delete(RoleMenu).where(RoleMenu.role_id.in_(role_ids)))
+    db.execute(delete(UserRole).where(UserRole.role_id.in_(role_ids)))
+    for role in roles:
+        db.delete(role)
+    db.flush()
+
+    user = db.scalar(select(User).where(User.username == "tc_r9", User.deleted == 0))
+    standard = db.scalar(select(Role).where(Role.role_key == "R9", Role.deleted == 0, Role.role_name == "数据分析师"))
+    if user is not None and standard is not None:
+        linked = db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == standard.id))
+        if linked is None:
+            db.add(UserRole(user_id=user.id, role_id=standard.id, tenant_id=user.tenant_id or 0))
+            db.flush()
+    elif user is not None:
+        logger.warning("标准 R9（数据分析师）不存在，已删除 bi:tc_r9 并解除 tc_r9 绑定，未创建 R9")
+    touched = set(holder_ids)
+    if user is not None:
+        touched.add(user.id)
+    for user_id in touched:
+        refresh_user_scope(db, int(user_id))
+
+
+def _keep_tc_r9_on_standard_r9(db) -> None:
+    """启动时把 tc_r9 收成仅标准 R9。
+
+    acct:r3 由账号种子绑到 e2e_acct_r3，fin:r9 由财务种子绑到 e2e_fin_r9，
+    这两处都不写 tc_r9。已部署库若仍把它们（或其它角色）绑在 tc_r9 上，
+    这里只删用户-角色关系，不删角色行。可重复执行。
+    标准 R9 不存在时不创建，只解绑并记日志。
+    """
+    from app.scope import refresh_user_scope
+
+    user = db.scalar(select(User).where(User.username == "tc_r9", User.deleted == 0))
+    if user is None:
+        return
+    standard = db.scalar(
+        select(Role).where(
+            Role.role_key == "R9",
+            Role.deleted == 0,
+            Role.status == "ENABLED",
+            Role.role_name == "数据分析师",
+        )
     )
+    removed: list[str] = []
+    links = list(db.scalars(select(UserRole).where(UserRole.user_id == user.id)).all())
+    for link in links:
+        role = db.get(Role, link.role_id)
+        if standard is not None and role is not None and role.id == standard.id:
+            continue
+        removed.append(role.role_key if role is not None else str(link.role_id))
+        db.delete(link)
+    if standard is not None:
+        linked = db.scalar(
+            select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == standard.id)
+        )
+        if linked is None:
+            db.add(UserRole(user_id=user.id, role_id=standard.id, tenant_id=user.tenant_id or 0))
+    elif removed:
+        logger.warning(
+            "标准 R9（数据分析师）不存在，已解除 tc_r9 的绑定 %s，未创建 R9",
+            ",".join(removed),
+        )
+    db.flush()
+    refresh_user_scope(db, int(user.id))
 
 
 def _ensure_fin_r9_user(db) -> None:
@@ -171,12 +238,12 @@ def seed() -> None:
             ensure_acct_e2e_pool_account(db, admin)
             refresh_acct_e2e_pool(db, admin)
             _ensure_fin_r9_user(db)
-            _ensure_tc_r9_user(db)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
             refresh_perf_e2e_seed(db, admin)
+        _retire_bi_tc_r9(db)
         from app.live_alarm import refresh_live_alarm_e2e
 
         refresh_live_alarm_e2e(db)
@@ -195,9 +262,38 @@ def seed() -> None:
         from app.bi_metric_formula import quarantine_illegal_metric_formulas
 
         quarantine_illegal_metric_formulas(db)
+        _keep_tc_r9_on_standard_r9(db)
         db.commit()
     finally:
         db.close()
+
+
+def ensure_bi_metric_columns() -> None:
+    """已有库补指标单位、数据源、计算方式和条件。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_bi_metric" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_bi_metric")}
+    alters: list[str] = []
+    if "unit" not in cols:
+        alters.append("ADD COLUMN unit VARCHAR(32) NOT NULL DEFAULT ''")
+    if "data_source" not in cols:
+        alters.append("ADD COLUMN data_source VARCHAR(64) NOT NULL DEFAULT ''")
+    if "calc_method" not in cols:
+        alters.append("ADD COLUMN calc_method VARCHAR(32) NOT NULL DEFAULT ''")
+    if "calc_field" not in cols:
+        alters.append("ADD COLUMN calc_field VARCHAR(64) NOT NULL DEFAULT ''")
+    if "summary_field" not in cols:
+        alters.append("ADD COLUMN summary_field VARCHAR(64) NOT NULL DEFAULT ''")
+    if "conditions_json" not in cols:
+        alters.append("ADD COLUMN conditions_json TEXT NULL")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_bi_metric {clause}"))
 
 
 def ensure_content_typeset_columns() -> None:
@@ -535,6 +631,7 @@ def init_db() -> None:
 
     ensure_ops()
     ensure_content_typeset_columns()
+    ensure_bi_metric_columns()
     seed()
 
 

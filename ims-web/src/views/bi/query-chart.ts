@@ -63,6 +63,26 @@ export function bi0SvgLine(series: ChartPoint[]): string {
   return `${g}</svg>`
 }
 
+function textWidth(text: string, size = 11.5): number {
+  let width = 0
+  for (const ch of text) width += ch.charCodeAt(0) > 255 ? size : size * 0.62
+  return width
+}
+
+function fitText(text: string, maxWidth: number, size = 11.5): string {
+  if (textWidth(text, size) <= maxWidth) return text
+  let out = ''
+  for (const ch of text) {
+    if (textWidth(`${out}${ch}…`, size) > maxWidth) break
+    out += ch
+  }
+  return `${out}…`
+}
+
+function xmlText(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 export function bi0SvgPie(series: ChartPoint[]): string {
   const total = series.reduce((a, s) => a + s.v, 0) || 1
   const colors = ['#0071e3', '#34c759', '#ff9f0a', '#ff3b30']
@@ -70,8 +90,14 @@ export function bi0SvgPie(series: ChartPoint[]): string {
   const cx = 80
   const cy = 80
   const circ = 2 * Math.PI * r
+  const nameX = 194
+  const valueRight = 430
+  const pctRight = 512
+  const width = 528
+  const rowH = 28
+  const height = Math.max(168, 20 + series.length * rowH)
   let off = 0
-  let g = `<svg class="bi0-chart-svg" viewBox="0 0 360 168" style="width:100%" role="img" aria-hidden="true">`
+  let g = `<svg class="bi0-chart-svg" viewBox="0 0 ${width} ${height}" style="width:100%" role="img" aria-hidden="true">`
   g += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(0,0,0,.06)" stroke-width="30"/>`
   series.forEach((s, i) => {
     const len = (s.v / total) * circ
@@ -79,10 +105,15 @@ export function bi0SvgPie(series: ChartPoint[]): string {
     off += len
   })
   series.forEach((s, i) => {
-    const y = 34 + i * 26
+    const y = 36 + i * rowH
+    const value = fmtNum(s.v)
+    const pct = `${((s.v / total) * 100).toFixed(1)}%`
+    const valueX = valueRight - textWidth(value)
+    const name = fitText(s.k, Math.max(24, valueX - nameX - 16))
     g += `<rect x="176" y="${y - 9}" width="10" height="10" rx="2" fill="${colors[i % colors.length]}"/>`
-    g += `<text x="194" y="${y}" font-size="11.5" fill="#5f6570">${s.k} · ${fmtNum(s.v)}</text>`
-    g += `<text x="300" y="${y}" font-size="11.5" font-weight="600" fill="#1d1d1f">${((s.v / total) * 100).toFixed(1)}%</text>`
+    g += `<text x="${nameX}" y="${y}" font-size="11.5" fill="#5f6570">${xmlText(name)}</text>`
+    g += `<text x="${valueRight}" y="${y}" text-anchor="end" font-size="11.5" fill="#1d1d1f">${xmlText(value)}</text>`
+    g += `<text x="${pctRight}" y="${y}" text-anchor="end" font-size="11.5" font-weight="600" fill="#1d1d1f">${pct}</text>`
   })
   return `${g}</svg>`
 }
