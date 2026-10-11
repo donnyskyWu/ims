@@ -56,16 +56,19 @@
               <tr>
                 <th>告警</th>
                 <th>场次</th>
+                <th>发生时间</th>
                 <th>规则</th>
                 <th>级别</th>
                 <th>内容</th>
+                <th>处置人</th>
                 <th>处置</th>
+                <th>升级标记</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="error && !records.length">
-                <td colspan="7">
+                <td colspan="10">
                   <div class="empty" data-testid="live-alarm-error-empty">
                     <div class="et">告警列表没有加载出来</div>
                     <button class="btn btn-sec btn-sm" type="button" data-testid="live-alarm-retry-row" @click="loadRecords">重试</button>
@@ -73,7 +76,7 @@
                 </td>
               </tr>
               <tr v-else-if="!records.length">
-                <td colspan="7">
+                <td colspan="10">
                   <div class="empty" data-testid="live-alarm-empty">
                     <div class="et">{{ alarmEmptyTitle }}</div>
                     <div class="es">{{ alarmEmptyHint }}</div>
@@ -82,16 +85,23 @@
               </tr>
               <tr v-for="row in records" v-else :key="row.id" data-testid="live-alarm-row">
                 <td class="mono">{{ row.id }}</td>
-                <td class="mono">{{ row.sessionCode }}</td>
+                <td class="mono">
+                  <router-link :to="{ path: '/ims/live/sessions', query: { sessionCode: row.sessionCode } }">{{ row.sessionCode }}</router-link>
+                </td>
+                <td data-testid="live-alarm-occur">{{ row.occurAt || '—' }}</td>
                 <td>{{ row.ruleName }}</td>
                 <td>L{{ row.alarmLevel }}</td>
                 <td>
                   {{ row.alarmContent }}
                   <span v-if="row.mergeCount > 1" data-testid="live-alarm-merge">×{{ row.mergeCount }}</span>
-                  <span v-if="row.escalated" data-testid="live-alarm-escalated">已升级</span>
                   <span data-testid="live-alarm-stub">{{ stubText(row) }}</span>
                 </td>
+                <td data-testid="live-alarm-handler">{{ row.handlerName || '—' }}</td>
                 <td data-testid="live-alarm-handle-state">{{ statusLabel(row.handleStatus) }}</td>
+                <td>
+                  <span v-if="row.escalated" data-testid="live-alarm-escalated">已升级</span>
+                  <span v-else>—</span>
+                </td>
                 <td>
                   <button
                     v-if="row.handleStatus === 'UNHANDLED' || row.handleStatus === 'CONFIRMED'"
