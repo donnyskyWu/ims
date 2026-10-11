@@ -17,7 +17,7 @@ test.describe('bi publish config C036', () => {
     await reportModal.locator('input.fld-in').first().fill(reportName)
     await reportModal.getByRole('button', { name: '创建并进入设计器' }).click()
     await expect(page.locator('h1')).toContainText('报表设计器')
-    await expect(page.locator('.sub')).toContainText('v1')
+    await expect(page.locator('.pg-h .sub')).toContainText('v1')
 
     await page.getByTestId('bi-publish').click()
     const drawer = page.getByTestId('bi-publish-drawer')
@@ -31,7 +31,7 @@ test.describe('bi publish config C036', () => {
     await drawer.getByTestId('bi-publish-row').selectOption('INHERIT')
     await drawer.getByTestId('bi-publish-now').click()
     await expect(page.getByTestId('bi-save-status')).toContainText('已发布', { timeout: 15_000 })
-    await expect(page.locator('.sub')).toContainText('v1')
+    await expect(page.locator('.pg-h .sub')).toContainText('v1')
 
     await page.getByTestId('bi-back').click()
     await expect(page.locator('h1')).toContainText('报表管理')
