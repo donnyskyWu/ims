@@ -214,6 +214,19 @@ test.describe('content TC-07 P1', () => {
     await expect(submittedRow).toContainText('待一级审核', { timeout: 15_000 })
     await expect(submittedRow.getByRole('button', { name: '提审' })).toHaveCount(0)
 
+    const statsWait = page.waitForResponse(
+      (r) => r.url().includes('/review/first-pass-stats') && r.request().method() === 'GET',
+    )
+    await page.goto('/ims/content/review')
+    const statsRes = await statsWait
+    expect(statsRes.status()).toBe(200)
+    const statsBody = (await statsRes.json()) as { code: number; data?: { firstPassRate?: number } }
+    expect(statsBody.code).toBe(0)
+    expect(statsBody.data?.firstPassRate).not.toBeUndefined()
+    await expect(page.locator('h1')).toHaveText('内容审核', { timeout: 15_000 })
+    await expect(page.locator('.csub')).toContainText('一次通过率')
+    await expect(page.locator('.csub')).not.toContainText('—%')
+
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })
 

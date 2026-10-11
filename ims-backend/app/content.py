@@ -1134,6 +1134,52 @@ def review_queue(
     return paged([review_vo(db, row) for row in page_rows], total, page_no, size)
 
 
+@router.get("/review/first-pass-stats")
+def review_first_pass_stats(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    """与审核队列同属 GET /content/review → ims_content_review，不另设菜单权限码。"""
+    rows = db.scalars(
+        select(ContentReview).where(
+            ContentReview.deleted == 0,
+            ContentReview.tenant_id == tenant(actor),
+            ContentReview.conclusion.is_not(None),
+        )
+    ).all()
+    total = len(rows)
+    first_pass = sum(1 for row in rows if row.first_pass)
+    rate = round(first_pass / total, 4) if total else 0.0
+    return ok({"firstPassRate": rate, "total": total, "trend": []})
+
+
+@router.get("/review/reject-analysis")
+def review_reject_analysis(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    rows = db.scalars(
+        select(ContentReview).where(
+            ContentReview.deleted == 0,
+            ContentReview.tenant_id == tenant(actor),
+            ContentReview.conclusion == "REJECT_BACK",
+        )
+    ).all()
+    counts: dict[str, int] = {}
+    for row in rows:
+        for item in row.reject_items or []:
+            code = item.get("itemCode") or "UNKNOWN"
+            counts[code] = counts.get(code, 0) + 1
+    total = sum(counts.values()) or 1
+    by_item = []
+    for item in DEFAULT_REVIEW_CHECKLIST:
+        code = item["itemCode"]
+        count = counts.get(code, 0)
+        by_item.append(
+            {
+                "itemCode": code,
+                "itemDesc": item["itemDesc"],
+                "count": count,
+                "ratio": round(count / total, 4),
+            }
+        )
+    return ok({"byItem": by_item})
+
+
 @router.get("/review/{review_no}")
 def review_detail(
     review_no: str,
@@ -1270,51 +1316,6 @@ def review_conclusion(
     elif project is not None and body.conclusion == "TERMINATE":
         project.review_passed = 0
     return ok(None)
-
-
-@router.get("/review/first-pass-stats")
-def review_first_pass_stats(db: Session = Depends(db_session), actor: User = Depends(current_user)):
-    rows = db.scalars(
-        select(ContentReview).where(
-            ContentReview.deleted == 0,
-            ContentReview.tenant_id == tenant(actor),
-            ContentReview.conclusion.is_not(None),
-        )
-    ).all()
-    total = len(rows)
-    first_pass = sum(1 for row in rows if row.first_pass)
-    rate = round(first_pass / total, 4) if total else 0.0
-    return ok({"firstPassRate": rate, "total": total, "trend": []})
-
-
-@router.get("/review/reject-analysis")
-def review_reject_analysis(db: Session = Depends(db_session), actor: User = Depends(current_user)):
-    rows = db.scalars(
-        select(ContentReview).where(
-            ContentReview.deleted == 0,
-            ContentReview.tenant_id == tenant(actor),
-            ContentReview.conclusion == "REJECT_BACK",
-        )
-    ).all()
-    counts: dict[str, int] = {}
-    for row in rows:
-        for item in row.reject_items or []:
-            code = item.get("itemCode") or "UNKNOWN"
-            counts[code] = counts.get(code, 0) + 1
-    total = sum(counts.values()) or 1
-    by_item = []
-    for item in DEFAULT_REVIEW_CHECKLIST:
-        code = item["itemCode"]
-        count = counts.get(code, 0)
-        by_item.append(
-            {
-                "itemCode": code,
-                "itemDesc": item["itemDesc"],
-                "count": count,
-                "ratio": round(count / total, 4),
-            }
-        )
-    return ok({"byItem": by_item})
 
 
 @router.post("/publish")

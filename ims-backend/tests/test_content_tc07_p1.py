@@ -343,6 +343,23 @@ def test_b009_two_level_status_filters():
     assert other_account.json()["data"]["list"] == []
 
 
+def test_b062_first_pass_stats_same_perm_as_review():
+    from app.scope import match_table
+
+    path = "/admin-api/ims/content/review/first-pass-stats"
+    assert match_table("GET", path) == "ims_content_review"
+    assert match_table("GET", "/admin-api/ims/content/review/queue") == "ims_content_review"
+
+    auth = headers()
+    stats = client.get(path, headers=auth)
+    assert stats.status_code == 200
+    body = stats.json()
+    assert body["code"] == 0
+    assert isinstance(body["data"]["firstPassRate"], float)
+    queue = client.get("/admin-api/ims/content/review/queue", headers=auth)
+    assert queue.json()["code"] == 0
+
+
 def test_b007_export_and_batch():
     auth = headers()
     title = "TC07 批量内容"
