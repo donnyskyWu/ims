@@ -384,14 +384,14 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '直播数据'" class="tbl-block" style="margin-top: 12px">
-        <p class="hint">GMV / 峰值 / 涨粉等由下播录入承载；此处只读 live_room。</p>
+        <p class="hint">GMV、峰值、涨粉由下播录入承载。此处只读 Football 直播间，结束时间仅作参考，不改变本场状态。</p>
         <div class="acts" style="margin: 8px 0">
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-sync-btn" @click="doSync">从 Football 同步</button>
         </div>
         <p v-if="syncError" class="hint bad" data-testid="live-sync-error">{{ syncError }}</p>
         <div v-if="metrics && !metrics.footballRoomBasic" class="empty" data-testid="live-metrics-empty">
           <div class="et">未绑定 Football 房间</div>
-          <div class="es">观看、点赞、预约留在 live_room；GMV 仍走下播录入。</div>
+          <div class="es">绑定直播间后可看到观看、点赞和预约。GMV 仍走下播录入。</div>
         </div>
         <table v-if="metrics" class="ipg-info-grid">
           <tbody>
@@ -577,7 +577,7 @@
           </li>
         </ul>
         <p v-else class="hint" data-testid="live-bound-empty">暂无绑定设备</p>
-        <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
+        <p class="hint" data-testid="live-related-alarm-title">告警摘要</p>
         <table v-if="alarms.length">
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
           <tbody>
@@ -966,7 +966,7 @@ const sessionsEmptyHint = computed(() => {
     query.timeTo
   return narrowed
     ? '没有符合当前账号、责任人或筛选条件的场次。'
-    : '登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。'
+    : '登记后生成 19 位场次 ID。直播数据页只读 Football 直播间。'
 })
 
 function ledgerQueryParams(withPage: boolean) {
@@ -1372,7 +1372,7 @@ const basicLines = computed(() => {
     { k: '实际时长', v: d.durationMinutes == null ? '—' : `${d.durationMinutes} 分钟` },
     { k: '取消原因', v: d.cancelReason || '—' },
     { k: '补录', v: d.isSupplement ? d.supplementReason || '待审批' : '否' },
-    { k: 'Football room', v: d.footballRoomId || '—' },
+    { k: 'Football 直播间', v: d.footballRoomId || '—' },
   ]
 })
 
@@ -1502,7 +1502,7 @@ async function doSync() {
   syncError.value = ''
   try {
     metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, {})
-    hint.value = '已同步 live_room'
+    hint.value = '已同步 Football 直播间'
   } catch (e: unknown) {
     syncError.value = bizError(e)
     hint.value = syncError.value
