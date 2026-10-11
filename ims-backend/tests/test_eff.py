@@ -318,34 +318,55 @@ def test_eff_inventory_snapshot():
 
 
 def _role_user(db, username: str, role_key: str, data_scope: str, mobile: str):
+    """按 role_key 复用启动种子里的角色，没有才创建。用户同名时也复用。"""
+    from sqlalchemy import func, select
+
     from app.models import Role, RolePerm, User, UserRole
     from app.security import hash_password
 
-    user = User(
-        username=username,
-        nickname=username,
-        mobile=mobile,
-        password_hash=hash_password("Admin@123"),
-        status="ENABLED",
-        tenant_id=0,
+    role = db.scalar(select(Role).where(func.lower(Role.role_key) == role_key.lower(), Role.deleted == 0))
+    if role is None:
+        role = Role(
+            role_name=username,
+            role_key=role_key,
+            data_scope=data_scope,
+            status="ENABLED",
+            source="MANUAL",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+    perm = db.scalar(
+        select(RolePerm).where(RolePerm.role_id == role.id, RolePerm.perm_code == "ims:eff:relation:query")
     )
-    role = Role(
-        role_name=username,
-        role_key=role_key,
-        data_scope=data_scope,
-        status="ENABLED",
-        source="MANUAL",
-        tenant_id=0,
-    )
-    db.add_all([user, role])
-    db.flush()
-    db.add(RolePerm(role_id=role.id, module_code="eff", perm_code="ims:eff:relation:query", perm_level="R", tenant_id=0))
-    db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+    if perm is None:
+        db.add(RolePerm(role_id=role.id, module_code="eff", perm_code="ims:eff:relation:query", perm_level="R", tenant_id=0))
+    user = db.scalar(select(User).where(User.username == username, User.deleted == 0))
+    password_hash = hash_password("Admin@123")
+    if user is None:
+        user = User(
+            username=username,
+            nickname=username,
+            mobile=mobile,
+            password_hash=password_hash,
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+    else:
+        user.password_hash = password_hash
+        user.status = "ENABLED"
+        if not user.mobile:
+            user.mobile = mobile
+    linked = db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id))
+    if linked is None:
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
     return user, role
 
 
 def test_bug_c054_relation_list_scope_r7_self_r4_all():
-    """R7 只看本人归属；R4 看全部。同时持有两角色时取最宽。"""
+    """R7 只看本人归属；R4 看全部。同时持有两角色时取最宽。角色按 role_key 复用种子。"""
     from app.core import SessionLocal
     from app.models import User, UserRole
 
@@ -422,3 +443,50 @@ def test_bug_c054_relation_list_scope_r7_self_r4_all():
     ).json()["data"]
     assert widest["total"] >= 1
     assert {row["userId"] for row in widest["list"]} == {r4_id}
+
+
+def test_r9_relation_write_forbidden_query_ok():
+    """标准 R9 只读：建立、变更、删除均为 403 / 1008，列表仍可查。"""
+    from app.core import SessionLocal
+
+    auth = headers()
+    db = SessionLocal()
+    try:
+        analyst, _role = _role_user(db, "tc_r9", "R9", "ALL", "13900000091")
+        db.commit()
+        analyst_id = analyst.id
+    finally:
+        db.close()
+
+    created = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=auth,
+        json={"userId": analyst_id, "relationType": "PRIMARY", "targetName": "分析师主归属", "shareRatio": 100},
+    )
+    assert created.json()["code"] == 0, created.json()
+    relation_id = created.json()["data"]["id"]
+
+    r9 = headers_for("tc_r9")
+    listed = client.get("/admin-api/ims/eff/relation/list", headers=r9, params={"pageSize": 20})
+    assert listed.status_code == 200
+    assert listed.json()["code"] == 0
+    assert listed.json()["data"]["total"] >= 1
+
+    denied_create = client.post(
+        "/admin-api/ims/eff/relation",
+        headers=r9,
+        json={"userId": analyst_id, "relationType": "PART_TIME", "targetName": "越权兼职", "shareRatio": 10},
+    )
+    denied_update = client.put(
+        f"/admin-api/ims/eff/relation/{relation_id}",
+        headers=r9,
+        json={"action": "TERMINATE", "effectiveDate": "2026-10-12"},
+    )
+    denied_delete = client.delete(f"/admin-api/ims/eff/relation/{relation_id}", headers=r9)
+    for response in (denied_create, denied_update, denied_delete):
+        assert response.status_code == 403
+        assert response.json()["code"] == 1008
+    caps = client.get("/admin-api/ims/eff/relation/coverage", headers=r9).json()["data"]
+    assert caps["canCreate"] is False
+    assert caps["canChange"] is False
+    assert caps["canDelete"] is False

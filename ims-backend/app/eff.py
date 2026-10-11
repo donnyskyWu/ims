@@ -88,12 +88,21 @@ def relation_list_scope(db: Session, actor: User) -> str:
 
 
 def can_manage_relation(db: Session, actor: User) -> bool:
+    """建立、变更仅 R1/R2。R9 只读，不因全量数据范围获得写权限。"""
     tags = actor_tags(db, actor)
     return "r1" in tags or "r2" in tags
 
 
 def can_delete_relation(db: Session, actor: User) -> bool:
     return "r1" in actor_tags(db, actor)
+
+
+def r9_write_fallback(db: Session, actor: User):
+    """R9 写操作兜底。已具备 R1/R2 的账号不拦截。"""
+    tags = actor_tags(db, actor)
+    if "r9" in tags and "r1" not in tags and "r2" not in tags:
+        return fail(1008, "无权限建立归属")
+    return None
 
 
 def resolve_target_name(ops: Session, tenant_id: int, target_type: str, target_id: int, fallback: str) -> str:
@@ -222,6 +231,9 @@ def relation_create(
     tenant_id = tenant_of(actor)
     if not can_manage_relation(db, actor):
         return fail(1008, "无权限建立归属")
+    denied = r9_write_fallback(db, actor)
+    if denied is not None:
+        return denied
     rtype = body.relationType.strip().upper()
     if rtype not in {"PRIMARY", "PART_TIME"}:
         return fail(1001, "归属类型无效")
@@ -270,6 +282,9 @@ def relation_change(
     tenant_id = tenant_of(actor)
     if not can_manage_relation(db, actor):
         return fail(1008, "无权限变更归属")
+    denied = r9_write_fallback(db, actor)
+    if denied is not None:
+        return denied
     row = db.get(EffRelation, relation_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1504, "归属不存在")
@@ -333,6 +348,9 @@ def relation_delete(
     tenant_id = tenant_of(actor)
     if not can_delete_relation(db, actor):
         return fail(1008, "无权限删除归属，仅管理员可删除误操作记录")
+    denied = r9_write_fallback(db, actor)
+    if denied is not None:
+        return denied
     row = db.get(EffRelation, relation_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1504, "归属不存在")
