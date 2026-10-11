@@ -196,6 +196,7 @@ def grants_for(role_key: str) -> dict[str, str]:
     _apply_eff_relation(role_key, levels)
     _apply_comp_review(role_key, levels)
     _apply_dict_data_read(levels)
+    _apply_report_edit(role_key, levels)
     return levels
 
 
@@ -256,6 +257,16 @@ def grant_dict_data_readers(db: Session) -> None:
             continue
         _link(db, role, menu, "R")
     db.flush()
+
+
+# BI-001：设计/维护报表。R2 仅使用，R7/R8/R10/R11 不设计。分享只读不靠这个码。
+REPORT_EDIT_PERM = "bi:report:edit"
+_REPORT_EDIT_ROLES = frozenset({"R1", "R3", "R4", "R5", "R6", "R9"})
+
+
+def _apply_report_edit(role_key: str, levels: dict[str, str]) -> None:
+    if role_key in _REPORT_EDIT_ROLES:
+        _raise(levels, REPORT_EDIT_PERM, "R")
 
 
 def _apply_comp_review(role_key: str, levels: dict[str, str]) -> None:

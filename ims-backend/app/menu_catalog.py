@@ -289,6 +289,7 @@ CATALOG = (
     ('menu:biList:add', 'menu:biList:query', '报表管理·新增', 'BUTTON', '', 'biList', 285),
     ('menu:biList:edit', 'menu:biList:query', '报表管理·编辑', 'BUTTON', '', 'biList', 286),
     ('menu:biList:remove', 'menu:biList:query', '报表管理·删除', 'BUTTON', '', 'biList', 287),
+    ('bi:report:edit', 'menu:biList:query', '报表设计·编辑', 'BUTTON', '', 'biList', 2871),
     ('menu:bi0Report:query', 'nav:bi-report:query', '报表中心', 'MENU', '/ims/bi/report', 'bi0Report', 288),
     ('menu:bi0Report:add', 'menu:bi0Report:query', '报表中心·新增', 'BUTTON', '', 'bi0Report', 289),
     ('menu:bi0Report:edit', 'menu:bi0Report:query', '报表中心·编辑', 'BUTTON', '', 'bi0Report', 290),
