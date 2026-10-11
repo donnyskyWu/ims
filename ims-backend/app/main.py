@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +11,7 @@ from sqlalchemy import delete, select
 from app.models import Role, RoleMenu, RolePerm, User, UserRole
 from app.security import hash_password
 
+logger = logging.getLogger(__name__)
 
 E2E_OPS_AUTHOR_ID = 900_001
 
@@ -64,26 +66,37 @@ def _ensure_e2e_douyin_account(db, ops) -> None:
 
 
 def _retire_bi_tc_r9(db) -> None:
-    """撤掉误种的全权限角色 bi:tc_r9 及其菜单授权。
+    """启动时删除已部署的 bi:tc_r9，并把 tc_r9 改绑到已有的标准 R9。
 
-    tc_r9 应使用标准 R9。这里不创建 R9，也不复制管理员权限。
-    已存在的用户账号保留，只解除和该角色的绑定。
+    可重复执行。标准 R9 不存在时不创建，只解绑并记日志。
     """
-    from app.core import utcnow
     from app.scope import refresh_user_scope
 
-    role = db.scalar(select(Role).where(Role.role_key == "bi:tc_r9", Role.deleted == 0))
-    if role is None:
+    roles = list(db.scalars(select(Role).where(Role.role_key == "bi:tc_r9")).all())
+    if not roles:
         return
-    holder_ids = list(db.scalars(select(UserRole.user_id).where(UserRole.role_id == role.id)).all())
-    db.execute(delete(RolePerm).where(RolePerm.role_id == role.id))
-    db.execute(delete(RoleMenu).where(RoleMenu.role_id == role.id))
-    db.execute(delete(UserRole).where(UserRole.role_id == role.id))
-    role.deleted = 1
-    role.status = "DISABLED"
-    role.updated_at = utcnow()
+    role_ids = [role.id for role in roles]
+    holder_ids = {int(user_id) for user_id in db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all()}
+    db.execute(delete(RolePerm).where(RolePerm.role_id.in_(role_ids)))
+    db.execute(delete(RoleMenu).where(RoleMenu.role_id.in_(role_ids)))
+    db.execute(delete(UserRole).where(UserRole.role_id.in_(role_ids)))
+    for role in roles:
+        db.delete(role)
     db.flush()
-    for user_id in holder_ids:
+
+    user = db.scalar(select(User).where(User.username == "tc_r9", User.deleted == 0))
+    standard = db.scalar(select(Role).where(Role.role_key == "R9", Role.deleted == 0, Role.role_name == "数据分析师"))
+    if user is not None and standard is not None:
+        linked = db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == standard.id))
+        if linked is None:
+            db.add(UserRole(user_id=user.id, role_id=standard.id, tenant_id=user.tenant_id or 0))
+            db.flush()
+    elif user is not None:
+        logger.warning("标准 R9（数据分析师）不存在，已删除 bi:tc_r9 并解除 tc_r9 绑定，未创建 R9")
+    touched = set(holder_ids)
+    if user is not None:
+        touched.add(user.id)
+    for user_id in touched:
         refresh_user_scope(db, int(user_id))
 
 
