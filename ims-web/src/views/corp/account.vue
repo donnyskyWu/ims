@@ -2430,15 +2430,33 @@ function changeSize(ev: Event) {
 }
 
 function reloadTimeline() {
-  if (detail.value?.id) loadTimeline(detail.value.id)
+  const id = detail.value?.id
+  if (id) loadTimeline(id)
+}
+
+let timelineLoadToken = 0
+
+function timelineRows(data: unknown) {
+  if (!data || typeof data !== 'object') return null
+  const body = data as { list?: unknown; events?: unknown }
+  if (Array.isArray(body.list)) return body.list as typeof timelineEvents.value
+  if (Array.isArray(body.events)) return body.events as typeof timelineEvents.value
+  return null
 }
 
 async function loadTimeline(accountId: unknown) {
+  const token = ++timelineLoadToken
   timelineLoading.value = true
   timelineError.value = ''
   timelineEvents.value = []
   if (timelineRangeHint.value) {
     timelineLoading.value = false
+    return
+  }
+  const id = Number(accountId)
+  if (!Number.isFinite(id) || id <= 0) {
+    timelineLoading.value = false
+    timelineError.value = '时间线加载失败'
     return
   }
   try {
@@ -2447,16 +2465,22 @@ async function loadTimeline(accountId: unknown) {
     if (timelineFrom.value && timelineTo.value) {
       params.timeRange = [`${timelineFrom.value} 00:00:00`, `${timelineTo.value} 23:59:59`]
     }
-    const res = await http.get(`/account/timeline/${accountId}`, {
+    const res = await http.get(`/account/timeline/${id}`, {
       params,
       paramsSerializer: { indexes: null },
     })
-    const data = res.data?.data as { list: typeof timelineEvents.value }
-    timelineEvents.value = data?.list || []
+    if (token !== timelineLoadToken) return
+    const rows = timelineRows(res.data?.data)
+    if (!rows) {
+      timelineError.value = '时间线加载失败'
+      return
+    }
+    timelineEvents.value = rows
   } catch (e: unknown) {
-    timelineError.value = bizMessage(e)
+    if (token !== timelineLoadToken) return
+    timelineError.value = bizMessage(e) || '时间线加载失败'
   } finally {
-    timelineLoading.value = false
+    if (token === timelineLoadToken) timelineLoading.value = false
   }
 }
 

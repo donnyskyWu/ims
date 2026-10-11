@@ -394,34 +394,52 @@ def timeline(
         stmt = stmt.where(AccountTimelineEvent.event_type.in_(selected))
     if start is not None and end is not None:
         stmt = stmt.where(AccountTimelineEvent.event_time >= start, AccountTimelineEvent.event_time <= end)
-    rows = list(db.scalars(stmt.order_by(AccountTimelineEvent.event_time.desc())).all())
+    rows = list(db.scalars(stmt.order_by(AccountTimelineEvent.event_time.desc(), AccountTimelineEvent.id.desc())).all())
     # 显示字段在读出时格式化。snapshot_summary / event_time 仍是原值，不改正文、不改全局时区。
-    from app.acct_pool import beijing_clock, render_summary, summary_user_ids, user_names
+    # 格式化失败也不能把整段时间线变成空列表：页面会把非 JSON / 失败响应当成「暂无事件」。
+    names: dict[int, str] = {}
+    render = None
+    clock = None
+    try:
+        from app.acct_pool import beijing_clock, render_summary, summary_user_ids, user_names
 
-    names = user_names(db, summary_user_ids(rows))
-    return ok(
-        {
-            "list": [
-                {
-                    "id": r.id,
-                    "accountId": r.account_id,
-                    "eventType": r.event_type,
-                    "eventLabel": TIMELINE_EVENT_LABEL.get(r.event_type, r.event_type),
-                    "refNo": r.ref_no,
-                    "refId": r.ref_id,
-                    "operatorUserId": r.operator_user_id,
-                    "operatorName": names.get(int(r.operator_user_id or 0), ""),
-                    "snapshotSummary": r.snapshot_summary,
-                    "snapshotText": render_summary(r.snapshot_summary or "", names),
-                    "remark": r.remark,
-                    "eventTime": r.event_time.strftime("%Y-%m-%dT%H:%M:%S") if r.event_time else "",
-                    "eventTimeText": beijing_clock(r.event_time),
-                }
-                for r in rows
-            ],
-            "total": len(rows),
-        }
-    )
+        names = user_names(db, summary_user_ids(rows))
+        render = render_summary
+        clock = beijing_clock
+    except Exception:
+        names = _timeline_operator_names(db, rows)
+    events = []
+    for row in rows:
+        summary = row.snapshot_summary or ""
+        when = row.event_time.strftime("%Y-%m-%dT%H:%M:%S") if row.event_time else ""
+        shown = ""
+        text = ""
+        try:
+            if clock is not None:
+                shown = clock(row.event_time)
+            if render is not None:
+                text = render(summary, names)
+        except Exception:
+            shown = ""
+            text = ""
+        events.append(
+            {
+                "id": row.id,
+                "accountId": row.account_id,
+                "eventType": row.event_type,
+                "eventLabel": TIMELINE_EVENT_LABEL.get(row.event_type, row.event_type),
+                "refNo": row.ref_no,
+                "refId": row.ref_id,
+                "operatorUserId": row.operator_user_id,
+                "operatorName": names.get(int(row.operator_user_id or 0), ""),
+                "snapshotSummary": summary,
+                "snapshotText": text,
+                "remark": row.remark,
+                "eventTime": when,
+                "eventTimeText": shown,
+            }
+        )
+    return ok({"list": events, "events": events, "total": len(events), "accountId": account_id})
 
 
 @router.post("/account/return/submit")

@@ -76,6 +76,8 @@ def test_timeline_includes_chinese_label_and_operator():
     payload = timeline.json()
     assert payload["code"] == 0, payload
     events = payload["data"]["list"]
+    assert payload["data"]["events"] == events
+    assert events, payload
     apply_event = next(item for item in events if item["eventType"] == "APPLY")
     assert apply_event["eventLabel"] == "领用"
     assert apply_event["operatorName"] == "管理员"
