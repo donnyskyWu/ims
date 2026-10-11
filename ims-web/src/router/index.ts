@@ -139,12 +139,16 @@ const HIDDEN_GUARDED = new Set([
   '/ims/air/cfg',
 ])
 
+function loginTarget(fullPath: string) {
+  return { path: '/login', query: { redirect: fullPath } }
+}
+
 router.beforeEach(async (to) => {
   const user = useUserStore()
   if (to.path === '/login' || to.path === '/403') return true
-  if (!user.accessToken) return '/login'
+  if (!user.accessToken) return loginTarget(to.fullPath)
   await user.loadAccess()
-  if (!user.accessToken) return '/login'
+  if (!user.accessToken) return loginTarget(to.fullPath)
   if (user.canOpen(to.path)) return true
   if (HIDDEN_GUARDED.has(to.path)) return '/403'
   return '/ims/workbench'

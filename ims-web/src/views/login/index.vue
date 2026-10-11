@@ -23,7 +23,8 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { safeInternalRedirect } from '../../auth/sessionPolicy'
 import { errorMessage } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
@@ -33,13 +34,14 @@ const error = ref('')
 const loading = ref(false)
 const user = useUserStore()
 const router = useRouter()
+const route = useRoute()
 
 async function submit() {
   error.value = ''
   loading.value = true
   try {
     await user.login(username.value, password.value)
-    router.push('/ims/system/user')
+    router.push(safeInternalRedirect(route.query.redirect) || '/ims/system/user')
   } catch (e: unknown) {
     error.value = errorMessage(e)
   } finally {

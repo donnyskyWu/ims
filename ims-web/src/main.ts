@@ -5,5 +5,11 @@ import 'element-plus/dist/index.css'
 import './styles/prototype.css'
 import App from './App.vue'
 import router from './router'
+import { bindSessionCleaner } from './auth/session'
+import { useUserStore } from './stores/user'
 
-createApp(App).use(createPinia()).use(router).use(ElementPlus).mount('#app')
+const app = createApp(App)
+const pinia = createPinia()
+app.use(pinia)
+bindSessionCleaner(() => useUserStore(pinia).clearLocalSession())
+app.use(router).use(ElementPlus).mount('#app')

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { http } from '../api/http'
+import { http, isSessionInvalidError } from '../api/http'
+import { resetSessionExpiry } from '../auth/session'
 
 type Profile = { userId: string; nickname?: string; username?: string }
 
@@ -68,6 +69,7 @@ export const useUserStore = defineStore('user', {
       localStorage.setItem('ims_access', this.accessToken)
       localStorage.setItem('ims_refresh', this.refreshToken)
       localStorage.setItem('ims_profile', JSON.stringify(this.profile))
+      resetSessionExpiry()
       await this.loadAccess()
     },
     async loadAccess() {
@@ -82,8 +84,12 @@ export const useUserStore = defineStore('user', {
         this.permCodes = Array.isArray(data.permCodes) ? data.permCodes : []
         this.permLevels = data.permLevels && typeof data.permLevels === 'object' ? data.permLevels : {}
         this.routes = Array.isArray(data.routes) ? data.routes : []
-      } catch {
+      } catch (error) {
         if (gen !== this.accessGen) return
+        if (isSessionInvalidError(error)) {
+          this.clearLocalSession()
+          return
+        }
         this.admin = false
         this.fullCatalog = false
         this.permCodes = []
@@ -102,25 +108,29 @@ export const useUserStore = defineStore('user', {
       if (this.profile) localStorage.setItem('ims_profile', JSON.stringify(this.profile))
       this.accessReady = false
       this.accessGen += 1
+      resetSessionExpiry()
       await this.loadAccess()
+    },
+    clearLocalSession() {
+      this.accessToken = ''
+      this.refreshToken = ''
+      this.profile = null
+      this.permCodes = []
+      this.permLevels = {}
+      this.routes = []
+      this.admin = false
+      this.fullCatalog = false
+      this.accessReady = false
+      this.accessGen += 1
+      localStorage.removeItem('ims_access')
+      localStorage.removeItem('ims_refresh')
+      localStorage.removeItem('ims_profile')
     },
     async logout() {
       try {
         await http.post('/auth/sso/logout', { refreshToken: this.refreshToken })
       } finally {
-        this.accessToken = ''
-        this.refreshToken = ''
-        this.profile = null
-        this.permCodes = []
-        this.permLevels = {}
-        this.routes = []
-        this.admin = false
-        this.fullCatalog = false
-        this.accessReady = false
-        this.accessGen += 1
-        localStorage.removeItem('ims_access')
-        localStorage.removeItem('ims_refresh')
-        localStorage.removeItem('ims_profile')
+        this.clearLocalSession()
       }
     },
   },
