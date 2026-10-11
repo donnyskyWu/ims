@@ -55,7 +55,7 @@
                     data-testid="bi-query-limit"
                     type="number"
                     min="1"
-                    max="1000"
+                    max="100000"
                   />
                 </label>
                 <label class="fld">
@@ -465,7 +465,7 @@ const resultFieldMap = ref<Record<string, string>>({})
 const builder = reactive({
   entityCode: '',
   selectFields: [] as string[],
-  limit: 100,
+  limit: 1000,
   dateFrom: '',
   dateTo: '',
   condValue: '',
@@ -594,7 +594,7 @@ function dateEdge(): string {
 
 function limitEdge(): string {
   const limit = Number(builder.limit)
-  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) return '行数上限须为 1~1000'
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100000) return '行数上限须为 1~100000'
   return ''
 }
 
@@ -784,6 +784,11 @@ async function runAdhoc() {
     syncResultFieldMap()
     await fetchAdhoc(1, resultPageSize.value)
   } catch (error: unknown) {
+    if (rejectedCode(error) === 1262) {
+      toast.value = '导出任务已提交'
+      formError.value = ''
+      return
+    }
     formError.value = errorMessage(error)
   } finally {
     running.value = false

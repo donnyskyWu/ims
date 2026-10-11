@@ -5,8 +5,9 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
-from app.core import Base, engine
+from app.core import Base, SessionLocal, engine
 from app.main import app, init_db
+from app.models import Notify
 from app.ops_db import OpsBase, ops_engine
 
 client = TestClient(app)
@@ -222,6 +223,37 @@ def test_bi_query_sources_and_agg_join_preview():
     assert ":tenant_id" in sql
     assert ":p0" in sql
     assert "电竞一组" not in sql
+
+
+def test_bi_query_limit_and_timeout_export():
+    auth = headers()
+    client.get("/admin-api/ims/bi/query/sources", headers=auth)
+    too_big = client.post(
+        "/admin-api/ims/bi/query/run",
+        headers=auth,
+        json={"entityCode": "IP_GROUP", "config": {"selectFields": ["group_name"], "limit": 100001}},
+    )
+    assert too_big.json()["code"] == 1001
+    assert "100000" in too_big.json()["msg"]
+    os.environ["IMS_BI_QUERY_TIMEOUT_MS"] = "0"
+    try:
+        timed = client.post(
+            "/admin-api/ims/bi/query/run",
+            headers=auth,
+            json={"entityCode": "IP_GROUP", "config": {"selectFields": ["group_name"], "limit": 100000}},
+        )
+        body = timed.json()
+        assert body["code"] == 1262, body
+        assert body["msg"] == "导出任务已提交"
+        task_id = body["data"]["exportTaskId"]
+        db = SessionLocal()
+        try:
+            note = db.query(Notify).filter(Notify.event_type == "BI_QUERY_EXPORT", Notify.biz_key == task_id).one()
+            assert note.deleted == 0
+        finally:
+            db.close()
+    finally:
+        os.environ.pop("IMS_BI_QUERY_TIMEOUT_MS", None)
 
 
 def test_bi_query_adhoc_run_does_not_create_row():

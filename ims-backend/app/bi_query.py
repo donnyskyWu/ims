@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+import uuid
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -13,6 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
+from app.audit import publish_notify
 from app.bi_drill import router as bi_drill_router
 from app.core import utcnow
 from app.corp import count_of, ops_db, page_args, paged, tenant_of, visible
@@ -24,11 +28,19 @@ router.include_router(bi_drill_router)
 
 _IDENT = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_MAX_LIMIT = 1000
+_MAX_LIMIT = 100000
 
 
 def limit_ok(limit: int) -> bool:
     return 1 <= limit <= _MAX_LIMIT
+
+
+def bi_query_timeout_ms() -> int:
+    raw = os.environ.get("IMS_BI_QUERY_TIMEOUT_MS", "8000")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 8000
 
 
 class QueryCondition(BaseModel):
@@ -43,7 +55,7 @@ class QueryConfigBody(BaseModel):
     selectFields: list[str] = Field(default_factory=list)
     conditions: list[QueryCondition] = Field(default_factory=list)
     orderBy: list[str] = Field(default_factory=list)
-    limit: int = 100
+    limit: int = 1000
     aggFunc: str = ""
     aggField: str = ""
     groupBy: list[str] = Field(default_factory=list)
@@ -417,7 +429,7 @@ def build_preview_sql(
         if order_parts:
             sql += " ORDER BY " + ", ".join(order_parts)
     if not limit_ok(config.limit):
-        return None, fail(1001, "行数上限须为 1~1000"), None
+        return None, fail(1001, "行数上限须为 1~100000"), None
     sql += f" LIMIT {int(config.limit)}"
     return sql, params, out_aliases
 
@@ -484,6 +496,28 @@ def execute_query(
     start = (pg_no - 1) * pg_size
     page_rows = data_rows[start : start + pg_size]
     cost_ms = int((time.perf_counter() - t0) * 1000)
+    if cost_ms >= bi_query_timeout_ms():
+        task_id = uuid.uuid4().hex
+        folder = Path(os.environ.get("IMS_BI_EXPORT_DIR", "/tmp/ims-bi-exports"))
+        folder.mkdir(parents=True, exist_ok=True)
+        artifact = {
+            "exportTaskId": task_id,
+            "entityCode": entity.entity_code,
+            "sql": sql,
+            "status": "SUBMITTED",
+            "message": "导出任务已提交",
+        }
+        (folder / f"{task_id}.json").write_text(json.dumps(artifact, ensure_ascii=False), encoding="utf-8")
+        publish_notify(
+            ims,
+            event_type="BI_QUERY_EXPORT",
+            biz_key=task_id,
+            receiver=(actor.username if actor is not None else "system"),
+            receiver_user_id=actor.id if actor is not None else 0,
+            tenant_id=tenant_id,
+            creator=actor.id if actor is not None else 0,
+        )
+        return None, fail(1262, "导出任务已提交", {"message": "导出任务已提交", "exportTaskId": task_id})
     return {
         "sql": sql,
         "columns": columns,
@@ -570,7 +604,7 @@ def query_run_adhoc(
     if not body.entityCode.strip():
         return fail(1001, "请选择数据源")
     if not limit_ok(body.config.limit):
-        return fail(1001, "行数上限须为 1~1000")
+        return fail(1001, "行数上限须为 1~100000")
     entity, fields, err = load_entity_bundle(ims, actor, body.entityCode)
     if err:
         return err
@@ -600,7 +634,7 @@ def query_preview(
     if not body.entityCode.strip():
         return fail(1001, "请选择数据源")
     if not limit_ok(body.config.limit):
-        return fail(1001, "行数上限须为 1~1000")
+        return fail(1001, "行数上限须为 1~100000")
     entity, fields, err = load_entity_bundle(ims, actor, body.entityCode)
     if err:
         return err
@@ -639,7 +673,7 @@ def query_create(
     if not body.queryName.strip() or not body.entityCode.strip():
         return fail(1001, "必填项缺失")
     if not limit_ok(body.config.limit):
-        return fail(1001, "行数上限须为 1~1000")
+        return fail(1001, "行数上限须为 1~100000")
     entity, fields, err = load_entity_bundle(ims, actor, body.entityCode)
     if err:
         return err

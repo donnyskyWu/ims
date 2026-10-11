@@ -89,6 +89,26 @@ def test_query_tool_template_page_and_run():
     assert draft.json()["data"]["templateCode"] is None
 
 
+def test_query_tool_stays_sync_when_bi_timeout_is_zero():
+    os.environ["IMS_BI_QUERY_TIMEOUT_MS"] = "0"
+    try:
+        auth = headers()
+        client.get("/admin-api/ims/analysis/query-tool/template/page", headers=auth, params={"pageNo": 1, "pageSize": 10})
+        seed_ip_group("C048-sync")
+        run = client.post(
+            "/admin-api/ims/analysis/query-tool/run",
+            headers=auth,
+            json={"mode": "DRILL", "templateCode": "QT-TPL-0001"},
+        )
+        body = run.json()
+        assert body["code"] == 0, body
+        assert body["code"] != 1262
+        assert body["data"]["queryMode"] == "SYNC"
+        assert "未接 DW" not in str(body)
+    finally:
+        os.environ.pop("IMS_BI_QUERY_TIMEOUT_MS", None)
+
+
 def test_query_tool_menu_seed_and_revoke():
     auth = headers()
     created = client.post(
