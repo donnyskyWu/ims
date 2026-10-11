@@ -14,7 +14,7 @@
         <button class="btn btn-sm" type="button" data-testid="bi-free-layout" :class="layoutMode === 'FREE' ? 'btn-pri' : 'btn-sec'" @click="useFreeLayout">自由布局</button>
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-device-preview" @click="deviceOpen = !deviceOpen">终端预览</button>
         <button class="btn btn-sec btn-sm" type="button" @click="runPreview">运行预览</button>
-        <button class="btn btn-pri btn-sm" type="button" :disabled="saving" data-testid="bi-save" @click="saveLayout">保存草稿</button>
+        <button class="btn btn-pri btn-sm" type="button" :disabled="saving" data-testid="bi-save" @click="saveLayout()">保存草稿</button>
         <button class="btn btn-pri btn-sm" type="button" data-testid="bi-open-drill" @click="openDrill">预览下钻</button>
         <button class="btn btn-pri btn-sm" type="button" @click="publish">保存并发布</button>
       </div>
@@ -661,12 +661,14 @@ async function loadReport() {
 
 async function saveLayout(keepVersion = false) {
   if (!reportId.value) return
+  // 按钮若写成 @click="saveLayout" 会把 MouseEvent 传进来，后端 keepVersion 不是 bool 会 422。
+  const keep = keepVersion === true
   saving.value = true
   try {
     const res = await http.put(`/bi/report/${reportId.value}`, {
       reportName: report.value?.reportName,
       layoutJson: { layoutMode: layoutMode.value || 'FREE', comps: comps.value },
-      keepVersion,
+      keepVersion: keep,
     })
     if (res.data.code !== 0) {
       previewMsg.value = res.data.msg || '保存失败'
