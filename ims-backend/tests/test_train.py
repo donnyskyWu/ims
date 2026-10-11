@@ -1336,3 +1336,48 @@ def test_train_offline_keeps_referenced_material():
         assert material_id in list(task.material_ids or [])
     finally:
         db.close()
+
+
+def test_train_quiz_ai_generate_stub_and_adopt():
+    auth = headers()
+    material_id = _published_material(auth, f"AI样题 {uuid.uuid4().hex[:6]}")
+    empty = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [], "questionCount": 10},
+    )
+    assert empty.json()["code"] == 1001
+    assert empty.json()["msg"] == "请至少选择 1 份已发布资料"
+    missing = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [99999999], "questionCount": 5},
+    )
+    assert missing.json()["code"] == 1111
+    zero = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [material_id], "questionCount": 0},
+    )
+    assert zero.json()["code"] == 1114
+    generated = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [material_id], "questionCount": 5, "difficulty": "EASY"},
+    )
+    body = generated.json()
+    assert body["code"] == 0, body
+    assert len(body["data"]["questions"]) == 5
+    assert body["data"]["meta"]["modelCode"] == "stub-train-quiz"
+    adopted = client.post(
+        "/admin-api/ims/train/quiz/ai-adopt",
+        headers=auth,
+        json={"draftId": body["data"]["draftId"]},
+    )
+    adopted_body = adopted.json()
+    assert adopted_body["code"] == 0, adopted_body
+    quiz = adopted_body["data"]["quiz"]
+    assert len(quiz) == 5
+    assert "answerIndex" in quiz[0]
+    created = _quiz_task(auth, material_id, f"AI卷 {uuid.uuid4().hex[:6]}", quiz, len(quiz))
+    assert created.json()["code"] == 0, created.json()

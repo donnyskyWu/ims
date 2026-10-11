@@ -329,6 +329,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/report/audit", "ims_report_submission"),
     ("PUT", "/admin-api/ims/report/audit", "ims_report_submission"),
     ("GET", "/admin-api/ims/report/stat", "ims_report_submission"),
+    ("POST", "/admin-api/ims/train/quiz", "ims_train_task"),
     ("GET", "/admin-api/ims/train/task", "ims_train_task"),
     ("GET", "/admin-api/ims/train/stat", "ims_train_task"),
     ("POST", "/admin-api/ims/train/task", "ims_train_task"),

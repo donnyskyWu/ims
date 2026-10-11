@@ -6,6 +6,7 @@
         <div class="sub">TRAIN-002 · 资料多选 · DURATION/QUIZ · 02 TRAIN</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-ai-open" @click="openAi">AI 生成试卷</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">下达学习任务</button>
       </div>
     </div>
@@ -115,6 +116,54 @@
         </table>
       </div>
       <div class="hint" style="margin-top: 8px" data-testid="train-task-total">共 {{ total }} 条</div>
+    </div>
+
+    <div v-if="showAi" class="modal-mask" @click.self="showAi = false">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto" data-testid="train-ai-wizard">
+        <h3 style="margin: 0 0 12px">AI 生成试卷 · 第 {{ aiStep }} / 4 步</h3>
+        <template v-if="aiStep === 1">
+          <p class="hint">选择已发布资料，至少 1 份。</p>
+          <div v-if="publishedMaterials.length" class="mat-pick" data-testid="train-ai-materials">
+            <label v-for="m in publishedMaterials" :key="m.id" class="mat-opt">
+              <input v-model="aiMaterialIds" type="checkbox" :value="m.id" />
+              {{ m.title }} <small class="mono">#{{ m.id }}</small>
+            </label>
+          </div>
+          <p v-else class="hint">暂无已发布资料</p>
+        </template>
+        <template v-else-if="aiStep === 2">
+          <label class="fld">题量（5～30）</label>
+          <input v-model.number="aiCount" class="fld-in" type="number" min="5" max="30" data-testid="train-ai-count" />
+          <label class="fld">难度</label>
+          <select v-model="aiDifficulty" class="fld-in" data-testid="train-ai-difficulty">
+            <option value="EASY">容易</option>
+            <option value="MEDIUM">中等</option>
+            <option value="HARD">困难</option>
+          </select>
+        </template>
+        <template v-else-if="aiStep === 3">
+          <p data-testid="train-ai-generating">AI 生成中</p>
+          <p class="hint">当前为样题桩，不调用真实模型。</p>
+        </template>
+        <template v-else>
+          <p class="hint">预览 {{ aiQuestions.length }} 题。采纳后可在自测问卷任务中使用。</p>
+          <ol data-testid="train-ai-preview">
+            <li v-for="(q, index) in aiQuestions" :key="index">
+              {{ q.stem || q.question }}
+              <span class="hint">（{{ q.type === 'TRUE_FALSE' ? '判断' : '单选' }}）</span>
+            </li>
+          </ol>
+        </template>
+        <p v-if="aiError" class="hint" style="color: var(--red)" data-testid="train-ai-error">{{ aiError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; gap: 8px">
+          <button class="btn btn-sec btn-sm" type="button" @click="showAi = false">关闭</button>
+          <button v-if="aiStep > 1 && aiStep < 3" class="btn btn-sec btn-sm" type="button" @click="aiStep -= 1">上一步</button>
+          <button v-if="aiStep < 3" class="btn btn-pri btn-sm" type="button" data-testid="train-ai-next" @click="aiNext">下一步</button>
+          <button v-if="aiStep === 4" class="btn btn-pri btn-sm" type="button" data-testid="train-ai-adopt" :disabled="aiBusy" @click="adoptAi">
+            采纳
+          </button>
+        </div>
+      </div>
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
@@ -292,6 +341,15 @@ const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
+const showAi = ref(false)
+const aiStep = ref(1)
+const aiError = ref('')
+const aiBusy = ref(false)
+const aiMaterialIds = ref<number[]>([])
+const aiCount = ref(10)
+const aiDifficulty = ref('MEDIUM')
+const aiDraftId = ref('')
+const aiQuestions = ref<Array<{ stem?: string; question?: string; type?: string; options?: string[]; answerIndex?: number }>>([])
 const editingId = ref(0)
 const formError = ref('')
 const filters = reactive({ taskName: '', status: '', confirmType: '' })
@@ -561,6 +619,76 @@ function openEdit(row: Row) {
   formError.value = ''
   void loadPublishedMaterials()
   showForm.value = true
+}
+
+function openAi() {
+  aiStep.value = 1
+  aiError.value = ''
+  aiMaterialIds.value = []
+  aiCount.value = 10
+  aiDifficulty.value = 'MEDIUM'
+  aiDraftId.value = ''
+  aiQuestions.value = []
+  showAi.value = true
+  void loadPublishedMaterials()
+}
+
+async function aiNext() {
+  aiError.value = ''
+  if (aiStep.value === 1) {
+    if (!aiMaterialIds.value.length) {
+      aiError.value = '请至少选择 1 份已发布资料'
+      return
+    }
+    aiStep.value = 2
+    return
+  }
+  if (aiCount.value < 5 || aiCount.value > 30) {
+    aiError.value = '题量须在 5 到 30'
+    return
+  }
+  aiStep.value = 3
+  aiBusy.value = true
+  try {
+    const res = await http.post('/train/quiz/ai-generate', {
+      materialIds: [...aiMaterialIds.value],
+      questionCount: aiCount.value,
+      difficulty: aiDifficulty.value,
+    })
+    aiDraftId.value = res.data.data.draftId
+    aiQuestions.value = res.data.data.questions || []
+    aiStep.value = 4
+  } catch (err) {
+    aiError.value = errorMessage(err)
+    aiStep.value = 2
+  } finally {
+    aiBusy.value = false
+  }
+}
+
+async function adoptAi() {
+  if (!aiDraftId.value) return
+  aiBusy.value = true
+  aiError.value = ''
+  try {
+    const res = await http.post('/train/quiz/ai-adopt', { draftId: aiDraftId.value })
+    const quiz = (res.data.data.quiz || []) as QuizDraft[]
+    const passScore = Number(res.data.data.passScore || quiz.length)
+    openCreate()
+    form.confirmType = 'QUIZ'
+    form.materialIds = [...aiMaterialIds.value]
+    form.quiz = quiz.map((question) => ({
+      question: question.question,
+      options: [...(question.options || [])],
+      answerIndex: question.answerIndex || 0,
+    }))
+    form.passScore = Math.min(Math.max(1, quiz.length), passScore)
+    showAi.value = false
+  } catch (err) {
+    aiError.value = errorMessage(err)
+  } finally {
+    aiBusy.value = false
+  }
 }
 
 function openCreate() {

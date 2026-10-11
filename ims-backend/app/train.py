@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
+import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -1137,6 +1139,141 @@ def finish_rate(db: Session, task_id: int, assigned: int) -> float:
         or 0
     )
     return round(done * 100.0 / assigned, 2)
+
+
+_AI_DRAFTS: dict[str, tuple[float, list[dict]]] = {}
+AI_DRAFT_TTL = 15 * 60
+
+
+class AiGenerateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    materialIds: list[int] = Field(default_factory=list)
+    questionCount: int = 10
+    difficulty: str = "MEDIUM"
+
+
+class AiAdoptBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    draftId: str = ""
+    taskId: int | None = None
+
+
+def _purge_ai_drafts() -> None:
+    now = time.time()
+    stale = [key for key, (created, _) in _AI_DRAFTS.items() if now - created > AI_DRAFT_TTL]
+    for key in stale:
+        _AI_DRAFTS.pop(key, None)
+
+
+def stub_ai_questions(materials: list[TrainMaterial], count: int) -> list[dict]:
+    """无真实模型。单选与判断约 7:3，判断题用「正确/错误」便于现有问卷判分。"""
+    single = count if count < 2 else max(1, round(count * 0.7))
+    if single >= count:
+        single = count - (1 if count > 1 else 0)
+    true_false = count - single
+    if true_false < 0:
+        single, true_false = count, 0
+    out: list[dict] = []
+    for index in range(single):
+        mat = materials[index % len(materials)]
+        out.append(
+            {
+                "type": "SINGLE",
+                "stem": f"《{mat.title}》要点 {index + 1}",
+                "options": ["按资料执行", "跳过资料", "随意发挥"],
+                "answerIndex": 0,
+                "materialId": mat.id,
+                "source": "AI_DRAFT",
+            }
+        )
+    for index in range(true_false):
+        mat = materials[(single + index) % len(materials)]
+        out.append(
+            {
+                "type": "TRUE_FALSE",
+                "stem": f"《{mat.title}》可以不阅读直接上岗",
+                "options": ["正确", "错误"],
+                "answerIndex": 1,
+                "answerBoolean": False,
+                "materialId": mat.id,
+                "source": "AI_DRAFT",
+            }
+        )
+    return out
+
+
+def adopt_quiz_rows(questions: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for item in questions:
+        options = list(item.get("options") or [])
+        if item.get("type") == "TRUE_FALSE" and len(options) < 2:
+            options = ["正确", "错误"]
+        answer = item.get("answerIndex")
+        if answer is None and "answerBoolean" in item:
+            answer = 0 if item.get("answerBoolean") else 1
+        rows.append(
+            {
+                "question": str(item.get("stem") or item.get("question") or "").strip(),
+                "options": [str(opt) for opt in options],
+                "answerIndex": int(answer or 0),
+            }
+        )
+    return rows
+
+
+@router.post("/quiz/ai-generate")
+def ai_generate_quiz(
+    body: AiGenerateBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """ADR-IMS-004 桩：不调用模型，返回可采纳的样题。"""
+    if not body.materialIds:
+        return fail(1001, "请至少选择 1 份已发布资料")
+    if body.questionCount == 0:
+        return fail(1114, "题量为 0")
+    if body.questionCount < 5 or body.questionCount > 30:
+        return fail(1001, "题量须在 5 到 30")
+    if body.difficulty not in {"EASY", "MEDIUM", "HARD"}:
+        return fail(1001, "difficulty 无效")
+    tenant_id = tenant_of(actor)
+    materials: list[TrainMaterial] = []
+    for mid in body.materialIds:
+        mat = db.get(TrainMaterial, mid)
+        if mat is None or mat.deleted or mat.tenant_id != tenant_id or mat.status != "PUBLISHED":
+            return fail(1111, "资料未发布或不存在")
+        materials.append(mat)
+    questions = stub_ai_questions(materials, body.questionCount)
+    if not questions:
+        return fail(1114, "题量为 0")
+    draft_id = uuid.uuid4().hex
+    _purge_ai_drafts()
+    _AI_DRAFTS[draft_id] = (time.time(), questions)
+    return ok(
+        {
+            "draftId": draft_id,
+            "questions": questions,
+            "meta": {
+                "modelCode": "stub-train-quiz",
+                "promptCode": "TRAIN-QUIZ-STUB",
+                "generatedAt": iso(utcnow()),
+                "difficulty": body.difficulty,
+            },
+        }
+    )
+
+
+@router.post("/quiz/ai-adopt")
+def ai_adopt_quiz(
+    body: AiAdoptBody,
+    _: User = Depends(current_user),
+):
+    _purge_ai_drafts()
+    found = _AI_DRAFTS.get((body.draftId or "").strip())
+    if found is None:
+        return fail(1112, "试卷草稿不存在或已过期")
+    quiz = adopt_quiz_rows(found[1])
+    return ok({"quiz": quiz, "passScore": 60, "taskId": body.taskId})
 
 
 def public_quiz(raw) -> list[dict]:
