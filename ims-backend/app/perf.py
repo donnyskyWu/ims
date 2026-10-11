@@ -47,7 +47,7 @@ KNOWLEDGE_DOMAINS = frozenset(
 
 POSITION_LABELS = {
     "R5": "直播运营",
-    "R6": "内容运营",
+    "R6": "短视频运营",
     "R2": "行政管理",
     "R4": "运营总监",
     "OPS_LEADER": "运营组长",

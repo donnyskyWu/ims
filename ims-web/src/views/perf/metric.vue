@@ -256,7 +256,7 @@
         <label>岗位</label>
         <select v-model="bindPosition" data-testid="bind-position">
           <option value="R5">直播运营 R5</option>
-          <option value="R6">内容运营 R6</option>
+          <option value="R6">短视频运营 R6</option>
           <option value="R2">行政管理 R2</option>
           <option value="R4">运营总监 R4</option>
         </select>

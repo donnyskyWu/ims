@@ -27,7 +27,7 @@
       <select v-model="filters.positionCode" style="width: 130px">
         <option value="">全部岗位</option>
         <option value="R5">直播运营 R5</option>
-        <option value="R6">内容运营 R6</option>
+        <option value="R6">短视频运营 R6</option>
         <option value="R2">行政管理 R2</option>
       </select>
       <select v-model="filters.periodType" style="width: 110px">
@@ -151,7 +151,7 @@
           <label>适用岗位</label>
           <select v-model="form.positionCode">
             <option value="R5">直播运营 R5</option>
-            <option value="R6">内容运营 R6</option>
+            <option value="R6">短视频运营 R6</option>
             <option value="R2">行政管理 R2</option>
           </select>
         </div>
