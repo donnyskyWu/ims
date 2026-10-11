@@ -21,11 +21,14 @@ BJ = timezone(timedelta(hours=8))
 
 class ModelSaveBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    vendor: str
-    modelName: str
-    useCase: str = "CHAT"
+    displayName: str = ""
+    vendor: str = ""
+    modelName: str = ""
+    useCase: str = ""
     endpointUrl: str = ""
-    status: str = "CONNECTED"
+    apiKey: str = ""
+    status: str = ""
+    isDefault: bool = False
 
 
 class PromptSaveBody(BaseModel):
@@ -63,14 +66,30 @@ def next_prompt_code(db: Session, tenant_id: int) -> str:
     return f"PRM-{int(count or 0) + 1:04d}"
 
 
+def mask_secret(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    tail = text[-4:] if len(text) >= 4 else text
+    return f"****{tail}"
+
+
+def is_jingcai(vendor: str) -> bool:
+    text = (vendor or "").strip().upper().replace(" ", "")
+    return "JINGCAI" in text
+
+
 def model_vo(row: AirModelConfig, names: dict[int, str]) -> dict:
     return {
         "id": row.id,
         "configCode": row.config_code,
+        "displayName": row.display_name or row.model_name,
         "vendor": row.vendor,
         "modelName": row.model_name,
         "useCase": row.use_case,
         "endpointUrl": row.endpoint_url,
+        "apiKeyMask": row.api_key_mask or "",
+        "isDefault": bool(row.is_default),
         "status": row.status,
         "creatorName": names.get(row.creator_id, ""),
         "updatedAt": iso(row.updated_at),
@@ -164,16 +183,20 @@ def model_create(body: ModelSaveBody, db: Session = Depends(db_session), actor: 
     tenant_id = tenant_of(actor)
     name = body.modelName.strip()
     vendor = body.vendor.strip()
-    if not vendor or not name:
-        return fail(1001, "厂商与模型名必填")
+    display = body.displayName.strip() or name
+    if not vendor or not name or not display:
+        return fail(1001, "名称、供应商与 model 必填")
     now = utcnow()
     row = AirModelConfig(
         config_code=next_model_code(db, tenant_id),
+        display_name=display,
         vendor=vendor,
         model_name=name,
         use_case=body.useCase.strip() or "CHAT",
         endpoint_url=body.endpointUrl.strip(),
-        status=body.status.strip() or "CONNECTED",
+        api_key_mask=mask_secret(body.apiKey),
+        is_default=1 if body.isDefault else 0,
+        status="DISCONNECTED",
         creator_id=actor.id,
         tenant_id=tenant_id,
         created_at=now,
@@ -193,14 +216,35 @@ def model_update(
     row = db.get(AirModelConfig, model_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1001, "配置不存在")
+    if body.displayName.strip():
+        row.display_name = body.displayName.strip()
     row.vendor = body.vendor.strip() or row.vendor
     row.model_name = body.modelName.strip() or row.model_name
     row.use_case = body.useCase.strip() or row.use_case
     row.endpoint_url = body.endpointUrl.strip()
+    if body.apiKey.strip():
+        row.api_key_mask = mask_secret(body.apiKey)
+    row.is_default = 1 if body.isDefault else row.is_default
     row.status = body.status.strip() or row.status
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
     return ok(model_vo(row, names))
+
+
+@router.post("/model/{model_id}/test")
+def model_test(model_id: int, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    """连通测试只看本地是否具备密钥，不访问第三方。"""
+    tenant_id = tenant_of(actor)
+    row = db.get(AirModelConfig, model_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "配置不存在")
+    if not is_jingcai(row.vendor) and not (row.api_key_mask or "").strip():
+        row.status = "DISCONNECTED"
+        row.updated_at = utcnow()
+        return fail(5004, "未配置密钥")
+    row.status = "CONNECTED"
+    row.updated_at = utcnow()
+    return ok({"id": row.id, "status": "CONNECTED", "latencyMs": 42, "stub": True})
 
 
 @router.get("/prompt/page")

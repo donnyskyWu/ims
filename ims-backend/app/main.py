@@ -419,6 +419,27 @@ def ensure_air_skill_audit_columns() -> None:
         conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''"))
 
 
+def ensure_air_model_columns() -> None:
+    """已有库补模型显示名、密钥掩码与默认标记。不改已有行的连接状态。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_model_config" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_model_config")}
+    alters: list[str] = []
+    if "display_name" not in cols:
+        alters.append("ADD COLUMN display_name VARCHAR(128) NOT NULL DEFAULT ''")
+    if "api_key_mask" not in cols:
+        alters.append("ADD COLUMN api_key_mask VARCHAR(64) NOT NULL DEFAULT ''")
+    if "is_default" not in cols:
+        alters.append("ADD COLUMN is_default INT NOT NULL DEFAULT 0")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE ims_air_model_config {', '.join(alters)}"))
+
+
 def ensure_air_expert_grant_columns() -> None:
     """已有库补专家授权全员可见。"""
     from sqlalchemy import inspect, text
@@ -598,6 +619,7 @@ def init_db() -> None:
     ensure_air_skill_audit_columns()
     ensure_air_skill_form_columns()
     ensure_air_expert_grant_columns()
+    ensure_air_model_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     from app.ops_db import ensure_ops
