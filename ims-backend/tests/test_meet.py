@@ -180,6 +180,9 @@ def seed_submitted_report_for_peer(report_date: str) -> int:
             )
         )
         if existing is not None:
+            if not (existing.report_type or "").strip():
+                existing.report_type = "ADMIN"
+                db.commit()
             return int(existing.id)
         now = utcnow()
         row = MeetDailyReport(
@@ -188,6 +191,7 @@ def seed_submitted_report_for_peer(report_date: str) -> int:
             user_name=peer.nickname or peer.username,
             dept_name="测试部",
             report_date=report_date,
+            report_type="ADMIN",
             content_done="同事完成项",
             content_plan="明日",
             content_issue="无",
@@ -223,7 +227,9 @@ def test_meet_daily_team_list_excludes_self():
     finally:
         db.close()
     assert admin_id not in ids
-    assert any(r["contentDone"] == "同事完成项" for r in team.json()["data"]["list"])
+    peer_row = next(r for r in team.json()["data"]["list"] if r["contentDone"] == "同事完成项")
+    assert peer_row["reportType"] == "ADMIN"
+    assert peer_row["reportTypeLabel"] == "行政"
 
 
 def test_meet_review_queue_and_two_level_read():

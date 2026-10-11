@@ -57,7 +57,7 @@
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="num">{{ row.reportDate }}</td>
               <td>{{ row.userName }}</td>
-              <td>{{ row.reportTypeLabel || '—' }}</td>
+              <td>{{ reportTypeText(row) }}</td>
               <td class="num">{{ row.fieldCompleteness ?? '—' }}%</td>
               <td class="num" style="font-size: 12px">{{ formatShanghaiMinute(row.submittedAt) }}</td>
               <td><span class="tag" :class="statusClass(row.submitStatus)">{{ displayStatus(row) }}</span></td>
@@ -107,6 +107,7 @@ type DailyRow = {
   contentIssue: string
   weekSummary?: string
   supplement?: string
+  reportType?: string
   reportTypeLabel?: string
   fieldCompleteness?: number
   reviewStatus?: string
@@ -144,6 +145,23 @@ const reviewSteps = computed(() => {
     }
   })
 })
+
+const reportTypeLabels = ref<Record<string, string>>({
+  LIVE: '直播',
+  SHORT_VIDEO: '短视频',
+  OPS: '运营',
+  ADMIN: '行政',
+})
+
+function reportTypeText(row: DailyRow) {
+  const code = (row.reportType || '').trim()
+  const label = (row.reportTypeLabel || '').trim()
+  const dict = reportTypeLabels.value
+  if (code && dict[code]) return dict[code]
+  if (label && dict[label]) return dict[label]
+  if (label && !/^[A-Z0-9_]+$/.test(label)) return label
+  return '—'
+}
 
 function formatShanghaiMinute(value?: string) {
   if (!value) return '—'
@@ -233,7 +251,27 @@ async function openDetail(row: DailyRow) {
   }
 }
 
-onMounted(loadList)
+async function loadReportTypeDict() {
+  try {
+    const res = await http.get('/meet/daily/template')
+    const items = res.data?.data?.reportTypes
+    if (!Array.isArray(items)) return
+    const next = { ...reportTypeLabels.value }
+    for (const item of items) {
+      const value = String(item?.value || '').trim()
+      const label = String(item?.label || '').trim()
+      if (value && label) next[value] = label
+    }
+    reportTypeLabels.value = next
+  } catch {
+    // 模板不可用时沿用内置日报类型
+  }
+}
+
+onMounted(() => {
+  loadReportTypeDict()
+  loadList()
+})
 </script>
 
 <style scoped>
