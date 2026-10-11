@@ -105,6 +105,7 @@ test.describe('IP 组 BUG-014～021 / BUG-024～026', () => {
     await page.getByTestId('ipg-toggle').click()
     await expect(page.getByTestId('ipg-toast')).toContainText('状态已更新为「停用」')
     await expect(page.getByTestId('ipg-toggle')).toHaveText('启用')
+    await page.locator('.tab', { hasText: '基本信息' }).click()
     await expect(page.getByTestId('ipg-status')).toHaveText('停用')
     await page.getByTestId('ipg-toggle').click()
     await expect(page.getByTestId('ipg-toast')).toContainText('状态已更新为「启用」')
