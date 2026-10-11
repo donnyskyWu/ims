@@ -136,7 +136,7 @@ const loading = ref(false)
 const filters = reactive({ keyword: '', status: '', mode: '' })
 const showForm = ref(false)
 const form = reactive({ name: '', mode: 'DRILL', desc: '' })
-const runResult = ref<Record<string, unknown> | null>(null)
+const runResult = ref<Record<string, any> | null>(null)
 
 function statusLabel(s: string) {
   return s === 'PUBLISHED' ? '已发布' : '草稿'

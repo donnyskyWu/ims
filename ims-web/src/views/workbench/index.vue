@@ -311,7 +311,7 @@ const dash = reactive<{
   myCertWarningCount?: number
   myLiveSessionCount?: number
 }>({})
-const flowTodos = ref<Record<string, unknown>[]>([])
+const flowTodos = ref<Record<string, any>[]>([])
 const flowReady = ref(false)
 const flowError = ref('')
 const dashReady = ref(false)

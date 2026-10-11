@@ -1441,8 +1441,8 @@ const collectSummary = ref('—')
 const ksPlatformAccountId = ref('')
 const ksCredential = ref('')
 const dyCredential = ref('')
-const dyLogs = ref<Array<Record<string, unknown>>>([])
-const wxLogs = ref<Array<Record<string, unknown>>>([])
+const dyLogs = ref<Array<Record<string, any>>>([])
+const wxLogs = ref<Array<Record<string, any>>>([])
 
 const timelineEvents = ref<
   {

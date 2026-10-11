@@ -29,7 +29,7 @@ const route = useRoute()
 const loading = ref(true)
 const title = ref('数据大屏')
 const refreshedAt = ref('')
-const widgets = ref<Record<string, unknown>[]>([])
+const widgets = ref<Record<string, any>[]>([])
 const gate = ref('')
 const emptyReason = ref('暂无组件')
 

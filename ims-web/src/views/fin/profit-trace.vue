@@ -258,7 +258,7 @@
           <li>账号：{{ chain.chain?.account?.accountNo || '—' }}</li>
           <li>责任人：{{ chain.chain?.responsibleUser?.userName || '—' }}</li>
           <li>实名人：{{ chain.chain?.realnamePersons?.[0]?.userName || '—' }}</li>
-          <li>资产：{{ (chain.chain?.assets || []).map((a: { assetCode: string }) => a.assetCode).join(', ') || '—' }}</li>
+          <li>资产：{{ joinAssetCodes(chain.chain?.assets) }}</li>
         </ul>
         <h3 style="font-size: 14px; margin-bottom: 6px">成本明细</h3>
         <table>
@@ -354,6 +354,10 @@ const costLabels: Record<string, string> = {
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function joinAssetCodes(assets: { assetCode: string }[] | null | undefined) {
+  return (assets || []).map((a) => a.assetCode).join(', ') || '—'
 }
 
 function costLabel(key: string) {

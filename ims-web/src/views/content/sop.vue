@@ -276,6 +276,8 @@ type SopRow = {
   sopLevel?: string
   version: number
   marketingPlan?: string
+  nodeCount?: number
+  status?: string
 }
 
 type EditorNode = {

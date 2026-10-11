@@ -109,7 +109,6 @@ export const IMPLEMENTED: Record<string, string> = {
   alertLive: '/ims/alert/live',
   alertEscalate: '/ims/alert/escalate',
   alertStats: '/ims/alert/stats',
-  alertEscalate: '/ims/alert/escalate',
   alertHistory: '/ims/alert/live?tab=history',
   alertDedup: '/ims/alert/live?tab=dedup',
   airKey: '/ims/air/cfg?tab=key',

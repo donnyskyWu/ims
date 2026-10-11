@@ -321,7 +321,6 @@ type SubRow = {
   status: string
   lastPushStatus: string
   lastPushAt: string
-  nextPushAt: string
 }
 
 const tabDefs = [
@@ -349,7 +348,7 @@ type ShareRow = {
 const shares = ref<ShareRow[]>([])
 const shareLoading = ref(false)
 const shareKeyword = ref('')
-const published = ref<Record<string, unknown>[]>([])
+const published = ref<Record<string, any>[]>([])
 const snapshot = ref<{
   subName: string
   snapshotAt: string

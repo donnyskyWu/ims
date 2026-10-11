@@ -247,7 +247,7 @@ function gradeText(level: string) {
   return '—'
 }
 
-function medalText(medal: string, rankNo: number) {
+function medalText(medal: string | undefined, rankNo: number | undefined) {
   if (medal === 'GOLD' || (!medal && rankNo === 1)) return '金'
   if (medal === 'SILVER' || (!medal && rankNo === 2)) return '银'
   if (medal === 'BRONZE' || (!medal && rankNo === 3)) return '铜'

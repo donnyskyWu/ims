@@ -137,7 +137,7 @@ const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
 const formError = ref('')
-const detail = ref<Record<string, unknown> | null>(null)
+const detail = ref<Record<string, any> | null>(null)
 const archiveStat = ref({ totalMeetings: 0, archivedCount: 0, traceRate: 0 })
 
 const filters = reactive({ meetingTitle: '', minutesStatus: '' })

@@ -469,10 +469,10 @@ type ProfitRow = {
   sessionCode: string
   sessionTitle?: string
   platform?: string
-  gmv?: number
+  gmv?: number | string
   grossProfit?: number
   operatingProfit?: number
-  netProfit?: number
+  netProfit?: number | string
   netProfitRate?: number
   settlementStatus?: string
   calcStatus?: string
@@ -492,7 +492,7 @@ const detail = ref<ProfitDetail | null>(null)
 const verifyHint = ref('')
 const tab = ref<'list' | 'abnormal'>('list')
 const abnormalLoading = ref(false)
-const abnormalRows = ref<Record<string, unknown>[]>([])
+const abnormalRows = ref<Record<string, any>[]>([])
 const abnormalPlatform = ref('')
 const abnormalDateFrom = ref('')
 const abnormalDateTo = ref('')
@@ -670,6 +670,7 @@ function settlementLabel(s: string | undefined) {
     IN_SETTLEMENT: '结算中',
     DONE: '已结算',
   }
+  if (!s) return s
   return map[s] || s
 }
 

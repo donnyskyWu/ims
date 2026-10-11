@@ -615,7 +615,7 @@ const timeoutStats = ref<{
 const timeoutDist = ref<{
   durationBuckets: { bucketKey: string; bucketLabel: string; count: number }[]
 } | null>(null)
-const tplRows = ref<Record<string, unknown>[]>([])
+const tplRows = ref<Record<string, any>[]>([])
 const STAT_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
 
 function beijingStatMonth(date = new Date()) {

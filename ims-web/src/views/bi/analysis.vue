@@ -108,7 +108,7 @@ const loading = ref(false)
 const ran = ref(false)
 const analysisError = ref('')
 const emptyReason = ref('当前日期下暂无分析数据')
-const resultRows = ref<Record<string, unknown>[]>([])
+const resultRows = ref<Record<string, any>[]>([])
 const series = ref<{ metricCode: string; points: { date: string; value: number }[] }[]>([])
 const note = ref('')
 

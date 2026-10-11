@@ -96,7 +96,7 @@ import { computed, onMounted, ref } from 'vue'
 import { http } from '../../api/http'
 
 type Row = { id: number; reportNo: string; reportName: string; status: string }
-type Detail = { reportName: string; theme: string; widgets: Record<string, unknown>[]; emptyReason?: string }
+type Detail = { reportName: string; theme: string; widgets: Record<string, any>[]; emptyReason?: string }
 
 const rows = ref<Row[]>([])
 const detail = ref<Detail | null>(null)

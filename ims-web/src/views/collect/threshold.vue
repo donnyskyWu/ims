@@ -93,7 +93,7 @@ const categories = [
 ]
 const platforms = ['DOUYIN', 'KUAISHOU', 'XIAOHONGSHU']
 const activeCategory = ref('ALERT')
-const rows = ref<Record<string, unknown>[]>([])
+const rows = ref<Record<string, any>[]>([])
 const loading = ref(false)
 const error = ref('')
 const drawerOpen = ref(false)
