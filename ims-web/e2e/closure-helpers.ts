@@ -658,6 +658,30 @@ async function fillAfterReportReset(field: Locator, value: string) {
   throw new Error(`下播字段未保持为 ${value}，当前 ${last}`)
 }
 
+/** 开播登记抽屉：按名称下拉选账号 / 实名人 / 手机，不再手填数字 id。 */
+export async function fillLiveRegisterDrawer(
+  drawer: Locator,
+  ids: { accountId: number; realnamePersonId: number; deviceId: number },
+  topic: string,
+  planStartTime?: string,
+) {
+  const account = drawer.getByTestId('live-reg-account')
+  await expect(account.locator(`option[value="${ids.accountId}"]`)).toHaveCount(1, { timeout: 15_000 })
+  await account.selectOption(String(ids.accountId))
+  const person = drawer.getByTestId('live-reg-person')
+  await expect(person.locator(`option[value="${ids.realnamePersonId}"]`)).toHaveCount(1, { timeout: 15_000 })
+  await person.selectOption(String(ids.realnamePersonId))
+  const phone = drawer.getByTestId('live-reg-phone')
+  await expect(phone.locator(`option[value="${ids.deviceId}"]`)).toHaveCount(1, { timeout: 15_000 })
+  await phone.selectOption(String(ids.deviceId))
+  const boxes = drawer.getByTestId('live-reg-devices').locator('input[type="checkbox"]')
+  if (await boxes.count()) await boxes.first().check()
+  await drawer.getByTestId('live-reg-topic').fill(topic)
+  if (planStartTime) {
+    await drawer.getByTestId('live-reg-plan').fill(planStartTime.slice(0, 16))
+  }
+}
+
 export async function registerLiveSessionConfirmedReportViaUi(
   page: Page,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
@@ -684,17 +708,7 @@ export async function registerLiveSessionConfirmedReportViaUi(
   await page.getByRole('button', { name: '新建场次登记' }).click()
   const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
   await expect(drawer).toBeVisible()
-  await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-  await drawer
-    .locator('label', { hasText: '实名人 id' })
-    .locator('..')
-    .locator('input')
-    .fill(String(ids.realnamePersonId))
-  await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-  await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
-  if (opts?.planStartTime) {
-    await drawer.locator('label', { hasText: '计划开播' }).locator('..').locator('input').fill(opts.planStartTime)
-  }
+  await fillLiveRegisterDrawer(drawer, ids, topic, opts?.planStartTime)
 
   const regResp = page.waitForResponse(
     (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,

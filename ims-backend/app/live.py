@@ -18,6 +18,7 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import (
+    AssetLedger,
     CertArchive,
     LiveAlarmRecord,
     LiveCost,
@@ -164,14 +165,35 @@ def load_realname(ops: Session, actor: User, person_id: int) -> Realname | None:
     return row
 
 
-def validate_devices(ops: Session, actor: User, device_ids: list[int]) -> bool:
+LIVE_ASSET_TYPES = frozenset({"LIVE", "SHOOT"})
+
+
+def load_asset(db: Session, actor: User, asset_id: int) -> AssetLedger | None:
+    row = db.get(AssetLedger, asset_id)
+    if row is None or row.deleted or (row.tenant_id or 0) != tenant_of(actor):
+        return None
+    return row
+
+
+def device_kind(db: Session, ops: Session, actor: User, device_id: int) -> str | None:
+    """手机或在用直播/拍摄资产都算场次设备。两者 id 空间不同库，先认手机再认资产。"""
+    phone = ops.get(Phone, device_id)
+    if visible(phone, actor):
+        return "PHONE"
+    asset = load_asset(db, actor, device_id)
+    if asset is None:
+        return None
+    if asset.asset_type not in LIVE_ASSET_TYPES:
+        return None
+    if asset.status != "IN_USE":
+        return None
+    return "ASSET"
+
+
+def validate_devices(db: Session, ops: Session, actor: User, device_ids: list[int]) -> bool:
     if not device_ids:
         return False
-    for device_id in device_ids:
-        phone = ops.get(Phone, device_id)
-        if not visible(phone, actor):
-            return False
-    return True
+    return all(device_kind(db, ops, actor, device_id) is not None for device_id in device_ids)
 
 
 USABLE_CERT_STATUS = frozenset({"EFFECTIVE", "EXPIRING"})
@@ -235,12 +257,16 @@ def airtime_blocked(ops: Session, actor: User, account: PlatformAccount) -> bool
     return (sim.status or "") != "IN_USE"
 
 
-def device_outcome(ops: Session, actor: User, device_ids: list[int]) -> str:
-    if not validate_devices(ops, actor, device_ids):
+def device_outcome(db: Session, ops: Session, actor: User, device_ids: list[int]) -> str:
+    if not validate_devices(db, ops, actor, device_ids):
         return "WARN"
     for device_id in device_ids:
-        phone = ops.get(Phone, device_id)
-        if phone is None or phone.deleted or phone.status != "IN_USE":
+        kind = device_kind(db, ops, actor, device_id)
+        if kind == "PHONE":
+            phone = ops.get(Phone, device_id)
+            if phone is None or phone.deleted or phone.status != "IN_USE":
+                return "FAIL"
+        elif kind != "ASSET":
             return "FAIL"
     return "PASS"
 
@@ -269,8 +295,7 @@ def run_risk_checks(
     for item in RISK_ITEMS:
         result = "PASS"
         if item == "CERT_VALID":
-            if person.status != "ENABLED":
-                result = "FAIL"
+            result, _detail = cert_signal(db, actor, person)
         elif item == "ACCOUNT_STATUS":
             if account.status != "IN_USE":
                 result = "FAIL"
@@ -281,7 +306,7 @@ def run_risk_checks(
             if topic_hits_blacklist(session.topic):
                 result = "FAIL"
         elif item == "DEVICE_OWNER":
-            result = device_outcome(ops, actor, device_ids)
+            result = device_outcome(db, ops, actor, device_ids)
         added = points_for(item, result)
         score += added
         row = LiveRiskCheck(
@@ -1420,6 +1445,171 @@ def football_sync(
     return ok(metrics_payload(db, ops, actor, row))
 
 
+def person_certs(db: Session, actor: User, person: Realname) -> list[CertArchive]:
+    name = (person.real_name or "").strip()[:64]
+    if not name:
+        return []
+    return list(
+        db.scalars(
+            select(CertArchive).where(
+                CertArchive.deleted == 0,
+                CertArchive.tenant_id == tenant_of(actor),
+                CertArchive.holder_name == name,
+            )
+        ).all()
+    )
+
+
+def days_until_expire(expire: str) -> int | None:
+    text = (expire or "").strip()[:10]
+    if len(text) != 10:
+        return None
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return (day - datetime.now(BJ).date()).days
+
+
+def cert_signal(db: Session, actor: User, person: Realname) -> tuple[str, str]:
+    """实名人证件预检。过期/锁定为 FAIL，临期为 WARN，无档不拦截。"""
+    if (person.status or "") != "ENABLED":
+        return "FAIL", "实名人未在职，证件不可用于开播"
+    rows = person_certs(db, actor, person)
+    if not rows:
+        return "PASS", "未建档，不拦截"
+    expired = next((row for row in rows if row.status == "EXPIRED"), None)
+    if expired is not None:
+        when = expired.expire_date or "—"
+        return "FAIL", f"证件 {when} 已到期，实名人证件过期或锁定"
+    soon: tuple[int, CertArchive] | None = None
+    for row in rows:
+        left = days_until_expire(row.expire_date)
+        expiring = row.status == "EXPIRING" or (
+            left is not None and 0 <= left <= 30 and row.status in USABLE_CERT_STATUS
+        )
+        if not expiring or left is None:
+            if row.status == "EXPIRING" and (soon is None or left is None):
+                soon = (left if left is not None else 0, row)
+            continue
+        if soon is None or left < soon[0]:
+            soon = (left, row)
+    if soon is not None:
+        left, row = soon
+        when = row.expire_date or "—"
+        return "WARN", f"证件 {when} 到期，剩余 {left} 天"
+    blocked = cert_blocks_live(db, actor, person)
+    if blocked:
+        return "FAIL", blocked
+    return "PASS", "证件在有效期内"
+
+
+@router.get("/register/options")
+def register_options(
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    """开播登记下拉。账号只列使用中，设备只列在用直播/拍摄资产。"""
+    tenant_id = tenant_of(actor)
+    accounts = ops.scalars(
+        select(PlatformAccount)
+        .where(
+            PlatformAccount.deleted == 0,
+            PlatformAccount.tenant_id == tenant_id,
+            PlatformAccount.status == "IN_USE",
+        )
+        .order_by(PlatformAccount.id.desc())
+        .limit(500)
+    ).all()
+    persons = ops.scalars(
+        select(Realname)
+        .where(Realname.deleted == 0, Realname.tenant_id == tenant_id)
+        .order_by(Realname.id.desc())
+        .limit(500)
+    ).all()
+    phones = ops.scalars(
+        select(Phone)
+        .where(Phone.deleted == 0, Phone.tenant_id == tenant_id, Phone.status == "IN_USE")
+        .order_by(Phone.id.desc())
+        .limit(500)
+    ).all()
+    assets = db.scalars(
+        select(AssetLedger)
+        .where(
+            AssetLedger.deleted == 0,
+            AssetLedger.tenant_id == tenant_id,
+            AssetLedger.status == "IN_USE",
+            AssetLedger.asset_type.in_(tuple(LIVE_ASSET_TYPES)),
+        )
+        .order_by(AssetLedger.id.desc())
+        .limit(500)
+    ).all()
+    users = db.scalars(
+        select(User)
+        .where(User.deleted == 0, User.tenant_id == tenant_id, User.status == "ENABLED")
+        .order_by(User.id)
+        .limit(200)
+    ).all()
+    return ok(
+        {
+            "currentUserId": actor.id,
+            "accounts": [
+                {
+                    "id": row.id,
+                    "accountNo": row.account_no,
+                    "accountName": row.account_name or row.account_no,
+                    "platform": row.platform_type,
+                    "realnamePersonId": row.realname_id or 0,
+                    "holderUserId": row.holder_user_id or 0,
+                    "status": row.status,
+                }
+                for row in accounts
+            ],
+            "realnames": [
+                {"id": row.id, "realName": row.real_name, "status": row.status}
+                for row in persons
+            ],
+            "phones": [
+                {
+                    "id": row.id,
+                    "label": row.phone_code or row.device_number or row.phone_model or f"手机#{row.id}",
+                    "status": row.status,
+                }
+                for row in phones
+            ],
+            "devices": [
+                {
+                    "id": row.id,
+                    "assetCode": row.asset_code,
+                    "assetName": row.asset_name or row.asset_code,
+                    "assetType": row.asset_type,
+                    "status": row.status,
+                }
+                for row in assets
+            ],
+            "users": [
+                {"id": row.id, "nickname": row.nickname or row.username, "username": row.username}
+                for row in users
+            ],
+        }
+    )
+
+
+@router.get("/register/cert-preview")
+def register_cert_preview(
+    realnamePersonId: int,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    person = load_realname(ops, actor, realnamePersonId)
+    if person is None:
+        return fail(1041, "实名人不存在")
+    level, detail = cert_signal(db, actor, person)
+    return ok({"level": level, "detail": detail, "blocked": cert_blocks_live(db, actor, person) is not None})
+
+
 @router.post("/register")
 def register_create(
     body: LiveCreateBody,
@@ -1451,7 +1641,7 @@ def register_create(
     blocked = locked_cert_fail(db, actor, person)
     if blocked is not None:
         return blocked
-    if not validate_devices(ops, actor, body.deviceAssetIds):
+    if not validate_devices(db, ops, actor, body.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     user = db.get(User, body.responsibleUserId)
     if user is None or user.deleted or (user.tenant_id or 0) != tenant_id:
@@ -1556,7 +1746,7 @@ def register_update(
     blocked = locked_cert_fail(db, actor, person)
     if blocked is not None:
         return blocked
-    if not validate_devices(ops, actor, body.deviceAssetIds):
+    if not validate_devices(db, ops, actor, body.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     row.account_id = body.accountId
     row.account_no = account.account_no
@@ -1966,7 +2156,7 @@ def ledger_supplement(
     blocked = locked_cert_fail(db, actor, person)
     if blocked is not None:
         return blocked
-    if not validate_devices(ops, actor, create.deviceAssetIds):
+    if not validate_devices(db, ops, actor, create.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     user = db.get(User, create.responsibleUserId)
     tenant_id = tenant_of(actor)

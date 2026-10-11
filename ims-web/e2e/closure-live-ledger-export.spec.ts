@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, loginAs, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, loginAs, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
 
 /**
  * #82 · 纯 UI
@@ -133,10 +133,7 @@ test.describe('live ledger export and finance report', () => {
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const drawer = page.locator('.drawer.on').filter({ hasText: '开播登记' })
     await expect(drawer).toBeVisible()
-    await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(`E2E 成本明细 ${Date.now()}`)
+    await fillLiveRegisterDrawer(drawer, ids, `E2E 成本明细 ${Date.now()}`)
     const regResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
     )

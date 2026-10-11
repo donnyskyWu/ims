@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
 
 /**
  * #239 · 空表导出、慢查询提示、下播负数红框、更正原因空态、规则名与告警处置刷新。
@@ -81,10 +81,7 @@ test.describe('live local empty and edge copy', () => {
     await page.goto('/ims/live/sessions')
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
-    await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(`E2E 239 ${Date.now()}`)
+    await fillLiveRegisterDrawer(drawer, ids, `E2E 239 ${Date.now()}`)
     const regResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
     )

@@ -238,34 +238,76 @@
     </div>
 
     <ProtoDrawer :open="registerOpen" :title="registerTitle" width="720px" :z-index="130" @close="closeRegister">
+      <p class="hint">提交后执行风控。实名人证件过期或锁定会拦截新场次。</p>
       <div class="formrow one">
         <div v-if="editingCode" class="fld">
           <label>场次 ID（不可变更）</label>
           <input :value="editingCode" readonly data-testid="live-session-code-lock" />
         </div>
         <div class="fld">
-          <label>平台账号 id *</label>
-          <input v-model.number="reg.accountId" type="number" />
+          <label>直播账号 *</label>
+          <select v-model="reg.accountId" data-testid="live-reg-account" :style="regGap('account') ? 'border-color: var(--red)' : ''" @change="onAccountPicked">
+            <option value="">请选择使用中的账号</option>
+            <option v-for="item in regOptions.accounts" :key="item.id" :value="String(item.id)">{{ item.accountName }}（{{ item.accountNo }}）</option>
+          </select>
+          <p v-if="regGap('account')" class="hint bad" data-testid="live-reg-gap-account">必填项，请填写</p>
         </div>
         <div class="fld">
-          <label>实名人 id *</label>
-          <input v-model.number="reg.realnamePersonId" type="number" />
+          <label>实名人 *</label>
+          <select v-model="reg.realnamePersonId" data-testid="live-reg-person" :style="regGap('person') ? 'border-color: var(--red)' : ''" @change="loadCertPreview">
+            <option value="">请选择实名人</option>
+            <option v-for="item in regOptions.realnames" :key="item.id" :value="String(item.id)">{{ item.realName }}{{ item.status === 'ENABLED' ? '' : '（停用）' }}</option>
+          </select>
+          <p v-if="regGap('person')" class="hint bad" data-testid="live-reg-gap-person">必填项，请填写</p>
+          <p v-if="certPreview" class="hint" data-testid="live-reg-cert" :class="{ bad: certPreview.level !== 'PASS' }" :style="certPreview.level === 'FAIL' ? 'color: var(--red)' : certPreview.level === 'WARN' ? 'color: #b8860b' : ''">{{ certPreview.detail }}</p>
         </div>
         <div class="fld">
-          <label>手机设备 id *</label>
-          <input v-model.number="reg.deviceId" type="number" />
+          <label>责任人 *</label>
+          <select v-model="reg.responsibleUserId" data-testid="live-reg-owner" :style="regGap('owner') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择责任人</option>
+            <option v-for="item in regOptions.users" :key="item.id" :value="String(item.id)">{{ item.nickname }}</option>
+          </select>
+          <p v-if="regGap('owner')" class="hint bad" data-testid="live-reg-gap-owner">必填项，请填写</p>
         </div>
         <div class="fld">
-          <label>Football room id（可选）</label>
-          <input v-model="reg.footballRoomId" placeholder="live_room.id" />
+          <label>手机设备 *</label>
+          <select v-model="reg.phoneId" data-testid="live-reg-phone" :style="regGap('phone') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择使用中的手机</option>
+            <option v-for="item in regOptions.phones" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+          <p v-if="regGap('phone')" class="hint bad" data-testid="live-reg-gap-phone">必填项，请填写</p>
+        </div>
+        <div class="fld">
+          <label>直播设备 *</label>
+          <div data-testid="live-reg-devices" :style="regGap('devices') ? 'border: 1px solid var(--red); padding: 6px' : ''">
+            <p v-if="!regOptions.devices.length" class="hint">暂无使用中的直播/拍摄设备</p>
+            <label v-for="item in regOptions.devices" :key="item.id" style="display: block">
+              <input type="checkbox" :checked="reg.deviceIds.includes(item.id)" @change="toggleDevice(item.id)" />
+              {{ item.assetName }}（{{ item.assetCode }}）
+            </label>
+          </div>
+          <p v-if="regGap('devices')" class="hint bad" data-testid="live-reg-gap-devices">必填项，请填写</p>
+        </div>
+        <div class="fld">
+          <label>直播平台 *</label>
+          <select v-model="reg.platform" data-testid="live-reg-platform" :style="regGap('platform') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择平台</option>
+            <option value="DOUYIN">抖音</option>
+            <option value="KUAISHOU">快手</option>
+            <option value="WECHAT_CHANNELS">视频号</option>
+            <option value="OTHER">其他</option>
+          </select>
+          <p v-if="regGap('platform')" class="hint bad" data-testid="live-reg-gap-platform">必填项，请填写</p>
         </div>
         <div class="fld">
           <label>主题 *</label>
-          <input v-model="reg.topic" />
+          <input v-model="reg.topic" data-testid="live-reg-topic" maxlength="256" :style="regGap('topic') ? 'border-color: var(--red)' : ''" />
+          <p v-if="regGap('topic')" class="hint bad" data-testid="live-reg-gap-topic">必填项，请填写</p>
         </div>
         <div class="fld">
           <label>计划开播 *</label>
-          <input v-model="reg.planStartTime" placeholder="2026-10-06T20:00:00+08:00" />
+          <input v-model="reg.planStartTime" type="datetime-local" data-testid="live-reg-plan" :style="regGap('plan') ? 'border-color: var(--red)' : ''" />
+          <p v-if="regGap('plan')" class="hint bad" data-testid="live-reg-gap-plan">{{ planGapText }}</p>
         </div>
       </div>
       <div v-if="registerError" class="hint bad" data-testid="live-register-error">{{ registerError }}</div>
@@ -613,13 +655,38 @@ const sup = reactive({
   supplementReason: '',
   gmv: 100,
 })
+type RegOptionAccount = {
+  id: number
+  accountNo: string
+  accountName: string
+  platform: string
+  realnamePersonId: number
+  holderUserId: number
+}
+type RegOptionPerson = { id: number; realName: string; status: string }
+type RegOptionPhone = { id: number; label: string }
+type RegOptionDevice = { id: number; assetCode: string; assetName: string; assetType: string }
+type RegOptionUser = { id: number; nickname: string; username: string }
+
+const regOptions = reactive({
+  currentUserId: 0,
+  accounts: [] as RegOptionAccount[],
+  realnames: [] as RegOptionPerson[],
+  phones: [] as RegOptionPhone[],
+  devices: [] as RegOptionDevice[],
+  users: [] as RegOptionUser[],
+})
+const regGaps = ref<string[]>([])
+const certPreview = ref<{ level: string; detail: string; blocked?: boolean } | null>(null)
 const reg = reactive({
-  accountId: 0,
-  realnamePersonId: 0,
-  deviceId: 0,
-  footballRoomId: '',
-  topic: 'IMS 直播专场',
-  planStartTime: '2026-10-06T20:00:00+08:00',
+  accountId: '',
+  realnamePersonId: '',
+  responsibleUserId: '',
+  phoneId: '',
+  deviceIds: [] as number[],
+  platform: '',
+  topic: '',
+  planStartTime: '',
 })
 let clientToken = ''
 
@@ -1028,11 +1095,127 @@ function checkResultLabel(result: string) {
   return result
 }
 
-function openRegister() {
+function shanghaiLocalInput(date: Date) {
+  const text = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(date)
+  return text.replace(' ', 'T')
+}
+
+function planIso(local: string) {
+  if (!local) return ''
+  return local.length === 16 ? `${local}:00+08:00` : local
+}
+
+function planIsFuture(local: string) {
+  if (!local) return false
+  const parsed = new Date(planIso(local))
+  return !Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()
+}
+
+function defaultPlanLocal() {
+  return shanghaiLocalInput(new Date(Date.now() + 2 * 60 * 60 * 1000))
+}
+
+function isoToLocal(value: string) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16)
+  return shanghaiLocalInput(parsed)
+}
+
+function regGap(key: string) {
+  return regGaps.value.includes(key)
+}
+
+const planGapText = computed(() => {
+  if (!reg.planStartTime) return '必填项，请填写'
+  return '计划开播须晚于当前时间'
+})
+
+function resetReg() {
+  reg.accountId = ''
+  reg.realnamePersonId = ''
+  reg.responsibleUserId = regOptions.currentUserId ? String(regOptions.currentUserId) : ''
+  reg.phoneId = ''
+  reg.deviceIds = []
+  reg.platform = ''
+  reg.topic = ''
+  reg.planStartTime = defaultPlanLocal()
+  regGaps.value = []
+  certPreview.value = null
+}
+
+async function loadRegOptions() {
+  const data = await apiGet('/live/register/options')
+  regOptions.currentUserId = Number(data.currentUserId || 0)
+  regOptions.accounts = data.accounts || []
+  regOptions.realnames = data.realnames || []
+  regOptions.phones = data.phones || []
+  regOptions.devices = data.devices || []
+  regOptions.users = data.users || []
+  if (!reg.responsibleUserId && regOptions.currentUserId) {
+    reg.responsibleUserId = String(regOptions.currentUserId)
+  }
+}
+
+function onAccountPicked() {
+  const hit = regOptions.accounts.find((item) => String(item.id) === reg.accountId)
+  if (!hit) return
+  if (hit.platform) reg.platform = hit.platform
+  if (hit.realnamePersonId) {
+    reg.realnamePersonId = String(hit.realnamePersonId)
+    loadCertPreview()
+  }
+  if (hit.holderUserId) reg.responsibleUserId = String(hit.holderUserId)
+}
+
+function toggleDevice(id: number) {
+  if (reg.deviceIds.includes(id)) reg.deviceIds = reg.deviceIds.filter((item) => item !== id)
+  else reg.deviceIds = [...reg.deviceIds, id]
+}
+
+async function loadCertPreview() {
+  certPreview.value = null
+  const id = Number(reg.realnamePersonId)
+  if (!id) return
+  try {
+    certPreview.value = await apiGet('/live/register/cert-preview', { realnamePersonId: id })
+  } catch (e: unknown) {
+    certPreview.value = { level: 'FAIL', detail: bizError(e) }
+  }
+}
+
+function collectRegGaps() {
+  const gaps: string[] = []
+  if (!reg.accountId) gaps.push('account')
+  if (!reg.realnamePersonId) gaps.push('person')
+  if (!reg.responsibleUserId) gaps.push('owner')
+  if (!reg.phoneId) gaps.push('phone')
+  if (regOptions.devices.length && !reg.deviceIds.length) gaps.push('devices')
+  if (!reg.platform) gaps.push('platform')
+  if (!String(reg.topic || '').trim()) gaps.push('topic')
+  if (!reg.planStartTime || !planIsFuture(reg.planStartTime)) gaps.push('plan')
+  return gaps
+}
+
+async function openRegister() {
   editingCode.value = ''
   clientToken = crypto.randomUUID()
   registerError.value = ''
+  resetReg()
   registerOpen.value = true
+  try {
+    await loadRegOptions()
+  } catch (e: unknown) {
+    registerError.value = bizError(e)
+  }
 }
 
 function closeRegister() {
@@ -1045,34 +1228,54 @@ function closeRegister() {
   }
 }
 
-function openEdit() {
+async function openEdit() {
   if (!detail.value) return
   const current = detail.value
   editingCode.value = current.sessionCode
-  reg.accountId = current.accountId
-  reg.realnamePersonId = current.realnamePersonId
-  reg.deviceId = current.deviceAssetIds?.[0] || 0
-  reg.footballRoomId = current.footballRoomId || ''
-  reg.topic = current.topic || ''
-  reg.planStartTime = current.planStartTime || ''
   registerError.value = ''
+  regGaps.value = []
   registerOpen.value = true
+  try {
+    await loadRegOptions()
+  } catch (e: unknown) {
+    registerError.value = bizError(e)
+  }
+  reg.accountId = current.accountId ? String(current.accountId) : ''
+  reg.realnamePersonId = current.realnamePersonId ? String(current.realnamePersonId) : ''
+  reg.responsibleUserId = current.responsibleUserId ? String(current.responsibleUserId) : ''
+  const ids = (current.deviceAssetIds || []) as number[]
+  const phoneHit = ids.find((id) => regOptions.phones.some((item) => item.id === id))
+  reg.phoneId = phoneHit ? String(phoneHit) : ''
+  reg.deviceIds = ids.filter((id) => regOptions.devices.some((item) => item.id === id))
+  reg.platform = current.platform || ''
+  reg.topic = current.topic || ''
+  reg.planStartTime = isoToLocal(current.planStartTime || '') || defaultPlanLocal()
+  if (reg.realnamePersonId) await loadCertPreview()
 }
 
 async function submitRegister() {
   hint.value = ''
   registerError.value = ''
+  regGaps.value = collectRegGaps()
+  if (regGaps.value.length) {
+    registerError.value = '必填项，请填写'
+    return
+  }
+  if (String(reg.topic).trim().length > 256) {
+    registerError.value = '主题不能超过 256 字'
+    return
+  }
   try {
+    const deviceAssetIds = [Number(reg.phoneId), ...reg.deviceIds.filter((id) => id !== Number(reg.phoneId))]
     const body = {
-      accountId: reg.accountId,
-      realnamePersonId: reg.realnamePersonId,
-      responsibleUserId: editingCode.value ? detail.value?.responsibleUserId || 1 : 1,
-      deviceAssetIds: [reg.deviceId],
-      platform: editingCode.value ? detail.value?.platform || 'DOUYIN' : 'DOUYIN',
-      topic: reg.topic,
-      planStartTime: reg.planStartTime,
+      accountId: Number(reg.accountId),
+      realnamePersonId: Number(reg.realnamePersonId),
+      responsibleUserId: Number(reg.responsibleUserId),
+      deviceAssetIds,
+      platform: reg.platform,
+      topic: reg.topic.trim(),
+      planStartTime: planIso(reg.planStartTime),
       planEndTime: '',
-      footballRoomId: reg.footballRoomId || undefined,
     }
     if (editingCode.value) {
       const code = editingCode.value

@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
 
 /**
  * #197 · 纯 UI
@@ -82,10 +82,7 @@ test.describe('live local risk report tails', () => {
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
     await expect(drawer).toBeVisible()
-    await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
+    await fillLiveRegisterDrawer(drawer, ids, topic)
     const regResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
     )
