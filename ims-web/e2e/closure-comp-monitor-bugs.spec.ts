@@ -20,7 +20,7 @@ test('竞品库录入、对比与监测页导出', async ({ page }) => {
   await page.getByTestId('comp-conclusion').fill('可借鉴选题节奏')
   await page.getByTestId('comp-submit').click()
   await expect(page.getByTestId('comp-lib-note')).toContainText('待初审')
-  await expect(page.getByText(name)).toBeVisible()
+  await expect(page.locator('.comp-card', { hasText: name })).toBeVisible()
 
   await page.getByText('悦跑圈').click()
   await expect(page.getByTestId('comp-monitor-chip')).toBeVisible()
