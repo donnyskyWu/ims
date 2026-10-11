@@ -276,7 +276,7 @@
           </label>
         </div>
         <div>
-          <label>佣金率<i class="req">*</i><input v-model="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
+          <label>佣金率（%）<i class="req">*</i><input v-model="form.commissionRate" type="number" step="0.01" min="0" max="100" data-testid="fin-cost-commission-rate" /></label>
           <div v-if="fieldErrors.commissionRate" class="ferr">{{ fieldErrors.commissionRate }}</div>
         </div>
         <div>
@@ -368,7 +368,7 @@
         {{ correctionError }}
       </p>
       <div class="form-grid">
-        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
+        <label>佣金率（%）<input v-model.number="form.commissionRate" type="number" step="0.01" min="0" max="100" /></label>
         <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
         <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
         <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
@@ -544,7 +544,7 @@ async function previewEngine() {
   await ensureShareRules()
   const gmv = finite(form.costGmv) || 0
   const refund = finite(form.costRefund) || 0
-  const rate = finite(form.commissionRate)
+  const rate = percentToRate(form.commissionRate)
   const commission = round2(gmv * (Number.isFinite(rate) ? rate : 0))
   const gross = round2(gmv - refund - commission)
   const ad = finite(form.adCost)
@@ -618,10 +618,22 @@ function finite(n: unknown) {
   return Number.isFinite(value) ? value : Number.NaN
 }
 
+function percentToRate(raw: unknown) {
+  const value = finite(raw)
+  if (!Number.isFinite(value)) return 0
+  return Math.round(value * 100) / 10000
+}
+
+function rateToPercent(raw: unknown) {
+  const value = finite(raw)
+  if (!Number.isFinite(value)) return ''
+  return Math.round(value * 10000) / 100
+}
+
 const entryTotal = computed(() => {
-  const rate = finite(form.commissionRate)
+  const rate = percentToRate(form.commissionRate)
   const gmv = finite(form.costGmv)
-  const commission = round2((Number.isFinite(gmv) ? gmv : 0) * (Number.isFinite(rate) ? rate : 0))
+  const commission = round2((Number.isFinite(gmv) ? gmv : 0) * rate)
   const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname, form.shareTeam]
   const extra = parts.reduce((acc, raw) => {
     const value = finite(raw)
@@ -654,9 +666,9 @@ function entryFormError() {
     fieldErrors.commissionRate = '必填项，请填写'
     issues.push('必填项，请填写')
   } else {
-    const rate = finite(form.commissionRate)
-    if (!Number.isFinite(rate) || rate <= 0 || rate > 1) {
-      fieldErrors.commissionRate = '1001 佣金率须大于 0 且不超过 1'
+    const percent = finite(form.commissionRate)
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      fieldErrors.commissionRate = '佣金率须在 0~100% 之间'
       issues.push(fieldErrors.commissionRate)
     }
   }
@@ -817,7 +829,7 @@ async function submitEntry(asDraft: boolean) {
   const res = await http.post(
     `/fin/cost/${form.sessionCode}`,
     {
-      commissionRate: Number(form.commissionRate),
+      commissionRate: percentToRate(form.commissionRate),
       adCost: Number(form.adCost || 0),
       rechargeCost: Number(form.rechargeCost || 0),
       fixedCost: Number(form.fixedCost || 0),
@@ -847,7 +859,7 @@ function assignFormFromCost(d: Record<string, unknown>) {
     sessionCode: d.sessionCode,
     costGmv: d.costGmv,
     costRefund: d.costRefund,
-    commissionRate: d.commissionRate,
+    commissionRate: rateToPercent(d.commissionRate),
     adCost: d.adCost,
     rechargeCost: d.rechargeCost,
     fixedCost: d.fixedCost,
@@ -1012,7 +1024,7 @@ async function submitCorrection() {
     {
       correctionReason: correctionReason.value.trim(),
       corrected: {
-        commissionRate: form.commissionRate,
+        commissionRate: percentToRate(form.commissionRate),
         adCost: form.adCost,
         rechargeCost: form.rechargeCost,
         fixedCost: form.fixedCost,
