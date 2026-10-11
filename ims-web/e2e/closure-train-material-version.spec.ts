@@ -86,7 +86,7 @@ test.describe('train material version and task edit closure', () => {
     const renamedRow = page.locator('tr', { hasText: renamed })
     await expect(renamedRow).toBeVisible()
     await renamedRow.getByRole('button', { name: '学习记录' }).click()
-    await expect(page.getByText('NOT_CONFIRMED')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByText('未确认')).toBeVisible({ timeout: 10_000 })
     await page.getByRole('button', { name: '关闭' }).click()
     await page.screenshot({ path: `${shotDir}/03-task-edited.png`, fullPage: true })
 

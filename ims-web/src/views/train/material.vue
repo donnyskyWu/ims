@@ -255,7 +255,7 @@
         <h3 style="margin: 0 0 12px">资料详情</h3>
         <p class="mono">{{ detail.materialNo }} · V{{ detail.version || 1 }}</p>
         <p>{{ detail.title }}</p>
-        <p class="hint">{{ detail.materialType }} · {{ detail.status }} · {{ detail.uploaderName }}</p>
+        <p class="hint">{{ detail.materialType }} · {{ statusLabel(detail.status) }} · {{ detail.uploaderName }}</p>
         <div data-testid="train-material-preview">
           <h4 style="margin: 12px 0 8px">预览</h4>
           <p class="hint">只读预览，历史版本不可修改</p>
@@ -293,7 +293,7 @@
               data-testid="train-version-archive"
               @click="previewVersion = item.version"
             >
-              V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ item.updatedAt }}
+              V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ fmtBj(item.updatedAt) }}
             </button>
           </li>
         </ul>
@@ -522,6 +522,23 @@ function statusLabel(value: string) {
   if (value === 'PUBLISHED') return '已发布'
   if (value === 'OFFLINE') return '已下架'
   return value || '—'
+}
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
 }
 
 function statusStyle(value: string) {

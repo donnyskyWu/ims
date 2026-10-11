@@ -46,10 +46,12 @@
         <table>
           <thead>
             <tr>
-              <th>编号</th>
+              <th>任务编号</th>
               <th>任务名称</th>
               <th>资料数</th>
+              <th>指派范围</th>
               <th>应完成</th>
+              <th>已完成</th>
               <th>完成率</th>
               <th>确认方式</th>
               <th>截止时间</th>
@@ -59,10 +61,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9">
+              <td colspan="11">
                 <div class="empty" data-testid="train-task-empty">
                   <div class="et">{{ error || (hasActiveFilters ? '没有符合筛选的任务' : '暂无任务') }}</div>
                   <div v-if="!error && hasActiveFilters" class="es">调整任务名称、状态或确认方式后再查询</div>
@@ -82,7 +84,9 @@
               <td class="mono">{{ row.taskNo }}</td>
               <td style="font-weight: 500">{{ row.taskName }}</td>
               <td class="num">{{ row.materialCount }}</td>
+              <td>{{ assignScopeLabel(row.assignScope) }}</td>
               <td class="num">{{ row.assignedCount }}</td>
+              <td class="num" data-testid="train-task-finished">{{ row.finishedCount ?? 0 }}</td>
               <td :style="{ color: finishColor(row.finishRate) }">{{ row.finishRate }}%</td>
               <td>{{ confirmLabel(row.confirmType) }}</td>
               <td
@@ -90,11 +94,11 @@
                 data-testid="train-task-deadline"
                 :class="{ 'due-over': deadlineTone(row) === 'over' }"
               >
-                {{ row.deadline }}
+                {{ fmtBj(row.deadline) }}
                 <span v-if="deadlineTone(row) === 'soon'" class="tag due-tag" data-testid="train-task-due-soon">即将到期</span>
                 <span v-else-if="deadlineTone(row) === 'over'" class="tag due-tag over" data-testid="train-task-overdue">已逾期</span>
               </td>
-              <td>{{ row.status }}</td>
+              <td>{{ statusLabel(row.status) }}</td>
               <td>
                 <button
                   class="btn btn-sec btn-sm"
@@ -258,8 +262,9 @@
     </div>
 
     <div v-if="showRecords" class="modal-mask" @click.self="showRecords = false">
-      <div class="card" style="width: 640px; padding: 20px; max-height: 85vh; overflow: auto">
+      <div class="card" style="width: 880px; padding: 20px; max-height: 85vh; overflow: auto">
         <h3 style="margin: 0 0 8px">学习记录 · {{ recordsTaskName }}</h3>
+        <p class="hint" data-testid="train-record-makeup-note">逾期仍可补学，计入完成率分母</p>
         <form class="qbar" @submit.prevent="loadRecords">
           <select v-model="recordFilters.confirmStatus" data-testid="train-record-filter-status">
             <option value="">全部确认状态</option>
@@ -280,6 +285,8 @@
               <th>进度</th>
               <th>确认状态</th>
               <th>得分</th>
+              <th>开始</th>
+              <th>完成</th>
               <th>逾期</th>
               <th v-if="recordsConfirmType === 'QUIZ'">操作</th>
             </tr>
@@ -308,7 +315,7 @@
               <td>{{ r.userName || r.userId }}</td>
               <td>{{ r.deptName || '未分配' }}</td>
               <td class="num">{{ r.progress }}%</td>
-              <td>{{ r.confirmStatus }}</td>
+              <td>{{ confirmStatusLabel(r.confirmStatus) }}</td>
               <td class="num">
                 <span
                   v-if="recordsConfirmType === 'QUIZ' && r.confirmScore == null"
@@ -316,6 +323,8 @@
                 >暂无成绩</span>
                 <template v-else>{{ r.confirmScore == null ? '—' : r.confirmScore }}</template>
               </td>
+              <td class="mono">{{ fmtBj(r.startedAt) }}</td>
+              <td class="mono">{{ r.finishedAt ? fmtBj(r.finishedAt) : '—' }}</td>
               <td>
                 <span v-if="r.isOverdue" data-testid="train-record-overdue">已逾期 {{ r.overdueDays || '' }}天</span>
                 <span v-else>—</span>
@@ -360,6 +369,7 @@ type Row = {
   assignTargetUserIds?: number[]
   assignTargetPositionCodes?: string[]
   materialCount: number
+  finishedCount?: number
   assignedCount: number
   finishRate: number
   confirmType: string
@@ -408,11 +418,13 @@ const recordRows = ref<
     progress: number
     confirmStatus: string
     confirmScore: number | null
+    startedAt?: string
+    finishedAt?: string
     isOverdue: boolean
     overdueDays: number
   }>
 >([])
-const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 7 : 6))
+const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 9 : 8))
 const userStore = useUserStore()
 
 function isSelfRecord(userId: number) {
@@ -462,6 +474,41 @@ function confirmLabel(value: string) {
   if (value === 'QUIZ') return '自测问卷'
   if (value === 'DURATION') return '学时达标'
   return value
+}
+
+function statusLabel(value: string) {
+  if (value === 'IN_PROGRESS') return '进行中'
+  if (value === 'FINISHED') return '已结束'
+  return value
+}
+
+function confirmStatusLabel(value: string) {
+  if (value === 'CONFIRMED') return '已确认'
+  if (value === 'NOT_CONFIRMED') return '未确认'
+  return value
+}
+
+function assignScopeLabel(value?: string) {
+  if (value === 'BY_POSITION') return '按岗位'
+  if (value === 'BY_USER') return '按人'
+  return value || '—'
+}
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
 }
 
 function addQuestion() {

@@ -51,7 +51,7 @@ test.describe('train local tails', () => {
 
     await page.locator('tr', { hasText: durationName }).getByRole('button', { name: '学习记录' }).click()
     const records = page.locator('.modal-mask .card').filter({ hasText: '学习记录' })
-    await expect(records.getByText('NOT_CONFIRMED')).toBeVisible()
+    await expect(records.getByText('未确认')).toBeVisible()
     await records.getByTestId('train-record-filter-status').selectOption('CONFIRMED')
     const emptyRecords = page.waitForResponse(
       (r) => r.url().includes('/train/task/records') && r.url().includes('confirmStatus=CONFIRMED') && r.status() === 200,
@@ -61,7 +61,7 @@ test.describe('train local tails', () => {
     await expect(records.getByTestId('train-record-empty')).toContainText('没有符合筛选的学习记录')
     await page.screenshot({ path: `${SHOT}/train-record-filter-empty.png`, fullPage: true })
     await records.getByTestId('train-record-clear').click()
-    await expect(records.getByText('NOT_CONFIRMED')).toBeVisible()
+    await expect(records.getByText('未确认')).toBeVisible()
     await records.getByRole('button', { name: '关闭' }).click()
 
     await page.goto(`/ims/train/study/${await taskIdOf(page, quizName)}`)

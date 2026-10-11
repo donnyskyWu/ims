@@ -1,6 +1,7 @@
+import json
 import os
 import uuid
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 os.environ.pop("IMS_DATABASE_URL", None)
 os.environ["IMS_MYSQL_HOST"] = "127.0.0.1"
@@ -12,7 +13,18 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import Todo, TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserMapping, UserRole
+from app.models import (
+    OrgEvent,
+    Todo,
+    TrainMaterial,
+    TrainMaterialCate,
+    TrainTask,
+    TrainTaskRecord,
+    User,
+    UserDept,
+    UserMapping,
+    UserRole,
+)
 
 client = TestClient(app)
 
@@ -1464,3 +1476,88 @@ def test_train_quiz_ai_generate_stub_and_adopt():
     assert "answerIndex" in quiz[0]
     created = _quiz_task(auth, material_id, f"AI卷 {uuid.uuid4().hex[:6]}", quiz, len(quiz))
     assert created.json()["code"] == 0, created.json()
+
+
+def test_train_task_list_beijing_time_finished_count_and_dept_name():
+    auth = headers()
+    material_id = _published_material(auth, "列与部门资料")
+    username = f"dept_{uuid.uuid4().hex[:8]}"
+    created_user = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": "内容部学员", "mobile": f"136{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    user_body = created_user.json()
+    assert user_body["code"] == 0, user_body
+    user_id = int(user_body["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(UserDept(user_id=user_id, dept_id=7301, tenant_id=0))
+        db.add(
+            UserMapping(
+                user_id=user_id,
+                dingtalk_user_id=f"dt-{username}",
+                dept_ids=[7301],
+                tenant_id=0,
+            )
+        )
+        db.add(
+            OrgEvent(
+                dingtalk_event_id=f"evt-{username}",
+                event_type="hire",
+                idempotency_key=f"idem-{username}",
+                user_id=user_id,
+                after_dept="内容部",
+                payload_json=json.dumps({"deptIds": [7301], "deptNames": ["内容部"]}, ensure_ascii=False),
+                sync_status="SUCCESS",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    name = f"列展示 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [user_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    listed = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": name, "pageNo": 1, "pageSize": 10},
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == task_id)
+    assert row["assignScope"] == "BY_USER"
+    assert row["finishedCount"] == 0
+    assert row["deadline"] == "2026-12-31T18:00:00+08:00"
+    created_at = datetime_from_iso(row["createdAt"])
+    assert abs((created_at - utcnow().replace(tzinfo=timezone.utc)).total_seconds()) < 180
+
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    rec = records.json()["data"]["list"][0]
+    assert rec["deptName"] == "内容部"
+    assert rec["confirmStatus"] == "NOT_CONFIRMED"
+    assert rec["startedAt"]
+    assert rec["finishedAt"] in (None, "")
+
+
+def datetime_from_iso(text: str):
+    from datetime import datetime
+
+    return datetime.fromisoformat(text)

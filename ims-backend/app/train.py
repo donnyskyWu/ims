@@ -74,10 +74,20 @@ class MaterialBody(BaseModel):
 
 
 def iso(dt: datetime | None) -> str:
+    """Naive values are Beijing wall clock, used for deadlines."""
     if dt is None:
         return ""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=BJ)
+    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def iso_utc(dt: datetime | None) -> str:
+    """Naive values are UTC instants (created / updated / finished)."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
@@ -207,7 +217,7 @@ def material_versions(db: Session, material_id: int, tenant_id: int) -> list[dic
             "fileKey": row.file_key or None,
             "linkUrl": row.link_url or None,
             "editorName": names.get(row.editor_user_id, ""),
-            "updatedAt": iso(row.updated_at),
+            "updatedAt": iso_utc(row.updated_at),
         }
         for row in rows
     ]
@@ -231,7 +241,7 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
         "status": row.status,
         "uploaderUserId": row.uploader_user_id,
         "uploaderName": names.get(row.uploader_user_id, ""),
-        "updatedAt": iso(row.updated_at),
+        "updatedAt": iso_utc(row.updated_at),
     }
 
 
@@ -604,7 +614,7 @@ def weekly_update_metrics(
             {
                 "materialNo": row.material_no,
                 "title": row.title,
-                "lastUpdatedAt": iso(touched),
+                "lastUpdatedAt": iso_utc(touched),
                 "ownerName": names.get(row.uploader_user_id, ""),
             }
         )
@@ -759,12 +769,23 @@ def as_date(value) -> date:
 
 
 def dept_label(dept_id: int) -> str:
-    return f"部门#{dept_id}" if dept_id else "未分配"
+    return f"部门 {dept_id}" if dept_id else "未分配"
 
 
-def dept_of(db: Session, cache: dict[int, int], user_id: int, tenant_id: int) -> int:
-    if user_id not in cache:
-        cache[user_id] = primary_dept_id(db, user_id, tenant_id)
+def user_dept_view(db: Session, user_id: int, tenant_id: int, cache: dict[int, tuple[int, str]]) -> tuple[int, str]:
+    """部门编号沿用主部门，名称优先取组织事件里的部门名。"""
+    found = cache.get(user_id)
+    if found is not None:
+        return found
+    from app.api import user_dept_snapshot
+
+    ids, names = user_dept_snapshot(db, user_id, tenant_id)
+    dept_id = int(ids[0]) if ids else primary_dept_id(db, user_id, tenant_id)
+    if names and str(names[0]).strip():
+        name = str(names[0]).strip()
+    else:
+        name = dept_label(dept_id)
+    cache[user_id] = (dept_id, name)
     return cache[user_id]
 
 
@@ -803,18 +824,18 @@ def duration_minutes(study_seconds: int) -> int:
 def aggregate_dept_daily(
     db: Session, tenant_id: int, pairs: list[tuple[TrainTaskRecord, TrainTask]]
 ) -> list[dict]:
-    cache: dict[int, int] = {}
+    cache: dict[int, tuple[int, str]] = {}
     buckets: dict[tuple[str, int], dict] = {}
     for record, task in pairs:
         created = task.created_at or utcnow()
         stat_date = created.date().isoformat()
-        dept_id = dept_of(db, cache, record.user_id, tenant_id)
+        dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, cache)
         bucket = buckets.setdefault(
             (stat_date, dept_id),
             {
                 "statDate": stat_date,
                 "deptId": dept_id,
-                "deptName": dept_label(dept_id),
+                "deptName": dept_name,
                 "assignedCount": 0,
                 "finishedCount": 0,
                 "studySeconds": 0,
@@ -943,7 +964,7 @@ def aggregate_rank(
     dimension: str,
     top_n: int,
 ) -> list[dict]:
-    cache: dict[int, int] = {}
+    cache: dict[int, tuple[int, str]] = {}
     groups: dict[int, dict] = {}
     if dimension == "PERSON":
         names = user_names(db, {record.user_id for record, _ in pairs})
@@ -974,10 +995,10 @@ def aggregate_rank(
         items.sort(key=lambda item: (-item["totalDurationMinutes"], -item["finishRate"], item["userName"]))
     else:
         for record, _task in pairs:
-            dept_id = dept_of(db, cache, record.user_id, tenant_id)
+            dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, cache)
             bucket = groups.setdefault(
                 dept_id,
-                {"deptName": dept_label(dept_id), "assigned": 0, "finished": 0, "seconds": 0},
+                {"deptName": dept_name, "assigned": 0, "finished": 0, "seconds": 0},
             )
             bucket["assigned"] += 1
             if record.confirm_status == 1:
@@ -1126,10 +1147,8 @@ def close_study_todo(db: Session, tenant_id: int, user_id: int, task_id: int) ->
         row.status = "DONE"
 
 
-def finish_rate(db: Session, task_id: int, assigned: int) -> float:
-    if assigned <= 0:
-        return 0.0
-    done = int(
+def finished_count(db: Session, task_id: int) -> int:
+    return int(
         db.scalar(
             select(func.count())
             .select_from(TrainTaskRecord)
@@ -1141,7 +1160,12 @@ def finish_rate(db: Session, task_id: int, assigned: int) -> float:
         )
         or 0
     )
-    return round(done * 100.0 / assigned, 2)
+
+
+def finish_rate(db: Session, task_id: int, assigned: int) -> float:
+    if assigned <= 0:
+        return 0.0
+    return round(finished_count(db, task_id) * 100.0 / assigned, 2)
 
 
 _AI_DRAFTS: dict[str, tuple[float, list[dict]]] = {}
@@ -1259,7 +1283,7 @@ def ai_generate_quiz(
             "meta": {
                 "modelCode": "stub-train-quiz",
                 "promptCode": "TRAIN-QUIZ-STUB",
-                "generatedAt": iso(utcnow()),
+                "generatedAt": iso_utc(utcnow()),
                 "difficulty": body.difficulty,
             },
         }
@@ -1399,7 +1423,7 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "questionCount": len(quiz),
         "quiz": quiz,
         "status": resolve_task_status(row),
-        "createdAt": iso(row.created_at),
+        "createdAt": iso_utc(row.created_at),
     }
 
 
@@ -1662,6 +1686,7 @@ def stat_finish_rate(
     by_person: dict[int, dict] = {}
     user_ids = {rec.user_id for rec, _ in rows}
     names = user_names(db, user_ids)
+    dept_cache: dict[int, tuple[int, str]] = {}
 
     for record, task in rows:
         finished = record.confirm_status == 1
@@ -1677,11 +1702,11 @@ def stat_finish_rate(
         if finished:
             by_task[tid]["finishedCount"] += 1
 
-        dept_id = primary_dept_id(db, record.user_id, tenant_id)
+        dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, dept_cache)
         if dept_id not in by_dept:
             by_dept[dept_id] = {
                 "deptId": dept_id,
-                "deptName": dept_label(dept_id),
+                "deptName": dept_name,
                 "assignedCount": 0,
                 "finishedCount": 0,
             }
@@ -1822,11 +1847,11 @@ def stat_overdue(
     if scoped_user_id(actor) is not None:
         stmt = stmt.where(TrainTaskRecord.user_id == actor.id)
     rows = list(db.execute(stmt).all())
-    cache: dict[int, int] = {}
+    cache: dict[int, tuple[int, str]] = {}
     names = user_names(db, {record.user_id for record, _ in rows})
     items = []
     for record, task in rows:
-        dept_id = dept_of(db, cache, record.user_id, tenant_id)
+        dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, cache)
         if deptId is not None and dept_id != deptId:
             continue
         deadline = task.deadline
@@ -1837,7 +1862,7 @@ def stat_overdue(
                 "taskName": task.task_name,
                 "userId": record.user_id,
                 "userName": names.get(record.user_id, ""),
-                "deptName": dept_label(dept_id),
+                "deptName": dept_name,
                 "deadline": deadline_text(deadline),
                 "overdueDays": overdue_day_count(deadline, now) if deadline else 1,
                 "progress": int(record.progress or 0),
@@ -1892,7 +1917,10 @@ def task_list(
     items = []
     for row in rows:
         vo = task_vo(db, row)
-        vo["finishRate"] = finish_rate(db, row.id, row.assigned_count)
+        done = finished_count(db, row.id)
+        vo["finishedCount"] = done
+        assigned = int(row.assigned_count or 0)
+        vo["finishRate"] = round(done * 100.0 / assigned, 2) if assigned else 0.0
         vo["materialCount"] = len(vo["materialIds"])
         items.append(vo)
     return paged(items, total, page_no, size)
@@ -1978,7 +2006,7 @@ def progress_vo(
     mid = material_id or (
         int(task.material_ids[0]) if isinstance(task.material_ids, list) and task.material_ids else 0
     )
-    finished = iso(record.finished_at) if record.finished_at else None
+    finished = iso_utc(record.finished_at) if record.finished_at else None
     return {
         "taskId": task.id,
         "userId": record.user_id,
@@ -1987,7 +2015,7 @@ def progress_vo(
         "materialProgress": {str(k): v for k, v in mat_prog.items()},
         "confirmStatus": confirm_status_label(record.confirm_status),
         "confirmScore": record.confirm_score,
-        "startedAt": iso(record.created_at),
+        "startedAt": iso_utc(record.created_at),
         "finishedAt": finished,
         "studySeconds": int(record.study_seconds or 0),
         "materialSeconds": {str(k): v for k, v in material_seconds_map(record).items()},
@@ -2000,7 +2028,7 @@ def confirm_payload(task: TrainTask, record: TrainTaskRecord) -> dict:
         "confirmStatus": confirm_status_label(record.confirm_status),
         "confirmScore": record.confirm_score,
         "isPassed": passed,
-        "finishedAt": iso(record.finished_at) if record.finished_at else None,
+        "finishedAt": iso_utc(record.finished_at) if record.finished_at else None,
     }
     if task.confirm_type == "QUIZ":
         data["passScore"] = int(task.pass_score or 0)
@@ -2160,14 +2188,14 @@ def task_records(
     names = user_names(db, {rec.user_id for rec, _ in rows})
     items = []
     now = utcnow()
-    dept_cache: dict[int, int] = {}
+    dept_cache: dict[int, tuple[int, str]] = {}
     for record, task in rows:
         vo = progress_vo(db, task, record)
         vo["taskNo"] = task.task_no
         vo["taskName"] = task.task_name
         vo["userName"] = names.get(record.user_id, "")
-        dept_id = dept_of(db, dept_cache, record.user_id, tenant_id)
-        vo["deptName"] = dept_label(dept_id)
+        _dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, dept_cache)
+        vo["deptName"] = dept_name
         deadline = task.deadline
         vo["isOverdue"] = bool(
             record.confirm_status == 0 and deadline and deadline < now.replace(tzinfo=None)

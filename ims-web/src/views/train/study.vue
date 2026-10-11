@@ -143,7 +143,7 @@
           </router-link>
         </p>
         <p v-if="confirmStatus === 'CONFIRMED'" class="hint ok-banner">
-          学习已完成 · CONFIRMED<span v-if="passedScore != null"> · 得分 {{ passedScore }}</span>
+          学习已完成 · 已确认<span v-if="passedScore != null"> · 得分 {{ passedScore }}</span>
         </p>
       </div>
     </div>
