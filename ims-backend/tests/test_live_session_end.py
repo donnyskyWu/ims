@@ -230,3 +230,38 @@ def test_r5_and_r7_only_end_own_sessions_r4_ends_any():
     director = client.put(f"/admin-api/ims/live/register/{fresh}/end", headers=r4)
     assert director.json()["code"] == 0, director.json()
     assert director.json()["data"]["sessionStatus"] == "ENDED"
+
+
+def test_bind_room_on_sync_keeps_session_status():
+    auth = headers()
+    ids = seed()
+    created = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json={
+            "accountId": ids["account"],
+            "realnamePersonId": ids["person"],
+            "responsibleUserId": 1,
+            "deviceAssetIds": [ids["phone"]],
+            "platform": "DOUYIN",
+            "topic": "未绑定房间",
+            "planStartTime": "2026-10-20T20:00:00+08:00",
+            "planEndTime": "",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    code = created.json()["data"]["sessionCode"]
+    missing = client.post(f"/admin-api/ims/live/sessions/{code}/football-sync", headers=auth, json={})
+    assert missing.json()["code"] == 1041
+    bound = client.post(
+        f"/admin-api/ims/live/sessions/{code}/football-sync",
+        headers=auth,
+        json={"footballRoomId": str(ids["room"])},
+    )
+    assert bound.json()["code"] == 0, bound.json()
+    basic = bound.json()["data"]["footballRoomBasic"]
+    assert basic["status"] == 3
+    assert basic["endTime"]
+    still = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
+    assert still["sessionStatus"] == "APPROVED"
+    assert still["footballRoomId"] == str(ids["room"])

@@ -1354,6 +1354,7 @@ def ensure_overdue_supervision(db: Session, actor: User, row: LiveSession, hours
 
 class SyncBody(BaseModel):
     force: bool | None = False
+    footballRoomId: str | None = None
 
 
 class SupplementBody(BaseModel):
@@ -1563,6 +1564,10 @@ def football_sync(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
+    room_id = (body.footballRoomId or "").strip() if body is not None else ""
+    if room_id:
+        row.football_room_id = room_id
+        row.football_sync_status = "PENDING"
     if not row.football_room_id:
         return fail(1041, "未绑定 Football 直播间")
     room = read_live_room(ops, actor, row.football_room_id)

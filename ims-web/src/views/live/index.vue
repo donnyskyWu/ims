@@ -389,26 +389,33 @@
       <div v-else-if="detail && tab === '直播数据'" class="tbl-block" style="margin-top: 12px">
         <p class="hint">GMV、峰值、涨粉由下播录入承载。此处只读 Football 直播间，结束时间仅作参考，不改变本场状态。</p>
         <div class="acts" style="margin: 8px 0">
+          <input v-model="roomIdDraft" data-testid="live-room-id" placeholder="直播间 ID" style="width: 140px" />
+          <button class="btn btn-sec btn-sm" type="button" data-testid="live-room-bind" @click="bindRoom">绑定</button>
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-sync-btn" @click="doSync">从 Football 同步</button>
         </div>
         <p v-if="syncError" class="hint bad" data-testid="live-sync-error">{{ syncError }}</p>
         <div v-if="metrics && !metrics.footballRoomBasic" class="empty" data-testid="live-metrics-empty">
-          <div class="et">未绑定 Football 房间</div>
+          <div class="et">未绑定 Football 直播间</div>
           <div class="es">绑定直播间后可看到观看、点赞和预约。GMV 仍走下播录入。</div>
         </div>
-        <table v-if="metrics" class="ipg-info-grid">
+        <table v-if="metrics" class="ipg-info-grid" data-testid="live-room-basic">
           <tbody>
             <tr><td class="lbl">同步态</td><td>{{ syncLabel(metrics.syncStatus) }}</td></tr>
-            <tr><td class="lbl">roomId</td><td>{{ metrics.footballRoomId || '—' }}</td></tr>
+            <tr><td class="lbl">上次同步</td><td data-testid="live-room-synced-at">{{ minuteText(metrics.lastSyncAt) }}</td></tr>
+            <tr><td class="lbl">直播间</td><td>{{ metrics.footballRoomId || '—' }}</td></tr>
             <template v-if="metrics.footballRoomBasic">
-              <tr><td class="lbl">直播名称</td><td>{{ metrics.footballRoomBasic.liveName }}</td></tr>
-              <tr><td class="lbl">作者</td><td>{{ metrics.footballRoomBasic.authorNickname }}</td></tr>
-              <tr><td class="lbl">观看人数</td><td>{{ metrics.footballRoomBasic.viewerCount }}</td></tr>
-              <tr><td class="lbl">点赞</td><td>{{ metrics.footballRoomBasic.likeCount }}</td></tr>
-              <tr><td class="lbl">预约</td><td>{{ metrics.footballRoomBasic.reservationCount }}</td></tr>
+              <tr><td class="lbl">直播名称</td><td>{{ metrics.footballRoomBasic.liveName || '—' }}</td></tr>
+              <tr><td class="lbl">作者</td><td>{{ metrics.footballRoomBasic.authorNickname || '—' }}</td></tr>
+              <tr><td class="lbl">直播间状态</td><td data-testid="live-room-status">{{ roomStatusLabel(metrics.footballRoomBasic.status) }}</td></tr>
+              <tr><td class="lbl">开始时间</td><td>{{ minuteText(metrics.footballRoomBasic.startTime) }}</td></tr>
+              <tr><td class="lbl">结束时间</td><td data-testid="live-room-end">{{ minuteText(metrics.footballRoomBasic.endTime) }}</td></tr>
+              <tr><td class="lbl">观看人数</td><td>{{ metrics.footballRoomBasic.viewerCount ?? '—' }}</td></tr>
+              <tr><td class="lbl">点赞</td><td>{{ metrics.footballRoomBasic.likeCount ?? '—' }}</td></tr>
+              <tr><td class="lbl">预约</td><td>{{ metrics.footballRoomBasic.reservationCount ?? '—' }}</td></tr>
             </template>
           </tbody>
         </table>
+        <p v-if="metrics?.footballRoomBasic?.endTime" class="hint" data-testid="live-room-end-ref">直播间结束时间只作参考，不会因此改变本场状态。</p>
       </div>
       <div v-else-if="detail && tab === '风控登记'" class="tbl-block" style="margin-top: 12px">
         <div class="acts" style="margin-bottom: 8px">
@@ -653,6 +660,7 @@ const overdueCount = ref(0)
 const overdueOnly = ref(false)
 const reportError = ref('')
 const syncError = ref('')
+const roomIdDraft = ref('')
 const reportMissing = ref<string[]>([])
 const reportBadField = ref('')
 const slowQueryHint = ref('')
@@ -1007,6 +1015,17 @@ function ledgerQueryParams(withPage: boolean) {
 
 function bindCorrections(source: any) {
   correctionSlips.value = Array.isArray(source?.corrections) ? source.corrections : []
+}
+
+function minuteText(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return '—'
+  return text.replace('T', ' ').slice(0, 16)
+}
+
+function roomStatusLabel(status: unknown) {
+  const map: Record<string, string> = { '1': '未开始', '2': '直播中', '3': '已结束', '4': '过期', '5': '暂停' }
+  return map[String(status ?? '')] || '—'
 }
 
 function syncLabel(v: string | undefined) {
@@ -1527,12 +1546,31 @@ async function switchTab(name: string) {
   }
 }
 
+async function bindRoom() {
+  if (!detail.value) return
+  syncError.value = ''
+  const roomId = roomIdDraft.value.trim()
+  if (!roomId) {
+    syncError.value = '请填写直播间 ID'
+    return
+  }
+  try {
+    metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, { footballRoomId: roomId })
+    hint.value = '已绑定并同步 Football 直播间'
+    await refreshDetail()
+  } catch (e: unknown) {
+    syncError.value = bizError(e)
+    hint.value = syncError.value
+  }
+}
+
 async function doSync() {
   if (!detail.value) return
   syncError.value = ''
   try {
     metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, {})
     hint.value = '已同步 Football 直播间'
+    await refreshDetail()
   } catch (e: unknown) {
     syncError.value = bizError(e)
     hint.value = syncError.value
