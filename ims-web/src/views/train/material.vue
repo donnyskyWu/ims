@@ -6,36 +6,47 @@
         <div class="sub">TRAIN-001 · DOC/VIDEO/LINK · 02 TRAIN</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-material-export" @click="exportMaterials">导出</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>
       </div>
     </div>
+    <p v-if="exportHint" class="hint" data-testid="train-material-export-msg">{{ exportHint }}</p>
     <p class="hint" style="margin-bottom: 8px">左侧按岗位查看资料；更新资料生成新版本并留档。列表可按标题、类型、状态和岗位筛选。</p>
-    <div
-      class="card weekly-card"
-      :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
-      data-testid="train-weekly-rate"
-    >
-      <div>
-        <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
-        <div v-if="weeklyStatus === 'loading'" class="hint">加载中</div>
-        <div v-else-if="weeklyStatus === 'error'" class="hint" data-testid="train-weekly-error">
-          周更新率加载失败
-          <button class="btn btn-sec btn-sm" type="button" @click="loadWeekly">重试</button>
-        </div>
-        <template v-else>
-          <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
-          <div v-if="weekly.shouldUpdateCount === 0" class="hint" data-testid="train-weekly-empty">
-            本周暂无已发布资料
-          </div>
-          <div v-else class="hint">
-            已更新 {{ weekly.updatedCount }} / 应更新 {{ weekly.shouldUpdateCount }}
-            <span v-if="weekly.weeklyUpdateRate < 100"> · 未达 100%，请督办</span>
-          </div>
-        </template>
+    <div class="weekly-row">
+      <div class="card weekly-card" data-testid="train-weekly-should">
+        <div class="weekly-label">本周应更新</div>
+        <div class="weekly-num">{{ weeklyStatus === 'ready' ? weekly.shouldUpdateCount : '—' }}</div>
       </div>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="openUnupdated">
-        未更新清单
-      </button>
+      <div class="card weekly-card" data-testid="train-weekly-updated">
+        <div class="weekly-label">已更新</div>
+        <div class="weekly-num">{{ weeklyStatus === 'ready' ? weekly.updatedCount : '—' }}</div>
+      </div>
+      <div
+        class="card weekly-card"
+        :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
+        data-testid="train-weekly-rate"
+      >
+        <div>
+          <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
+          <div v-if="weeklyStatus === 'loading'" class="hint">加载中</div>
+          <div v-else-if="weeklyStatus === 'error'" class="hint" data-testid="train-weekly-error">
+            周更新率加载失败
+            <button class="btn btn-sec btn-sm" type="button" @click="loadWeekly">重试</button>
+          </div>
+          <template v-else>
+            <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
+            <div v-if="weekly.shouldUpdateCount === 0" class="hint" data-testid="train-weekly-empty">
+              本周暂无已发布资料
+            </div>
+            <div v-else class="hint">
+              <span v-if="weekly.weeklyUpdateRate < 100">未达 100%，请督办</span>
+            </div>
+          </template>
+        </div>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="openUnupdated">
+          未更新清单
+        </button>
+      </div>
     </div>
     <div class="g2" style="margin-bottom: 12px; align-items: flex-start">
       <div class="card" style="padding: 12px; max-height: 280px; overflow: auto">
@@ -96,22 +107,23 @@
             <table>
               <thead>
                 <tr>
-                  <th>编号</th>
+                  <th>资料编号</th>
                   <th>标题</th>
                   <th>类型</th>
                   <th>版本</th>
-                  <th>岗位</th>
+                  <th>关联岗位</th>
                   <th>状态</th>
                   <th>更新人</th>
+                  <th>更新时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
-                </tr>
-                <tr v-else-if="!rows.length">
-                  <td colspan="8">
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+            </tr>
+            <tr v-else-if="!rows.length">
+              <td colspan="9">
                     <div class="empty" data-testid="train-material-empty">
                       <div data-testid="train-list-empty">
                         <div class="et">{{ error || listEmptyText }}</div>
@@ -154,6 +166,7 @@
                     </span>
                   </td>
                   <td>{{ row.uploaderName }}</td>
+                  <td class="mono">{{ fmtBj(row.updatedAt) }}</td>
                   <td>
                     <button class="btn btn-sec btn-sm" type="button" data-testid="train-material-detail" @click="openDetail(row)">
                       详情
@@ -255,7 +268,8 @@
         <h3 style="margin: 0 0 12px">资料详情</h3>
         <p class="mono">{{ detail.materialNo }} · V{{ detail.version || 1 }}</p>
         <p>{{ detail.title }}</p>
-        <p class="hint">{{ detail.materialType }} · {{ statusLabel(detail.status) }} · {{ detail.uploaderName }}</p>
+        <p class="hint">{{ typeLabel(detail.materialType) }} · {{ statusLabel(detail.status) }} · {{ detail.uploaderName }}</p>
+        <p data-testid="train-detail-positions">关联岗位：{{ detailPositionText }}</p>
         <div data-testid="train-material-preview">
           <h4 style="margin: 12px 0 8px">预览</h4>
           <p class="hint">只读预览，历史版本不可修改</p>
@@ -298,7 +312,25 @@
           </li>
         </ul>
         <p v-if="!detail.versions?.length" class="hint">尚无历史版本</p>
-        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; gap: 8px">
+          <button
+            v-if="detail.status !== 'OFFLINE'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            data-testid="train-detail-edit"
+            @click="editFromDetail"
+          >
+            编辑（新版本）
+          </button>
+          <button
+            v-if="detail.status !== 'OFFLINE'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            data-testid="train-detail-offline"
+            @click="offlineFromDetail"
+          >
+            下架
+          </button>
           <button class="btn btn-pri btn-sm" type="button" @click="detail = null">关闭</button>
         </div>
       </div>
@@ -330,13 +362,14 @@
               <td class="mono">{{ item.materialNo }}</td>
               <td>{{ item.title }}</td>
               <td>{{ item.ownerName || '—' }}</td>
-              <td class="mono">{{ item.lastUpdatedAt }}</td>
+              <td class="mono">{{ fmtBj(item.lastUpdatedAt) }}</td>
             </tr>
           </tbody>
         </table>
         <p v-if="copyHint" class="hint" data-testid="train-unupdated-copy-hint">{{ copyHint }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="copyUnupdated">复制清单</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-export" @click="exportUnupdated">导出清单</button>
           <button class="btn btn-pri btn-sm" type="button" @click="showUnupdated = false">关闭</button>
         </div>
       </div>
@@ -435,6 +468,7 @@ const detail = ref<Row | null>(null)
 const previewVersion = ref<number | null>(null)
 const showUnupdated = ref(false)
 const copyHint = ref('')
+const exportHint = ref('')
 const formError = ref('')
 const weeklyStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const offlineTarget = ref<Row | null>(null)
@@ -781,6 +815,79 @@ function openDetail(row: Row) {
   detail.value = row
 }
 
+const detailPositionText = computed(() => {
+  const codes = detail.value?.positionCodes || []
+  if (!codes.length) return '—'
+  return codes.map((code) => positionName(code)).join('、')
+})
+
+function editFromDetail() {
+  const row = detail.value
+  if (!row) return
+  detail.value = null
+  openEdit(row)
+}
+
+function offlineFromDetail() {
+  const row = detail.value
+  if (!row) return
+  detail.value = null
+  void openOffline(row)
+}
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+function downloadCsv(filename: string, lines: string[]) {
+  const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportMaterials() {
+  if (!rows.value.length) {
+    exportHint.value = '没有可导出的资料'
+    return
+  }
+  const header = ['资料编号', '标题', '类型', '版本', '关联岗位', '状态', '更新人', '更新时间']
+  const body = rows.value.map((row) =>
+    [
+      row.materialNo,
+      row.title,
+      typeLabel(row.materialType),
+      `V${row.version || 1}`,
+      (row.positionCodes || []).map((code) => positionName(code)).join('、'),
+      statusLabel(row.status),
+      row.uploaderName || '',
+      fmtBj(row.updatedAt),
+    ]
+      .map((cell) => csvCell(String(cell ?? '')))
+      .join(','),
+  )
+  downloadCsv('培训资料.csv', [header.map(csvCell).join(','), ...body])
+  exportHint.value = '已导出当前列表'
+}
+
+function exportUnupdated() {
+  if (weeklyStatus.value !== 'ready' || !weekly.unupdatedList.length) {
+    copyHint.value = weekly.shouldUpdateCount === 0 ? '本周暂无已发布资料' : '没有可导出的未更新资料'
+    return
+  }
+  const header = ['资料编号', '标题', '负责人', '最后更新']
+  const body = weekly.unupdatedList.map((item) =>
+    [item.materialNo, item.title, item.ownerName || '', fmtBj(item.lastUpdatedAt)]
+      .map((cell) => csvCell(String(cell ?? '')))
+      .join(','),
+  )
+  downloadCsv('未更新清单.csv', [header.map(csvCell).join(','), ...body])
+  copyHint.value = '已导出清单'
+}
+
 function openUnupdated() {
   copyHint.value = ''
   showUnupdated.value = true
@@ -1075,12 +1182,18 @@ onMounted(async () => {
   width: 100%;
   box-sizing: border-box;
 }
+.weekly-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
 .weekly-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 .weekly-card.warn {
   border: 1px solid #e6a700;
