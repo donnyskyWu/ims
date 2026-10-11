@@ -356,15 +356,13 @@ def cost_vo(db: Session, row: FinCost) -> dict:
 
 
 def hours_since(ts: str | None) -> float:
-    if not ts:
+    """核准时间是带偏移的 ISO。无时区按北京墙钟。与 utcnow 的差用同一瞬时，避免把 UTC 再标成 +08。"""
+    from app.clock import parse_to_utc_naive
+
+    parsed = parse_to_utc_naive(ts or "")
+    if parsed is None:
         return 0.0
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return 0.0
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    delta = utcnow().replace(tzinfo=BJ) - dt.astimezone(BJ)
+    delta = utcnow() - parsed
     return round(max(delta.total_seconds(), 0) / 3600, 1)
 
 

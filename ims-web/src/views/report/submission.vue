@@ -188,6 +188,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import { shanghaiToday } from '../../utils/time'
 
 type Row = {
   id: number
@@ -296,7 +297,7 @@ function resetFilters() {
 
 function openSubmit() {
   form.templateId = rows.value[0]?.id ? 0 : 0
-  form.period = new Date().toISOString().slice(0, 10)
+  form.period = shanghaiToday()
   form.authorId = 0
   form.accountId = 0
   form.metricValue = 0

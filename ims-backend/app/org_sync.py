@@ -42,9 +42,9 @@ class EventBody(BaseModel):
 
 
 def iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.strftime("%Y-%m-%dT%H:%M:%S")
+    from app.clock import format_iso_or_none
+
+    return format_iso_or_none(value)
 
 
 def clamp_page(page_no: int, page_size: int) -> tuple[int, int]:
@@ -1180,15 +1180,13 @@ class ReplayBody(BaseModel):
 
 
 def parse_moment(value: str) -> datetime | None:
-    text = (value or "").strip().replace("Z", "")
-    if not text:
-        return None
+    """回放窗口：无时区按北京时间，返回 naive UTC，与 created_at 对齐。"""
+    from app.clock import parse_to_utc_naive
+
+    text = (value or "").strip()
     if len(text) == 16:
         text = text + ":00"
-    try:
-        return datetime.fromisoformat(text[:19])
-    except ValueError:
-        return None
+    return parse_to_utc_naive(text)
 
 
 def report_body(event: OrgEvent | None) -> dict:

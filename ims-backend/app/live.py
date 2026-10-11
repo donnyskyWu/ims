@@ -68,12 +68,10 @@ CONCLUSIONS = {
 BJ = timezone(timedelta(hours=8))
 
 
-def iso(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str | None:
+    from app.clock import format_iso_or_none
+
+    return format_iso_or_none(dt, civil=civil)
 
 
 def parse_iso(value: str | None) -> datetime | None:
@@ -638,8 +636,8 @@ def room_basic_vo(room: LiveRoom) -> dict:
         "status": room.status,
         "orientation": room.orientation or None,
         "payType": room.pay_type or None,
-        "startTime": iso(start),
-        "endTime": iso(end),
+        "startTime": iso(start, civil=True),
+        "endTime": iso(end, civil=True),
         "durationMinutes": duration,
         "coverUrl": room.cover or None,
         "playUrl": room.play_url or None,

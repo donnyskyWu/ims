@@ -131,12 +131,10 @@ def next_push_stub(period: str, push_time: str, status: str) -> str:
     return candidate.strftime("%Y-%m-%d %H:%M")
 
 
-def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str:
+    from app.clock import format_iso
+
+    return format_iso(dt, civil=civil)
 
 
 def expire_str(days: int) -> str:

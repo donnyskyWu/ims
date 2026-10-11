@@ -50,7 +50,7 @@
               <td><span class="tag" :class="statusClass(row.submitStatus)">{{ statusLabel(row.submitStatus) }}</span></td>
               <td>{{ row.submitStatus === 'SUBMITTED' || row.submitStatus === 'READ' ? (row.isOnTime ? '是' : '否') : '—' }}</td>
               <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ row.contentDone }}</td>
-              <td class="num" style="font-size: 12px">{{ row.submittedAt || '—' }}</td>
+              <td class="num" style="font-size: 12px">{{ formatDateTime(row.submittedAt) || '—' }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">查看</button>
               </td>
@@ -81,6 +81,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import { formatDateTime } from '../../utils/time'
 
 type DailyRow = {
   id: number

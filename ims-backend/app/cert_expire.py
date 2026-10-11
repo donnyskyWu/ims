@@ -64,9 +64,9 @@ def remain_days(expire_date: str, today: date) -> int | None:
 
 
 def iso(value: datetime | None) -> str:
-    if value is None:
-        return ""
-    return value.isoformat(sep=" ", timespec="seconds")
+    from app.clock import format_iso
+
+    return format_iso(value)
 
 
 class UploadBody(BaseModel):

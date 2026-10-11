@@ -56,9 +56,9 @@ class VerifyTaskBody(BaseModel):
 
 
 def _clock(value) -> str:
-    if value is None:
-        return ""
-    return value.strftime("%Y-%m-%d %H:%M:%S")
+    from app.clock import format_iso
+
+    return format_iso(value)
 
 
 def _loads(text: str) -> list:

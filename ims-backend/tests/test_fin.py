@@ -49,6 +49,28 @@ def approved_session(auth: dict) -> str:
     return code
 
 
+def test_cost_approved_at_is_shanghai():
+    from datetime import timedelta
+
+    from app.clock import format_iso, parse_to_utc_naive
+    from app.core import utcnow
+    from app.fin import hours_since
+
+    past = utcnow() - timedelta(hours=3)
+    assert 2.5 <= hours_since(format_iso(past)) <= 3.5
+
+    auth = headers()
+    code = approved_session(auth)
+    pending = client.get("/admin-api/ims/fin/cost/pending-sessions", headers=auth).json()
+    row = next(item for item in pending["data"]["list"] if item["sessionCode"] == code)
+    stamp = row["approvedAt"]
+    assert stamp.endswith("+08:00")
+    parsed = parse_to_utc_naive(stamp)
+    assert parsed is not None
+    assert abs((utcnow() - parsed).total_seconds()) < 180
+    assert row["hoursSinceApprove"] < 1
+
+
 def test_fin_cost_pending_submit_confirm():
     auth = headers()
     code = approved_session(auth)

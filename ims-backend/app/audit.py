@@ -29,9 +29,15 @@ def clamp_page(page_no: int, page_size: int) -> tuple[int, int]:
 
 
 def clock(value) -> str:
+    from datetime import datetime
+
+    from app.clock import format_display
+
     if value is None:
         return ""
-    return value.strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, datetime):
+        return format_display(value)
+    return str(value)
 
 
 def describe(method: str, path: str) -> tuple[str, str, str]:

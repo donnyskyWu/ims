@@ -131,6 +131,14 @@ def test_register_session_id_and_metrics_from_live_room():
     assert basic is not None
     assert basic["sourceTable"] == "live_room"
     assert basic["viewerCount"] == 8800
+    assert basic["startTime"].endswith("+08:00")
+    assert basic["endTime"].endswith("+08:00")
+    from app.clock import parse_to_utc_naive
+    from app.core import utcnow
+
+    shown = parse_to_utc_naive(basic["startTime"])
+    assert shown is not None
+    assert abs((utcnow() - timedelta(hours=2) - shown).total_seconds()) < 180
     assert data["metricsByManualEntry"]["gmv"] is True
 
     sync = client.post(f"/admin-api/ims/live/sessions/{code}/football-sync", headers=auth, json={})
@@ -141,6 +149,7 @@ def test_register_session_id_and_metrics_from_live_room():
     listing = client.get("/admin-api/ims/live/sessions/list", headers=auth)
     assert listing.json()["data"]["total"] >= 1
     assert listing.json()["data"]["list"][0]["sessionCode"] == code
+    assert listing.json()["data"]["list"][0]["planStartTime"] == "2026-10-06T20:00:00+08:00"
 
 
 def test_metrics_unlinked_without_room():

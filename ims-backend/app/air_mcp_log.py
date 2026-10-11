@@ -21,9 +21,9 @@ USAGE_TOOLS = ("skills.list", "skills.get", "experts.list", "experts.assemble")
 
 
 def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    from app.clock import format_iso
+
+    return format_iso(dt)
 
 
 def parse_day(value: str) -> datetime | None:

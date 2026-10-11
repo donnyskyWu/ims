@@ -88,12 +88,10 @@ class SchemeBody(BaseModel):
     activate: bool = False
 
 
-def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str:
+    from app.clock import format_iso
+
+    return format_iso(dt, civil=civil)
 
 
 def position_label(code: str) -> str:
@@ -814,6 +812,9 @@ def question_vo(row: ExamQuestion) -> dict:
         "questionTypeLabel": type_labels.get(row.question_type, row.question_type),
         "score": row.score,
         "refCount": row.ref_count,
+        "options": row.options,
+        "answer": row.answer,
+        "content": row.stem,
     }
 
 

@@ -52,9 +52,9 @@ class ItemBody(BaseModel):
 
 
 def _clock(value: datetime | None) -> str:
-    if value is None:
-        return ""
-    return value.strftime("%Y-%m-%dT%H:%M:%S")
+    from app.clock import format_iso
+
+    return format_iso(value)
 
 
 def _parse_day(text: str) -> date:

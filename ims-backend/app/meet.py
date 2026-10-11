@@ -41,12 +41,10 @@ class DailySubmitBody(BaseModel):
     supplement: str | None = None
 
 
-def iso(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str | None:
+    from app.clock import format_iso_or_none
+
+    return format_iso_or_none(dt, civil=civil)
 
 
 def primary_dept(db: Session, user: User) -> tuple[int, str]:
@@ -57,13 +55,15 @@ def primary_dept(db: Session, user: User) -> tuple[int, str]:
 
 
 def calc_on_time(report_date: str, submitted_at: datetime) -> bool:
+    """22:00 是日报日期当天的北京时间。submitted_at 库内是 naive UTC。"""
+    from app.clock import as_shanghai
+
     try:
         day = datetime.strptime(report_date, "%Y-%m-%d").replace(tzinfo=BJ)
     except ValueError:
         return False
     deadline = day.replace(hour=22, minute=0, second=0, microsecond=0)
-    at = submitted_at if submitted_at.tzinfo else submitted_at.replace(tzinfo=BJ)
-    return at.astimezone(BJ) <= deadline
+    return as_shanghai(submitted_at) <= deadline
 
 
 def daily_vo(row: MeetDailyReport) -> dict:
@@ -112,11 +112,12 @@ def apply_body(row: MeetDailyReport, body: DailySubmitBody, *, allow_main: bool)
 
 
 def waiting_hours(submitted_at: datetime | None) -> float:
+    from app.clock import as_shanghai
+
     if submitted_at is None:
         return 0.0
     now = datetime.now(BJ)
-    at = submitted_at if submitted_at.tzinfo else submitted_at.replace(tzinfo=BJ)
-    return max(0.0, (now - at.astimezone(BJ)).total_seconds() / 3600.0)
+    return max(0.0, (now - as_shanghai(submitted_at)).total_seconds() / 3600.0)
 
 
 def review_vo(row: MeetDailyReview, report: MeetDailyReport | None = None) -> dict:
@@ -744,7 +745,7 @@ def minutes_vo(row: MeetMinutes) -> dict:
         "id": row.id,
         "minutesNo": row.minutes_no,
         "meetingTitle": row.meeting_title,
-        "meetingDate": iso(row.meeting_date),
+        "meetingDate": iso(row.meeting_date, civil=True),
         "meetingRoom": row.meeting_room or None,
         "durationMinutes": row.duration_minutes,
         "organizerName": row.organizer_name or row.recorder_name,
