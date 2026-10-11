@@ -66,7 +66,7 @@
                   + 新建小组
                 </button>
                 <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-edit" @click="openEdit">编辑</button>
-                <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-toggle" @click="toggleStatus">
+                <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-toggle" @click="askToggleStatus">
                   {{ detail.status === 1 ? '停用' : '启用' }}
                 </button>
                 <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-delete" @click="askRemove">删除</button>
@@ -329,7 +329,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { http, errorMessage } from '../../api/http'
 
 type TreeNode = {
@@ -536,16 +536,34 @@ function selectGroup(id: number) {
   selectedId.value = id
 }
 
-async function toggleStatus() {
+function askToggleStatus() {
   if (!selectedId.value || !detail.value) return
-  const next = detail.value.status === 1 ? 0 : 1
+  const id = selectedId.value
+  if (detail.value.status !== 1) {
+    void applyStatus(id, 1)
+    return
+  }
+  const name = detail.value.groupName
+  confirming.value = {
+    title: '停用确认',
+    message: `确认停用 IP 组「${name}」？`,
+    run: () => {
+      confirming.value = null
+      void applyStatus(id, 0)
+    },
+  }
+}
+
+async function applyStatus(id: number, next: number) {
   const label = next === 1 ? '启用' : '停用'
   try {
-    await http.put('/ip-group/update', { id: selectedId.value, status: next })
+    await http.put('/ip-group/update', { id, status: next })
     msg.value = `状态已更新为「${label}」`
-    const current = selectedId.value
+    const node = nodeMap.value.get(id)
+    if (node) node.status = next
+    await nextTick()
     await loadTree()
-    selectedId.value = current
+    selectedId.value = id
   } catch (e) {
     msg.value = apiError(e)
   }

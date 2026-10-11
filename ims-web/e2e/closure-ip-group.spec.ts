@@ -103,6 +103,8 @@ test.describe('IP 组 BUG-014～021 / BUG-024～026', () => {
     await expect(page.locator('.ipg-node.on .cnt')).toContainText('(0/')
 
     await page.getByTestId('ipg-toggle').click()
+    await expect(page.getByTestId('ipg-confirm-text')).toContainText(`确认停用 IP 组「${smallName}」`)
+    await page.getByTestId('ipg-confirm-ok').click()
     await expect(page.getByTestId('ipg-toast')).toContainText('状态已更新为「停用」')
     await expect(page.getByTestId('ipg-toggle')).toHaveText('启用')
     await page.locator('.tab', { hasText: '基本信息' }).click()
@@ -184,6 +186,56 @@ test.describe('IP 组 BUG-014～021 / BUG-024～026', () => {
     await expect(page.locator('.ipg-node', { hasText: name })).toHaveCount(0)
     await expect(page.locator('.ipg-node.on')).toHaveCount(0)
     await expect(page.getByTestId('ipg-empty')).toHaveText('请从左侧选择 IP 组')
+    expect(pageErrors).toEqual([])
+  })
+
+  test('BUG-059 停用先确认，成功后立即提示再刷新', async ({ page }) => {
+    test.setTimeout(90_000)
+    const pageErrors = attachClosurePageHooks(page)
+    await loginAdmin(page)
+    const stamp = String(Date.now()).slice(-6)
+    const name = `停用确认${stamp}`
+
+    await page.goto('/ims/ip-group')
+    await expect(page.locator('h1')).toHaveText('IP 组运营')
+    await page.getByRole('button', { name: '+ 新建大组' }).click()
+    await page.getByTestId('ipg-name').fill(name)
+    await page.getByTestId('ipg-group-submit').click()
+    await expect(page.locator('.ipg-node.on', { hasText: name })).toBeVisible()
+    await expect(page.getByTestId('ipg-status')).toHaveText('启用')
+
+    await page.getByTestId('ipg-toggle').click()
+    await expect(page.getByTestId('ipg-confirm-text')).toHaveText(`确认停用 IP 组「${name}」？`)
+    await page.getByTestId('ipg-confirm-cancel').click()
+    await expect(page.getByTestId('ipg-confirm')).toHaveCount(0)
+    await expect(page.getByTestId('ipg-status')).toHaveText('启用')
+    await expect(page.getByTestId('ipg-toggle')).toHaveText('停用')
+
+    let releaseTree: (() => void) | undefined
+    const treeHeld = new Promise<void>((resolve) => {
+      releaseTree = resolve
+    })
+    await page.route('**/ip-group/tree', async (route) => {
+      if (route.request().method() !== 'GET') {
+        await route.continue()
+        return
+      }
+      await treeHeld
+      await route.continue()
+    })
+    await page.getByTestId('ipg-toggle').click()
+    await page.getByTestId('ipg-confirm-ok').click()
+    await expect(page.getByTestId('ipg-toast')).toContainText('状态已更新为「停用」')
+    await expect(page.locator('.ipg-tree-body')).toContainText('加载中')
+    releaseTree?.()
+    await expect(page.getByTestId('ipg-toggle')).toHaveText('启用')
+    await expect(page.getByTestId('ipg-status')).toHaveText('停用')
+    await page.unroute('**/ip-group/tree')
+
+    await page.getByTestId('ipg-toggle').click()
+    await expect(page.getByTestId('ipg-confirm')).toHaveCount(0)
+    await expect(page.getByTestId('ipg-toast')).toContainText('状态已更新为「启用」')
+    await expect(page.getByTestId('ipg-status')).toHaveText('启用')
     expect(pageErrors).toEqual([])
   })
 })
