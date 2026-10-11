@@ -25,7 +25,7 @@
       提交后进入两级审核：R8 初审 → R4 终审。终审通过后「已入库」并自动订阅监控。
     </p>
     <form class="qbar" @submit.prevent="loadList">
-      <input v-model="filters.compName" placeholder="竞品名称" style="width: 140px" />
+      <input v-model="filters.compName" placeholder="竞品对象名称" style="width: 140px" />
       <select v-model="filters.platform" style="width: 120px">
         <option value="">全部平台</option>
         <option v-for="item in platforms" :key="item.value" :value="item.value">{{ item.label }}</option>
@@ -82,7 +82,7 @@
       </div>
       <form class="comp-form" @submit.prevent="submitCreate">
         <div class="fld">
-          <label>竞品名称 <span class="req">*</span></label>
+          <label>竞品对象名称 <span class="req">*</span></label>
           <input v-model="createForm.compName" data-testid="comp-name" placeholder="如：TC竞品库A" @blur="previewMerge" />
           <div v-if="fieldErrors.compName" class="ferr">{{ fieldErrors.compName }}</div>
         </div>
@@ -160,6 +160,7 @@
           驳回原因：{{ active.rejectReason }}
         </div>
         <div class="kv">
+          <div><div class="k">竞品对象名称</div><div class="v">{{ active.compName }}</div></div>
           <div><div class="k">分析周期</div><div class="v">{{ active.periodMonth || '—' }}</div></div>
           <div><div class="k">数据来源</div><div class="v">{{ active.dataSource || '—' }}</div></div>
           <div><div class="k">结论</div><div class="v">{{ active.conclusion || '—' }}</div></div>
