@@ -311,6 +311,8 @@ def account_vo(row: ExternalAccount, *, segment: str, high_fans: float, low_fans
         "followerCount": row.follower_count,
         "workCount": row.work_count,
         "lastSyncedAt": row.last_synced_at,
+        "dailyNet": None,
+        "growthRate": None,
         "isHighFans": is_high,
         "isLowFans": is_low,
         "segment": segment,
@@ -375,6 +377,8 @@ def collect_accounts(
         if seg == "LOW_FANS" and not is_low:
             continue
         filtered.append(account_vo(row, segment=seg, high_fans=high_fans, low_fans=low_fans))
+    for index, item in enumerate(filtered, start=1):
+        item["rank"] = index
     return filtered, None
 
 
@@ -445,6 +449,6 @@ def account_export(
         return err
     return csv_response(
         "comp_accounts.csv",
-        ["accountName", "platformType", "followerCount", "workCount", "lastSyncedAt"],
+        ["rank", "accountName", "platformType", "followerCount", "dailyNet", "growthRate"],
         filtered,
     )

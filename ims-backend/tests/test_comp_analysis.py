@@ -134,6 +134,8 @@ def test_comp_account_page_all_and_high_fans():
     assert body["data"]["total"] == 2
     assert any(row["isHighFans"] for row in body["data"]["list"])
     assert body["data"]["list"][0]["followerCount"] == 520_000
+    assert body["data"]["list"][0]["rank"] == 1
+    assert body["data"]["list"][0]["dailyNet"] is None
 
     high_resp = client.get(
         "/admin-api/ims/comp-analysis/account/page",
