@@ -63,7 +63,7 @@ test.describe('bi drill pack closure S12', () => {
 
     await page.getByTestId('bi-palette-TABLE').dragTo(page.getByTestId('bi-canvas'))
     await expect(page.getByTestId('bi-canvas-comp')).toHaveCount(1)
-    await expect(page.getByTestId('bi-canvas-comp')).toContainText('表格')
+    await expect(page.getByTestId('bi-canvas-comp')).toContainText('数据表')
     await page.screenshot({ path: `${shotDir}/01-designer-drag.png` })
 
     await page.getByTestId('bi-save').click()

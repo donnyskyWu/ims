@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -67,31 +68,242 @@ class PreviewDrillBody(BaseModel):
     cellMetric: str = "gmv"
 
 
+def _field(key: str, label: str, ftype: str, dtype: str, metric_code: str = "") -> dict:
+    item = {
+        "fieldKey": key,
+        "fieldLabel": label,
+        "fieldType": ftype,
+        "dataType": dtype,
+        "name": key,
+        "label": label,
+        "type": "number" if dtype == "NUMBER" else "string",
+    }
+    if metric_code:
+        item["metricCode"] = metric_code
+    return item
+
+
+# 开发 / E2E 用的指标事实样本（METRIC_LIB）。绑定 GMV、统计日期等字段后按这里取数。
+METRIC_FACT = [
+    {"statDate": "2026-10-01", "platform": "抖音", "gmv": 186400, "orders": 621, "liveSessions": 4, "interactRate": 4.7},
+    {"statDate": "2026-10-02", "platform": "视频号", "gmv": 412800, "orders": 1376, "liveSessions": 6, "interactRate": 5.1},
+    {"statDate": "2026-10-03", "platform": "快手", "gmv": 96800, "orders": 310, "liveSessions": 3, "interactRate": 3.9},
+]
+CUSTOM_FACT = [
+    {"dim": "内容", "value": 128},
+    {"dim": "投放", "value": 96},
+]
+
 DATASETS = [
     {
         "code": "METRIC_LIB",
         "name": "指标库",
+        "datasetSource": "METRIC_LIB",
+        "enabled": True,
+        "freshnessMinutes": 15,
+        "rowCountEstimate": len(METRIC_FACT),
         "fields": [
-            {"name": "metricName", "label": "指标名", "type": "string"},
-            {"name": "metricValue", "label": "指标值", "type": "number"},
+            _field("statDate", "统计日期", "DIMENSION", "DATE"),
+            _field("platform", "平台", "DIMENSION", "STRING"),
+            _field("gmv", "GMV", "METRIC", "NUMBER", "GMV_DAILY"),
+            _field("orders", "订单数", "METRIC", "NUMBER", "ORDER_CNT"),
+            _field("liveSessions", "直播场次", "METRIC", "NUMBER", "LIVE_SESSIONS"),
+            _field("interactRate", "互动率", "METRIC", "NUMBER", "INTERACT_RATE"),
         ],
     },
     {
         "code": "CUSTOM_QUERY",
         "name": "已发布自定义查询",
+        "datasetSource": "CUSTOM_QUERY",
+        "enabled": True,
+        "freshnessMinutes": 15,
+        "rowCountEstimate": len(CUSTOM_FACT),
         "fields": [
-            {"name": "dim", "label": "维度", "type": "string"},
-            {"name": "value", "label": "数值", "type": "number"},
+            _field("dim", "维度", "DIMENSION", "STRING"),
+            _field("value", "数值", "METRIC", "NUMBER", "CQ_VALUE"),
         ],
+    },
+    {
+        "code": "DWS_AGGREGATION",
+        "name": "宽表聚合",
+        "datasetSource": "DWS_AGGREGATION",
+        "enabled": False,
+        "freshnessMinutes": 15,
+        "rowCountEstimate": 0,
+        "note": "P2+",
+        "fields": [],
     },
 ]
 
+
+def _comp(type_: str, name: str, group: str, w: int, h: int) -> dict:
+    return {"type": type_, "name": name, "group": group, "defaultSize": {"w": w, "h": h}}
+
+
 COMP_LIB = [
-    {"type": "KPI", "name": "KPI 卡片", "defaultSize": {"w": 240, "h": 120}},
-    {"type": "BAR", "name": "柱状图", "defaultSize": {"w": 480, "h": 280}},
-    {"type": "LINE", "name": "折线图", "defaultSize": {"w": 480, "h": 280}},
-    {"type": "TABLE", "name": "表格", "defaultSize": {"w": 640, "h": 320}},
+    _comp("KPI", "KPI 指标卡", "CHART", 240, 120),
+    _comp("BAR", "柱状图", "CHART", 480, 280),
+    _comp("LINE", "折线图", "CHART", 480, 280),
+    _comp("PIE", "饼图", "CHART", 360, 280),
+    _comp("AREA", "面积图", "CHART", 480, 280),
+    _comp("DONUT", "环形图", "CHART", 360, 280),
+    _comp("RADAR", "雷达图", "CHART", 360, 280),
+    _comp("FUNNEL", "漏斗图", "CHART", 360, 280),
+    _comp("SCATTER", "散点图", "CHART", 480, 280),
+    _comp("TABLE", "数据表", "CHART", 640, 320),
+    _comp("DETAIL_TABLE", "明细表", "CHART", 640, 320),
+    _comp("RICH_TEXT", "文字", "CHART", 320, 120),
+    _comp("DATE_RANGE", "日期", "FILTER", 280, 80),
+    _comp("SELECT_SINGLE", "下拉", "FILTER", 240, 80),
+    _comp("SELECT_MULTI", "下拉多选", "FILTER", 240, 80),
+    _comp("TEXT_INPUT", "文本", "FILTER", 240, 80),
+    _comp("CASCADE", "级联", "FILTER", 280, 80),
+    _comp("NUMBER_RANGE", "数值区间", "FILTER", 280, 80),
+    _comp("GROUP", "分组", "CONTAINER", 480, 320),
+    _comp("CARD", "卡片容器", "CONTAINER", 320, 200),
+    _comp("TAB", "Tab", "CONTAINER", 640, 320),
+    _comp("BUTTON", "按钮", "ACTION", 160, 80),
+    _comp("LINK", "超链接", "ACTION", 200, 80),
+    _comp("TRIGGER", "跳转", "ACTION", 200, 80),
 ]
+
+_AGG = {"SUM", "AVG", "COUNT", "MAX", "MIN"}
+_CALL = re.compile(r"(SUM|AVG|COUNT|MAX|MIN)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", re.I)
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def dataset_fields(code: str) -> dict[str, dict]:
+    for item in DATASETS:
+        if item["code"] == code:
+            return {field["fieldKey"]: field for field in item.get("fields") or []}
+    return {}
+
+
+def fact_rows(code: str) -> list[dict]:
+    if code == "CUSTOM_QUERY":
+        return [dict(row) for row in CUSTOM_FACT]
+    if code == "DWS_AGGREGATION":
+        return []
+    return [dict(row) for row in METRIC_FACT]
+
+
+def aggregate_values(rows: list[dict], key: str, agg: str) -> float:
+    vals: list[float] = []
+    for row in rows:
+        if key not in row:
+            continue
+        try:
+            vals.append(float(row[key]))
+        except (TypeError, ValueError):
+            continue
+    kind = (agg or "SUM").upper()
+    if not vals:
+        return 0
+    if kind == "AVG":
+        return round(sum(vals) / len(vals), 2)
+    if kind == "COUNT":
+        return float(len(vals))
+    if kind == "MAX":
+        return max(vals)
+    if kind == "MIN":
+        return min(vals)
+    return round(sum(vals), 2)
+
+
+def expr_error(expr: str, fields: dict[str, dict]) -> int | None:
+    text = (expr or "").strip()
+    if not text:
+        return None
+    if not re.fullmatch(r"[0-9A-Za-z_+\-*/().,\s]+", text):
+        return 1192
+    calls = list(_CALL.finditer(text))
+    if not calls and _IDENT.search(text):
+        return 1192
+    for match in calls:
+        key = match.group(2)
+        meta = fields.get(key)
+        if meta is None:
+            return 1191
+        if meta.get("fieldType") != "METRIC":
+            return 1191
+    stripped = _CALL.sub("0", text)
+    if _IDENT.search(stripped):
+        return 1192
+    if not re.fullmatch(r"[0-9+\-*/().\s]+", stripped):
+        return 1192
+    return None
+
+
+def eval_expr(expr: str, rows: list[dict]) -> float:
+    def repl(match: re.Match) -> str:
+        return str(aggregate_values(rows, match.group(2), match.group(1)))
+
+    replaced = _CALL.sub(repl, expr)
+    value = eval(replaced, {"__builtins__": {}}, {})  # noqa: S307 — 已限制为白名单函数与四则运算
+    return round(float(value), 4)
+
+
+def binding_error(comp: dict) -> int | None:
+    dataset = str(comp.get("dataset") or "METRIC_LIB")
+    if dataset == "DWS_AGGREGATION":
+        return 1191
+    fields = dataset_fields(dataset)
+    if dataset not in {item["code"] for item in DATASETS}:
+        return 1191
+    metric = str(comp.get("metric") or comp.get("fieldKey") or "").strip()
+    dimension = str(comp.get("dimension") or "").strip()
+    calc = str(comp.get("calcExpression") or "").strip()
+    if metric:
+        meta = fields.get(metric)
+        if meta is None or meta.get("fieldType") != "METRIC":
+            return 1191
+    if dimension:
+        meta = fields.get(dimension)
+        if meta is None or meta.get("fieldType") != "DIMENSION":
+            return 1191
+    if calc:
+        return expr_error(calc, fields)
+    return None
+
+
+def project_comp(comp: dict) -> dict:
+    dataset = str(comp.get("dataset") or "METRIC_LIB")
+    rows = fact_rows(dataset)
+    fields = dataset_fields(dataset)
+    metric = str(comp.get("metric") or "").strip()
+    dimension = str(comp.get("dimension") or "").strip()
+    agg = str(comp.get("agg") or "SUM").upper()
+    if agg not in _AGG:
+        agg = "SUM"
+    calc = str(comp.get("calcExpression") or "").strip()
+    if calc:
+        value = eval_expr(calc, rows)
+        return {"columns": ["label", "value"], "rows": [{"label": calc, "value": value}], "total": 1}
+    if metric and dimension:
+        grouped: dict[str, list] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get(dimension, "")), []).append(row)
+        out = []
+        for key, bucket in grouped.items():
+            value = aggregate_values(bucket, metric, agg)
+            out.append({"dim": key, dimension: key, "value": value, metric: value})
+        return {"columns": [dimension, metric], "rows": out, "total": len(out)}
+    if metric:
+        value = aggregate_values(rows, metric, agg)
+        label = fields.get(metric, {}).get("fieldLabel", metric)
+        return {"columns": ["label", "value"], "rows": [{"label": label, "value": value}], "total": 1}
+    columns = list(rows[0].keys()) if rows else []
+    return {"columns": columns, "rows": rows, "total": len(rows)}
+
+
+def target_comp(body: ReportQueryBody) -> dict:
+    comps = body.components or []
+    wanted = (body.compId or "").strip()
+    if wanted and wanted != "preview":
+        for item in comps:
+            if str(item.get("id") or item.get("compId") or "") == wanted:
+                return item
+    return comps[0] if comps else {}
 
 
 def iso(dt: datetime | None) -> str:
@@ -362,11 +574,20 @@ def report_design_query(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    comp_id = body.compId or "preview"
-    rows = [
-        {"dim": "示例A", "value": 128},
-        {"dim": "示例B", "value": 96},
-    ]
+    comp = target_comp(body)
+    comp_id = body.compId or str(comp.get("id") or "preview")
+    if comp:
+        err = binding_error(comp)
+        if err == 1191:
+            return fail(1191, "字段引用非法")
+        if err == 1192:
+            return fail(1192, "计算字段表达式非法")
+        projected = project_comp(comp)
+        dataset = str(comp.get("dataset") or "METRIC_LIB")
+    else:
+        rows = fact_rows("METRIC_LIB")
+        projected = {"columns": list(rows[0].keys()) if rows else [], "rows": rows, "total": len(rows)}
+        dataset = "METRIC_LIB"
     started = time.perf_counter()
     elapsed = max(round((time.perf_counter() - started) * 1000, 1), 1)
     record_bi_query(
@@ -377,7 +598,7 @@ def report_design_query(
         "DESIGN",
         "SYNC",
         elapsed,
-        len(rows),
+        int(projected["total"]),
     )
     return ok(
         {
@@ -385,9 +606,12 @@ def report_design_query(
             "status": "SYNC",
             "queryMode": "SYNC",
             "costMs": elapsed,
-            "columns": list(rows[0].keys()),
-            "rows": rows,
-            "total": len(rows),
+            "columns": projected["columns"],
+            "rows": projected["rows"],
+            "total": projected["total"],
+            "cacheHit": True,
+            "dataAsOf": "2026-10-03T14:00:00+08:00",
+            "dataset": dataset,
         }
     )
 
