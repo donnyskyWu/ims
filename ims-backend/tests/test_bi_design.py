@@ -5,6 +5,7 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
+from app.bi_report import BiCompType
 from app.main import app
 
 client = TestClient(app)
@@ -53,23 +54,35 @@ def test_bi_design_datasets_save_publish():
 def test_bi_design_bind_metric_rejects_illegal_field():
     auth = headers()
     ds = client.get("/admin-api/ims/bi/report/datasets", headers=auth).json()["data"]
-    types = {item["type"] for item in ds["compLib"]}
-    grouped = {
-        "CHART": ["KPI", "BAR", "LINE", "PIE", "DONUT", "RADAR", "FUNNEL", "SCATTER", "TABLE", "DETAIL_TABLE", "RICH_TEXT"],
-        "FILTER": ["DATE_RANGE", "SELECT_SINGLE", "SELECT_MULTI", "TEXT_INPUT", "NUMBER_RANGE"],
-        "CONTAINER": ["GROUP", "CARD", "TAB"],
-        "ACTION": ["BUTTON", "LINK", "TRIGGER"],
-    }
-    actual = {group: [item["type"] for item in ds["compLib"] if item["group"] == group] for group in grouped}
-    assert actual == grouped
-    assert types == {code for codes in grouped.values() for code in codes}
-    assert "AREA" not in types and "CASCADE" not in types
-    names = {item["type"]: item["name"] for item in ds["compLib"]}
-    assert names["RICH_TEXT"] == "富文本"
-    assert names["TABLE"] == "数据表"
-    assert names["DATE_RANGE"] == "日期范围"
-    assert names["TRIGGER"] == "联动触发件"
-    assert len(ds["compLib"]) == 22
+    expected = [
+        ("KPI", "KPI 指标卡", "CHART"),
+        ("BAR", "柱状图", "CHART"),
+        ("LINE", "折线图", "CHART"),
+        ("PIE", "饼图", "CHART"),
+        ("DONUT", "环形图", "CHART"),
+        ("RADAR", "雷达图", "CHART"),
+        ("FUNNEL", "漏斗图", "CHART"),
+        ("SCATTER", "散点图", "CHART"),
+        ("TABLE", "数据表", "CHART"),
+        ("DETAIL_TABLE", "明细表", "CHART"),
+        ("RICH_TEXT", "富文本", "CHART"),
+        ("DATE_RANGE", "日期范围", "FILTER"),
+        ("SELECT_SINGLE", "下拉单选", "FILTER"),
+        ("SELECT_MULTI", "下拉多选", "FILTER"),
+        ("TEXT_INPUT", "文本输入", "FILTER"),
+        ("NUMBER_RANGE", "数值区间", "FILTER"),
+        ("GROUP", "分组容器", "CONTAINER"),
+        ("CARD", "卡片容器", "CONTAINER"),
+        ("TAB", "Tab 容器", "CONTAINER"),
+        ("BUTTON", "按钮", "ACTION"),
+        ("LINK", "跳转链接", "ACTION"),
+        ("TRIGGER", "联动触发件", "ACTION"),
+    ]
+    assert [item.value for item in BiCompType] == [row[0] for row in expected]
+    assert len(BiCompType) == 22
+    assert [(item["type"], item["name"], item["group"]) for item in ds["compLib"]] == expected
+    assert "AREA" not in {item.value for item in BiCompType}
+    assert "CASCADE" not in {item.value for item in BiCompType}
     metric = next(item for item in ds["datasets"] if item["code"] == "METRIC_LIB")
     keys = {field["fieldKey"] for field in metric["fields"]}
     assert {"statDate", "gmv"} <= keys

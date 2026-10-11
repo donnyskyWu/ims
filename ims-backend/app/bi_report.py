@@ -6,6 +6,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -165,34 +166,66 @@ DATASETS = [
 ]
 
 
+class BiCompType(str, Enum):
+    """页面规格 BiCompType。验收 22 格，顺序与第 80～83 行一致。"""
+
+    KPI = "KPI"
+    BAR = "BAR"
+    LINE = "LINE"
+    PIE = "PIE"
+    DONUT = "DONUT"
+    RADAR = "RADAR"
+    FUNNEL = "FUNNEL"
+    SCATTER = "SCATTER"
+    TABLE = "TABLE"
+    DETAIL_TABLE = "DETAIL_TABLE"
+    RICH_TEXT = "RICH_TEXT"
+    DATE_RANGE = "DATE_RANGE"
+    SELECT_SINGLE = "SELECT_SINGLE"
+    SELECT_MULTI = "SELECT_MULTI"
+    TEXT_INPUT = "TEXT_INPUT"
+    NUMBER_RANGE = "NUMBER_RANGE"
+    GROUP = "GROUP"
+    CARD = "CARD"
+    TAB = "TAB"
+    BUTTON = "BUTTON"
+    LINK = "LINK"
+    TRIGGER = "TRIGGER"
+
+
 def _comp(type_: str, name: str, group: str, w: int, h: int) -> dict:
     return {"type": type_, "name": name, "group": group, "defaultSize": {"w": w, "h": h}}
 
 
-COMP_LIB = [
-    _comp("KPI", "KPI 指标卡", "CHART", 240, 120),
-    _comp("BAR", "柱状图", "CHART", 480, 280),
-    _comp("LINE", "折线图", "CHART", 480, 280),
-    _comp("PIE", "饼图", "CHART", 360, 280),
-    _comp("DONUT", "环形图", "CHART", 360, 280),
-    _comp("RADAR", "雷达图", "CHART", 360, 280),
-    _comp("FUNNEL", "漏斗图", "CHART", 360, 280),
-    _comp("SCATTER", "散点图", "CHART", 480, 280),
-    _comp("TABLE", "数据表", "CHART", 640, 320),
-    _comp("DETAIL_TABLE", "明细表", "CHART", 640, 320),
-    _comp("RICH_TEXT", "富文本", "CHART", 320, 120),
-    _comp("DATE_RANGE", "日期范围", "FILTER", 280, 80),
-    _comp("SELECT_SINGLE", "下拉单选", "FILTER", 240, 80),
-    _comp("SELECT_MULTI", "下拉多选", "FILTER", 240, 80),
-    _comp("TEXT_INPUT", "文本输入", "FILTER", 240, 80),
-    _comp("NUMBER_RANGE", "数值区间", "FILTER", 280, 80),
-    _comp("GROUP", "分组容器", "CONTAINER", 480, 320),
-    _comp("CARD", "卡片容器", "CONTAINER", 320, 200),
-    _comp("TAB", "Tab 容器", "CONTAINER", 640, 320),
-    _comp("BUTTON", "按钮", "ACTION", 160, 80),
-    _comp("LINK", "跳转链接", "ACTION", 200, 80),
-    _comp("TRIGGER", "联动触发件", "ACTION", 200, 80),
-]
+# 图表 11 · 查询条件 5 · 容器 3 · 交互 3
+_COMP_SPEC: tuple[tuple[BiCompType, str, str, int, int], ...] = (
+    (BiCompType.KPI, "KPI 指标卡", "CHART", 240, 120),
+    (BiCompType.BAR, "柱状图", "CHART", 480, 280),
+    (BiCompType.LINE, "折线图", "CHART", 480, 280),
+    (BiCompType.PIE, "饼图", "CHART", 360, 280),
+    (BiCompType.DONUT, "环形图", "CHART", 360, 280),
+    (BiCompType.RADAR, "雷达图", "CHART", 360, 280),
+    (BiCompType.FUNNEL, "漏斗图", "CHART", 360, 280),
+    (BiCompType.SCATTER, "散点图", "CHART", 480, 280),
+    (BiCompType.TABLE, "数据表", "CHART", 640, 320),
+    (BiCompType.DETAIL_TABLE, "明细表", "CHART", 640, 320),
+    (BiCompType.RICH_TEXT, "富文本", "CHART", 320, 120),
+    (BiCompType.DATE_RANGE, "日期范围", "FILTER", 280, 80),
+    (BiCompType.SELECT_SINGLE, "下拉单选", "FILTER", 240, 80),
+    (BiCompType.SELECT_MULTI, "下拉多选", "FILTER", 240, 80),
+    (BiCompType.TEXT_INPUT, "文本输入", "FILTER", 240, 80),
+    (BiCompType.NUMBER_RANGE, "数值区间", "FILTER", 280, 80),
+    (BiCompType.GROUP, "分组容器", "CONTAINER", 480, 320),
+    (BiCompType.CARD, "卡片容器", "CONTAINER", 320, 200),
+    (BiCompType.TAB, "Tab 容器", "CONTAINER", 640, 320),
+    (BiCompType.BUTTON, "按钮", "ACTION", 160, 80),
+    (BiCompType.LINK, "跳转链接", "ACTION", 200, 80),
+    (BiCompType.TRIGGER, "联动触发件", "ACTION", 200, 80),
+)
+if [item[0] for item in _COMP_SPEC] != list(BiCompType) or len(BiCompType) != 22:
+    raise RuntimeError("BiCompType 必须与规格组件清单同序且恰好 22 个")
+
+COMP_LIB = [_comp(code.value, name, group, w, h) for code, name, group, w, h in _COMP_SPEC]
 
 _AGG = {"SUM", "AVG", "COUNT", "MAX", "MIN"}
 _CALL = re.compile(r"(SUM|AVG|COUNT|MAX|MIN)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", re.I)

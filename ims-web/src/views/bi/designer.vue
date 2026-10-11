@@ -60,20 +60,22 @@
         <p v-if="datasetHint" class="csub" style="margin-top: 8px">{{ datasetHint }}</p>
 
         <template v-for="group in paletteGroups" :key="group.key">
-          <b style="font-size: 13px; display: block; margin-top: 16px">{{ group.label }}</b>
-          <div
-            v-for="c in paletteOf(group.key)"
-            :key="c.type"
-            class="btn btn-sec btn-sm"
-            role="button"
-            draggable="true"
-            :data-testid="`bi-palette-${c.type}`"
-            style="display: block; width: 100%; margin-top: 8px; text-align: center; user-select: none"
-            @mousedown="onPaletteDown(c)"
-            @dragstart="onHtml5Start(c, $event)"
-            @click="onPaletteClick(c)"
-          >
-            + {{ c.name }}
+          <div :data-testid="`bi-comp-group-${group.key}`">
+            <b style="font-size: 13px; display: block; margin-top: 16px">{{ group.label }}</b>
+            <div
+              v-for="c in paletteOf(group.key)"
+              :key="c.type"
+              class="btn btn-sec btn-sm"
+              role="button"
+              draggable="true"
+              :data-testid="`bi-palette-${c.type}`"
+              style="display: block; width: 100%; margin-top: 8px; text-align: center; user-select: none"
+              @mousedown="onPaletteDown(c)"
+              @dragstart="onHtml5Start(c, $event)"
+              @click="onPaletteClick(c)"
+            >
+              + {{ c.name }}
+            </div>
           </div>
         </template>
       </div>
@@ -337,7 +339,57 @@ type ReportVo = {
 
 type Viewer = { id: number; username: string; nickname?: string }
 
-type CompMeta = { type: string; name: string; group?: string; defaultSize: { w: number; h: number } }
+/** 与页面规格 BiCompType、后端 app.bi_report.BiCompType 同序，验收 22 格。 */
+type BiCompType =
+  | 'KPI'
+  | 'BAR'
+  | 'LINE'
+  | 'PIE'
+  | 'DONUT'
+  | 'RADAR'
+  | 'FUNNEL'
+  | 'SCATTER'
+  | 'TABLE'
+  | 'DETAIL_TABLE'
+  | 'RICH_TEXT'
+  | 'DATE_RANGE'
+  | 'SELECT_SINGLE'
+  | 'SELECT_MULTI'
+  | 'TEXT_INPUT'
+  | 'NUMBER_RANGE'
+  | 'GROUP'
+  | 'CARD'
+  | 'TAB'
+  | 'BUTTON'
+  | 'LINK'
+  | 'TRIGGER'
+
+const BI_COMP_TYPES: BiCompType[] = [
+  'KPI',
+  'BAR',
+  'LINE',
+  'PIE',
+  'DONUT',
+  'RADAR',
+  'FUNNEL',
+  'SCATTER',
+  'TABLE',
+  'DETAIL_TABLE',
+  'RICH_TEXT',
+  'DATE_RANGE',
+  'SELECT_SINGLE',
+  'SELECT_MULTI',
+  'TEXT_INPUT',
+  'NUMBER_RANGE',
+  'GROUP',
+  'CARD',
+  'TAB',
+  'BUTTON',
+  'LINK',
+  'TRIGGER',
+]
+
+type CompMeta = { type: BiCompType; name: string; group?: string; defaultSize: { w: number; h: number } }
 
 type Preview = { columns: string[]; rows: Record<string, unknown>[]; error: string }
 
@@ -397,8 +449,35 @@ const canvasMax = computed(() => (device.value === '移动' ? '420px' : device.v
 const dimFields = computed(() => fieldsOf(selected.value?.dataset || activeDataset.value).filter((f) => f.fieldType === 'DIMENSION'))
 const metricFields = computed(() => fieldsOf(selected.value?.dataset || activeDataset.value).filter((f) => f.fieldType === 'METRIC'))
 
+function isCompType(value: string): value is BiCompType {
+  return (BI_COMP_TYPES as string[]).includes(value)
+}
+
+function readCompLib(raw: unknown): CompMeta[] {
+  if (!Array.isArray(raw)) return []
+  const items: CompMeta[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const record = row as { type?: string; name?: string; group?: string; defaultSize?: { w?: number; h?: number } }
+    const type = String(record.type || '')
+    if (!isCompType(type)) continue
+    items.push({
+      type,
+      name: String(record.name || type),
+      group: String(record.group || 'CHART'),
+      defaultSize: { w: Number(record.defaultSize?.w || 80), h: Number(record.defaultSize?.h || 80) },
+    })
+  }
+  return items
+}
+
 function paletteOf(group: string) {
-  return compLib.value.filter((item) => (item.group || 'CHART') === group)
+  const byType = new Map(compLib.value.map((item) => [item.type, item]))
+  return BI_COMP_TYPES.flatMap((type) => {
+    const item = byType.get(type)
+    if (!item || (item.group || 'CHART') !== group) return []
+    return [item]
+  })
 }
 
 function fieldsOf(code?: string) {
@@ -685,7 +764,7 @@ async function loadMeta() {
   const ds = await http.get('/bi/report/datasets')
   if (ds.data.code === 0) {
     datasets.value = ds.data.data.datasets || []
-    compLib.value = ds.data.data.compLib || []
+    compLib.value = readCompLib(ds.data.data.compLib)
   }
 }
 
