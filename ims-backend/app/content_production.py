@@ -249,6 +249,7 @@ def submit_one(db: Session, row: ContentProject, actor: User) -> str | None:
             tenant_id=tenant(actor),
         )
     )
+    db.flush()
     row.content_status = "PENDING_FIRST_REVIEW"
     row.review_passed = 0
     return None

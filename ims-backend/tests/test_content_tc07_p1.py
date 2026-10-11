@@ -343,6 +343,25 @@ def test_b009_two_level_status_filters():
     assert other_account.json()["data"]["list"] == []
 
 
+def test_b061_submit_returns_review_record():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/content",
+        headers=auth,
+        json={"title": "TC07 抽屉直提", "body": "正文"},
+    )
+    content_id = created.json()["data"]["id"]
+    submitted = client.post(f"/admin-api/ims/content/{content_id}/submit-review", headers=auth)
+    body = submitted.json()
+    assert body["code"] == 0
+    review_no = body["data"]["reviewNo"]
+    assert review_no
+    assert body["data"]["contentStatus"] == "PENDING_FIRST_REVIEW"
+    detail = client.get(f"/admin-api/ims/content/review/{review_no}", headers=auth)
+    assert detail.json()["code"] == 0
+    assert detail.json()["data"]["contentTitle"] == "TC07 抽屉直提"
+
+
 def test_b062_first_pass_stats_same_perm_as_review():
     from app.scope import match_table
 
