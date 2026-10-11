@@ -1,5 +1,7 @@
 """CORP 账号领用 E2E 种子：池内抖音号 AC-E2E-POOL（幂等 / 可 refresh）。"""
 
+import logging
+
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,8 @@ from app.models import (
 )
 from app.ops_db import ops_session
 from app.ops_models import Company, IpGroup, PlatformAccount
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_acct_schema() -> None:
@@ -155,6 +159,9 @@ def _ensure_cloned_user(
     from app.scope import refresh_user_scope
     from app.security import hash_password
 
+    if username == "tc_r9":
+        logger.warning("跳过把角色 %s 绑到 tc_r9：该账号只保留标准 R9", role_key)
+        return
     user = db.scalar(select(User).where(User.username == username, User.deleted == 0))
     if user is None:
         user = User(

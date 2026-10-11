@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -54,6 +54,21 @@ def relation_vo(row: EffRelation, names: dict[int, str]) -> dict:
         "changedByName": names.get(row.changed_by, ""),
         "changedAt": iso(row.updated_at),
     }
+
+
+_EFF_WRITE_KEYS = frozenset({"sys:admin", "R1", "R2"})
+_EFF_DELETE_KEYS = frozenset({"sys:admin", "R1"})
+
+
+def _deny_eff_mutation(db: Session, actor: User, *, delete: bool = False):
+    """组织人效写操作：建立/变更仅 R1、R2；删除仅 R1。标准 R9 只有查询。"""
+    from app.scope import enabled_roles
+
+    keys = {(role.role_key or "").strip() for role in enabled_roles(db, actor)}
+    allowed = _EFF_DELETE_KEYS if delete else _EFF_WRITE_KEYS
+    if keys & allowed:
+        return None
+    return fail(403, "无操作权限")
 
 
 def active_primary(db: Session, tenant_id: int, user_id: int) -> EffRelation | None:
@@ -110,6 +125,9 @@ def relation_list(
 
 @router.post("/relation")
 def relation_create(body: RelationBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    denied = _deny_eff_mutation(db, actor)
+    if denied is not None:
+        return denied
     tenant_id = tenant_of(actor)
     rtype = body.relationType.strip().upper()
     if rtype not in {"PRIMARY", "PART_TIME"}:
@@ -143,6 +161,30 @@ def relation_create(body: RelationBody, db: Session = Depends(db_session), actor
     db.flush()
     names = user_names(db, [row.user_id, row.changed_by])
     return ok(relation_vo(row, names))
+
+
+@router.put("/relation/{relation_id}")
+def relation_update(
+    relation_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    denied = _deny_eff_mutation(db, actor)
+    if denied is not None:
+        return denied
+    raise HTTPException(status_code=404, detail=str(relation_id))
+
+
+@router.delete("/relation/{relation_id}")
+def relation_delete(
+    relation_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    denied = _deny_eff_mutation(db, actor, delete=True)
+    if denied is not None:
+        return denied
+    raise HTTPException(status_code=404, detail=str(relation_id))
 
 
 @router.get("/relation/coverage")
