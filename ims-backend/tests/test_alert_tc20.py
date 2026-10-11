@@ -342,15 +342,24 @@ def test_c056_rule_fields_and_finance_module():
     assert allowed.json()["data"]["sourceModule"] == "财务核算"
 
 
-def test_c056_backfill_cert_module():
-    """旧规则 source_module 为空时，列表按编码归到证件档案并写回。创建响应仍为空。"""
+def test_c056_list_readonly_and_module_backfill(caplog):
+    """列表可展示推导模块，但查询不写库。启动回填只补空值，再跑一次不变。"""
+    import logging
+
+    from app.alert import backfill_rule_modules
+    from app.core import SessionLocal
+    from app.models import AlertRule
+
     auth = headers()
     suffix = uuid.uuid4().hex[:6]
+    cert_code = f"TC_C_CERT_EXPIRE.{suffix}"
+    plain_code = f"plain.delay.{suffix}"
+    kept_code = f"TC_C_CERT_KEEP.{suffix}"
     created = client.post(
         "/admin-api/ims/alert/rule",
         headers=auth,
         json={
-            "ruleCode": f"TC_C_CERT_EXPIRE.{suffix}",
+            "ruleCode": cert_code,
             "ruleName": "证件到期",
             "thresholdExpr": "days_left<=30",
             "enabled": False,
@@ -363,13 +372,40 @@ def test_c056_backfill_cert_module():
         "/admin-api/ims/alert/rule",
         headers=auth,
         json={
-            "ruleCode": f"plain.delay.{suffix}",
+            "ruleCode": plain_code,
             "ruleName": "不带来源",
             "thresholdExpr": "delayMinutes>1",
             "enabled": False,
         },
     )
     assert plain.json()["code"] == 0
+
+    kept = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": kept_code,
+            "ruleName": "已有模块",
+            "thresholdExpr": "days_left<=30",
+            "sourceModule": "直播管理",
+            "enabled": False,
+        },
+    )
+    assert kept.json()["code"] == 0
+    assert kept.json()["data"]["sourceModule"] == "直播管理"
+
+    def snapshot() -> dict[str, tuple[str, object]]:
+        db = SessionLocal()
+        try:
+            rows = db.query(AlertRule).filter(AlertRule.rule_code.in_([cert_code, plain_code, kept_code])).all()
+            return {row.rule_code: (row.source_module, row.updated_at) for row in rows}
+        finally:
+            db.close()
+
+    before = snapshot()
+    assert before[cert_code][0] == ""
+    assert before[plain_code][0] == ""
+    assert before[kept_code][0] == "直播管理"
 
     listed = client.get(
         "/admin-api/ims/alert/rule/list",
@@ -378,16 +414,45 @@ def test_c056_backfill_cert_module():
     )
     body = listed.json()
     assert body["code"] == 0
-    row = next(item for item in body["data"]["list"] if item["ruleCode"] == f"TC_C_CERT_EXPIRE.{suffix}")
-    assert row["sourceModule"] == "证件档案"
+    shown = next(item for item in body["data"]["list"] if item["ruleCode"] == cert_code)
+    assert shown["sourceModule"] == "证件档案"
+    assert snapshot() == before
 
-    again = client.get(
+    plain_list = client.get(
         "/admin-api/ims/alert/rule/list",
         headers=auth,
         params={"ruleName": "不带来源", "pageNo": 1, "pageSize": 20},
     )
-    kept = next(item for item in again.json()["data"]["list"] if item["ruleCode"] == f"plain.delay.{suffix}")
-    assert kept["sourceModule"] == ""
+    plain_row = next(item for item in plain_list.json()["data"]["list"] if item["ruleCode"] == plain_code)
+    assert plain_row["sourceModule"] == ""
+    assert snapshot() == before
+
+    db = SessionLocal()
+    try:
+        with caplog.at_level(logging.INFO, logger="app.alert"):
+            assert backfill_rule_modules(db) == 1
+        db.commit()
+        lines = [rec.message for rec in caplog.records if "source_module backfill" in rec.message]
+        assert lines == [f"source_module backfill rule_code={cert_code} old='' new='证件档案'"]
+        filled = db.query(AlertRule).filter(AlertRule.rule_code == cert_code).one()
+        assert filled.source_module == "证件档案"
+        untouched = db.query(AlertRule).filter(AlertRule.rule_code == plain_code).one()
+        assert untouched.source_module == ""
+        assert untouched.updated_at == before[plain_code][1]
+        kept_row = db.query(AlertRule).filter(AlertRule.rule_code == kept_code).one()
+        assert kept_row.source_module == "直播管理"
+        assert kept_row.updated_at == before[kept_code][1]
+        stamped = filled.updated_at
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="app.alert"):
+            assert backfill_rule_modules(db) == 0
+        db.commit()
+        assert [rec.message for rec in caplog.records if "source_module backfill" in rec.message] == []
+        db.refresh(filled)
+        assert filled.source_module == "证件档案"
+        assert filled.updated_at == stamped
+    finally:
+        db.close()
 
 
 def test_c057_rule_name_unique_1165():

@@ -177,6 +177,9 @@ def seed() -> None:
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
         refresh_wechat_channels_collect_seed()
+        from app.alert import backfill_rule_modules
+
+        backfill_rule_modules(db)
         db.commit()
     finally:
         db.close()

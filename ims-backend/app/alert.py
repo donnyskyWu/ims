@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -23,6 +24,7 @@ from app.models import AlertDedupPolicy, AlertRecord, AlertRule, CertArchive, Li
 
 router = APIRouter(prefix="/alert", tags=["alert"])
 router.include_router(escalate_router)
+logger = logging.getLogger(__name__)
 
 BJ = timezone(timedelta(hours=8))
 # 契约 AlertEventStatus。1=CONFIRMED（旧称 ACK），2=RESOLVED（旧称 HANDLED）。
@@ -401,25 +403,37 @@ def derive_source_module(rule: AlertRule) -> str:
     return ""
 
 
-def ensure_rule_modules(db: Session, tenant_id: int) -> None:
-    """把已落库、模块为空且能识别的规则写回 source_module。不新增列。"""
+def backfill_rule_modules(db: Session) -> int:
+    """启动时补空的所属模块。只改能识别且 source_module 为空的行，重复执行不再改。"""
     rows = db.scalars(
         select(AlertRule).where(
             AlertRule.deleted == 0,
-            AlertRule.tenant_id == tenant_id,
             AlertRule.source_module == "",
         )
     ).all()
-    changed = False
+    changed = 0
     for row in rows:
         module = derive_source_module(row)
         if not module:
             continue
+        old = row.source_module or ""
         row.source_module = module
         row.updated_at = utcnow()
-        changed = True
+        changed += 1
+        message = f"source_module backfill rule_code={row.rule_code} old={old!r} new={module!r}"
+        logger.info(message)
+        print(message, flush=True)
     if changed:
         db.flush()
+    return changed
+
+
+def list_rule_vo(row: AlertRule) -> dict:
+    """列表展示用。库存为空时带上推导结果，不写库。"""
+    data = rule_vo(row)
+    if not (data.get("sourceModule") or "").strip():
+        data["sourceModule"] = derive_source_module(row)
+    return data
 
 
 def rule_vo(row: AlertRule) -> dict:
@@ -612,7 +626,6 @@ def rule_list(
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
-    ensure_rule_modules(db, tenant_id)
     page_no, size = page_args(pageNo, pageSize)
     level_code, level_error = parse_level(level)
     if level_error:
@@ -632,7 +645,7 @@ def rule_list(
             .limit(size)
         ).all()
     )
-    data = paged([rule_vo(row) for row in rows], total, page_no, size)
+    data = paged([list_rule_vo(row) for row in rows], total, page_no, size)
     data["data"]["financeOnly"] = finance_only(db, actor)
     data["data"]["monitorModules"] = [FINANCE_MODULE] if data["data"]["financeOnly"] else list(MONITOR_MODULES)
     return data
