@@ -358,7 +358,7 @@
           <b>{{ doc.title }}</b>
           <div class="hint">{{ docStatusLabel(doc.auditStatus) }} · {{ doc.secretLabel || '继承库密级' }} · {{ doc.sourceLabel }}</div>
           <button class="btn btn-sec btn-sm" type="button" @click="browseDoc = doc">浏览</button>
-          <button v-if="doc.auditStatus === 'PUBLISHED'" class="btn btn-sec btn-sm" type="button" @click="downloadDoc(doc.id)">下载</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-kb-download" @click="downloadDoc(doc.id)">下载</button>
         </div>
         <p v-if="browseDoc" class="hint" data-testid="air-kb-browse">{{ browseDoc.body || browseDoc.fileKey || '暂无正文' }}</p>
         <p class="hint">仅文件管理：本页不含知识检索与向量化。</p>
@@ -569,11 +569,11 @@ function say(message: string) {
 }
 
 async function loadUsers() {
-  const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
-  const list = res.data.data?.list || []
-  users.value = list.map((item: { id: string | number; username: string; nickname?: string }) => ({
-    id: String(item.id),
-    label: item.nickname ? `${item.nickname}（${item.username}）` : item.username,
+  const res = await http.get('/air/kb/owner-candidates')
+  const list = Array.isArray(res.data.data) ? res.data.data : []
+  users.value = list.map((item: { userId: string | number; name: string }) => ({
+    id: String(item.userId),
+    label: item.name,
   }))
 }
 

@@ -4,8 +4,11 @@ os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.core import SessionLocal
 from app.main import app
+from app.models import Role, RolePerm, User, UserRole
 
 client = TestClient(app)
 
@@ -140,3 +143,136 @@ def test_kb_confidential_grant_blocks_plain_user():
         json={"kbId": kb_id, "grantType": "PERSON", "grantId": owner_id, "expireAt": "2027-03-31"},
     )
     assert allowed.json()["code"] == 0
+
+
+def _login(username: str, password: str) -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": password}).json()["data"][
+        "accessToken"
+    ]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _ensure_user(auth: dict, username: str, mobile: str, nickname: str) -> int:
+    created = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": nickname, "mobile": mobile, "password": "Pass@123"},
+    )
+    if created.json()["code"] == 0:
+        return int(created.json()["data"]["id"])
+    listed = client.get(
+        "/admin-api/ims/system/user/page",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 5, "username": username},
+    )
+    return int(listed.json()["data"]["list"][0]["id"])
+
+
+def _bind_kb_reader(user_id: int, role_key: str) -> None:
+    db = SessionLocal()
+    try:
+        role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
+        if role is None:
+            role = Role(role_name=role_key, role_key=role_key, data_scope="SELF", status="ENABLED", source="MANUAL")
+            db.add(role)
+            db.flush()
+            db.add(RolePerm(role_id=role.id, module_code="air", perm_code="air:kb:query", perm_level="R", tenant_id=0))
+        linked = db.scalar(select(UserRole).where(UserRole.user_id == user_id, UserRole.role_id == role.id))
+        if linked is None:
+            db.add(UserRole(user_id=user_id, role_id=role.id, tenant_id=0))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_kb_owner_candidates_without_user_directory():
+    auth = headers()
+    reader_id = _ensure_user(auth, "kb_r11_c065", "13900006511", "知识库责任候选")
+    off_id = _ensure_user(auth, "kb_off_c065", "13900006512", "停用候选")
+    _bind_kb_reader(reader_id, "air-kb-c065")
+    db = SessionLocal()
+    try:
+        off = db.get(User, off_id)
+        off.status = "DISABLED"
+        db.commit()
+    finally:
+        db.close()
+
+    reader = _login("kb_r11_c065", "Pass@123")
+    directory = client.get("/admin-api/ims/system/user/page", headers=reader, params={"pageNo": 1, "pageSize": 50})
+    assert directory.json()["code"] == 0
+    assert [int(item["id"]) for item in directory.json()["data"]["list"]] == [reader_id]
+
+    picked = client.get("/admin-api/ims/air/kb/owner-candidates", headers=reader)
+    assert picked.json()["code"] == 0
+    rows = picked.json()["data"]
+    assert rows
+    assert all(set(item.keys()) == {"userId", "name"} for item in rows)
+    ids = {int(item["userId"]) for item in rows}
+    assert reader_id in ids
+    assert off_id not in ids
+    assert len(ids) > 1
+    names = {item["name"] for item in rows}
+    assert "知识库责任候选" in names
+    assert "停用候选" not in names
+
+
+def test_kb_download_respects_publish_and_secret():
+    auth = headers()
+    reader_id = _ensure_user(auth, "kb_reader_c065", "13900006513", "知识库下载员")
+    peer_id = _ensure_user(auth, "kb_peer_c065", "13900006514", "知识库旁观者")
+    _bind_kb_reader(reader_id, "air-kb-reader-c065")
+    _bind_kb_reader(peer_id, "air-kb-peer-c065")
+    reader = _login("kb_reader_c065", "Pass@123")
+    peer = _login("kb_peer_c065", "Pass@123")
+    owner_id = int(
+        client.get(
+            "/admin-api/ims/system/user/page",
+            headers=auth,
+            params={"pageNo": 1, "pageSize": 5, "username": "admin"},
+        ).json()["data"]["list"][0]["id"]
+    )
+    created = client.post(
+        "/admin-api/ims/air/kb",
+        headers=auth,
+        json={"kbName": "TC下载密级单测", "secretLevel": "INTERNAL", "ownerUserId": owner_id},
+    )
+    assert created.json()["code"] == 0
+    kb_id = created.json()["data"]["id"]
+    granted = client.post(
+        "/admin-api/ims/air/kb/grant",
+        headers=auth,
+        json={"kbId": kb_id, "grantType": "PERSON", "grantId": reader_id},
+    )
+    assert granted.json()["code"] == 0
+
+    internal = client.post(
+        "/admin-api/ims/air/kb/doc/upload",
+        headers=auth,
+        json={"title": "TC内部可下", "fileKey": "kb/c065/internal.txt", "kbId": kb_id, "secretLevel": "INTERNAL"},
+    )
+    internal_id = internal.json()["data"]["docIds"][0]
+    client.post("/admin-api/ims/air/kb/doc/audit", headers=auth, json={"docId": internal_id, "approve": True})
+    opened = client.get(f"/admin-api/ims/air/kb/doc/{internal_id}/download", headers=reader)
+    assert opened.json()["code"] == 0
+    assert opened.json()["data"]["stub"] is True
+
+    secret = client.post(
+        "/admin-api/ims/air/kb/doc/upload",
+        headers=auth,
+        json={"title": "TC机密下载", "fileKey": "kb/c065/secret.txt", "kbId": kb_id, "secretLevel": "CONFIDENTIAL"},
+    )
+    doc_id = secret.json()["data"]["docIds"][0]
+    pending = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=reader)
+    assert pending.json()["code"] == 1001
+    assert pending.json()["msg"] == "未发布文档不可下载"
+
+    audited = client.post("/admin-api/ims/air/kb/doc/audit", headers=auth, json={"docId": doc_id, "approve": True})
+    assert audited.json()["code"] == 0
+    allowed = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=reader)
+    assert allowed.json()["code"] == 0
+    blocked = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=peer)
+    assert blocked.json()["code"] == 1001
+    assert blocked.json()["msg"] == "当前密级无权下载"
+    admin_dl = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
+    assert admin_dl.json()["code"] == 0

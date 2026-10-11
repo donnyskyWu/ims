@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.air_skill import parse_expire, resolve_grant_target, write_event
+from app.air_skill import dept_ids_of, parse_expire, resolve_grant_target, role_ids_of, write_event
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
@@ -1000,6 +1000,24 @@ def kb_lib_audit(body: KbLibAuditBody, db: Session = Depends(db_session), actor:
     return ok(data)
 
 
+@router.get("/kb/owner-candidates")
+def kb_owner_candidates(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    """在职人员姓名，供新建知识库选责任人。走知识库数据范围，不依赖系统用户目录。"""
+    tenant_id = tenant_of(actor)
+    rows = db.scalars(
+        select(User)
+        .where(User.deleted == 0, User.tenant_id == tenant_id, User.status == "ENABLED")
+        .order_by(User.id.asc())
+    ).all()
+    data = []
+    for row in rows:
+        name = (row.nickname or "").strip() or (row.username or "").strip()
+        if not name:
+            continue
+        data.append({"userId": row.id, "name": name})
+    return ok(data)
+
+
 @router.get("/kb/{kb_id}")
 def kb_detail(kb_id: int, db: Session = Depends(db_session), actor: User = Depends(current_user)):
     tenant_id = tenant_of(actor)
@@ -1250,6 +1268,51 @@ def kb_doc_audit(
     return ok({"docId": row.id, "auditStatus": row.audit_status, "docStatus": doc_status})
 
 
+def kb_grant_covers(db: Session, kb_id: int, tenant_id: int, actor: User) -> bool:
+    now = utcnow()
+    grants = db.scalars(
+        select(AirKbGrant).where(
+            AirKbGrant.deleted == 0,
+            AirKbGrant.tenant_id == tenant_id,
+            AirKbGrant.kb_id == kb_id,
+            AirKbGrant.status == "ACTIVE",
+        )
+    ).all()
+    if not grants:
+        return False
+    dept_ids = dept_ids_of(db, actor.id, tenant_id)
+    role_ids = role_ids_of(db, actor.id)
+    for item in grants:
+        if item.expire_at is not None and item.expire_at < now:
+            continue
+        if item.grant_type == "PERSON" and int(item.grant_id_ref) == int(actor.id):
+            return True
+        if item.grant_type == "DEPT" and int(item.grant_id_ref) in dept_ids:
+            return True
+        if item.grant_type == "ROLE" and int(item.grant_id_ref) in role_ids:
+            return True
+    return False
+
+
+def download_block_reason(db: Session, actor: User, row: AirKbDoc) -> str:
+    if row.audit_status != "PUBLISHED":
+        return "未发布文档不可下载"
+    secret = (row.secret_level or "").strip() or "INTERNAL"
+    if secret not in {"CONFIDENTIAL", "TOP_SECRET"}:
+        return ""
+    tenant_id = tenant_of(actor)
+    if int(row.uploader_user_id or 0) == int(actor.id):
+        return ""
+    kb = load_kb(db, row.kb_id, tenant_id)
+    if kb is not None and int(kb.owner_user_id or 0) == int(actor.id):
+        return ""
+    if target_allowed(secret, role_tags_of(db, actor)):
+        return ""
+    if kb_grant_covers(db, row.kb_id, tenant_id, actor):
+        return ""
+    return "当前密级无权下载"
+
+
 @router.get("/kb/doc/{doc_id}/download")
 def kb_doc_download(
     doc_id: int,
@@ -1266,8 +1329,9 @@ def kb_doc_download(
     )
     if row is None:
         return fail(1004, "文档不存在")
-    if row.audit_status != "PUBLISHED":
-        return fail(1001, "未发布文档不可下载")
+    reason = download_block_reason(db, actor, row)
+    if reason:
+        return fail(1001, reason)
     return ok(
         {
             "docId": row.id,
