@@ -31,7 +31,6 @@
           <div class="rowline" style="justify-content: space-between; flex-wrap: wrap; gap: 8px">
             <div>
               <b>采购成本</b>
-              <span class="hint" style="margin-left: 8px">单行 · PUT purchase</span>
             </div>
             <button class="btn btn-sec btn-sm" type="button" @click="savePurchase">保存采购</button>
           </div>

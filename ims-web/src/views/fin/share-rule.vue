@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>分成规则</h1>
-        <div class="sub">FIN-003 · 规则维护 · 比例合计 1.0000（1146）· 同范围冲突须确认（1147）· 阶梯试算</div>
+        <div class="sub">FIN-003 · 规则维护 · 比例合计 1.0000 · 同范围冲突须确认 · 阶梯试算</div>
       </div>
       <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-create" @click="openCreate">
         创建规则
