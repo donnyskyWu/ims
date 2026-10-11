@@ -248,15 +248,31 @@ def ensure_bi_report_scope_column() -> None:
     if "row_perm" not in cols:
         alters.append("ADD COLUMN row_perm VARCHAR(16) NOT NULL DEFAULT 'INHERIT'")
     if "publish_dest" not in cols:
-        alters.append("ADD COLUMN publish_dest VARCHAR(16) NOT NULL DEFAULT 'CENTER'")
+        alters.append("ADD COLUMN publish_dest VARCHAR(32) NOT NULL DEFAULT 'CENTER'")
     if "menu_name" not in cols:
         alters.append("ADD COLUMN menu_name VARCHAR(64) NOT NULL DEFAULT ''")
     if "viewer_ids" not in cols:
         alters.append("ADD COLUMN viewer_ids VARCHAR(512) NOT NULL DEFAULT ''")
-    if not alters:
+    if "access_type" not in cols:
+        alters.append("ADD COLUMN access_type VARCHAR(16) NOT NULL DEFAULT 'SHARE_LINK'")
+    if "expire_days" not in cols:
+        alters.append("ADD COLUMN expire_days INT NOT NULL DEFAULT 7")
+    if "password_hash" not in cols:
+        alters.append("ADD COLUMN password_hash VARCHAR(128) NOT NULL DEFAULT ''")
+    if alters:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE ims_bi_report_def {', '.join(alters)}"))
+    if "ims_bi_report_publish" not in insp.get_table_names():
         return
-    with engine.begin() as conn:
-        conn.execute(text(f"ALTER TABLE ims_bi_report_def {', '.join(alters)}"))
+    pub_cols = {c["name"] for c in insp.get_columns("ims_bi_report_publish")}
+    pub_alters: list[str] = []
+    if "expire_days" not in pub_cols:
+        pub_alters.append("ADD COLUMN expire_days INT NOT NULL DEFAULT 7")
+    if "password_hash" not in pub_cols:
+        pub_alters.append("ADD COLUMN password_hash VARCHAR(128) NOT NULL DEFAULT ''")
+    if pub_alters:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE ims_bi_report_publish {', '.join(pub_alters)}"))
 
 
 def ensure_bi_br212_columns() -> None:

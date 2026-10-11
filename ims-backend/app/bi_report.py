@@ -14,7 +14,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
-from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def, share_grant_clause
+from app.bi_br212 import primary_dept_id, report_row_visible, report_share_granted, restrict_report_def, share_grant_clause
+from app.security import hash_password
 from app.bi_drill import guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
@@ -65,12 +66,16 @@ class ReportUpdateBody(BaseModel):
 class PublishBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     dest: str = "CENTER"
+    dests: list[str] = Field(default_factory=list)
     shareScope: str = ""
     opPerm: str = "READONLY"
     rowPerm: str = "INHERIT"
     viewerIds: list[int] = Field(default_factory=list)
     menuName: str = ""
     accessType: str = "SHARE_LINK"
+    expireDays: int = 7
+    passwordEnabled: bool = False
+    password: str = ""
 
 
 class ReportQueryBody(BaseModel):
@@ -390,8 +395,47 @@ def parse_layout(raw: str) -> dict:
         return {}
 
 
-def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
+def report_caps(row: BiReportDef, actor: User | None) -> dict:
+    granted = actor is not None and row.creator_id != actor.id and report_share_granted(row, actor)
+    perm = (row.op_perm or "READONLY").upper()
+    if not granted:
+        return {"canEdit": True, "canCopy": True, "canDelete": True, "canExport": True, "canPublish": True}
+    return {
+        "canEdit": False,
+        "canCopy": perm == "COPY",
+        "canDelete": False,
+        "canExport": perm == "EXPORT",
+        "canPublish": False,
+    }
+
+
+def mutation_denied(row: BiReportDef, actor: User, action: str) -> str | None:
+    caps = report_caps(row, actor)
+    allowed = {
+        "edit": caps["canEdit"],
+        "copy": caps["canCopy"],
+        "delete": caps["canDelete"],
+        "export": caps["canExport"],
+        "publish": caps["canPublish"],
+    }
+    if allowed.get(action, False):
+        return None
+    return "当前为只读，不能编辑、复制、删除或导出"
+
+
+def report_def_vo(row: BiReportDef, names: dict[int, str], actor: User | None = None) -> dict:
     layout = parse_layout(row.layout_json)
+    comps = layout.get("comps") or []
+    if not isinstance(comps, list):
+        comps = []
+    datasets = []
+    for comp in comps:
+        if isinstance(comp, dict):
+            dataset = str(comp.get("dataset") or "").strip()
+            if dataset and dataset not in datasets:
+                datasets.append(dataset)
+    tags = [item for item in [row.category, row.report_type] if item]
+    caps = report_caps(row, actor)
     return {
         "id": row.id,
         "reportNo": row.report_no,
@@ -408,10 +452,17 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "publishDest": row.publish_dest or "CENTER",
         "menuName": row.menu_name or "",
         "viewerIds": [int(item) for item in (row.viewer_ids or "").split(",") if item.strip().isdigit()],
+        "accessType": row.access_type or "SHARE_LINK",
+        "expireDays": int(row.expire_days or 7),
+        "hasPassword": bool(row.password_hash),
+        "dataset": "、".join(datasets) if datasets else "—",
+        "compCount": len(comps),
+        "tags": tags,
         "layoutMode": layout.get("layoutMode", "FREE"),
-        "comps": layout.get("comps", []),
+        "comps": comps,
         "creatorName": names.get(row.creator_id, ""),
         "updatedAt": iso(row.updated_at),
+        **caps,
     }
 
 STANDARD_REPORTS = [
@@ -807,7 +858,7 @@ def report_import(body: ImportBody, db: Session = Depends(db_session), actor: Us
     db.add(row)
     db.flush()
     names = user_names(db, [row.creator_id])
-    vo = report_def_vo(row, names)
+    vo = report_def_vo(row, names, actor)
     return ok(
         {
             **vo,
@@ -864,7 +915,7 @@ def report_manage_list(
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
     names = user_names(db, [r.creator_id for r in rows])
-    return paged([report_def_vo(r, names) for r in rows], total, page_no, size)
+    return paged([report_def_vo(r, names, actor) for r in rows], total, page_no, size)
 
 
 @router.post("")
@@ -900,7 +951,41 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
     db.add(row)
     db.flush()
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
+
+
+@router.get("/published-menus")
+def published_menus(
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(BiReportDef)
+            .where(
+                BiReportDef.deleted == 0,
+                BiReportDef.tenant_id == tenant_id,
+                BiReportDef.status == "PUBLISHED",
+                BiReportDef.publish_dest.like("%MENU%"),
+                BiReportDef.menu_name != "",
+            )
+            .order_by(BiReportDef.id.desc())
+        ).all()
+    )
+    items = []
+    for row in rows:
+        if not report_row_visible(db, row, actor, request.state.scope):
+            continue
+        items.append(
+            {
+                "reportId": row.id,
+                "menuName": row.menu_name,
+                "path": f"/ims/bi/report/designer?reportId={row.id}",
+            }
+        )
+    return ok({"list": items})
 
 
 @router.get("/{report_id:int}")
@@ -917,7 +1002,7 @@ def report_design_get(
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
 
 
 @router.put("/{report_id:int}")
@@ -934,6 +1019,9 @@ def report_design_save(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    denied = mutation_denied(row, actor, "edit")
+    if denied:
+        return fail(1008, denied)
     if body.reportName.strip():
         row.report_name = body.reportName.strip()
     if body.layoutJson is not None:
@@ -945,7 +1033,7 @@ def report_design_save(
             row.report_version = int(row.report_version or 1) + 1
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
 
 
 def pack_viewer_ids(ids: list[int]) -> str:
@@ -972,6 +1060,8 @@ def publish_vo(row: BiReportPublish, names: dict[int, str]) -> dict:
         "rowPerm": row.row_perm,
         "menuName": row.menu_name,
         "accessType": row.access_type,
+        "expireDays": int(row.expire_days or 7),
+        "hasPassword": bool(row.password_hash),
         "snapshotVersion": row.snapshot_version,
         "status": row.status,
         "shareUrl": row.share_url,
@@ -993,6 +1083,9 @@ def report_copy(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, src, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    denied = mutation_denied(src, actor, "copy")
+    if denied:
+        return fail(1008, denied)
     now = utcnow()
     row = BiReportDef(
         report_no=next_report_no(db, tenant_id),
@@ -1014,7 +1107,7 @@ def report_copy(
     db.add(row)
     db.flush()
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
 
 
 @router.get("/{report_id:int}/export")
@@ -1030,6 +1123,9 @@ def report_export(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    denied = mutation_denied(row, actor, "export")
+    if denied:
+        return fail(1008, denied)
     layout = parse_layout(row.layout_json)
     return ok(
         {
@@ -1057,6 +1153,9 @@ def report_delete(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    denied = mutation_denied(row, actor, "delete")
+    if denied:
+        return fail(1008, denied)
     row.deleted = 1
     row.updated_at = utcnow()
     return ok({"id": row.id, "deleted": True})
@@ -1104,25 +1203,48 @@ def report_design_publish(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    denied = mutation_denied(row, actor, "publish")
+    if denied:
+        return fail(1008, denied)
     cfg = body or PublishBody()
-    dest = (cfg.dest or "CENTER").strip().upper()
-    if dest not in {"CENTER", "MENU"}:
+    raw_dests = [str(item).strip().upper() for item in (cfg.dests or []) if str(item).strip()]
+    if not raw_dests:
+        raw_dests = [(cfg.dest or "CENTER").strip().upper() or "CENTER"]
+    dests: list[str] = []
+    for item in raw_dests:
+        if item not in dests:
+            dests.append(item)
+    if any(item not in {"CENTER", "MENU"} for item in dests):
         return fail(1001, "发布去向无效")
     menu_name = (cfg.menuName or "").strip()
-    if dest == "MENU" and not menu_name:
+    if "MENU" in dests and not menu_name:
         return fail(1001, "请填写菜单名称")
     scope = (cfg.shareScope or row.share_scope or "PRIVATE").strip().upper()
     if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
         return fail(1001, "可见范围无效")
     op_perm = (cfg.opPerm or "READONLY").strip().upper()
-    if op_perm not in {"READONLY", "EXPORT"}:
+    if op_perm not in {"READONLY", "EXPORT", "COPY"}:
         return fail(1001, "操作权限无效")
     row_perm = (cfg.rowPerm or "INHERIT").strip().upper()
     if row_perm not in {"INHERIT", "SNAPSHOT"}:
         return fail(1001, "行权限无效")
+    access = (cfg.accessType or row.access_type or "SHARE_LINK").strip().upper() or "SHARE_LINK"
+    if access not in {"SHARE_LINK", "SSO"}:
+        return fail(1001, "访问方式无效")
+    days = cfg.expireDays
+    if isinstance(days, bool) or not isinstance(days, int) or days < 7 or days > 30:
+        return fail(1197, "分享有效期须为 7~30 天")
+    if cfg.passwordEnabled:
+        secret = (cfg.password or "").strip()
+        if len(secret) < 8:
+            return fail(1001, "密码至少 8 位")
+        password_hash = hash_password(secret)
+    else:
+        password_hash = ""
     viewers = pack_viewer_ids(cfg.viewerIds)
     if scope == "SPECIFIED" and not viewers:
         return fail(1001, "请选择可见用户")
+    dest = ",".join(dests)
     republish = row.status == "PUBLISHED"
     row.status = "PUBLISHED"
     if republish:
@@ -1133,8 +1255,11 @@ def report_design_publish(
     row.op_perm = op_perm
     row.row_perm = row_perm
     row.publish_dest = dest
-    row.menu_name = menu_name if dest == "MENU" else ""
+    row.menu_name = menu_name if "MENU" in dests else ""
     row.viewer_ids = viewers if scope == "SPECIFIED" else ""
+    row.access_type = access
+    row.expire_days = days
+    row.password_hash = password_hash
     row.updated_at = utcnow()
     share_url = f"/ims/bi/report/list?highlight={row.id}"
     record = BiReportPublish(
@@ -1145,7 +1270,9 @@ def report_design_publish(
         row_perm=row_perm,
         viewer_ids=row.viewer_ids,
         menu_name=row.menu_name,
-        access_type=(cfg.accessType or "SHARE_LINK").strip().upper() or "SHARE_LINK",
+        access_type=access,
+        expire_days=days,
+        password_hash=password_hash,
         snapshot_version=int(row.report_version or 1),
         status="ACTIVE",
         share_url=share_url,
@@ -1156,14 +1283,15 @@ def report_design_publish(
     db.add(record)
     db.flush()
     names = user_names(db, [row.creator_id, actor.id])
-    vo = report_def_vo(row, names)
+    vo = report_def_vo(row, names, actor)
     return ok(
         {
             **vo,
             "dest": dest,
+            "dests": dests,
             "publishId": record.id,
             "shareUrl": share_url,
-            "menuNote": "发布去向已记为单独菜单，本次不写入系统菜单" if dest == "MENU" else "",
+            "menuNote": "已加入侧栏「数据决策」" if "MENU" in dests else "",
         }
     )
 

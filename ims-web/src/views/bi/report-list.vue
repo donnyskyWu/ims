@@ -93,15 +93,10 @@
             <div class="csub" style="margin-top: 6px">{{ row.category }} / {{ row.subCategory || '—' }}</div>
             <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ statusText(row.status) }} · v{{ row.version || 1 }}</div>
             <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }} · {{ scopeText(row.shareScope) }} · {{ opText(row.opPerm) }} · {{ rowPermText(row.rowPerm) }}</div>
-            <div class="rowline" style="margin-top: 10px; gap: 8px">
-              <button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑设计</button>
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="toggleMore(row.id)">更多</button>
-            </div>
-            <div v-if="moreId === row.id" class="card" data-testid="bi-more-menu" style="margin-top: 8px; padding: 8px">
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(row)">复制</button>
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(row)">删除</button>
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(row)">导出模板 JSON</button>
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(row)">发布管理</button>
+            <div class="rowline" style="margin-top: 10px; gap: 8px; flex-wrap: wrap">
+              <button v-if="row.canPublish !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
+              <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-edit" @click="openDesigner(row.id)">编辑设计</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="openMore(row)">更多</button>
             </div>
           </div>
           <div v-if="!loading && !rows.length" class="card" style="grid-column: 1 / -1">
@@ -138,8 +133,9 @@
               <td>v{{ row.version || 1 }}</td>
               <td class="csub">{{ formatShanghai(row.updatedAt) }}</td>
                   <td>
-                    <button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button>
-                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="toggleMore(row.id)">更多</button>
+                    <button v-if="row.canPublish !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
+                    <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="openMore(row)">更多</button>
                   </td>
                 </tr>
               </tbody>
@@ -160,13 +156,78 @@
       </div>
     </div>
 
+    <div v-if="moreRow" class="modal-mask" data-testid="bi-more-drawer" @click.self="moreRow = null">
+      <div class="card" style="width: 480px; padding: 18px">
+        <h3 style="margin: 0 0 8px">更多 · {{ moreRow.reportName }}</h3>
+        <p class="csub" data-testid="bi-more-type">类型：{{ moreRow.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</p>
+        <p class="csub" data-testid="bi-more-dataset">数据源：{{ moreRow.dataset || '—' }}</p>
+        <p class="csub" data-testid="bi-more-status">状态：{{ statusText(moreRow.status) }}</p>
+        <p class="csub" data-testid="bi-more-count">组件数：{{ moreRow.compCount ?? 0 }}</p>
+        <p class="csub" data-testid="bi-more-tags">标签：{{ (moreRow.tags || []).join('、') || '—' }}</p>
+        <p class="csub">分享：{{ scopeText(moreRow.shareScope) }} · {{ opText(moreRow.opPerm) }}</p>
+        <div class="rowline" style="margin-top: 12px; gap: 8px; flex-wrap: wrap">
+          <button v-if="moreRow.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-design" @click="openDesigner(moreRow.id)">进入设计器</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-share" @click="openShare(moreRow)">分享设置</button>
+          <button v-if="moreRow.canCopy !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(moreRow)">复制</button>
+          <button v-if="moreRow.canDelete !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(moreRow)">删除</button>
+          <button v-if="moreRow.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(moreRow)">导出模板 JSON</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(moreRow)">发布管理</button>
+        </div>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="moreRow = null">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="publishManage" class="modal-mask" data-testid="bi-publish-manage" @click.self="publishManage = null">
-      <div class="card" style="width: 520px; padding: 18px">
+      <div class="card" style="width: 560px; padding: 18px; max-height: 80vh; overflow: auto">
         <h3 style="margin: 0 0 8px">发布管理 · {{ publishManage.reportName }} · v{{ publishManage.version || 1 }}</h3>
-        <p v-if="!publishRows.length" class="csub">尚未发布</p>
+        <p v-if="!publishRows.length" class="csub">尚未发布。可在下方填写发布配置。</p>
         <div v-for="item in publishRows" :key="item.publishId" class="csub" style="margin-top: 8px" data-testid="bi-publish-row">
-          {{ destText(item.dest) }} · {{ scopeText(item.shareScope) }} · {{ opText(item.opPerm) }} · {{ rowPermText(item.rowPerm) }} · 快照 v{{ item.snapshotVersion }}
+          {{ destText(item.dest) }} · {{ accessText(item.accessType) }} · {{ scopeText(item.shareScope) }} · {{ opText(item.opPerm) }} · {{ rowPermText(item.rowPerm) }}
+          · 有效期 {{ item.expireDays || 7 }} 天 · 密码 {{ item.hasPassword ? '••••••' : '无' }} · 快照 v{{ item.snapshotVersion }}
           <span v-if="item.menuName"> · 菜单 {{ item.menuName }}</span>
+        </div>
+        <div v-if="publishManage.canPublish !== false" style="margin-top: 14px" data-testid="bi-list-publish">
+          <label class="fld">发布去向</label>
+          <label class="csub" style="display: block; margin-top: 6px"><input v-model="listPublish.dests" type="checkbox" value="CENTER" /> 发布到报表中心</label>
+          <label class="csub" style="display: block; margin-top: 6px"><input v-model="listPublish.dests" type="checkbox" value="MENU" /> 单独发布为菜单</label>
+          <template v-if="listPublish.dests.includes('MENU')">
+            <label class="fld">菜单名称</label>
+            <input v-model="listPublish.menuName" class="fld-in" data-testid="bi-list-menu" placeholder="侧栏显示名" />
+          </template>
+          <label class="fld">访问方式</label>
+          <select v-model="listPublish.accessType" class="fld-in" data-testid="bi-list-access">
+            <option value="SHARE_LINK">发布链接</option>
+            <option value="SSO">站内授权</option>
+          </select>
+          <label class="fld">有效期（天，7~30）</label>
+          <input v-model.number="listPublish.expireDays" class="fld-in" type="number" min="7" max="30" data-testid="bi-list-expire" />
+          <label class="csub" style="display: flex; align-items: center; gap: 8px; margin-top: 8px">
+            <input v-model="listPublish.passwordEnabled" type="checkbox" /> 访问密码
+          </label>
+          <input v-if="listPublish.passwordEnabled" v-model="listPublish.password" class="fld-in" type="password" placeholder="至少 8 位" />
+          <label class="fld">可见范围</label>
+          <select v-model="listPublish.shareScope" class="fld-in" data-testid="bi-list-scope">
+            <option value="PRIVATE">私有</option>
+            <option value="SPECIFIED">指定人</option>
+            <option value="ALL">全员</option>
+          </select>
+          <template v-if="listPublish.shareScope === 'SPECIFIED'">
+            <label class="fld">可见用户</label>
+            <select v-model="listPublish.viewerId" class="fld-in">
+              <option value="">请选择</option>
+              <option v-for="user in viewers" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+            </select>
+          </template>
+          <label class="fld">操作权限</label>
+          <select v-model="listPublish.opPerm" class="fld-in">
+            <option value="READONLY">只读</option>
+            <option value="EXPORT">可导出</option>
+            <option value="COPY">可复制</option>
+          </select>
+          <p v-if="publishError" class="hint" style="color: var(--red)">{{ publishError }}</p>
+          <button class="btn btn-pri btn-sm" type="button" style="margin-top: 10px" data-testid="bi-list-publish-now" @click="confirmListPublish">保存并发布</button>
         </div>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="publishManage = null">关闭</button>
@@ -308,8 +369,37 @@ type Row = {
   version?: number
   opPerm?: string
   rowPerm?: string
+  publishDest?: string
+  menuName?: string
+  viewerIds?: number[]
+  accessType?: string
+  expireDays?: number
+  hasPassword?: boolean
+  dataset?: string
+  compCount?: number
+  tags?: string[]
+  canEdit?: boolean
+  canCopy?: boolean
+  canDelete?: boolean
+  canExport?: boolean
+  canPublish?: boolean
   updatedAt: string
 }
+
+type PublishRecord = {
+  publishId: number
+  dest: string
+  shareScope: string
+  opPerm: string
+  rowPerm: string
+  snapshotVersion: number
+  menuName?: string
+  accessType?: string
+  expireDays?: number
+  hasPassword?: boolean
+}
+
+type Viewer = { id: number; username: string; nickname?: string }
 
 type CatNode = { id: number; name: string; system?: boolean; children: CatNode[] }
 type FlatCat = { id: number; name: string; level: number; system: boolean }
@@ -331,10 +421,24 @@ const catError = ref('')
 const catMsg = ref('')
 const catForm = reactive({ name: '', parentId: 0 })
 const showImport = ref(false)
-const moreId = ref(0)
+const moreRow = ref<Row | null>(null)
 const deleteTarget = ref<Row | null>(null)
 const publishManage = ref<Row | null>(null)
-const publishRows = ref<{ publishId: number; dest: string; shareScope: string; opPerm: string; rowPerm: string; snapshotVersion: number; menuName?: string }[]>([])
+const publishRows = ref<PublishRecord[]>([])
+const publishError = ref('')
+const viewers = ref<Viewer[]>([])
+const listPublish = reactive({
+  dests: ['CENTER'] as string[],
+  menuName: '',
+  shareScope: 'PRIVATE',
+  viewerId: '',
+  opPerm: 'READONLY',
+  rowPerm: 'INHERIT',
+  accessType: 'SHARE_LINK',
+  expireDays: 7,
+  passwordEnabled: false,
+  password: '',
+})
 const actionMsg = ref('')
 const importError = ref('')
 const importTemplate = ref<Record<string, unknown> | null>(null)
@@ -399,7 +503,13 @@ function statusText(status: string) {
 }
 
 function opText(value?: string) {
-  return value === 'EXPORT' ? '可导出' : '只读'
+  if (value === 'EXPORT') return '可导出'
+  if (value === 'COPY') return '可复制'
+  return '只读'
+}
+
+function accessText(value?: string) {
+  return value === 'SSO' ? '站内授权' : '发布链接'
 }
 
 function rowPermText(value?: string) {
@@ -407,7 +517,9 @@ function rowPermText(value?: string) {
 }
 
 function destText(value?: string) {
-  return value === 'MENU' ? '单独菜单' : '报表中心'
+  const parts = String(value || 'CENTER').split(',')
+  const labels = parts.map((item) => (item.trim() === 'MENU' ? '单独菜单' : '报表中心'))
+  return labels.join('、')
 }
 
 function scopeText(value?: string) {
@@ -416,8 +528,55 @@ function scopeText(value?: string) {
   return '私有'
 }
 
-function toggleMore(id: number) {
-  moreId.value = moreId.value === id ? 0 : id
+function openMore(row: Row) {
+  moreRow.value = row
+}
+
+function openShare(row: Row) {
+  moreRow.value = null
+  void router.push({ path: '/ims/bi/report/subscribe', query: { tab: 'share', reportId: String(row.id) } })
+}
+
+function fillListPublish(row: Row) {
+  const dests = String(row.publishDest || 'CENTER')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item === 'CENTER' || item === 'MENU')
+  listPublish.dests = dests.length ? dests : ['CENTER']
+  listPublish.menuName = row.menuName || ''
+  listPublish.shareScope = row.shareScope || 'PRIVATE'
+  listPublish.viewerId = row.viewerIds?.[0] ? String(row.viewerIds[0]) : ''
+  listPublish.opPerm = row.opPerm || 'READONLY'
+  listPublish.rowPerm = row.rowPerm || 'INHERIT'
+  listPublish.accessType = row.accessType || 'SHARE_LINK'
+  listPublish.expireDays = row.expireDays || 7
+  listPublish.passwordEnabled = Boolean(row.hasPassword)
+  listPublish.password = ''
+}
+
+async function loadViewers() {
+  if (viewers.value.length) return
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
+    viewers.value = (res.data.data?.list || []) as Viewer[]
+  } catch {
+    viewers.value = []
+  }
+}
+
+async function openListPublish(row: Row) {
+  moreRow.value = null
+  publishError.value = ''
+  fillListPublish(row)
+  publishManage.value = row
+  publishRows.value = []
+  await loadViewers()
+  try {
+    const res = await http.get(`/bi/report/${row.id}/publish/list`)
+    publishRows.value = res.data.data?.list || []
+  } catch {
+    publishRows.value = []
+  }
 }
 
 async function copyReport(row: Row) {
@@ -425,7 +584,7 @@ async function copyReport(row: Row) {
   try {
     const res = await http.post(`/bi/report/${row.id}/copy`)
     actionMsg.value = `已复制为「${res.data.data.reportName}」· v${res.data.data.version}`
-    moreId.value = 0
+    moreRow.value = null
     await loadList()
   } catch (error: unknown) {
     const body = error as { msg?: string }
@@ -435,7 +594,7 @@ async function copyReport(row: Row) {
 
 function askDelete(row: Row) {
   deleteTarget.value = row
-  moreId.value = 0
+  moreRow.value = null
 }
 
 async function confirmDelete() {
@@ -462,7 +621,7 @@ async function exportTemplate(row: Row) {
     link.click()
     URL.revokeObjectURL(link.href)
     actionMsg.value = `已导出模板 ${row.reportNo}.json`
-    moreId.value = 0
+    moreRow.value = null
   } catch (error: unknown) {
     const body = error as { msg?: string }
     actionMsg.value = body.msg || '导出失败'
@@ -470,15 +629,53 @@ async function exportTemplate(row: Row) {
 }
 
 async function openPublishManage(row: Row) {
-  publishManage.value = row
-  moreId.value = 0
-  publishRows.value = []
+  await openListPublish(row)
+}
+
+async function confirmListPublish() {
+  const row = publishManage.value
+  if (!row) return
+  publishError.value = ''
+  if (!listPublish.dests.length) {
+    publishError.value = '请选择发布去向'
+    return
+  }
+  if (listPublish.dests.includes('MENU') && !listPublish.menuName.trim()) {
+    publishError.value = '请填写菜单名称'
+    return
+  }
+  if (listPublish.expireDays < 7 || listPublish.expireDays > 30) {
+    publishError.value = '分享有效期须为 7~30 天'
+    return
+  }
+  if (listPublish.passwordEnabled && listPublish.password.trim().length < 8) {
+    publishError.value = '密码至少 8 位'
+    return
+  }
+  if (listPublish.shareScope === 'SPECIFIED' && !listPublish.viewerId) {
+    publishError.value = '请选择可见用户'
+    return
+  }
   try {
-    const res = await http.get(`/bi/report/${row.id}/publish/list`)
-    publishRows.value = res.data.data.list || []
+    const res = await http.post(`/bi/report/${row.id}/publish`, {
+      dests: listPublish.dests,
+      menuName: listPublish.menuName.trim(),
+      shareScope: listPublish.shareScope,
+      opPerm: listPublish.opPerm,
+      rowPerm: listPublish.rowPerm,
+      viewerIds: listPublish.shareScope === 'SPECIFIED' ? [Number(listPublish.viewerId)] : [],
+      accessType: listPublish.accessType,
+      expireDays: listPublish.expireDays,
+      passwordEnabled: listPublish.passwordEnabled,
+      password: listPublish.password,
+    })
+    const data = res.data.data
+    actionMsg.value = data.menuNote ? `已发布 · v${data.version} · ${data.menuNote}` : `已发布 · v${data.version}`
+    publishManage.value = null
+    await loadList()
   } catch (error: unknown) {
     const body = error as { msg?: string }
-    actionMsg.value = body.msg || '发布记录加载失败'
+    publishError.value = body.msg || '发布失败'
   }
 }
 

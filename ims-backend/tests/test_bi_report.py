@@ -325,3 +325,72 @@ def test_bi_publish_config_grants_tc_r6_and_card_actions():
     assert exported.json()["data"]["template"]["reportName"] == "可见日报"
     records = client.get(f"/admin-api/ims/bi/report/{rid}/publish/list", headers=auth)
     assert len(records.json()["data"]["list"]) >= 1
+    shared = next(item for item in listed.json()["data"]["list"] if item["reportName"] == "可见日报")
+    assert shared["canEdit"] is False
+    assert shared["canCopy"] is False
+    assert shared["canDelete"] is False
+    assert shared["canExport"] is False
+    denied = client.post(f"/admin-api/ims/bi/report/{rid}/copy", headers=viewer_headers)
+    assert denied.json()["code"] == 1008
+    denied_save = client.put(
+        f"/admin-api/ims/bi/report/{rid}",
+        headers=viewer_headers,
+        json={"reportName": "越权改名", "keepVersion": True},
+    )
+    assert denied_save.json()["code"] == 1008
+    denied_export = client.get(f"/admin-api/ims/bi/report/{rid}/export", headers=viewer_headers)
+    assert denied_export.json()["code"] == 1008
+    denied_delete = client.delete(f"/admin-api/ims/bi/report/{rid}", headers=viewer_headers)
+    assert denied_delete.json()["code"] == 1008
+
+
+def test_bi_republish_menu_access_and_version():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "菜单日报", "reportType": "REPORT", "category": "日报"},
+    )
+    rid = created.json()["data"]["id"]
+    first = client.post(
+        f"/admin-api/ims/bi/report/{rid}/publish",
+        headers=auth,
+        json={"dests": ["CENTER"], "shareScope": "ALL", "opPerm": "COPY", "accessType": "SSO", "expireDays": 14},
+    )
+    assert first.json()["code"] == 0
+    assert first.json()["data"]["version"] == 1
+    assert first.json()["data"]["shareScope"] == "ALL"
+    assert first.json()["data"]["opPerm"] == "COPY"
+    assert first.json()["data"]["accessType"] == "SSO"
+    assert first.json()["data"]["expireDays"] == 14
+    short = client.post(
+        f"/admin-api/ims/bi/report/{rid}/publish",
+        headers=auth,
+        json={"dests": ["MENU"], "menuName": "菜单日报", "expireDays": 3},
+    )
+    assert short.json()["code"] == 1197
+    again = client.post(
+        f"/admin-api/ims/bi/report/{rid}/publish",
+        headers=auth,
+        json={
+            "dests": ["CENTER", "MENU"],
+            "menuName": "菜单日报",
+            "shareScope": "ALL",
+            "opPerm": "COPY",
+            "accessType": "SHARE_LINK",
+            "expireDays": 7,
+            "passwordEnabled": True,
+            "password": "Secret123",
+        },
+    )
+    body = again.json()
+    assert body["code"] == 0
+    assert body["data"]["version"] == 2
+    assert body["data"]["publishDest"] == "CENTER,MENU"
+    assert body["data"]["shareScope"] == "ALL"
+    assert body["data"]["hasPassword"] is True
+    menus = client.get("/admin-api/ims/bi/report/published-menus", headers=auth)
+    assert any(item["menuName"] == "菜单日报" for item in menus.json()["data"]["list"])
+    detail = client.get(f"/admin-api/ims/bi/report/{rid}", headers=auth)
+    assert detail.json()["data"]["shareScope"] == "ALL"
+    assert detail.json()["data"]["publishDest"] == "CENTER,MENU"

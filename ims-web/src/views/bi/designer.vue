@@ -236,15 +236,30 @@
         <h3 style="margin: 0 0 8px">发布配置</h3>
         <p class="csub">当前版本 v{{ report?.version || 1 }}。立即发布后，可见范围内的用户可以在报表管理看到这张报表。</p>
         <label class="fld">发布去向</label>
-        <select v-model="publishForm.dest" class="fld-in" data-testid="bi-publish-dest">
-          <option value="CENTER">发布到报表中心</option>
-          <option value="MENU">单独发布为菜单</option>
-        </select>
-        <template v-if="publishForm.dest === 'MENU'">
+        <div data-testid="bi-publish-dest">
+          <label class="csub" style="display: block; margin-top: 6px">
+            <input v-model="publishForm.dests" type="checkbox" value="CENTER" /> 发布到报表中心
+          </label>
+          <label class="csub" style="display: block; margin-top: 6px">
+            <input v-model="publishForm.dests" type="checkbox" value="MENU" /> 单独发布为菜单
+          </label>
+        </div>
+        <template v-if="publishForm.dests.includes('MENU')">
           <label class="fld">菜单名称</label>
           <input v-model="publishForm.menuName" class="fld-in" data-testid="bi-publish-menu" placeholder="侧栏显示名" />
-          <p class="csub">去向会记在发布记录里。系统菜单种子由另一处维护，这里不写入 sys_menu。</p>
+          <p class="csub">勾选后出现在侧栏「数据决策」，不改菜单权限种子。</p>
         </template>
+        <label class="fld">访问方式</label>
+        <select v-model="publishForm.accessType" class="fld-in" data-testid="bi-publish-access">
+          <option value="SHARE_LINK">发布链接</option>
+          <option value="SSO">站内授权</option>
+        </select>
+        <label class="fld">有效期（天，7~30）</label>
+        <input v-model.number="publishForm.expireDays" class="fld-in" type="number" min="7" max="30" data-testid="bi-publish-expire" />
+        <label class="csub" style="display: flex; align-items: center; gap: 8px; margin-top: 8px">
+          <input v-model="publishForm.passwordEnabled" type="checkbox" data-testid="bi-publish-password-on" /> 访问密码
+        </label>
+        <input v-if="publishForm.passwordEnabled" v-model="publishForm.password" class="fld-in" type="password" data-testid="bi-publish-password" placeholder="至少 8 位" />
         <label class="fld">可见范围</label>
         <select v-model="publishForm.shareScope" class="fld-in" data-testid="bi-publish-scope">
           <option value="PRIVATE">私有</option>
@@ -262,6 +277,7 @@
         <select v-model="publishForm.opPerm" class="fld-in" data-testid="bi-publish-op">
           <option value="READONLY">只读</option>
           <option value="EXPORT">可导出</option>
+          <option value="COPY">可复制</option>
         </select>
         <label class="fld">行权限</label>
         <select v-model="publishForm.rowPerm" class="fld-in" data-testid="bi-publish-row">
@@ -335,6 +351,15 @@ type ReportVo = {
   comps: Comp[]
   layoutMode: string
   version?: number
+  shareScope?: string
+  opPerm?: string
+  rowPerm?: string
+  publishDest?: string
+  menuName?: string
+  viewerIds?: number[]
+  accessType?: string
+  expireDays?: number
+  hasPassword?: boolean
 }
 
 type Viewer = { id: number; username: string; nickname?: string }
@@ -424,12 +449,16 @@ const publishOpen = ref(false)
 const publishError = ref('')
 const viewers = ref<Viewer[]>([])
 const publishForm = reactive({
-  dest: 'CENTER',
+  dests: ['CENTER'] as string[],
   menuName: '',
   shareScope: 'PRIVATE',
   viewerId: '',
   opPerm: 'READONLY',
   rowPerm: 'INHERIT',
+  accessType: 'SHARE_LINK',
+  expireDays: 7,
+  passwordEnabled: false,
+  password: '',
 })
 const devices = ['PC', 'TV', '移动'] as const
 const previewById = ref<Record<string, Preview>>({})
@@ -834,8 +863,27 @@ async function openDrill() {
   await router.push({ path: '/ims/bi/report/preview', query: { reportId: String(reportId.value) } })
 }
 
+function fillPublishForm() {
+  const current = report.value
+  const dests = String(current?.publishDest || 'CENTER')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item === 'CENTER' || item === 'MENU')
+  publishForm.dests = dests.length ? dests : ['CENTER']
+  publishForm.menuName = current?.menuName || ''
+  publishForm.shareScope = current?.shareScope || 'PRIVATE'
+  publishForm.viewerId = current?.viewerIds?.[0] ? String(current.viewerIds[0]) : ''
+  publishForm.opPerm = current?.opPerm || 'READONLY'
+  publishForm.rowPerm = current?.rowPerm || 'INHERIT'
+  publishForm.accessType = current?.accessType || 'SHARE_LINK'
+  publishForm.expireDays = current?.expireDays || 7
+  publishForm.passwordEnabled = Boolean(current?.hasPassword)
+  publishForm.password = ''
+}
+
 async function openPublish() {
   publishError.value = ''
+  fillPublishForm()
   publishOpen.value = true
   if (viewers.value.length) return
   try {
@@ -848,8 +896,20 @@ async function openPublish() {
 
 async function confirmPublish() {
   publishError.value = ''
-  if (publishForm.dest === 'MENU' && !publishForm.menuName.trim()) {
+  if (!publishForm.dests.length) {
+    publishError.value = '请选择发布去向'
+    return
+  }
+  if (publishForm.dests.includes('MENU') && !publishForm.menuName.trim()) {
     publishError.value = '请填写菜单名称'
+    return
+  }
+  if (publishForm.expireDays < 7 || publishForm.expireDays > 30) {
+    publishError.value = '分享有效期须为 7~30 天'
+    return
+  }
+  if (publishForm.passwordEnabled && publishForm.password.trim().length < 8) {
+    publishError.value = '密码至少 8 位'
     return
   }
   if (publishForm.shareScope === 'SPECIFIED' && !publishForm.viewerId) {
@@ -864,16 +924,32 @@ async function confirmPublish() {
   }
   try {
     const res = await http.post(`/bi/report/${reportId.value}/publish`, {
-      dest: publishForm.dest,
+      dests: publishForm.dests,
       menuName: publishForm.menuName.trim(),
       shareScope: publishForm.shareScope,
       opPerm: publishForm.opPerm,
       rowPerm: publishForm.rowPerm,
       viewerIds: publishForm.shareScope === 'SPECIFIED' ? [Number(publishForm.viewerId)] : [],
-      accessType: 'SHARE_LINK',
+      accessType: publishForm.accessType,
+      expireDays: publishForm.expireDays,
+      passwordEnabled: publishForm.passwordEnabled,
+      password: publishForm.password,
     })
     const data = res.data.data
-    report.value = { ...report.value!, status: data.status, version: data.version }
+    report.value = {
+      ...report.value!,
+      status: data.status,
+      version: data.version,
+      shareScope: data.shareScope,
+      opPerm: data.opPerm,
+      rowPerm: data.rowPerm,
+      publishDest: data.publishDest,
+      menuName: data.menuName,
+      accessType: data.accessType,
+      expireDays: data.expireDays,
+      hasPassword: data.hasPassword,
+      viewerIds: data.viewerIds,
+    }
     previewMsg.value = data.menuNote ? `已发布 · v${data.version} · ${data.menuNote}` : `已发布 · v${data.version}`
     dirty.value = false
     publishOpen.value = false
