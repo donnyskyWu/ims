@@ -71,7 +71,7 @@ test.describe('bi drill report subscribe local tails', () => {
     const subModal = page.locator('.modal-mask .card').filter({ hasText: '新建订阅' })
     await subModal.locator('input.fld-in').first().fill(label)
     await subModal.getByTestId('bi-sub-report').selectOption(String(reportId))
-    await subModal.locator('select').selectOption('DAILY')
+    await subModal.getByTestId('bi-sub-period').selectOption('DAILY')
     const createSubResp = page.waitForResponse(
       (r) => r.url().includes('/bi/subscribe') && r.request().method() === 'POST' && !r.url().includes('share') && r.status() === 200,
     )
