@@ -72,7 +72,7 @@
                 <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-toggle" @click="toggleStatus">
                   {{ detail.status === 1 ? '停用' : '启用' }}
                 </button>
-                <button class="btn btn-sec btn-sm" type="button" @click="removeGroup">删除</button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-delete" @click="askRemove">删除</button>
               </div>
             </div>
           </div>
@@ -265,6 +265,17 @@
         <button class="btn btn-pri" type="button" data-testid="ipg-group-submit" @click="submitGroup">确认</button>
       </div>
     </div>
+    <div v-if="confirming" class="cfwrap on" data-testid="ipg-confirm">
+      <div class="cfmask" @click="confirming = null"></div>
+      <div class="cfcard danger">
+        <div class="cf-t">删除确认</div>
+        <div class="cf-m" data-testid="ipg-confirm-text">确认删除 IP 组「{{ confirming.name }}」？</div>
+        <div class="cf-f">
+          <button class="btn btn-sec" type="button" data-testid="ipg-confirm-cancel" @click="confirming = null">取消</button>
+          <button class="btn btn-red" type="button" data-testid="ipg-confirm-ok" @click="confirming.run()">确认</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -302,6 +313,7 @@ const members = ref<any[]>([])
 const accounts = ref<any[]>([])
 const anchors = ref<any[]>([])
 const stats = ref<Record<string, number>>({})
+const confirming = ref<{ name: string; run: () => void } | null>(null)
 const bindAccountId = ref<number | undefined>()
 const bindAuthorId = ref<number | undefined>()
 const creating = ref(false)
@@ -588,12 +600,24 @@ async function bindAuthor() {
   }
 }
 
-async function removeGroup() {
-  if (!selectedId.value) return
+function askRemove() {
+  if (!selectedId.value || !detail.value) return
+  const id = selectedId.value
+  const name = detail.value.groupName
+  confirming.value = {
+    name,
+    run: () => {
+      confirming.value = null
+      removeGroup(id)
+    },
+  }
+}
+
+async function removeGroup(id: number) {
   try {
-    await http.delete('/ip-group/delete', { params: { id: selectedId.value } })
-    msg.value = '已删除'
-    selectedId.value = null
+    await http.delete('/ip-group/delete', { params: { id } })
+    msg.value = 'IP 组已删除'
+    if (selectedId.value === id) selectedId.value = null
     await loadTree()
   } catch (e) {
     msg.value = apiError(e)
