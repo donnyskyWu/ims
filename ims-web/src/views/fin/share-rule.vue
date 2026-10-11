@@ -331,6 +331,19 @@
       </div>
     </div>
 
+    <div v-if="enableConflictOpen" class="mask on" style="z-index: 140" data-testid="fin-share-rule-enable-conflict">
+      <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 400px; padding: 16px">
+        <b>优先级冲突</b>
+        <p>存在同范围同对象优先级冲突规则，确认强制保存？</p>
+        <div class="acts" style="gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-enable-confirm" @click="confirmEnable">
+            确认强制启用
+          </button>
+          <button class="btn btn-sec btn-sm" type="button" @click="enableConflictOpen = false">取消</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="disableOpen" class="mask on" style="z-index: 140" data-testid="fin-share-rule-disable-dialog">
       <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 400px; padding: 16px">
         <b>停用规则</b>
@@ -382,6 +395,8 @@ const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
 const clientToken = ref('')
 const conflictOpen = ref(false)
+const enableConflictOpen = ref(false)
+const enableRow = ref<RuleRow | null>(null)
 const disableOpen = ref(false)
 const disableRow = ref<RuleRow | null>(null)
 const simOpen = ref(false)
@@ -902,10 +917,32 @@ function askDisable(row: RuleRow) {
 
 async function enableRule(row: RuleRow) {
   error.value = ''
+  enableRow.value = row
   try {
-    await http.put(`/fin/share/rule/${row.id}/enable`)
+    await http.put(`/fin/share/rule/${row.id}/enable`, {})
+    enableConflictOpen.value = false
+    enableRow.value = null
     await loadList()
   } catch (err) {
+    const body = err as ApiErr
+    if (body?.code === 1147) {
+      enableConflictOpen.value = true
+      return
+    }
+    error.value = errText(err)
+  }
+}
+
+async function confirmEnable() {
+  if (!enableRow.value) return
+  error.value = ''
+  try {
+    await http.put(`/fin/share/rule/${enableRow.value.id}/enable`, { confirmConflict: true })
+    enableConflictOpen.value = false
+    enableRow.value = null
+    await loadList()
+  } catch (err) {
+    enableConflictOpen.value = false
     error.value = errText(err)
   }
 }

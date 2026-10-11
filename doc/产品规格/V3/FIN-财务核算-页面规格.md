@@ -516,6 +516,7 @@ type RateType = 'FIXED' | 'LADDER';                       // 固定/阶梯
 
 **C. 停用规则（R3/R1）**
 - [停用] → ConfirmDialog warning："历史分成单引用不受影响（FIN-S-R5）" → 状态 DISABLED。
+- [启用] → `PUT /fin/share/rule/{id}/enable`。若 1147，弹出与保存相同的冲突确认（文案不含错误码），确认后以 `confirmConflict: true` 再次启用。1146 仍拦截，不提供强制启用。
 
 ### 5. 查询条件表
 

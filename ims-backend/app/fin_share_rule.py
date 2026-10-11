@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -69,6 +69,11 @@ class FinShareRuleBody(BaseModel):
     effectiveRange: EffectiveRangeBody | None = None
     confirmConflict: bool = False
     clientToken: str | None = None
+
+
+class EnableBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    confirmConflict: bool = False
 
 
 class FinShareSimulateBody(BaseModel):
@@ -552,6 +557,7 @@ def payload_from_row(row: FinShareRule) -> dict:
 @router.put("/share/rule/{rule_id}/enable")
 def share_rule_enable(
     rule_id: int,
+    body: EnableBody | None = Body(default=None),
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -570,7 +576,7 @@ def share_rule_enable(
     if summed:
         return fail(1146, summed)
     hit = conflicts_of(rows, payload, row.id)
-    if hit:
+    if hit and not (body and body.confirmConflict):
         return fail(1147, MSG_1147, {"conflictRuleIds": hit})
     row.status = "ENABLED"
     row.updated_at = utcnow()

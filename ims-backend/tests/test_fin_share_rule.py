@@ -405,6 +405,12 @@ def test_fin_share_rule_enable_roundtrip_and_disabled_edit_keeps_bills():
     assert blocked.json()["code"] == 0
     crowded = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
     assert crowded.json()["code"] == 1146
+    forced_sum = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}/enable",
+        headers=auth,
+        json={"confirmConflict": True},
+    )
+    assert forced_sum.json()["code"] == 1146
 
     db = SessionLocal()
     try:
@@ -473,3 +479,35 @@ def test_fin_share_rule_sum_is_per_base_and_shortfall_allowed():
         ),
     )
     assert short.json()["code"] == 0
+
+
+def test_fin_share_rule_enable_conflict_needs_confirm():
+    auth = headers()
+    scope = {"platforms": ["TM"], "accountIds": [86046], "ipGroupIds": []}
+    first = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="待停用再启用", shareTarget="TEAM", fixedRate=0.2, priority=4, scope=scope),
+    )
+    assert first.json()["code"] == 0
+    rule_id = first.json()["data"]["id"]
+    version = first.json()["data"]["version"]
+    assert client.delete(f"/admin-api/ims/fin/share/rule/{rule_id}", headers=auth).json()["code"] == 0
+    other = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="同对象占位", shareTarget="TEAM", fixedRate=0.3, priority=8, scope=scope),
+    )
+    assert other.json()["code"] == 0
+    blocked = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert blocked.json()["code"] == 1147
+    assert blocked.json()["msg"] == "存在同范围同对象优先级冲突规则，确认强制保存？"
+    assert "1147" not in blocked.json()["msg"]
+    forced = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}/enable",
+        headers=auth,
+        json={"confirmConflict": True},
+    )
+    assert forced.json()["code"] == 0
+    assert forced.json()["data"]["status"] == "ENABLED"
+    assert forced.json()["data"]["version"] == version

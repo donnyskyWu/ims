@@ -250,7 +250,7 @@ interface FinShareRuleVO {
 
 #### 2.3.4a PUT /admin-api/ims/fin/share/rule/{id}/enable — 重新启用
 
-已停用规则可重新启用。启用前按当前规则重查 1146（同一范围同一基数合计超过 1）和 1147（同范围同对象冲突）。不递增 version，不改写历史分成单。已是 `ENABLED` 时幂等返回当前规则。
+已停用规则可重新启用。启用前按当前规则重查 1146（同一范围同一基数合计超过 1）和 1147（同范围同对象冲突）。请求体可省略；`{ confirmConflict: true }` 仅放行 1147，不放行 1146。未确认时 1147 的 `msg` 为业务句「存在同范围同对象优先级冲突规则，确认强制保存？」，由页面弹窗确认后带 `confirmConflict` 重试。不递增 version，不改写历史分成单。已是 `ENABLED` 时幂等返回当前规则。
 
 #### 2.3.5 POST /admin-api/ims/fin/share/simulate — 规则试算
 
