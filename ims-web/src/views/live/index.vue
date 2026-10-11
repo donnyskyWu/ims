@@ -111,7 +111,8 @@
             <tr v-for="row in rows" v-else :key="row.sessionCode">
               <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">
                 {{ row.sessionCode }}
-                <span v-if="row.isSupplement" data-testid="live-supplement-tag">补录</span>
+                <span v-if="row.isSupplement" data-testid="live-supplement-tag" style="margin-left: 6px; color: #8e8e93">补录</span>
+                <span v-if="row.isSupplement && !row.approverUserId" data-testid="live-supplement-pending" style="margin-left: 4px; color: #8e8e93">待审批</span>
               </td>
               <td class="mono" style="font-size: 12px">{{ row.accountNo }}</td>
               <td>{{ row.topic }}</td>
@@ -337,16 +338,25 @@
       </div>
       <div class="formrow one">
         <div class="fld">
-          <label>平台账号 id *</label>
-          <input v-model.number="sup.accountId" type="number" data-testid="live-supplement-account" :data-missing="supplementGap('account') ? '1' : '0'" :style="supplementGap('account') ? 'border-color: var(--red)' : ''" />
+          <label>直播账号 *</label>
+          <select v-model="sup.accountId" data-testid="live-supplement-account" :data-missing="supplementGap('account') ? '1' : '0'" :style="supplementGap('account') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择</option>
+            <option v-for="item in regOptions.accounts" :key="item.id" :value="String(item.id)">{{ item.accountName }}</option>
+          </select>
         </div>
         <div class="fld">
-          <label>实名人 id *</label>
-          <input v-model.number="sup.realnamePersonId" type="number" data-testid="live-supplement-person" :data-missing="supplementGap('person') ? '1' : '0'" :style="supplementGap('person') ? 'border-color: var(--red)' : ''" />
+          <label>实名人 *</label>
+          <select v-model="sup.realnamePersonId" data-testid="live-supplement-person" :data-missing="supplementGap('person') ? '1' : '0'" :style="supplementGap('person') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择</option>
+            <option v-for="item in regOptions.realnames" :key="item.id" :value="String(item.id)">{{ item.realName }}</option>
+          </select>
         </div>
         <div class="fld">
-          <label>手机设备 id *</label>
-          <input v-model.number="sup.deviceId" type="number" data-testid="live-supplement-device" :data-missing="supplementGap('device') ? '1' : '0'" :style="supplementGap('device') ? 'border-color: var(--red)' : ''" />
+          <label>手机设备 *</label>
+          <select v-model="sup.deviceId" data-testid="live-supplement-device" :data-missing="supplementGap('device') ? '1' : '0'" :style="supplementGap('device') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择</option>
+            <option v-for="item in regOptions.phones" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
         </div>
         <div class="fld">
           <label>主题 *</label>
@@ -724,9 +734,9 @@ const supplementOpen = ref(false)
 const supplementError = ref('')
 const supplementComment = ref('')
 const sup = reactive({
-  accountId: 0,
-  realnamePersonId: 0,
-  deviceId: 0,
+  accountId: '',
+  realnamePersonId: '',
+  deviceId: '',
   topic: '历史场次补录',
   planStartTime: '2020-01-15T20:00:00+08:00',
   supplementReason: '',
@@ -1471,7 +1481,7 @@ const showYellowApprove = computed(
 )
 
 const showSupplementApprove = computed(
-  () => !!detail.value?.isSupplement && !detail.value?.approverUserId,
+  () => !!detail.value?.isSupplement && !detail.value?.approverUserId && !!detail.value?.supplementApproveAllowed,
 )
 
 async function openDetail(row: any) {
@@ -1690,9 +1700,13 @@ async function doApprove(pass: boolean) {
   await refreshDetail()
 }
 
-function openSupplement() {
+async function openSupplement() {
   supplementError.value = ''
   sup.supplementReason = ''
+  sup.accountId = ''
+  sup.realnamePersonId = ''
+  sup.deviceId = ''
+  await loadRegOptions().catch(() => null)
   supplementOpen.value = true
 }
 
@@ -1701,11 +1715,11 @@ async function submitSupplement() {
   try {
     const data = await apiPost('/live/ledger/supplement', {
       sessionCreate: {
-        accountId: sup.accountId,
-        realnamePersonId: sup.realnamePersonId,
-        responsibleUserId: 1,
-        deviceAssetIds: [sup.deviceId],
-        platform: 'DOUYIN',
+        accountId: Number(sup.accountId),
+        realnamePersonId: Number(sup.realnamePersonId),
+        responsibleUserId: regOptions.currentUserId || 1,
+        deviceAssetIds: [Number(sup.deviceId)],
+        platform: regOptions.accounts.find((item) => String(item.id) === sup.accountId)?.platform || 'DOUYIN',
         topic: sup.topic,
         planStartTime: sup.planStartTime,
         planEndTime: '',

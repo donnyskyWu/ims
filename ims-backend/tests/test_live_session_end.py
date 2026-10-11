@@ -265,3 +265,58 @@ def test_bind_room_on_sync_keeps_session_status():
     still = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
     assert still["sessionStatus"] == "APPROVED"
     assert still["footballRoomId"] == str(ids["room"])
+
+
+def test_r5_cannot_approve_supplement():
+    ensure_roles()
+    auth = headers()
+    ids = seed()
+    created = client.post(
+        "/admin-api/ims/live/ledger/supplement",
+        headers=auth,
+        json={
+            "sessionCreate": {
+                "accountId": ids["account"],
+                "realnamePersonId": ids["person"],
+                "responsibleUserId": 1,
+                "deviceAssetIds": [ids["phone"]],
+                "platform": "DOUYIN",
+                "topic": "补录待审批",
+                "planStartTime": "2020-01-15T20:00:00+08:00",
+                "planEndTime": "",
+            },
+            "sessionReport": {
+                "actualStart": "2020-01-15T20:00:00+08:00",
+                "actualEnd": "2020-01-15T22:00:00+08:00",
+                "gmv": 20,
+                "refundAmount": 0,
+                "orderCount": 1,
+                "viewerCount": 10,
+                "peakOnline": 4,
+                "newFans": 1,
+                "adCost": 0,
+            },
+            "supplementReason": "历史漏登",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    supplement_id = created.json()["data"]["supplementId"]
+    code = created.json()["data"]["sessionCode"]
+    pending = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
+    assert pending["isSupplement"] is True
+    assert pending["approverUserId"] is None
+    denied = client.put(
+        f"/admin-api/ims/live/ledger/supplement/{supplement_id}/approve",
+        headers=headers("live_r5"),
+        json={"approve": True, "comment": "运营不能批"},
+    )
+    assert denied.json()["code"] == 1008
+    approved = client.put(
+        f"/admin-api/ims/live/ledger/supplement/{supplement_id}/approve",
+        headers=auth,
+        json={"approve": True, "comment": "总监入库"},
+    )
+    assert approved.json()["code"] == 0, approved.json()
+    landed = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
+    assert landed["sessionStatus"] == "ENDED"
+    assert landed["approverUserId"]

@@ -690,6 +690,7 @@ def session_vo(
     allowed = actor is not None and can_operate_session(db, actor, row)
     base["startAllowed"] = allowed
     base["endAllowed"] = allowed and row.session_status == "LIVE"
+    base["supplementApproveAllowed"] = actor is not None and bool(role_tags(db, actor) & {"r1", "r4", "sys:admin"})
     if report is not None:
         base["reportSummary"] = report_summary(report)
         base["reportEntryStatus"] = report.entry_status if report and not report.deleted else None
@@ -2530,6 +2531,8 @@ def ledger_supplement_approve(
         return fail(1504, "资源不可用")
     if not row.is_supplement:
         return fail(1042, "不是补录场次")
+    if not (role_tags(db, actor) & {"r1", "r4", "sys:admin"}):
+        return fail(1008, "无数据权限")
     if not (row.supplement_reason or "").strip():
         return fail(1049, "补录缺少说明或未审批")
     comment, comment_error = trimmed_comment(body.comment)
