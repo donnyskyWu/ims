@@ -203,6 +203,16 @@
         </div>
         <p v-if="!positions.length" class="hint">岗位字典为空时仍可选「全员通用」</p>
         <p v-if="fieldErrors.position" class="hint err" data-testid="train-form-position-error">{{ fieldErrors.position }}</p>
+        <label class="fld">要求学时（分钟）<span class="req">*</span></label>
+        <input
+          v-model.number="form.requiredMinutes"
+          class="fld-in"
+          type="number"
+          min="1"
+          max="1440"
+          data-testid="train-form-minutes"
+        />
+        <p v-if="fieldErrors.minutes" class="hint err" data-testid="train-form-minutes-error">{{ fieldErrors.minutes }}</p>
         <template v-if="form.materialType === 'LINK'">
           <label class="fld">链接<span class="req">*</span></label>
           <input
@@ -391,6 +401,7 @@ type Row = {
   version?: number
   versions?: VersionItem[]
   positionCodes?: string[]
+  requiredMinutes?: number
   status: string
   uploaderName: string
 }
@@ -451,8 +462,9 @@ const form = reactive({
   fileKey: '',
   linkUrl: '',
   positionCodes: [] as string[],
+  requiredMinutes: 1,
 })
-const fieldErrors = reactive({ title: '', position: '', file: '', link: '' })
+const fieldErrors = reactive({ title: '', position: '', file: '', link: '', minutes: '' })
 const pickedName = ref('')
 const fileAccept = computed(() =>
   (form.materialType === 'VIDEO' ? VIDEO_EXTS : DOC_EXTS).map((ext) => `.${ext}`).join(','),
@@ -667,6 +679,7 @@ function clearFieldErrors() {
   fieldErrors.position = ''
   fieldErrors.file = ''
   fieldErrors.link = ''
+  fieldErrors.minutes = ''
 }
 
 function openCreate() {
@@ -677,6 +690,7 @@ function openCreate() {
   form.fileKey = ''
   form.linkUrl = ''
   form.positionCodes = []
+  form.requiredMinutes = 1
   form.cateId = 0
   pickedName.value = ''
   clearFieldErrors()
@@ -693,6 +707,7 @@ function openEdit(row: Row) {
   form.fileKey = row.fileKey || ''
   form.linkUrl = row.linkUrl || ''
   form.positionCodes = [...(row.positionCodes || [])]
+  form.requiredMinutes = row.requiredMinutes || 1
   pickedName.value = row.fileKey ? '已有文件' : ''
   clearFieldErrors()
   formError.value = ''
@@ -796,6 +811,7 @@ function materialPayload(publish: boolean) {
     cateId: form.cateId,
     materialType: form.materialType,
     positionCodes: [...form.positionCodes],
+    requiredMinutes: Number(form.requiredMinutes) || 0,
     publish,
   }
   if (form.materialType === 'LINK') body.linkUrl = form.linkUrl.trim()
@@ -816,6 +832,14 @@ function formInvalid() {
   }
   if (!form.positionCodes.length) {
     fieldErrors.position = '必填项，请填写'
+    bad = true
+  }
+  const minutes = Number(form.requiredMinutes)
+  if (!minutes || minutes < 1) {
+    fieldErrors.minutes = '必填项，请填写'
+    bad = true
+  } else if (minutes > 1440) {
+    fieldErrors.minutes = '要求学时须在 1 到 1440 分钟'
     bad = true
   }
   if (form.materialType === 'LINK') {

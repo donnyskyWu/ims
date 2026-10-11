@@ -64,6 +64,7 @@ class MaterialBody(BaseModel):
     fileKey: str = ""
     linkUrl: str = ""
     positionCodes: list[str] = Field(default_factory=list)
+    requiredMinutes: int = 1
     publish: bool = False
 
 
@@ -219,6 +220,7 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
         "fileKey": row.file_key,
         "linkUrl": row.link_url,
         "positionCodes": codes,
+        "requiredMinutes": int(row.required_minutes or 1),
         "version": row.version,
         "versions": material_versions(db, row.id, row.tenant_id),
         "status": row.status,
@@ -315,6 +317,8 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
             return rejected
     if not resolved_position_codes(body, cate):
         return fail(1001, "岗位必填")
+    if body.requiredMinutes < 1 or body.requiredMinutes > 24 * 60:
+        return fail(1001, "要求学时须在 1 到 1440 分钟")
     return cate
 
 
@@ -345,6 +349,7 @@ def apply_material_fields(row: TrainMaterial, body: MaterialBody, cate: TrainMat
     row.file_key = body.fileKey.strip()
     row.link_url = body.linkUrl.strip()
     row.position_codes = codes
+    row.required_minutes = int(body.requiredMinutes)
     if body.publish:
         row.status = "PUBLISHED"
     elif row.status != "OFFLINE":
@@ -505,6 +510,7 @@ def create_material(
         file_key=body.fileKey.strip(),
         link_url=body.linkUrl.strip(),
         position_codes=resolved_position_codes(body, cate),
+        required_minutes=int(body.requiredMinutes),
         status="PUBLISHED" if body.publish else "DRAFT",
         uploader_user_id=actor.id,
         tenant_id=tenant_id,
@@ -1723,6 +1729,40 @@ def material_progress_map(record: TrainTaskRecord) -> dict[int, int]:
     return out
 
 
+def material_seconds_map(record: TrainTaskRecord) -> dict[int, int]:
+    raw = record.material_seconds if isinstance(record.material_seconds, dict) else {}
+    out: dict[int, int] = {}
+    for key, val in raw.items():
+        try:
+            out[int(key)] = max(0, int(val))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def required_seconds_of(db: Session, material_id: int) -> int:
+    mat = db.get(TrainMaterial, material_id)
+    minutes = int(mat.required_minutes or 1) if mat is not None else 1
+    if minutes < 1:
+        minutes = 1
+    return minutes * 60
+
+
+def duration_gap_message(db: Session, task: TrainTask, record: TrainTaskRecord) -> str | None:
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    seconds_map = material_seconds_map(record)
+    remain = 0
+    for mid in material_ids:
+        need = required_seconds_of(db, int(mid))
+        got = seconds_map.get(int(mid), 0)
+        if got < need:
+            remain += need - got
+    if remain <= 0:
+        return None
+    minutes = (remain + 59) // 60
+    return f"学时未达标，还差 {minutes} 分钟"
+
+
 def recompute_overall_progress(task: TrainTask, mat_prog: dict[int, int]) -> int:
     material_ids = task.material_ids if isinstance(task.material_ids, list) else []
     if not material_ids:
@@ -1753,6 +1793,7 @@ def progress_vo(
         "startedAt": iso(record.created_at),
         "finishedAt": finished,
         "studySeconds": int(record.study_seconds or 0),
+        "materialSeconds": {str(k): v for k, v in material_seconds_map(record).items()},
     }
 
 
@@ -1803,20 +1844,19 @@ def report_progress(
     if record.confirm_status == 1:
         return ok(progress_vo(db, task, record, body.materialId))
 
-    pct = 0
-    if body.totalPages and body.totalPages > 0 and body.currentPage is not None:
-        pct = min(100, int(body.currentPage * 100 / body.totalPages))
-    elif body.watchedSeconds is not None and body.watchedSeconds >= 60:
-        pct = 100
-    elif body.watchedSeconds is not None and body.watchedSeconds > 0:
-        pct = min(99, body.watchedSeconds)
-
+    seconds_map = material_seconds_map(record)
+    if body.watchedSeconds is not None and int(body.watchedSeconds) > 0:
+        watched = int(body.watchedSeconds)
+        seconds_map[body.materialId] = max(seconds_map.get(body.materialId, 0), watched)
+    record.material_seconds = {str(k): v for k, v in seconds_map.items()}
+    need = required_seconds_of(db, body.materialId)
+    got = seconds_map.get(body.materialId, 0)
+    pct = min(100, int(got * 100 / need)) if need else 0
     mat_prog = material_progress_map(record)
-    mat_prog[body.materialId] = max(mat_prog.get(body.materialId, 0), pct)
+    mat_prog[body.materialId] = pct
     record.material_progress = {str(k): v for k, v in mat_prog.items()}
     record.progress = recompute_overall_progress(task, mat_prog)
-    if body.watchedSeconds is not None and body.watchedSeconds > 0:
-        record.study_seconds = max(int(record.study_seconds or 0), int(body.watchedSeconds))
+    record.study_seconds = sum(seconds_map.get(int(mid), 0) for mid in material_ids)
     record.updated_at = utcnow()
     db.flush()
     return ok(progress_vo(db, task, record, body.materialId))
@@ -1840,10 +1880,9 @@ def confirm_task(
         return ok(confirm_payload(task, record))
 
     if task.confirm_type == "DURATION":
-        material_ids = task.material_ids if isinstance(task.material_ids, list) else []
-        mat_prog = material_progress_map(record)
-        if not all(mat_prog.get(int(mid), 0) >= 100 for mid in material_ids):
-            return fail(1104, "学时未达标")
+        gap = duration_gap_message(db, task, record)
+        if gap:
+            return fail(1104, gap)
     elif task.confirm_type == "QUIZ":
         quiz = task.quiz if isinstance(task.quiz, list) else []
         if not quiz:

@@ -575,21 +575,25 @@ export async function createTrainTaskViaUi(
   return { taskId: taskId! }
 }
 
-/** TRAIN 学习中心 · 标记学完并确认（纯 UI） */
+/** TRAIN 学习中心 · 累计要求学时后确认（纯 UI，用时钟快进心跳） */
 export async function completeTrainStudyViaUi(page: Page, taskId: number, taskName: string) {
+  await page.clock.install()
   await page.goto(`/ims/train/study/${taskId}`)
   await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
   await expect(page.getByText(taskName)).toBeVisible()
+  const confirmBtn = page.getByTestId('train-study-confirm')
+  await expect(confirmBtn).toBeDisabled()
 
-  const progressResp = page.waitForResponse(
-    (r) =>
-      r.url().includes(`/train/task/${taskId}/progress`) &&
-      r.request().method() === 'PUT' &&
-      r.status() === 200,
-  )
-  await page.getByRole('button', { name: '标记当前资料已学完' }).click()
-  const progBody = (await (await progressResp).json()) as { code: number }
-  expect(progBody.code).toBe(0)
+  const progressed = page.waitForResponse(async (r) => {
+    if (!r.url().includes(`/train/task/${taskId}/progress`) || r.request().method() !== 'PUT' || r.status() !== 200) {
+      return false
+    }
+    const body = (await r.json()) as { code?: number; data?: { progress?: number } }
+    return body.code === 0 && (body.data?.progress ?? 0) >= 100
+  })
+  await page.clock.fastForward(75_000)
+  await progressed
+  await expect(confirmBtn).toBeEnabled({ timeout: 15_000 })
 
   const confirmResp = page.waitForResponse(
     (r) =>
@@ -597,7 +601,7 @@ export async function completeTrainStudyViaUi(page: Page, taskId: number, taskNa
       r.request().method() === 'POST' &&
       r.status() === 200,
   )
-  await page.getByRole('button', { name: '完成确认' }).click()
+  await confirmBtn.click()
   const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { confirmStatus?: string } }
   expect(confirmBody.code).toBe(0)
   expect(confirmBody.data?.confirmStatus).toBe('CONFIRMED')

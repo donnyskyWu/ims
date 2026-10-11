@@ -268,10 +268,20 @@ def ensure_train_stat_schema() -> None:
     tables = set(insp.get_table_names())
     if "ims_train_task_record" in tables:
         cols = {c["name"] for c in insp.get_columns("ims_train_task_record")}
+        alters: list[str] = []
         if "study_seconds" not in cols:
+            alters.append("ADD COLUMN study_seconds INT NOT NULL DEFAULT 0")
+        if "material_seconds" not in cols:
+            alters.append("ADD COLUMN material_seconds JSON NULL")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_train_task_record {', '.join(alters)}"))
+    if "ims_train_material" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_train_material")}
+        if "required_minutes" not in cols:
             with engine.begin() as conn:
                 conn.execute(
-                    text("ALTER TABLE ims_train_task_record ADD COLUMN study_seconds INT NOT NULL DEFAULT 0")
+                    text("ALTER TABLE ims_train_material ADD COLUMN required_minutes INT NOT NULL DEFAULT 1")
                 )
 
 

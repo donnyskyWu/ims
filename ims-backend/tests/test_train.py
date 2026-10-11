@@ -485,14 +485,28 @@ def test_train_task_progress_confirm_and_records():
     )
     task_id = created.json()["data"]["id"]
 
+    short = client.put(
+        f"/admin-api/ims/train/task/{task_id}/progress",
+        headers=auth,
+        json={
+            "materialId": material_id,
+            "watchedSeconds": 10,
+            "heartbeatAt": "2026-10-08T12:00:00+08:00",
+        },
+    )
+    assert short.json()["code"] == 0
+    assert short.json()["data"]["progress"] < 100
+    blocked = client.post(f"/admin-api/ims/train/task/{task_id}/confirm", headers=auth, json={})
+    assert blocked.json()["code"] == 1104
+    assert "还差" in blocked.json()["msg"]
+
     prog = client.put(
         f"/admin-api/ims/train/task/{task_id}/progress",
         headers=auth,
         json={
             "materialId": material_id,
-            "currentPage": 1,
-            "totalPages": 1,
-            "heartbeatAt": "2026-10-08T12:00:00+08:00",
+            "watchedSeconds": 60,
+            "heartbeatAt": "2026-10-08T12:00:15+08:00",
         },
     )
     assert prog.json()["code"] == 0
@@ -555,8 +569,7 @@ def test_train_stat_finish_rate_after_confirm():
         headers=auth,
         json={
             "materialId": material_id,
-            "currentPage": 1,
-            "totalPages": 1,
+            "watchedSeconds": 60,
             "heartbeatAt": "2026-10-08T12:00:00+08:00",
         },
     )
@@ -911,8 +924,7 @@ def test_train_task_edit_before_deadline_keeps_progress():
         headers=auth,
         json={
             "materialId": material["id"],
-            "currentPage": 1,
-            "totalPages": 1,
+            "watchedSeconds": 60,
             "heartbeatAt": "2026-10-09T12:00:00+08:00",
         },
     )

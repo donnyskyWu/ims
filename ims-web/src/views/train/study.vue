@@ -29,7 +29,12 @@
       <div class="card" style="padding: 12px">
         <div style="font-weight: 600; margin-bottom: 8px">资料清单</div>
         <ul v-if="materials.length" class="mat-list">
-          <li v-for="m in materials" :key="m.id">
+          <li
+            v-for="m in materials"
+            :key="m.id"
+            :class="{ on: activeMaterialId === m.id }"
+            @click="activeMaterialId = m.id"
+          >
             <div>
               <div>{{ m.title }}</div>
               <a
@@ -38,9 +43,11 @@
                 :href="m.linkUrl"
                 target="_blank"
                 rel="noopener"
+                @click.stop
               >打开外链</a>
               <div v-else-if="m.fileKey" class="hint mono">文件留档 {{ m.fileKey }}</div>
               <div v-else class="hint" data-testid="train-study-material-empty">暂无可预览</div>
+              <div class="hint">要求 {{ m.requiredMinutes || 1 }} 分钟 · 已学 {{ learnedMinutes(m.id) }} 分钟</div>
             </div>
             <span class="mono">{{ materialPct(m.id) }}%</span>
           </li>
@@ -57,22 +64,19 @@
         </div>
 
         <p
-          v-if="materials.length && task.confirmType !== 'QUIZ' && confirmStatus !== 'CONFIRMED' && remainingMaterials > 0"
+          v-if="materials.length && task.confirmType !== 'QUIZ' && confirmStatus !== 'CONFIRMED' && remainMinutes > 0"
           class="hint"
           data-testid="train-study-gap"
         >
-          还差 {{ remainingMaterials }} 份资料未学完，学完后才能完成确认
+          还差 {{ remainMinutes }} 分钟学时，学时达标后才能完成确认
         </p>
-        <div v-if="materials.length && confirmStatus !== 'CONFIRMED'" class="acts" style="margin-top: 16px; flex-wrap: wrap; gap: 8px">
-          <button class="btn btn-sec btn-sm" type="button" :disabled="busy" @click="markCurrentMaterialDone">
-            标记当前资料已学完
-          </button>
+        <div v-if="materials.length && confirmStatus !== 'CONFIRMED' && task.confirmType !== 'QUIZ'" class="acts" style="margin-top: 16px; flex-wrap: wrap; gap: 8px">
           <button
-            v-if="task.confirmType !== 'QUIZ'"
             class="btn btn-pri btn-sm"
             type="button"
-            :disabled="busy || !allMaterialsDone"
-            :title="allMaterialsDone ? '' : `还差 ${remainingMaterials} 份资料未学完`"
+            data-testid="train-study-confirm"
+            :disabled="busy || !hoursMet"
+            :title="hoursMet ? '' : `还差 ${remainMinutes} 分钟学时`"
             @click="confirmComplete"
           >
             完成确认
@@ -159,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
@@ -177,7 +181,14 @@ type TaskRow = {
   quiz?: QuizPublic[]
 }
 
-type MatRow = { id: number; title: string; materialType: string; fileKey?: string; linkUrl?: string }
+type MatRow = {
+  id: number
+  title: string
+  materialType: string
+  fileKey?: string
+  linkUrl?: string
+  requiredMinutes?: number
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -185,6 +196,7 @@ const taskId = computed(() => Number(route.params.taskId))
 const task = ref<TaskRow | null>(null)
 const materials = ref<MatRow[]>([])
 const materialProgress = ref<Record<number, number>>({})
+const materialSeconds = ref<Record<number, number>>({})
 const progressPct = ref(0)
 const studySeconds = ref(0)
 const confirmStatus = ref<'NOT_CONFIRMED' | 'CONFIRMED'>('NOT_CONFIRMED')
@@ -252,9 +264,32 @@ const overdueDays = computed(() => {
   return days >= 1 ? days : 1
 })
 
-const remainingMaterials = computed(() => {
+function learnedSeconds(id: number) {
+  return materialSeconds.value[id] ?? 0
+}
+
+function learnedMinutes(id: number) {
+  return Math.floor(learnedSeconds(id) / 60)
+}
+
+function needSeconds(id: number) {
+  const mat = materials.value.find((item) => item.id === id)
+  return Math.max(1, mat?.requiredMinutes || 1) * 60
+}
+
+const remainMinutes = computed(() => {
   const ids = task.value?.materialIds || []
-  return ids.filter((id) => (materialProgress.value[id] ?? 0) < 100).length
+  let remain = 0
+  for (const id of ids) {
+    const gap = needSeconds(id) - learnedSeconds(id)
+    if (gap > 0) remain += gap
+  }
+  return remain <= 0 ? 0 : Math.ceil(remain / 60)
+})
+
+const hoursMet = computed(() => {
+  const ids = task.value?.materialIds || []
+  return ids.length > 0 && remainMinutes.value === 0 && hiddenMaterialCount.value === 0
 })
 
 const hiddenMaterialCount = computed(() => {
@@ -262,11 +297,6 @@ const hiddenMaterialCount = computed(() => {
   if (!ids.length) return 0
   const visible = new Set(materials.value.map((item) => item.id))
   return ids.filter((id) => !visible.has(id)).length
-})
-
-const allMaterialsDone = computed(() => {
-  if (!task.value?.materialIds?.length) return false
-  return remainingMaterials.value === 0
 })
 
 function noteActionFailure(err: unknown, fallback: string) {
@@ -329,6 +359,7 @@ async function loadTaskAndProgress() {
   if (recRes.data.code === 0 && recRes.data.data.list?.length) {
     const rec = recRes.data.data.list[0]
     materialProgress.value = parseMatProgress(rec.materialProgress)
+    materialSeconds.value = parseMatProgress(rec.materialSeconds)
     progressPct.value = rec.progress ?? 0
     studySeconds.value = Number(rec.studySeconds || 0)
     confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
@@ -401,30 +432,51 @@ async function submitQuiz() {
   }
 }
 
-async function markCurrentMaterialDone() {
-  if (!task.value || !activeMaterialId.value) return
-  actionError.value = ''
-  notAssignee.value = false
-  busy.value = true
+function syncLocalProgress() {
+  const ids = task.value?.materialIds || []
+  const next: Record<number, number> = {}
+  let sum = 0
+  for (const id of ids) {
+    const pct = Math.min(100, Math.floor((learnedSeconds(id) * 100) / needSeconds(id)))
+    next[id] = pct
+    sum += pct
+  }
+  materialProgress.value = next
+  progressPct.value = ids.length ? Math.floor(sum / ids.length) : 0
+  studySeconds.value = ids.reduce((acc, id) => acc + learnedSeconds(id), 0)
+}
+
+async function pushProgress(materialId: number, seconds: number) {
   try {
     const res = await http.put(`/train/task/${taskId.value}/progress`, {
-      materialId: activeMaterialId.value,
-      currentPage: 1,
-      totalPages: 1,
-      watchedSeconds: 60,
+      materialId,
+      watchedSeconds: seconds,
       heartbeatAt: new Date().toISOString(),
     })
-    if (res.data.code !== 0) {
-      actionError.value = res.data.msg || '进度上报失败'
-      return
+    const data = res.data.data || {}
+    const serverSeconds = parseMatProgress(data.materialSeconds)
+    const merged = { ...materialSeconds.value }
+    for (const [key, value] of Object.entries(serverSeconds)) {
+      merged[Number(key)] = Math.max(merged[Number(key)] || 0, value)
     }
-    const data = res.data.data
-    materialProgress.value = parseMatProgress(data.materialProgress)
-    progressPct.value = data.progress ?? progressPct.value
+    materialSeconds.value = merged
+    syncLocalProgress()
   } catch (err) {
     noteActionFailure(err, '进度上报失败')
-  } finally {
-    busy.value = false
+  }
+}
+
+let sinceBeat = 0
+function onStudyTick() {
+  if (!task.value || confirmStatus.value === 'CONFIRMED' || !activeMaterialId.value) return
+  if (!materials.value.some((item) => item.id === activeMaterialId.value)) return
+  const id = activeMaterialId.value
+  materialSeconds.value = { ...materialSeconds.value, [id]: learnedSeconds(id) + 1 }
+  syncLocalProgress()
+  sinceBeat += 1
+  if (sinceBeat >= 15) {
+    sinceBeat = 0
+    void pushProgress(id, learnedSeconds(id))
   }
 }
 
@@ -447,7 +499,12 @@ async function confirmComplete() {
   }
 }
 
-onMounted(loadTaskAndProgress)
+let tickHandle = 0
+onMounted(async () => {
+  await loadTaskAndProgress()
+  tickHandle = window.setInterval(onStudyTick, 1000)
+})
+onUnmounted(() => window.clearInterval(tickHandle))
 </script>
 
 <style scoped>

@@ -72,19 +72,16 @@ test.describe('train local edges 215', () => {
     await expect(taskRow.getByTestId('train-task-due-soon')).toHaveText('即将到期', { timeout: 15_000 })
     await page.screenshot({ path: `${SHOT}/train-215-due-soon.png`, fullPage: true })
 
+    await page.clock.install()
     await page.goto(`/ims/train/study/${taskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
-    await expect(page.getByTestId('train-study-gap')).toHaveText('还差 1 份资料未学完，学完后才能完成确认')
-    await expect(page.getByRole('button', { name: '完成确认' })).toBeDisabled()
+    await expect(page.getByTestId('train-study-gap')).toHaveText('还差 1 分钟学时，学时达标后才能完成确认')
+    await expect(page.getByTestId('train-study-confirm')).toBeDisabled()
     await page.screenshot({ path: `${SHOT}/train-215-study-gap.png`, fullPage: true })
 
-    const progress = page.waitForResponse(
-      (r) => r.url().includes(`/train/task/${taskId}/progress`) && r.request().method() === 'PUT' && r.status() === 200,
-    )
-    await page.getByRole('button', { name: '标记当前资料已学完' }).click()
-    expect(((await (await progress).json()) as { code: number }).code).toBe(0)
+    await page.clock.fastForward(70_000)
     await expect(page.getByTestId('train-study-gap')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '完成确认' })).toBeEnabled()
+    await expect(page.getByTestId('train-study-confirm')).toBeEnabled()
 
     await page.goto('/ims/train/material')
     await expect(page.locator('h1')).toHaveText('培训资料库', { timeout: 15_000 })

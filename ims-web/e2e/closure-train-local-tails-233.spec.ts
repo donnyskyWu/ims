@@ -116,11 +116,12 @@ test.describe('train local tails 233', () => {
       })
     ).taskId
 
+    await page.clock.install()
     await page.goto(`/ims/train/study/${strangerTaskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
     await expect(page.getByText(strangerTitle)).toBeVisible()
-    await page.getByRole('button', { name: '标记当前资料已学完' }).click()
-    await expect(page.getByTestId('train-study-action-error')).toHaveText('仅被指派人可学习本任务')
+    await page.clock.fastForward(16_000)
+    await expect(page.getByTestId('train-study-action-error')).toHaveText('仅被指派人可学习本任务', { timeout: 15_000 })
     await expect(page.getByTestId('train-study-back-workbench')).toBeVisible()
     await shot(page, '06-not-assignee')
 
