@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
 
-test.describe('IP 组 BUG-014～021 / BUG-024', () => {
+test.describe('IP 组 BUG-014～021 / BUG-024～026', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
 
   test('新建、编辑、成员、停用，且页头没有导出', async ({ page }) => {
@@ -152,6 +152,30 @@ test.describe('IP 组 BUG-014～021 / BUG-024', () => {
     await expect(page.locator('.ipg-node', { hasText: bigName })).toBeVisible()
     await expect(page.locator('.ipg-node', { hasText: smallName })).toHaveCount(0)
     await expect(page.locator('.ipg-node', { hasText: otherSmall })).toHaveCount(0)
+    expect(pageErrors).toEqual([])
+  })
+
+  test('BUG-026 删除当前组后右栏空态', async ({ page }) => {
+    test.setTimeout(90_000)
+    const pageErrors = attachClosurePageHooks(page)
+    await loginAdmin(page)
+    const stamp = String(Date.now()).slice(-6)
+    const name = `删后空态${stamp}`
+
+    await page.goto('/ims/ip-group')
+    await expect(page.locator('h1')).toHaveText('IP 组运营')
+    await page.getByRole('button', { name: '+ 新建大组' }).click()
+    await page.getByTestId('ipg-name').fill(name)
+    await page.getByTestId('ipg-group-submit').click()
+    await expect(page.locator('.ipg-node.on', { hasText: name })).toBeVisible()
+
+    await page.getByTestId('ipg-delete').click()
+    await expect(page.getByTestId('ipg-confirm-text')).toContainText(name)
+    await page.getByTestId('ipg-confirm-ok').click()
+    await expect(page.getByTestId('ipg-toast')).toContainText('IP 组已删除')
+    await expect(page.locator('.ipg-node', { hasText: name })).toHaveCount(0)
+    await expect(page.locator('.ipg-node.on')).toHaveCount(0)
+    await expect(page.getByTestId('ipg-empty')).toHaveText('请从左侧选择 IP 组')
     expect(pageErrors).toEqual([])
   })
 })

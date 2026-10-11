@@ -475,12 +475,13 @@ const parentName = computed(() => {
   return nodeMap.value.get(detail.value.parentId)?.groupName || String(detail.value.parentId)
 })
 
-async function loadTree() {
+async function loadTree(opts?: { selectFirst?: boolean }) {
   treeReady.value = false
   try {
     const res = await http.get('/ip-group/tree')
     tree.value = res.data.data || []
-    if (!selectedId.value && flatNodes.value.length) {
+    if (selectedId.value && !nodeMap.value.has(selectedId.value)) selectedId.value = null
+    if (opts?.selectFirst && !selectedId.value && flatNodes.value.length) {
       selectedId.value = flatNodes.value[0].id
     }
   } catch (e) {
@@ -803,7 +804,7 @@ watch(selectedId, () => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadTree(), loadLevels(), loadPositions()])
+  await Promise.all([loadTree({ selectFirst: true }), loadLevels(), loadPositions()])
   await loadDetailTabs()
 })
 </script>
