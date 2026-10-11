@@ -67,6 +67,7 @@ FIN_MONEY_KEYS = frozenset(
         "sampleCost",
         "shareDaren",
         "shareRealname",
+        "shareTeam",
         "amount",
         "cost",
         "totalAmount",
@@ -277,6 +278,21 @@ def load_fin_cost(db: Session, tenant_id: int, session_code: str) -> FinCost | N
     )
 
 
+def share_team_amount(row: FinCost) -> float:
+    """团队分成没有独立列，含在成本合计里。差额即团队/阶梯分成。"""
+    residual = money(
+        money(row.total_cost)
+        - money(row.commission_amount)
+        - money(row.ad_cost)
+        - money(row.recharge_cost)
+        - money(row.fixed_cost)
+        - money(row.sample_cost)
+        - money(row.share_daren)
+        - money(row.share_realname)
+    )
+    return residual if residual > 0 else 0.0
+
+
 def calc_amounts(gmv: float, body: FinCostEntryBody, refund: float = 0) -> dict[str, float]:
     from app.fin_policy import commission_amount
 
@@ -345,6 +361,7 @@ def cost_vo(db: Session, row: FinCost, *, with_edits: bool = False) -> dict:
         "sampleCost": money(row.sample_cost),
         "shareDaren": money(row.share_daren),
         "shareRealname": money(row.share_realname),
+        "shareTeam": share_team_amount(row),
         "shareCostType": row.share_cost_type,
         "totalCost": money(row.total_cost),
         "entryStatus": row.entry_status,
@@ -818,7 +835,32 @@ def abnormal_marks(rows: list[tuple[FinProfit, LiveSession, FinCost | None]]) ->
     return found
 
 
-def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
+def active_share_lines(db: Session, tenant_id: int, session_code: str) -> list[dict]:
+    rows = db.scalars(
+        select(FinShareResult).where(
+            FinShareResult.tenant_id == tenant_id,
+            FinShareResult.session_code == session_code,
+            FinShareResult.deleted == 0,
+            FinShareResult.archive_key == 0,
+            FinShareResult.status != "REVERSED",
+        ).order_by(FinShareResult.id.asc())
+    ).all()
+    lines = []
+    for row in rows:
+        amount = money(row.share_amount)
+        if amount <= 0:
+            continue
+        lines.append(
+            {
+                "shareTarget": row.share_target,
+                "ruleName": row.rule_name or "",
+                "shareAmount": amount,
+            }
+        )
+    return lines
+
+
+def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None, share_lines: list[dict] | None = None) -> dict:
     params: dict[str, float] = {
         "revenue": money(profit.revenue),
         "refund": money(profit.refund_amount),
@@ -834,9 +876,10 @@ def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
                 "sampleCost": money(cost.sample_cost),
                 "shareDaren": money(cost.share_daren),
                 "shareRealname": money(cost.share_realname),
+                "shareTeam": share_team_amount(cost),
             }
         )
-    return {
+    snapshot = {
         "formula": (
             "netProfit = revenue - refund - totalCost; "
             "grossProfit = revenue - refund - commission; "
@@ -844,6 +887,9 @@ def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
         ),
         "params": params,
     }
+    if share_lines is not None:
+        snapshot["shareLines"] = share_lines
+    return snapshot
 
 
 def settlement_status(calc_status: str) -> str:
@@ -1140,6 +1186,11 @@ def profit_detail(
     if profit is None or profit.calc_status in ("", "PENDING") or cost is None or cost.entry_status != "CONFIRMED":
         return fail(1145, "该场次成本未核准，利润未计算")
     vo = profit_vo(db, profit, session, cost, include_session=True)
+    vo["calcRuleSnapshot"] = calc_rule_snapshot(
+        profit,
+        cost,
+        active_share_lines(db, tenant_id, session_code),
+    )
     month, status = period_of_session(db, tenant_id, session)
     vo["periodMonth"] = month
     vo["financeStatus"] = status

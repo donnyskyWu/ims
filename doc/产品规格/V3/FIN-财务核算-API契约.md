@@ -95,8 +95,10 @@ interface FinCostVO {
   sampleCost: number;
   shareDaren: number;
   shareRealname: number;
+  /** 团队/阶梯分成。无独立列，由成本合计减去其余项得到，计入 shares */
+  shareTeam: number;
   shareCostType: 'MANUAL' | 'ENGINE';
-  /** 成本合计 = commission + ad + recharge + fixed + sample + shares */
+  /** 成本合计 = commission + ad + recharge + fixed + sample + shares（含达人、实名人、团队/阶梯）。录入预览、详情、列表同一口径 */
   totalCost: number;
   entryStatus: 'DRAFT' | 'SUBMITTED' | 'CONFIRMED';   // 0 草稿 / 1 已提交 / 2 已核准
   entryUserId: number;
@@ -171,7 +173,9 @@ interface FinProfitVO {
   /** 计算时公式与参数快照（BigDecimal 全链路，V2-E1） */
   calcRuleSnapshot: {
     formula: string;             // BR-108 表达式
-    params: Record<string, number>;
+    params: Record<string, number>; // 含 shareTeam
+    /** 当前未冲销分成，瀑布逐笔扣减（含团队阶梯） */
+    shareLines?: Array<{ shareTarget: string; ruleName: string; shareAmount: number }>;
   };
   calcVersion: number;           // 重算递增
   calcStatus: 'PENDING' | 'CALCULATED' | 'RECALCULATED' | 'ABNORMAL';   // 0 待计算/1 已计算/2 已重算/3 异常待核
@@ -360,7 +364,7 @@ PENDING_AUDIT ──财务审（R3）+业务审（R4）双审通过──▶ AUD
 | 规则 | 约束 | API 落点 |
 |------|------|----------|
 | BR-107 | 成本录入完整率 > 95%（联动 V1 BR-006/007） | 2.1.7 |
-| BR-108 | 净利润 = GMV−退款−佣金−投放−冲话费−固定−样品−达人分成−实名人分成 | 2.2.1 calcRuleSnapshot |
+| BR-108 | 净利润 = GMV−退款−佣金−投放−冲话费−固定−样品−全部分成（达人、实名人、团队/阶梯） | 2.2.1 calcRuleSnapshot |
 | BR-109 | 分成 = 基数×比例（阶梯逐档求和） | 2.3.5 simulate |
 | BR-118 | 核准后 48h 未录成本触发预警 | 2.1.1 isOver48h（联动 ALERT） |
 | FIN-C-R1 | 仅已核准场次可录成本 | 2.1.2 错误码 1141 |

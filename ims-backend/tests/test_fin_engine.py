@@ -246,3 +246,47 @@ def test_engine_correction_opens_new_bill_and_marks_original_replaced():
     assert fresh[0]["shareAmount"] == 900
     assert fresh[0]["shareBase"] == 9000
     assert fresh[0]["ruleName"] == "TC-达人分成B"
+
+
+def test_engine_team_ladder_is_in_cost_total_and_profit_lines():
+    """团队阶梯计入成本合计，利润快照逐笔列出，扣完等于净利润。"""
+    auth = headers()
+    code = "IMS20261011DYS0006"
+    create_rule(
+        auth,
+        ruleName="TC-团队阶梯",
+        shareTarget="TEAM",
+        baseType="GMV",
+        rateType="LADDER",
+        fixedRate=None,
+        ladderConfig=[{"min": 0, "max": 10000, "rate": 0.05}],
+        priority=5,
+        scope=ALL_SCOPE,
+    )
+    seed_confirmed_session(code, 91006, 1000, 0)
+    saved = submit_engine(auth, code, commissionRate=0.05, fixedCost=215)
+    assert saved["commissionAmount"] == 50
+    assert saved["shareTeam"] == 50
+    assert saved["totalCost"] == 315
+    listed = client.get("/admin-api/ims/fin/cost/list", headers=auth, params={"sessionCode": code}).json()
+    assert listed["code"] == 0
+    row = next(item for item in listed["data"]["list"] if item["sessionCode"] == code)
+    assert row["totalCost"] == 315
+    detail = client.get(f"/admin-api/ims/fin/cost/{code}", headers=auth).json()["data"]
+    assert detail["shareTeam"] == 50
+    assert detail["totalCost"] == 315
+    profit = client.get(f"/admin-api/ims/fin/profit/{code}", headers=auth).json()["data"]
+    assert profit["netProfit"] == 685
+    params = profit["calcRuleSnapshot"]["params"]
+    assert params["shareTeam"] == 50
+    assert params["totalCost"] == 315
+    lines = profit["calcRuleSnapshot"]["shareLines"]
+    team = next(item for item in lines if item["ruleName"] == "TC-团队阶梯")
+    assert team["shareTarget"] == "TEAM"
+    assert team["shareAmount"] == 50
+    share_sum = round(sum(item["shareAmount"] for item in lines), 2)
+    non_share = round(
+        params["commissionAmount"] + params["adCost"] + params["rechargeCost"] + params["fixedCost"] + params["sampleCost"],
+        2,
+    )
+    assert round(params["revenue"] - params["refund"] - non_share - share_sum, 2) == profit["netProfit"]

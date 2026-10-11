@@ -153,7 +153,7 @@ type ShareCostType = 'MANUAL' | 'ENGINE';   // 手工/引擎
 **A. 成本录入（R3 主责 / R5 协录本团队）**
 1. 待录入行 [录入成本] → 录入抽屉：只读带出区（场次号/平台/GMV/退款，灰底 + "V1 数据同源"水印提示，FIN-C-R2）；投放成本自动带入 V1 汇总值（可覆盖）；
 2. 录入区：佣金率百分比输入（0 < rate ≤ 1 换算 DECIMAL(5,4)）；金额字段 InputNumber 两位小数非负；分成方式切换：手工（达人/实名人分成必填）/ 引擎（留空由 FIN-003 计算）；
-3. 底部成本合计实时预览（¥ 前缀千分位）；
+3. 底部成本合计实时预览（¥ 前缀千分位）。合计 = 佣金 + 投放 + 冲话费 + 固定 + 样品 + 全部分成（含团队/阶梯），与详情、已录入列表同一口径；
 4. [保存草稿] 或 [提交]（clientToken 幂等，V2-E4）→ `POST /fin/cost/{sessionCode}`；
 5. 勾稽提示（1143）：分成金额与利润合计勾稽不平 → 错误明细行内定位。
 
@@ -333,7 +333,7 @@ type ProfitDimension = 'ACCOUNT' | 'IP_GROUP' | 'DAREN' | 'OWNER';
 2. 行点击 → 利润详情抽屉（80%）。
 
 **B. 利润详情（BR-108 透明化）**
-1. 三级利润瀑布图（ECharts waterfall）：GMV → 逐项扣减 → 净利润，每级 hover 显示公式参数；
+1. 三级利润瀑布图（ECharts waterfall）：GMV → 逐项扣减 → 净利润。每一笔未冲销分成单独成行（含团队阶梯，显示规则名），扣完等于净利润；每级 hover 显示公式参数；
 2. 计算快照区：formula + params 表格（BigDecimal 全链路，V2-E1 注释）；
 3. 重算版本历史时间轴（`GET /fin/profit/history/{sessionCode}`）：每版本标注触发类型（成本更正自动/手动）与原因；
 4. [手动触发重算]（R3/R1）→ ConfirmDialog："重算将生成新版本 V{n+1}，旧结果留痕" → `POST /fin/profit/recalc/{sessionCode}` → calcStatus=RECALCULATED（FIN-P-R3）。

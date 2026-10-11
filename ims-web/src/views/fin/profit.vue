@@ -417,7 +417,11 @@ interface ProfitDetail {
   calculatedAt: string
   financeStatus?: string
   periodMonth?: string
-  calcRuleSnapshot?: { formula?: string; params?: Record<string, number | string> }
+  calcRuleSnapshot?: {
+    formula?: string
+    params?: Record<string, number | string>
+    shareLines?: Array<{ shareTarget?: string; ruleName?: string; shareAmount?: number | string }>
+  }
 }
 
 type WfKind = 'start' | 'deduct' | 'level'
@@ -443,6 +447,7 @@ const SNAPSHOT_FIELDS: { key: string; label: string }[] = [
   { key: 'sampleCost', label: '样品成本' },
   { key: 'shareDaren', label: '达人分成' },
   { key: 'shareRealname', label: '实名人分成' },
+  { key: 'shareTeam', label: '团队分成' },
   { key: 'totalCost', label: '成本合计' },
 ]
 
@@ -546,6 +551,7 @@ function buildWaterfall(row: ProfitDetail): WfStep[] {
   const sample = money(params.sampleCost)
   const daren = money(params.shareDaren)
   const realname = money(params.shareRealname)
+  const team = money(params.shareTeam)
   const gross = money(row.grossProfit)
   const operating = money(row.operatingProfit)
   const net = money(row.netProfit)
@@ -584,8 +590,21 @@ function buildWaterfall(row: ProfitDetail): WfStep[] {
   running = operating
   pushDeduct('fixed', '固定成本', fixed, '扣减固定成本')
   pushDeduct('sample', '样品成本', sample, '扣减样品成本')
-  pushDeduct('shareDaren', '达人分成', daren, '扣减达人分成')
-  pushDeduct('shareRealname', '实名人分成', realname, '扣减实名人分成')
+  const lines = row.calcRuleSnapshot?.shareLines || []
+  const seen = new Set<string>()
+  if (lines.length) {
+    lines.forEach((line, index) => {
+      const target = String(line.shareTarget || '')
+      const key = target === 'DAREN' ? 'shareDaren' : target === 'REALNAME' ? 'shareRealname' : target === 'TEAM' ? 'shareTeam' : `share-${index}`
+      const ruleName = String(line.ruleName || '').trim()
+      const label = target === 'DAREN' ? '达人分成' : target === 'REALNAME' ? '实名人分成' : ruleName || '团队分成'
+      pushDeduct(key, label, money(line.shareAmount), `扣减${label}`)
+      if (target) seen.add(target)
+    })
+  }
+  if (!seen.has('DAREN')) pushDeduct('shareDaren', '达人分成', daren, '扣减达人分成')
+  if (!seen.has('REALNAME')) pushDeduct('shareRealname', '实名人分成', realname, '扣减实名人分成')
+  if (!seen.has('TEAM') && team > 0) pushDeduct('shareTeam', '团队分成', team, '扣减团队分成')
   steps.push({
     key: 'net',
     label: '净利润',
@@ -593,7 +612,7 @@ function buildWaterfall(row: ProfitDetail): WfStep[] {
     level: 'NET',
     delta: 0,
     running: net,
-    formula: '净利润 = GMV − 退款 − 佣金 − 投放 − 冲话费 − 固定 − 样品 − 达人分成 − 实名人分成（BR-108）',
+    formula: '净利润 = GMV − 退款 − 佣金 − 投放 − 冲话费 − 固定 − 样品 − 全部分成（含团队/阶梯，BR-108）',
   })
   return steps
 }

@@ -303,6 +303,9 @@
           <label>实名人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareRealname" type="number" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
           <div v-if="fieldErrors.shareRealname" class="ferr">{{ fieldErrors.shareRealname }}</div>
         </div>
+        <div v-if="form.shareCostType === 'ENGINE' || Number(form.shareTeam) > 0">
+          <label>团队分成<input :value="form.shareTeam === '' ? '' : fmt(form.shareTeam)" data-testid="fin-cost-share-team" disabled /></label>
+        </div>
       </div>
       <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
       <div v-if="editLogs" data-testid="fin-cost-edit-log" class="hint" style="margin-top: 12px">
@@ -372,6 +375,7 @@
         <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
         <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
         <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
+        <label v-if="form.shareCostType === 'ENGINE' || Number(form.shareTeam) > 0">团队分成<input :value="fmt(form.shareTeam)" disabled /></label>
         <label style="grid-column: 1 / -1">
           更正原因（必填）
           <input
@@ -505,6 +509,7 @@ const form = reactive({
   sampleCost: '' as string | number,
   shareDaren: '' as string | number,
   shareRealname: '' as string | number,
+  shareTeam: '' as string | number,
   shareCostType: 'MANUAL',
   remark: '',
 })
@@ -552,7 +557,6 @@ async function previewEngine() {
   const winners = new Map<string, Record<string, any>>()
   for (const rule of shareRules.value) {
     if (rule.status && rule.status !== 'ENABLED') continue
-    if (rule.rateType !== 'FIXED') continue
     const scope = rule.scope || {}
     const platforms = scope.platforms || []
     const accounts = (scope.accountIds || []).map(Number)
@@ -569,10 +573,28 @@ async function previewEngine() {
     const rule = winners.get(target)
     if (!rule) return 0
     const base = bases[rule.baseType] ?? preShare
+    if (rule.rateType === 'LADDER') return ladderShare(base, rule.ladderConfig || [])
     return round2(Math.max(base, 0) * Number(rule.fixedRate || 0))
   }
   form.shareDaren = amountOf('DAREN')
   form.shareRealname = amountOf('REALNAME')
+  if (winners.has('TEAM')) form.shareTeam = amountOf('TEAM')
+}
+
+function ladderShare(base: number, ladders: Array<Record<string, unknown>>) {
+  let total = 0
+  const value = Math.max(base, 0)
+  for (const row of ladders || []) {
+    const lower = Number(row.min)
+    const upper = row.max == null || row.max === '' ? null : Number(row.max)
+    const rate = Number(row.rate)
+    if (!Number.isFinite(lower) || !Number.isFinite(rate) || !(value > lower)) continue
+    const cap = upper == null || !Number.isFinite(upper) ? value : Math.min(value, upper)
+    const portion = round2(cap - lower)
+    if (portion <= 0) continue
+    total = round2(total + round2(portion * rate))
+  }
+  return total
 }
 
 function platformLabel(code: string) {
@@ -600,7 +622,7 @@ const entryTotal = computed(() => {
   const rate = finite(form.commissionRate)
   const gmv = finite(form.costGmv)
   const commission = round2((Number.isFinite(gmv) ? gmv : 0) * (Number.isFinite(rate) ? rate : 0))
-  const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname]
+  const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname, form.shareTeam]
   const extra = parts.reduce((acc, raw) => {
     const value = finite(raw)
     return acc + (Number.isFinite(value) ? value : 0)
@@ -768,6 +790,7 @@ function openEntry(row: Record<string, unknown>) {
   form.sampleCost = ''
   form.shareDaren = ''
   form.shareRealname = ''
+  form.shareTeam = ''
   form.shareCostType = 'MANUAL'
   entryFormError()
   fieldErrors.commissionRate = ''
@@ -831,6 +854,7 @@ function assignFormFromCost(d: Record<string, unknown>) {
     sampleCost: d.sampleCost,
     shareDaren: d.shareDaren,
     shareRealname: d.shareRealname,
+    shareTeam: d.shareTeam ?? 0,
     shareCostType: d.shareCostType || 'MANUAL',
     platform: d.platform || form.platform,
   })
