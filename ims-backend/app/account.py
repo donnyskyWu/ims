@@ -455,6 +455,88 @@ def account_page(
     )
 
 
+@router.get("/corp/account/export/file")
+def account_export_file(token: str, actor: User = Depends(current_user)):
+    from app.list_export import take_csv
+
+    return take_csv(token, actor)
+
+
+@router.get("/corp/account/export")
+def account_export(
+    request: Request,
+    platformType: str = "",
+    keyword: str = "",
+    ipGroupId: int | None = None,
+    companyId: int | None = None,
+    status: str = "",
+    holderUserId: int | None = None,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    load_scope_ip_groups(db, request, actor)
+    platform_error = check_platform(platformType)
+    if platform_error:
+        return platform_error
+    status_error = check_list_status(status)
+    if status_error:
+        return status_error
+    holder_error = check_list_holder(db, actor, holderUserId)
+    if holder_error:
+        return holder_error
+    stmt = select(PlatformAccount).where(
+        PlatformAccount.deleted == 0,
+        PlatformAccount.tenant_id == tenant_of(actor),
+        PlatformAccount.platform_type == platformType,
+    )
+    scoped_groups = scope_ip_groups(request)
+    if scoped_groups is not None:
+        if not scoped_groups:
+            rows = []
+        else:
+            stmt = stmt.where(PlatformAccount.ip_group_id.in_(scoped_groups))
+            rows = None
+    else:
+        rows = None
+    if rows is None:
+        if keyword.strip():
+            like = f"%{keyword.strip()}%"
+            stmt = stmt.where(or_(PlatformAccount.account_no.like(like), PlatformAccount.account_name.like(like)))
+        if ipGroupId:
+            stmt = stmt.where(PlatformAccount.ip_group_id == ipGroupId)
+        if companyId:
+            stmt = stmt.where(PlatformAccount.company_id == companyId)
+        if status:
+            stmt = stmt.where(PlatformAccount.status == status)
+        if holderUserId:
+            stmt = stmt.where(PlatformAccount.holder_user_id == holderUserId)
+        rows = ops.scalars(stmt.order_by(PlatformAccount.id.desc()).limit(5000)).all()
+    bind_map = binds_map(ops, [row.id for row in rows])
+    groups = ip_group_names(ops, {row.ip_group_id for row in rows if row.ip_group_id})
+    companies = company_names(ops, {row.company_id for row in rows if row.company_id})
+    persons = realname_masked(ops, {row.realname_id for row in rows if row.realname_id})
+    holders = user_names(db, {row.holder_user_id for row in rows if row.holder_user_id})
+    matrix = [["账号编号", "昵称", "IP组", "公司", "责任人", "实名人", "状态", "采集"]]
+    for row in rows:
+        item = list_vo(row, groups, companies, persons, holders, bind_map.get(row.id))
+        matrix.append(
+            [
+                str(item["accountNo"]),
+                str(item["nickname"] or ""),
+                str(item["ipGroupName"] or ""),
+                str(item["companyName"] or ""),
+                str(item["holderUserName"] or ""),
+                str(item["realNameMasked"] or ""),
+                str(item["status"] or ""),
+                str(item["collectBindSummary"] or ""),
+            ]
+        )
+    return ok(issue_list_csv(actor.id, "platform-accounts.csv", matrix, "/admin-api/ims/corp/account/export/file"))
+
+
 @router.get("/corp/account/{account_id}")
 def account_detail(
     account_id: int,

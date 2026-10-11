@@ -6,6 +6,13 @@
         <div class="sub">{{ meta.sub }}</div>
       </div>
       <div class="acts">
+        <FilteredExportButton
+          url="/corp/account/export"
+          :params="accountExportParams"
+          test-id="acct-list-export"
+          @done="onAccountExport"
+          @error="onAccountExport"
+        />
         <button class="btn btn-pri" type="button" data-testid="acct-register-open" @click="openCreate">登记账号</button>
       </div>
     </div>
@@ -1404,6 +1411,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import FilteredExportButton from '../../components/FilteredExportButton.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { useUserStore } from '../../stores/user'
 
@@ -1471,6 +1479,18 @@ const ipGroupMiss = ref('')
 const ipGroupApplied = ref(false)
 const status = ref('')
 const holderUserId = ref('')
+const appliedIpGroupId = ref<number | ''>('')
+const accountExportParams = computed(() => ({
+  platformType: meta.value.platform,
+  keyword: keyword.value.trim() || undefined,
+  status: status.value || undefined,
+  holderUserId: holderUserId.value || undefined,
+  ipGroupId: appliedIpGroupId.value || undefined,
+}))
+
+function onAccountExport(message: string) {
+  registerToast.value = message
+}
 const holders = ref<{ id: string; username: string; nickname: string }[]>([])
 
 const listFiltered = computed(
@@ -2096,7 +2116,10 @@ async function load() {
         return
       }
       params.ipGroupId = resolved.id
+      appliedIpGroupId.value = resolved.id
       ipGroupApplied.value = true
+    } else {
+      appliedIpGroupId.value = ''
     }
     const res = await http.get('/corp/account/page', { params })
     const data = res.data?.data as { list: Record<string, unknown>[]; total: number }

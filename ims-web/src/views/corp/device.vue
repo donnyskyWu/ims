@@ -65,6 +65,14 @@
       </template>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <FilteredExportButton
+        v-if="kind === 'phone'"
+        url="/master/phone/export"
+        :params="phoneExportParams"
+        test-id="corp-phone-export"
+        @done="onPhoneExport"
+        @error="onPhoneExport"
+      />
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
       <button
         v-if="kind !== 'phone'"
@@ -573,6 +581,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import FilteredExportButton from '../../components/FilteredExportButton.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal } from '../../api/read'
@@ -591,6 +600,21 @@ const pageSize = ref(10)
 const keyword = ref('')
 const phoneModel = ref('')
 const phoneType = ref('')
+const phoneExportParams = computed(() => {
+  const query: Record<string, string> = {}
+  const text = keyword.value.trim()
+  const model = phoneModel.value.trim()
+  if (text && /^[A-Za-z0-9-]+$/.test(text) && !/^\d{11}$/.test(text)) query.deviceNumber = text
+  else if (text && !model) query.phoneModel = text
+  if (model) query.phoneModel = model
+  if (phoneType.value) query.phoneType = phoneType.value
+  if (status.value) query.status = status.value
+  return query
+})
+
+function onPhoneExport(message: string) {
+  ledgerExportNote.value = message
+}
 const status = ref('')
 const ownerFilter = ref('')
 const assetTypeFilter = ref('')

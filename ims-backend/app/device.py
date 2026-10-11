@@ -234,6 +234,54 @@ def list_phones(
     return paged([phone_vo(row, names) for row in rows], total, page_no, size)
 
 
+@router.get("/master/phone/export/file")
+@router.get("/corp/device/phone/export/file")
+def phone_export_file(token: str, actor: User = Depends(current_user)):
+    from app.list_export import take_csv
+
+    return take_csv(token, actor)
+
+
+@router.get("/master/phone/export")
+@router.get("/corp/device/phone/export")
+def phone_export(
+    phoneType: str = "",
+    deviceNumber: str = "",
+    phoneModel: str = "",
+    status: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(Phone).where(Phone.deleted == 0, Phone.tenant_id == tenant_of(actor))
+    if phoneType:
+        stmt = stmt.where(Phone.phone_type == phoneType)
+    if deviceNumber:
+        stmt = stmt.where(Phone.device_number.like(f"%{deviceNumber}%"))
+    if phoneModel:
+        stmt = stmt.where(Phone.phone_model.like(f"%{phoneModel}%"))
+    if status:
+        stmt = stmt.where(Phone.status == status)
+    rows = ops.scalars(stmt.order_by(Phone.id).limit(5000)).all()
+    names = user_names(db, {row.keeper_id for row in rows if row.keeper_id})
+    matrix = [["号码", "编号", "型号", "类型", "保管人", "状态"]]
+    for row in rows:
+        item = phone_vo(row, names)
+        matrix.append(
+            [
+                item["phoneNumber"],
+                item["deviceNumber"] or "",
+                item["phoneModel"] or "",
+                item["phoneType"] or "",
+                item["keeperName"] or "",
+                item["status"] or "",
+            ]
+        )
+    return ok(issue_list_csv(actor.id, "phones.csv", matrix, "/admin-api/ims/master/phone/export/file"))
+
+
 @router.get("/master/phone/page")
 @router.get("/corp/device/phone/page")
 def phone_page(
