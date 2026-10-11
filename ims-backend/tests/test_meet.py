@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import MeetDailyReport, User
+from app.models import MeetDailyReport, Role, RolePerm, User, UserRole
 
 client = TestClient(app)
 BJ = timezone(timedelta(hours=8))
@@ -348,6 +348,97 @@ def test_meet_minutes_registered_without_summary():
     )
     assert created.json()["code"] == 0
     assert created.json()["data"]["minutesStatus"] == "REGISTERED"
+
+
+def _scoped_user(username: str, nickname: str, scope: str) -> int:
+    db = SessionLocal()
+    try:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        assert admin is not None
+        role = Role(
+            role_name=nickname,
+            role_key=f"meet:{username}",
+            data_scope=scope,
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        db.add(
+            RolePerm(
+                role_id=role.id,
+                module_code="MEET",
+                perm_code="meet:query",
+                perm_level="R",
+                tenant_id=0,
+            )
+        )
+        user = User(
+            username=username,
+            nickname=nickname,
+            password_hash=admin.password_hash,
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+        return int(user.id)
+    finally:
+        db.close()
+
+
+def _auth(username: str) -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"}).json()["data"][
+        "accessToken"
+    ]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_meet_minutes_visible_to_organizer_recorder_and_attendee():
+    attendee_id = _scoped_user("meet_attendee", "参会甲", "SELF")
+    _scoped_user("meet_stranger", "路人乙", "SELF")
+    _scoped_user("meet_host", "发起人", "DEPT")
+    host = _auth("meet_host")
+    when = datetime.now(BJ).strftime("%Y-%m-%dT11:00:00+08:00")
+    created = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=host,
+        json={
+            "meetingTitle": "范围可见会议",
+            "meetingDate": when,
+            "attendees": [{"userId": attendee_id, "userName": "参会甲"}],
+        },
+    )
+    assert created.json()["code"] == 0
+    mid = created.json()["data"]["id"]
+
+    own = client.get(
+        "/admin-api/ims/meet/minutes/list",
+        headers=host,
+        params={"pageNo": 1, "pageSize": 20, "meetingTitle": "范围可见"},
+    )
+    assert any(row["id"] == mid for row in own.json()["data"]["list"])
+
+    guest = client.get(
+        "/admin-api/ims/meet/minutes/list",
+        headers=_auth("meet_attendee"),
+        params={"pageNo": 1, "pageSize": 20, "meetingTitle": "范围可见"},
+    )
+    assert any(row["id"] == mid for row in guest.json()["data"]["list"])
+    detail = client.get(f"/admin-api/ims/meet/minutes/{mid}", headers=_auth("meet_attendee"))
+    assert detail.json()["code"] == 0
+
+    stranger = client.get(
+        "/admin-api/ims/meet/minutes/list",
+        headers=_auth("meet_stranger"),
+        params={"pageNo": 1, "pageSize": 20, "meetingTitle": "范围可见"},
+    )
+    assert stranger.json()["code"] == 0
+    assert all(row["id"] != mid for row in stranger.json()["data"]["list"])
+    hidden = client.get(f"/admin-api/ims/meet/minutes/{mid}", headers=_auth("meet_stranger"))
+    assert hidden.json()["code"] == 1004
 
 
 def test_meet_minutes_archive_and_rate():

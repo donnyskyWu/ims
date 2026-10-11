@@ -31,6 +31,10 @@ def ensure_meet_columns() -> None:
         cols = {c["name"] for c in insp.get_columns("ims_meet_daily_report")}
         if "report_type" not in cols:
             alters.append(("ims_meet_daily_report", "report_type", "VARCHAR(32) NOT NULL DEFAULT ''"))
+    if "ims_meet_minutes" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_meet_minutes")}
+        if "organizer_user_id" not in cols:
+            alters.append(("ims_meet_minutes", "organizer_user_id", "BIGINT NOT NULL DEFAULT 0"))
     if not alters:
         return
     with engine.begin() as conn:
@@ -799,6 +803,7 @@ def minutes_vo(row: MeetMinutes) -> dict:
         "meetingDate": iso(row.meeting_date),
         "meetingRoom": row.meeting_room or None,
         "durationMinutes": row.duration_minutes,
+        "organizerUserId": row.organizer_user_id or row.recorder_user_id,
         "organizerName": row.organizer_name or row.recorder_name,
         "attendeeCount": len(attendees),
         "attendees": attendees,
@@ -813,17 +818,46 @@ def minutes_vo(row: MeetMinutes) -> dict:
     }
 
 
-def restrict_minutes(stmt, actor: User, scope: DataScope | None):
-    stmt = stmt.where(MeetMinutes.deleted == 0, MeetMinutes.tenant_id == tenant_of(actor))
+def minutes_base(actor: User):
+    return select(MeetMinutes).where(MeetMinutes.deleted == 0, MeetMinutes.tenant_id == tenant_of(actor))
+
+
+def attendee_of(row: MeetMinutes, actor: User) -> bool:
+    names = {(actor.nickname or "").strip(), (actor.username or "").strip()}
+    names.discard("")
+    for item in row.attendees or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            uid = int(item.get("userId") or 0)
+        except (TypeError, ValueError):
+            uid = 0
+        if uid and uid == actor.id:
+            return True
+        user_name = str(item.get("userName") or "").strip()
+        if user_name and user_name in names:
+            return True
+    return False
+
+
+def minutes_visible(row: MeetMinutes, actor: User, scope: DataScope | None) -> bool:
+    """发起人、记录人、参会人可见；部门数据范围另外可见本部门会议。"""
     if scope is None or scope.kind == "ALL":
-        return stmt
-    if scope.kind == "SELF":
-        return stmt.where(MeetMinutes.recorder_user_id == actor.id)
-    if scope.kind == "DEPT":
-        if not scope.dept_ids:
-            return stmt.where(MeetMinutes.id < 0)
-        return stmt.where(MeetMinutes.dept_id.in_(scope.dept_ids))
-    return stmt.where(MeetMinutes.id < 0)
+        return True
+    if row.recorder_user_id == actor.id or int(row.organizer_user_id or 0) == actor.id:
+        return True
+    if attendee_of(row, actor):
+        return True
+    if scope.kind == "DEPT" and scope.dept_ids and int(row.dept_id or 0) in set(scope.dept_ids):
+        return True
+    return False
+
+
+def load_visible_minutes(db: Session, actor: User, scope: DataScope | None, stmt):
+    rows = list(
+        db.scalars(stmt.order_by(MeetMinutes.meeting_date.desc(), MeetMinutes.id.desc())).all()
+    )
+    return [row for row in rows if minutes_visible(row, actor, scope)]
 
 
 @router.get("/minutes/list")
@@ -838,8 +872,7 @@ def minutes_list(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = select(MeetMinutes)
-    stmt = restrict_minutes(stmt, actor, request.state.scope)
+    stmt = minutes_base(actor)
     if meetingTitle:
         stmt = stmt.where(MeetMinutes.meeting_title.like(f"%{meetingTitle.strip()}%"))
     if minutesStatus:
@@ -849,15 +882,10 @@ def minutes_list(
     if dateTo:
         stmt = stmt.where(MeetMinutes.meeting_date <= parse_meeting_date(dateTo[:10] + "T23:59:59+08:00"))
     page_no, size = page_args(pageNo, pageSize)
-    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-    rows = list(
-        db.scalars(
-            stmt.order_by(MeetMinutes.meeting_date.desc(), MeetMinutes.id.desc())
-            .offset((page_no - 1) * size)
-            .limit(size)
-        ).all()
-    )
-    return paged([minutes_vo(row) for row in rows], total, page_no, size)
+    rows = load_visible_minutes(db, actor, request.state.scope, stmt)
+    total = len(rows)
+    page = rows[(page_no - 1) * size : page_no * size]
+    return paged([minutes_vo(row) for row in page], total, page_no, size)
 
 
 @router.post("/minutes")
@@ -886,6 +914,7 @@ def minutes_create(
         meeting_date=when,
         meeting_room=(body.meetingRoom or "").strip(),
         duration_minutes=body.durationMinutes,
+        organizer_user_id=actor.id,
         organizer_name=actor.nickname or actor.username,
         attendees=attendees,
         summary=summary,
@@ -912,13 +941,12 @@ def minutes_archive_rate(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = select(MeetMinutes)
-    stmt = restrict_minutes(stmt, actor, request.state.scope)
+    stmt = minutes_base(actor)
     if dateFrom:
         stmt = stmt.where(MeetMinutes.meeting_date >= parse_meeting_date(dateFrom[:10] + "T00:00:00+08:00"))
     if dateTo:
         stmt = stmt.where(MeetMinutes.meeting_date <= parse_meeting_date(dateTo[:10] + "T23:59:59+08:00"))
-    rows = list(db.scalars(stmt).all())
+    rows = load_visible_minutes(db, actor, request.state.scope, stmt)
     total = len(rows)
     archived = sum(1 for r in rows if r.minutes_status == "ARCHIVED")
     recorded = sum(1 for r in rows if r.minutes_status in ("MINUTES_RECORDED", "ARCHIVED"))
@@ -942,9 +970,8 @@ def minutes_detail(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = restrict_minutes(select(MeetMinutes).where(MeetMinutes.id == minutes_id), actor, request.state.scope)
-    row = db.scalar(stmt)
-    if row is None:
+    row = db.scalar(minutes_base(actor).where(MeetMinutes.id == minutes_id))
+    if row is None or not minutes_visible(row, actor, request.state.scope):
         return fail(1004, "会议纪要不存在")
     return ok(minutes_vo(row))
 
@@ -956,9 +983,8 @@ def minutes_archive(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = restrict_minutes(select(MeetMinutes).where(MeetMinutes.id == minutes_id), actor, request.state.scope)
-    row = db.scalar(stmt)
-    if row is None:
+    row = db.scalar(minutes_base(actor).where(MeetMinutes.id == minutes_id))
+    if row is None or not minutes_visible(row, actor, request.state.scope):
         return fail(1004, "会议纪要不存在")
     if row.minutes_status == "REGISTERED":
         return fail(1001, "请先录入纪要再归档")
