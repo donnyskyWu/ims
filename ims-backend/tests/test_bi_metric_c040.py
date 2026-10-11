@@ -40,7 +40,6 @@ def test_formula_parser_rejects_sql_and_other_text():
         "UPDATE t SET a = 1",
         "DROP TABLE t",
         "INSERT INTO t VALUES (1)",
-        "SELECT * FROM t",
         "A; DROP TABLE t",
         "SUM(A); DELETE FROM x",
         "1 OR 1",
@@ -50,6 +49,7 @@ def test_formula_parser_rejects_sql_and_other_text():
         err = formula_error(sample)
         assert err is not None, sample
         assert "1192" in err
+    assert formula_error("SELECT ip_group_name, SUM(play_count) AS metric_value FROM oa_content_metric") is None
 
 
 def test_tc_r9_save_rejects_delete_and_preview_rejects_stored_formula():

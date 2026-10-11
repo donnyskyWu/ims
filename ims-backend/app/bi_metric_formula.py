@@ -114,21 +114,38 @@ _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
 def formula_error(formula: str | None) -> str | None:
-    """空公式视为未配置，允许。非法时返回可直接展示的 1192 文案。"""
+    """空公式视为未配置，允许。非法时返回可直接展示的 1192 文案。
+
+    复合指标走指标编码 + 白名单函数 + 四则运算。
+    基础指标「生成公式」可以是单条 SELECT，但不能含 DELETE/UPDATE/DROP 等语句。
+    两种公式都只做文本校验，不会拿去执行。
+    """
     text = formula or ""
     if not text.strip():
         return None
     if len(text) > 512:
         return _BASE_MSG + "，公式过长"
-    if "--" in text or "/*" in text or "*/" in text:
+    if "--" in text or "/*" in text or "*/" in text or ";" in text:
         return _BASE_MSG
     upper = text.upper()
     for word in _DML:
         if re.search(rf"\b{word}\b", upper):
             return f"{_BASE_MSG}，不允许 {word} 等语句"
+    if _is_safe_select(text):
+        return None
     if _forbidden_char(text) or not _parse(text):
         return _BASE_MSG
     return None
+
+
+def _is_safe_select(text: str) -> bool:
+    stripped = text.strip()
+    if not re.match(r"(?is)^select\b", stripped):
+        return False
+    upper = stripped.upper()
+    if re.search(r"\b(INTO|OUTFILE|DUMPFILE|LOAD_FILE|SLEEP|BENCHMARK|INFORMATION_SCHEMA)\b", upper):
+        return False
+    return True
 
 
 def quarantine_illegal_metric_formulas(db: Session) -> int:

@@ -200,6 +200,34 @@ def seed() -> None:
         db.close()
 
 
+def ensure_bi_metric_columns() -> None:
+    """已有库补指标单位、数据源、计算方式和条件。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_bi_metric" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_bi_metric")}
+    alters: list[str] = []
+    if "unit" not in cols:
+        alters.append("ADD COLUMN unit VARCHAR(32) NOT NULL DEFAULT ''")
+    if "data_source" not in cols:
+        alters.append("ADD COLUMN data_source VARCHAR(64) NOT NULL DEFAULT ''")
+    if "calc_method" not in cols:
+        alters.append("ADD COLUMN calc_method VARCHAR(32) NOT NULL DEFAULT ''")
+    if "calc_field" not in cols:
+        alters.append("ADD COLUMN calc_field VARCHAR(64) NOT NULL DEFAULT ''")
+    if "summary_field" not in cols:
+        alters.append("ADD COLUMN summary_field VARCHAR(64) NOT NULL DEFAULT ''")
+    if "conditions_json" not in cols:
+        alters.append("ADD COLUMN conditions_json TEXT NULL")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_bi_metric {clause}"))
+
+
 def ensure_content_typeset_columns() -> None:
     """已有库补排版列。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -535,6 +563,7 @@ def init_db() -> None:
 
     ensure_ops()
     ensure_content_typeset_columns()
+    ensure_bi_metric_columns()
     seed()
 
 
