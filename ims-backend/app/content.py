@@ -200,9 +200,15 @@ class SopCreateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     sopName: str
     contentType: str
+    platform: str = ""
     sopLevel: str = "STANDARD"
     marketingPlan: str = ""
     nodes: list[SopNodeReq]
+
+
+class SopStatusBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    status: str
 
 
 class SopNodeCheckBody(BaseModel):
@@ -258,6 +264,7 @@ def sop_vo(row: ContentSop) -> dict:
         "sopCode": row.sop_code,
         "sopName": row.sop_name,
         "contentType": row.content_type,
+        "platform": row.platform or "",
         "sopLevel": row.sop_level,
         "version": row.version,
         "status": row.status,
@@ -318,6 +325,14 @@ def load_sop(db: Session, sop_id: int, actor: User) -> ContentSop | None:
 
 
 _NODE_TYPES = {"NORMAL", "CONTENT_GENERATION", "CONTENT_PUBLISH"}
+_SOP_PLATFORMS = {"", "DOUYIN", "KUAISHOU", "WECHAT_CHANNELS", "WECHAT_OFFICIAL", "ALL"}
+
+
+def normalize_sop_platform(value: str | None) -> str | None:
+    platform = (value or "").strip().upper()
+    if platform not in _SOP_PLATFORMS:
+        return None
+    return platform
 
 
 def validate_sop_nodes(nodes: list[SopNodeReq]) -> str | None:
@@ -688,6 +703,9 @@ def sop_create(body: SopCreateBody, db: Session = Depends(db_session), actor: Us
     name = (body.sopName or "").strip()
     if not name or len(name) > 128 or not (body.contentType or "").strip():
         return fail(1500, "参数校验失败")
+    platform = normalize_sop_platform(body.platform)
+    if platform is None:
+        return fail(1500, "参数校验失败")
     if body.sopLevel not in ("STANDARD", "GUIDE"):
         return fail(1500, "参数校验失败")
     node_err = validate_sop_nodes(body.nodes)
@@ -698,6 +716,7 @@ def sop_create(body: SopCreateBody, db: Session = Depends(db_session), actor: Us
         sop_code=code,
         sop_name=name,
         content_type=body.contentType.strip(),
+        platform=platform,
         sop_level=body.sopLevel,
         marketing_plan=(body.marketingPlan or "").strip()[:32],
         version=1,
@@ -724,6 +743,9 @@ def sop_update(
     name = (body.sopName or old.sop_name).strip()
     if not name:
         return fail(1500, "参数校验失败")
+    platform = normalize_sop_platform(body.platform if body.platform else old.platform)
+    if platform is None:
+        return fail(1500, "参数校验失败")
     node_err = validate_sop_nodes(body.nodes)
     if node_err:
         return fail(1500, node_err)
@@ -748,6 +770,7 @@ def sop_update(
         sop_code=old.sop_code,
         sop_name=name,
         content_type=(body.contentType or old.content_type).strip(),
+        platform=platform,
         sop_level=body.sopLevel if body.sopLevel in ("STANDARD", "GUIDE") else old.sop_level,
         marketing_plan=(body.marketingPlan or old.marketing_plan or "").strip()[:32],
         version=next_version,
@@ -762,6 +785,24 @@ def sop_update(
     except ValueError:
         return fail(1500, "参数校验失败")
     return ok(sop_vo(sop))
+
+
+@router.put("/sop/{sop_id}/status")
+def sop_set_status(
+    sop_id: int,
+    body: SopStatusBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """列表启停。停用后不出现在计划「SOP 模板（启用）」下拉（该下拉只查 ENABLED）。"""
+    row = load_sop(db, sop_id, actor)
+    if row is None:
+        return fail(1504, "资源不可用")
+    status = (body.status or "").strip().upper()
+    if status not in ("ENABLED", "DISABLED"):
+        return fail(1500, "参数校验失败")
+    row.status = status
+    return ok(sop_vo(row))
 
 
 @router.delete("/sop/{sop_id}")

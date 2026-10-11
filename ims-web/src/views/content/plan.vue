@@ -125,8 +125,8 @@
           <input v-model="form.planName" maxlength="128" data-testid="plan-create-name" />
         </div>
         <div class="fld">
-          <label>SOP 模板</label>
-          <select v-model="sopPick" @change="onSopPick">
+          <label>SOP 模板（启用）</label>
+          <select v-model="sopPick" data-testid="plan-sop-enabled" @change="onSopPick">
             <option value="">— 选择已启用模板 —</option>
             <option v-for="sop in sopOptions" :key="sop.id" :value="String(sop.id)">
               {{ sop.sopName }} · v{{ sop.version }}（{{ sop.sopCode }}）

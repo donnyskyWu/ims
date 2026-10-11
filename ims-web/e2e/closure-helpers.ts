@@ -103,7 +103,7 @@ export async function createSopViaUi(
   const drawer = page.locator('.drawer.on').filter({ hasText: '新增 SOP 模板' })
   await expect(drawer).toBeVisible()
 
-  const nameInput = drawer.locator('.fld').filter({ hasText: '模板名称' }).locator('input')
+  const nameInput = drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input')
   await nameInput.fill(opts.sopName)
   if (opts.nodeName) {
     await drawer.getByPlaceholder('脚本').fill(opts.nodeName)
@@ -112,7 +112,7 @@ export async function createSopViaUi(
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/content/sop') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await drawer.getByRole('button', { name: '保存' }).click()
+  await drawer.getByRole('button', { name: '保存为新版本' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: unknown }
   expect(body.code).toBe(0)
   const sopId = idFromOkPayload(body.data)
@@ -317,7 +317,7 @@ export async function createWorkTaskSopViaUi(
   const drawer = page.locator('.drawer.on').filter({ hasText: '新增 SOP 模板' })
   await expect(drawer).toBeVisible()
 
-  await drawer.locator('.fld').filter({ hasText: '模板名称' }).locator('input').fill(opts.sopName)
+  await drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input').fill(opts.sopName)
   await drawer.locator('.fld').filter({ hasText: '营销计划' }).locator('select').selectOption(opts.marketingPlan ?? 'LIVE_PUBLIC')
   await drawer.locator('.fld').filter({ hasText: '首节点名称' }).locator('input').fill(opts.nodeName)
   await drawer.locator('.fld').filter({ hasText: '首节点类型' }).locator('select').selectOption('CONTENT_GENERATION')
@@ -326,7 +326,7 @@ export async function createWorkTaskSopViaUi(
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/content/sop') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await drawer.getByRole('button', { name: '保存' }).click()
+  await drawer.getByRole('button', { name: '保存为新版本' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: unknown }
   expect(body.code).toBe(0)
   const sopId = idFromOkPayload(body.data)

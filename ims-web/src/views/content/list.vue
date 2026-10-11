@@ -6,7 +6,8 @@
         <div class="sub">内容 CRUD · 玩法 matchScheme（CONTENT-106）</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri" type="button" @click="openCreate">新增内容</button>
+        <button class="btn btn-sec" type="button" data-testid="content-export" @click="exportCsv">导出 CSV</button>
+        <button class="btn btn-pri" type="button" data-testid="content-create" @click="openCreate">新建内容</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
@@ -44,11 +45,21 @@
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-filter-reset" @click="resetFilters">重置</button>
     </form>
+    <div class="rowline" data-testid="content-batch-bar" style="gap: 8px; margin-bottom: 10px; flex-wrap: wrap">
+      <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新增内容</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-export-bar" @click="exportCsv">导出</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-delete" @click="batchDelete">批量删除</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-submit" @click="batchSubmit">批量提交审核</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-kb" @click="batchTransfer">批量转知识库</button>
+    </div>
+    <p v-if="batchMsg" class="hint" :class="{ bad: batchWarn }" data-testid="content-batch-msg">{{ batchMsg }}</p>
+    <p v-if="exportNote" class="hint" data-testid="content-export-note">{{ exportNote }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
             <tr>
+              <th style="width: 36px"></th>
               <th>ID</th>
               <th>标题</th>
               <th>状态</th>
@@ -64,10 +75,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="12"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="11">
+              <td colspan="12">
                 <div class="empty" data-testid="content-list-empty">
                   <div class="et">{{ error || contentEmptyTitle }}</div>
                   <div v-if="!error" class="es">{{ contentEmptyHint }}</div>
@@ -75,6 +86,14 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
+              <td>
+                <input
+                  type="checkbox"
+                  data-testid="content-row-check"
+                  :checked="selectedIds.includes(row.id)"
+                  @change="toggleSelect(row.id)"
+                />
+              </td>
               <td class="mono">{{ row.id }}</td>
               <td><b>{{ row.title }}</b></td>
               <td>{{ row.contentStatus }}</td>
@@ -228,12 +247,14 @@
           </div>
         </div>
       </div>
+      <p v-if="submitHint" class="hint bad" data-testid="content-submit-hint">{{ submitHint }}</p>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
       <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
       <AiCopyDrawer :open="aiOpen" :content-id="editingId" @close="aiOpen = false" @adopt="adoptAi" />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
+        <button class="btn btn-sec" type="button" data-testid="content-submit-review" @click="submitFromDrawer">提交审核</button>
       </template>
     </ProtoDrawer>
 
@@ -303,6 +324,11 @@ const editingRow = ref<any>(null)
 const editorSeed = ref(0)
 const editTitle = ref('')
 const titleError = ref('')
+const submitHint = ref('')
+const selectedIds = ref<number[]>([])
+const batchMsg = ref('')
+const batchWarn = ref(false)
+const exportNote = ref('')
 const editContentType = ref('SHORT_VIDEO')
 const editPlatform = ref('')
 const editDocType = ref('COPY')
@@ -476,6 +502,7 @@ function openCreate() {
   editingId.value = null
   editingRow.value = null
   titleError.value = ''
+  submitHint.value = ''
   resetForm()
   editorSeed.value += 1
   uploadError.value = ''
@@ -497,6 +524,7 @@ function openEdit(row: any) {
   editingId.value = row.id
   editingRow.value = row
   titleError.value = ''
+  submitHint.value = ''
   editTitle.value = row.title || ''
   editContentType.value = row.contentType || 'SHORT_VIDEO'
   editPlatform.value = row.platformType || ''
@@ -591,11 +619,118 @@ function onLayoutApplied(payload: {
   editBody.value = payload.body
 }
 
+function toggleSelect(id: number) {
+  if (selectedIds.value.includes(id)) selectedIds.value = selectedIds.value.filter((item) => item !== id)
+  else selectedIds.value = [...selectedIds.value, id]
+  batchMsg.value = ''
+}
+
+function requireSelection(message: string) {
+  if (selectedIds.value.length) return true
+  batchWarn.value = true
+  batchMsg.value = message
+  return false
+}
+
+async function exportCsv() {
+  exportNote.value = ''
+  const params = new URLSearchParams()
+  if (titleKw.value.trim()) params.set('title', titleKw.value.trim())
+  if (statusKw.value) params.set('status', statusKw.value)
+  if (typeKw.value) params.set('contentType', typeKw.value)
+  if (platformKw.value) params.set('platformType', platformKw.value)
+  if (docKw.value) params.set('documentType', docKw.value)
+  const qs = params.toString()
+  const token = localStorage.getItem('ims_access')
+  try {
+    const res = await fetch(`/admin-api/ims/content/export${qs ? `?${qs}` : ''}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      exportNote.value = `导出失败（${res.status}）`
+      return
+    }
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = (await res.json()) as { msg?: string }
+      exportNote.value = body.msg || '导出失败'
+      return
+    }
+    const count = Number(res.headers.get('X-Export-Rows') || '0')
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'content.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    exportNote.value = `已导出 ${count} 条`
+  } catch {
+    exportNote.value = '导出失败'
+  }
+}
+
+async function batchDelete() {
+  if (!requireSelection('请先勾选要删除的内容')) return
+  if (!window.confirm(`批量删除选中的 ${selectedIds.value.length} 条内容？`)) return
+  try {
+    const { data } = await http.post('/content/batch-delete', { ids: selectedIds.value })
+    batchWarn.value = false
+    batchMsg.value = `已删除 ${data.data?.deleted ?? 0} 条`
+    selectedIds.value = []
+    await loadList()
+  } catch (e) {
+    batchWarn.value = true
+    batchMsg.value = errorMessage(e)
+  }
+}
+
+async function batchSubmit() {
+  if (!requireSelection('请先勾选要提交的内容')) return
+  try {
+    const { data } = await http.post('/content/batch-submit', { ids: selectedIds.value })
+    batchWarn.value = false
+    batchMsg.value = `已提交 ${data.data?.submitted ?? 0} 条`
+    selectedIds.value = []
+    await loadList()
+  } catch (e) {
+    batchWarn.value = true
+    batchMsg.value = errorMessage(e)
+  }
+}
+
+async function batchTransfer() {
+  if (!requireSelection('请先勾选要转入知识库的内容')) return
+  try {
+    const { data } = await http.post('/content/batch-transfer-kb', { ids: selectedIds.value })
+    batchWarn.value = false
+    batchMsg.value = `已转入知识库 ${data.data?.transferred ?? 0} 条`
+    selectedIds.value = []
+  } catch (e) {
+    batchWarn.value = true
+    batchMsg.value = errorMessage(e)
+  }
+}
+
+async function submitFromDrawer() {
+  submitHint.value = ''
+  if (!editingId.value) {
+    submitHint.value = '请先保存内容'
+    return
+  }
+  try {
+    await http.post(`/content/${editingId.value}/submit-review`)
+    drawerOpen.value = false
+    await loadList()
+  } catch (e) {
+    submitHint.value = errorMessage(e)
+  }
+}
+
 async function saveContent() {
   titleError.value = ''
+  submitHint.value = ''
   if (!editTitle.value.trim()) {
-    titleError.value = '请填写标题'
-    window.alert('请填写标题')
+    titleError.value = '必填项，请填写'
     return
   }
   saving.value = true

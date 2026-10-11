@@ -380,6 +380,7 @@ PREFIXES = [
     ("GET", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),
     ("POST", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),
     ("PUT", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),
+    ("DELETE", "/admin-api/ims/content/layout-template", "ims_content_layout_template"),
     ("GET", "/admin-api/ims/perf/result/export", "ims_perf_record"),
     ("GET", "/admin-api/ims/perf/result", "ims_perf_record"),
     ("GET", "/admin-api/ims/perf/result/", "ims_perf_record"),

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import html
+import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -26,6 +28,51 @@ class LayoutBody(BaseModel):
     templateName: str
     previewHtml: str = ""
     source: str = "CUSTOM"
+
+
+class ImportUrlBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    url: str = ""
+    templateName: str = ""
+
+
+class ImportPasteBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    templateName: str = ""
+    html: str = ""
+
+
+def new_job_id() -> str:
+    return f"IMP{secrets.token_hex(4)}"
+
+
+def load_layout(db: Session, template_id: int, tenant_id: int) -> ContentLayoutTemplate | None:
+    row = db.get(ContentLayoutTemplate, template_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    return row
+
+
+def new_import_template(
+    db: Session,
+    actor: User,
+    *,
+    name: str,
+    preview_html: str,
+) -> ContentLayoutTemplate:
+    tenant_id = tenant_of(actor)
+    row = ContentLayoutTemplate(
+        template_no=next_template_no(db, tenant_id),
+        template_name=name[:128],
+        source="IMPORT",
+        status="DRAFT",
+        preview_html=preview_html,
+        created_by=actor.id,
+        tenant_id=tenant_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def iso(dt: datetime | None) -> str:
@@ -198,3 +245,111 @@ def enable_layout(
     row.updated_at = utcnow()
     db.flush()
     return ok(layout_vo(row))
+
+
+@router.post("/import-url")
+def import_layout_url(
+    body: ImportUrlBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """公众号链接抓取桩：反爬不可用时不落库，提示改走 MHTML / HTML。"""
+    del db, actor
+    url = (body.url or "").strip()
+    if not url:
+        return fail(1001, "必填项，请填写")
+    return fail(1500, "公众号链接抓取失败，请改用 MHTML 或粘贴 HTML")
+
+
+@router.post("/import-paste")
+def import_layout_paste(
+    body: ImportPasteBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    name = (body.templateName or "").strip()
+    raw = (body.html or "").strip()
+    if not name or not raw:
+        return fail(1001, "必填项，请填写")
+    row = new_import_template(db, actor, name=name, preview_html=raw)
+    return ok({"jobId": new_job_id(), "template": layout_vo(row)})
+
+
+@router.post("/import-mhtml")
+async def import_layout_mhtml(
+    file: UploadFile | None = File(default=None),
+    templateName: str = Form(default=""),
+    overrideId: int | None = Form(default=None),
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if file is None or not (file.filename or "").strip():
+        return fail(1001, "必填项，请填写")
+    filename = file.filename or ""
+    if not filename.lower().endswith((".mhtml", ".mht")):
+        return fail(1001, "请上传 .mhtml 文件")
+    raw = await file.read()
+    if not raw:
+        return fail(1001, "必填项，请填写")
+    text = raw.decode("utf-8", errors="ignore")
+    preview = f"<pre>{html.escape(text[:4000])}</pre>"
+    tenant_id = tenant_of(actor)
+    name = (templateName or "").strip() or filename.rsplit(".", 1)[0]
+    if overrideId:
+        row = load_layout(db, int(overrideId), tenant_id)
+        if row is None:
+            return fail(1500, "模板不存在")
+        if row.source == "PRESET":
+            return fail(1001, "预置模板不可覆盖")
+        row.preview_html = preview
+        if (templateName or "").strip():
+            row.template_name = name[:128]
+        row.updated_at = utcnow()
+        db.flush()
+    else:
+        row = new_import_template(db, actor, name=name, preview_html=preview)
+    return ok({"jobId": new_job_id(), "template": layout_vo(row)})
+
+
+@router.post("/{template_id}/copy")
+def copy_layout(
+    template_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    src = load_layout(db, template_id, tenant_id)
+    if src is None:
+        return fail(1500, "模板不存在")
+    name = f"{src.template_name}（副本）"[:128]
+    row = ContentLayoutTemplate(
+        template_no=next_template_no(db, tenant_id),
+        template_name=name,
+        source="CUSTOM",
+        status="DRAFT",
+        preview_html=src.preview_html or "",
+        layout_json=src.layout_json or "",
+        preset_code="",
+        created_by=actor.id,
+        tenant_id=tenant_id,
+    )
+    db.add(row)
+    db.flush()
+    return ok(layout_vo(row))
+
+
+@router.delete("/{template_id}")
+def delete_layout(
+    template_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = load_layout(db, template_id, tenant_id)
+    if row is None:
+        return fail(1500, "模板不存在")
+    if row.source == "PRESET":
+        return fail(1001, "预置模板不可删除")
+    row.deleted = 1
+    row.updated_at = utcnow()
+    return ok(None)

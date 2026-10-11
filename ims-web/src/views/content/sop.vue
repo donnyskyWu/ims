@@ -61,7 +61,21 @@
               <td>{{ row.sopLevel }}</td>
               <td class="num">v{{ row.version }}</td>
               <td class="num">{{ row.nodeCount }}</td>
-              <td>{{ row.status }}</td>
+              <td>
+                <button
+                  type="button"
+                  class="sw"
+                  :class="{ on: row.status === 'ENABLED' }"
+                  role="switch"
+                  :aria-checked="row.status === 'ENABLED'"
+                  :aria-label="row.status === 'ENABLED' ? '停用 SOP' : '启用 SOP'"
+                  data-testid="sop-status-switch"
+                  @click="toggleStatus(row)"
+                >
+                  <i></i>
+                </button>
+                <span class="hint" data-testid="sop-status-text">{{ row.status }}</span>
+              </td>
               <td class="acts-inline">
                 <button class="btn btn-sec btn-sm" type="button" @click="openNodes(row)">节点</button>
                 <button class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
@@ -81,14 +95,24 @@
       <p v-else class="hint">保存即启用（免审）。从左侧节点库加入画布，用前置节点连成 DAG。</p>
       <div class="formrow">
         <div class="fld">
-          <label>模板名称 *</label>
+          <label>SOP 名称 *</label>
           <input v-model="form.sopName" maxlength="128" data-testid="sop-name" />
           <p v-if="nameError" class="hint bad" data-testid="sop-name-error">{{ nameError }}</p>
         </div>
         <div class="fld">
-          <label>内容类型 *</label>
+          <label>适用内容类型 *</label>
           <input v-model="form.contentType" data-testid="sop-content-type" placeholder="SHORT_VIDEO" />
           <p v-if="typeError" class="hint bad" data-testid="sop-type-error">{{ typeError }}</p>
+        </div>
+        <div class="fld">
+          <label>适用平台</label>
+          <select v-model="form.platform" data-testid="sop-platform">
+            <option value="DOUYIN">抖音</option>
+            <option value="KUAISHOU">快手</option>
+            <option value="WECHAT_CHANNELS">视频号</option>
+            <option value="WECHAT_OFFICIAL">微信公众号</option>
+            <option value="ALL">全平台</option>
+          </select>
         </div>
         <div class="fld">
           <label>级别</label>
@@ -107,6 +131,19 @@
         </div>
       </div>
       <p v-if="banner" class="hint bad" data-testid="sop-dag-error">{{ banner }}</p>
+      <div class="dag-tb">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="sop-auto-layout" @click="autoLayout">自动布局</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="sop-fit-view" @click="fitView">适配视图</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="sop-validate-dag" @click="validateDag">校验 DAG</button>
+      </div>
+      <p
+        v-if="dagToast"
+        class="hint"
+        :class="{ bad: dagToast !== 'DAG 校验通过（无环 · 岗位/文档类型完备）' && dagToast !== '已按依赖层级自动布局' && dagToast !== '已适配视图' }"
+        data-testid="sop-dag-toast"
+      >
+        {{ dagToast }}
+      </p>
       <div class="dag-wrap sop-dag">
         <div class="dag-pal">
           <h4>节点库</h4>
@@ -120,7 +157,7 @@
             普通节点<small>NORMAL</small>
           </button>
         </div>
-        <div class="dag-canvas" data-testid="sop-dag-canvas" :style="{ height: canvasHeight + 'px' }">
+        <div ref="canvasEl" class="dag-canvas" data-testid="sop-dag-canvas" :style="{ height: canvasHeight + 'px' }">
           <svg class="dag-svg" :width="canvasWidth" :height="canvasHeight">
             <defs>
               <marker id="sop-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
@@ -166,13 +203,18 @@
               <option value="CONTENT_PUBLISH">CONTENT_PUBLISH</option>
             </select>
           </div>
-          <div v-if="selected.nodeType === 'CONTENT_GENERATION'" class="fld">
-            <label>文档类型</label>
-            <select v-model="selected.documentType">
-              <option value="COPY">COPY</option>
-              <option value="SCRIPT">SCRIPT</option>
-              <option value="OFFICIAL_PLAN">OFFICIAL_PLAN</option>
+          <div class="fld">
+            <label>
+              文档类型
+              <span v-if="selected.nodeType === 'CONTENT_GENERATION'">*</span>
+            </label>
+            <select v-model="selected.documentType" data-testid="sop-node-doc-type">
+              <option value="">— 请选择 —</option>
+              <option value="COPY">文案 COPY</option>
+              <option value="SCRIPT">脚本 SCRIPT</option>
+              <option value="OFFICIAL_PLAN">正式方案 OFFICIAL_PLAN</option>
             </select>
+            <p v-if="selected.nodeType !== 'CONTENT_GENERATION'" class="hint">内容生成节点必填；其它节点可留空</p>
           </div>
           <div class="fld">
             <label>执行岗位 *</label>
@@ -231,8 +273,8 @@
       </div>
       <template #footer>
         <button class="btn btn-sec" type="button" @click="editorOpen = false">取消</button>
-        <button class="btn btn-pri" type="button" :disabled="saving || !!dagError" @click="saveSop">
-          {{ editingId ? '保存新版本' : '保存' }}
+        <button class="btn btn-pri" type="button" data-testid="sop-save" :disabled="saving || !!dagError" @click="saveSop">
+          保存为新版本
         </button>
       </template>
     </ProtoDrawer>
@@ -276,6 +318,7 @@ type SopRow = {
   sopLevel?: string
   version: number
   marketingPlan?: string
+  platform?: string
   nodeCount?: number
   status?: string
 }
@@ -334,9 +377,12 @@ const editingVersion = ref(1)
 const form = ref({
   sopName: '',
   contentType: 'SHORT_VIDEO',
+  platform: 'DOUYIN',
   sopLevel: 'STANDARD',
   marketingPlan: '',
 })
+const dagToast = ref('')
+const canvasEl = ref<HTMLElement | null>(null)
 const nodes = ref<EditorNode[]>([])
 const selectedKey = ref('')
 let keySeq = 1
@@ -404,7 +450,7 @@ function makeNode(partial: Partial<EditorNode> & { nodeType: string }, index: nu
     key: partial.key || nextKey(),
     nodeName: partial.nodeName || nodeTypeLabel(partial.nodeType),
     nodeType: partial.nodeType,
-    documentType: partial.documentType || (partial.nodeType === 'CONTENT_GENERATION' ? 'COPY' : ''),
+    documentType: partial.documentType || '',
     standardDesc: partial.standardDesc || '执行标准',
     ownerRole: partial.ownerRole || 'R6',
     slaHours: partial.slaHours || 24,
@@ -450,6 +496,55 @@ function validateLocal(): string {
     if (!color.get(node.key) && walk(node.key)) return 'DAG 存在环'
   }
   return ''
+}
+
+const DAG_OK = 'DAG 校验通过（无环 · 岗位/文档类型完备）'
+
+function autoLayout() {
+  const levelOf = new Map<string, number>()
+  function level(key: string, guard = 0): number {
+    const cached = levelOf.get(key)
+    if (cached != null) return cached
+    if (guard > 40) return 0
+    const node = nodes.value.find((item) => item.key === key)
+    if (!node || !node.predecessorKeys.length) {
+      levelOf.set(key, 0)
+      return 0
+    }
+    let maxLevel = 0
+    for (const pred of node.predecessorKeys) {
+      maxLevel = Math.max(maxLevel, level(pred, guard + 1) + 1)
+    }
+    levelOf.set(key, maxLevel)
+    return maxLevel
+  }
+  const buckets = new Map<number, EditorNode[]>()
+  for (const node of nodes.value) {
+    const lv = level(node.key)
+    const bucket = buckets.get(lv) || []
+    bucket.push(node)
+    buckets.set(lv, bucket)
+  }
+  for (const [lv, bucket] of buckets) {
+    bucket.forEach((node, index) => {
+      node.x = 40 + lv * 220
+      node.y = 36 + index * 120
+    })
+  }
+  dagToast.value = '已按依赖层级自动布局'
+}
+
+function fitView() {
+  if (canvasEl.value) {
+    canvasEl.value.scrollLeft = 0
+    canvasEl.value.scrollTop = 0
+  }
+  dagToast.value = '已适配视图'
+}
+
+function validateDag() {
+  const err = validateLocal()
+  dagToast.value = err || DAG_OK
 }
 
 function payloadNodes() {
@@ -507,7 +602,8 @@ function openCreate() {
   saveError.value = ''
   nameError.value = ''
   typeError.value = ''
-  form.value = { sopName: '', contentType: 'SHORT_VIDEO', sopLevel: 'STANDARD', marketingPlan: '' }
+  form.value = { sopName: '', contentType: 'SHORT_VIDEO', platform: 'DOUYIN', sopLevel: 'STANDARD', marketingPlan: '' }
+  dagToast.value = ''
   nodes.value = defaultNodes()
   selectedKey.value = nodes.value[0].key
   editorOpen.value = true
@@ -571,10 +667,10 @@ async function saveSop() {
   typeError.value = ''
   const name = form.value.sopName.trim()
   const contentTypeName = form.value.contentType.trim()
-  if (!name) nameError.value = '请填写模板名称'
+  if (!name) nameError.value = '请填写 SOP 名称'
   if (!contentTypeName) typeError.value = '请填写内容类型'
   if (!name || !contentTypeName) {
-    saveError.value = !name && !contentTypeName ? '请填写模板名称与内容类型' : nameError.value || typeError.value
+    saveError.value = !name && !contentTypeName ? '请填写 SOP 名称与内容类型' : nameError.value || typeError.value
     return
   }
   if (dagError.value) return
@@ -583,6 +679,7 @@ async function saveSop() {
     const body = {
       sopName: name,
       contentType: contentTypeName,
+      platform: form.value.platform,
       sopLevel: form.value.sopLevel,
       marketingPlan: form.value.marketingPlan || undefined,
       nodes: payloadNodes(),
@@ -608,9 +705,11 @@ async function openEdit(row: SopRow) {
   nodes.value = []
   editingId.value = row.id
   editingVersion.value = row.version || 1
+  dagToast.value = ''
   form.value = {
     sopName: row.sopName,
     contentType: row.contentType || 'SHORT_VIDEO',
+    platform: row.platform || 'DOUYIN',
     sopLevel: row.sopLevel || 'STANDARD',
     marketingPlan: row.marketingPlan || '',
   }
@@ -647,6 +746,16 @@ async function openEdit(row: SopRow) {
     nodes.value = defaultNodes()
     selectedKey.value = nodes.value[0].key
     saveError.value = errorMessage(e)
+  }
+}
+
+async function toggleStatus(row: SopRow) {
+  const next = row.status === 'ENABLED' ? 'DISABLED' : 'ENABLED'
+  try {
+    await http.put(`/content/sop/${row.id}/status`, { status: next })
+    row.status = next
+  } catch (e) {
+    alert(errorMessage(e))
   }
 }
 
@@ -708,5 +817,10 @@ loadList()
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+button.sw {
+  border: 0;
+  padding: 0;
+  vertical-align: middle;
 }
 </style>
