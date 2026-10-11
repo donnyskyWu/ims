@@ -115,7 +115,10 @@
             </tr>
             <tr v-for="row in rows" v-else :key="String(row.id)">
               <td v-for="key in meta.keys" :key="key" :data-testid="cellTestId(key)">
-                <template v-if="key === 'bindCount'">
+                <template v-if="key === 'assetCode'">
+                  <button class="btn btn-txt" type="button" data-testid="corp-asset-code-link" @click="openAssetDetail(row)">{{ show(row, key) }}</button>
+                </template>
+                <template v-else-if="key === 'bindCount'">
                   <span>{{ show(row, key) }}</span>
                   <span v-if="row.linkGap" data-testid="corp-asset-link-gap" style="margin-left: 6px; color: #8b909a">待补关联</span>
                 </template>
@@ -337,14 +340,16 @@
       <div v-if="assetDetail" class="formrow one">
         <div class="fld"><label>编号</label><div>{{ assetDetail.assetCode }}</div></div>
         <div class="fld"><label>名称</label><div>{{ assetDetail.assetName }}</div></div>
-        <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
-        <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
-        <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
+        <div class="fld"><label>类型</label><div data-testid="corp-asset-detail-type">{{ typeLabel(String(assetDetail.assetType || '')) }}</div></div>
         <div class="fld">
           <label>规格</label>
           <div v-if="String(assetDetail.spec || '').trim()" data-testid="corp-asset-detail-spec">{{ assetDetail.spec }}</div>
           <div v-else data-testid="corp-asset-detail-spec-empty">未填规格</div>
         </div>
+        <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
+        <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
+        <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
+        <div class="fld"><label>绑定账号</label><div data-testid="corp-asset-detail-bind">绑定账号（{{ Number(assetDetail.bindCount || 0) }}）</div></div>
         <div class="fld"><label>采购批次</label><div data-testid="corp-asset-detail-batch">{{ assetDetail.purchaseBatchNo || '—' }}</div></div>
       </div>
       <p v-if="assetDetail?.status === 'SCRAPPED'" class="hint" data-testid="corp-asset-terminal">已报废为终态，不能再领用。</p>
