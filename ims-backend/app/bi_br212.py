@@ -85,7 +85,35 @@ def restrict_share_link(stmt: Select, scope: DataScope | None, tenant_id: int) -
     return stmt
 
 
+def report_share_granted(row: BiReportDef, actor: User) -> bool:
+    """已发布且可见范围覆盖当前用户时，列表/详情可见。行数据仍走 BR-212，不在这里放行。"""
+    if row.deleted or (row.status or "") != "PUBLISHED":
+        return False
+    if (row.tenant_id or 0) != (actor.tenant_id or 0):
+        return False
+    scope_name = (row.share_scope or "PRIVATE").upper()
+    if scope_name == "ALL":
+        return True
+    if scope_name == "SPECIFIED":
+        return f",{actor.id}," in (row.viewer_ids or "")
+    return False
+
+
+def share_grant_clause(actor: User):
+    return and_(
+        BiReportDef.deleted == 0,
+        BiReportDef.tenant_id == (actor.tenant_id or 0),
+        BiReportDef.status == "PUBLISHED",
+        or_(
+            BiReportDef.share_scope == "ALL",
+            BiReportDef.viewer_ids.like(f"%,{int(actor.id)},%"),
+        ),
+    )
+
+
 def report_row_visible(db: Session, row: BiReportDef, actor: User, scope: DataScope | None) -> bool:
+    if report_share_granted(row, actor):
+        return True
     if row.deleted or row.tenant_id != (actor.tenant_id or 0):
         return False
     tenant_id = actor.tenant_id or 0

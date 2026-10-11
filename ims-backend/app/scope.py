@@ -389,6 +389,8 @@ PREFIXES = [
     ("GET", "/admin-api/ims/eff/metrics", "ims_eff_relation"),
     ("GET", "/admin-api/ims/eff/inventory", "ims_eff_relation"),
     ("GET", "/admin-api/ims/bi/report/list", "ims_bi_report_def"),
+    ("GET", "/admin-api/ims/bi/report/", "ims_bi_report_def"),
+    ("DELETE", "/admin-api/ims/bi/report/", "ims_bi_report_def"),
     ("POST", "/admin-api/ims/bi/report", "ims_bi_report_def"),
     ("GET", "/admin-api/ims/bi/report/categories", "ims_bi_report_def"),
     ("GET", "/admin-api/ims/bi/report/datasets", "ims_bi_report_def"),

@@ -1643,6 +1643,11 @@ class BiReportDef(Base):
     share_scope: Mapped[str] = mapped_column(String(16), default="PRIVATE")
     metric_note: Mapped[str] = mapped_column(String(512), default="")
     report_version: Mapped[int] = mapped_column(Integer, default=1)
+    op_perm: Mapped[str] = mapped_column(String(16), default="READONLY")
+    row_perm: Mapped[str] = mapped_column(String(16), default="INHERIT")
+    publish_dest: Mapped[str] = mapped_column(String(16), default="CENTER")
+    menu_name: Mapped[str] = mapped_column(String(64), default="")
+    viewer_ids: Mapped[str] = mapped_column(String(512), default="")
     layout_json: Mapped[str] = mapped_column(Text, default="{}")
     creator_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     dept_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
@@ -1650,6 +1655,26 @@ class BiReportDef(Base):
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BiReportPublish(Base):
+    __tablename__ = "ims_bi_report_publish"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    report_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    dest: Mapped[str] = mapped_column(String(16), default="CENTER")
+    share_scope: Mapped[str] = mapped_column(String(16), default="PRIVATE")
+    op_perm: Mapped[str] = mapped_column(String(16), default="READONLY")
+    row_perm: Mapped[str] = mapped_column(String(16), default="INHERIT")
+    viewer_ids: Mapped[str] = mapped_column(String(512), default="")
+    menu_name: Mapped[str] = mapped_column(String(64), default="")
+    access_type: Mapped[str] = mapped_column(String(16), default="SHARE_LINK")
+    snapshot_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default="ACTIVE")
+    share_url: Mapped[str] = mapped_column(String(256), default="")
+    publisher_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class BiReportCategory(Base):

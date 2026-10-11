@@ -13,11 +13,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
-from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def
+from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def, share_grant_clause
 from app.bi_drill import guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import BiReportCategory, BiReportDef, User
+from app.models import BiReportCategory, BiReportDef, BiReportPublish, User
 
 router = APIRouter(prefix="/bi/report", tags=["bi-report"])
 
@@ -59,6 +59,17 @@ class ReportUpdateBody(BaseModel):
     reportName: str = ""
     layoutJson: dict | None = None
     keepVersion: bool = False
+
+
+class PublishBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    dest: str = "CENTER"
+    shareScope: str = ""
+    opPerm: str = "READONLY"
+    rowPerm: str = "INHERIT"
+    viewerIds: list[int] = Field(default_factory=list)
+    menuName: str = ""
+    accessType: str = "SHARE_LINK"
 
 
 class ReportQueryBody(BaseModel):
@@ -361,6 +372,11 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "shareScope": row.share_scope or "PRIVATE",
         "metricNote": row.metric_note or "",
         "version": int(row.report_version or 1),
+        "opPerm": row.op_perm or "READONLY",
+        "rowPerm": row.row_perm or "INHERIT",
+        "publishDest": row.publish_dest or "CENTER",
+        "menuName": row.menu_name or "",
+        "viewerIds": [int(item) for item in (row.viewer_ids or "").split(",") if item.strip().isdigit()],
         "layoutMode": layout.get("layoutMode", "FREE"),
         "comps": layout.get("comps", []),
         "creatorName": names.get(row.creator_id, ""),
@@ -716,11 +732,13 @@ def report_manage_list(
     from app.bi_br212_seed import ensure_bi_br212_seed
 
     ensure_bi_br212_seed(db)
-    q = restrict_report_def(
-        select(BiReportDef).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id),
+    scoped_ids = restrict_report_def(
+        select(BiReportDef.id).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id),
         request.state.scope,
         tenant_id,
     )
+    granted_ids = select(BiReportDef.id).where(share_grant_clause(actor))
+    q = select(BiReportDef).where(BiReportDef.id.in_(scoped_ids.union(granted_ids)))
     if keyword:
         kw = f"%{keyword.strip()}%"
         q = q.where((BiReportDef.report_name.like(kw)) | (BiReportDef.report_no.like(kw)))
@@ -822,8 +840,77 @@ def report_design_save(
     return ok(report_def_vo(row, names))
 
 
-@router.post("/{report_id:int}/publish")
-def report_design_publish(
+def pack_viewer_ids(ids: list[int]) -> str:
+    clean = []
+    for item in ids:
+        try:
+            num = int(item)
+        except (TypeError, ValueError):
+            continue
+        if num > 0 and num not in clean:
+            clean.append(num)
+    if not clean:
+        return ""
+    return "," + ",".join(str(item) for item in clean) + ","
+
+
+def publish_vo(row: BiReportPublish, names: dict[int, str]) -> dict:
+    return {
+        "publishId": row.id,
+        "reportId": row.report_id,
+        "dest": row.dest,
+        "shareScope": row.share_scope,
+        "opPerm": row.op_perm,
+        "rowPerm": row.row_perm,
+        "menuName": row.menu_name,
+        "accessType": row.access_type,
+        "snapshotVersion": row.snapshot_version,
+        "status": row.status,
+        "shareUrl": row.share_url,
+        "publisherName": names.get(row.publisher_id, ""),
+        "publishedAt": iso(row.created_at),
+    }
+
+
+@router.post("/{report_id:int}/copy")
+def report_copy(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    src = db.get(BiReportDef, report_id)
+    if src is None or src.deleted or src.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, src, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    now = utcnow()
+    row = BiReportDef(
+        report_no=next_report_no(db, tenant_id),
+        report_name=f"{src.report_name}副本"[:128],
+        report_type=src.report_type,
+        category=src.category,
+        sub_category=src.sub_category,
+        status="DRAFT",
+        share_scope="PRIVATE",
+        metric_note=src.metric_note or "",
+        report_version=1,
+        layout_json=src.layout_json or "{}",
+        creator_id=actor.id,
+        dept_id=primary_dept_id(db, actor.id, tenant_id),
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    names = user_names(db, [row.creator_id])
+    return ok(report_def_vo(row, names))
+
+
+@router.get("/{report_id:int}/export")
+def report_export(
     report_id: int,
     request: Request,
     db: Session = Depends(db_session),
@@ -835,16 +922,142 @@ def report_design_publish(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    layout = parse_layout(row.layout_json)
+    return ok(
+        {
+            "template": {
+                "reportName": row.report_name,
+                "reportType": row.report_type,
+                "category": row.category,
+                "version": int(row.report_version or 1),
+                "layoutJson": layout,
+            }
+        }
+    )
+
+
+@router.delete("/{report_id:int}")
+def report_delete(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(BiReportDef, report_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    row.deleted = 1
+    row.updated_at = utcnow()
+    return ok({"id": row.id, "deleted": True})
+
+
+@router.get("/{report_id:int}/publish/list")
+def report_publish_list(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(BiReportDef, report_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    rows = list(
+        db.scalars(
+            select(BiReportPublish)
+            .where(
+                BiReportPublish.report_id == report_id,
+                BiReportPublish.deleted == 0,
+                BiReportPublish.tenant_id == tenant_id,
+            )
+            .order_by(BiReportPublish.id.desc())
+        ).all()
+    )
+    names = user_names(db, [item.publisher_id for item in rows])
+    return ok({"list": [publish_vo(item, names) for item in rows]})
+
+
+@router.post("/{report_id:int}/publish")
+def report_design_publish(
+    report_id: int,
+    request: Request,
+    body: PublishBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(BiReportDef, report_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    cfg = body or PublishBody()
+    dest = (cfg.dest or "CENTER").strip().upper()
+    if dest not in {"CENTER", "MENU"}:
+        return fail(1001, "发布去向无效")
+    menu_name = (cfg.menuName or "").strip()
+    if dest == "MENU" and not menu_name:
+        return fail(1001, "请填写菜单名称")
+    scope = (cfg.shareScope or row.share_scope or "PRIVATE").strip().upper()
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        return fail(1001, "可见范围无效")
+    op_perm = (cfg.opPerm or "READONLY").strip().upper()
+    if op_perm not in {"READONLY", "EXPORT"}:
+        return fail(1001, "操作权限无效")
+    row_perm = (cfg.rowPerm or "INHERIT").strip().upper()
+    if row_perm not in {"INHERIT", "SNAPSHOT"}:
+        return fail(1001, "行权限无效")
+    viewers = pack_viewer_ids(cfg.viewerIds)
+    if scope == "SPECIFIED" and not viewers:
+        return fail(1001, "请选择可见用户")
     republish = row.status == "PUBLISHED"
     row.status = "PUBLISHED"
     if republish:
         row.report_version = int(row.report_version or 1) + 1
     elif not row.report_version:
         row.report_version = 1
+    row.share_scope = scope
+    row.op_perm = op_perm
+    row.row_perm = row_perm
+    row.publish_dest = dest
+    row.menu_name = menu_name if dest == "MENU" else ""
+    row.viewer_ids = viewers if scope == "SPECIFIED" else ""
     row.updated_at = utcnow()
-    names = user_names(db, [row.creator_id])
+    share_url = f"/ims/bi/report/list?highlight={row.id}"
+    record = BiReportPublish(
+        report_id=row.id,
+        dest=dest,
+        share_scope=scope,
+        op_perm=op_perm,
+        row_perm=row_perm,
+        viewer_ids=row.viewer_ids,
+        menu_name=row.menu_name,
+        access_type=(cfg.accessType or "SHARE_LINK").strip().upper() or "SHARE_LINK",
+        snapshot_version=int(row.report_version or 1),
+        status="ACTIVE",
+        share_url=share_url,
+        publisher_id=actor.id,
+        tenant_id=tenant_id,
+        created_at=row.updated_at,
+    )
+    db.add(record)
+    db.flush()
+    names = user_names(db, [row.creator_id, actor.id])
     vo = report_def_vo(row, names)
-    return ok({**vo, "dest": "center", "shareUrl": f"/ims/bi/report/list?highlight={row.id}"})
+    return ok(
+        {
+            **vo,
+            "dest": dest,
+            "publishId": record.id,
+            "shareUrl": share_url,
+            "menuNote": "发布去向已记为单独菜单，本次不写入系统菜单" if dest == "MENU" else "",
+        }
+    )
 
 
 @router.post("/query")

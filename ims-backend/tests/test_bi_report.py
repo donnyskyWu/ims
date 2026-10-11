@@ -141,3 +141,92 @@ def test_bi_category_tree_import_and_scope_filter():
     assert imported.json()["code"] == 0
     assert imported.json()["data"]["compCount"] == 1
     assert imported.json()["data"]["warnings"]
+
+
+def test_bi_publish_config_grants_tc_r6_and_card_actions():
+    from app.bi_br212_seed import _clone_admin_perms
+    from app.core import SessionLocal
+    from app.models import Role, User, UserRole
+    from app.scope import refresh_user_scope
+    from app.security import hash_password
+
+    auth = headers()
+    db = SessionLocal()
+    try:
+        viewer = User(
+            username="tc_r6",
+            nickname="主播R6",
+            mobile="13900003636",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(viewer)
+        db.flush()
+        role = Role(
+            role_name="R6本域",
+            role_key="bi:tc-r6",
+            data_scope="SELF",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        _clone_admin_perms(db, role.id)
+        db.add(UserRole(user_id=viewer.id, role_id=role.id, tenant_id=0))
+        refresh_user_scope(db, viewer.id)
+        db.commit()
+        viewer_id = viewer.id
+    finally:
+        db.close()
+
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "可见日报", "reportType": "REPORT", "category": "日报"},
+    )
+    rid = created.json()["data"]["id"]
+    bare = client.post(f"/admin-api/ims/bi/report/{rid}/publish", headers=auth)
+    assert bare.json()["code"] == 0
+    assert bare.json()["data"]["version"] == 1
+
+    published = client.post(
+        f"/admin-api/ims/bi/report/{rid}/publish",
+        headers=auth,
+        json={
+            "dest": "CENTER",
+            "shareScope": "SPECIFIED",
+            "opPerm": "READONLY",
+            "rowPerm": "INHERIT",
+            "viewerIds": [viewer_id],
+        },
+    )
+    body = published.json()
+    assert body["code"] == 0
+    assert body["data"]["version"] == 2
+    assert body["data"]["shareScope"] == "SPECIFIED"
+    assert body["data"]["opPerm"] == "READONLY"
+
+    token = client.post("/admin-api/ims/auth/login", json={"username": "tc_r6", "password": "Admin@123"}).json()["data"]["accessToken"]
+    viewer_headers = {"Authorization": f"Bearer {token}"}
+    listed = client.get("/admin-api/ims/bi/report/list", headers=viewer_headers, params={"keyword": "可见日报"})
+    assert any(item["reportName"] == "可见日报" for item in listed.json()["data"]["list"])
+    hidden = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "私有草稿", "reportType": "REPORT", "category": "日报"},
+    )
+    private_id = hidden.json()["data"]["id"]
+    missed = client.get("/admin-api/ims/bi/report/list", headers=viewer_headers, params={"keyword": "私有草稿"})
+    assert all(item["id"] != private_id for item in missed.json()["data"]["list"])
+
+    copied = client.post(f"/admin-api/ims/bi/report/{rid}/copy", headers=auth)
+    assert copied.json()["code"] == 0
+    assert copied.json()["data"]["reportName"].endswith("副本")
+    assert copied.json()["data"]["version"] == 1
+    assert copied.json()["data"]["status"] == "DRAFT"
+    exported = client.get(f"/admin-api/ims/bi/report/{rid}/export", headers=auth)
+    assert exported.json()["data"]["template"]["reportName"] == "可见日报"
+    records = client.get(f"/admin-api/ims/bi/report/{rid}/publish/list", headers=auth)
+    assert len(records.json()["data"]["list"]) >= 1

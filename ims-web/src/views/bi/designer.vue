@@ -4,7 +4,7 @@
       <div>
         <h1>报表设计器</h1>
         <div class="sub">
-          {{ report?.reportName || '加载中…' }} · {{ report?.status === 'PUBLISHED' ? '已发布' : '新建草稿' }} · 隐藏路由 /ims/bi/report/designer · BI-001
+          {{ report?.reportName || '加载中…' }} · {{ report?.status === 'PUBLISHED' ? '已发布' : '新建草稿' }} · v{{ report?.version || 1 }} · 隐藏路由 /ims/bi/report/designer · BI-001
           <span v-if="dirty" data-testid="bi-dirty"> · ● 有未保存修改</span>
         </div>
       </div>
@@ -16,7 +16,7 @@
         <button class="btn btn-sec btn-sm" type="button" @click="runPreview">运行预览</button>
         <button class="btn btn-pri btn-sm" type="button" :disabled="saving" data-testid="bi-save" @click="saveLayout()">保存草稿</button>
         <button class="btn btn-pri btn-sm" type="button" data-testid="bi-open-drill" @click="openDrill">预览下钻</button>
-        <button class="btn btn-pri btn-sm" type="button" @click="publish">保存并发布</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="bi-publish" @click="openPublish()">保存并发布</button>
       </div>
     </div>
 
@@ -229,6 +229,51 @@
       </div>
     </div>
 
+    <div v-if="publishOpen" class="modal-mask" data-testid="bi-publish-drawer" @click.self="publishOpen = false">
+      <div class="card" style="width: 520px; padding: 18px">
+        <h3 style="margin: 0 0 8px">发布配置</h3>
+        <p class="csub">当前版本 v{{ report?.version || 1 }}。立即发布后，可见范围内的用户可以在报表管理看到这张报表。</p>
+        <label class="fld">发布去向</label>
+        <select v-model="publishForm.dest" class="fld-in" data-testid="bi-publish-dest">
+          <option value="CENTER">发布到报表中心</option>
+          <option value="MENU">单独发布为菜单</option>
+        </select>
+        <template v-if="publishForm.dest === 'MENU'">
+          <label class="fld">菜单名称</label>
+          <input v-model="publishForm.menuName" class="fld-in" data-testid="bi-publish-menu" placeholder="侧栏显示名" />
+          <p class="csub">去向会记在发布记录里。系统菜单种子由另一处维护，这里不写入 sys_menu。</p>
+        </template>
+        <label class="fld">可见范围</label>
+        <select v-model="publishForm.shareScope" class="fld-in" data-testid="bi-publish-scope">
+          <option value="PRIVATE">私有</option>
+          <option value="SPECIFIED">指定人</option>
+          <option value="ALL">公开</option>
+        </select>
+        <template v-if="publishForm.shareScope === 'SPECIFIED'">
+          <label class="fld">可见用户</label>
+          <select v-model="publishForm.viewerId" class="fld-in" data-testid="bi-publish-viewer">
+            <option value="">请选择</option>
+            <option v-for="user in viewers" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}（{{ user.username }}）</option>
+          </select>
+        </template>
+        <label class="fld">操作权限</label>
+        <select v-model="publishForm.opPerm" class="fld-in" data-testid="bi-publish-op">
+          <option value="READONLY">只读</option>
+          <option value="EXPORT">可导出</option>
+        </select>
+        <label class="fld">行权限</label>
+        <select v-model="publishForm.rowPerm" class="fld-in" data-testid="bi-publish-row">
+          <option value="INHERIT">继承数据权限</option>
+          <option value="SNAPSHOT">锁定发布快照</option>
+        </select>
+        <p v-if="publishError" class="hint" data-testid="bi-publish-error" style="color: var(--red)">{{ publishError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="publishOpen = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-publish-now" @click="confirmPublish()">立即发布</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="leaveAsk" class="modal-mask" data-testid="bi-leave-dialog">
       <div class="card" style="width: 380px; padding: 20px">
         <h3 style="margin: 0 0 8px">● 有未保存修改</h3>
@@ -243,7 +288,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { http } from '../../api/http'
 
@@ -287,7 +332,10 @@ type ReportVo = {
   status: string
   comps: Comp[]
   layoutMode: string
+  version?: number
 }
+
+type Viewer = { id: number; username: string; nickname?: string }
 
 type CompMeta = { type: string; name: string; group?: string; defaultSize: { w: number; h: number } }
 
@@ -320,6 +368,17 @@ const undoStack = ref<string[]>([])
 const layoutMode = ref('FREE')
 const deviceOpen = ref(false)
 const device = ref<'PC' | 'TV' | '移动'>('PC')
+const publishOpen = ref(false)
+const publishError = ref('')
+const viewers = ref<Viewer[]>([])
+const publishForm = reactive({
+  dest: 'CENTER',
+  menuName: '',
+  shareScope: 'PRIVATE',
+  viewerId: '',
+  opPerm: 'READONLY',
+  rowPerm: 'INHERIT',
+})
 const devices = ['PC', 'TV', '移动'] as const
 const previewById = ref<Record<string, Preview>>({})
 let allowLeave = false
@@ -696,18 +755,52 @@ async function openDrill() {
   await router.push({ path: '/ims/bi/report/preview', query: { reportId: String(reportId.value) } })
 }
 
-async function publish() {
+async function openPublish() {
+  publishError.value = ''
+  publishOpen.value = true
+  if (viewers.value.length) return
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
+    viewers.value = (res.data.data?.list || []) as Viewer[]
+  } catch {
+    viewers.value = []
+  }
+}
+
+async function confirmPublish() {
+  publishError.value = ''
+  if (publishForm.dest === 'MENU' && !publishForm.menuName.trim()) {
+    publishError.value = '请填写菜单名称'
+    return
+  }
+  if (publishForm.shareScope === 'SPECIFIED' && !publishForm.viewerId) {
+    publishError.value = '请选择可见用户'
+    return
+  }
   const again = report.value?.status === 'PUBLISHED'
   await saveLayout(again)
-  if (previewMsg.value !== '已保存') return
+  if (previewMsg.value !== '已保存') {
+    publishError.value = previewMsg.value || '请先保存草稿'
+    return
+  }
   try {
-    const res = await http.post(`/bi/report/${reportId.value}/publish`)
-    previewMsg.value = `已发布 · ${res.data.data.status}`
-    report.value = { ...report.value!, status: res.data.data.status }
+    const res = await http.post(`/bi/report/${reportId.value}/publish`, {
+      dest: publishForm.dest,
+      menuName: publishForm.menuName.trim(),
+      shareScope: publishForm.shareScope,
+      opPerm: publishForm.opPerm,
+      rowPerm: publishForm.rowPerm,
+      viewerIds: publishForm.shareScope === 'SPECIFIED' ? [Number(publishForm.viewerId)] : [],
+      accessType: 'SHARE_LINK',
+    })
+    const data = res.data.data
+    report.value = { ...report.value!, status: data.status, version: data.version }
+    previewMsg.value = data.menuNote ? `已发布 · v${data.version} · ${data.menuNote}` : `已发布 · v${data.version}`
     dirty.value = false
+    publishOpen.value = false
   } catch (err) {
     const body = err as { msg?: string }
-    previewMsg.value = body.msg || '发布失败'
+    publishError.value = body.msg || '发布失败'
   }
 }
 

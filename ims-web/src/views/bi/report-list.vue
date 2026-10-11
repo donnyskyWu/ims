@@ -92,8 +92,17 @@
             </div>
             <div class="csub" style="margin-top: 6px">{{ row.category }} / {{ row.subCategory || '—' }}</div>
             <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ statusText(row.status) }} · v{{ row.version || 1 }}</div>
-            <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }}</div>
-            <button class="btn btn-sec btn-sm" type="button" style="margin-top: 10px" @click="openDesigner(row.id)">编辑设计</button>
+            <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }} · {{ opText(row.opPerm) }} · {{ rowPermText(row.rowPerm) }}</div>
+            <div class="rowline" style="margin-top: 10px; gap: 8px">
+              <button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑设计</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="toggleMore(row.id)">更多</button>
+            </div>
+            <div v-if="moreId === row.id" class="card" data-testid="bi-more-menu" style="margin-top: 8px; padding: 8px">
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(row)">复制</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(row)">删除</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(row)">导出模板 JSON</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(row)">发布管理</button>
+            </div>
           </div>
           <div v-if="!loading && !rows.length" class="card" style="grid-column: 1 / -1">
             <div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div>
@@ -126,7 +135,10 @@
               <td>{{ statusText(row.status) }}</td>
               <td>v{{ row.version || 1 }}</td>
               <td class="csub">{{ formatShanghai(row.updatedAt) }}</td>
-                  <td><button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button></td>
+                  <td>
+                    <button class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="toggleMore(row.id)">更多</button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -134,6 +146,33 @@
         </div>
       </div>
     </div>
+
+    <div v-if="deleteTarget" class="modal-mask" data-testid="bi-delete-confirm" @click.self="deleteTarget = null">
+      <div class="card" style="width: 380px; padding: 18px">
+        <h3 style="margin: 0 0 8px">删除报表</h3>
+        <p>确认删除「{{ deleteTarget.reportName }}」？</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="deleteTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-delete-ok" @click="confirmDelete">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="publishManage" class="modal-mask" data-testid="bi-publish-manage" @click.self="publishManage = null">
+      <div class="card" style="width: 520px; padding: 18px">
+        <h3 style="margin: 0 0 8px">发布管理 · {{ publishManage.reportName }} · v{{ publishManage.version || 1 }}</h3>
+        <p v-if="!publishRows.length" class="csub">尚未发布</p>
+        <div v-for="item in publishRows" :key="item.publishId" class="csub" style="margin-top: 8px" data-testid="bi-publish-row">
+          {{ destText(item.dest) }} · {{ scopeText(item.shareScope) }} · {{ opText(item.opPerm) }} · {{ rowPermText(item.rowPerm) }} · 快照 v{{ item.snapshotVersion }}
+          <span v-if="item.menuName"> · 菜单 {{ item.menuName }}</span>
+        </div>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="publishManage = null">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="actionMsg" class="hint" data-testid="bi-action-msg">{{ actionMsg }}</div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
@@ -256,6 +295,8 @@ type Row = {
   status: string
   shareScope?: string
   version?: number
+  opPerm?: string
+  rowPerm?: string
   updatedAt: string
 }
 
@@ -278,6 +319,11 @@ const catError = ref('')
 const catMsg = ref('')
 const catForm = reactive({ name: '', parentId: 0 })
 const showImport = ref(false)
+const moreId = ref(0)
+const deleteTarget = ref<Row | null>(null)
+const publishManage = ref<Row | null>(null)
+const publishRows = ref<{ publishId: number; dest: string; shareScope: string; opPerm: string; rowPerm: string; snapshotVersion: number; menuName?: string }[]>([])
+const actionMsg = ref('')
 const importError = ref('')
 const importTemplate = ref<Record<string, unknown> | null>(null)
 const importPreview = ref<{ compCount: number; dsCount: number } | null>(null)
@@ -336,6 +382,90 @@ function statusText(status: string) {
   if (status === 'DRAFT') return '草稿'
   if (status === 'PUBLISHED') return '已发布'
   return status
+}
+
+function opText(value?: string) {
+  return value === 'EXPORT' ? '可导出' : '只读'
+}
+
+function rowPermText(value?: string) {
+  return value === 'SNAPSHOT' ? '快照' : '继承行权限'
+}
+
+function destText(value?: string) {
+  return value === 'MENU' ? '单独菜单' : '报表中心'
+}
+
+function scopeText(value?: string) {
+  if (value === 'ALL') return '公开'
+  if (value === 'SPECIFIED') return '指定人'
+  return '私有'
+}
+
+function toggleMore(id: number) {
+  moreId.value = moreId.value === id ? 0 : id
+}
+
+async function copyReport(row: Row) {
+  actionMsg.value = ''
+  try {
+    const res = await http.post(`/bi/report/${row.id}/copy`)
+    actionMsg.value = `已复制为「${res.data.data.reportName}」· v${res.data.data.version}`
+    moreId.value = 0
+    await loadList()
+  } catch (error: unknown) {
+    const body = error as { msg?: string }
+    actionMsg.value = body.msg || '复制失败'
+  }
+}
+
+function askDelete(row: Row) {
+  deleteTarget.value = row
+  moreId.value = 0
+}
+
+async function confirmDelete() {
+  const row = deleteTarget.value
+  if (!row) return
+  try {
+    await http.delete(`/bi/report/${row.id}`)
+    actionMsg.value = `已删除「${row.reportName}」`
+    deleteTarget.value = null
+    await loadList()
+  } catch (error: unknown) {
+    const body = error as { msg?: string }
+    actionMsg.value = body.msg || '删除失败'
+  }
+}
+
+async function exportTemplate(row: Row) {
+  try {
+    const res = await http.get(`/bi/report/${row.id}/export`)
+    const blob = new Blob([JSON.stringify(res.data.data.template, null, 2)], { type: 'application/json' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `${row.reportNo || 'report'}.json`
+    link.click()
+    URL.revokeObjectURL(link.href)
+    actionMsg.value = `已导出模板 ${row.reportNo}.json`
+    moreId.value = 0
+  } catch (error: unknown) {
+    const body = error as { msg?: string }
+    actionMsg.value = body.msg || '导出失败'
+  }
+}
+
+async function openPublishManage(row: Row) {
+  publishManage.value = row
+  moreId.value = 0
+  publishRows.value = []
+  try {
+    const res = await http.get(`/bi/report/${row.id}/publish/list`)
+    publishRows.value = res.data.data.list || []
+  } catch (error: unknown) {
+    const body = error as { msg?: string }
+    actionMsg.value = body.msg || '发布记录加载失败'
+  }
 }
 
 function formatShanghai(iso: string) {

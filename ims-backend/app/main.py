@@ -243,6 +243,16 @@ def ensure_bi_report_scope_column() -> None:
         alters.append("ADD COLUMN metric_note VARCHAR(512) NOT NULL DEFAULT ''")
     if "report_version" not in cols:
         alters.append("ADD COLUMN report_version INT NOT NULL DEFAULT 1")
+    if "op_perm" not in cols:
+        alters.append("ADD COLUMN op_perm VARCHAR(16) NOT NULL DEFAULT 'READONLY'")
+    if "row_perm" not in cols:
+        alters.append("ADD COLUMN row_perm VARCHAR(16) NOT NULL DEFAULT 'INHERIT'")
+    if "publish_dest" not in cols:
+        alters.append("ADD COLUMN publish_dest VARCHAR(16) NOT NULL DEFAULT 'CENTER'")
+    if "menu_name" not in cols:
+        alters.append("ADD COLUMN menu_name VARCHAR(64) NOT NULL DEFAULT ''")
+    if "viewer_ids" not in cols:
+        alters.append("ADD COLUMN viewer_ids VARCHAR(512) NOT NULL DEFAULT ''")
     if not alters:
         return
     with engine.begin() as conn:
