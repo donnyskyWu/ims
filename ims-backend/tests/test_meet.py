@@ -99,7 +99,12 @@ def test_meet_daily_direct_submit_without_draft():
     if body["code"] == 0:
         assert body["data"]["submitStatus"] == "SUBMITTED"
         assert body["data"]["reportType"] == "SHORT_VIDEO"
+        assert body["data"]["contentDone"] == "直接提交"
         assert body["data"]["contentPlan"] == ""
+        fetched = client.get(f"/admin-api/ims/meet/daily/{day}", headers=auth)
+        assert fetched.json()["code"] == 0
+        assert fetched.json()["data"]["contentDone"] == "直接提交"
+        assert fetched.json()["data"]["submitStatus"] == "SUBMITTED"
 
     friday = client.post(
         "/admin-api/ims/meet/daily/submit",

@@ -87,6 +87,16 @@ const form = reactive({
   supplement: '',
 })
 const fieldErrors = reactive({ contentDone: '', weekSummary: '' })
+let requestEpoch = 0
+
+type FormSnap = {
+  reportType: string
+  contentDone: string
+  contentPlan: string
+  contentIssue: string
+  weekSummary: string
+  supplement: string
+}
 
 function clearToast() {
   window.clearTimeout(toastTimer)
@@ -119,20 +129,43 @@ function goBack() {
   router.push('/ims/meet/daily')
 }
 
-function applyRow(row: Record<string, unknown>) {
-  reportId.value = Number(row.id)
-  form.reportType = String(row.reportType || '')
-  form.contentDone = String(row.contentDone || '')
-  form.contentPlan = String(row.contentPlan || '')
-  form.contentIssue = String(row.contentIssue || '')
-  form.weekSummary = String(row.weekSummary || '')
-  form.supplement = String(row.supplement || '')
-  locked.value = row.submitStatus === 'SUBMITTED' || row.submitStatus === 'READ'
+function snapshotForm(): FormSnap {
+  return {
+    reportType: form.reportType,
+    contentDone: form.contentDone,
+    contentPlan: form.contentPlan,
+    contentIssue: form.contentIssue,
+    weekSummary: form.weekSummary,
+    supplement: form.supplement,
+  }
+}
+
+function keepText(echo: unknown, typed = '') {
+  if (typeof echo === 'string' && echo.trim()) return echo
+  if (typed.trim()) return typed
+  return typeof echo === 'string' ? echo : typed
+}
+
+function applyRow(row: Record<string, unknown> | null | undefined, typed?: FormSnap) {
+  const source = row || {}
+  const id = Number(source.id)
+  if (Number.isFinite(id) && id > 0) reportId.value = id
+  form.reportType = keepText(source.reportType, typed?.reportType)
+  form.contentDone = keepText(source.contentDone, typed?.contentDone)
+  form.contentPlan = keepText(source.contentPlan, typed?.contentPlan)
+  form.contentIssue = keepText(source.contentIssue, typed?.contentIssue)
+  form.weekSummary = keepText(source.weekSummary, typed?.weekSummary)
+  form.supplement = keepText(source.supplement, typed?.supplement)
+  const status = String(source.submitStatus || '')
+  if (status === 'SUBMITTED' || status === 'READ') locked.value = true
+  else if (!typed) locked.value = false
 }
 
 async function loadTemplateAndToday() {
+  const epoch = requestEpoch
   reportDate.value = todayStr()
   const tpl = await http.get('/meet/daily/template')
+  if (epoch !== requestEpoch) return
   if (tpl.data.code === 0) {
     deadlineTime.value = tpl.data.data.deadlineTime || '22:00'
     weekSummaryEnabled.value = !!tpl.data.data.weekSummaryEnabled
@@ -141,6 +174,7 @@ async function loadTemplateAndToday() {
     }
   }
   const cur = await http.get(`/meet/daily/${reportDate.value}`)
+  if (epoch !== requestEpoch) return
   if (cur.data.code === 0 && cur.data.data) {
     applyRow(cur.data.data)
     if (locked.value) msg.value = '今日日报已存在'
@@ -171,6 +205,8 @@ async function save(asDraft: boolean) {
     return
   }
   const wasLocked = locked.value
+  const typed = snapshotForm()
+  requestEpoch += 1
   saving.value = true
   try {
     const payload = {
@@ -186,7 +222,8 @@ async function save(asDraft: boolean) {
     const res = wasLocked && reportId.value
       ? await http.put(`/meet/daily/${reportId.value}`, payload)
       : await http.post('/meet/daily/submit', payload)
-    applyRow(res.data.data)
+    applyRow(res.data.data, typed)
+    if (!asDraft) locked.value = true
     if (asDraft) {
       msg.value = '草稿已保存'
       showToast('草稿已保存')
@@ -194,8 +231,9 @@ async function save(asDraft: boolean) {
       msg.value = '补充说明已保存'
       showToast('补充说明已保存')
     } else {
-      const onTime = res.data.data.isOnTime ? '按时' : '迟交'
-      msg.value = `已提交 · ${onTime} · 审阅待审阅`
+      const echoed = res.data?.data as { isOnTime?: boolean } | null | undefined
+      const onTime = typeof echoed?.isOnTime === 'boolean' ? (echoed.isOnTime ? '按时' : '迟交') : ''
+      msg.value = onTime ? `已提交 · ${onTime} · 审阅待审阅` : '已提交 · 审阅待审阅'
       showToast('已提交')
     }
   } catch (e: unknown) {
