@@ -57,7 +57,7 @@ test.describe('live local risk report tails', () => {
     await detail.getByTestId('live-sync-btn').click()
     const syncBody = (await (await syncResp).json()) as { code: number; msg?: string }
     expect(syncBody.code).toBe(1041)
-    await expect(detail.getByTestId('live-sync-error')).toContainText('1041')
+    await expect(detail.getByTestId('live-sync-error')).toContainText('未绑定')
     await page.screenshot({ path: `${shotDir}/02-metrics-unlinked.png`, fullPage: true })
 
     await page.goto('/ims/live/sessions')

@@ -78,7 +78,7 @@ test.describe('live report end ledger closure', () => {
     const missingBody = (await (await missingResp).json()) as { code: number; data?: { missing?: string[] } }
     expect(missingBody.code).toBe(1046)
     expect(missingBody.data?.missing).toContain('gmv')
-    await expect(detail.getByTestId('live-report-error')).toContainText('1046')
+    await expect(detail.getByTestId('live-report-error')).toContainText('必填项缺失')
     await page.screenshot({ path: `${shotDir}/01-missing-1046.png`, fullPage: true })
 
     await detail.getByTestId('live-report-gmv').fill('88000')
@@ -152,7 +152,7 @@ test.describe('live report end ledger closure', () => {
     const hit = pendingBody.data?.list?.find((row) => row.sessionCode === OVERDUE_SESSION)
     expect(hit?.overdue).toBe(true)
     expect(hit?.overdueHours).toBeGreaterThanOrEqual(24)
-    await expect(page.getByTestId('live-overdue-hint')).toContainText('1048')
+    await expect(page.getByTestId('live-overdue-hint')).toContainText('24小时录入超时督办')
     const row = page.getByTestId('live-pending-row').filter({ hasText: OVERDUE_SESSION })
     await expect(row).toBeVisible()
     await expect(row.getByTestId('live-pending-overdue')).toHaveText('超 24h')
@@ -167,19 +167,18 @@ test.describe('live report end ledger closure', () => {
     await detail.locator('.tab', { hasText: '关联' }).click()
     await alarmResp
     await expect(detail).toContainText('下播超时督办')
-    await expect(detail).toContainText('1048')
     await page.screenshot({ path: `${shotDir}/06-overdue-alarm.png`, fullPage: true })
 
     await page.goto('/ims/workbench/todos')
     await expect(page.locator('h1')).toHaveText('待办中心', { timeout: 15_000 })
-    const todoRow = page.locator('tbody tr').filter({ hasText: `下播超时督办 1048：${OVERDUE_SESSION}` })
+    const todoRow = page.locator('tbody tr').filter({ hasText: `下播超时督办：${OVERDUE_SESSION}` })
     await expect(todoRow).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: `${shotDir}/07-workbench-todo.png`, fullPage: true })
     await todoRow.getByRole('button', { name: '完成' }).click()
 
     await page.goto('/ims/workbench/messages')
     await expect(page.locator('h1')).toHaveText('消息中心', { timeout: 15_000 })
-    const msgRow = page.locator('tbody tr').filter({ hasText: `下播超时督办 1048：${OVERDUE_SESSION}` })
+    const msgRow = page.locator('tbody tr').filter({ hasText: `下播超时督办：${OVERDUE_SESSION}` })
     await expect(msgRow).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: `${shotDir}/08-workbench-message.png`, fullPage: true })
     const readBtn = msgRow.getByRole('button', { name: '标已读' })

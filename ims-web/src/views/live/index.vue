@@ -343,7 +343,7 @@
     <ProtoDrawer :open="supplementOpen" title="历史补录" width="720px" @close="supplementOpen = false">
       <div v-if="supplementGaps.length" class="empty" data-testid="live-supplement-empty" style="padding: 12px 0 4px">
         <div class="et">历史补录还缺 {{ supplementGaps.length }} 项</div>
-        <div class="es">账号、实名人、设备和补录说明都要填。说明为空返回 1049，审批通过后才入库。</div>
+        <div class="es">账号、实名人、设备和补录说明都要填。说明为空不能提交，审批通过后才入库。</div>
       </div>
       <div class="formrow one">
         <div class="fld">
@@ -507,7 +507,7 @@
         <template v-if="entryOpen">
         <div v-if="!report" class="empty" data-testid="live-report-empty" style="padding: 12px 0">
           <div class="et">待录入</div>
-          <div class="es">下播九项还没提交。缺字段返回 1046，提交后只能走更正单。</div>
+          <div class="es">下播九项还没提交。缺字段不能提交，提交后只能走更正单。</div>
         </div>
         <p v-if="financeView" class="hint" data-testid="live-report-finance-scope">财务字段：仅 GMV 与成本</p>
         <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
@@ -1235,7 +1235,7 @@ function unwrapError(error: unknown) {
 function bizError(error: unknown) {
   const body = unwrapError(error) as { code?: number; msg?: string }
   if (body && typeof body === 'object' && typeof body.code === 'number' && body.code !== 0) {
-    return `${body.code} ${body.msg || ''}`.trim()
+    return (body.msg || '操作失败').trim()
   }
   return errorMessage(error)
 }
@@ -1667,7 +1667,7 @@ async function loadPending() {
     if (body?.code === 1048) {
       pendingRows.value = body.data?.list || []
       overdueCount.value = Number(body.data?.overdueCount || pendingRows.value.filter((row) => row.overdue).length)
-      pendingHint.value = `1048 ${body.msg || '24小时录入超时督办'}`
+      pendingHint.value = body.msg || '24小时录入超时督办'
       return
     }
     pendingRows.value = []

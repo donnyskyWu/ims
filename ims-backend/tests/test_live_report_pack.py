@@ -293,7 +293,7 @@ def test_overdue_pending_hints_1048_and_creates_supervision_once():
         ).all()
         by_channel = {item.channel: item for item in messages}
         assert set(by_channel) == {"IN_APP", "DINGTALK", "SMS"}
-        assert by_channel["IN_APP"].title.startswith("下播超时督办 1048")
+        assert by_channel["IN_APP"].title.startswith("下播超时督办：")
         assert "钉钉本地桩，未外发" in by_channel["DINGTALK"].content
         assert "短信本地桩，未外发" in by_channel["SMS"].content
         alarms = db.scalars(

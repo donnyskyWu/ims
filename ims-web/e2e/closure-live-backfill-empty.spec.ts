@@ -35,7 +35,7 @@ test.describe('live backfill empty and 24h urge stub', () => {
     )
     await drawer.getByTestId('live-supplement-submit').click()
     expect(((await (await missingResp).json()) as { code: number }).code).toBe(1049)
-    await expect(drawer.getByTestId('live-supplement-error')).toContainText('1049')
+    await expect(drawer.getByTestId('live-supplement-error')).toContainText('补录缺少说明')
     await expect(drawer.getByTestId('live-supplement-reason')).toHaveAttribute('data-missing', '1')
     await page.screenshot({ path: `${shotDir}/live-180-supplement-1049.png`, fullPage: true })
     await drawer.locator('.dr-x').click()

@@ -134,7 +134,7 @@ test.describe('live risk pack closure', () => {
     )
     await drawer.getByTestId('live-supplement-submit').click()
     expect(((await (await missingResp).json()) as { code: number }).code).toBe(1049)
-    await expect(drawer.getByTestId('live-supplement-error')).toContainText('1049')
+    await expect(drawer.getByTestId('live-supplement-error')).toContainText('补录缺少说明')
     await page.screenshot({ path: `${shotDir}/04-supplement-1049.png`, fullPage: true })
 
     await expect(drawer.getByTestId('live-supplement-account').locator(`option[value="${ids.accountId}"]`)).toHaveCount(1)
@@ -161,7 +161,7 @@ test.describe('live risk pack closure', () => {
     )
     await detail.getByTestId('live-start-btn').click()
     expect(((await (await startResp).json()) as { code: number }).code).toBe(1049)
-    await expect(detail.getByTestId('live-action-error')).toContainText('1049')
+    await expect(detail.getByTestId('live-action-error')).toContainText('补录未审批')
 
     await detail.getByTestId('live-supplement-comment').fill('补录通过')
     const approveResp = page.waitForResponse(

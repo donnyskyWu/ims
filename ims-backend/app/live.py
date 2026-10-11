@@ -1408,9 +1408,9 @@ def urge_stubs(session_code: str, hours: int) -> list[tuple[str, str, str]]:
     code = session_code
     base = f"下播已超过 {hours} 小时未录入"
     return [
-        ("IN_APP", f"下播超时督办 1048：{code}"[:128], f"1048 {base}"[:512]),
-        ("DINGTALK", f"钉钉桩 1048：{code}"[:128], f"1048 钉钉本地桩，未外发。{base}"[:512]),
-        ("SMS", f"短信桩 1048：{code}"[:128], f"1048 短信本地桩，未外发。{base}"[:512]),
+        ("IN_APP", f"下播超时督办：{code}"[:128], f"下播超时督办：已超过 {hours} 小时未录入"[:512]),
+        ("DINGTALK", f"钉钉提醒：{code}"[:128], f"钉钉本地桩，未外发。{base}"[:512]),
+        ("SMS", f"短信提醒：{code}"[:128], f"短信本地桩，未外发。{base}"[:512]),
     ]
 
 
