@@ -457,6 +457,7 @@ def menu_seed_create(
     payload = dict(row.payload_json) if isinstance(row.payload_json, dict) else {}
     payload["menuTitle"] = title
     row.payload_json = payload
+    flag_modified(row, "payload_json")
     row.menu_seed = 1
     row.menu_route = f"/ims/analysis/query-tool/run/{row.template_code}"
     row.perm_code = (body.permCode or f"ims:analysis:qt:run:{row.template_code}").strip()
@@ -477,6 +478,7 @@ def menu_seed_delete(
     payload = dict(row.payload_json) if isinstance(row.payload_json, dict) else {}
     payload.pop("menuTitle", None)
     row.payload_json = payload
+    flag_modified(row, "payload_json")
     row.menu_seed = 0
     row.menu_route = ""
     row.updated_at = utcnow()
