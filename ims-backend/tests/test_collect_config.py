@@ -89,6 +89,46 @@ def test_external_account_keyword_and_threshold():
     )
     assert len(listed.json()["data"]["list"]) == 1
 
+    play = client.post(
+        "/admin-api/ims/collect/threshold",
+        headers=auth,
+        json={
+            "thresholdCategory": "ALERT",
+            "platformType": "DOUYIN",
+            "metricName": "play_count",
+            "compareOperator": "GT",
+            "thresholdValue": "100",
+            "status": "ENABLED",
+        },
+    )
+    play_body = play.json()
+    assert play_body["code"] == 0, play_body
+    assert play_body["data"]["statusLabel"] == "启用"
+    assert play_body["data"]["summary"] == "播放量 > 100"
+
+    packed = client.post(
+        "/admin-api/ims/collect/threshold",
+        headers=auth,
+        json={
+            "thresholdCategory": "ALERT",
+            "platformType": "DOUYIN",
+            "metricName": "play_count",
+            "thresholdValue": "GT 100",
+            "status": "ENABLED",
+        },
+    )
+    assert packed.json()["data"]["summary"] == "播放量 > 100"
+
+    listed_zh = client.get(
+        "/admin-api/ims/collect/threshold/list",
+        headers=auth,
+        params={"thresholdCategory": "ALERT"},
+    ).json()
+    hit = next(item for item in listed_zh["data"]["list"] if item["thresholdValue"] == "100")
+    assert hit["status"] == "ENABLED"
+    assert hit["statusLabel"] == "启用"
+    assert hit["summary"] == "播放量 > 100"
+
     client.delete(f"/admin-api/ims/collect/external/account/{acc_id}", headers=auth)
 
 
