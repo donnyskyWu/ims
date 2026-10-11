@@ -126,6 +126,7 @@
               </td>
               <td v-if="kind === 'phone'">
                 <button class="btn btn-txt" type="button" @click="openDetail(row)">详情</button>
+                <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-btn" @click="openChain(row)">正向穿透</button>
               </td>
               <td v-else>
                 <button v-if="row.status === 'PENDING_REVIEW'" class="btn btn-txt" type="button" data-testid="corp-asset-checkout-btn" @click="openCheckout(row)">领用</button>
@@ -442,11 +443,20 @@
             {{ chainState.L5.error }}
             <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l5" @click="loadChainLayer('L5')">重试</button>
           </p>
-          <p v-else class="hint">
-            成本 <span data-testid="corp-asset-chain-cost-amount">{{ chainCostText }}</span>
-            · 收入 <span data-testid="corp-asset-chain-revenue">{{ chainRevenueText }}</span>
-            · 场次 {{ chainCost?.sessionCount || 0 }}
-          </p>
+          <div v-else class="cost-cards" data-testid="corp-asset-chain-cost-cards">
+            <div class="card stat">
+              <span class="l">成本</span>
+              <div class="n" data-testid="corp-asset-chain-cost-amount">{{ chainCostText }}</div>
+            </div>
+            <div class="card stat">
+              <span class="l">收入</span>
+              <div class="n" data-testid="corp-asset-chain-revenue">{{ chainRevenueText }}</div>
+            </div>
+            <div class="card stat">
+              <span class="l">场次</span>
+              <div class="n" data-testid="corp-asset-chain-session-count">{{ chainCost?.sessionCount || 0 }}</div>
+            </div>
+          </div>
         </section>
       </div>
       <template #foot>
@@ -737,6 +747,7 @@ const forwardOpen = ref(false)
 const chainOpen = ref(false)
 const chainTab = ref<'layers' | 'graph'>('layers')
 const chainAssetId = ref(0)
+const chainSubject = ref('')
 type ChainLayer = { loading: boolean; error: string }
 const chainState = ref<Record<string, ChainLayer>>({
   L1: { loading: false, error: '' },
@@ -993,6 +1004,7 @@ function statusLabel(value: string) {
 }
 
 function typeLabel(value: string) {
+  if (value === 'PHONE') return '手机设备'
   const dict = assetTypes.value.length ? assetTypes.value : fallbackType
   return dict.find((item) => item.value === value)?.label || value
 }
@@ -1270,7 +1282,9 @@ async function loadChainLayer(layer: 'L1' | 'L2' | 'L3' | 'L4' | 'L5') {
   if (!chainAssetId.value) return
   chainState.value[layer] = { loading: true, error: '' }
   try {
-    const res = await http.get(`/asset/forward/chain/${chainAssetId.value}`, { params: { layer } })
+    const params: Record<string, string> = { layer }
+    if (chainSubject.value) params.subject = chainSubject.value
+    const res = await http.get(`/asset/forward/chain/${chainAssetId.value}`, { params })
     const data = (res.data?.data || {}) as Row
     if (layer === 'L1') chainAsset.value = (data.asset as Row) || null
     if (layer === 'L2') chainAccounts.value = (data.accounts as Row[]) || []
@@ -1285,6 +1299,7 @@ async function loadChainLayer(layer: 'L1' | 'L2' | 'L3' | 'L4' | 'L5') {
 
 function openChain(row: Row) {
   chainAssetId.value = Number(row.id)
+  chainSubject.value = kind.value === 'phone' ? 'phone' : ''
   chainTab.value = 'layers'
   chainAsset.value = null
   chainAccounts.value = []
@@ -2007,3 +2022,12 @@ onMounted(async () => {
   await load()
 })
 </script>
+
+<style scoped>
+.cost-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+</style>
