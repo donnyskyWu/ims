@@ -123,6 +123,18 @@
 
     <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
 
+    <div v-if="confirmOpen" class="mask on" style="z-index: 140" data-testid="fin-cost-confirm-dialog">
+      <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 420px; padding: 16px">
+        <b>核准成本</b>
+        <p>成本合计 {{ yuan(confirmTotal) }}</p>
+        <p>核准后 5 分钟内自动计算利润</p>
+        <div class="acts" style="gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-cost-confirm-ok" @click="submitConfirm">确认</button>
+          <button class="btn btn-sec btn-sm" type="button" @click="confirmOpen = false">取消</button>
+        </div>
+      </div>
+    </div>
+
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table v-if="tab === 'pending'">
@@ -390,6 +402,9 @@ const rate = ref<Record<string, any> | null>(null)
 const pendingRows = ref<Record<string, any>[]>([])
 const enteredRows = ref<Record<string, any>[]>([])
 const drawerOpen = ref(false)
+const confirmOpen = ref(false)
+const confirmTarget = ref('')
+const confirmTotal = ref(0)
 const correctionOpen = ref(false)
 const correctionReason = ref('')
 const correctionPreview = ref<Record<string, any> | null>(null)
@@ -976,14 +991,28 @@ async function submitCorrection() {
   }
 }
 
-async function confirmCost(sessionCode: string) {
-  const res = await http.put(`/fin/cost/${sessionCode}/confirm`)
-  if (res.data?.code !== 0) {
-    error.value = res.data?.msg || '核准失败'
-    return
+function confirmCost(sessionCode: string) {
+  const row = enteredRows.value.find((item) => item.sessionCode === sessionCode)
+  confirmTarget.value = sessionCode
+  confirmTotal.value = Number(row?.totalCost || 0)
+  confirmOpen.value = true
+}
+
+async function submitConfirm() {
+  const sessionCode = confirmTarget.value
+  if (!sessionCode) return
+  confirmOpen.value = false
+  try {
+    const res = await http.put(`/fin/cost/${sessionCode}/confirm`)
+    if (res.data?.code !== 0) {
+      error.value = res.data?.msg || '核准失败'
+      return
+    }
+    await loadRate()
+    await loadEntered()
+  } catch (err) {
+    error.value = failMsg(err, '核准失败')
   }
-  await loadRate()
-  await loadEntered()
 }
 
 watch(

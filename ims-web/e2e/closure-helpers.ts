@@ -837,6 +837,11 @@ export async function submitAndConfirmFinCostViaUi(
     (r) => r.url().includes('/fin/cost/') && r.url().includes('/confirm') && r.request().method() === 'PUT',
   )
   await enteredRow.getByRole('button', { name: '核准' }).click()
+  const confirmDialog = page.getByTestId('fin-cost-confirm-dialog')
+  await expect(confirmDialog).toBeVisible()
+  await expect(confirmDialog).toContainText('成本合计')
+  await expect(confirmDialog).toContainText('核准后 5 分钟内自动计算利润')
+  await confirmDialog.getByTestId('fin-cost-confirm-ok').click()
   const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { entryStatus?: string } }
   expect(confirmBody.code).toBe(0)
   expect(confirmBody.data?.entryStatus).toBe('CONFIRMED')
