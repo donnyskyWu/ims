@@ -1009,6 +1009,54 @@ def report_datasets(_: User = Depends(current_user)):
     return ok({"datasets": DATASETS, "compLib": COMP_LIB})
 
 
+@router.get("/viewers")
+def report_viewers(
+    keyword: str = "",
+    includeId: int = 0,
+    pageNo: int = 1,
+    pageSize: int = 50,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """发布「指定人」人员名单。同租户启用用户，按账号或姓名检索。不走用户管理数据范围。"""
+    tenant_id = tenant_of(actor)
+    page_no, size = page_args(pageNo, pageSize)
+    stmt = select(User).where(
+        User.deleted == 0,
+        User.status == "ENABLED",
+        User.tenant_id == tenant_id,
+    )
+    text = keyword.strip()
+    if text:
+        like = f"%{text}%"
+        stmt = stmt.where(or_(User.username.like(like), User.nickname.like(like)))
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    rows = list(
+        db.scalars(stmt.order_by(User.username.asc(), User.id.asc()).offset((page_no - 1) * size).limit(size)).all()
+    )
+    if includeId > 0 and all(row.id != includeId for row in rows):
+        extra = db.scalar(
+            select(User).where(User.id == includeId, User.deleted == 0, User.tenant_id == tenant_id)
+        )
+        if extra is not None:
+            rows.append(extra)
+    return ok(
+        {
+            "list": [
+                {
+                    "id": str(row.id),
+                    "username": row.username,
+                    "nickname": row.nickname or row.username,
+                }
+                for row in rows
+            ],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+        }
+    )
+
+
 @router.get("/list")
 def report_manage_list(
     request: Request,

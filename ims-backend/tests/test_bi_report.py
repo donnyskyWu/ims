@@ -542,3 +542,155 @@ def test_bi_report_no_startup_repair_is_idempotent(caplog):
     finally:
         db.close()
     assert "uk_bi_report_no" in index_names()
+
+
+def _self_user(username: str, nickname: str, role_key: str, mobile: str) -> int:
+    from sqlalchemy import select
+
+    from app.bi_br212_seed import _clone_admin_perms
+    from app.core import SessionLocal
+    from app.models import Role, User, UserRole
+    from app.scope import refresh_user_scope
+    from app.security import hash_password
+
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.username == username))
+        if user is None:
+            user = User(
+                username=username,
+                nickname=nickname,
+                mobile=mobile,
+                password_hash=hash_password("Admin@123"),
+                status="ENABLED",
+                tenant_id=0,
+            )
+            db.add(user)
+            db.flush()
+        user.nickname = nickname
+        user.mobile = mobile
+        user.password_hash = hash_password("Admin@123")
+        user.status = "ENABLED"
+        user.deleted = 0
+        user.tenant_id = 0
+        role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
+        if role is None:
+            role = Role(
+                role_name=role_key,
+                role_key=role_key,
+                data_scope="SELF",
+                source="MANUAL",
+                status="ENABLED",
+                tenant_id=0,
+            )
+            db.add(role)
+            db.flush()
+            _clone_admin_perms(db, role.id)
+        if not db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id)):
+            db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        refresh_user_scope(db, user.id)
+        db.commit()
+        return int(user.id)
+    finally:
+        db.close()
+
+
+def test_bi_viewer_picker_and_readonly_entry():
+    auth = headers()
+    viewer_id = _self_user("tc_r2", "只读同事", "bi:tc-r2", "13900002002")
+    outsider_id = _self_user("tc_r2_out", "范围外", "bi:tc-r2-out", "13900002003")
+
+    by_account = client.get(
+        "/admin-api/ims/bi/report/viewers",
+        headers=auth,
+        params={"keyword": "tc_r2", "pageSize": 100},
+    )
+    assert by_account.status_code == 200
+    picked = next(item for item in by_account.json()["data"]["list"] if item["username"] == "tc_r2")
+    assert picked["id"] == str(viewer_id)
+    assert picked["nickname"] == "只读同事"
+    assert "mobile" not in picked
+    by_name = client.get(
+        "/admin-api/ims/bi/report/viewers",
+        headers=auth,
+        params={"keyword": "只读同事"},
+    )
+    assert any(item["username"] == "tc_r2" for item in by_name.json()["data"]["list"])
+    pinned = client.get(
+        "/admin-api/ims/bi/report/viewers",
+        headers=auth,
+        params={"keyword": "没有这个人", "includeId": viewer_id},
+    )
+    assert any(item["id"] == str(viewer_id) for item in pinned.json()["data"]["list"])
+
+    outsider_token = client.post(
+        "/admin-api/ims/auth/login", json={"username": "tc_r2_out", "password": "Admin@123"}
+    ).json()["data"]["accessToken"]
+    outsider_headers = {"Authorization": f"Bearer {outsider_token}"}
+    scoped_users = client.get("/admin-api/ims/system/user/page", headers=outsider_headers, params={"pageSize": 100})
+    assert scoped_users.status_code == 200
+    scoped_names = {item["username"] for item in scoped_users.json()["data"]["list"]}
+    assert "tc_r2" not in scoped_names
+    assert scoped_users.json()["data"]["list"][0]["id"]
+    visible = client.get(
+        "/admin-api/ims/bi/report/viewers",
+        headers=outsider_headers,
+        params={"keyword": "tc_r2"},
+    )
+    assert any(item["username"] == "tc_r2" for item in visible.json()["data"]["list"])
+
+    created = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "只读授权日报", "reportType": "REPORT", "category": "日报"},
+    )
+    rid = created.json()["data"]["id"]
+    published = client.post(
+        f"/admin-api/ims/bi/report/{rid}/publish",
+        headers=auth,
+        json={
+            "dests": ["CENTER"],
+            "shareScope": "SPECIFIED",
+            "opPerm": "READONLY",
+            "rowPerm": "INHERIT",
+            "viewerIds": [viewer_id],
+            "accessType": "SHARE_LINK",
+            "expireDays": 7,
+        },
+    )
+    body = published.json()
+    assert body["code"] == 0
+    assert f"highlight={rid}" in body["data"]["shareUrl"]
+
+    viewer_token = client.post(
+        "/admin-api/ims/auth/login", json={"username": "tc_r2", "password": "Admin@123"}
+    ).json()["data"]["accessToken"]
+    viewer_headers = {"Authorization": f"Bearer {viewer_token}"}
+    listed = client.get(
+        "/admin-api/ims/bi/report/list",
+        headers=viewer_headers,
+        params={"status": "PUBLISHED", "keyword": "只读授权日报", "pageSize": 50},
+    )
+    shared = next(item for item in listed.json()["data"]["list"] if item["id"] == rid)
+    assert shared["reportNo"]
+    assert "CENTER" in shared["publishDest"]
+    assert shared["opPerm"] == "READONLY"
+    assert shared["canEdit"] is False
+    assert shared["canDelete"] is False
+    assert shared["canPublish"] is False
+    detail = client.get(f"/admin-api/ims/bi/report/{rid}", headers=viewer_headers)
+    assert detail.status_code == 200
+    assert detail.json()["data"]["canEdit"] is False
+    denied_save = client.put(
+        f"/admin-api/ims/bi/report/{rid}",
+        headers=viewer_headers,
+        json={"reportName": "越权改名", "keepVersion": True},
+    )
+    assert denied_save.status_code == 403
+    assert denied_save.json()["code"] == 403
+    denied_delete = client.delete(f"/admin-api/ims/bi/report/{rid}", headers=viewer_headers)
+    assert denied_delete.status_code == 403
+    hidden = client.get(f"/admin-api/ims/bi/report/{rid}", headers=outsider_headers)
+    assert hidden.status_code == 403
+    assert hidden.json()["code"] == 1008
+    assert outsider_id != viewer_id

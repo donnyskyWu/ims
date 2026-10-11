@@ -41,6 +41,22 @@
     <p v-if="resetNote" class="hint" data-testid="bi-report-reset-note">{{ resetNote }}</p>
     <p v-if="reportError" class="hint bad" data-testid="bi-report-error">{{ reportError }}</p>
 
+    <div v-if="published.length" class="card" style="margin-top: 14px" data-testid="bi-center-published">
+      <b>已发布到报表中心</b>
+      <div class="csub" style="margin-top: 4px">按可见范围授权查看。只读用户只能预览，没有设计入口。</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px">
+        <router-link
+          v-for="item in published"
+          :key="item.id"
+          class="btn btn-sec btn-sm"
+          :data-testid="`bi-center-report-${item.reportNo}`"
+          :to="{ path: '/ims/bi/report/preview', query: { reportId: String(item.id) } }"
+        >
+          {{ item.reportNo }} {{ item.reportName }}
+        </router-link>
+      </div>
+    </div>
+
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 14px">
       <div
         v-for="item in reports"
@@ -112,8 +128,10 @@ type Preview = {
 }
 
 type IpGroup = { id: number; name: string }
+type PublishedReport = { id: number; reportNo: string; reportName: string; publishDest?: string; status?: string }
 
 const reports = ref<ReportCard[]>([])
+const published = ref<PublishedReport[]>([])
 const selected = ref<ReportCard | null>(null)
 const preview = ref<Preview | null>(null)
 const platform = ref('')
@@ -186,6 +204,16 @@ async function loadIpGroups() {
   }
 }
 
+async function loadPublished() {
+  try {
+    const res = await http.get('/bi/report/list', { params: { status: 'PUBLISHED', pageNo: 1, pageSize: 100 } })
+    const list = (res.data.data?.list || []) as PublishedReport[]
+    published.value = list.filter((item) => String(item.publishDest || 'CENTER').split(',').includes('CENTER'))
+  } catch {
+    published.value = []
+  }
+}
+
 async function loadCatalog() {
   const res = await http.get('/bi/report/catalog')
   if (res.data.code === 0) {
@@ -235,5 +263,6 @@ async function reloadPreview() {
 onMounted(() => {
   void loadIpGroups()
   void loadCatalog()
+  void loadPublished()
 })
 </script>

@@ -268,10 +268,18 @@
         </select>
         <template v-if="publishForm.shareScope === 'SPECIFIED'">
           <label class="fld">可见用户</label>
-          <select v-model="publishForm.viewerId" class="fld-in" data-testid="bi-publish-viewer">
+          <input
+            v-model="viewerKeyword"
+            class="fld-in"
+            data-testid="bi-viewer-keyword"
+            placeholder="按姓名或账号搜索，如 tc_r2"
+            @input="scheduleViewers"
+          />
+          <select v-model="publishForm.viewerId" class="fld-in" data-testid="bi-publish-viewer" style="margin-top: 6px">
             <option value="">请选择</option>
-            <option v-for="user in viewers" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}（{{ user.username }}）</option>
+            <option v-for="person in viewers" :key="person.id" :value="String(person.id)">{{ viewerLabel(person) }}</option>
           </select>
+          <p v-if="viewerError" class="hint" data-testid="bi-viewer-error" style="color: var(--red)">{{ viewerError }}</p>
         </template>
         <label class="fld">操作权限</label>
         <select v-model="publishForm.opPerm" class="fld-in" data-testid="bi-publish-op">
@@ -308,7 +316,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Field = {
   fieldKey: string
@@ -363,7 +371,7 @@ type ReportVo = {
   canEdit?: boolean
 }
 
-type Viewer = { id: number; username: string; nickname?: string }
+type Viewer = { id: number | string; username: string; nickname?: string }
 
 /** 与页面规格 BiCompType、后端 app.bi_report.BiCompType 同序，验收 22 格。 */
 type BiCompType =
@@ -451,6 +459,9 @@ const device = ref<'PC' | 'TV' | '移动'>('PC')
 const publishOpen = ref(false)
 const publishError = ref('')
 const viewers = ref<Viewer[]>([])
+const viewerKeyword = ref('')
+const viewerError = ref('')
+let viewerTimer = 0
 const publishForm = reactive({
   dests: ['CENTER'] as string[],
   menuName: '',
@@ -903,17 +914,46 @@ function fillPublishForm() {
   publishForm.password = ''
 }
 
+function viewerLabel(person: Viewer) {
+  const name = (person.nickname || '').trim()
+  const account = (person.username || '').trim()
+  if (name && account && name !== account) return `${name}（${account}）`
+  return name || account || String(person.id)
+}
+
+function scheduleViewers() {
+  window.clearTimeout(viewerTimer)
+  viewerTimer = window.setTimeout(() => {
+    void loadViewers()
+  }, 200)
+}
+
+async function loadViewers() {
+  viewerError.value = ''
+  try {
+    const res = await http.get('/bi/report/viewers', {
+      params: {
+        keyword: viewerKeyword.value.trim() || undefined,
+        includeId: publishForm.viewerId || undefined,
+        pageNo: 1,
+        pageSize: 100,
+      },
+    })
+    const list = (res.data.data?.list || []) as Viewer[]
+    viewers.value = list
+    if (!list.length) viewerError.value = viewerKeyword.value.trim() ? '没有匹配的人员' : '暂无可选人员'
+  } catch (error: unknown) {
+    viewers.value = []
+    viewerError.value = errorMessage(error)
+  }
+}
+
 async function openPublish() {
   publishError.value = ''
+  viewerKeyword.value = ''
   fillPublishForm()
   publishOpen.value = true
-  if (viewers.value.length) return
-  try {
-    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
-    viewers.value = (res.data.data?.list || []) as Viewer[]
-  } catch {
-    viewers.value = []
-  }
+  await loadViewers()
 }
 
 async function confirmPublish() {

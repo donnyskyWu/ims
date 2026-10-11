@@ -84,8 +84,15 @@
           </button>
         </div>
 
+        <p v-if="highlightMiss" class="hint" data-testid="bi-highlight-miss" style="color: var(--red)">{{ highlightMiss }}</p>
         <div v-if="viewMode === 'card'" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px">
-          <div v-for="row in rows" :key="row.id" class="card hov">
+          <div
+            v-for="row in rows"
+            :key="row.id"
+            class="card hov"
+            :data-testid="isHighlight(row) ? 'bi-report-highlight' : undefined"
+            :style="isHighlight(row) ? { outline: '2px solid var(--blue)' } : undefined"
+          >
             <div class="rowline" style="justify-content: space-between">
               <b>{{ row.reportName }}</b>
               <span class="tag tag-info">{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</span>
@@ -123,7 +130,7 @@
               <tbody>
                 <tr v-if="loading"><td colspan="9"><div class="empty"><div class="et">加载中</div></div></td></tr>
                 <tr v-else-if="!rows.length"><td colspan="9"><div class="empty" data-testid="bi-report-list-empty"><div class="et">{{ emptyText }}</div></div></td></tr>
-                <tr v-for="row in rows" v-else :key="row.id">
+                <tr v-for="row in rows" v-else :key="row.id" :data-testid="isHighlight(row) ? 'bi-report-highlight' : undefined">
                   <td class="mono">{{ row.reportNo }}</td>
                   <td>{{ row.reportName }}</td>
                   <td>{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</td>
@@ -228,10 +235,18 @@
           </select>
           <template v-if="listPublish.shareScope === 'SPECIFIED'">
             <label class="fld">可见用户</label>
-            <select v-model="listPublish.viewerId" class="fld-in">
+            <input
+              v-model="viewerKeyword"
+              class="fld-in"
+              data-testid="bi-viewer-keyword"
+              placeholder="按姓名或账号搜索，如 tc_r2"
+              @input="scheduleViewers"
+            />
+            <select v-model="listPublish.viewerId" class="fld-in" data-testid="bi-list-viewer" style="margin-top: 6px">
               <option value="">请选择</option>
-              <option v-for="user in viewers" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+              <option v-for="person in viewers" :key="person.id" :value="String(person.id)">{{ viewerLabel(person) }}</option>
             </select>
+            <p v-if="viewerError" class="hint" data-testid="bi-viewer-error" style="color: var(--red)">{{ viewerError }}</p>
           </template>
           <label class="fld">操作权限</label>
           <select v-model="listPublish.opPerm" class="fld-in">
@@ -365,11 +380,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { useRoute, useRouter } from 'vue-router'
+import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
+const route = useRoute()
 const user = useUserStore()
 const editAllowed = ref(false)
 
@@ -416,7 +432,7 @@ type PublishRecord = {
   shareUrl?: string
 }
 
-type Viewer = { id: number; username: string; nickname?: string }
+type Viewer = { id: number | string; username: string; nickname?: string }
 
 type CatNode = { id: number; name: string; system?: boolean; children: CatNode[] }
 type FlatCat = { id: number; name: string; level: number; system: boolean }
@@ -445,6 +461,10 @@ const publishRows = ref<PublishRecord[]>([])
 const publishError = ref('')
 const copyToast = ref('')
 const viewers = ref<Viewer[]>([])
+const viewerKeyword = ref('')
+const viewerError = ref('')
+const highlightMiss = ref('')
+let viewerTimer = 0
 const listPublish = reactive({
   dests: ['CENTER'] as string[],
   menuName: '',
@@ -509,8 +529,34 @@ async function loadList() {
         filters.keyword.trim() || filters.reportType || filters.category || filters.shareScope || filters.status,
       )
     }
+    await pinHighlight()
   } finally {
     loading.value = false
+  }
+}
+
+const highlightId = computed(() => {
+  const raw = route.query.highlight
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const id = Number(value)
+  return Number.isFinite(id) && id > 0 ? id : 0
+})
+
+function isHighlight(row: Row) {
+  return highlightId.value > 0 && Number(row.id) === highlightId.value
+}
+
+async function pinHighlight() {
+  highlightMiss.value = ''
+  const id = highlightId.value
+  if (!id) return
+  if (rows.value.some((row) => Number(row.id) === id)) return
+  try {
+    const res = await http.get(`/bi/report/${id}`)
+    const row = res.data.data as Row
+    if (row?.id) rows.value = [row, ...rows.value.filter((item) => Number(item.id) !== Number(row.id))]
+  } catch (error: unknown) {
+    highlightMiss.value = errorMessage(error)
   }
 }
 
@@ -622,13 +668,37 @@ function fillListPublish(row: Row) {
   listPublish.password = ''
 }
 
+function viewerLabel(person: Viewer) {
+  const name = (person.nickname || '').trim()
+  const account = (person.username || '').trim()
+  if (name && account && name !== account) return `${name}（${account}）`
+  return name || account || String(person.id)
+}
+
+function scheduleViewers() {
+  window.clearTimeout(viewerTimer)
+  viewerTimer = window.setTimeout(() => {
+    void loadViewers()
+  }, 200)
+}
+
 async function loadViewers() {
-  if (viewers.value.length) return
+  viewerError.value = ''
   try {
-    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
-    viewers.value = (res.data.data?.list || []) as Viewer[]
-  } catch {
+    const res = await http.get('/bi/report/viewers', {
+      params: {
+        keyword: viewerKeyword.value.trim() || undefined,
+        includeId: listPublish.viewerId || undefined,
+        pageNo: 1,
+        pageSize: 100,
+      },
+    })
+    const list = (res.data.data?.list || []) as Viewer[]
+    viewers.value = list
+    if (!list.length) viewerError.value = viewerKeyword.value.trim() ? '没有匹配的人员' : '暂无可选人员'
+  } catch (error: unknown) {
     viewers.value = []
+    viewerError.value = errorMessage(error)
   }
 }
 
@@ -636,6 +706,7 @@ async function openListPublish(row: Row) {
   moreRow.value = null
   publishError.value = ''
   copyToast.value = ''
+  viewerKeyword.value = ''
   fillListPublish(row)
   publishManage.value = row
   publishRows.value = []
