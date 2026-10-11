@@ -160,7 +160,7 @@
               :data-testid="String(row.taskType || '') === 'acct_transfer' ? 'wb-acct-transfer-todo' : undefined"
             >
               <td>{{ cell(row, ['title']) }}</td>
-              <td>{{ cell(row, ['status']) }}</td>
+              <td>{{ todoStatusLabel(row.status) }}</td>
               <td>{{ overdueLabel(row) }}</td>
               <td>
                 <router-link
@@ -266,6 +266,14 @@ import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
 const user = useUserStore()
+
+function todoStatusLabel(status: unknown) {
+  const code = String(status || '')
+  if (code === 'PENDING') return '待处理'
+  if (code === 'DONE') return '已处理'
+  if (code === 'EXPIRED') return '已过期'
+  return code || '—'
+}
 
 function platformSlug(platform: string) {
   const map: Record<string, string> = {
