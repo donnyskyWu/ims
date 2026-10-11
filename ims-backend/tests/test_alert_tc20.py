@@ -340,3 +340,41 @@ def test_c056_rule_fields_and_finance_module():
     )
     assert allowed.json()["code"] == 0
     assert allowed.json()["data"]["sourceModule"] == "财务核算"
+
+
+def test_c057_rule_name_unique_1165():
+    auth = headers()
+    suffix = uuid.uuid4().hex[:8]
+    first = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": f"c057.a.{suffix}", "ruleName": f"同名规则{suffix}", "thresholdExpr": "delayMinutes>1", "enabled": False},
+    )
+    assert first.json()["code"] == 0
+    second = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": f"c057.b.{suffix}", "ruleName": f"同名规则{suffix}", "thresholdExpr": "delayMinutes>1", "enabled": False},
+    )
+    assert second.json()["code"] == 1165
+    assert "规则名称已存在" in second.json()["msg"]
+
+    other = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": f"c057.c.{suffix}", "ruleName": f"另一个{suffix}", "thresholdExpr": "delayMinutes>1", "enabled": False},
+    )
+    assert other.json()["code"] == 0
+    renamed = client.put(
+        f"/admin-api/ims/alert/rule/{other.json()['data']['id']}",
+        headers=auth,
+        json={"ruleName": f"同名规则{suffix}"},
+    )
+    assert renamed.json()["code"] == 1165
+    kept = client.put(
+        f"/admin-api/ims/alert/rule/{first.json()['data']['id']}",
+        headers=auth,
+        json={"ruleName": f"同名规则{suffix}", "thresholdExpr": "delayMinutes>2"},
+    )
+    assert kept.json()["code"] == 0
+    assert kept.json()["data"]["thresholdExpr"] == "delayMinutes>2"

@@ -177,6 +177,11 @@
         <p v-if="thresholdError" data-testid="alert-rule-threshold-error" class="hint" style="color: var(--red)">
           {{ thresholdError }}
         </p>
+        <p v-if="editingId" class="hint" data-testid="alert-rule-threshold-where">
+          阈值在
+          <router-link to="/ims/collect/threshold">数据采集 → 阈值规则</router-link>
+          配置，保存后即时生效。
+        </p>
         <label class="fld">触发条件 DSL</label>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
           <input v-model="form.dslSource" data-testid="alert-dsl-source" class="fld-in" placeholder="ims_fin_cost" />
@@ -460,7 +465,7 @@ async function submitCreate() {
     const edited = editingId.value !== null
     showForm.value = false
     editingId.value = null
-    if (edited) toast.value = '阈值已即时生效（热更新）'
+    toast.value = edited ? '阈值已即时生效（热更新）' : '预警规则创建成功'
     await loadList()
   } catch (error) {
     const body = error as { code?: number; msg?: string }
@@ -468,6 +473,7 @@ async function submitCreate() {
     if (body?.code === 1009 && msg.includes('thresholdExpr')) {
       thresholdError.value = '阈值表达式须为字段、比较符和数字，例如 delayMinutes>30'
     } else if (body?.code === 1009) dslError.value = msg
+    else if (body?.code === 1165 && msg.includes('规则名称')) nameError.value = msg
     else if (body?.code === 1165) codeError.value = msg
     else if (body?.code === 1001 && msg.includes('ruleName')) nameError.value = '规则名称不能为空'
     else formError.value = msg
@@ -475,8 +481,18 @@ async function submitCreate() {
 }
 
 async function toggle(row: Row) {
-  await http.put(`/alert/rule/${row.id}/enable`, null, { params: { enabled: !row.enabled } })
-  await loadList()
+  const enabling = !row.enabled
+  try {
+    const res = await http.put(`/alert/rule/${row.id}/enable`, null, { params: { enabled: enabling } })
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '操作失败'
+      return
+    }
+    toast.value = enabling ? '规则已启用' : '规则已停用'
+    await loadList()
+  } catch (error) {
+    toast.value = errorMessage(error)
+  }
 }
 
 async function run(ruleId: number) {

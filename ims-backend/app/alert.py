@@ -358,6 +358,19 @@ def normalize_monitor(db: Session, actor: User, raw: str, *, default_when_empty:
     return module, None
 
 
+def name_taken(db: Session, tenant_id: int, name: str, exclude_id: int | None = None) -> bool:
+    if not name:
+        return False
+    stmt = select(AlertRule.id).where(
+        AlertRule.deleted == 0,
+        AlertRule.tenant_id == tenant_id,
+        AlertRule.rule_name == name,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(AlertRule.id != exclude_id)
+    return db.scalar(stmt) is not None
+
+
 def normalize_notify(raw: str | None) -> tuple[str, str | None]:
     mode = (raw or "IN_APP").strip().upper() or "IN_APP"
     if mode not in NOTIFY_MODES:
@@ -601,6 +614,8 @@ def create_rule(
         )
         if dup:
             return fail(1165, "规则编码已存在（1165）")
+    if name and name_taken(db, tenant_id, name):
+        return fail(1165, "规则名称已存在（1165）")
     if not code:
         code = next_rule_code(db, tenant_id)
     stored_expr = body.thresholdExpr.strip()
@@ -654,6 +669,8 @@ def update_rule(
         name = body.ruleName.strip()
         if not name:
             return fail(1001, "ruleName 不能为空")
+        if name_taken(db, tenant_id, name, exclude_id=row.id):
+            return fail(1165, "规则名称已存在（1165）")
         row.rule_name = name
     if body.metricType is not None and body.metricType.strip():
         row.metric_type = body.metricType.strip()

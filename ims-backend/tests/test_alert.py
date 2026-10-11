@@ -979,12 +979,12 @@ def test_alert_rule_level_filter_and_empty_delivery():
     created_low = client.post(
         "/admin-api/ims/alert/rule",
         headers=auth,
-        json={"ruleCode": low, "ruleName": name, "thresholdExpr": "delayMinutes>1", "level": 1, "enabled": True},
+        json={"ruleCode": low, "ruleName": f"{name}低", "thresholdExpr": "delayMinutes>1", "level": 1, "enabled": True},
     )
     created_high = client.post(
         "/admin-api/ims/alert/rule",
         headers=auth,
-        json={"ruleCode": high, "ruleName": name, "thresholdExpr": "delayMinutes>1", "level": 3, "enabled": False},
+        json={"ruleCode": high, "ruleName": f"{name}高", "thresholdExpr": "delayMinutes>1", "level": 3, "enabled": False},
     )
     assert created_low.json()["code"] == 0
     assert created_high.json()["code"] == 0
