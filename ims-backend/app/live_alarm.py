@@ -603,6 +603,35 @@ def load_rule(db: Session, actor: User, rule_id: int) -> LiveAlarmRule | None:
     return row
 
 
+def notify_candidates(db: Session, actor: User) -> dict:
+    """告警通知人只从本租户启用用户和角色里选，不走系统用户管理权限。"""
+    tenant_id = tenant_of(actor)
+    users = db.scalars(
+        select(User)
+        .where(User.deleted == 0, User.tenant_id == tenant_id, User.status == "ENABLED")
+        .order_by(User.id)
+        .limit(200)
+    ).all()
+    roles = db.scalars(
+        select(Role).where(Role.deleted == 0, Role.tenant_id == tenant_id).order_by(Role.id).limit(80)
+    ).all()
+    members: dict[int, list[int]] = {row.id: [] for row in roles}
+    role_ids = list(members)
+    if role_ids:
+        links = db.scalars(
+            select(UserRole).where(UserRole.role_id.in_(role_ids), UserRole.tenant_id == tenant_id)
+        ).all()
+        for link in links:
+            members.setdefault(int(link.role_id), []).append(int(link.user_id))
+    return {
+        "users": [{"id": row.id, "name": row.nickname or row.username} for row in users],
+        "roles": [
+            {"id": row.id, "name": row.role_name or row.role_key, "userIds": members.get(row.id, [])}
+            for row in roles
+        ],
+    }
+
+
 @router.get("/rules")
 def alarm_rules(
     pageNo: int = 1,
@@ -627,7 +656,15 @@ def alarm_rules(
     for row in rows:
         ids.update(int(item) for item in (row.notify_users or []))
     names = user_names(db, ids)
-    return ok({"list": [rule_vo(row, names) for row in rows], "total": total, "pageNo": page_no, "pageSize": size})
+    return ok(
+        {
+            "list": [rule_vo(row, names) for row in rows],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+            "candidates": notify_candidates(db, actor),
+        }
+    )
 
 
 @router.post("/rule")

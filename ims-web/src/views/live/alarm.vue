@@ -294,10 +294,18 @@
             <option value="3">L3 严重</option>
           </select>
         </label>
-        <label class="fld">
+        <div class="fld" data-testid="live-alarm-rule-notify">
           <span>通知人 *</span>
-          <input v-model="ruleForm.notifyText" data-testid="live-alarm-rule-notify" placeholder="用户 id，多个用逗号分隔" />
-        </label>
+          <p v-if="!candidates.users.length && !candidates.roles.length" class="hint">暂无可选的人或角色</p>
+          <label v-for="item in candidates.users" :key="'user-' + item.id" style="display: block">
+            <input type="checkbox" :checked="ruleForm.notifyUsers.includes(item.id)" @change="toggleNotifyUser(item.id)" />
+            {{ item.name }}
+          </label>
+          <label v-for="item in candidates.roles" :key="'role-' + item.id" style="display: block">
+            <input type="checkbox" :checked="roleSelected(item)" @change="toggleNotifyRole(item)" />
+            {{ item.name }}
+          </label>
+        </div>
         <p v-if="ruleError" class="hint bad" data-testid="live-alarm-rule-error">{{ ruleError }}</p>
         <div class="drawer-f">
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-rule-save" @click="saveRule">保存</button>
@@ -427,6 +435,10 @@ const statsEmpty = computed(() => {
 })
 const route = useRoute()
 const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '', timeFrom: '', timeTo: '' })
+const candidates = reactive({
+  users: [] as { id: number; name: string }[],
+  roles: [] as { id: number; name: string; userIds: number[] }[],
+})
 const ruleFilters = reactive({ keyword: '', ruleType: '', status: '' })
 const unhandledCount = computed(() => Number(stats.value?.byHandleStatus?.UNHANDLED || 0))
 const severeOpen = ref(false)
@@ -480,7 +492,6 @@ const ruleForm = reactive({
   level: '2',
   status: 'ENABLED',
   notifyUsers: [] as number[],
-  notifyText: '',
 })
 
 const handleOpen = ref(false)
@@ -586,6 +597,11 @@ async function loadRules() {
   try {
     const res = await http.get('/live/alarm/rules', { params })
     rules.value = res.data.data.list || []
+    const found = res.data.data.candidates
+    if (found) {
+      candidates.users = found.users || []
+      candidates.roles = found.roles || []
+    }
   } catch (err) {
     error.value = errorMessage(err)
   }
@@ -618,7 +634,6 @@ function openRule(row?: RuleRow) {
     ruleForm.level = '2'
     ruleForm.status = 'ENABLED'
     ruleForm.notifyUsers = []
-    ruleForm.notifyText = ''
   } else {
     editingId.value = row.id
     ruleForm.ruleName = row.ruleName
@@ -630,16 +645,30 @@ function openRule(row?: RuleRow) {
     ruleForm.level = String(row.level)
     ruleForm.status = row.status
     ruleForm.notifyUsers = row.notifyUsers?.length ? [...row.notifyUsers] : []
-    ruleForm.notifyText = ruleForm.notifyUsers.join(',')
   }
   ruleOpen.value = true
 }
 
+function toggleNotifyUser(id: number) {
+  const picked = new Set(ruleForm.notifyUsers)
+  if (picked.has(id)) picked.delete(id)
+  else picked.add(id)
+  ruleForm.notifyUsers = [...picked]
+}
+
+function roleSelected(role: { userIds: number[] }) {
+  return role.userIds.length > 0 && role.userIds.every((id) => ruleForm.notifyUsers.includes(id))
+}
+
+function toggleNotifyRole(role: { userIds: number[] }) {
+  const picked = new Set(ruleForm.notifyUsers)
+  if (roleSelected(role)) role.userIds.forEach((id) => picked.delete(id))
+  else role.userIds.forEach((id) => picked.add(id))
+  ruleForm.notifyUsers = [...picked]
+}
+
 function notifyFromText() {
-  return String(ruleForm.notifyText || '')
-    .split(/[,，\s]+/)
-    .map((item) => Number(item))
-    .filter((item) => Number.isInteger(item) && item > 0)
+  return ruleForm.notifyUsers.filter((item) => Number.isInteger(item) && item > 0)
 }
 
 function rulePayload() {
