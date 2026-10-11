@@ -49,7 +49,7 @@ test.describe('bi metric analysis C042', () => {
     await page.getByTestId('bi-analysis-chart-type').selectOption('line')
     await expect(chart.locator('polyline')).toBeVisible()
     await page.getByTestId('bi-analysis-chart-type').selectOption('pie')
-    await expect(chart.locator('circle')).toBeVisible()
+    await expect(chart.locator('circle').first()).toBeVisible()
 
     await ip.selectOption('电竞一组')
     await page.locator('.tab', { hasText: '指标明细' }).click()

@@ -100,7 +100,7 @@ test.describe('bi local tails 222', () => {
     await page.getByTestId('bi-analysis-from').fill('2026-09-01')
     await page.getByTestId('bi-analysis-to').fill('2026-09-30')
     await page.getByTestId('bi-analysis-run').click()
-    await expect(page.locator('tbody tr', { hasText: metricName })).toBeVisible()
+    await expect(page.locator('tbody tr', { hasText: metricName }).first()).toBeVisible()
 
     await page.goto('/ims/bi/report/preview')
     await expect(page.locator('h1')).toHaveText('预览与下钻')
