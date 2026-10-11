@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.models import DictData, DictType, SysParam, User
+from app.models import ContentProject, ContentSop, DictData, DictType, SysParam, User
 from app.settings_runtime import SECRET_MASK, invalidate_param_cache, is_secret_param, param_display_value
 
 router = APIRouter()
@@ -19,7 +19,7 @@ DICT_SEED = [
     ("dict_sales_platform", "销售平台", [("PRIVATE", "私域"), ("KUAISHOU", "快手"), ("DOUYIN", "抖音"), ("NONE", "无")]),
     ("dict_win_prediction", "红黑", [("RED", "红"), ("BLACK", "黑"), ("UNKNOWN", "待判定")]),
     ("dict_position", "钉钉岗位", [("LIVE_OPS", "直播运营"), ("DIRECTOR", "编导"), ("ANCHOR", "主播达人")]),
-    ("dict_content_type", "内容类型", [("SHORT_VIDEO", "短视频"), ("LIVE_CLIP", "直播切片")]),
+    ("dict_content_type", "内容类型", [("ARTICLE", "文章"), ("SHORT_VIDEO", "短视频"), ("VIDEO", "视频")]),
     ("dict_ai_scene", "AI 场景", [("TITLE", "标题"), ("COVER", "封面")]),
     ("dict_yes_no", "是否", [("YES", "是"), ("NO", "否")]),
     ("dict_sim_operator", "运营商", [("MOBILE", "移动"), ("UNICOM", "联通"), ("TELECOM", "电信")]),
@@ -76,6 +76,77 @@ PARAM_SEED = [
     ("comfyui.baseUrl", "", "ComfyUI 根地址（IMS_COMFYUI_BASE_URL；空且未开桩则不可生成）"),
     ("comfyui.tokenSecret", "", "ComfyUI Token（敏感，仅系统参数或 IMS_COMFYUI_TOKEN，界面掩码）"),
 ]
+
+
+# 全系统作品类型只保留这一套。顺序即字典 sort。
+OFFICIAL_CONTENT_TYPES: tuple[tuple[str, str], ...] = (
+    ("ARTICLE", "文章"),
+    ("SHORT_VIDEO", "短视频"),
+    ("VIDEO", "视频"),
+)
+# 存量「图文」写法。不改写已经是 ARTICLE 的编码，只改展示名。
+CONTENT_TYPE_ARTICLE_ALIASES = ("GRAPHIC", "IMAGE_TEXT", "图文")
+# 存量「直播切片」。裸「直播」/ LIVE 不是切片，不映射。
+CONTENT_TYPE_SHORT_VIDEO_ALIASES = ("LIVE_CLIP", "直播切片")
+
+
+def align_dict_content_type(db: Session) -> None:
+    """把 dict_content_type 收成文章 / 短视频 / 视频。可重复执行。"""
+    official = {value: (label, index) for index, (value, label) in enumerate(OFFICIAL_CONTENT_TYPES, start=1)}
+    if db.scalar(select(DictType).where(DictType.dict_type == "dict_content_type", DictType.deleted == 0)) is None:
+        db.add(DictType(dict_type="dict_content_type", type_name="内容类型", status="ENABLED", tenant_id=0))
+        db.flush()
+    rows = list(
+        db.scalars(select(DictData).where(DictData.dict_type == "dict_content_type", DictData.deleted == 0)).all()
+    )
+    by_value = {row.dict_value: row for row in rows}
+    for value, (label, sort) in official.items():
+        row = by_value.get(value)
+        if row is None:
+            db.add(
+                DictData(
+                    dict_type="dict_content_type",
+                    dict_label=label,
+                    dict_value=value,
+                    sort=sort,
+                    status="ENABLED",
+                    tenant_id=0,
+                )
+            )
+            continue
+        row.dict_label = label
+        row.sort = sort
+        row.status = "ENABLED"
+    for row in rows:
+        if row.dict_value not in official and row.status != "DISABLED":
+            row.status = "DISABLED"
+
+
+def remap_stored_content_types(session: Session, model) -> int:
+    """图文 → 文章，直播切片 → 短视频。第二遍没有可改行。"""
+    from sqlalchemy import update
+
+    changed = 0
+    for aliases, target in (
+        (CONTENT_TYPE_ARTICLE_ALIASES, "ARTICLE"),
+        (CONTENT_TYPE_SHORT_VIDEO_ALIASES, "SHORT_VIDEO"),
+    ):
+        result = session.execute(update(model).where(model.content_type.in_(aliases)).values(content_type=target))
+        changed += int(result.rowcount or 0)
+    return changed
+
+
+def apply_content_type_compat(db: Session, ops: Session) -> int:
+    """启动兼容：对齐字典并改写作品内容类型列。不碰文件 MIME。"""
+    from app.ops_models import ExternalWork, InternalContent
+
+    align_dict_content_type(db)
+    changed = 0
+    for model in (ContentProject, ContentSop):
+        changed += remap_stored_content_types(db, model)
+    for model in (ExternalWork, InternalContent):
+        changed += remap_stored_content_types(ops, model)
+    return changed
 
 
 def seed_dict(db: Session) -> None:

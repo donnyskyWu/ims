@@ -45,6 +45,7 @@ test.describe('采集任务调度与失败重试', () => {
       (r) => r.url().includes('/collect/task/') && r.url().endsWith('/stop') && r.request().method() === 'POST',
     )
     await row.getByTestId('task-stop').click()
+    await page.getByTestId('confirm-ok').click()
     expect(((await (await stopResp).json()) as { code: number }).code).toBe(0)
     await expect(row.getByTestId('task-status')).toHaveText('停用')
     await expect(row.getByTestId('task-next-run')).toHaveText('已停止，暂无下次执行')
@@ -55,6 +56,7 @@ test.describe('采集任务调度与失败重试', () => {
       (r) => r.url().includes('/collect/task/') && r.url().endsWith('/start') && r.request().method() === 'POST',
     )
     await row.getByTestId('task-start').click()
+    await page.getByTestId('confirm-ok').click()
     expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
     await expect(row.getByTestId('task-status')).toHaveText('启用')
     await expect(row.getByTestId('task-next-run')).toContainText(/\d{4}-\d{2}-\d{2}/)

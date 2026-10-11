@@ -516,6 +516,9 @@ def upsert_videos(profile: PlatformProfile, ops: Session, account: PlatformAccou
         snap.updated_at = utcnow()
         written += 1
         ops.flush()
+        from app.collect_snapshot import mirror_collected_video
+
+        mirror_collected_video(ops, account, item)
     return written
 
 
@@ -548,6 +551,9 @@ def upsert_follower_daily(profile: PlatformProfile, ops: Session, account: Platf
     row.collected_at = collected_at
     row.updated_at = utcnow()
     ops.flush()
+    from app.collect_snapshot import mirror_follower_count
+
+    mirror_follower_count(ops, account, int(call.follower_count))
     return 1
 
 

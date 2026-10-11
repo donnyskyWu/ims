@@ -111,7 +111,7 @@ def seed() -> None:
                 )
             )
             db.flush()
-        from app.system_dict import seed_dict
+        from app.system_dict import apply_content_type_compat, seed_dict
         from app.system_role import seed_roles
 
         seed_roles(db)
@@ -125,6 +125,7 @@ def seed() -> None:
 
         ops = ops_session()
         try:
+            apply_content_type_compat(db, ops)
             _ensure_e2e_douyin_account(db, ops)
             _ensure_e2e_ops_author(ops)
             ops.commit()
@@ -584,6 +585,9 @@ def main() -> None:
     from app.kuaishou_collect import start_scheduler
 
     start_embedded_stub()
+    from app.collect_snapshot import ensure_stub_analysis_demo
+
+    ensure_stub_analysis_demo()
     start_scheduler()
     port = int(os.environ.get("IMS_PORT", "18080"))
     uvicorn.run(app, host="127.0.0.1", port=port)

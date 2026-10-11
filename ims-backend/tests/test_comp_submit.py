@@ -1,0 +1,237 @@
+import os
+
+os.environ["IMS_DB"] = "ims_test"
+os.environ["IMS_OPS_DB"] = "ims_ops_test"
+
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.core import SessionLocal
+from app.main import app
+from app.models import Role, RolePerm, User, UserRole
+from app.security import hash_password
+
+client = TestClient(app)
+
+BODY = {
+    "compName": "TC竞品库A",
+    "platform": "DOUYIN",
+    "homepageUrl": "https://example.com/a",
+    "periodMonth": "2026-10",
+    "dataSource": "公开主页与作品列表",
+    "dimensionData": {"contentStrategy": "连载挑战"},
+    "conclusion": "可借鉴选题节奏",
+}
+
+
+def headers(username: str = "admin") -> dict:
+    token = client.post(
+        "/admin-api/ims/auth/login",
+        json={"username": username, "password": "Admin@123"},
+    ).json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def ensure_role_user(username: str, role_key: str, nickname: str, extra_roles: tuple[tuple[str, str], ...] = ()) -> None:
+    db = SessionLocal()
+    try:
+        user = db.scalar(select(User).where(User.username == username, User.deleted == 0))
+        if user is None:
+            user = User(
+                username=username,
+                nickname=nickname,
+                mobile=f"139{abs(hash(username)) % 10_000_000:07d}"[:11],
+                password_hash=hash_password("Admin@123"),
+                status="ENABLED",
+                tenant_id=0,
+                deleted=0,
+            )
+            db.add(user)
+            db.flush()
+        role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
+        if role is None:
+            role = Role(
+                role_name=nickname,
+                role_key=role_key,
+                data_scope="ALL",
+                status="ENABLED",
+                tenant_id=0,
+                deleted=0,
+            )
+            db.add(role)
+            db.flush()
+        if db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == role.id)) is None:
+            db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        if db.scalar(select(RolePerm).where(RolePerm.role_id == role.id)) is None:
+            db.add(
+                RolePerm(
+                    role_id=role.id,
+                    module_code="comp",
+                    perm_code="comp:analysis:query",
+                    perm_level="R",
+                    tenant_id=0,
+                )
+            )
+        for extra_key, extra_name in extra_roles:
+            extra = db.scalar(select(Role).where(Role.role_key == extra_key, Role.deleted == 0))
+            if extra is None:
+                extra = Role(
+                    role_name=extra_name,
+                    role_key=extra_key,
+                    data_scope="ALL",
+                    status="ENABLED",
+                    tenant_id=0,
+                    deleted=0,
+                )
+                db.add(extra)
+                db.flush()
+            if db.scalar(select(UserRole).where(UserRole.user_id == user.id, UserRole.role_id == extra.id)) is None:
+                db.add(UserRole(user_id=user.id, role_id=extra.id, tenant_id=0))
+            if db.scalar(select(RolePerm).where(RolePerm.role_id == extra.id)) is None:
+                db.add(
+                    RolePerm(
+                        role_id=extra.id,
+                        module_code="comp",
+                        perm_code="comp:analysis:query",
+                        perm_level="R",
+                        tenant_id=0,
+                    )
+                )
+        db.commit()
+    finally:
+        db.close()
+
+
+def seed_roles() -> None:
+    ensure_role_user("tc_r6", "comp:r6", "短视频运营")
+    ensure_role_user("tc_r8", "comp:r8", "内容审核")
+    ensure_role_user("tc_r4", "comp:r4", "运营总监")
+
+
+def test_submit_requires_data_source_then_enters_first_audit():
+    seed_roles()
+    auth = headers("tc_r6")
+    missing = client.post("/admin-api/ims/comp/analysis", headers=auth, json={**BODY, "dataSource": ""})
+    assert missing.json()["code"] == 1171
+
+    created = client.post("/admin-api/ims/comp/analysis", headers=auth, json=BODY)
+    body = created.json()
+    assert body["code"] == 0, body
+    assert body["data"]["auditStatus"] == "PENDING_FIRST"
+    assert body["data"]["auditStatusLabel"] == "待初审"
+    assert body["data"]["analysisNo"].startswith("CA")
+
+    dup = client.post("/admin-api/ims/comp/analysis", headers=auth, json=BODY)
+    assert dup.json()["code"] == 1172
+
+
+def test_two_level_audit_stores_and_subscribes():
+    seed_roles()
+    r6 = headers("tc_r6")
+    created = client.post("/admin-api/ims/comp/analysis", headers=r6, json=BODY).json()
+    assert created["code"] == 0, created
+    no = created["data"]["analysisNo"]
+
+    blocked = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=r6,
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    assert blocked.json()["code"] == 1176
+
+    first = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r8"),
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    first_body = first.json()
+    assert first_body["code"] == 0, first_body
+    assert first_body["data"]["auditStatusLabel"] == "待终审"
+    assert first_body["data"]["nextAction"] == "TO_FINAL"
+
+    early = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r4"),
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    assert early.json()["code"] == 1176
+
+    final = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=headers("tc_r4"),
+        json={"auditLevel": "FINAL", "conclusion": "STORED"},
+    )
+    final_body = final.json()
+    assert final_body["code"] == 0, final_body
+    assert final_body["data"]["newStatus"] == "STORED"
+    assert final_body["data"]["auditStatusLabel"] == "已入库"
+    assert final_body["data"]["mergeInfo"]["monitorSubscribed"] is True
+    assert len(final_body["data"]["auditRounds"]) == 2
+
+
+def test_reject_requires_reason_and_resubmit_keeps_timeline():
+    seed_roles()
+    r6 = headers("tc_r6")
+    no = client.post("/admin-api/ims/comp/analysis", headers=r6, json={**BODY, "compName": "TC竞品库B"}).json()["data"][
+        "analysisNo"
+    ]
+    r8 = headers("tc_r8")
+    empty = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=r8,
+        json={"auditLevel": "FIRST", "conclusion": "REJECTED", "rejectReason": ""},
+    )
+    assert empty.json()["code"] == 1173
+
+    rejected = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=r8,
+        json={"auditLevel": "FIRST", "conclusion": "REJECTED", "rejectReason": "来源不可追溯"},
+    )
+    rejected_body = rejected.json()
+    assert rejected_body["code"] == 0, rejected_body
+    assert rejected_body["data"]["auditStatusLabel"] == "已退回"
+
+    detail = client.get(f"/admin-api/ims/comp/analysis/{no}", headers=r6).json()
+    assert detail["data"]["rejectReason"] == "来源不可追溯"
+    assert len(detail["data"]["auditRounds"]) == 1
+
+    again = client.put(
+        f"/admin-api/ims/comp/analysis/{no}",
+        headers=r6,
+        json={**BODY, "compName": "TC竞品库B", "conclusion": "补充公开来源后重提"},
+    )
+    again_body = again.json()
+    assert again_body["code"] == 0, again_body
+    assert again_body["data"]["auditStatus"] == "PENDING_FIRST"
+    assert len(again_body["data"]["auditRounds"]) == 1
+
+
+def test_self_audit_blocked_and_merge_preview():
+    seed_roles()
+    ensure_role_user("tc_r68", "comp:r6", "短视频兼审核", extra_roles=(("comp:r8", "内容审核"),))
+    r8 = headers("tc_r68")
+    created = client.post(
+        "/admin-api/ims/comp/analysis",
+        headers=r8,
+        json={**BODY, "compName": "Keep 官方"},
+    ).json()
+    assert created["code"] == 0, created
+    no = created["data"]["analysisNo"]
+    self_audit = client.put(
+        f"/admin-api/ims/comp/audit/{no}",
+        headers=r8,
+        json={"auditLevel": "FIRST", "conclusion": "STORED"},
+    )
+    assert self_audit.json()["code"] == 1057
+
+    listed = client.get("/admin-api/ims/comp/asset/list", headers=headers(), params={"pageNo": 1, "pageSize": 10})
+    assert listed.json()["code"] == 0
+    preview = client.get(
+        "/admin-api/ims/comp/audit/merge-preview",
+        headers=r8,
+        params={"compName": "Keep 官方"},
+    ).json()
+    assert preview["code"] == 0
+    assert preview["data"]["matched"] is True
+    assert preview["data"]["compNameStd"] == "Keep 官方"

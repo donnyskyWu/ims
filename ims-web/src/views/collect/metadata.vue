@@ -56,7 +56,7 @@
         <div class="metadata-form-grid">
           <label class="fld wide">
             <span>未映射物理表 <em class="req">*</em></span>
-            <select v-model="createForm.tableName" data-testid="metadata-create-table" required @change="onCreateTablePick">
+            <select v-model="createForm.tableName" data-testid="metadata-create-table" @change="onCreateTablePick">
               <option value="">请选择 IMS 库表</option>
               <option v-for="t in unmapped" :key="t.tableName" :value="t.tableName">
                 {{ tableOptionLabel(t) }}
@@ -65,11 +65,11 @@
           </label>
           <label class="fld">
             <span>实体编码 <em class="req">*</em></span>
-            <input v-model="createForm.entityCode" class="mono" required placeholder="如 SYS_USER" />
+            <input v-model="createForm.entityCode" class="mono" placeholder="如 SYS_USER" />
           </label>
           <label class="fld">
             <span>实体名称 <em class="req">*</em></span>
-            <input v-model="createForm.entityName" required placeholder="中文名称" />
+            <input v-model="createForm.entityName" placeholder="中文名称" />
           </label>
           <label class="fld">
             <span>状态</span>
@@ -114,7 +114,7 @@
         <div class="metadata-form-grid metadata-form-grid--single">
           <label class="fld wide">
             <span>实体名称</span>
-            <input v-model="editForm.entityName" required />
+            <input v-model="editForm.entityName" />
           </label>
           <label class="fld wide">
             <span>状态</span>
@@ -318,8 +318,8 @@ function fieldPayload(list: FieldRow[]) {
 
 async function createEntity() {
   formMsg.value = ''
-  if (!createForm.tableName.trim() || !createForm.entityCode.trim()) {
-    formMsg.value = '请选择物理表并填写实体编码'
+  if (!createForm.tableName.trim() || !createForm.entityCode.trim() || !createForm.entityName.trim()) {
+    formMsg.value = '必填项，请填写'
     return
   }
   saving.value = true

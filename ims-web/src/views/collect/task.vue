@@ -182,47 +182,80 @@
       </div>
     </ProtoDrawer>
 
-    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑任务' : '新增单账号任务'" width="480px" @close="drawerOpen = false">
+    <ProtoDrawer :open="drawerOpen" :title="editingId ? '编辑任务' : '新增采集任务'" width="480px" @close="drawerOpen = false">
       <form class="drawer-form" @submit.prevent="saveTask">
-        <label>任务名<input v-model="form.taskName" required /></label>
-        <label>
-          平台
-          <select v-model="form.platformType" required>
-            <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
+        <FormField v-if="!editingId" label="任务类型" required :error="errors.taskType">
+          <select v-model="form.taskType" data-testid="task-type" @change="onTaskType">
+            <option value="SINGLE">单账号</option>
+            <option value="UNIFIED">统一任务</option>
+            <option value="EXTERNAL">外部配置</option>
           </select>
-        </label>
-        <label>
-          账号 ID（AccountSelect · 单账号）
-          <input v-model.number="form.accountId" type="number" placeholder="oa_platform_account.id" required />
-        </label>
-        <label>
-          频率
-          <select v-model="form.frequency" required>
-            <option value="HOURLY">HOURLY</option>
-            <option value="DAILY">DAILY</option>
-            <option value="WEEKLY">WEEKLY</option>
+        </FormField>
+        <FormField v-if="form.taskType !== 'UNIFIED' || editingId" label="任务名" required :error="errors.taskName">
+          <input v-model="form.taskName" data-testid="task-form-name" />
+        </FormField>
+        <FormField v-if="form.taskType !== 'EXTERNAL'" label="平台" required>
+          <select v-model="form.platformType" data-testid="task-form-platform" @change="loadCorpAccounts">
+            <option v-for="p in formPlatforms" :key="p.value" :value="p.value">{{ p.label }}</option>
+            <option
+              v-if="editingId && !formPlatforms.some((p) => p.value === form.platformType)"
+              :value="form.platformType"
+            >
+              {{ platformLabel(form.platformType) }}
+            </option>
           </select>
-        </label>
-        <label>Cron<input v-model="form.cron" required placeholder="0 2 * * *" /></label>
+        </FormField>
+        <FormField v-if="form.taskType === 'SINGLE' || editingId" label="账号" required :error="errors.accountId">
+          <select v-model="form.accountId" data-testid="task-account">
+            <option value="">请选择已授权账号</option>
+            <option v-for="item in corpAccounts" :key="item.id" :value="item.id">
+              {{ item.nickname }}（{{ item.accountNo }}）
+            </option>
+          </select>
+        </FormField>
+        <FormField v-if="form.taskType === 'EXTERNAL'" label="外部配置" required :error="errors.collectConfigId">
+          <select v-model="form.collectConfigId" data-testid="task-config" @change="syncConfigPlatform">
+            <option value="">请选择竞品账号配置</option>
+            <option v-for="item in externalConfigs" :key="item.id" :value="item.id">
+              {{ item.configName }} · {{ platformLabel(item.platformType) }}
+            </option>
+          </select>
+        </FormField>
+        <FormField v-if="form.taskType !== 'UNIFIED' || editingId" label="频率" required>
+          <select v-model="form.frequency" data-testid="task-form-frequency">
+            <option value="HOURLY">每小时</option>
+            <option value="DAILY">每天</option>
+            <option value="WEEKLY">每周</option>
+          </select>
+        </FormField>
+        <FormField v-if="form.taskType !== 'UNIFIED' || editingId" label="Cron" required :error="errors.cron">
+          <input v-model="form.cron" data-testid="task-form-cron" placeholder="0 2 * * *" />
+        </FormField>
         <p v-if="editingId" class="hint" data-testid="task-monitor">
           最近 {{ monitor.lastRunAt || '—' }} · 下次 {{ monitor.nextRunAt || monitor.scheduleLabel || '尚未排期' }} · 成功
           {{ monitor.successCount }} / 失败 {{ monitor.failCount }} · 健康 {{ monitor.healthLabel || '无账号探活' }}
         </p>
-        <label>
-          状态
+        <FormField v-if="form.taskType !== 'UNIFIED' || editingId" label="状态">
           <select v-model="form.status">
-            <option value="ENABLED">ENABLED</option>
-            <option value="DISABLED">DISABLED</option>
+            <option value="ENABLED">启用</option>
+            <option value="DISABLED">停用</option>
           </select>
-        </label>
-        <p class="hint">本表单不含 Cookie/Token；Channel-D 外部任务请用 API 指定 collectConfigId。</p>
-        <p v-if="saveWarning" class="hint" style="color: var(--orange)">{{ saveWarning }}</p>
+        </FormField>
+        <p class="hint">本表单不含 Cookie/Token。内部采集平台只有抖音、快手、视频号。</p>
+        <p v-if="saveWarning" class="hint" style="color: var(--orange)" data-testid="task-form-error">{{ saveWarning }}</p>
         <div class="drawer-actions">
           <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
-          <button class="btn btn-pri" type="submit">保存</button>
+          <button class="btn btn-pri" type="submit" data-testid="task-save">保存</button>
         </div>
       </form>
     </ProtoDrawer>
+    <ConfirmDialog
+      :open="confirmOpen"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      @cancel="confirmOpen = false"
+      @confirm="confirmAction"
+    />
   </div>
 </template>
 
@@ -230,6 +263,10 @@
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { http, errorMessage } from '../../api/http'
+import ConfirmDialog from '../../components/form/ConfirmDialog.vue'
+import FormField from '../../components/form/FormField.vue'
+import { REQUIRED_HINT, requiredError, requiredId } from '../../components/form/required'
+import { showToast } from '../../components/form/toast'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 const router = useRouter()
@@ -255,14 +292,29 @@ const filters = reactive({
   status: '',
 })
 
+const formPlatforms = [
+  { value: 'DOUYIN', label: '抖音' },
+  { value: 'KUAISHOU', label: '快手' },
+  { value: 'WECHAT_CHANNELS', label: '视频号' },
+]
 const form = reactive({
+  taskType: 'SINGLE' as 'SINGLE' | 'UNIFIED' | 'EXTERNAL',
   taskName: '',
   platformType: 'DOUYIN',
-  accountId: undefined as number | undefined,
+  accountId: '' as string | number,
+  collectConfigId: '' as string | number,
   frequency: 'DAILY',
   cron: '0 2 * * *',
   status: 'ENABLED',
 })
+const errors = reactive<Record<string, string>>({})
+const corpAccounts = ref<{ id: string; nickname: string; accountNo: string }[]>([])
+const externalConfigs = ref<{ id: string; configName: string; platformType: string }[]>([])
+const confirmOpen = ref(false)
+const confirmTitle = ref('请确认')
+const confirmMessage = ref('')
+const pendingRow = ref<any>(null)
+const pendingAction = ref<'start' | 'stop' | ''>('')
 const monitor = reactive({
   lastRunAt: '',
   nextRunAt: '',
@@ -341,24 +393,76 @@ function resetFilters() {
   loadList()
 }
 
+function clearErrors() {
+  for (const key of Object.keys(errors)) delete errors[key]
+}
+
+function onTaskType() {
+  clearErrors()
+  saveWarning.value = ''
+  if (form.taskType === 'EXTERNAL') loadExternalConfigs()
+  if (form.taskType === 'SINGLE') loadCorpAccounts()
+}
+
+async function loadCorpAccounts() {
+  if (!editingId.value && !formPlatforms.some((item) => item.value === form.platformType)) {
+    form.platformType = 'DOUYIN'
+  }
+  try {
+    const res = await http.get('/corp/account/page', {
+      params: { platformType: form.platformType, pageNo: 1, pageSize: 50 },
+    })
+    corpAccounts.value = (res.data?.data?.list || []).map((item: any) => ({
+      id: String(item.id),
+      nickname: item.nickname || item.accountName || item.accountNo,
+      accountNo: item.accountNo || item.id,
+    }))
+  } catch (e: unknown) {
+    corpAccounts.value = []
+    saveWarning.value = errorMessage(e)
+  }
+}
+
+async function loadExternalConfigs() {
+  try {
+    const res = await http.get('/collect/external/account/page', { params: { pageNo: 1, pageSize: 50, status: 'ENABLED' } })
+    externalConfigs.value = res.data?.data?.list || []
+  } catch (e: unknown) {
+    externalConfigs.value = []
+    saveWarning.value = errorMessage(e)
+  }
+}
+
+function syncConfigPlatform() {
+  const found = externalConfigs.value.find((item) => String(item.id) === String(form.collectConfigId))
+  if (found) form.platformType = found.platformType
+}
+
 function openCreate() {
   editingId.value = ''
   saveWarning.value = ''
+  clearErrors()
+  form.taskType = 'SINGLE'
   form.taskName = ''
   form.platformType = 'DOUYIN'
-  form.accountId = undefined
+  form.accountId = ''
+  form.collectConfigId = ''
   form.frequency = 'DAILY'
   form.cron = '0 2 * * *'
   form.status = 'ENABLED'
   drawerOpen.value = true
+  loadCorpAccounts()
 }
 
 function openEdit(row: any) {
   editingId.value = row.id
   saveWarning.value = row.bindWarning || ''
+  clearErrors()
+  form.taskType = 'SINGLE'
   form.taskName = row.taskName
-  form.platformType = row.platformType
-  form.accountId = row.accountId ? Number(row.accountId) : undefined
+  form.platformType = row.platformType || 'DOUYIN'
+  form.accountId = row.accountId ? String(row.accountId) : ''
+  form.collectConfigId = ''
   form.frequency = row.frequency
   form.cron = row.cron
   form.status = row.status === 'DISABLED' ? 'DISABLED' : 'ENABLED'
@@ -369,20 +473,32 @@ function openEdit(row: any) {
   monitor.failCount = row.failCount || 0
   monitor.healthLabel = row.healthLabel || ''
   drawerOpen.value = true
+  loadCorpAccounts()
 }
 
-async function startTask(row: any) {
-  try {
-    await http.post(`/collect/task/${row.id}/start`)
-    await loadList()
-  } catch (e: unknown) {
-    error.value = errorMessage(e)
-  }
+function startTask(row: any) {
+  pendingRow.value = row
+  pendingAction.value = 'start'
+  confirmTitle.value = '启动任务'
+  confirmMessage.value = '确认启动该采集任务？'
+  confirmOpen.value = true
 }
 
-async function stopTask(row: any) {
+function stopTask(row: any) {
+  pendingRow.value = row
+  pendingAction.value = 'stop'
+  confirmTitle.value = '停止任务'
+  confirmMessage.value = '确认停止该采集任务？'
+  confirmOpen.value = true
+}
+
+async function confirmAction() {
+  const row = pendingRow.value
+  const action = pendingAction.value
+  confirmOpen.value = false
+  if (!row || !action) return
   try {
-    await http.post(`/collect/task/${row.id}/stop`)
+    await http.post(`/collect/task/${row.id}/${action}`)
     await loadList()
   } catch (e: unknown) {
     error.value = errorMessage(e)
@@ -391,20 +507,50 @@ async function stopTask(row: any) {
 
 async function saveTask() {
   saveWarning.value = ''
-  const body = {
-    taskName: form.taskName,
-    platformType: form.platformType,
-    accountId: form.accountId,
-    frequency: form.frequency,
-    cron: form.cron,
-    status: form.status,
+  clearErrors()
+  if (!editingId.value && form.taskType === 'UNIFIED') {
+    try {
+      const res = await http.post('/collect/task/ensure-unified', { platformType: form.platformType })
+      const data = res.data?.data || {}
+      drawerOpen.value = false
+      showToast(data.message || '采集任务已保存')
+      await loadList()
+    } catch (e: unknown) {
+      saveWarning.value = errorMessage(e)
+    }
+    return
   }
+  errors.taskName = requiredError(form.taskName)
+  errors.cron = requiredError(form.cron)
+  if (form.taskType === 'EXTERNAL' && !editingId.value) {
+    errors.collectConfigId = requiredId(form.collectConfigId)
+  } else {
+    errors.accountId = requiredId(form.accountId)
+  }
+  if (Object.values(errors).some(Boolean)) {
+    if (!errors.taskName && !errors.cron && (errors.accountId || errors.collectConfigId)) {
+      saveWarning.value = REQUIRED_HINT
+    }
+    return
+  }
+  const external = form.taskType === 'EXTERNAL' && !editingId.value
+  const body: Record<string, unknown> = {
+    taskName: form.taskName.trim(),
+    platformType: form.platformType,
+    frequency: form.frequency,
+    cron: form.cron.trim(),
+    status: form.status,
+    method: external ? 'EXTERNAL' : 'INTERNAL',
+    accountId: external ? null : Number(form.accountId),
+  }
+  if (external) body.collectConfigId = Number(form.collectConfigId)
   try {
     const res = editingId.value
       ? await http.put(`/collect/task/${editingId.value}`, body)
       : await http.post('/collect/task', body)
     if (res.data?.data?.bindWarning) saveWarning.value = res.data.data.bindWarning
     drawerOpen.value = false
+    showToast('采集任务已保存')
     await loadList()
   } catch (e: unknown) {
     saveWarning.value = errorMessage(e)
@@ -467,12 +613,14 @@ async function removeTask(row: any) {
 
 async function ensureUnified() {
   const platform = filters.platformType && filters.platformType !== 'MULTI' ? filters.platformType : 'DOUYIN'
-  await http.post('/collect/task/ensure-unified', { platformType: platform })
+  const res = await http.post('/collect/task/ensure-unified', { platformType: platform })
+  showToast(res.data?.data?.message || '采集任务已保存')
   loadList()
 }
 
 async function ensureExternal() {
-  await http.post('/collect/task/ensure-external-unified', {})
+  const res = await http.post('/collect/task/ensure-external-unified', {})
+  showToast(res.data?.data?.message || '采集任务已保存')
   loadList()
 }
 

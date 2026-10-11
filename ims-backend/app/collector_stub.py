@@ -210,15 +210,17 @@ class CollectorStub:
 
 
 def start_embedded_stub() -> None:
-    """IMS_COLLECTOR_STUB=1 且未指定地址时，在 API 进程内拉起桩。"""
-    flag = os.environ.get("IMS_COLLECTOR_STUB", "").strip().lower()
-    if flag not in {"1", "true", "yes"}:
+    """未配置真实 Collector 地址时默认拉起桩。IMS_COLLECTOR_STUB=0 可关闭。"""
+    flag = os.environ.get("IMS_COLLECTOR_STUB", "1").strip().lower()
+    if flag in {"0", "false", "no"}:
         return
     if os.environ.get("IMS_COLLECTOR_BASE_URL", "").strip():
         return
     stub = CollectorStub()
     stub.start()
     os.environ["IMS_COLLECTOR_BASE_URL"] = stub.base_url
+    if not os.environ.get("IMS_COLLECTOR_TOKEN", "").strip():
+        os.environ["IMS_COLLECTOR_TOKEN"] = "ims-local-stub"
 
 
 def _handler_factory():

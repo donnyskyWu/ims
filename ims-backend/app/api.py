@@ -429,6 +429,7 @@ from app.bi_query import router as bi_query_router
 from app.int_analysis import router as int_analysis_router
 from app.comp_analysis import router as comp_analysis_router
 from app.comp_asset import router as comp_asset_router
+from app.comp_submit import router as comp_submit_router
 from app.monitor import router as monitor_router
 from app.meet import router as meet_router
 from app.report import router as report_router
@@ -509,6 +510,7 @@ router.include_router(bi_query_router)
 router.include_router(int_analysis_router)
 router.include_router(comp_analysis_router)
 router.include_router(comp_asset_router)
+router.include_router(comp_submit_router)
 router.include_router(monitor_router)
 router.include_router(meet_router)
 router.include_router(report_router)

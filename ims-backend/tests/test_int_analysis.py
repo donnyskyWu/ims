@@ -4,6 +4,7 @@ os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from app.main import app
 from app.ops_db import ops_session
@@ -89,7 +90,8 @@ def test_int_work_page_all_and_hit():
     assert hit_body["data"]["list"][0]["title"] == "晚间集锦"
 
 
-def test_int_work_low_score_requires_threshold():
+def test_int_work_low_score_uses_br004_default():
+    """BUG-B016：未配置 WORK 阈值时低分 Tab 仍按完播率 <20% 返回，而不是 1251。"""
     seed_works()
     auth = headers()
     missing = client.get(
@@ -97,7 +99,11 @@ def test_int_work_low_score_requires_threshold():
         headers=auth,
         params={"segment": "LOW_SCORE", "pageNo": 1, "pageSize": 20},
     )
-    assert missing.json()["code"] == 1251
+    missing_body = missing.json()
+    assert missing_body["code"] == 0
+    assert missing_body["data"]["total"] == 1
+    assert missing_body["data"]["list"][0]["title"] == "训练周记"
+    assert missing_body["data"]["list"][0]["isLowScore"] is True
 
     created = client.post(
         "/admin-api/ims/collect/threshold",
@@ -121,6 +127,67 @@ def test_int_work_low_score_requires_threshold():
     assert low_body["code"] == 0
     assert low_body["data"]["total"] == 1
     assert low_body["data"]["list"][0]["title"] == "训练周记"
+
+
+def test_int_work_library_summary_is_read_only():
+    """BUG-B025：爆款/低分库内数量不随 Tab 变，内容类型走字典，GET 不回写。"""
+    seed_works()
+    ops = ops_session()
+    try:
+        ops.add(
+            InternalContent(
+                title="文章稿",
+                account_name="神鱼文章",
+                platform_type="DOUYIN",
+                content_type="ARTICLE",
+                play_count=2_000_000,
+                completion_rate=40.0,
+                publish_time="2026-10-04 08:00:00",
+                tenant_id=0,
+            )
+        )
+        ops.commit()
+        before = int(ops.scalar(select(func.count()).select_from(InternalContent)) or 0)
+    finally:
+        ops.close()
+
+    auth = headers()
+    hit = client.get(
+        "/admin-api/ims/int-analysis/work/page",
+        headers=auth,
+        params={"segment": "HIT", "pageNo": 1, "pageSize": 20},
+    )
+    hit_body = hit.json()
+    assert hit_body["code"] == 0
+    assert hit_body["data"]["total"] == 2
+    assert hit_body["data"]["summary"]["hitCount"] == 2
+    assert hit_body["data"]["summary"]["lowScoreCount"] == 1
+
+    article = client.get(
+        "/admin-api/ims/int-analysis/work/page",
+        headers=auth,
+        params={"segment": "ALL", "contentType": "ARTICLE", "pageNo": 1, "pageSize": 20},
+    )
+    article_body = article.json()
+    assert article_body["code"] == 0
+    assert article_body["data"]["total"] == 1
+    assert article_body["data"]["list"][0]["title"] == "文章稿"
+    assert article_body["data"]["summary"]["hitCount"] == 1
+    assert article_body["data"]["summary"]["lowScoreCount"] == 0
+
+    retired = client.get(
+        "/admin-api/ims/int-analysis/work/page",
+        headers=auth,
+        params={"segment": "ALL", "contentType": "LIVE_CLIP", "pageNo": 1, "pageSize": 20},
+    )
+    assert retired.json()["code"] == 1503
+
+    ops = ops_session()
+    try:
+        after = int(ops.scalar(select(func.count()).select_from(InternalContent)) or 0)
+    finally:
+        ops.close()
+    assert after == before
 
 
 def seed_internal_accounts() -> None:

@@ -19,10 +19,13 @@
 | pageNo / pageSize | ✅ | 分页 |
 | segment | ✅ | `ALL` \| `HIT` \| `LOW_SCORE` — 对应页内 Tab 全部 / 爆款 / 低分 |
 | platformType | | `dict_platform_type` |
+| contentType | | `dict_content_type` 启用项：`ARTICLE` 文章 / `SHORT_VIDEO` 短视频 / `VIDEO` 视频。停用或未收录值 **1503** |
 | ipGroupId | | IP 组 |
 | industry | | 行业固定值 |
 | startDate / endDate | | 发布或统计日期 |
 | accountIdentifier | | 外部账号标识 |
+
+作品类型与全系统 `dict_content_type` 同一套，只有文章、短视频、视频。启动时 `apply_content_type_compat`（`python -m app.content_type_compat` 可再跑）把存量「图文」（`GRAPHIC` / `IMAGE_TEXT` / `图文`）改成 `ARTICLE`，把「直播切片」（`LIVE_CLIP` / `直播切片`）改成 `SHORT_VIDEO`。裸「直播」/ `LIVE` 不改。
 
 **Segment 路由（BFF → OPS）**
 

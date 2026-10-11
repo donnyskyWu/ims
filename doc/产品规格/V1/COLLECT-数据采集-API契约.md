@@ -41,7 +41,7 @@ Channel-D 任务体：`collect_config_id` + 可选 `credential_profile`；`accou
 
 | # | 方法 | 路径 | 说明 |
 |---|------|------|------|
-| 19 | GET | `/threshold/list` | `thresholdCategory` 必填 |
+| 19 | GET | `/threshold/list` | `thresholdCategory` 必填。账号覆盖项带 `overrideAccountName`（账号名称，摘要不展示账号 id） |
 | 20 | POST/PUT/DELETE | `/threshold/**` | CRUD；字段见 UX-M8 §5 |
 
 ## 5. 内部例外 / 订单 / 质量（无主导航）

@@ -80,3 +80,28 @@ def test_comp_asset_create_enriched_from_ops():
     )
     assert listed.json()["code"] == 0
     assert listed.json()["data"]["total"] >= 1
+
+
+def test_comp_asset_detail_and_compare():
+    auth = headers()
+    listed = client.get(
+        "/admin-api/ims/comp/asset/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 10},
+    ).json()
+    numbers = [row["assetNo"] for row in listed["data"]["list"][:2]]
+    detail = client.get(f"/admin-api/ims/comp/asset/{numbers[0]}", headers=auth).json()
+    assert detail["code"] == 0, detail
+    assert detail["data"]["auditStatusLabel"] == "已入库"
+    assert detail["data"]["monitorSubscribed"] is True
+    assert isinstance(detail["data"]["interactionTrend"], list)
+    assert "topWorks" in detail["data"]
+
+    compared = client.get(
+        "/admin-api/ims/comp/asset/compare",
+        headers=auth,
+        params={"assetNos": ",".join(numbers)},
+    ).json()
+    assert compared["code"] == 0, compared
+    assert compared["data"]["assetNos"] == numbers
+    assert any(item["dimensionKey"] == "followerCount" for item in compared["data"]["dimensionMatrix"])

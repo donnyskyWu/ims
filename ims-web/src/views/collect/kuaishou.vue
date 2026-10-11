@@ -19,25 +19,29 @@
     <form class="qbar" style="align-items: flex-end" @submit.prevent="saveAccount">
       <label class="fld">
         昵称
-        <input v-model="form.accountName" data-testid="ks-nickname" required />
+        <input v-model="form.accountName" data-testid="ks-nickname" />
+        <p v-if="fieldErrors.accountName" class="ims-field-error" data-testid="field-error">{{ fieldErrors.accountName }}</p>
       </label>
       <label class="fld">
         公司
-        <select v-model.number="form.companyId" data-testid="ks-company" required>
+        <select v-model.number="form.companyId" data-testid="ks-company">
           <option disabled value="">请选择</option>
           <option v-for="item in companies" :key="item.id" :value="item.id">{{ item.companyName }}</option>
         </select>
+        <p v-if="fieldErrors.companyId" class="ims-field-error" data-testid="field-error">{{ fieldErrors.companyId }}</p>
       </label>
       <label class="fld">
         IP 组
-        <select v-model.number="form.ipGroupId" data-testid="ks-ip-group" required>
+        <select v-model.number="form.ipGroupId" data-testid="ks-ip-group">
           <option disabled value="">请选择</option>
           <option v-for="item in groups" :key="item.id" :value="item.id">{{ item.groupName }}</option>
         </select>
+        <p v-if="fieldErrors.ipGroupId" class="ims-field-error" data-testid="field-error">{{ fieldErrors.ipGroupId }}</p>
       </label>
       <label class="fld">
         平台账号 ID
-        <input v-model="form.platformAccountId" data-testid="ks-platform-id" required />
+        <input v-model="form.platformAccountId" data-testid="ks-platform-id" />
+        <p v-if="fieldErrors.platformAccountId" class="ims-field-error" data-testid="field-error">{{ fieldErrors.platformAccountId }}</p>
       </label>
       <label class="fld">
         凭证
@@ -47,8 +51,8 @@
           type="password"
           autocomplete="new-password"
           :placeholder="editingId ? '留空则不修改' : '只写入，不回显'"
-          :required="!editingId"
         />
+        <p v-if="fieldErrors.cookie" class="ims-field-error" data-testid="field-error">{{ fieldErrors.cookie }}</p>
       </label>
       <label class="fld">
         频率
@@ -218,6 +222,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import { REQUIRED_HINT, requiredError, requiredId } from '../../components/form/required'
 import { healthIsEmpty, healthText } from './healthLabel'
 
 type Opt = { id: number; companyName?: string; groupName?: string }
@@ -274,6 +279,7 @@ const form = reactive({
   frequency: 'DAILY',
   cron: '0 2 * * *',
 })
+const fieldErrors = reactive<Record<string, string>>({})
 
 const followerRows = computed(() => {
   const rows: Array<FollowerDaily & { accountName: string; key: string }> = []
@@ -365,6 +371,15 @@ function editRow(row: AccountRow) {
 
 async function saveAccount() {
   notice.value = ''
+  fieldErrors.accountName = requiredError(form.accountName)
+  fieldErrors.companyId = requiredId(form.companyId)
+  fieldErrors.ipGroupId = requiredId(form.ipGroupId)
+  fieldErrors.platformAccountId = requiredError(form.platformAccountId)
+  fieldErrors.cookie = editingId.value ? '' : requiredError(form.cookie)
+  if (Object.values(fieldErrors).some(Boolean)) {
+    notice.value = REQUIRED_HINT
+    return
+  }
   const payload: Record<string, unknown> = {
     accountName: form.accountName,
     platformAccountId: form.platformAccountId,
