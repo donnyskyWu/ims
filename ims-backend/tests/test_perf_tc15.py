@@ -318,3 +318,37 @@ def test_adjust_by_metric_rejects_over_20_percent():
     lines = {line["metricName"]: line for line in saved_body["data"]["lines"]}
     assert lines["开播"]["finalScore"] == lines["开播"]["autoScore"] + 2
     assert saved_body["data"]["totalScore"] == round(base + 2 * 0.4, 1)
+
+
+def test_issued_record_is_visible_on_mine():
+    auth = headers()
+    scheme = _scheme(auth)
+    created = client.post(
+        "/admin-api/ims/perf/execution",
+        headers=auth,
+        json={
+            "schemeId": scheme,
+            "targetUserId": 1,
+            "periodType": "MONTHLY",
+            "periodStart": "2026-02-01",
+            "periodEnd": "2026-02-28",
+        },
+    )
+    record_id = created.json()["data"]["id"]
+    calc = client.post(f"/admin-api/ims/perf/execution/{record_id}/calculate", headers=auth)
+    assert calc.json()["code"] == 0
+    client.post(f"/admin-api/ims/perf/execution/{record_id}/confirm", headers=auth)
+    hidden = client.get("/admin-api/ims/perf/calc/2026-02/mine", headers=auth)
+    assert hidden.json()["code"] == 1157
+
+    issued = client.put(f"/admin-api/ims/perf/execution/{record_id}/issue", headers=auth)
+    assert issued.json()["code"] == 0
+    mine = client.get("/admin-api/ims/perf/calc/2026-02/mine", headers=auth)
+    body = mine.json()
+    assert body["code"] == 0
+    assert body["data"]["totalScore"] == calc.json()["data"]["totalScore"]
+    assert body["data"]["gradeLevel"] in {"EXCELLENT", "QUALIFIED", "IMPROVE"}
+    assert body["data"]["gradeLevel"] not in {"S", "A", "B", "C", "D"}
+    assert body["data"]["rankInDept"] == 1
+    assert body["data"]["deptTotalCount"] == 1
+    assert body["data"]["details"]

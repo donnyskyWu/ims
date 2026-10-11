@@ -899,6 +899,82 @@ def issue_execution(
     return ok(record_vo(db, row, scheme))
 
 
+def execution_month(row: PerfRecord) -> str:
+    if (row.period_type or "") != "MONTHLY":
+        return ""
+    start = (row.period_start or "")[:7]
+    if len(start) == 7 and start[4] == "-":
+        return start
+    return ""
+
+
+def execution_mine(db: Session, actor: User, period: str) -> tuple[str, dict | None]:
+    """考核单下发后的员工视图。missing / unpublished / issued。"""
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(PerfRecord).where(
+                PerfRecord.deleted == 0,
+                PerfRecord.tenant_id == tenant_id,
+                PerfRecord.period_type == "MONTHLY",
+                PerfRecord.period_start.like(f"{period}%"),
+            )
+        ).all()
+    )
+    matched = [row for row in rows if execution_month(row) == period]
+    own = [row for row in matched if row.target_user_id == actor.id]
+    if not own:
+        return "missing", None
+    issued_own = [row for row in own if row.status == "ISSUED"]
+    if not issued_own:
+        return "unpublished", None
+    row = max(issued_own, key=lambda item: item.id)
+    dept_id, dept_name = person_dept(db, actor.id)
+    issued = [item for item in matched if item.status == "ISSUED"]
+    dept_cache: dict[int, int] = {}
+
+    def same_dept(item: PerfRecord) -> bool:
+        if item.target_user_id not in dept_cache:
+            dept_cache[item.target_user_id] = person_dept(db, item.target_user_id)[0]
+        return dept_cache[item.target_user_id] == dept_id
+
+    peers = [item for item in issued if same_dept(item)]
+    if not any(item.id == row.id for item in peers):
+        peers.append(row)
+    ordered = sorted(peers, key=lambda item: (-(item.total_score or 0), item.id))
+    rank = next(index for index, item in enumerate(ordered, start=1) if item.id == row.id)
+    bundle = grade_bundle(db, row.total_score)
+    details = []
+    for line in score_line_views(row):
+        weight = float(line["weight"] or 0)
+        final = float(line["finalScore"] or 0)
+        details.append(
+            {
+                "metricCode": line["metricName"],
+                "metricName": line["metricName"],
+                "metricValue": line["rawValue"],
+                "metricScore": final,
+                "weight": weight,
+                "dataStatus": "MANUAL" if float(line["manualAdjustment"] or 0) else "AUTO",
+                "contribution": round(final * weight / 100.0, 2),
+            }
+        )
+    return "issued", {
+        "periodMonth": period,
+        "userId": actor.id,
+        "userName": user_label(db, actor.id),
+        "deptId": dept_id,
+        "deptName": dept_name,
+        "totalScore": row.total_score,
+        "rankInDept": rank,
+        "deptTotalCount": len(ordered),
+        "gradeLevel": bundle["gradeLevel"],
+        "gradeEdge": bundle["gradeEdge"],
+        "details": details,
+        "resultStatus": "ISSUED",
+    }
+
+
 def ensure_exam_questions(db: Session, tenant_id: int, actor_id: int) -> None:
     rows = db.scalars(
         select(ExamQuestion)

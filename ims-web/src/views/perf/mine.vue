@@ -26,7 +26,7 @@
       </p>
       <p>
         <span class="tag" data-testid="perf-mine-grade">{{ gradeText(mine.gradeLevel) }}</span>
-        <span data-testid="perf-mine-rank"> 部门排名 第 {{ mine.rankInDept || rank?.rankNo || '—' }} / {{ rank?.deptTotalCount || '—' }}</span>
+        <span data-testid="perf-mine-rank"> 部门排名 第 {{ mine.rankInDept || rank?.rankNo || '—' }} / {{ mine.deptTotalCount || rank?.deptTotalCount || '—' }}</span>
       </p>
       <p v-if="rank" data-testid="perf-mine-distribution" class="hint">
         部门分布：优秀 {{ rank.scoreDistribution.excellent }} · 合格 {{ rank.scoreDistribution.qualified }} · 待改进
@@ -78,6 +78,7 @@ type Mine = {
   deptName: string
   totalScore: number | null
   rankInDept: number | null
+  deptTotalCount?: number | null
   gradeLevel: string
   details?: Detail[]
 }

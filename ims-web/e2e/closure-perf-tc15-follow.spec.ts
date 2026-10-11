@@ -115,4 +115,74 @@ test.describe('perf TC-15 follow-up', () => {
 
     expect(pageErrors, pageErrors.join('\n')).toEqual([])
   })
+
+  test('issue dialog then employee sees the published month', async ({ page }) => {
+    test.setTimeout(120_000)
+    const pageErrors = attachClosurePageHooks(page)
+    const stamp = Date.now()
+    const month = String((stamp % 12) + 1).padStart(2, '0')
+    const year = 2038
+    const period = `${year}-${month}`
+    const schemeName = `TC15下发${stamp}`
+
+    await loginAdmin(page)
+    await page.goto('/ims/perf/scheme')
+    await expect(page.locator('h1')).toHaveText('考核方案', { timeout: 15_000 })
+    await page.getByRole('button', { name: '新建方案' }).click()
+    const schemeModal = page.locator('.modal.card').filter({ hasText: '新建考核方案' })
+    await schemeModal.locator('input').first().fill(schemeName)
+    const schemeResp = page.waitForResponse(
+      (r) => r.url().includes('/perf/scheme') && r.request().method() === 'POST' && r.status() === 200,
+    )
+    await schemeModal.getByRole('button', { name: '保存' }).click()
+    const schemeBody = (await (await schemeResp).json()) as { code: number; data?: { id: number } }
+    expect(schemeBody.code).toBe(0)
+    const schemeId = schemeBody.data!.id
+
+    await page.goto(`/ims/perf/execution?schemeId=${schemeId}`)
+    const execModal = page.locator('.modal.card').filter({ hasText: '创建考核' })
+    await expect(execModal).toBeVisible({ timeout: 15_000 })
+    await execModal.locator('input[type="number"]').first().fill(String(schemeId))
+    await execModal.locator('input[type="number"]').nth(1).fill('1')
+    await execModal.locator('select').first().selectOption('MONTHLY')
+    await execModal.locator('.fld').filter({ hasText: '周期开始' }).locator('input').fill(`${period}-01`)
+    await execModal.locator('.fld').filter({ hasText: '周期结束' }).locator('input').fill(`${period}-28`)
+    const createdResp = page.waitForResponse(
+      (r) => r.url().includes('/perf/execution') && r.request().method() === 'POST' && r.status() === 200,
+    )
+    await execModal.getByRole('button', { name: '保存' }).click()
+    const created = (await (await createdResp).json()) as { code: number; data?: { recordNo: string } }
+    expect(created.code).toBe(0)
+    const recordNo = created.data!.recordNo
+    const execRow = page.locator('tbody tr').filter({ hasText: recordNo }).first()
+    await execRow.getByText('算分').click()
+    await expect(execRow.locator('.tag')).toContainText('已计算', { timeout: 15_000 })
+    await execRow.getByTestId('perf-exec-confirm').click()
+    await page.getByTestId('perf-confirm-submit').click()
+    await expect(execRow.locator('.tag')).toContainText('已确认', { timeout: 15_000 })
+
+    await page.goto('/ims/perf/mine')
+    await page.getByTestId('perf-mine-period').fill(period)
+    await page.getByTestId('perf-mine-period').press('Tab')
+    await expect(page.getByTestId('perf-mine-empty')).toContainText('1157', { timeout: 15_000 })
+
+    await page.goto('/ims/perf/execution')
+    const again = page.locator('tbody tr').filter({ hasText: recordNo }).first()
+    await again.getByTestId('perf-exec-issue').click()
+    await expect(page.getByTestId('perf-issue-dialog')).toBeVisible()
+    await expect(page.getByTestId('perf-issue-score')).toContainText('综合得分')
+    await expect(page.getByTestId('perf-issue-grade')).toContainText('分档')
+    await expect(page.getByTestId('perf-issue-dialog')).not.toContainText('S≥')
+    await page.getByTestId('perf-issue-submit').click()
+    await expect(again.locator('.tag')).toContainText('已下发', { timeout: 15_000 })
+
+    await page.goto('/ims/perf/mine')
+    await page.getByTestId('perf-mine-period').fill(period)
+    await page.getByTestId('perf-mine-period').press('Tab')
+    await expect(page.getByTestId('perf-mine-score')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('perf-mine-grade')).toContainText(/优秀|合格|待改进/)
+    await expect(page.getByTestId('perf-mine-rank')).toContainText('部门排名')
+
+    expect(pageErrors, pageErrors.join('\n')).toEqual([])
+  })
 })

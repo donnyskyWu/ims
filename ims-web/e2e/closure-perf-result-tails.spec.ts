@@ -112,6 +112,8 @@ test.describe('perf result tails closure', () => {
     await page.getByTestId('perf-confirm-submit').click()
     await expect(located.row.locator('.tag')).toContainText('已确认', { timeout: 15_000 })
     await located.row.getByText('下发').click()
+    await expect(page.getByTestId('perf-issue-dialog')).toContainText('综合得分')
+    await page.getByTestId('perf-issue-submit').click()
     await expect(located.row).toContainText('已下发', { timeout: 15_000 })
 
     await page.goto('/ims/perf/result')

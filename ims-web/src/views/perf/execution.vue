@@ -87,7 +87,8 @@
                 <span
                   v-if="row.status === 'REVIEWED' || row.status === 'CONFIRMED'"
                   class="btn-txt btn"
-                  @click="issueRow(row)"
+                  data-testid="perf-exec-issue"
+                  @click="openIssue(row)"
                 >下发</span>
               </td>
             </tr>
@@ -109,6 +110,22 @@
           <button class="btn btn-sec btn-sm" type="button" @click="confirmTarget = null">取消</button>
           <button class="btn btn-pri btn-sm" type="button" data-testid="perf-confirm-submit" @click="submitConfirm">
             确认结果
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="issueTarget" class="modal-mask" data-testid="perf-issue-dialog" @click.self="issueTarget = null">
+      <div class="modal card" style="max-width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">确认下发</h3>
+        <p class="hint">下发后，被考核人可在「我的绩效」查看本期结果。未下发前不可见。</p>
+        <p data-testid="perf-issue-score">综合得分 {{ issueTarget.totalScore ?? '—' }}</p>
+        <p data-testid="perf-issue-grade">分档 {{ issueTarget.gradeEdge || '—' }}</p>
+        <p v-if="issueError" class="hint" style="color: var(--red)">{{ issueError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="issueTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="perf-issue-submit" @click="submitIssue">
+            确认下发
           </button>
         </div>
       </div>
@@ -228,6 +245,8 @@ const showForm = ref(false)
 const showAdjust = ref(false)
 const confirmTarget = ref<Row | null>(null)
 const confirmError = ref('')
+const issueTarget = ref<Row | null>(null)
+const issueError = ref('')
 const adjustTarget = ref<Row | null>(null)
 const adjustError = ref('')
 const adjustLines = ref<ScoreLine[]>([])
@@ -368,13 +387,26 @@ async function submitConfirm() {
   }
 }
 
-async function issueRow(row: Row) {
-  const res = await http.put(`/perf/execution/${row.id}/issue`)
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '下发失败')
-    return
+function openIssue(row: Row) {
+  issueError.value = ''
+  issueTarget.value = row
+}
+
+async function submitIssue() {
+  if (!issueTarget.value) return
+  issueError.value = ''
+  try {
+    const res = await http.put(`/perf/execution/${issueTarget.value.id}/issue`)
+    if (res.data.code !== 0) {
+      issueError.value = res.data.msg || '下发失败'
+      return
+    }
+    issueTarget.value = null
+    await loadList()
+  } catch (err) {
+    const body = err as { msg?: string }
+    issueError.value = body.msg || '下发失败'
   }
-  await loadList()
 }
 
 function lineFinal(line: ScoreLine) {

@@ -1137,6 +1137,13 @@ def calc_mine(
         )
     )
     if row is None:
+        from app.perf import execution_mine
+
+        kind, payload = execution_mine(db, actor, period)
+        if kind == "unpublished":
+            return fail(1157, UNPUBLISHED_MSG)
+        if kind == "issued":
+            return ok(payload)
         return ok(None)
     if row.result_status != "PUBLISHED":
         return fail(1157, UNPUBLISHED_MSG)
