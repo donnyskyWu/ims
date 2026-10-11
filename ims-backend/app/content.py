@@ -1259,7 +1259,7 @@ def review_conclusion(
                     tenant_id=tenant(actor),
                 )
             )
-            project.content_status = "PENDING_REVIEW"
+            project.content_status = "PENDING_SECOND_REVIEW"
             project.review_passed = 0
         else:
             project.review_passed = 1

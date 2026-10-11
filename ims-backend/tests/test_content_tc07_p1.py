@@ -272,6 +272,46 @@ def test_b006_layout_tags_and_meta():
     assert row["updatedAt"]
 
 
+def test_b009_two_level_status_filters():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/content",
+        headers=auth,
+        json={"title": "TC07 两级审核", "body": "正文"},
+    )
+    assert created.json()["code"] == 0
+    content_id = created.json()["data"]["id"]
+    submitted = client.post(f"/admin-api/ims/content/{content_id}/submit-review", headers=auth)
+    assert submitted.json()["code"] == 0
+    assert submitted.json()["data"]["contentStatus"] == "PENDING_FIRST_REVIEW"
+
+    listed = client.get(
+        "/admin-api/ims/content",
+        headers=auth,
+        params={"status": "PENDING_FIRST_REVIEW", "title": "TC07 两级审核", "aiGenerated": "NO"},
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == content_id)
+    assert row["contentStatus"] == "PENDING_FIRST_REVIEW"
+    assert row["contentStatusLabel"] == "待一级审核"
+    assert row["creatorName"]
+    assert "ipGroupName" in row
+    assert "accountId" in row
+
+    ai_yes = client.get(
+        "/admin-api/ims/content",
+        headers=auth,
+        params={"title": "TC07 两级审核", "aiGenerated": "YES"},
+    )
+    assert all(item["id"] != content_id for item in ai_yes.json()["data"]["list"])
+
+    other_account = client.get(
+        "/admin-api/ims/content",
+        headers=auth,
+        params={"title": "TC07 两级审核", "accountId": 999999},
+    )
+    assert other_account.json()["data"]["list"] == []
+
+
 def test_b007_export_and_batch():
     auth = headers()
     title = "TC07 批量内容"

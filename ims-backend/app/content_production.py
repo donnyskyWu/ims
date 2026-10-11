@@ -6,7 +6,7 @@ import io
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -91,6 +91,27 @@ def normalize_body_format(value: str | None) -> str | None:
     return fmt
 
 
+CONTENT_STATUS_LABELS = {
+    "DRAFT": "草稿",
+    "COMPLETED": "已完成",
+    "PENDING_FIRST_REVIEW": "待一级审核",
+    "PENDING_SECOND_REVIEW": "待二级审核",
+    "PENDING_FINAL_REVIEW": "待终审",
+    "PENDING_REVIEW": "待审核",
+    "PENDING_PUBLISH": "待发布",
+    "REJECTED": "已驳回",
+    "PUBLISHED": "已发布",
+    "PUBLISHED_DRAFT": "预发布",
+    "FORMALLY_PUBLISHED": "已发布",
+    "UNPUBLISHED": "已下架",
+}
+
+
+def content_status_label(code: str | None) -> str:
+    value = code or ""
+    return CONTENT_STATUS_LABELS.get(value, value)
+
+
 def project_vo(row: ContentProject) -> dict:
     data = {
         "id": row.id,
@@ -99,8 +120,13 @@ def project_vo(row: ContentProject) -> dict:
         "platformType": row.platform_type,
         "documentType": row.document_type,
         "contentStatus": row.content_status,
+        "contentStatusLabel": content_status_label(row.content_status),
         "taskId": row.task_id,
         "ipGroupId": row.ip_group_id,
+        "accountId": int(row.account_id or 0),
+        "creatorName": "",
+        "ipGroupName": "",
+        "accountName": "",
         "body": row.body,
         "layoutHtml": sanitize_layout_html(row.layout_html),
         "layoutJson": row.layout_json or "",
@@ -126,6 +152,34 @@ def project_vo(row: ContentProject) -> dict:
     return data
 
 
+def project_vos(db: Session, ops: Session, rows: list[ContentProject]) -> list[dict]:
+    from app.ops_models import IpGroup, PlatformAccount
+
+    creator_ids = {row.creator for row in rows if row.creator}
+    creators: dict[int, str] = {}
+    if creator_ids:
+        for user in db.scalars(select(User).where(User.id.in_(creator_ids))).all():
+            creators[user.id] = (user.nickname or user.username or "").strip()
+    ip_ids = {row.ip_group_id for row in rows if row.ip_group_id}
+    groups: dict[int, str] = {}
+    if ip_ids:
+        for group in ops.scalars(select(IpGroup).where(IpGroup.id.in_(ip_ids))).all():
+            groups[group.id] = group.group_name or ""
+    account_ids = {row.account_id for row in rows if row.account_id}
+    accounts: dict[int, str] = {}
+    if account_ids:
+        for account in ops.scalars(select(PlatformAccount).where(PlatformAccount.id.in_(account_ids))).all():
+            accounts[account.id] = account.account_name or ""
+    items = []
+    for row in rows:
+        data = project_vo(row)
+        data["creatorName"] = creators.get(row.creator or 0, "")
+        data["ipGroupName"] = groups.get(row.ip_group_id or 0, "")
+        data["accountName"] = accounts.get(row.account_id or 0, "")
+        items.append(data)
+    return items
+
+
 def load_project(db: Session, content_id: int, actor: User) -> ContentProject | None:
     row = db.get(ContentProject, content_id)
     if row is None or row.deleted or (row.tenant_id or 0) != tenant(actor):
@@ -142,6 +196,8 @@ def content_filtered(
     contentType: str | None = None,
     platformType: str | None = None,
     documentType: str | None = None,
+    accountId: int | None = None,
+    aiGenerated: str | None = None,
 ):
     stmt = select(ContentProject).where(ContentProject.deleted == 0, ContentProject.tenant_id == tenant(actor))
     if title:
@@ -154,6 +210,18 @@ def content_filtered(
         stmt = stmt.where(ContentProject.platform_type == platformType.strip())
     if documentType and documentType.strip():
         stmt = stmt.where(ContentProject.document_type == documentType.strip())
+    if accountId:
+        stmt = stmt.where(ContentProject.account_id == int(accountId))
+    flag = (aiGenerated or "").strip().upper()
+    if flag == "YES":
+        stmt = stmt.where(
+            ContentProject.ai_generate_status.isnot(None),
+            ContentProject.ai_generate_status != "",
+        )
+    elif flag == "NO":
+        stmt = stmt.where(
+            or_(ContentProject.ai_generate_status.is_(None), ContentProject.ai_generate_status == "")
+        )
     return stmt
 
 
@@ -181,7 +249,7 @@ def submit_one(db: Session, row: ContentProject, actor: User) -> str | None:
             tenant_id=tenant(actor),
         )
     )
-    row.content_status = "PENDING_REVIEW"
+    row.content_status = "PENDING_FIRST_REVIEW"
     row.review_passed = 0
     return None
 
@@ -209,7 +277,10 @@ def content_list(
     contentType: str | None = None,
     platformType: str | None = None,
     documentType: str | None = None,
+    accountId: int | None = None,
+    aiGenerated: str | None = None,
     db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
     page_no, size = page_args(pageNo, pageSize)
@@ -221,12 +292,14 @@ def content_list(
         contentType=contentType,
         platformType=platformType,
         documentType=documentType,
+        accountId=accountId,
+        aiGenerated=aiGenerated,
     )
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-    rows = db.scalars(
-        stmt.order_by(ContentProject.id.desc()).offset((page_no - 1) * size).limit(size)
-    ).all()
-    return paged([project_vo(row) for row in rows], total, page_no, size)
+    rows = list(
+        db.scalars(stmt.order_by(ContentProject.id.desc()).offset((page_no - 1) * size).limit(size)).all()
+    )
+    return paged(project_vos(db, ops, rows), total, page_no, size)
 
 
 @router.get("/export")
@@ -236,6 +309,8 @@ def content_export(
     contentType: str | None = None,
     platformType: str | None = None,
     documentType: str | None = None,
+    accountId: int | None = None,
+    aiGenerated: str | None = None,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -247,6 +322,8 @@ def content_export(
         contentType=contentType,
         platformType=platformType,
         documentType=documentType,
+        accountId=accountId,
+        aiGenerated=aiGenerated,
     )
     rows = list(db.scalars(stmt.order_by(ContentProject.id.desc()).limit(5000)).all())
     buf = io.StringIO()

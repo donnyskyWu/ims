@@ -18,18 +18,24 @@
     </p>
     <form class="qbar" data-testid="content-filters" @submit.prevent="loadList">
       <input v-model="titleKw" data-testid="content-filter-title" placeholder="标题" style="width: 160px" />
-      <select v-model="statusKw" style="width: 160px">
+      <select v-model="statusKw" data-testid="content-filter-status" style="width: 160px">
         <option value="">全部状态</option>
-        <option value="DRAFT">DRAFT</option>
-        <option value="REJECTED">REJECTED</option>
-        <option value="PENDING_REVIEW">PENDING_REVIEW</option>
-        <option value="PENDING_PUBLISH">PENDING_PUBLISH</option>
-        <option value="PUBLISHED">PUBLISHED</option>
+        <option value="DRAFT">草稿</option>
+        <option value="PENDING_FIRST_REVIEW">待一级审核</option>
+        <option value="PENDING_SECOND_REVIEW">待二级审核</option>
+        <option value="PENDING_FINAL_REVIEW">待终审</option>
+        <option value="PENDING_PUBLISH">待发布</option>
+        <option value="REJECTED">已驳回</option>
+        <option value="PUBLISHED">已发布</option>
+        <option value="UNPUBLISHED">已下架</option>
+        <option value="COMPLETED">已完成</option>
+        <option value="PENDING_REVIEW">待审核</option>
       </select>
       <select v-model="typeKw" data-testid="filter-content-type" style="width: 140px">
         <option value="">全部类型</option>
+        <option value="ARTICLE">文章</option>
         <option value="SHORT_VIDEO">短视频</option>
-        <option value="ARTICLE">图文</option>
+        <option value="VIDEO">视频</option>
       </select>
       <select v-model="platformKw" data-testid="filter-platform" style="width: 120px">
         <option value="">全部平台</option>
@@ -41,6 +47,15 @@
         <option value="">全部文档</option>
         <option value="COPY">文案</option>
         <option value="SCRIPT">脚本</option>
+      </select>
+      <select v-model="accountKw" data-testid="content-filter-account" style="width: 160px">
+        <option value="">全部账号</option>
+        <option v-for="item in accounts" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+      </select>
+      <select v-model="aiKw" data-testid="content-filter-ai" style="width: 120px">
+        <option value="">是否AI生成</option>
+        <option value="YES">是</option>
+        <option value="NO">否</option>
       </select>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-filter-reset" @click="resetFilters">重置</button>
@@ -62,11 +77,13 @@
               <th style="width: 36px"></th>
               <th>ID</th>
               <th>标题</th>
-              <th>状态</th>
-              <th>类型</th>
-              <th>平台</th>
-              <th>赛事摘要</th>
               <th>文档类型</th>
+              <th>平台</th>
+              <th>创作者</th>
+              <th>IP组</th>
+              <th>状态</th>
+              <th>赛事摘要</th>
+              <th>类型</th>
               <th>AI 文案</th>
               <th>视频</th>
               <th>Football 同步</th>
@@ -75,10 +92,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="12"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="14"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="12">
+              <td colspan="14">
                 <div class="empty" data-testid="content-list-empty">
                   <div class="et">{{ error || contentEmptyTitle }}</div>
                   <div v-if="!error" class="es">{{ contentEmptyHint }}</div>
@@ -96,11 +113,13 @@
               </td>
               <td class="mono">{{ row.id }}</td>
               <td><b>{{ row.title }}</b></td>
-              <td>{{ row.contentStatus }}</td>
-              <td data-testid="row-content-type">{{ typeLabel(row.contentType) }}</td>
+              <td>{{ docLabel(row.documentType) }}</td>
               <td data-testid="row-platform">{{ platformLabel(row.platformType) }}</td>
+              <td data-testid="row-creator">{{ row.creatorName || '—' }}</td>
+              <td data-testid="row-ip-group">{{ row.ipGroupName || '—' }}</td>
+              <td data-testid="row-content-status">{{ statusLabel(row) }}</td>
               <td>{{ row.matchSummary || row.competitionName || '—' }}</td>
-              <td>{{ row.documentType || '—' }}</td>
+              <td data-testid="row-content-type">{{ typeLabel(row.contentType) }}</td>
               <td data-testid="row-ai-status">{{ copyLabel(row.aiGenerateStatus) }}</td>
               <td data-testid="row-video-status">{{ videoLabel(row.videoJobStatus) }}</td>
               <td>{{ row.fbSyncStatusLabel || row.fbSyncStatus || '—' }}</td>
@@ -261,7 +280,7 @@
     <ProtoDrawer :open="viewOpen" title="查看内容" width="720px" @close="viewOpen = false">
       <p><b data-testid="content-view-title">{{ viewRow?.title }}</b></p>
       <p class="hint">
-        状态 {{ viewRow?.contentStatus || '—' }} · 文档类型 {{ viewRow?.documentType || '—' }} · 内容类型
+        状态 {{ viewRow ? statusLabel(viewRow) : '—' }} · 文档类型 {{ docLabel(viewRow?.documentType) }} · 内容类型
         {{ viewRow?.contentType || '—' }}
       </p>
       <p v-if="viewRow?.matchSummary" class="hint">赛事摘要 {{ viewRow.matchSummary }}</p>
@@ -299,8 +318,20 @@ const statusKw = ref('')
 const typeKw = ref('')
 const platformKw = ref('')
 const docKw = ref('')
+const accountKw = ref('')
+const aiKw = ref('')
+const accounts = ref<{ id: number; label: string }[]>([])
 const filtering = computed(
-  () => !!(titleKw.value.trim() || statusKw.value || typeKw.value || platformKw.value || docKw.value),
+  () =>
+    !!(
+      titleKw.value.trim() ||
+      statusKw.value ||
+      typeKw.value ||
+      platformKw.value ||
+      docKw.value ||
+      accountKw.value ||
+      aiKw.value
+    ),
 )
 const contentEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的内容' : '暂无内容'))
 const contentEmptyHint = computed(() =>
@@ -363,7 +394,39 @@ function videoLabel(status: string | null | undefined) {
   if (!status) return '未生成'
   return videoLabels[status] || status
 }
-const typeLabels: Record<string, string> = { SHORT_VIDEO: '短视频', ARTICLE: '图文' }
+const typeLabels: Record<string, string> = { SHORT_VIDEO: '短视频', ARTICLE: '图文', VIDEO: '视频' }
+const docLabels: Record<string, string> = { COPY: '文案', SCRIPT: '脚本' }
+const statusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  COMPLETED: '已完成',
+  PENDING_FIRST_REVIEW: '待一级审核',
+  PENDING_SECOND_REVIEW: '待二级审核',
+  PENDING_FINAL_REVIEW: '待终审',
+  PENDING_REVIEW: '待审核',
+  PENDING_PUBLISH: '待发布',
+  REJECTED: '已驳回',
+  PUBLISHED: '已发布',
+  PUBLISHED_DRAFT: '预发布',
+  FORMALLY_PUBLISHED: '已发布',
+  UNPUBLISHED: '已下架',
+}
+const accountPlatforms = ['DOUYIN', 'KUAISHOU', 'WECHAT_CHANNELS', 'WECHAT_OFFICIAL', 'XIAOHONGSHU']
+const accountPlatformLabels: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  WECHAT_OFFICIAL: '公众号',
+  XIAOHONGSHU: '小红书',
+}
+
+function docLabel(value: string | null | undefined) {
+  if (!value) return '—'
+  return docLabels[value] || value
+}
+
+function statusLabel(row: { contentStatus?: string; contentStatusLabel?: string }) {
+  return row.contentStatusLabel || statusLabels[row.contentStatus || ''] || row.contentStatus || '—'
+}
 const platformLabels: Record<string, string> = { DOUYIN: '抖音', KUAISHOU: '快手', WECHAT_CHANNELS: '视频号' }
 function typeLabel(value: string | null | undefined) {
   if (!value) return '—'
@@ -464,6 +527,8 @@ async function loadList() {
     if (typeKw.value) params.contentType = typeKw.value
     if (platformKw.value) params.platformType = platformKw.value
     if (docKw.value) params.documentType = docKw.value
+    if (accountKw.value) params.accountId = accountKw.value
+    if (aiKw.value) params.aiGenerated = aiKw.value
     const { data } = await http.get('/content', { params })
     rows.value = data.data?.list || []
     total.value = data.data?.total || 0
@@ -481,7 +546,27 @@ function resetFilters() {
   typeKw.value = ''
   platformKw.value = ''
   docKw.value = ''
+  accountKw.value = ''
+  aiKw.value = ''
   loadList()
+}
+
+async function loadAccounts() {
+  const items: { id: number; label: string }[] = []
+  for (const platform of accountPlatforms) {
+    try {
+      const { data } = await http.get('/corp/account/page', {
+        params: { platformType: platform, pageNo: 1, pageSize: 100 },
+      })
+      for (const row of data.data?.list || []) {
+        const name = row.nickname || row.accountNo || row.id
+        items.push({ id: row.id, label: `${name} · ${accountPlatformLabels[platform] || platform}` })
+      }
+    } catch {
+      /* 单个平台无账号时其余筛选仍可用 */
+    }
+  }
+  accounts.value = items
 }
 
 function resetForm() {
@@ -640,6 +725,8 @@ async function exportCsv() {
   if (typeKw.value) params.set('contentType', typeKw.value)
   if (platformKw.value) params.set('platformType', platformKw.value)
   if (docKw.value) params.set('documentType', docKw.value)
+  if (accountKw.value) params.set('accountId', accountKw.value)
+  if (aiKw.value) params.set('aiGenerated', aiKw.value)
   const qs = params.toString()
   const token = localStorage.getItem('ims_access')
   try {
@@ -804,6 +891,7 @@ async function retrySync(id: number) {
 }
 
 loadList()
+loadAccounts()
 </script>
 
 <style scoped>

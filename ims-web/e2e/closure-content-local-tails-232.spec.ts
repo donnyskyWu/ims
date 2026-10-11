@@ -138,7 +138,7 @@ test.describe('content local tails 232', () => {
     )
     await row.getByRole('button', { name: '提审' }).click()
     expect(((await (await reviewResp).json()) as { code: number }).code).toBe(0)
-    await expect(row).toContainText('PENDING_REVIEW', { timeout: 15_000 })
+    await expect(row).toContainText('待一级审核', { timeout: 15_000 })
     await row.getByRole('button', { name: '编辑' }).click()
     const editDrawer = page.locator('.drawer.on').filter({ hasText: '编辑内容' })
     await expect(editDrawer.getByTestId('ai-panel-locked')).toContainText('本地桩也不会出新任务')

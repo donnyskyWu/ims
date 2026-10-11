@@ -644,6 +644,7 @@ class ContentProject(Base):
     body: Mapped[str] = mapped_column(Text, default="")
     content_type: Mapped[str] = mapped_column(String(32), default="SHORT_VIDEO")
     platform_type: Mapped[str] = mapped_column(String(32), default="")
+    account_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     ip_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     competition_id: Mapped[str] = mapped_column(String(64), default="")
     competition_name: Mapped[str] = mapped_column(String(256), default="")

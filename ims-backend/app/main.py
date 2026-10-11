@@ -390,6 +390,20 @@ def ensure_air_slice92_columns() -> None:
                 )
 
 
+def ensure_content_project_account_column() -> None:
+    """已有库补内容账号。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_project" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_project")}
+    if "account_id" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_content_project ADD COLUMN account_id BIGINT NOT NULL DEFAULT 0"))
+
+
 def ensure_content_layout_meta_columns() -> None:
     """已有库补公推模板文档类型与标签。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -534,6 +548,7 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
+    ensure_content_project_account_column()
     ensure_content_layout_meta_columns()
     ensure_content_sop_platform_column()
     ensure_content_sop_dag_columns()
