@@ -48,6 +48,7 @@
           </thead>
           <tbody>
             <tr v-if="loading"><td colspan="9"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-else-if="listError"><td colspan="9"><div class="empty"><div class="et">{{ listError }}</div></div></td></tr>
             <tr v-else-if="!rows.length"><td colspan="9"><div class="empty"><div class="et">暂无技能</div></div></td></tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono">{{ row.skillNo }}</td>
@@ -197,6 +198,7 @@ type Option = { id: string; label: string }
 const summary = ref<{ skillCount: number; publishedCount: number; pendingAuditCount: number; invokeTotal: number } | null>(null)
 const rows = ref<Row[]>([])
 const loading = ref(false)
+const listError = ref('')
 const showForm = ref(false)
 const formError = ref('')
 const filters = reactive({ skillName: '', status: '' })
@@ -230,11 +232,16 @@ async function loadSummary() {
 
 async function loadList() {
   loading.value = true
+  listError.value = ''
   try {
     const res = await http.get('/air/skill/list', {
       params: { pageNo: 1, pageSize: 20, skillName: filters.skillName || undefined, status: filters.status || undefined },
     })
     if (res.data.code === 0) rows.value = res.data.data.list || []
+    else listError.value = res.data.msg || '加载失败'
+  } catch (error) {
+    rows.value = []
+    listError.value = errorMessage(error)
   } finally {
     loading.value = false
   }

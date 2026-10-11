@@ -129,7 +129,14 @@ const router = createRouter({
   ],
 })
 
-const HIDDEN_GUARDED = new Set(['/ims/content/topic', '/ims/content/publish'])
+const HIDDEN_GUARDED = new Set([
+  '/ims/content/topic',
+  '/ims/content/publish',
+  '/ims/air/skill',
+  '/ims/air/expert',
+  '/ims/air/kb',
+  '/ims/air/cfg',
+])
 
 router.beforeEach(async (to) => {
   const user = useUserStore()

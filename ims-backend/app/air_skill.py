@@ -122,8 +122,13 @@ def skill_list(
         q = q.where(AirSkill.category == category.strip())
     page_no, size = page_args(pageNo, pageSize)
     stmt = q.order_by(AirSkill.id.desc())
-    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-    rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
+    if sees_whole_catalog(db, actor):
+        total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+        rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
+    else:
+        matched = [row for row in db.scalars(stmt).all() if skill_in_dept_scope(db, row, actor)]
+        total = len(matched)
+        rows = matched[(page_no - 1) * size : page_no * size]
     names = user_names(db, [r.owner_user_id for r in rows])
     return paged([skill_vo(r, names) for r in rows], total, page_no, size)
 
@@ -274,6 +279,25 @@ def grant_matches(row: AirSkillGrant, user_id: int, dept_ids: set[int], role_ids
     if row.grant_type == "ROLE" and int(row.grant_id_ref) in role_ids:
         return True
     return False
+
+
+def sees_whole_catalog(db: Session, actor: User) -> bool:
+    """R1 / R9 / R11 和系统管理员看全量。R4 / R5 只看授权到本部门、本角色或本人的技能。"""
+    from app.perm import is_admin
+    from app.scope import enabled_roles
+
+    if is_admin(db, actor):
+        return True
+    keys = {role.role_key for role in enabled_roles(db, actor)}
+    return bool(keys & {"R1", "R9", "R11", "sys:admin"})
+
+
+def skill_in_dept_scope(db: Session, skill: AirSkill, actor: User) -> bool:
+    if skill_visible_to(db, skill, actor.id):
+        return True
+    owner_depts = dept_ids_of(db, skill.owner_user_id, skill.tenant_id)
+    my_depts = dept_ids_of(db, actor.id, skill.tenant_id)
+    return bool(owner_depts and my_depts and owner_depts & my_depts)
 
 
 def skill_visible_to(db: Session, skill: AirSkill, user_id: int) -> bool:

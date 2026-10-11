@@ -128,6 +128,27 @@ def test_train_alert_report_and_hidden_content_pages():
     }
 
 
+def test_air_center_matrix_for_r11_r6_and_r4():
+    asset = client.get("/admin-api/ims/auth/access", headers=login("tc_r11")).json()["data"]
+    assert asset["admin"] is False
+    assert asset["fullCatalog"] is False
+    air_routes = [route for route in asset["routes"] if route.startswith("/ims/air/")]
+    assert air_routes == ["/ims/air/cfg", "/ims/air/expert", "/ims/air/kb", "/ims/air/skill"]
+    assert "/ims/system/user" not in asset["routes"]
+    assert "/ims/live/sessions" not in asset["routes"]
+    assert l1_names("R11") == ["工作台", "AI 资源中心"]
+
+    short = client.get("/admin-api/ims/auth/access", headers=login("tc_r6")).json()["data"]
+    assert not any(route.startswith("/ims/air/") for route in short["routes"])
+    denied = client.get("/admin-api/ims/air/skill/list", headers=login("tc_r6"))
+    assert denied.status_code == 403 and denied.json()["code"] == 403
+
+    listed = client.get("/admin-api/ims/air/skill/list", headers=login("tc_r4"))
+    assert listed.status_code == 200 and listed.json()["code"] == 0, listed.json()
+    names = [row["skillName"] for row in listed.json()["data"]["list"]]
+    assert "运营技能" in names
+
+
 def test_r5_analysis_menu_is_prd_subset():
     codes = grants_for("R5")
     assert "menu:queryTool:query" in codes
