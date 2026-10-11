@@ -68,6 +68,9 @@
                   + 新建小组
                 </button>
                 <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-edit" @click="openEdit">编辑</button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="ipg-toggle" @click="toggleStatus">
+                  {{ detail.status === 1 ? '停用' : '启用' }}
+                </button>
                 <button class="btn btn-sec btn-sm" type="button" @click="removeGroup">删除</button>
               </div>
             </div>
@@ -365,7 +368,7 @@ async function loadTree() {
       selectedId.value = flatNodes.value[0].id
     }
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   } finally {
     treeReady.value = true
   }
@@ -386,12 +389,35 @@ async function loadDetailTabs() {
     anchors.value = an.data.data || []
     stats.value = s.data.data || {}
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
+}
+
+function apiError(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const body = error as { code?: number; msg?: string }
+    if (body.code) return `${body.code} ${body.msg || ''}`.trim()
+  }
+  return errorMessage(error)
 }
 
 function selectGroup(id: number) {
   selectedId.value = id
+}
+
+async function toggleStatus() {
+  if (!selectedId.value || !detail.value) return
+  const next = detail.value.status === 1 ? 0 : 1
+  const label = next === 1 ? '启用' : '停用'
+  try {
+    await http.put('/ip-group/update', { id: selectedId.value, status: next })
+    msg.value = `状态已更新为「${label}」`
+    const current = selectedId.value
+    await loadTree()
+    selectedId.value = current
+  } catch (e) {
+    msg.value = apiError(e)
+  }
 }
 
 async function loadUsers() {
@@ -404,7 +430,7 @@ async function loadUsers() {
       username: user.username || '',
     }))
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
 }
 
@@ -500,7 +526,7 @@ async function submitGroup() {
     await loadTree()
     selectedId.value = Number(res.data.data)
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
 }
 
@@ -516,7 +542,7 @@ async function addMember() {
     await loadDetailTabs()
     await loadTree()
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
 }
 
@@ -529,7 +555,7 @@ async function bindAccount() {
     await loadDetailTabs()
     await loadTree()
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
 }
 
@@ -545,7 +571,7 @@ async function bindAuthor() {
     await loadDetailTabs()
     await loadTree()
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
 }
 
@@ -557,7 +583,7 @@ async function removeGroup() {
     selectedId.value = null
     await loadTree()
   } catch (e) {
-    msg.value = errorMessage(e)
+    msg.value = apiError(e)
   }
 }
 

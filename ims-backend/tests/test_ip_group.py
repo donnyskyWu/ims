@@ -197,6 +197,53 @@ def test_ip_group_update_fields_without_changing_type():
     assert blocked.json()["code"] == 1503
 
 
+def test_disabled_ip_group_hidden_from_selectors_and_reference_1501():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "停用引用组", "groupType": "SMALL", "parentId": None},
+    )
+    # 小组必须挂大组；先建大组再停用小组。
+    assert created.json()["code"] == 1003
+    big = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "停用引用大组", "groupType": "BIG"},
+    )
+    big_id = big.json()["data"]
+    small = client.post(
+        "/admin-api/ims/ip-group/create",
+        headers=auth,
+        json={"groupName": "停用引用组", "groupType": "SMALL", "parentId": big_id},
+    )
+    gid = small.json()["data"]
+    off = client.put("/admin-api/ims/ip-group/update", headers=auth, json={"id": gid, "status": 0})
+    assert off.json()["code"] == 0
+    hidden = client.get("/admin-api/ims/ip-group/list", headers=auth, params={"keyword": "停用引用组"})
+    assert all(row["groupName"] != "停用引用组" for row in hidden.json()["data"]["list"])
+    shown = client.get(
+        "/admin-api/ims/ip-group/list",
+        headers=auth,
+        params={"keyword": "停用引用组", "status": 0},
+    )
+    assert any(row["id"] == gid and row["status"] == 0 for row in shown.json()["data"]["list"])
+    tree = client.get("/admin-api/ims/ip-group/tree", headers=auth).json()["data"]
+    parent = next(row for row in tree if row["id"] == big_id)
+    node = next(child for child in parent["children"] if child["id"] == gid)
+    assert node["status"] == 0
+    sheet = client.get(
+        "/admin-api/ims/content/work-task/sheet",
+        headers=auth,
+        params={"ipGroupId": gid, "workDate": "2026-10-11"},
+    )
+    assert sheet.json()["code"] == 1501
+    on = client.put("/admin-api/ims/ip-group/update", headers=auth, json={"id": gid, "status": 1})
+    assert on.json()["code"] == 0
+    visible = client.get("/admin-api/ims/ip-group/list", headers=auth, params={"keyword": "停用引用组"})
+    assert any(row["id"] == gid and row["status"] == 1 for row in visible.json()["data"]["list"])
+
+
 def test_ip_group_delete_guard_and_duplicate_name():
     auth = headers()
     created = client.post(

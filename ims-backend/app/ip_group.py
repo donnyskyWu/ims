@@ -359,6 +359,8 @@ def ip_group_list(
         stmt = stmt.where(IpGroup.group_type == groupType)
     if status is not None and status != "":
         stmt = stmt.where(IpGroup.status == status_store(status))
+    else:
+        stmt = stmt.where(IpGroup.status == "ENABLED")
     total = int(ops.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = ops.scalars(stmt.order_by(IpGroup.sort_order, IpGroup.id).offset((page_no - 1) * page_size).limit(page_size)).all()
     stats = counts_for(ops, [row.id for row in rows], tenant_of(actor))
@@ -703,6 +705,8 @@ def ip_group_bind_accounts(
     row = ensure_group_access(request, db, actor, group_id, ops)
     if row is None:
         return fail(1504, "资源不可用")
+    if row.status != "ENABLED":
+        return fail(1501, "IP 组已停用")
     if row.group_type != "SMALL":
         return fail(1203, "大组不可绑定账号")
     if not body.accountIds:
