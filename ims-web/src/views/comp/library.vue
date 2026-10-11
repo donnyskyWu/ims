@@ -8,7 +8,15 @@
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/comp/work')">竞品作品监测</button>
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/comp/account')">竞品账号监测</button>
-        <button class="btn btn-sec btn-sm" type="button" disabled>导出对比</button>
+        <button
+          class="btn btn-sec btn-sm"
+          type="button"
+          data-testid="comp-export-compare"
+          :disabled="!basket.length"
+          @click="exportCompare"
+        >
+          导出对比{{ basket.length ? `（${basket.length}）` : '' }}
+        </button>
         <button class="btn btn-pri btn-sm" type="button" data-testid="comp-add" @click="openCreate">新增竞品</button>
       </div>
     </div>
@@ -126,7 +134,28 @@
           <b>{{ active.compName }}</b>
           <span class="tag" :style="statusStyle(active.auditStatus)">{{ active.auditStatusLabel }}</span>
           <span style="font-size: 12px; color: var(--text2)">{{ platformLabel(active.platform) }} · 竞品账号</span>
+          <span v-if="active.monitorSubscribed" class="tag" data-testid="comp-monitor-chip">已订阅监控</span>
         </div>
+        <div v-if="active.stored" class="kv" data-testid="comp-detail-base">
+          <div><div class="k">粉丝数</div><div class="v">{{ formatFans(active.followerCount) }}</div></div>
+          <div><div class="k">近30天作品数</div><div class="v">{{ active.works30d }}</div></div>
+          <div><div class="k">更新频率</div><div class="v">{{ active.updateFrequency ?? '—' }} 条/天</div></div>
+          <div><div class="k">互动率</div><div class="v">{{ active.engagementRate }}%</div></div>
+        </div>
+        <div v-if="active.stored" class="dsec">近30天互动量趋势</div>
+        <div v-if="active.stored" class="trend" data-testid="comp-trend">
+          <span v-for="point in active.interactionTrend || []" :key="point.date" class="trend-bar" :title="point.date">
+            <i :style="{ height: Math.max(8, point.value * 8) + 'px' }"></i>
+          </span>
+          <em>{{ active.trendNote || '示意' }}</em>
+        </div>
+        <div v-if="active.stored" class="dsec">代表作品 Top3</div>
+        <ul v-if="active.stored" class="timeline" data-testid="comp-top-works">
+          <li v-if="!(active.topWorks || []).length">暂无代表作品</li>
+          <li v-for="work in active.topWorks || []" :key="work.title">
+            {{ work.title }} · 播放 {{ formatFans(work.playCount) }} · 点赞 {{ formatFans(work.likeCount) }}
+          </li>
+        </ul>
         <div v-if="active.rejectReason" class="hint" data-testid="comp-reject-reason" style="color: var(--red)">
           驳回原因：{{ active.rejectReason }}
         </div>
@@ -152,6 +181,15 @@
       </template>
       <template #footer>
         <button class="btn btn-sec btn-sm" type="button" @click="active = null">关闭</button>
+        <button
+          v-if="active?.stored"
+          class="btn btn-pri btn-sm"
+          type="button"
+          data-testid="comp-add-compare"
+          @click="addCompare"
+        >
+          加入对比
+        </button>
         <button
           v-if="canResubmit"
           class="btn btn-pri btn-sm"
@@ -249,6 +287,11 @@ type Card = {
   submitterUserId?: number
   homepageUrl?: string
   dimensionData?: Record<string, string>
+  monitorSubscribed?: boolean
+  updateFrequency?: number
+  trendNote?: string
+  interactionTrend?: { date: string; value: number }[]
+  topWorks?: { title: string; playCount: number; likeCount: number }[]
 }
 type Actor = {
   userId: number
@@ -270,6 +313,7 @@ const fieldErrors = reactive<Record<string, string>>({})
 const filters = reactive({ compName: '', platform: '' })
 const actor = ref<Actor>({ userId: 0, canSubmit: true, canFirstAudit: false, canFinalAudit: false })
 const active = ref<Card | null>(null)
+const basket = ref<{ assetNo: string; compName: string }[]>([])
 const showRejectBox = ref(false)
 const rejectReason = ref('')
 const rejectError = ref('')
@@ -369,6 +413,11 @@ function assetCard(row: Record<string, unknown>): Card {
     stored: true,
     foot: row.monitorSubscribed ? '已订阅监控' : '代表作品已收录',
     homepageUrl: String(row.homepageUrl || ''),
+    monitorSubscribed: Boolean(row.monitorSubscribed),
+    updateFrequency: Number(row.updateFrequency || 0),
+    trendNote: String(row.trendNote || ''),
+    interactionTrend: (row.interactionTrend as { date: string; value: number }[]) || [],
+    topWorks: (row.topWorks as { title: string; playCount: number; likeCount: number }[]) || [],
   }
 }
 
@@ -503,6 +552,15 @@ async function openCard(row: Card) {
   showRejectBox.value = false
   rejectReason.value = ''
   rejectError.value = ''
+  if (row.cardKind === 'asset' && row.assetNo) {
+    try {
+      const res = await http.get(`/comp/asset/${row.assetNo}`)
+      active.value = assetCard(res.data.data)
+      return
+    } catch (e: unknown) {
+      note.value = apiMessage(e, '加载详情失败')
+    }
+  }
   if (row.cardKind === 'analysis' && row.analysisNo) {
     try {
       const res = await http.get(`/comp/analysis/${row.analysisNo}`)
@@ -515,6 +573,52 @@ async function openCard(row: Card) {
     }
   }
   active.value = row
+}
+
+function addCompare() {
+  if (!active.value?.stored || !active.value.assetNo) {
+    note.value = '未入库的竞品不能加入对比'
+    return
+  }
+  if (basket.value.some((item) => item.assetNo === active.value?.assetNo)) {
+    note.value = `已在对比篮中，当前 ${basket.value.length} 个`
+    return
+  }
+  if (basket.value.length >= 5) {
+    note.value = '对比篮最多 5 个'
+    return
+  }
+  basket.value.push({ assetNo: active.value.assetNo, compName: active.value.compName })
+  note.value = `已加入对比，当前对比篮 ${basket.value.length} 个`
+}
+
+function csvCell(value: unknown) {
+  const text = value == null ? '' : String(value)
+  return `"${text.replaceAll('"', '""')}"`
+}
+
+async function exportCompare() {
+  if (!basket.value.length) return
+  try {
+    const res = await http.get('/comp/asset/compare', {
+      params: { assetNos: basket.value.map((item) => item.assetNo).join(',') },
+    })
+    const data = res.data.data
+    const names = (data.conclusions || []).map((item: { compNameStd: string }) => item.compNameStd)
+    const lines = [['维度', ...names].map(csvCell).join(',')]
+    for (const row of data.dimensionMatrix || []) {
+      lines.push([row.dimensionKey, ...(row.values || [])].map(csvCell).join(','))
+    }
+    const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = 'comp_compare.csv'
+    link.click()
+    URL.revokeObjectURL(link.href)
+    note.value = `已导出对比 ${data.assetNos.length} 个竞品`
+  } catch (e: unknown) {
+    note.value = apiMessage(e, '导出对比失败')
+  }
 }
 
 async function passAudit(level: 'FIRST' | 'FINAL') {
@@ -609,6 +713,24 @@ onMounted(loadList)
   padding-left: 18px;
   font-size: 12.5px;
   line-height: 1.7;
+}
+.trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  min-height: 48px;
+}
+.trend-bar i {
+  display: block;
+  width: 10px;
+  background: var(--blue);
+  border-radius: 3px 3px 0 0;
+}
+.trend em {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text2);
+  font-style: normal;
 }
 @media (max-width: 1200px) {
   .comp-grid {

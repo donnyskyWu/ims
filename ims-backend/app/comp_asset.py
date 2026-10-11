@@ -266,3 +266,139 @@ def create_asset(
     db.add(row)
     db.flush()
     return ok(asset_vo(row, enrich_metrics(ops, tenant_id, row)))
+
+
+COMPARE_KEYS = (
+    ("sales", "销售"),
+    ("gmv", "GMV"),
+    ("priceBand", "价格带"),
+    ("contentStrategy", "内容策略"),
+    ("adStrategy", "投放策略"),
+    ("followerCount", "粉丝数"),
+    ("works30d", "近30天作品"),
+    ("engagementRate", "互动率"),
+)
+
+
+def _load_asset(db: Session, tenant_id: int, asset_no: str) -> CompAsset | None:
+    return db.scalar(
+        select(CompAsset).where(
+            CompAsset.deleted == 0,
+            CompAsset.tenant_id == tenant_id,
+            CompAsset.asset_no == asset_no,
+        )
+    )
+
+
+def top_works(ops: Session, tenant_id: int, account_identifier: str) -> list[dict]:
+    if not account_identifier:
+        return []
+    rows = ops.scalars(
+        select(ExternalWork)
+        .where(
+            ExternalWork.deleted == 0,
+            ExternalWork.tenant_id == tenant_id,
+            ExternalWork.account_identifier == account_identifier,
+        )
+        .order_by(ExternalWork.play_count.desc())
+        .limit(3)
+    ).all()
+    return [
+        {
+            "title": row.title,
+            "platformType": row.platform_type,
+            "playCount": row.play_count,
+            "likeCount": row.like_count,
+        }
+        for row in rows
+    ]
+
+
+def interaction_trend(rate: float) -> list[dict]:
+    """没有日快照时给出 7 日示意，避免抽屉空白。"""
+    today = datetime.now(BJ).date()
+    base = float(rate or 0)
+    return [
+        {"date": (today - timedelta(days=6 - index)).isoformat(), "value": round(base, 1)}
+        for index in range(7)
+    ]
+
+
+def asset_detail(ops: Session, tenant_id: int, asset: CompAsset) -> dict:
+    metrics = enrich_metrics(ops, tenant_id, asset)
+    vo = asset_vo(asset, metrics)
+    info = dict(asset.base_info or {})
+    works = int(metrics["works30d"] or 0)
+    vo.update(
+        {
+            "versionTimeline": list(info.get("versionTimeline") or []),
+            "aliasList": list(info.get("aliasList") or []),
+            "conclusion": info.get("conclusion") or "",
+            "dataSource": info.get("dataSource") or "",
+            "dimensionData": dict(info.get("dimensionData") or {}),
+            "updateFrequency": round(works / 30, 2),
+            "trendNote": "示意（暂无日快照）",
+            "interactionTrend": interaction_trend(float(metrics["engagementRate"] or 0)),
+            "topWorks": top_works(ops, tenant_id, asset.comp_account_id),
+            "monitorEffectiveDate": info.get("monitorEffectiveDate") or "",
+        }
+    )
+    return vo
+
+
+@router.get("/compare")
+def compare_assets(
+    assetNos: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    numbers = [item.strip() for item in (assetNos or "").split(",") if item.strip()]
+    if not numbers or len(numbers) > 5:
+        return fail(1001, "请选择 1 到 5 个已入库竞品")
+    assets: list[tuple[CompAsset, dict]] = []
+    for number in numbers:
+        row = _load_asset(db, tenant_id, number)
+        if row is None:
+            return fail(1504, f"竞品档案不存在：{number}")
+        if row.status not in {"APPROVED", "STORED", "TRACKING"}:
+            return fail(1001, "未入库的竞品不能加入对比")
+        assets.append((row, asset_detail(ops, tenant_id, row)))
+    matrix = []
+    for key, _label in COMPARE_KEYS:
+        values = []
+        for _row, detail in assets:
+            if key in {"followerCount", "works30d", "engagementRate"}:
+                values.append(detail.get(key))
+            else:
+                values.append((detail.get("dimensionData") or {}).get(key))
+        matrix.append({"dimensionKey": key, "values": values})
+    return ok(
+        {
+            "assetNos": numbers,
+            "dimensionMatrix": matrix,
+            "conclusions": [
+                {
+                    "assetNo": detail["assetNo"],
+                    "compNameStd": detail["compName"],
+                    "conclusion": detail.get("conclusion") or "",
+                }
+                for _row, detail in assets
+            ],
+            "generatedAt": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+        }
+    )
+
+
+@router.get("/{asset_no}")
+def get_asset(
+    asset_no: str,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = _load_asset(db, tenant_of(actor), asset_no)
+    if row is None:
+        return fail(1504, "竞品档案不存在")
+    return ok(asset_detail(ops, tenant_of(actor), row))
