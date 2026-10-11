@@ -1648,6 +1648,21 @@ def user_is_assignee(db: Session, task: TrainTask, user: User) -> bool:
     return False
 
 
+def user_has_study_todo(db: Session, user_id: int, task_id: int) -> bool:
+    """工作台学习待办即被指派。PENDING 与 DONE 都算，不按租户过滤。"""
+    row = db.scalar(
+        select(Todo.id)
+        .where(
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == TRAIN_TODO,
+            Todo.ref_id == task_id,
+            Todo.status.in_(("PENDING", "DONE")),
+        )
+        .limit(1)
+    )
+    return row is not None
+
+
 def expand_assignees(db: Session, tenant_id: int, body: TaskBody) -> list[int] | dict:
     if body.assignScope not in ASSIGN_SCOPES:
         return fail(1001, "assignScope 无效")
@@ -2264,7 +2279,12 @@ def open_assignee(db: Session, actor: User, task_id: int, denied_code: int, deni
     if task is None or task.deleted or task.tenant_id != tenant_id:
         return None, None, fail(1500, "任务不存在")
     record = record_for_user(db, tenant_id, task_id, actor.id)
-    assignee = user_is_assignee(db, task, actor) or (record is not None and record.deleted == 0)
+    has_todo = user_has_study_todo(db, actor.id, task.id)
+    assignee = (
+        user_is_assignee(db, task, actor)
+        or (record is not None and record.deleted == 0)
+        or has_todo
+    )
     if not assignee:
         return None, None, fail(denied_code, denied_msg)
     if record is not None and record.deleted:
@@ -2281,7 +2301,8 @@ def open_assignee(db: Session, actor: User, task_id: int, denied_code: int, deni
         task.assigned_count = int(task.assigned_count or 0) + 1
         task.updated_at = utcnow()
         db.flush()
-        upsert_study_todos(db, task.tenant_id or 0, task, [actor.id])
+        if not has_todo:
+            upsert_study_todos(db, task.tenant_id or 0, task, [actor.id])
     return task, record, None
 
 

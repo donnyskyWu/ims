@@ -834,6 +834,119 @@ def test_train_study_assignee_without_record_can_open_stranger_forbidden():
     assert stranger_body["msg"] == "仅被指派人可学习本任务"
 
 
+def test_train_study_todo_without_record_opens_and_backfills():
+    """工作台已有学习待办、但岗位码对不上且没有学习记录时，仍可学习并补建记录。"""
+    auth = headers()
+    target_auth, target_id = _dept_learner("岗位目标")
+    learner_auth, learner_id = _dept_learner("TC-短视频")
+    stranger_auth, _stranger_id = _dept_learner("旁听")
+    material_id = _published_material(auth, f"待办学习 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "TB学时任务3",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [target_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    assert learner_id not in body["data"]["assignTargetUserIds"]
+    db = SessionLocal()
+    try:
+        existing = db.scalar(
+            select(TrainTaskRecord).where(
+                TrainTaskRecord.task_id == task_id,
+                TrainTaskRecord.user_id == learner_id,
+            )
+        )
+        assert existing is None
+        task = db.get(TrainTask, task_id)
+        db.add(
+            Todo(
+                assignee_user_id=learner_id,
+                task_type="train_study",
+                ref_type="train_task",
+                ref_id=task_id,
+                title="学习待办：TB学时任务3",
+                content="进入学习中心完成本任务",
+                status="PENDING",
+                tenant_id=9,
+            )
+        )
+        db.commit()
+        task_tenant = int(task.tenant_id or 0)
+    finally:
+        db.close()
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    assert opened_body["data"]["progress"]["userId"] == learner_id
+    again = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    assert again.status_code == 200
+    assert again.json()["code"] == 0
+    db = SessionLocal()
+    try:
+        live = list(
+            db.scalars(
+                select(TrainTaskRecord).where(
+                    TrainTaskRecord.task_id == task_id,
+                    TrainTaskRecord.user_id == learner_id,
+                    TrainTaskRecord.deleted == 0,
+                )
+            ).all()
+        )
+        assert len(live) == 1
+        assert int(live[0].tenant_id or 0) == task_tenant
+        live[0].deleted = 1
+        todo = db.scalar(
+            select(Todo).where(
+                Todo.assignee_user_id == learner_id,
+                Todo.task_type == "train_study",
+                Todo.ref_id == task_id,
+            )
+        )
+        todo.status = "DONE"
+        db.commit()
+    finally:
+        db.close()
+
+    restored = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    restored_body = restored.json()
+    assert restored.status_code == 200, restored_body
+    assert restored_body["code"] == 0, restored_body
+    db = SessionLocal()
+    try:
+        live = list(
+            db.scalars(
+                select(TrainTaskRecord).where(
+                    TrainTaskRecord.task_id == task_id,
+                    TrainTaskRecord.user_id == learner_id,
+                    TrainTaskRecord.deleted == 0,
+                )
+            ).all()
+        )
+        assert len(live) == 1
+    finally:
+        db.close()
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+    denied = client.get(f"/admin-api/ims/train/study/{task_id}", headers=target_auth)
+    assert denied.status_code == 200
+    assert denied.json()["code"] == 0
+
+
 SAMPLE_QUIZ = [
     {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"], "answerIndex": 0},
     {"question": "话术可以照着念吗", "options": ["可以", "不行"], "answerIndex": 1},
