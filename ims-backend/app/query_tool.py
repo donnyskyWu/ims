@@ -256,7 +256,6 @@ def template_detail(
     return ok(data)
 
 
-@router.post("/template")
 def payload_error(mode: str, payload: dict) -> str:
     if mode == "DRILL":
         levels = payload.get("levels") or []
@@ -273,6 +272,7 @@ def payload_error(mode: str, payload: dict) -> str:
     return ""
 
 
+@router.post("/template")
 def template_create(
     body: TemplateBody,
     db: Session = Depends(db_session),
