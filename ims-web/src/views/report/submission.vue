@@ -164,7 +164,7 @@
           :disabled="!form.templateId"
           @change="onAuthorChange"
         >
-          <option :value="0">请选择作者（AuthorSelect）</option>
+          <option :value="0">请选择作者</option>
           <option v-for="author in authors" :key="author.id" :value="author.id">{{ author.authorName }}</option>
         </select>
         <label class="fld">平台账号 <span class="req">*</span></label>
@@ -519,7 +519,7 @@ async function doSubmit(asDraft: boolean) {
   formError.value = ''
   for (const key of Object.keys(fieldErrors)) delete fieldErrors[key]
   const missing: string[] = []
-  if (!form.authorId) missing.push('请选择作者（AuthorSelect）')
+  if (!form.authorId) missing.push('请选择作者')
   if (!form.templateId) missing.push('请选择模板')
   if (!form.accountId) missing.push('请选择平台账号')
   if (!form.period) missing.push('请选择数据日期')

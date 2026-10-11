@@ -69,7 +69,7 @@ test.describe('report tc13 closure', () => {
     await expect(page.getByTestId('submit-template')).toBeVisible()
     await expect(page.getByTestId('submit-author')).toBeVisible()
     await page.getByTestId('submit-send').click()
-    await expect(page.getByTestId('submit-error')).toContainText('请选择作者（AuthorSelect）')
+    await expect(page.getByTestId('submit-error')).toContainText('请选择作者')
     await page.getByTestId('submit-dialog').getByRole('button', { name: '取消' }).click()
 
     await page.goto('/ims/report/stat')
