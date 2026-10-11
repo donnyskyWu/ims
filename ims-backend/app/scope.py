@@ -12,6 +12,8 @@ WHITELIST_PREFIXES = (
     "/admin-api/ims/auth/workbench",
     "/admin-api/ims/auth/access",
     "/admin-api/ims/home",
+    # 与功能白名单一致：待办查询已按 assignee 限定本人，不按流程表的数据范围再拦一层。
+    "/admin-api/ims/flow/task/my-todo",
 )
 
 

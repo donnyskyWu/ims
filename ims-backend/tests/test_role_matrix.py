@@ -171,6 +171,29 @@ def test_r7_and_r10_cannot_open_ops_board():
     assert "/ims/home" in director["routes"]
 
 
+def test_workbench_flow_todo_loads_without_flow_menu():
+    logged = client.post("/admin-api/ims/auth/login", json={"username": "tc_r7", "password": "Admin@123"}).json()["data"]
+    host = {"Authorization": f"Bearer {logged['accessToken']}"}
+    mine = client.get("/admin-api/ims/flow/task/my-todo", headers=host, params={"pageNo": 1, "pageSize": 5})
+    assert mine.status_code == 200, mine.text
+    body = mine.json()
+    assert body["code"] == 0, body
+    user_id = int(logged["profile"]["userId"])
+    for row in body["data"]["list"]:
+        assert int(row["assigneeUserId"]) == user_id
+    blocked = client.get("/admin-api/ims/flow/instance/list", headers=host)
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == 403
+    for username in ("tc_r4", "tc_r10"):
+        res = client.get(
+            "/admin-api/ims/flow/task/my-todo",
+            headers=login(username),
+            params={"pageNo": 1, "pageSize": 5},
+        )
+        assert res.status_code == 200, username
+        assert res.json()["code"] == 0, (username, res.json())
+
+
 def test_r5_analysis_menu_is_prd_subset():
     codes = grants_for("R5")
     assert "menu:queryTool:query" in codes
