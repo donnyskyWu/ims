@@ -634,6 +634,23 @@ def category_match_names(db: Session, tenant_id: int, name: str) -> list[str]:
     return names
 
 
+def category_list_clause(db: Session, tenant_id: int, name: str):
+    """树节点筛选。不在树上的分类（如遗留「内容分析」）在查询时归入「未分类」，不改库内原值。"""
+    rows = category_rows(db, tenant_id)
+    found = next((row for row in rows if row.name == name), None)
+    names = category_match_names(db, tenant_id, name)
+    matched = BiReportDef.category.in_(names)
+    if found is None or (found.name != "未分类" and not found.system_flag):
+        return matched
+    known = [row.name for row in rows if row.name]
+    orphan = or_(
+        BiReportDef.category.is_(None),
+        BiReportDef.category == "",
+        BiReportDef.category.notin_(known) if known else BiReportDef.category.isnot(None),
+    )
+    return or_(matched, orphan)
+
+
 def category_report_count(db: Session, tenant_id: int, names: list[str]) -> int:
     if not names:
         return 0
@@ -837,8 +854,7 @@ def report_manage_list(
     if reportType:
         q = q.where(BiReportDef.report_type == reportType.strip().upper())
     if category:
-        names = category_match_names(db, tenant_id, category.strip())
-        q = q.where(BiReportDef.category.in_(names))
+        q = q.where(category_list_clause(db, tenant_id, category.strip()))
     if status:
         q = q.where(BiReportDef.status == status.strip().upper())
     if shareScope:

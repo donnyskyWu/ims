@@ -58,6 +58,48 @@ def test_bi_report_manage_create_list():
     assert cats.json()["data"]["categories"]
 
 
+def test_bi_legacy_category_falls_under_uncategorized():
+    """BUG-C079：分类不在树上的报表（如 RPT-0001~0004 的「内容分析」）查询时归入未分类，不改原值。"""
+    auth = headers()
+    legacy = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "BUG-C079 内容分析遗留", "reportType": "REPORT", "category": "内容分析"},
+    )
+    assert legacy.json()["code"] == 0
+    rid = legacy.json()["data"]["id"]
+    assert legacy.json()["data"]["category"] == "内容分析"
+
+    daily = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={"reportName": "BUG-C079 日报对照", "reportType": "REPORT", "category": "日报"},
+    )
+    assert daily.json()["code"] == 0
+    daily_id = daily.json()["data"]["id"]
+
+    def ids(category: str, keyword: str) -> set[int]:
+        listed = client.get(
+            "/admin-api/ims/bi/report/list",
+            headers=auth,
+            params={"category": category, "keyword": keyword, "pageNo": 1, "pageSize": 20},
+        )
+        assert listed.json()["code"] == 0
+        return {item["id"] for item in listed.json()["data"]["list"]}
+
+    assert rid in ids("未分类", "BUG-C079 内容分析遗留")
+    assert daily_id not in ids("未分类", "BUG-C079")
+    assert rid not in ids("内容", "BUG-C079")
+    assert rid not in ids("运营", "BUG-C079")
+    assert rid not in ids("财务", "BUG-C079")
+    assert rid not in ids("日报", "BUG-C079")
+    assert daily_id in ids("日报", "BUG-C079 日报对照")
+    assert daily_id in ids("运营", "BUG-C079 日报对照")
+
+    detail = client.get(f"/admin-api/ims/bi/report/{rid}", headers=auth)
+    assert detail.json()["data"]["category"] == "内容分析"
+
+
 def test_bi_category_tree_import_and_scope_filter():
     auth = headers()
     cats = client.get("/admin-api/ims/bi/report/categories", headers=auth).json()["data"]["categories"]
