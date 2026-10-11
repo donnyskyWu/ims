@@ -31,9 +31,9 @@
       <input v-model="dateTo" data-testid="bi-report-to" type="date" />
       <span class="csub">时间维度</span>
       <select v-model="timeGrain" data-testid="bi-report-grain" style="width: 100px">
-        <option value="DAY">DAY</option>
-        <option value="WEEK">WEEK</option>
-        <option value="MONTH">MONTH</option>
+        <option value="DAY">日</option>
+        <option value="WEEK">周</option>
+        <option value="MONTH">月</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="button" data-testid="bi-report-run" @click="reloadPreview">查询</button>
@@ -143,7 +143,7 @@ function resetFilters() {
   dateTo.value = ''
   ipGroupId.value = ''
   timeGrain.value = 'DAY'
-  resetNote.value = '已重置统一筛选条'
+  resetNote.value = '已重置'
   reportError.value = ''
   void reloadPreview()
 }
