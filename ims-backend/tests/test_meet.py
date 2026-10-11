@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import MeetDailyReport, Role, RolePerm, Todo, User, UserRole
+from app.models import MeetDailyReport, Role, RolePerm, Todo, User, UserRole, WorkMessage
 
 client = TestClient(app)
 BJ = timezone(timedelta(hours=8))
@@ -641,3 +641,50 @@ def test_meet_review_follow_up_creates_todo_and_closes():
     todo = db.scalar(select(Todo).where(Todo.ref_type == "meet_follow", Todo.ref_id == item_id))
     assert todo is not None and todo.status == "DONE"
     db.close()
+
+
+def test_meet_room_conflict_and_invitation():
+    guest_id = _scoped_user("meet_guest", "受邀人", "SELF")
+    auth = headers()
+    when = "2026-10-21T10:00:00+08:00"
+    first = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "上午会",
+            "meetingDate": when,
+            "durationMinutes": 60,
+            "meetingRoom": "2F-会议室 A",
+            "attendees": [{"userId": guest_id, "userName": "受邀人"}],
+        },
+    )
+    assert first.json()["code"] == 0
+    clash = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "冲突会",
+            "meetingDate": "2026-10-21T10:30:00+08:00",
+            "durationMinutes": 30,
+            "meetingRoom": "2F-会议室 A",
+            "attendees": [{"userId": guest_id, "userName": "受邀人"}],
+        },
+    )
+    assert clash.json()["code"] == 1001
+    assert "会议室已被占用" in clash.json()["msg"]
+    online = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "线上不冲突",
+            "meetingDate": when,
+            "meetingRoom": "线上",
+            "attendees": [{"userName": "外部嘉宾", "external": True}],
+        },
+    )
+    assert online.json()["code"] == 0
+    db = SessionLocal()
+    notes = list(db.scalars(select(WorkMessage).where(WorkMessage.user_id == guest_id, WorkMessage.ref_type == "meet_minutes")).all())
+    db.close()
+    assert len(notes) == 1
+    assert notes[0].title == "会议邀请"

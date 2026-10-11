@@ -16,7 +16,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, Todo, User
+from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, Todo, User, WorkMessage
 from app.scope import DataScope, dept_ids_of
 
 router = APIRouter(prefix="/meet", tags=["meet"])
@@ -982,6 +982,71 @@ def action_item_vo(item: dict) -> dict:
     }
 
 
+def as_bj(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=BJ)
+    return value.astimezone(BJ)
+
+
+def room_taken(
+    db: Session,
+    tenant_id: int,
+    room: str,
+    start: datetime,
+    duration: int,
+    *,
+    exclude_id: int | None = None,
+) -> bool:
+    name = (room or "").strip()
+    if not name or name == "线上":
+        return False
+    rows = list(
+        db.scalars(
+            select(MeetMinutes).where(
+                MeetMinutes.deleted == 0,
+                MeetMinutes.tenant_id == tenant_id,
+                MeetMinutes.meeting_room == name,
+            )
+        ).all()
+    )
+    start_at = as_bj(start)
+    end_at = start_at + timedelta(minutes=int(duration or 60))
+    for other in rows:
+        if exclude_id and other.id == exclude_id:
+            continue
+        if other.meeting_date is None:
+            continue
+        other_start = as_bj(other.meeting_date)
+        other_end = other_start + timedelta(minutes=int(other.duration_minutes or 60))
+        if start_at < other_end and other_start < end_at:
+            return True
+    return False
+
+
+def invite_attendees(db: Session, row: MeetMinutes, actor: User) -> None:
+    now = utcnow()
+    when = iso(row.meeting_date) or ""
+    for item in row.attendees or []:
+        if not isinstance(item, dict):
+            continue
+        user_id = int(item.get("userId") or 0)
+        if not user_id or user_id == actor.id:
+            continue
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title="会议邀请",
+                content=f"{row.meeting_title} · {when} · {row.meeting_room or '会议室待定'}"[:512],
+                channel="IN_APP",
+                source_module="MEET",
+                ref_type="meet_minutes",
+                ref_id=row.id,
+                tenant_id=row.tenant_id,
+                created_at=now,
+            )
+        )
+
+
 def sync_action_todos(db: Session, row: MeetMinutes) -> None:
     now = utcnow()
     for item in row.action_items or []:
@@ -1192,6 +1257,8 @@ def minutes_create(
     if not title or when is None or not attendees:
         return fail(1001, "必填项，请填写")
     tenant_id = tenant_of(actor)
+    if room_taken(db, tenant_id, body.meetingRoom, when, body.durationMinutes):
+        return fail(1001, "会议室已被占用，不能提交")
     dept_id, _ = primary_dept(db, actor)
     now = utcnow()
     summary = (body.summary or "").strip()
@@ -1228,7 +1295,8 @@ def minutes_create(
     if body.actionItems:
         row.action_items = build_action_items(db, body.actionItems, minutes_id=row.id)
         sync_action_todos(db, row)
-        db.flush()
+    invite_attendees(db, row, actor)
+    db.flush()
     return ok(minutes_vo(row))
 
 
@@ -1362,6 +1430,18 @@ def minutes_update(
     summary = (body.summary or "").strip()
     if not summary:
         return fail(1001, "必填项，请填写")
+    next_room = (body.meetingRoom or "").strip() or row.meeting_room
+    next_when = parse_meeting_date(body.meetingDate) if (body.meetingDate or "").strip() else row.meeting_date
+    next_duration = body.durationMinutes or row.duration_minutes
+    if next_when is not None and room_taken(
+        db,
+        row.tenant_id,
+        next_room,
+        next_when,
+        next_duration,
+        exclude_id=row.id,
+    ):
+        return fail(1001, "会议室已被占用，不能提交")
     title = (body.meetingTitle or "").strip() or row.meeting_title
     when = parse_meeting_date(body.meetingDate) if (body.meetingDate or "").strip() else row.meeting_date
     attendees = [a.model_dump(exclude_none=True) for a in body.attendees if (a.userName or "").strip() or a.userId]
