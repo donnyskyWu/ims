@@ -112,8 +112,9 @@
           <option value="">不指定</option>
           <option v-for="room in rooms" :key="room" :value="room">{{ room }}</option>
         </select>
-        <label class="fld">议程</label>
+        <label class="fld">议程 *</label>
         <textarea v-model="form.agenda" class="fld-in" rows="3" data-testid="meet-agenda" />
+        <p v-if="fieldErrors.agenda" class="err">{{ fieldErrors.agenda }}</p>
         <p v-if="formError" class="err">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
@@ -244,7 +245,7 @@ const form = reactive({
   attendeeIds: [] as number[],
   recorderUserId: 0,
 })
-const fieldErrors = reactive({ meetingTitle: '', meetingDate: '', attendees: '' })
+const fieldErrors = reactive({ meetingTitle: '', meetingDate: '', attendees: '', agenda: '' })
 const toast = ref('')
 const toastOut = ref(false)
 let toastTimer = 0
@@ -391,6 +392,7 @@ function openCreate() {
   fieldErrors.meetingTitle = ''
   fieldErrors.meetingDate = ''
   fieldErrors.attendees = ''
+  fieldErrors.agenda = ''
   form.meetingTitle = ''
   form.meetingDate = ''
   form.meetingRoom = ''
@@ -406,7 +408,8 @@ function validateForm() {
   fieldErrors.meetingTitle = form.meetingTitle.trim() ? '' : '必填项，请填写'
   fieldErrors.meetingDate = form.meetingDate ? '' : '必填项，请填写'
   fieldErrors.attendees = form.attendeeIds.length ? '' : '必填项，请填写'
-  return !fieldErrors.meetingTitle && !fieldErrors.meetingDate && !fieldErrors.attendees
+  fieldErrors.agenda = form.agenda.trim() ? '' : '必填项，请填写'
+  return !fieldErrors.meetingTitle && !fieldErrors.meetingDate && !fieldErrors.attendees && !fieldErrors.agenda
 }
 
 async function submit() {
