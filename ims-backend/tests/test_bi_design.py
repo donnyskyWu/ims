@@ -54,7 +54,22 @@ def test_bi_design_bind_metric_rejects_illegal_field():
     auth = headers()
     ds = client.get("/admin-api/ims/bi/report/datasets", headers=auth).json()["data"]
     types = {item["type"] for item in ds["compLib"]}
-    assert {"KPI", "LINE", "BAR", "PIE", "AREA", "RADAR", "FUNNEL", "TABLE", "DATE_RANGE", "CASCADE", "BUTTON", "LINK"} <= types
+    grouped = {
+        "CHART": ["KPI", "BAR", "LINE", "PIE", "DONUT", "RADAR", "FUNNEL", "SCATTER", "TABLE", "DETAIL_TABLE", "RICH_TEXT"],
+        "FILTER": ["DATE_RANGE", "SELECT_SINGLE", "SELECT_MULTI", "TEXT_INPUT", "NUMBER_RANGE"],
+        "CONTAINER": ["GROUP", "CARD", "TAB"],
+        "ACTION": ["BUTTON", "LINK", "TRIGGER"],
+    }
+    actual = {group: [item["type"] for item in ds["compLib"] if item["group"] == group] for group in grouped}
+    assert actual == grouped
+    assert types == {code for codes in grouped.values() for code in codes}
+    assert "AREA" not in types and "CASCADE" not in types
+    names = {item["type"]: item["name"] for item in ds["compLib"]}
+    assert names["RICH_TEXT"] == "富文本"
+    assert names["TABLE"] == "数据表"
+    assert names["DATE_RANGE"] == "日期范围"
+    assert names["TRIGGER"] == "联动触发件"
+    assert len(ds["compLib"]) == 22
     metric = next(item for item in ds["datasets"] if item["code"] == "METRIC_LIB")
     keys = {field["fieldKey"] for field in metric["fields"]}
     assert {"statDate", "gmv"} <= keys

@@ -629,7 +629,7 @@ function isTable(comp: Comp) {
   return comp.type === 'TABLE' || comp.type === 'DETAIL_TABLE'
 }
 function isChart(comp: Comp) {
-  return ['LINE', 'BAR', 'AREA', 'PIE', 'DONUT', 'RADAR', 'FUNNEL', 'SCATTER'].includes(comp.type)
+  return ['LINE', 'BAR', 'PIE', 'DONUT', 'RADAR', 'FUNNEL', 'SCATTER'].includes(comp.type)
 }
 
 function previewOf(comp: Comp): Preview {
