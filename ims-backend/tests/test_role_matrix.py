@@ -281,6 +281,34 @@ def test_tc_accounts_follow_matrix_and_custom_role_survives():
     assert "协同与成长" in seen["tc_r4"]
 
 
+def test_b083_report_submit_menu_for_fillers():
+    """REPORT-002 数据提交：填报人 R2/R3/R5/R6/R10 看见「数据上报 / 填报单管理」。R7 没有。"""
+    fillers = ("R2", "R3", "R5", "R6", "R10")
+    for key in fillers:
+        codes = grants_for(key)
+        assert codes.get("nav:report:query") == "R"
+        assert "W" in codes["menu:reportSub:query"]
+        assert codes["menu:reportSub:add"] == "R"
+        assert codes["menu:reportSub:edit"] == "R"
+    assert "menu:reportSub:query" not in grants_for("R7")
+    assert "nav:report:query" not in grants_for("R7")
+    menu = next(row for row in CATALOG if row[0] == "menu:reportSub:query")
+    parent = next(row for row in CATALOG if row[0] == "nav:report:query")
+    assert parent[2] == "数据上报"
+    assert menu[2] == "填报单管理"
+    assert menu[4] == "/ims/report/submission"
+
+    for username in ("tc_r2", "tc_r3", "tc_r5", "tc_r6", "tc_r10"):
+        access = client.get("/admin-api/ims/auth/access", headers=login(username)).json()["data"]
+        assert "nav:report:query" in access["permCodes"]
+        assert "menu:reportSub:query" in access["permCodes"]
+        assert "menu:reportSub:add" in access["permCodes"]
+        assert "/ims/report/submission" in access["routes"]
+    hidden = client.get("/admin-api/ims/auth/access", headers=login("tc_r7")).json()["data"]
+    assert "menu:reportSub:query" not in hidden["permCodes"]
+    assert "/ims/report/submission" not in hidden["routes"]
+
+
 def test_catalog_has_button_rows():
     buttons = [row for row in CATALOG if row[3] == "BUTTON"]
     assert len(buttons) >= 100
