@@ -1067,3 +1067,59 @@ def test_seeded_author_exposes_bound_platform_account():
     assert pooled.json()["code"] == 0
     names = [row["accountName"] for row in pooled.json()["data"]["accounts"]]
     assert "TC-账号甲" in names
+
+
+def test_template_keeps_min_constraint_and_validate_expr():
+    auth = headers()
+    created = client.post(
+        "/admin-api/ims/report/template",
+        headers=auth,
+        json={
+            "templateName": "校验下限模板",
+            "periodType": "DAILY",
+            "fieldsSchema": [
+                {"fieldKey": "gmv", "fieldLabel": "GMV", "fieldType": "MONEY", "required": True},
+            ],
+        },
+    )
+    assert created.json()["code"] == 0
+    template_id = created.json()["data"]["id"]
+    updated = client.put(
+        f"/admin-api/ims/report/template/{template_id}",
+        headers=auth,
+        json={
+            "templateName": "校验下限模板",
+            "periodType": "DAILY",
+            "deadlineRule": "18:00",
+            "businessLine": "BUSINESS",
+            "status": "ENABLED",
+            "fieldsSchema": [
+                {
+                    "fieldKey": "gmv",
+                    "fieldLabel": "GMV",
+                    "fieldType": "MONEY",
+                    "required": True,
+                    "range": {"min": 0, "constraint": "≥0"},
+                    "validateExpr": ">=0",
+                }
+            ],
+            "assignees": [],
+        },
+    )
+    saved = updated.json()
+    assert saved["code"] == 0, saved
+    field = saved["data"]["fieldsSchema"][0]
+    assert field["range"]["min"] == 0
+    assert field["range"]["constraint"] == "≥0"
+    assert field["validateExpr"] == ">=0"
+
+    listed = client.get(
+        "/admin-api/ims/report/template/list",
+        headers=auth,
+        params={"templateName": "校验下限模板", "pageNo": 1, "pageSize": 10},
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == template_id)
+    kept = row["fieldsSchema"][0]
+    assert kept["range"]["min"] == 0
+    assert kept["range"]["constraint"] == "≥0"
+    assert kept["validateExpr"] == ">=0"

@@ -72,3 +72,11 @@ def test_arbitrary_call_rejected():
     with pytest.raises(ExprError) as raised:
         check_expression("gmv.drop()", ALLOWED)
     assert raised.value.code == 1192
+
+
+def test_alert_call_is_illegal_expression_not_unknown_field():
+    with pytest.raises(ExprError) as raised:
+        check_expression("alert(1)", ALLOWED)
+    assert raised.value.code == 1192
+    assert raised.value.msg == "非法表达式"
+    assert "不存在的字段" not in raised.value.msg

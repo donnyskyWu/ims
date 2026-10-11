@@ -200,6 +200,11 @@
                     style="width: 88px"
                   />
                   <input v-model="field.validateExpr" placeholder="校验表达式" data-testid="tpl-validate-expr" />
+                  <p
+                    v-if="fieldExprProblem(field.validateExpr)"
+                    class="field-err"
+                    data-testid="tpl-field-expr-error"
+                  >{{ fieldExprProblem(field.validateExpr) }}</p>
                 </td>
                 <td class="nowrap">
                   <button class="btn btn-sec btn-sm" type="button" @click="moveField(index, -1)">↑</button>
@@ -215,7 +220,10 @@
         <div v-else-if="editTab === 'rules'">
           <p class="hint">只允许字段代码、SUM/AVG/COUNT/MAX/MIN 和四则运算。DELETE、DROP 等语句会被拒绝。</p>
           <div v-for="(rule, index) in editRules" :key="index" class="rule-row">
-            <input v-model="rule.expression" placeholder="如 gmv == orders" data-testid="tpl-rule-expr" />
+            <div>
+              <input v-model="rule.expression" placeholder="如 gmv == orders" data-testid="tpl-rule-expr" />
+              <p v-if="ruleProblem(rule.expression)" class="field-err" data-testid="tpl-rule-error">{{ ruleProblem(rule.expression) }}</p>
+            </div>
             <input v-model="rule.errorMsg" placeholder="错误提示，如明细合计不平" />
             <button class="btn btn-sec btn-sm" type="button" @click="editRules.splice(index, 1)">删除</button>
           </div>
@@ -254,7 +262,7 @@ type SchemaField = {
   fieldLabel: string
   fieldType: string
   required?: boolean
-  range?: { min?: number; max?: number; maxLength?: number }
+  range?: { min?: number; max?: number; maxLength?: number; constraint?: string }
   validateExpr?: string
   crossCheck?: { expression?: string; errorMsg?: string; targetFieldKey?: string; operator?: string }
 }
@@ -286,7 +294,7 @@ type EditField = {
 }
 
 const FUNCS = new Set(['SUM', 'AVG', 'COUNT', 'MAX', 'MIN'])
-const SQL_WORDS = /^(DELETE|DROP|UPDATE|INSERT|SELECT|ALTER|TRUNCATE|EXEC|UNION|FROM|WHERE|TABLE)$/i
+const SQL_WORDS = /^(DELETE|DROP|UPDATE|INSERT|SELECT|ALTER|TRUNCATE|EXEC|UNION|FROM|WHERE|TABLE|OR|AND|NOT|EVAL)$/i
 
 const router = useRouter()
 const rows = ref<Row[]>([])
@@ -331,8 +339,8 @@ function go(path: string) {
 
 function apiError(err: unknown): string {
   if (err && typeof err === 'object' && 'msg' in err) {
-    const body = err as { code?: number; msg?: string }
-    if (body.msg) return body.code ? `${body.msg}（${body.code}）` : body.msg
+    const body = err as { msg?: string }
+    if (body.msg) return body.msg
   }
   return errorMessage(err)
 }
@@ -520,8 +528,8 @@ function openEdit(row: Row) {
       fieldLabel: item.fieldLabel,
       fieldType: item.fieldType || 'TEXT',
       required: !!item.required,
-      minText: item.range?.min != null ? String(item.range.min) : '',
-      maxLenText: item.range?.maxLength != null ? String(item.range.maxLength) : '',
+      minText: numberConstraint(item),
+      maxLenText: textConstraint(item),
       validateExpr: item.validateExpr || '',
       legacyCheck: item.crossCheck?.expression ? undefined : item.crossCheck,
     }))
@@ -537,26 +545,65 @@ function openEdit(row: Row) {
   loadUsers()
 }
 
-function localRuleError(keys: Set<string>): string {
-  const ident = /[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*/g
+function fieldKeySet(): Set<string> {
+  return new Set(editFields.value.map((field) => field.fieldKey.trim()).filter(Boolean))
+}
+
+function exprProblem(expr: string, unknownIsError: boolean): string {
+  const text = expr.trim()
+  if (!text) return ''
+  const keys = fieldKeySet()
+  const callRe = /([A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*)\s*\(/g
+  for (const match of text.matchAll(callRe)) {
+    if (!FUNCS.has(match[1].toUpperCase())) return '非法表达式'
+  }
+  const names = text.match(/[A-Za-z_\u4e00-\u9fff][A-Za-z0-9_\u4e00-\u9fff]*/g) || []
+  for (const name of names) {
+    if (FUNCS.has(name.toUpperCase())) continue
+    if (SQL_WORDS.test(name)) return '非法表达式'
+    if (unknownIsError && !keys.has(name)) return '勾稽规则引用了不存在的字段'
+  }
+  return ''
+}
+
+function ruleProblem(expr: string): string {
+  return exprProblem(expr, true)
+}
+
+function fieldExprProblem(expr: string): string {
+  return exprProblem(expr, false)
+}
+
+function parseBound(text: string): number | null {
+  const raw = text.trim().replace(/^[≥≤>=<]+/, '').replace(/字/g, '').trim()
+  if (!raw || Number.isNaN(Number(raw))) return null
+  return Number(raw)
+}
+
+function numberConstraint(item: SchemaField): string {
+  const range = item.range
+  if (!range) return ''
+  if (range.constraint && isNumberType(item.fieldType)) return range.constraint
+  if (range.min != null) return `≥${range.min}`
+  return ''
+}
+
+function textConstraint(item: SchemaField): string {
+  const range = item.range
+  if (!range) return ''
+  if (range.constraint && item.fieldType === 'TEXT') return range.constraint
+  if (range.maxLength != null) return String(range.maxLength)
+  return ''
+}
+
+function localRuleError(): string {
   for (const rule of editRules.value) {
-    const expr = rule.expression.trim()
-    if (!expr) continue
-    const names = expr.match(ident) || []
-    for (const name of names) {
-      if (FUNCS.has(name.toUpperCase())) continue
-      if (SQL_WORDS.test(name)) return '非法表达式（1192）'
-      if (!keys.has(name)) return '勾稽规则引用了不存在的字段（1121）'
-    }
+    const hit = ruleProblem(rule.expression)
+    if (hit) return hit
   }
   for (const field of editFields.value) {
-    const expr = field.validateExpr.trim()
-    if (!expr) continue
-    const names = expr.match(ident) || []
-    for (const name of names) {
-      if (FUNCS.has(name.toUpperCase())) continue
-      if (SQL_WORDS.test(name)) return '非法表达式（1192）'
-    }
+    const hit = fieldExprProblem(field.validateExpr)
+    if (hit) return hit
   }
   return ''
 }
@@ -579,20 +626,24 @@ async function saveEdit() {
     }
     keys.add(key)
   }
-  const instant = localRuleError(keys)
+  const instant = localRuleError()
   if (instant) {
     editError.value = instant
-    editTab.value = instant.includes('1121') || instant.includes('1192') ? 'rules' : editTab.value
+    editTab.value = editRules.value.some((rule) => ruleProblem(rule.expression)) ? 'rules' : 'fields'
     return
   }
   const fieldsSchema = [
     ...editFields.value.map((field) => {
-      const range: { min?: number; maxLength?: number } = {}
-      if (isNumberType(field.fieldType) && field.minText.trim() !== '' && !Number.isNaN(Number(field.minText))) {
-        range.min = Number(field.minText)
+      const range: { min?: number; maxLength?: number; constraint?: string } = {}
+      if (isNumberType(field.fieldType) && field.minText.trim()) {
+        range.constraint = field.minText.trim()
+        const min = parseBound(field.minText)
+        if (min != null) range.min = min
       }
-      if (field.fieldType === 'TEXT' && field.maxLenText.trim() !== '' && !Number.isNaN(Number(field.maxLenText))) {
-        range.maxLength = Number(field.maxLenText)
+      if (field.fieldType === 'TEXT' && field.maxLenText.trim()) {
+        range.constraint = field.maxLenText.trim()
+        const maxLength = parseBound(field.maxLenText)
+        if (maxLength != null) range.maxLength = maxLength
       }
       return {
         fieldKey: field.fieldKey.trim(),
