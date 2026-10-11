@@ -74,6 +74,7 @@ test.describe('content TC-07 P1', () => {
     )
     await page.getByRole('button', { name: '新增计划' }).click()
     await sopList
+    const planDrawer = page.locator('.drawer.on').filter({ hasText: '新增计划' })
     await expect(planDrawer.getByText('SOP 模板（启用）')).toBeVisible()
     await expect(planDrawer.getByTestId('plan-sop-enabled')).not.toContainText(sopName)
     await planDrawer.getByRole('button', { name: '取消' }).click()
