@@ -202,13 +202,15 @@ def test_r5_analysis_menu_is_prd_subset():
         "menu:biPreview:query",
         "menu:dc:query",
         "menu:dcDashboard:query",
-        "menu:eff:query",
         "menu:bi0Metric:query",
         "menu:bi0Analysis:query",
     ):
         assert code not in codes
     assert "menu:biList:query" in codes
-    assert "nav:bi-analysis:query" not in codes
+    assert codes.get("menu:eff:query") == "R"
+    assert codes.get("nav:bi-analysis:query") == "R"
+    assert "menu:eff:add" not in codes
+    assert "menu:eff:remove" not in codes
 
 
 def test_r8_has_no_report_menu_and_r4_can_open_flow_and_review():
@@ -266,7 +268,7 @@ def test_tc_accounts_follow_matrix_and_custom_role_survives():
         routes = set(access["routes"])
         if username in ("tc_r5", "tc_r5b"):
             analysis = [ANALYSIS[route] for route in ANALYSIS if route in routes]
-            assert analysis == []
+            assert analysis == ["组织人效"]
             assert "/ims/bi/metric" not in routes
             assert "/ims/bi/analysis" not in routes
             for path in ("/admin-api/ims/dc/trace/entry", "/admin-api/ims/analysis/query-tool/template/page"):
@@ -332,6 +334,19 @@ def test_eff_relation_perms_seed_and_login():
         assert (EFF_RELATION_CREATE in codes) is (key in writers)
         assert (EFF_RELATION_UPDATE in codes) is (key in writers)
         assert (EFF_RELATION_DELETE in codes) is (key == "R1")
+        assert (codes.get("menu:eff:query") == "R" or "W" in (codes.get("menu:eff:query") or "")) is (key in readers)
+        if key in {"R2", "R5", "R6", "R7"}:
+            assert codes.get("nav:bi-analysis:query") == "R"
+        if key == "R2":
+            assert codes.get("menu:eff:add") == "R"
+            assert codes.get("menu:eff:edit") == "R"
+            assert "menu:eff:remove" not in codes
+        if key in {"R5", "R6", "R7", "R9"}:
+            assert "menu:eff:add" not in codes
+            assert "menu:eff:edit" not in codes
+            assert "menu:eff:remove" not in codes
+        if key in {"R1", "R4", "R9"}:
+            assert "menu:eff:query" in codes
 
     db = SessionLocal()
     try:

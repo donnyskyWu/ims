@@ -161,6 +161,13 @@ def _button(perm: str, action: str) -> str:
     return f"{perm}:{action}"
 
 
+def _raise(levels: dict[str, str], code: str, level: str) -> None:
+    rank = {"R": 1, "RW": 2, "RWD": 3}
+    current = levels.get(code, "")
+    if rank.get(level, 0) >= rank.get(current, 0):
+        levels[code] = level
+
+
 def grants_for(role_key: str) -> dict[str, str]:
     """权限码 → 级别。含目录、菜单和应勾选的按钮。"""
     _name, _scope, mods = ROLE_SPEC[role_key]
@@ -200,12 +207,20 @@ _EFF_RELATION_WRITE = frozenset({"R1", "R2"})
 
 
 def _apply_eff_relation(role_key: str, levels: dict[str, str]) -> None:
+    """查看含菜单 menu:eff:query 及其父级。建立/变更只给 R1、R2。删除只给 R1。"""
+    by_perm, _menu_of = _index()
     if role_key in _EFF_RELATION_READ:
+        _raise(levels, "menu:eff:query", "R")
+        for parent in _ancestors("menu:eff:query", by_perm):
+            _raise(levels, parent, "R")
         levels[EFF_RELATION_QUERY] = "R"
     if role_key in _EFF_RELATION_WRITE:
+        _raise(levels, "menu:eff:add", "R")
+        _raise(levels, "menu:eff:edit", "R")
         levels[EFF_RELATION_CREATE] = "R"
         levels[EFF_RELATION_UPDATE] = "R"
     if role_key == "R1":
+        _raise(levels, "menu:eff:remove", "R")
         levels[EFF_RELATION_DELETE] = "R"
 
 
