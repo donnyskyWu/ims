@@ -378,6 +378,50 @@ def normalize_notify(raw: str | None) -> tuple[str, str | None]:
     return mode, None
 
 
+def derive_source_module(rule: AlertRule) -> str:
+    """旧规则没有监控对象时，按编码、名称和表达式归到现有模块。对不上就留空。"""
+    blob = f"{rule.rule_code or ''} {rule.rule_name or ''} {rule.threshold_expr or ''}"
+    upper = blob.upper()
+    if "CERT" in upper or "证件" in blob or "DAYS_LEFT" in upper:
+        return "证件档案"
+    if "ACCT" in upper or "账号" in blob or "UNRETURN" in upper:
+        return "账号管理"
+    if "FIN" in upper or "财务" in blob or "成本" in blob or "COST" in upper:
+        return "财务核算"
+    if "EFF" in upper or "人效" in blob or "组织" in blob:
+        return "组织人效"
+    if "MEET" in upper or "会议" in blob:
+        return "会议"
+    if "REPORT" in upper or "日报" in blob:
+        return "日报"
+    if "FLOW" in upper or "工作流" in blob or "节点" in blob:
+        return "工作流"
+    if "LIVE" in upper or "直播" in blob:
+        return "直播管理"
+    return ""
+
+
+def ensure_rule_modules(db: Session, tenant_id: int) -> None:
+    """把已落库、模块为空且能识别的规则写回 source_module。不新增列。"""
+    rows = db.scalars(
+        select(AlertRule).where(
+            AlertRule.deleted == 0,
+            AlertRule.tenant_id == tenant_id,
+            AlertRule.source_module == "",
+        )
+    ).all()
+    changed = False
+    for row in rows:
+        module = derive_source_module(row)
+        if not module:
+            continue
+        row.source_module = module
+        row.updated_at = utcnow()
+        changed = True
+    if changed:
+        db.flush()
+
+
 def rule_vo(row: AlertRule) -> dict:
     module = getattr(row, "source_module", None) or ""
     mode = getattr(row, "notify_mode", None) or "IN_APP"
@@ -568,6 +612,7 @@ def rule_list(
     actor: User = Depends(current_user),
 ):
     tenant_id = tenant_of(actor)
+    ensure_rule_modules(db, tenant_id)
     page_no, size = page_args(pageNo, pageSize)
     level_code, level_error = parse_level(level)
     if level_error:

@@ -105,7 +105,7 @@
           @click="openDetail(item.alertNo)"
         >
           <div>
-            <div class="mt">L{{ item.level }} {{ item.content }}</div>
+            <div class="mt">{{ levelName(item.level) }} {{ item.content }}</div>
             <div class="md">{{ item.alertNo }} · 未读</div>
           </div>
         </div>
@@ -127,11 +127,11 @@
 
     <form v-if="tab !== 'dedup'" class="qbar" data-testid="alert-filter-bar" @submit.prevent="loadList">
       <input v-model="filters.ruleCode" data-testid="alert-filter-rule" placeholder="规则编码" style="width: 160px" />
-      <select v-model="filters.level" data-testid="alert-filter-level" style="width: 110px">
+      <select v-model="filters.level" data-testid="alert-filter-level" style="width: 120px">
         <option value="">全部级别</option>
-        <option value="L1">L1</option>
-        <option value="L2">L2</option>
-        <option value="L3">L3</option>
+        <option value="L3">高(红)</option>
+        <option value="L2">中(橙)</option>
+        <option value="L1">低(黄)</option>
       </select>
       <select v-model="filters.responseStatus" data-testid="alert-history-status" style="width: 120px">
         <option value="">全部处置</option>
@@ -383,7 +383,7 @@
         <p>{{ detail.content }}</p>
         <p v-if="detail.objectLabel" class="hint" data-testid="alert-receipt-object">对象：{{ detail.objectLabel }}</p>
         <p class="hint" data-testid="alert-receipt-status">
-          {{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ statusText(detail.responseStatus) }}
+          {{ detail.ruleCode }} {{ detail.ruleName }} · {{ levelName(detail.level) }} · {{ statusText(detail.responseStatus) }}
         </p>
         <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
         <p v-if="detail.priorityNote || detail.level === 3" class="hint" data-testid="alert-receipt-priority">
@@ -683,7 +683,7 @@ const listEmptyText = computed(() => {
 })
 
 function levelName(level: number) {
-  const names: Record<number, string> = { 1: 'L1 提示', 2: 'L2 警告', 3: 'L3 严重' }
+  const names: Record<number, string> = { 1: '低(黄)', 2: '中(橙)', 3: '高(红)' }
   return names[level] || `L${level}`
 }
 

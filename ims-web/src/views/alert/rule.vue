@@ -15,11 +15,11 @@
     </div>
     <form class="qbar" data-testid="alert-rule-filter" @submit.prevent="loadList">
       <input v-model="filters.ruleName" data-testid="alert-rule-filter-name" placeholder="规则名称" style="width: 160px" />
-      <select v-model="filters.level" data-testid="alert-rule-filter-level" style="width: 110px">
+      <select v-model="filters.level" data-testid="alert-rule-filter-level" style="width: 120px">
         <option value="">全部级别</option>
-        <option value="L1">L1</option>
-        <option value="L2">L2</option>
-        <option value="L3">L3</option>
+        <option value="L3">高(红)</option>
+        <option value="L2">中(橙)</option>
+        <option value="L1">低(黄)</option>
       </select>
       <select v-model="filters.enabled" data-testid="alert-rule-filter-enabled" style="width: 110px">
         <option value="">全部状态</option>
@@ -151,9 +151,9 @@
         <p v-if="nameError" data-testid="alert-rule-name-error" class="hint" style="color: var(--red)">{{ nameError }}</p>
         <label class="fld">预警级别 <span class="req">*</span></label>
         <select v-model.number="form.level" data-testid="alert-rule-level" class="fld-in">
-          <option :value="1">L1 提示（黄）</option>
-          <option :value="2">L2 警告（橙）</option>
-          <option :value="3">L3 严重（红）</option>
+          <option :value="3">高(红)</option>
+          <option :value="2">中(橙)</option>
+          <option :value="1">低(黄)</option>
         </select>
         <label class="fld">监控对象 <span class="req">*</span></label>
         <select v-model="form.sourceModule" data-testid="alert-rule-object" class="fld-in">
@@ -173,7 +173,27 @@
           升级链：30 分钟责任人 → 再 60 分钟部门负责人 → 三级运营总监 + 系统管理员。严重级从二级起跳。
         </p>
         <label class="fld">触发条件 <span class="req">*</span></label>
-        <input v-model="form.thresholdExpr" data-testid="alert-rule-threshold" class="fld-in" placeholder="delayMinutes>30" />
+        <div data-testid="alert-rule-cond-mode" class="cond-mode">
+          <label><input v-model="form.condMode" type="radio" value="PRESET" /> 预置项</label>
+          <label><input v-model="form.condMode" type="radio" value="CUSTOM" /> 自定义表达式</label>
+        </div>
+        <select v-if="form.condMode === 'PRESET'" v-model="form.preset" data-testid="alert-rule-preset" class="fld-in">
+          <option value="">请选择预置项</option>
+          <option v-for="item in PRESETS" :key="item.id" :value="item.id">{{ item.label }}</option>
+        </select>
+        <template v-else>
+          <input v-model="form.thresholdExpr" data-testid="alert-rule-threshold" class="fld-in" placeholder="delayMinutes>30" />
+          <label class="fld">自定义 DSL</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
+            <input v-model="form.dslSource" data-testid="alert-dsl-source" class="fld-in" placeholder="ims_fin_cost" />
+            <input v-model="form.dslField" data-testid="alert-dsl-field" class="fld-in" placeholder="hours_since_approve" />
+            <input v-model="form.dslOp" data-testid="alert-dsl-op" class="fld-in" placeholder="GT" />
+            <input v-model="form.dslValue" data-testid="alert-dsl-value" class="fld-in" placeholder="48" />
+          </div>
+          <p class="hint">操作符 GT / GTE / LT / LTE / EQ / NEQ。留空则沿用自定义表达式。</p>
+          <p data-testid="alert-dsl-preview" class="hint mono">{{ dslPreview }}</p>
+          <p v-if="dslError" data-testid="alert-dsl-error" class="hint" style="color: var(--red)">{{ dslError }}</p>
+        </template>
         <p v-if="thresholdError" data-testid="alert-rule-threshold-error" class="hint" style="color: var(--red)">
           {{ thresholdError }}
         </p>
@@ -182,16 +202,6 @@
           <router-link to="/ims/collect/threshold">数据采集 → 阈值规则</router-link>
           配置，保存后即时生效。
         </p>
-        <label class="fld">触发条件 DSL</label>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
-          <input v-model="form.dslSource" data-testid="alert-dsl-source" class="fld-in" placeholder="ims_fin_cost" />
-          <input v-model="form.dslField" data-testid="alert-dsl-field" class="fld-in" placeholder="hours_since_approve" />
-          <input v-model="form.dslOp" data-testid="alert-dsl-op" class="fld-in" placeholder="GT" />
-          <input v-model="form.dslValue" data-testid="alert-dsl-value" class="fld-in" placeholder="48" />
-        </div>
-        <p class="hint">操作符 GT / GTE / LT / LTE / EQ / NEQ。留空则沿用阈值表达式。</p>
-        <p data-testid="alert-dsl-preview" class="hint mono">{{ dslPreview }}</p>
-        <p v-if="dslError" data-testid="alert-dsl-error" class="hint" style="color: var(--red)">{{ dslError }}</p>
         <label class="fld"><input v-model="form.enabled" type="checkbox" /> 创建后立即启用</label>
         <p v-if="formError" data-testid="alert-rule-form-error" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
@@ -222,6 +232,13 @@ type Row = {
 }
 
 const ALL_MODULES = ['账号管理', '证件档案', '工作流', '日报', '会议', '财务核算', '组织人效', '直播管理']
+const PRESETS = [
+  { id: 'risk', label: '风险分 ≥ 85 触发', expr: 'riskScore>=85' },
+  { id: 'cert', label: '剩余有效期 ≤ 30 天', expr: 'days_left<=30' },
+  { id: 'flow', label: '节点停留 > 24h', expr: 'stayHours>24' },
+  { id: 'recharge', label: '7 天充值超 P95 分位', expr: 'rechargeCount>0' },
+  { id: 'submit', label: '提交率 < 85%', expr: 'submitRate<85' },
+]
 
 const rows = ref<Row[]>([])
 const loading = ref(false)
@@ -242,6 +259,8 @@ const form = reactive({
   level: 2,
   sourceModule: '直播管理',
   notifyMode: 'IN_APP',
+  condMode: 'CUSTOM' as 'PRESET' | 'CUSTOM',
+  preset: '',
   ruleDesc: '',
   thresholdExpr: '',
   dslSource: '',
@@ -344,7 +363,7 @@ function resetFilters() {
 }
 
 function levelLabel(level: number) {
-  const names: Record<number, string> = { 1: 'L1 提示（黄）', 2: 'L2 警告（橙）', 3: 'L3 严重（红）' }
+  const names: Record<number, string> = { 1: '低(黄)', 2: '中(橙)', 3: '高(红)' }
   return names[level] || `L${level}`
 }
 
@@ -354,6 +373,8 @@ function resetForm() {
   form.level = 2
   form.sourceModule = financeOnly.value ? '财务核算' : '直播管理'
   form.notifyMode = 'IN_APP'
+  form.condMode = 'CUSTOM'
+  form.preset = ''
   form.ruleDesc = ''
   form.thresholdExpr = ''
   form.dslSource = ''
@@ -386,12 +407,21 @@ function validateForm() {
     moduleError.value = '必填项，请填写'
     ok = false
   }
-  if (!ok) return false
-  const expr = form.thresholdExpr.trim()
-  if (!expr && !dslTouched.value) {
-    thresholdError.value = '必填项，请填写'
-    return false
+  if (form.condMode === 'PRESET') {
+    const picked = PRESETS.find((item) => item.id === form.preset)
+    if (!picked) {
+      thresholdError.value = '必填项，请填写'
+      ok = false
+    } else {
+      form.thresholdExpr = picked.expr
+    }
   }
+  const expr = form.thresholdExpr.trim()
+  if (form.condMode === 'CUSTOM' && !expr && !dslTouched.value) {
+    thresholdError.value = '必填项，请填写'
+    ok = false
+  }
+  if (!ok) return false
   if (expr && !dslTouched.value && !EXPR_RE.test(expr)) {
     thresholdError.value = '阈值表达式须为字段、比较符和数字，例如 delayMinutes>30'
     return false
@@ -435,6 +465,9 @@ function openEdit(row: Row) {
   form.level = row.level || 2
   form.sourceModule = row.sourceModule || (financeOnly.value ? '财务核算' : '直播管理')
   form.notifyMode = row.notifyMode || 'IN_APP'
+  const preset = PRESETS.find((item) => item.expr === (row.thresholdExpr || ''))
+  form.condMode = preset ? 'PRESET' : 'CUSTOM'
+  form.preset = preset?.id || ''
   form.ruleDesc = row.ruleDesc || ''
   form.thresholdExpr = row.thresholdExpr || ''
   form.enabled = row.enabled
@@ -565,6 +598,12 @@ onMounted(loadList)
 }
 .req {
   color: var(--red);
+}
+.cond-mode {
+  display: flex;
+  gap: 16px;
+  margin: 4px 0 8px;
+  font-size: 13px;
 }
 .hit-modal {
   width: 800px;

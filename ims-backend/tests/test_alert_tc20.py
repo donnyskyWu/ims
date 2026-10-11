@@ -342,6 +342,54 @@ def test_c056_rule_fields_and_finance_module():
     assert allowed.json()["data"]["sourceModule"] == "财务核算"
 
 
+def test_c056_backfill_cert_module():
+    """旧规则 source_module 为空时，列表按编码归到证件档案并写回。创建响应仍为空。"""
+    auth = headers()
+    suffix = uuid.uuid4().hex[:6]
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": f"TC_C_CERT_EXPIRE.{suffix}",
+            "ruleName": "证件到期",
+            "thresholdExpr": "days_left<=30",
+            "enabled": False,
+        },
+    )
+    assert created.json()["code"] == 0
+    assert created.json()["data"]["sourceModule"] == ""
+
+    plain = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={
+            "ruleCode": f"plain.delay.{suffix}",
+            "ruleName": "不带来源",
+            "thresholdExpr": "delayMinutes>1",
+            "enabled": False,
+        },
+    )
+    assert plain.json()["code"] == 0
+
+    listed = client.get(
+        "/admin-api/ims/alert/rule/list",
+        headers=auth,
+        params={"ruleName": "证件到期", "pageNo": 1, "pageSize": 20},
+    )
+    body = listed.json()
+    assert body["code"] == 0
+    row = next(item for item in body["data"]["list"] if item["ruleCode"] == f"TC_C_CERT_EXPIRE.{suffix}")
+    assert row["sourceModule"] == "证件档案"
+
+    again = client.get(
+        "/admin-api/ims/alert/rule/list",
+        headers=auth,
+        params={"ruleName": "不带来源", "pageNo": 1, "pageSize": 20},
+    )
+    kept = next(item for item in again.json()["data"]["list"] if item["ruleCode"] == f"plain.delay.{suffix}")
+    assert kept["sourceModule"] == ""
+
+
 def test_c057_rule_name_unique_1165():
     auth = headers()
     suffix = uuid.uuid4().hex[:8]
