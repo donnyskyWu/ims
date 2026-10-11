@@ -687,116 +687,189 @@ def graph_nodes(db: Session, tpl: FlowTemplate | None, *, version_no: int | None
     return []
 
 
-SKIP_SELF_NOTE = "发起人与审批人相同，已跳过该节点"
+# FLO-O-R2 的流程域负责人：行政 R2、财务 R3、业务 R4。
+_DOMAIN_OWNER_KEY = {"ADMIN": "r2", "FINANCE": "r3", "BUSINESS": "r4"}
+_DOMAIN_OWNER_NAME = {"ADMIN": "行政管理", "FINANCE": "财务管理员", "BUSINESS": "运营总监"}
 
 
-def resolve_assignee(db: Session, initiator: User, node: dict) -> tuple[int | None, str | None]:
-    """按节点规则解析处理人。
+def _display_name(user: User) -> str:
+    return (user.nickname or user.username or "").strip() or str(user.id)
 
-    能解析到部门负责人/指定人时不把审批待办派回发起人。
-    INITIATOR_SUPERIOR 解析失败返回 1132，不静默派给发起人。
-    PRD 未规定「解析结果就是发起人」时如何改派；由 _land_node 跳到下一节点并留痕。
-    """
+
+def _is_direct_superior_role(role: Role) -> bool:
+    """直属上级取同部门的部门负责人，不把域角色（运营总监）当成上级。"""
+    key = (role.role_key or "").lower()
+    name = role.role_name or ""
+    return key in {"dept_leader", "dept:leader"} or "部门负责人" in name
+
+
+def _direct_superior(db: Session, initiator: User) -> User | None:
+    dept_ids = set(dept_ids_of(db, initiator))
+    if not dept_ids:
+        return None
+    for user in _users_in_tenant(db, initiator.tenant_id or 0):
+        if user.id == initiator.id:
+            continue
+        if not dept_ids & set(dept_ids_of(db, user)):
+            continue
+        if any(_is_direct_superior_role(role) for role in enabled_roles(db, user)):
+            return user
+    return None
+
+
+def _domain_owners(db: Session, tenant_id: int, domain: str) -> list[User]:
+    wanted = _DOMAIN_OWNER_KEY.get((domain or "").upper())
+    hint = _DOMAIN_OWNER_NAME.get((domain or "").upper())
+    if not wanted:
+        return []
+    exact: list[User] = []
+    named: list[User] = []
+    for user in _users_in_tenant(db, tenant_id):
+        roles = enabled_roles(db, user)
+        if any((role.role_key or "").lower() == wanted for role in roles):
+            exact.append(user)
+        elif hint and any(hint in (role.role_name or "") for role in roles):
+            named.append(user)
+    return exact or named
+
+
+def _other_r1(db: Session, initiator: User) -> User | None:
+    for user in _users_in_tenant(db, initiator.tenant_id or 0):
+        if user.id == initiator.id:
+            continue
+        for role in enabled_roles(db, user):
+            key = (role.role_key or "").lower()
+            if key in {"r1", "sys:admin"} or key.endswith(":r1"):
+                return user
+    return None
+
+
+def _reassign_note(user: User) -> str:
+    return f"审批人为发起人，已改派给 {_display_name(user)}"
+
+
+def _reassign_target(db: Session, initiator: User, domain: str) -> tuple[User | None, str | None]:
+    """候选人去掉发起人后无人：直属上级 → 域负责人 → 其他 R1。"""
+    superior = _direct_superior(db, initiator)
+    if superior is not None:
+        return superior, _reassign_note(superior)
+    for owner in _domain_owners(db, initiator.tenant_id or 0, domain):
+        if owner.id != initiator.id:
+            return owner, _reassign_note(owner)
+    other = _other_r1(db, initiator)
+    if other is not None:
+        return other, _reassign_note(other)
+    return None, None
+
+
+def _candidates(db: Session, initiator: User, node: dict) -> tuple[list[User], str | None]:
+    """节点规则的原始候选人，包含发起人。非法规则返回错误，不在这里改派。"""
     rule = node.get("assigneeRule") or {}
     kind = str(rule.get("assignType") or "")
-    node_type = str(node.get("nodeType") or "APPROVE")
+    tenant_id = initiator.tenant_id or 0
     if kind == "USER":
         ids = [int(item) for item in (rule.get("targetIds") or [])]
         if not ids:
-            return initiator.id, None
-        target = db.get(User, ids[0])
-        if target is None or target.deleted or target.status != "ENABLED":
-            return None, "处理人规则非法"
-        if node_type == "APPROVE" and target.id == initiator.id:
-            return None, "发起人不能审批自己的单据"
-        return target.id, None
+            return [initiator], None
+        found: list[User] = []
+        for uid in ids:
+            target = db.get(User, uid)
+            if target is None or target.deleted or target.status != "ENABLED" or (target.tenant_id or 0) != tenant_id:
+                return [], "处理人规则非法"
+            found.append(target)
+        return found, None
     if kind == "INITIATOR_SUPERIOR":
-        picked = _pick_among(db, initiator, _leaders(db, initiator.tenant_id or 0))
-        if picked is None:
-            return None, "处理人规则非法"
-        return picked.id, None
+        superior = _direct_superior(db, initiator)
+        if superior is None:
+            return [], "处理人规则非法，发起人上级无法解析"
+        return [superior], None
     if kind == "DEPT":
         dept_id = rule.get("targetDeptId")
         if not dept_id:
-            return None, "处理人规则非法"
-        members = [
-            user
-            for user in _users_in_tenant(db, initiator.tenant_id or 0)
-            if dept_id in dept_ids_of(db, user) and user.id != initiator.id
-        ]
+            return [], "处理人规则非法"
+        members = [user for user in _users_in_tenant(db, tenant_id) if dept_id in dept_ids_of(db, user)]
+        if not members:
+            return [], "处理人规则非法"
         leaders = [user for user in members if any(_role_is_leader(role) for role in enabled_roles(db, user))]
-        picked = (leaders or members)[:1]
-        if not picked:
-            return None, "处理人规则非法"
-        return picked[0].id, None
+        return leaders or members, None
     codes = [str(code) for code in (rule.get("targetPositionCodes") or [])]
     pool = [
         user
-        for user in _users_in_tenant(db, initiator.tenant_id or 0)
+        for user in _users_in_tenant(db, tenant_id)
         if any(_role_matches_position(role, codes) for role in enabled_roles(db, user))
     ]
     if not pool and (not codes or "DEPT_LEADER" in {code.upper() for code in codes}):
-        pool = _leaders(db, initiator.tenant_id or 0)
-    picked = _pick_among(db, initiator, pool)
-    if picked is not None:
-        return picked.id, None
-    if node_type == "APPROVE":
-        return initiator.id, None
-    return initiator.id, None
+        pool = _leaders(db, tenant_id)
+    return pool, None
 
 
-def _self_approval(node: dict, assignee_id: int | None, initiator_id: int) -> bool:
-    return node.get("nodeType") in {"APPROVE", "CC"} and assignee_id == initiator_id
+def _place(
+    db: Session, initiator: User, node: dict, domain: str
+) -> tuple[int | None, str | None, str | None]:
+    """返回处理人、改派留痕、错误。多人节点先去掉发起人；只剩发起人时改派，不跳过节点。"""
+    node_type = str(node.get("nodeType") or "APPROVE")
+    rule = node.get("assigneeRule") or {}
+    if node_type == "TASK" and str(rule.get("assignType") or "") == "USER" and not rule.get("targetIds"):
+        return initiator.id, None, None
+    candidates, err = _candidates(db, initiator, node)
+    if err:
+        return None, None, err
+    others = [user for user in candidates if user.id != initiator.id]
+    if node_type not in {"APPROVE", "CC"}:
+        if others:
+            picked = _pick_among(db, initiator, others)
+            return (picked or others[0]).id, None, None
+        if candidates:
+            return candidates[0].id, None, None
+        return initiator.id, None, None
+    if others:
+        picked = _pick_among(db, initiator, others)
+        return (picked or others[0]).id, None, None
+    target, note = _reassign_target(db, initiator, domain)
+    if target is None:
+        return None, None, "处理人规则非法"
+    return target.id, note, None
 
 
 def _land_node(
-    db: Session, initiator: User, nodes: list[dict], node: dict | None
-) -> tuple[dict | None, int | None, list[dict], str | None]:
-    """从当前节点起找待办。审批/抄送解析到发起人时跳过，PRD 对此没有改派条款。"""
-    skipped: list[dict] = []
+    db: Session, initiator: User, nodes: list[dict], node: dict | None, domain: str
+) -> tuple[dict | None, int | None, str | None, str | None]:
+    """从当前节点起落待办。定时归档不占待办。审批人是发起人时留在本节点并改派。"""
     current = node
     while current is not None:
         if current.get("nodeType") == "TIMER":
             current = next_chain_node(nodes, int(current.get("nodeOrder") or 0))
             continue
-        assignee_id, err = resolve_assignee(db, initiator, current)
-        if assignee_id is None and err == "发起人不能审批自己的单据":
-            skipped.append(current)
-            current = next_chain_node(nodes, int(current.get("nodeOrder") or 0))
-            continue
+        assignee_id, note, err = _place(db, initiator, current, domain)
+        if err:
+            return None, None, None, err
         if assignee_id is None:
-            return None, None, skipped, err or "处理人规则非法"
-        if _self_approval(current, assignee_id, initiator.id):
-            skipped.append(current)
-            current = next_chain_node(nodes, int(current.get("nodeOrder") or 0))
-            continue
-        return current, assignee_id, skipped, None
-    return None, None, skipped, None
+            return None, None, None, "处理人规则非法"
+        return current, assignee_id, note, None
+    return None, None, None, None
 
 
-def _record_skips(db: Session, inst: FlowInstance, tenant_id: int, nodes: list[dict]) -> None:
+def _record_reassign(db: Session, inst: FlowInstance, tenant_id: int, node: dict, assignee_id: int, note: str) -> None:
     now = utcnow()
-    for node in nodes:
-        db.add(
-            FlowTask(
-                instance_id=inst.id,
-                node_order=int(node.get("nodeOrder") or 1),
-                node_name=str(node.get("nodeName") or "审批节点"),
-                node_type=str(node.get("nodeType") or "APPROVE"),
-                assignee_user_id=inst.initiator_user_id,
-                task_status="APPROVED",
-                sla_hours=int(node.get("slaHours") or DEFAULT_SLA_HOURS),
-                allow_transfer=0,
-                comment=SKIP_SELF_NOTE,
-                tenant_id=tenant_id,
-                started_at=now,
-                handled_at=now,
-                created_at=now,
-                updated_at=now,
-            )
+    db.add(
+        FlowTask(
+            instance_id=inst.id,
+            node_order=int(node.get("nodeOrder") or 1),
+            node_name=str(node.get("nodeName") or "审批节点"),
+            node_type=str(node.get("nodeType") or "APPROVE"),
+            assignee_user_id=assignee_id,
+            task_status="REASSIGNED",
+            sla_hours=int(node.get("slaHours") or DEFAULT_SLA_HOURS),
+            allow_transfer=0,
+            comment=note[:512],
+            tenant_id=tenant_id,
+            started_at=now,
+            handled_at=now,
+            created_at=now,
+            updated_at=now,
         )
-    if nodes:
-        db.flush()
+    )
+    db.flush()
 
 
 def _assignee_for_instance(db: Session, inst: FlowInstance) -> tuple[int, dict | None]:
@@ -813,7 +886,8 @@ def _assignee_for_instance(db: Session, inst: FlowInstance) -> tuple[int, dict |
             node = opening_node(nodes)
     if initiator is None or node is None:
         return inst.initiator_user_id or 0, node
-    assignee_id, _err = resolve_assignee(db, initiator, node)
+    domain = tpl.business_domain if tpl is not None else ""
+    assignee_id, _note, _err = _place(db, initiator, node, domain)
     return assignee_id or inst.initiator_user_id or 0, node
 
 
@@ -1406,13 +1480,11 @@ def flow_instance_start(
             "assigneeRule": {"assignType": "POSITION", "targetPositionCodes": ["DEPT_LEADER"]},
             "slaHours": DEFAULT_SLA_HOURS,
         }
-    node, assignee_id, skipped, rule_err = _land_node(db, actor, nodes, node)
-    if rule_err and (not node or str((node.get("assigneeRule") or {}).get("assignType")) == "INITIATOR_SUPERIOR"):
-        if "上级" in (rule_err or ""):
+    node, assignee_id, reassign_note, rule_err = _land_node(db, actor, nodes, node, tpl.business_domain or "")
+    if rule_err:
+        if "上级" in rule_err:
             return fail(1132, "处理人规则非法，发起人上级无法解析")
-        return fail(1132, rule_err or "处理人规则非法")
-    if node is not None and assignee_id is None:
-        return fail(1132, rule_err or "处理人规则非法")
+        return fail(1132, rule_err)
     now = utcnow()
     row = FlowInstance(
         instance_no=next_instance_no(db, tenant_id),
@@ -1435,12 +1507,12 @@ def flow_instance_start(
     db.add(row)
     db.flush()
     tpl.start_count = int(tpl.start_count or 0) + 1
-    _record_skips(db, row, tenant_id, skipped)
+    if node is not None and assignee_id is not None and reassign_note:
+        _record_reassign(db, row, tenant_id, node, assignee_id, reassign_note)
     if node is None or assignee_id is None:
         names = user_names(db, [actor.id])
         done = instance_start_vo(row, tpl, names, assignee_user_id=actor.id, node_order=0)
         done["currentNodes"] = []
-        done["skippedNodes"] = [item.get("nodeName") for item in skipped]
         return ok(done)
     task = ensure_pending_task(
         db,
@@ -1455,8 +1527,6 @@ def flow_instance_start(
     holder = task.assignee_user_id if task is not None else assignee_id
     names = user_names(db, [actor.id, holder])
     started = instance_start_vo(row, tpl, names, assignee_user_id=holder, node_order=row.current_node_order)
-    if skipped:
-        started["skippedNodes"] = [item.get("nodeName") for item in skipped]
     return ok(started)
 
 
@@ -1560,12 +1630,14 @@ def flow_task_handle(
         # 通过即沿绑定版本的节点链往下走。advance 只是看板按钮的同义标记。
         nxt = next_chain_node(nodes, task.node_order) if nodes else None
         initiator = db.get(User, inst.initiator_user_id) or actor
-        landed, assignee_id, skipped, rule_err = _land_node(db, initiator, nodes, nxt)
+        domain = tpl.business_domain if tpl is not None else ""
+        landed, assignee_id, reassign_note, rule_err = _land_node(db, initiator, nodes, nxt, domain)
         if rule_err:
             return fail(1132, rule_err)
         task.task_status = "APPROVED"
         db.flush()
-        _record_skips(db, inst, tenant_id, skipped)
+        if landed is not None and assignee_id is not None and reassign_note:
+            _record_reassign(db, inst, tenant_id, landed, assignee_id, reassign_note)
         if landed is not None and assignee_id is not None:
             inst.current_node_name = str(landed.get("nodeName") or "审批节点")
             inst.current_node_order = int(landed.get("nodeOrder") or task.node_order + 1)
