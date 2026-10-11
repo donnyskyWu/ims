@@ -10,6 +10,8 @@
       </div>
     </div>
 
+    <p v-if="toast" class="hint" data-testid="air-skill-toast">{{ toast }}</p>
+
     <div v-if="summary" class="g4" style="margin-bottom: 12px" data-testid="air-skill-stats">
       <div class="card stat">
         <span class="l">技能 / 专家 / 知识库</span>
@@ -58,7 +60,7 @@
             <tr v-if="loading"><td colspan="10"><div class="empty"><div class="et">加载中</div></div></td></tr>
             <tr v-else-if="!rows.length"><td colspan="10"><div class="empty"><div class="et">暂无技能</div></div></td></tr>
             <tr v-for="row in rows" v-else :key="row.id">
-              <td class="mono">{{ row.skillNo }}</td>
+              <td class="mono"><button class="skill-no" type="button" data-testid="air-skill-no" @click="openDetail(row)">{{ row.skillNo }}</button></td>
               <td style="font-weight: 500">{{ row.skillName }}</td>
               <td>{{ row.category }}</td>
               <td>{{ row.versionLabel }}</td>
@@ -112,6 +114,25 @@
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-save" @click="submitCreate">提交审核</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="detail" class="modal-mask" @click.self="detail = null">
+      <div class="card" style="width: 620px; padding: 20px" data-testid="air-skill-detail">
+        <h3 style="margin: 0 0 12px">技能详情 · {{ detail.skillNo }}</h3>
+        <div class="kv">
+          <div><div class="k">技能 ID</div><div class="v mono">{{ detail.skillNo }}</div></div>
+          <div><div class="k">状态</div><div class="v">{{ statusLabel(detail.status) }}</div></div>
+          <div><div class="k">安全审核</div><div class="v">{{ auditLabel(detail.auditStatus) }}</div></div>
+          <div><div class="k">版本</div><div class="v">{{ detail.versionLabel }}</div></div>
+          <div><div class="k">授权范围</div><div class="v">{{ grantScope(detail) }}</div></div>
+          <div><div class="k">调用方式</div><div class="v mono">MCP skills.get</div></div>
+        </div>
+        <p v-if="detail.capability" style="font-size: 13px; line-height: 1.6">{{ detail.capability }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="detail = null">关闭</button>
+          <button v-if="detail.status === 'PUBLISHED'" class="btn btn-pri btn-sm" type="button" @click="openGrantFromDetail">授权</button>
         </div>
       </div>
     </div>
@@ -256,7 +277,9 @@ const summary = ref<{
 } | null>(null)
 const rows = ref<Row[]>([])
 const loading = ref(false)
+const toast = ref('')
 const showForm = ref(false)
+const detail = ref<(Row & { grants?: GrantRow[] }) | null>(null)
 const formError = ref('')
 const formErrors = reactive({ skillName: '', category: '', ownerUserId: '', capability: '', promptTemplate: '' })
 const filters = reactive({ skillName: '', category: '', status: '' })
@@ -273,6 +296,15 @@ const grantForm = reactive({ grantType: 'DEPT', grantId: '', allStaff: false })
 const targetOptions = ref<Option[]>([])
 const userKeyword = ref('')
 const deptKeyword = ref('')
+
+function say(message: string) {
+  toast.value = message
+}
+
+function grantScope(row: Row & { grants?: GrantRow[] }) {
+  const names = (row.grants || []).filter((item) => item.status === 'ACTIVE').map((item) => item.grantName || grantTypeLabel(item))
+  return names.length ? names.join('、') : '暂无授权'
+}
 
 function statusLabel(status: string) {
   return ({ DRAFT: '草稿', PENDING: '审核中', PUBLISHED: '已发布', DISABLED: '已停用' } as Record<string, string>)[status] || status
@@ -370,6 +402,7 @@ async function submitCreate() {
     const id = created.data.data?.id
     if (id) await http.put(`/air/skill/${id}/submit-audit`)
     showForm.value = false
+    say('技能已提交，进入强制审核')
     await loadSummary()
     await loadList()
   } catch (error) {
@@ -379,8 +412,25 @@ async function submitCreate() {
 
 async function submitAudit(id: number) {
   await http.put(`/air/skill/${id}/submit-audit`)
+  say('已提交审核')
   await loadList()
   await loadSummary()
+}
+
+async function openDetail(row: Row) {
+  try {
+    const res = await http.get(`/air/skill/${row.id}`)
+    detail.value = res.data.code === 0 ? res.data.data : row
+  } catch (error) {
+    say(errorMessage(error))
+  }
+}
+
+function openGrantFromDetail() {
+  if (!detail.value) return
+  const row = detail.value
+  detail.value = null
+  openGrant(row)
 }
 
 function openAudit(row: Row) {
@@ -402,6 +452,7 @@ async function submitAuditDecision(approve: boolean) {
       auditNote: auditNote.value.trim(),
     })
     auditSkill.value = null
+    say(approve ? '审核通过，技能已发布' : '已驳回，技能退回草稿')
     await loadList()
     await loadSummary()
   } catch (error) {
@@ -422,6 +473,7 @@ async function confirmDisable() {
 
 async function setStatus(id: number, status: 'ENABLED' | 'DISABLED') {
   await http.put(`/air/skill/${id}/status`, { status })
+  say(status === 'DISABLED' ? '已停用' : '已启用')
   await loadList()
   await loadSummary()
 }
@@ -513,6 +565,7 @@ async function submitGrant() {
     })
     grantForm.grantId = ''
     grantForm.allStaff = false
+    say('授权成功')
     await loadGrants(grantSkill.value.id)
     await loadList()
     await loadSummary()
@@ -524,6 +577,7 @@ async function submitGrant() {
 async function revokeGrant(grantId: number) {
   if (!grantSkill.value) return
   await http.delete(`/air/skill/grant/${grantId}`)
+  say('已收回授权')
   await loadGrants(grantSkill.value.id)
   await loadList()
 }
@@ -533,3 +587,33 @@ onMounted(async () => {
   await loadList()
 })
 </script>
+
+<style>
+.skill-no {
+  background: none;
+  border: none;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.kv {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.kv .k {
+  font-size: 12px;
+  color: var(--text2);
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+</style>
