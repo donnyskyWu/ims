@@ -246,3 +246,31 @@ def test_ledger_export_empty_filter_says_zero_hits():
     text = client.get(csv_export["data"]["downloadUrl"], headers=auth).content.decode("utf-8-sig")
     assert "暂无资产记录" in text
     assert keyword not in text
+
+
+def test_live_asset_type_is_required_and_office_still_registers():
+    auth = headers()
+    missing = client.post(
+        "/admin-api/ims/asset/ledger",
+        headers=auth,
+        json={"assetName": "缺类型设备", "assetType": ""},
+    ).json()
+    assert missing["code"] == 1001
+    assert missing["msg"] == "资产类型必填"
+    omitted = client.post("/admin-api/ims/asset/ledger", headers=auth, json={"assetName": "未传类型"}).json()
+    assert omitted["code"] == 1001
+    live = client.post(
+        "/admin-api/ims/asset/ledger",
+        headers=auth,
+        json={"assetName": "拍摄机", "assetType": "SHOOT"},
+    ).json()
+    assert live["code"] == 0, live
+    assert live["data"]["assetType"] == "SHOOT"
+    assert live["data"]["status"] == "PENDING_REVIEW"
+    office = client.post(
+        "/admin-api/ims/asset/ledger",
+        headers=auth,
+        json={"assetName": "办公椅", "assetType": "OFFICE"},
+    ).json()
+    assert office["code"] == 0, office
+    assert office["data"]["status"] == "PENDING_REVIEW"

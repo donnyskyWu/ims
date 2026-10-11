@@ -16,7 +16,7 @@ class LedgerBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     assetCode: str = ""
     assetName: str = ""
-    assetType: str = "OFFICE"
+    assetType: str = ""
     spec: str = ""
     purchaseDate: str = ""
     realnameId: int | None = None
@@ -534,7 +534,10 @@ def ledger_create(
     spec = (body.spec or "").strip()
     if len(spec) > 128:
         return fail(1001, "规格过长")
-    enum_error = check_enum(db, "dict_asset_type", body.assetType, True)
+    asset_type = (body.assetType or "").strip()
+    if not asset_type:
+        return fail(1001, "资产类型必填")
+    enum_error = check_enum(db, "dict_asset_type", asset_type, True)
     if enum_error:
         return enum_error
     date_error = check_date(body.purchaseDate or None, False)
@@ -565,7 +568,7 @@ def ledger_create(
     row = AssetLedger(
         asset_code=code,
         asset_name=name,
-        asset_type=body.assetType,
+        asset_type=asset_type,
         spec=spec,
         status="PENDING_REVIEW",
         owner_user_id=None,

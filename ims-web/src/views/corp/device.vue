@@ -242,11 +242,13 @@
       <div class="formrow one"><div class="fld"><label>规格</label><input v-model="assetForm.spec" data-testid="corp-asset-spec" /></div></div>
       <div v-if="kind === 'live'" class="formrow one">
         <div class="fld">
-          <label>类型</label>
-          <select v-model="assetForm.assetType" data-testid="corp-asset-type">
+          <label>类型<i class="req">*</i></label>
+          <select v-model="assetForm.assetType" data-testid="corp-asset-type" :class="{ err: liveTypeError }">
+            <option value="">请选择类型</option>
             <option value="LIVE">直播设备</option>
             <option value="SHOOT">拍摄设备</option>
           </select>
+          <div v-if="liveTypeError" class="ferr" data-testid="corp-asset-type-error">必填项，请填写</div>
         </div>
       </div>
       <div class="formrow one"><div class="fld"><label>采购日期</label><input v-model="assetForm.purchaseDate" type="date" data-testid="corp-asset-purchase" /></div></div>
@@ -628,6 +630,7 @@ const detail = ref<Row | null>(null)
 const formOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
+const liveTypeError = computed(() => kind.value === 'live' && formError.value === '必填项，请填写')
 const users = ref<UserOpt[]>([])
 const phoneStatus = ref<Opt[]>([])
 const phoneTypes = ref<Opt[]>([])
@@ -1269,7 +1272,7 @@ function openAssetCreate() {
   assetForm.assetCode = ''
   assetForm.assetName = ''
   assetForm.spec = ''
-  assetForm.assetType = kind.value === 'live' ? 'LIVE' : 'OFFICE'
+  assetForm.assetType = kind.value === 'live' ? '' : 'OFFICE'
   assetForm.purchaseDate = today()
   assetForm.realnameId = ''
   assetForm.parentAssetCode = ''
@@ -1331,6 +1334,7 @@ function registerFormError() {
   const spec = assetForm.spec.trim()
   const session = assetForm.sessionCode.trim().toUpperCase()
   if (!name) return '资产名称必填'
+  if (kind.value === 'live' && !assetForm.assetType) return '必填项，请填写'
   if (name.length > 128) return '资产名称过长'
   if (code.length > 64) return '资产编号过长'
   if (spec.length > 128) return '规格过长'
