@@ -118,4 +118,6 @@ def test_flow_approve_comment_length():
         json={"action": "APPROVE", "comment": "意" * 512},
     ).json()
     assert ok["code"] == 0
-    assert ok["data"]["newStatus"] == "APPROVED"
+    assert ok["data"]["newStatus"] == "RUNNING"
+    assert ok["data"]["isInstanceFinished"] is False
+    assert ok["data"]["nextNodes"][0]["nodeName"] == "人事备案"

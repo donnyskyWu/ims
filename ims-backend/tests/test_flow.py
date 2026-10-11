@@ -101,8 +101,9 @@ def test_flow_task_handle_approve_and_reject():
     ab = approved.json()
     assert ab["code"] == 0
     assert ab["data"]["instanceNo"] == instance_no
-    assert ab["data"]["newStatus"] == "APPROVED"
-    assert ab["data"]["isInstanceFinished"] is True
+    assert ab["data"]["newStatus"] == "RUNNING"
+    assert ab["data"]["isInstanceFinished"] is False
+    assert ab["data"]["nextNodes"]
 
     published = client.get(
         "/admin-api/ims/flow/template/list",

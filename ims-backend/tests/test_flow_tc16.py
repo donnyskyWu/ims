@@ -134,8 +134,9 @@ def test_c024_c030_handler_not_initiator_admin_can_see_detail():
         json={"action": "APPROVE", "comment": "负责人通过"},
     ).json()
     assert approved["code"] == 0
-    assert approved["data"]["newStatus"] == "APPROVED"
-    assert approved["data"]["isInstanceFinished"] is True
+    assert approved["data"]["newStatus"] == "RUNNING"
+    assert approved["data"]["isInstanceFinished"] is False
+    assert approved["data"]["nextNodes"][0]["nodeName"] == "人事备案"
 
 
 def test_c024_dept_with_flow_perm_opens_todo_ip_group_stays_denied():
@@ -529,3 +530,68 @@ def test_c031_instance_urge_without_waiting_for_timeout():
         assert "请尽快审批" in note.content
     finally:
         db.close()
+
+
+def test_c077_leave_walks_bound_version_until_last_node():
+    """请假审批 4 节点：部门负责人通过后进入人事备案，抄送办完才归档。"""
+    admin = login()
+    leader_id = create_user(admin, "c077_r4", "13616000021")
+    staff_id = create_user(admin, "c077_r6", "13616000022")
+    bind(leader_id, key="dept:leader", name="部门负责人", scope="ALL", depts=[88041])
+    bind(staff_id, key="flow:staff", name="员工", scope="ALL", depts=[88041])
+    staff = login("c077_r6", "Pass@123")
+    leader = login("c077_r4", "Pass@123")
+
+    leave = published_leave(admin)
+    preview = client.get(f"/admin-api/ims/flow/template/{leave['id']}/preview", headers=admin).json()
+    assert preview["code"] == 0
+    assert len(preview["data"]["nodes"]) == 4
+    assert [node["nodeName"] for node in preview["data"]["nodes"]] == [
+        "发起申请",
+        "部门负责人审批",
+        "人事备案",
+        "归档",
+    ]
+
+    started = start_leave(staff, "C077 请假", "c077-leave")
+    assert started["templateVersion"] == leave["version"]
+    assert started["currentNodes"][0]["nodeName"] == "部门负责人审批"
+    assert started["currentNodes"][0]["assigneeUserId"] == leader_id
+    assert started["instanceStatus"] == "RUNNING"
+
+    detail = client.get(f"/admin-api/ims/flow/instance/{started['instanceNo']}", headers=admin).json()
+    assert detail["data"]["templateVersion"] == leave["version"]
+
+    leader_todo = client.get("/admin-api/ims/flow/task/my-todo", headers=leader, params={"pageSize": 50}).json()
+    task = next(row for row in leader_todo["data"]["list"] if row["instanceNo"] == started["instanceNo"])
+    first = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=leader,
+        json={"action": "APPROVE", "comment": "部门通过"},
+    ).json()
+    assert first["code"] == 0, first
+    assert first["data"]["isInstanceFinished"] is False
+    assert first["data"]["newStatus"] == "RUNNING"
+    assert first["data"]["nextNodes"][0]["nodeName"] == "人事备案"
+    assert first["data"]["nextNodes"][0]["assigneeUserId"] == leader_id
+
+    running = client.get(f"/admin-api/ims/flow/instance/{started['instanceNo']}", headers=staff).json()["data"]
+    assert running["instanceStatus"] == "RUNNING"
+    assert running["currentNodes"][0]["nodeName"] == "人事备案"
+
+    leader_todo = client.get("/admin-api/ims/flow/task/my-todo", headers=leader, params={"pageSize": 50}).json()
+    cc = next(row for row in leader_todo["data"]["list"] if row["instanceNo"] == started["instanceNo"])
+    assert cc["nodeName"] == "人事备案"
+    done = client.put(
+        f"/admin-api/ims/flow/task/{cc['id']}/handle",
+        headers=leader,
+        json={"action": "APPROVE", "comment": "备案"},
+    ).json()
+    assert done["code"] == 0, done
+    assert done["data"]["newStatus"] == "APPROVED"
+    assert done["data"]["isInstanceFinished"] is True
+
+    finished = client.get(f"/admin-api/ims/flow/instance/{started['instanceNo']}", headers=admin).json()["data"]
+    assert finished["instanceStatus"] == "APPROVED"
+    assert finished["instanceStatusLabel"] == "已完成"
+    assert finished["templateVersion"] == leave["version"]

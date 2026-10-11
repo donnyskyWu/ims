@@ -580,14 +580,24 @@ def test_fin_period_close_locks_writes_then_r4_red_correction():
         headers=auth,
         params={"pageNo": 1, "pageSize": 50},
     ).json()["data"]["list"]
-    task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"锁后更正 {code}")
-    handled = client.put(
-        f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
-        json={"action": "APPROVE", "comment": "R4 锁后更正"},
-    )
-    assert handled.json()["code"] == 0, handled.json()
-    assert handled.json()["data"]["newStatus"] == "APPROVED"
+    handled_body = None
+    for _ in range(6):
+        todos = client.get(
+            "/admin-api/ims/flow/task/my-todo",
+            headers=auth,
+            params={"pageNo": 1, "pageSize": 50},
+        ).json()["data"]["list"]
+        task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"锁后更正 {code}")
+        handled = client.put(
+            f"/admin-api/ims/flow/task/{task['id']}/handle",
+            headers=auth,
+            json={"action": "APPROVE", "comment": "R4 锁后更正"},
+        )
+        handled_body = handled.json()
+        assert handled_body["code"] == 0, handled_body
+        if handled_body["data"]["newStatus"] == "APPROVED":
+            break
+    assert handled_body["data"]["newStatus"] == "APPROVED"
 
     fixed = client.post(
         f"/admin-api/ims/fin/cost/{code}/correction",

@@ -19,7 +19,7 @@ from app.flow_graph import (
     chain_text,
     diff_nodes,
     ends_moved,
-    next_human_node,
+    next_chain_node,
     node_by_order,
     nodes_from_chain,
     nodes_from_preview,
@@ -206,7 +206,7 @@ def instance_start_vo(
         "id": row.id,
         "instanceNo": row.instance_no,
         "templateId": row.template_id,
-        "templateVersion": template_version_no(tpl),
+        "templateVersion": int(row.template_version or tpl.version_no or template_version_no(tpl) or 1),
         "initiatorUserId": row.initiator_user_id,
         "initiatorName": names.get(row.initiator_user_id, ""),
         "formData": row.form_data or {},
@@ -660,6 +660,7 @@ def _leaders(db: Session, tenant_id: int) -> list[User]:
 
 
 def graph_nodes(db: Session, tpl: FlowTemplate | None, *, version_no: int | None = None) -> list[dict]:
+    """实例只读发起时绑定的版本快照。版本对不上时不用模板上后来改过的节点。"""
     if tpl is None:
         return []
     if version_no is not None:
@@ -673,6 +674,11 @@ def graph_nodes(db: Session, tpl: FlowTemplate | None, *, version_no: int | None
         )
         if snap is not None and snap.nodes:
             return normalize_nodes(snap.nodes)
+        if int(tpl.version_no or 1) != int(version_no):
+            preset = PREVIEW_NODES.get(tpl.template_code)
+            if preset and int(version_no) == 1:
+                return nodes_from_preview(preset, int(tpl.sla_hours or DEFAULT_SLA_HOURS))
+            return []
     if tpl.nodes:
         return normalize_nodes(tpl.nodes)
     preset = PREVIEW_NODES.get(tpl.template_code)
@@ -854,7 +860,7 @@ def instance_detail_vo(db: Session, inst: FlowInstance, actor: User, names: dict
         current_nodes = []
     return {
         **instance_vo(inst, names, pending),
-        "templateVersion": template_version_no(tpl) if tpl is not None and not tpl.deleted else 1,
+        "templateVersion": int(inst.template_version or 1),
         "initiatorUserId": inst.initiator_user_id,
         "formData": inst.form_data or {},
         "formEmpty": _form_empty(inst.form_data),
@@ -964,6 +970,7 @@ def seed_flow(db: Session, tenant_id: int, creator_id: int) -> None:
         added = True
     if added:
         db.flush()
+    _bind_seed_graphs(db, list(by_code.values()), creator_id)
     sync_seed_tasks(db, tenant_id, creator_id)
     _backdate_demo_timeout_task(db, tenant_id)
     _mark_demo_warn_task(db, tenant_id)
@@ -995,6 +1002,46 @@ def flow_template_list(
     rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
     names = user_names(db, [r.creator_id for r in rows])
     return paged([template_vo(r, names) for r in rows], total, page_no, size)
+
+
+def _bind_seed_graphs(db: Session, tpls: list[FlowTemplate], actor_id: int) -> None:
+    """内置模板把预览链写入节点和 v1 快照，实例按这个版本往下走。"""
+    now = utcnow()
+    for tpl in tpls:
+        preset = PREVIEW_NODES.get(tpl.template_code)
+        if not preset:
+            continue
+        if not tpl.nodes:
+            tpl.nodes = nodes_from_preview(preset, int(tpl.sla_hours or DEFAULT_SLA_HOURS))
+            tpl.node_count = len(tpl.nodes)
+            tpl.updated_at = now
+        version = int(tpl.version_no or 1)
+        exists = db.scalar(
+            select(FlowTemplateVersion.id).where(
+                FlowTemplateVersion.deleted == 0,
+                FlowTemplateVersion.tenant_id == tpl.tenant_id,
+                FlowTemplateVersion.template_id == tpl.id,
+                FlowTemplateVersion.version_no == version,
+            )
+        )
+        if exists is not None:
+            continue
+        db.add(
+            FlowTemplateVersion(
+                template_id=tpl.id,
+                version_no=version,
+                nodes=tpl.nodes,
+                template_name=tpl.template_name,
+                sla_hours=int(tpl.sla_hours or DEFAULT_SLA_HOURS),
+                change_desc="种子版本",
+                version_status="CURRENT",
+                published_by=actor_id,
+                tenant_id=tpl.tenant_id,
+                published_at=now,
+                created_at=now,
+            )
+        )
+    db.flush()
 
 
 def preview_nodes_for(tpl: FlowTemplate) -> list[tuple[int, str, str, str]]:
@@ -1143,7 +1190,13 @@ def flow_instance_board(
         task = pending.get(row.id)
         name = row.current_node_name or "未分派"
         card = instance_vo(row, names, task)
-        card["canAdvance"] = bool(task is not None and next_human_node(graph_nodes(db, db.get(FlowTemplate, row.template_id), version_no=row.template_version or None), task.node_order))
+        card["canAdvance"] = bool(
+            task is not None
+            and next_chain_node(
+                graph_nodes(db, db.get(FlowTemplate, row.template_id), version_no=row.template_version or None),
+                task.node_order,
+            )
+        )
         columns.setdefault(name, []).append(card)
         bucket = by_node.setdefault(name, {"nodeName": name, "pendingCount": 0, "timeoutCount": 0})
         bucket["pendingCount"] += 1
@@ -1318,7 +1371,7 @@ def flow_instance_start(
         instance_status="RUNNING",
         current_node_name=str(node.get("nodeName") or "审批节点"),
         current_node_order=int(node.get("nodeOrder") or 1),
-        template_version=template_version_no(tpl),
+        template_version=int(tpl.version_no or template_version_no(tpl) or 1),
         initiator_user_id=actor.id,
         tenant_id=tenant_id,
         started_at=now,
@@ -1440,8 +1493,9 @@ def flow_task_handle(
     task.updated_at = now
     next_nodes: list[dict] = []
 
-    if action == "APPROVE" and body.advance:
-        nxt = next_human_node(nodes, task.node_order) if nodes else None
+    if action == "APPROVE":
+        # 通过即沿绑定版本的节点链往下走。advance 只是看板按钮的同义标记。
+        nxt = next_chain_node(nodes, task.node_order) if nodes else None
         if nxt is not None:
             initiator = db.get(User, inst.initiator_user_id) or actor
             assignee_id, rule_err = resolve_assignee(db, initiator, nxt)
@@ -1451,6 +1505,8 @@ def flow_task_handle(
             db.flush()
             inst.current_node_name = str(nxt.get("nodeName") or "审批节点")
             inst.current_node_order = int(nxt.get("nodeOrder") or task.node_order + 1)
+            inst.instance_status = "RUNNING"
+            inst.finished_at = None
             inst.updated_at = now
             ensure_pending_task(
                 db,
@@ -1479,14 +1535,6 @@ def flow_task_handle(
             inst.updated_at = now
             new_status = "APPROVED"
             is_finished = True
-    elif action == "APPROVE":
-        task.task_status = "APPROVED"
-        inst.instance_status = "APPROVED"
-        inst.current_node_name = "—"
-        inst.finished_at = now
-        inst.updated_at = now
-        new_status = "APPROVED"
-        is_finished = True
     else:
         target = node_by_order(nodes, reject_order or 1) if nodes else None
         node_name = str((target or {}).get("nodeName") or "发起申请")

@@ -214,13 +214,24 @@ def test_perf_month_close_grades_lock_and_self_view():
         headers=auth,
         params={"pageNo": 1, "pageSize": 100},
     ).json()["data"]["list"]
-    task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"绩效锁后更正 {PERIOD}")
-    handled = client.put(
-        f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
-        json={"action": "APPROVE", "comment": "R4 绩效更正"},
-    )
-    assert handled.json()["code"] == 0, handled.json()
+    handled_body = None
+    for _ in range(6):
+        todos = client.get(
+            "/admin-api/ims/flow/task/my-todo",
+            headers=auth,
+            params={"pageNo": 1, "pageSize": 100},
+        ).json()["data"]["list"]
+        task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"绩效锁后更正 {PERIOD}")
+        handled = client.put(
+            f"/admin-api/ims/flow/task/{task['id']}/handle",
+            headers=auth,
+            json={"action": "APPROVE", "comment": "R4 绩效更正"},
+        )
+        handled_body = handled.json()
+        assert handled_body["code"] == 0, handled_body
+        if handled_body["data"]["newStatus"] == "APPROVED":
+            break
+    assert handled_body["data"]["newStatus"] == "APPROVED"
 
     db = SessionLocal()
     try:

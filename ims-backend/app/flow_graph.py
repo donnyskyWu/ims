@@ -222,6 +222,17 @@ def next_human_node(nodes: list[dict], after_order: int) -> dict | None:
     return None
 
 
+def next_chain_node(nodes: list[dict], after_order: int) -> dict | None:
+    """绑定版本上的下一待办。抄送也要落任务；定时归档不占待办，链走完才办结。"""
+    ordered = sorted(nodes, key=lambda node: int(node["nodeOrder"]))
+    for node in ordered:
+        if int(node["nodeOrder"]) <= int(after_order):
+            continue
+        if node.get("nodeType") in {"APPROVE", "TASK", "CC"}:
+            return node
+    return None
+
+
 def node_by_order(nodes: list[dict], order: int) -> dict | None:
     for node in nodes:
         if int(node["nodeOrder"]) == int(order):
