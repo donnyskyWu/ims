@@ -117,4 +117,41 @@ test.describe('IP 组 BUG-014～021 / BUG-024', () => {
 
     expect(pageErrors).toEqual([])
   })
+
+  test('BUG-025 搜索小组带出上级，搜索大组不展开', async ({ page }) => {
+    test.setTimeout(90_000)
+    const pageErrors = attachClosurePageHooks(page)
+    await loginAdmin(page)
+    const stamp = String(Date.now()).slice(-6)
+    const bigName = `搜大组${stamp}`
+    const smallName = `搜小组${stamp}`
+    const otherSmall = `搜其他${stamp}`
+
+    await page.goto('/ims/ip-group')
+    await expect(page.locator('h1')).toHaveText('IP 组运营')
+    await page.getByRole('button', { name: '+ 新建大组' }).click()
+    const drawer = page.getByTestId('ipg-group-drawer')
+    await drawer.getByTestId('ipg-name').fill(bigName)
+    await drawer.getByTestId('ipg-group-submit').click()
+    await expect(page.locator('.ipg-node', { hasText: bigName })).toBeVisible()
+
+    await page.getByRole('button', { name: '+ 新建小组' }).click()
+    await page.getByTestId('ipg-name').fill(smallName)
+    await page.getByTestId('ipg-group-submit').click()
+    await page.locator('.ipg-node', { hasText: bigName }).click()
+    await page.getByRole('button', { name: '+ 新建小组' }).click()
+    await page.getByTestId('ipg-name').fill(otherSmall)
+    await page.getByTestId('ipg-group-submit').click()
+
+    await page.getByTestId('ipg-search').fill(smallName)
+    await expect(page.locator('.ipg-node', { hasText: bigName })).toBeVisible()
+    await expect(page.locator('.ipg-node', { hasText: smallName })).toBeVisible()
+    await expect(page.locator('.ipg-node', { hasText: otherSmall })).toHaveCount(0)
+
+    await page.getByTestId('ipg-search').fill(bigName)
+    await expect(page.locator('.ipg-node', { hasText: bigName })).toBeVisible()
+    await expect(page.locator('.ipg-node', { hasText: smallName })).toHaveCount(0)
+    await expect(page.locator('.ipg-node', { hasText: otherSmall })).toHaveCount(0)
+    expect(pageErrors).toEqual([])
+  })
 })

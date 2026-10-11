@@ -399,12 +399,33 @@ const nodeMap = computed(() => {
 const flatNodes = computed(() => {
   const key = treeKeyword.value.trim().toLowerCase()
   const out: (TreeNode & { depth: number })[] = []
-  const walk = (nodes: TreeNode[], depth: number) => {
-    for (const n of nodes) {
-      if (!key || n.groupName.toLowerCase().includes(key)) {
-        out.push({ ...n, depth })
+  if (!key) {
+    const walk = (nodes: TreeNode[], depth: number) => {
+      for (const node of nodes) {
+        out.push({ ...node, depth })
+        if (node.children?.length) walk(node.children, depth + 1)
       }
-      if (n.children?.length) walk(n.children, depth + 1)
+    }
+    walk(tree.value, 0)
+    return out
+  }
+  const shown = new Set<number>()
+  const mark = (nodes: TreeNode[], parent: TreeNode | null) => {
+    for (const node of nodes) {
+      const hit = node.groupName.toLowerCase().includes(key)
+      if (hit && node.groupType === 'BIG') shown.add(node.id)
+      else if (hit) {
+        shown.add(node.id)
+        if (parent) shown.add(parent.id)
+      }
+      if (node.children?.length) mark(node.children, node)
+    }
+  }
+  mark(tree.value, null)
+  const walk = (nodes: TreeNode[], depth: number) => {
+    for (const node of nodes) {
+      if (shown.has(node.id)) out.push({ ...node, depth })
+      if (node.children?.length) walk(node.children, depth + 1)
     }
   }
   walk(tree.value, 0)
