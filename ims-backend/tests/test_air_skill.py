@@ -65,3 +65,14 @@ def test_air_skill_create_list_audit():
     )
     assert approved.json()["code"] == 0
     assert approved.json()["data"]["status"] == "PUBLISHED"
+
+    summary = client.get("/admin-api/ims/air/skill/summary", headers=auth)
+    assert summary.json()["code"] == 0
+    for key in ("expertCount", "kbCount", "docCount", "activeKeyCount"):
+        assert key in summary.json()["data"]
+    filtered = client.get(
+        "/admin-api/ims/air/skill/list",
+        headers=auth,
+        params={"skillName": "W9", "category": "数据分析", "pageNo": 1, "pageSize": 5},
+    )
+    assert any(r["id"] == skill_id for r in filtered.json()["data"]["list"])

@@ -24,12 +24,17 @@ test.describe('air expert assemble and audit closure S8', () => {
     await page.getByTestId('air-skill-create').click()
     const skillForm = page.getByTestId('air-skill-form')
     await skillForm.getByTestId('air-skill-name').fill(skillName)
+    await skillForm.getByTestId('air-skill-category').selectOption('内容生产')
+    await skillForm.getByTestId('air-skill-capability').fill('组装用能力说明')
+    await skillForm.getByTestId('air-skill-prompt').fill('模板 {topic}')
     const createdSkill = page.waitForResponse(
       (response) => response.url().includes('/air/skill') && response.request().method() === 'POST',
     )
+    const submitted = page.waitForResponse((response) => response.url().includes('/submit-audit'))
     await skillForm.getByTestId('air-skill-save').click()
     const skillBody = await (await createdSkill).json()
     expect(skillBody.code).toBe(0)
+    expect((await (await submitted).json()).code).toBe(0)
     const skillNo = skillBody.data.skillNo as string
 
     await page.locator('input[placeholder="技能名称"]').fill(skillName)
@@ -39,9 +44,6 @@ test.describe('air expert assemble and audit closure S8', () => {
     await page.getByRole('button', { name: '查询' }).click()
     await listed
     const skillRow = page.locator('tbody tr').filter({ hasText: skillName })
-    const submitted = page.waitForResponse((response) => response.url().includes('/submit-audit'))
-    await skillRow.getByTestId('air-skill-submit').click()
-    expect((await (await submitted).json()).code).toBe(0)
     await expect(skillRow.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PENDING')
     await loginAdmin(page)
     await page.goto('/ims/air/skill')

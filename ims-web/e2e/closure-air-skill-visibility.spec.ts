@@ -23,11 +23,12 @@ test.describe('air skill visibility closure S8', () => {
     await page.getByTestId('air-skill-create').click()
     const form = page.getByTestId('air-skill-form')
     await form.getByTestId('air-skill-name').fill(skillName)
-    const created = page.waitForResponse(
-      (response) => response.url().includes('/air/skill') && response.request().method() === 'POST',
-    )
+    await form.getByTestId('air-skill-category').selectOption('内容生产')
+    await form.getByTestId('air-skill-capability').fill('输出可见性说明')
+    await form.getByTestId('air-skill-prompt').fill('模板 {topic}')
+    const submitted = page.waitForResponse((response) => response.url().includes('/submit-audit'))
     await form.getByTestId('air-skill-save').click()
-    expect((await (await created).json()).code).toBe(0)
+    expect((await (await submitted).json()).code).toBe(0)
 
     await page.locator('input[placeholder="技能名称"]').fill(skillName)
     const listed = page.waitForResponse(
@@ -36,12 +37,6 @@ test.describe('air skill visibility closure S8', () => {
     await page.getByRole('button', { name: '查询' }).click()
     await listed
     const row = page.locator('tbody tr').filter({ hasText: skillName })
-    await expect(row.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'DRAFT')
-    await page.screenshot({ path: `${shotDir}/01-skill-draft.png`, fullPage: true })
-
-    const submitted = page.waitForResponse((response) => response.url().includes('/submit-audit'))
-    await row.getByTestId('air-skill-submit').click()
-    expect((await (await submitted).json()).code).toBe(0)
     await expect(row.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PENDING')
     await page.screenshot({ path: `${shotDir}/02-skill-pending.png`, fullPage: true })
 
