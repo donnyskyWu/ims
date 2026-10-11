@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,6 +99,10 @@ def _ensure_e2e_author(db) -> None:
 
 
 def seed() -> None:
+    # 改名先落库。采集等后续种子抛错时，这一段不能跟着主事务回滚。
+    from app.role_matrix import commit_e2e_legacy_roles
+
+    commit_e2e_legacy_roles()
     db = SessionLocal()
     try:
         if db.get(User, 1) is None and db.query(User).filter(User.username == "admin").first() is None:
@@ -539,8 +544,16 @@ def init_db() -> None:
     seed()
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from app.role_matrix import commit_e2e_legacy_roles
+
+    commit_e2e_legacy_roles()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="IMS")
+    app = FastAPI(title="IMS", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

@@ -822,10 +822,13 @@ def refresh_live_alarm_e2e(db: Session) -> None:
     from app.scope import refresh_user_scope
     from app.security import hash_password
 
+    from app.role_matrix import E2E_LEGACY_ROLE_NAMES
+
+    display = E2E_LEGACY_ROLE_NAMES["live:r4"]
     role = db.scalar(select(Role).where(Role.role_key == "live:r4", Role.deleted == 0))
     if role is None:
         role = Role(
-            role_name="E2E专用-运营总监",
+            role_name=display,
             role_key="live:r4",
             data_scope="ALL",
             source="MANUAL",
@@ -834,6 +837,8 @@ def refresh_live_alarm_e2e(db: Session) -> None:
         )
         db.add(role)
         db.flush()
+    elif role.role_name != display:
+        role.role_name = display
     director = db.scalar(select(User).where(User.username == DIRECTOR_USERNAME, User.deleted == 0))
     if director is None:
         director = User(

@@ -480,7 +480,10 @@ _EFF_WRITE_CODES = (
 
 
 def normalize_e2e_legacy_roles(db: Session) -> None:
-    """幂等：显示名加「E2E专用-」，去掉这些角色的组织人效建立/变更/删除。"""
+    """幂等：显示名写成映射全称，去掉这些角色的组织人效建立/变更/删除。
+
+    赋的是完整显示名，已有前缀不会再叠一层。
+    """
     for role_key, display in E2E_LEGACY_ROLE_NAMES.items():
         role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
         if role is None:
@@ -505,6 +508,22 @@ def normalize_e2e_legacy_roles(db: Session) -> None:
         if query is not None and ("W" in (query.perm_level or "") or "D" in (query.perm_level or "")):
             query.perm_level = "R"
     db.flush()
+
+
+def commit_e2e_legacy_roles() -> None:
+    """单独提交改名。后面的种子失败回滚时，显示名和人效写权限不再被一起撤掉。"""
+    from sqlalchemy import inspect
+
+    from app.core import SessionLocal, engine
+
+    if "ims_sys_role" not in set(inspect(engine).get_table_names()):
+        return
+    db = SessionLocal()
+    try:
+        normalize_e2e_legacy_roles(db)
+        db.commit()
+    finally:
+        db.close()
 
 
 def ensure_role_matrix(db: Session) -> None:

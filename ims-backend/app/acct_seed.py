@@ -180,6 +180,8 @@ def _ensure_cloned_user(
         )
         db.add(role)
         db.flush()
+    elif role.role_name != role_name:
+        role.role_name = role_name
     perm_count = db.scalar(select(func.count()).select_from(RolePerm).where(RolePerm.role_id == role.id)) or 0
     if perm_count == 0:
         _clone_admin_perms(db, role.id)

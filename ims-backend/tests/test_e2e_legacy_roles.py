@@ -4,9 +4,12 @@ import os
 
 os.environ["IMS_DB"] = "ims_test"
 
+import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.core import SessionLocal
+from app.main import app, seed
 from app.models import Role, RoleMenu, RolePerm, User
 from app.role_matrix import (
     E2E_LEGACY_ROLE_NAMES,
@@ -16,6 +19,8 @@ from app.role_matrix import (
     EFF_RELATION_UPDATE,
     normalize_e2e_legacy_roles,
 )
+
+client = TestClient(app)
 
 WRITE_CODES = (
     EFF_RELATION_CREATE,
@@ -101,3 +106,81 @@ def test_e2e_legacy_roles_renamed_and_eff_writes_removed():
         assert not (_codes(db, fin.id) & set(WRITE_CODES))
     finally:
         db.close()
+
+
+def test_startup_seed_keeps_rename_when_later_seed_fails():
+    """已提交的旧显示名必须在启动后改掉。后续种子失败不能把改名一起回滚，也不能叠两层前缀。"""
+    db = SessionLocal()
+    try:
+        for role_key, old in BEFORE_NAMES.items():
+            role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
+            assert role is not None, role_key
+            role.role_name = old
+        fin = db.scalar(select(Role).where(Role.role_key == "fin:r9", Role.deleted == 0))
+        db.add(
+            RolePerm(
+                role_id=fin.id,
+                module_code="ims",
+                perm_code=EFF_RELATION_CREATE,
+                perm_level="R",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+        kept_ids = {
+            role_key: db.scalar(select(Role.id).where(Role.role_key == role_key, Role.deleted == 0))
+            for role_key in E2E_LEGACY_ROLE_NAMES
+        }
+    finally:
+        db.close()
+
+    import app.douyin_collect_seed as dy
+
+    original = dy.refresh_douyin_collect_seed
+
+    def boom() -> None:
+        raise RuntimeError("collect seed failed")
+
+    dy.refresh_douyin_collect_seed = boom
+    try:
+        with pytest.raises(RuntimeError, match="collect seed failed"):
+            seed()
+    finally:
+        dy.refresh_douyin_collect_seed = original
+
+    db = SessionLocal()
+    try:
+        for role_key, display in E2E_LEGACY_ROLE_NAMES.items():
+            role = db.scalar(select(Role).where(Role.role_key == role_key, Role.deleted == 0))
+            assert role is not None and role.id == kept_ids[role_key]
+            assert role.role_name == display
+            assert role.role_name.count("E2E专用-") == 1
+            assert not (_codes(db, role.id) & set(WRITE_CODES))
+        for username in ("e2e_fin_r9", "e2e_acct_r3", "e2e_acct_peer", "e2e_acct_sum", "bi_r4_viewer", "live_director"):
+            assert db.scalar(select(User).where(User.username == username, User.deleted == 0)) is not None
+        r9 = db.scalar(select(Role).where(Role.role_key == "R9", Role.deleted == 0))
+        assert r9 is not None and r9.role_name == "数据分析师"
+        fin = db.scalar(select(Role).where(Role.role_key == "fin:r9", Role.deleted == 0))
+        fin.role_name = "E2E专用-" + E2E_LEGACY_ROLE_NAMES["fin:r9"]
+        db.commit()
+    finally:
+        db.close()
+
+    seed()
+
+    db = SessionLocal()
+    try:
+        fin = db.scalar(select(Role).where(Role.role_key == "fin:r9", Role.deleted == 0))
+        assert fin.role_name == E2E_LEGACY_ROLE_NAMES["fin:r9"]
+        assert fin.role_name.count("E2E专用-") == 1
+    finally:
+        db.close()
+
+    token = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"][
+        "accessToken"
+    ]
+    listed = client.get("/admin-api/ims/system/role/list", headers={"Authorization": f"Bearer {token}"}).json()
+    assert listed["code"] == 0
+    found = {row["roleKey"]: row["roleName"] for row in listed["data"]}
+    for role_key, display in E2E_LEGACY_ROLE_NAMES.items():
+        assert found[role_key] == display
