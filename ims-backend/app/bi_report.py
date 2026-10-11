@@ -1561,8 +1561,8 @@ def standard_visuals(title: str, rows: list[dict], grain: str) -> tuple[list[dic
         {"metric": "记录数", "value": len(rows), "note": title},
         {
             "metric": COLUMN_LABEL.get(numeric_key, "合计") if numeric_key else "合计",
-            "value": round(total, 2) if numeric_key else 0,
-            "note": "种子数据合计",
+            "value": round(total, 2) if numeric_key else len(rows),
+            "note": "种子数据合计" if numeric_key else "与明细行数一致",
         },
     ]
     if not rows or not numeric_key:

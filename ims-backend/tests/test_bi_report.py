@@ -36,6 +36,10 @@ def test_bi_report_catalog_and_preview():
     assert status["rows"]
     assert "状态" in status["columns"]
     assert "note" not in status["columns"]
+    alert = client.get("/admin-api/ims/bi/report/account-alert", headers=auth).json()["data"]
+    total_kpi = next(item for item in alert["kpis"] if item["metric"] == "合计")
+    assert total_kpi["value"] == alert["total"]
+    assert total_kpi["value"] == 3
 
 
 def test_bi_report_manage_create_list():
