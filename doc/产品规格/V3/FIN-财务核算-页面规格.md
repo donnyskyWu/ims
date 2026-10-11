@@ -222,7 +222,7 @@ type ShareCostType = 'MANUAL' | 'ENGINE';   // 手工/引擎
 | 成本录入抽屉 | Drawer 720px | GMV/退款只读；commissionRate 必填 (0,1]；金额字段必填非负两位小数；MANUAL 时 shareDaren/shareRealname 必填；合计实时预览；clientToken 幂等 |
 | 成本详情抽屉 | Drawer 70% | 全字段只读 + 状态/录入人 + 修改记录（修改人、北京时间、字段、旧值、新值；草稿与已提交的每次编辑）+ 更正历史入口 |
 | 成本更正抽屉 | Drawer 720px | 预填原值可改；Diff 红冲/蓝补实时预览；correctionReason 必填 ≤512；clientToken |
-| 核准确认弹窗 | Modal 400px | 汇总成本合计 + "核准后 5 分钟内自动计算利润"提示 |
+| 核准确认弹窗 | Modal 400px | 场次号 + 成本合计 + "核准后 5 分钟内自动计算利润"；主按钮「财务核准」 |
 | 超 48h 未录清单抽屉 | Drawer 60% | BR-118 督办清单（场次/平台/核准时间/已过小时数红标） |
 
 ### 8. 错误处理

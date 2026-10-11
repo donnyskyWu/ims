@@ -126,10 +126,11 @@
     <div v-if="confirmOpen" class="mask on" style="z-index: 140" data-testid="fin-cost-confirm-dialog">
       <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 420px; padding: 16px">
         <b>核准成本</b>
+        <p data-testid="fin-cost-confirm-session">场次号 {{ confirmTarget }}</p>
         <p>成本合计 {{ yuan(confirmTotal) }}</p>
         <p>核准后 5 分钟内自动计算利润</p>
         <div class="acts" style="gap: 8px">
-          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-cost-confirm-ok" @click="submitConfirm">确认</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-cost-confirm-ok" @click="submitConfirm">财务核准</button>
           <button class="btn btn-sec btn-sm" type="button" @click="confirmOpen = false">取消</button>
         </div>
       </div>
