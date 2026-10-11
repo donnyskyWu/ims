@@ -162,6 +162,7 @@ def test_random_paper_1159_1160_dedup_makeup_and_window():
     assert assigned["code"] == 0
     started = client.post("/admin-api/ims/perf/exam/record/start", headers=auth, json={"paperId": paper_id}).json()
     assert started["code"] == 0
+    assert started["data"]["startAt"].endswith("+08:00")
     questions = started["data"]["questions"]
     assert len(questions) == 2
     assert len({item["questionId"] for item in questions}) == 2
@@ -189,6 +190,8 @@ def test_random_paper_1159_1160_dedup_makeup_and_window():
     )
     outside = client.post("/admin-api/ims/perf/exam/record/start", headers=auth, json={"paperId": late_id}).json()
     assert outside["code"] == 1161
+    assert "Z" not in outside["msg"]
+    assert "T" not in outside["msg"]
 
     fixed = _paper(
         auth,
@@ -267,3 +270,107 @@ def test_random_paper_1159_1160_dedup_makeup_and_window():
     assert scores["data"]["total"] == 1
     assert scores["data"]["list"][0]["isMakeup"] is True
     assert scores["data"]["list"][0]["score"] == 20
+
+
+def test_question_create_edit_1159_and_multi_score():
+    login = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"]
+    auth = {"Authorization": f"Bearer {login['accessToken']}"}
+    user_id = int(login["profile"]["userId"])
+
+    missing = client.post(
+        "/admin-api/ims/perf/exam/question",
+        headers=auth,
+        json={"questionType": "SINGLE", "content": "  ", "knowledgeDomain": "LIVE_RULE", "score": 10, "options": ["A", "B"], "answer": 0},
+    ).json()
+    assert missing["code"] == 1001
+
+    created = client.post(
+        "/admin-api/ims/perf/exam/question",
+        headers=auth,
+        json={
+            "questionType": "MULTI",
+            "content": "哪些行为违规",
+            "knowledgeDomain": "COMPLIANCE",
+            "score": 10,
+            "options": ["引导线下", "口播极限词", "正常介绍"],
+            "answer": [0, 1],
+        },
+    ).json()
+    assert created["code"] == 0
+    qid = int(created["data"]["id"])
+    other = client.post(
+        "/admin-api/ims/perf/exam/question",
+        headers=auth,
+        json={
+            "questionType": "JUDGE",
+            "content": "判断对错",
+            "knowledgeDomain": "COMPLIANCE",
+            "score": 10,
+            "answer": False,
+        },
+    ).json()
+    assert other["code"] == 0
+    judge_id = int(other["data"]["id"])
+
+    paper = _paper(
+        auth,
+        {
+            "paperName": "分值锁定",
+            "paperType": "FIXED",
+            "questionIds": [qid, judge_id],
+            "totalScore": 20,
+            "passScore": 10,
+            "durationMinutes": 20,
+        },
+    )
+    assert paper["code"] == 0
+    broken = client.put(
+        f"/admin-api/ims/perf/exam/question/{qid}",
+        headers=auth,
+        json={
+            "questionType": "MULTI",
+            "content": "哪些行为违规",
+            "knowledgeDomain": "COMPLIANCE",
+            "score": 11,
+            "options": ["引导线下", "口播极限词", "正常介绍"],
+            "answer": [0, 1],
+        },
+    ).json()
+    assert broken["code"] == 1159
+    listed = client.get(
+        "/admin-api/ims/perf/exam/questions",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50, "questionNo": created["data"]["questionNo"]},
+    ).json()["data"]["list"]
+    assert listed[0]["score"] == 10
+
+    multi_paper = _paper(
+        auth,
+        {
+            "paperName": "多选计分",
+            "paperType": "FIXED",
+            "questionIds": [qid],
+            "totalScore": 10,
+            "passScore": 10,
+            "durationMinutes": 20,
+        },
+    )
+    assert multi_paper["code"] == 0
+    paper_id = multi_paper["data"]["id"]
+    client.put(f"/admin-api/ims/perf/exam/paper/{paper_id}/publish", headers=auth)
+    client.post(
+        f"/admin-api/ims/perf/exam/paper/{paper_id}/assign",
+        headers=auth,
+        json={"userIds": [user_id], "examWindow": _window(-1, 2)},
+    )
+    started = client.post("/admin-api/ims/perf/exam/record/start", headers=auth, json={"paperId": paper_id}).json()
+    assert started["code"] == 0
+    snap = started["data"]["questions"][0]
+    assert snap["questionType"] == "MULTIPLE"
+    full = client.post(
+        "/admin-api/ims/perf/exam/record/submit",
+        headers=auth,
+        json={"recordId": started["data"]["id"], "answers": [{"questionId": snap["questionId"], "answer": [0, 1]}]},
+    ).json()
+    assert full["code"] == 0
+    assert full["data"]["totalScore"] == 10

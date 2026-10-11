@@ -289,6 +289,8 @@ PREFIXES = [
     ("GET", "/admin-api/ims/comp-analysis/account", "oa_external_account"),
     ("GET", "/admin-api/ims/comp/asset", "ims_comp_asset"),
     ("POST", "/admin-api/ims/comp/asset", "ims_comp_asset"),
+    ("POST", "/admin-api/ims/perf/exam/question", "ims_exam_question"),
+    ("PUT", "/admin-api/ims/perf/exam/question", "ims_exam_question"),
     ("GET", "/admin-api/ims/perf/exam/paper", "ims_exam_paper"),
     ("POST", "/admin-api/ims/perf/exam/paper", "ims_exam_paper"),
     ("PUT", "/admin-api/ims/perf/exam/paper", "ims_exam_paper"),

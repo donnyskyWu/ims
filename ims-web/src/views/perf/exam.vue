@@ -35,6 +35,9 @@
         <span class="sp"></span>
         <button class="btn btn-pri btn-sm" type="submit">查询</button>
         <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="exam-question-create" @click="openQuestion()">
+          新增题目
+        </button>
       </form>
       <div class="tbl-block">
         <div class="tbl-wrap">
@@ -74,7 +77,11 @@
                 </td>
                 <td class="num">{{ row.score }} 分</td>
                 <td class="num">{{ row.refCount }} 卷</td>
-                <td><span class="btn btn-sec btn-sm" style="pointer-events: none; opacity: 0.5">编辑</span></td>
+                <td>
+                  <button class="btn btn-sec btn-sm" type="button" data-testid="exam-question-edit" @click="openQuestion(row)">
+                    编辑
+                  </button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -341,6 +348,68 @@
       </div>
     </div>
 
+    <div v-if="questionOpen" class="modal-mask" data-testid="exam-question-drawer">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 88vh; overflow: auto">
+        <h3 style="margin: 0 0 8px">{{ qform.id ? '编辑题目' : '新增题目' }}</h3>
+        <label class="fld">题干 *</label>
+        <textarea v-model="qform.stem" class="fld-in" rows="3" data-testid="exam-question-stem" />
+        <p v-if="fieldErrors.stem" class="hint stock-err">{{ fieldErrors.stem }}</p>
+        <label class="fld">知识域 *</label>
+        <select v-model="qform.knowledgeDomain" class="fld-in" data-testid="exam-question-domain">
+          <option v-for="d in domains" :key="d.value" :value="d.value">{{ d.label }}</option>
+        </select>
+        <p v-if="fieldErrors.domain" class="hint stock-err">{{ fieldErrors.domain }}</p>
+        <label class="fld">题型 *</label>
+        <select v-model="qform.questionType" class="fld-in" data-testid="exam-question-type" @change="onQuestionType">
+          <option v-for="t in qtypes" :key="t.value" :value="t.value">{{ t.label }}</option>
+        </select>
+        <p v-if="fieldErrors.type" class="hint stock-err">{{ fieldErrors.type }}</p>
+        <label class="fld">分值 *</label>
+        <input v-model.number="qform.score" class="fld-in" type="number" min="0.01" step="0.01" data-testid="exam-question-score" />
+        <p v-if="fieldErrors.score" class="hint stock-err">{{ fieldErrors.score }}</p>
+        <template v-if="qform.questionType === 'SINGLE' || qform.questionType === 'MULTIPLE'">
+          <label class="fld">选项</label>
+          <div v-for="(_opt, oi) in qform.options" :key="oi" class="opt">
+            <input v-model="qform.options[oi]" class="fld-in" :data-testid="'exam-question-option-' + oi" :placeholder="'选项 ' + (oi + 1)" />
+            <button v-if="qform.options.length > 2" class="btn btn-sec btn-sm" type="button" @click="qform.options.splice(oi, 1)">删除</button>
+          </div>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="exam-question-add-option" @click="qform.options.push('')">
+            增加选项
+          </button>
+          <label class="fld">参考答案</label>
+          <template v-if="qform.questionType === 'SINGLE'">
+            <label v-for="(opt, oi) in qform.options" :key="'a' + oi" class="opt">
+              <input v-model.number="qform.answerIndex" type="radio" name="q-answer" :value="oi" />
+              {{ opt || '选项 ' + (oi + 1) }}
+            </label>
+          </template>
+          <template v-else>
+            <label v-for="(opt, oi) in qform.options" :key="'m' + oi" class="opt">
+              <input type="checkbox" :checked="qform.answerIndexes.includes(oi)" @change="toggleAnswerIndex(oi)" />
+              {{ opt || '选项 ' + (oi + 1) }}
+            </label>
+          </template>
+        </template>
+        <template v-else-if="qform.questionType === 'JUDGE'">
+          <label class="fld">参考答案</label>
+          <label class="opt"><input v-model="qform.judgeAnswer" type="radio" :value="true" /> 对</label>
+          <label class="opt"><input v-model="qform.judgeAnswer" type="radio" :value="false" /> 错</label>
+        </template>
+        <template v-else>
+          <label class="fld">参考答案</label>
+          <textarea v-model="qform.essayAnswer" class="fld-in" rows="3" data-testid="exam-question-reference" placeholder="简答参考答案，可空" />
+        </template>
+        <p v-if="fieldErrors.answer" class="hint stock-err">{{ fieldErrors.answer }}</p>
+        <p v-if="questionError" class="hint stock-err" data-testid="exam-question-error">{{ questionError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="questionOpen = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="exam-question-save" :disabled="questionSaving" @click="saveQuestion">
+            保存
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="taking" class="modal-mask">
       <div class="card" style="width: 640px; padding: 20px; max-height: 88vh; overflow: auto">
         <h3 style="margin: 0 0 8px">在线作答 · {{ taking.paperName }}</h3>
@@ -356,6 +425,17 @@
               :aria-label="q.content"
               placeholder="简答"
             />
+            <template v-else-if="isMulti(q)">
+              <label v-for="(opt, oi) in q.options || []" :key="oi" class="opt">
+                <input
+                  type="checkbox"
+                  :data-testid="'exam-multi-' + q.questionId + '-' + oi"
+                  :checked="chosenMulti(q.questionId).includes(oi)"
+                  @change="toggleMulti(q.questionId, oi)"
+                />
+                {{ opt }}
+              </label>
+            </template>
             <template v-else>
               <label v-for="(opt, oi) in q.options || []" :key="oi" class="opt">
                 <input
@@ -459,7 +539,9 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import { datetimeLocalToOffset, formatDateTime, shanghaiDateTimeLocal, shiftShanghaiMinutes } from '../../utils/time'
 import { useUserStore } from '../../stores/user'
 
 type BankRow = {
@@ -472,6 +554,8 @@ type BankRow = {
   questionTypeLabel: string
   score: number
   refCount: number
+  options?: string[] | null
+  answer?: number | number[] | boolean | string | null
 }
 
 type Strategy = { knowledgeDomain: string; questionType: string; count: number; scorePerQuestion: number }
@@ -531,6 +615,7 @@ const qtypes = [
 ]
 
 const user = useUserStore()
+const route = useRoute()
 const tab = ref<'bank' | 'paper' | 'score'>('bank')
 const rows = ref<BankRow[]>([])
 const total = ref(0)
@@ -572,7 +657,23 @@ const taking = ref<{
   examStatus: string
   questions: QuestionSnap[]
 } | null>(null)
-const answers = reactive<Record<number, number>>({})
+const answers = reactive<Record<number, number | number[]>>({})
+const questionOpen = ref(false)
+const questionSaving = ref(false)
+const questionError = ref('')
+const fieldErrors = reactive({ stem: '', domain: '', type: '', score: '', answer: '' })
+const qform = reactive({
+  id: '',
+  stem: '',
+  knowledgeDomain: 'LIVE_RULE',
+  questionType: 'SINGLE',
+  score: 10,
+  options: ['', ''] as string[],
+  answerIndex: 0,
+  answerIndexes: [] as number[],
+  judgeAnswer: true,
+  essayAnswer: '',
+})
 const essayAnswers = reactive<Record<number, string>>({})
 const takePhase = ref<'answer' | 'confirm' | 'result' | 'makeup'>('answer')
 const takeError = ref('')
@@ -583,6 +684,99 @@ const pendingObjective = ref<number | null>(null)
 
 function isEssay(q: QuestionSnap) {
   return q.questionType === 'ESSAY' || q.questionType === 'SHORT_ANSWER'
+}
+
+function isMulti(q: QuestionSnap) {
+  return q.questionType === 'MULTIPLE' || q.questionType === 'MULTI'
+}
+
+function chosenMulti(id: number) {
+  const value = answers[id]
+  return Array.isArray(value) ? value : []
+}
+
+function toggleMulti(id: number, index: number) {
+  const current = chosenMulti(id)
+  answers[id] = current.includes(index) ? current.filter((item) => item !== index) : [...current, index]
+}
+
+function toggleAnswerIndex(index: number) {
+  qform.answerIndexes = qform.answerIndexes.includes(index)
+    ? qform.answerIndexes.filter((item) => item !== index)
+    : [...qform.answerIndexes, index]
+}
+
+function onQuestionType() {
+  if (qform.questionType === 'SINGLE' || qform.questionType === 'MULTIPLE') {
+    if (qform.options.length < 2) qform.options = ['', '']
+  }
+}
+
+function openQuestion(row?: BankRow) {
+  questionError.value = ''
+  fieldErrors.stem = ''
+  fieldErrors.domain = ''
+  fieldErrors.type = ''
+  fieldErrors.score = ''
+  fieldErrors.answer = ''
+  qform.id = row?.id || ''
+  qform.stem = row?.stem || ''
+  qform.knowledgeDomain = row?.knowledgeDomain || 'LIVE_RULE'
+  qform.questionType = row?.questionType || 'SINGLE'
+  qform.score = row?.score ?? 10
+  qform.options = row?.options && row.options.length ? [...row.options] : ['', '']
+  qform.answerIndex = typeof row?.answer === 'number' ? row.answer : 0
+  qform.answerIndexes = Array.isArray(row?.answer) ? [...row.answer] : []
+  qform.judgeAnswer = typeof row?.answer === 'boolean' ? row.answer : true
+  qform.essayAnswer = typeof row?.answer === 'string' ? row.answer : ''
+  questionOpen.value = true
+}
+
+function questionPayload() {
+  const options = qform.options.map((item) => item.trim()).filter(Boolean)
+  let answer: number | number[] | boolean | string = qform.answerIndex
+  if (qform.questionType === 'MULTIPLE') answer = [...qform.answerIndexes]
+  else if (qform.questionType === 'JUDGE') answer = qform.judgeAnswer
+  else if (qform.questionType === 'ESSAY') answer = qform.essayAnswer.trim()
+  return {
+    questionType: qform.questionType,
+    content: qform.stem.trim(),
+    knowledgeDomain: qform.knowledgeDomain,
+    score: Number(qform.score),
+    options: qform.questionType === 'ESSAY' ? undefined : options,
+    answer,
+  }
+}
+
+function validateQuestion() {
+  fieldErrors.stem = qform.stem.trim() ? '' : '题干必填'
+  fieldErrors.domain = qform.knowledgeDomain ? '' : '知识域必填'
+  fieldErrors.type = qform.questionType ? '' : '题型必填'
+  fieldErrors.score = Number(qform.score) > 0 ? '' : '分值须大于 0'
+  fieldErrors.answer = ''
+  if (qform.questionType === 'SINGLE' || qform.questionType === 'MULTIPLE') {
+    const options = qform.options.map((item) => item.trim()).filter(Boolean)
+    if (options.length < 2) fieldErrors.answer = '选项至少 2 项'
+    else if (qform.questionType === 'MULTIPLE' && !qform.answerIndexes.length) fieldErrors.answer = '请选择参考答案'
+  }
+  return !fieldErrors.stem && !fieldErrors.domain && !fieldErrors.type && !fieldErrors.score && !fieldErrors.answer
+}
+
+async function saveQuestion() {
+  questionError.value = ''
+  if (!validateQuestion()) return
+  questionSaving.value = true
+  try {
+    const payload = questionPayload()
+    if (qform.id) await http.put(`/perf/exam/question/${qform.id}`, payload)
+    else await http.post('/perf/exam/question', payload)
+    questionOpen.value = false
+    await loadList()
+  } catch (e: unknown) {
+    questionError.value = errorMessage(e)
+  } finally {
+    questionSaving.value = false
+  }
 }
 
 const bankFiltered = computed(
@@ -606,7 +800,7 @@ const scoreEmpty = computed(() => {
 
 function timeText(value?: string) {
   if (!value) return '—'
-  return value.replace('T', ' ').replace(/Z$/, '').slice(0, 16)
+  return formatDateTime(value) || '—'
 }
 
 function scoreText(row: ScoreRow) {
@@ -881,18 +1075,13 @@ async function publishPaper() {
   }
 }
 
-function localInput(date: Date) {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
 function openAssign(row: Paper) {
   assignTarget.value = row
   assignError.value = ''
   assignForm.userIdsText = user.profile?.userId || '1'
-  const now = new Date()
-  assignForm.from = localInput(new Date(now.getTime() - 5 * 60 * 1000))
-  assignForm.to = localInput(new Date(now.getTime() + 24 * 60 * 60 * 1000))
+  const now = shanghaiDateTimeLocal()
+  assignForm.from = shiftShanghaiMinutes(now, -5)
+  assignForm.to = shiftShanghaiMinutes(now, 24 * 60)
 }
 
 async function submitAssign() {
@@ -915,7 +1104,7 @@ async function submitAssign() {
   try {
     const res = await http.post(`/perf/exam/paper/${assignTarget.value.id}/assign`, {
       userIds,
-      examWindow: { from: new Date(assignForm.from).toISOString(), to: new Date(assignForm.to).toISOString() },
+      examWindow: { from: datetimeLocalToOffset(assignForm.from), to: datetimeLocalToOffset(assignForm.to) },
     })
     const count = res.data.data?.assignedCount ?? userIds.length
     assignNotice.value = `已指派 ${count} 人，考生工作台已收到考试待办`
@@ -975,6 +1164,7 @@ function askSubmit() {
   if (!taking.value) return
   unansweredCount.value = taking.value.questions.filter((q) => {
     if (isEssay(q)) return !(essayAnswers[q.questionId] || '').trim()
+    if (isMulti(q)) return chosenMulti(q.questionId).length === 0
     return answers[q.questionId] === undefined
   }).length
   takeError.value = ''
@@ -990,7 +1180,11 @@ async function submitPaper() {
       switchScreenCount: 0,
       answers: taking.value.questions.map((q) => ({
         questionId: q.questionId,
-        answer: isEssay(q) ? (essayAnswers[q.questionId] || '').trim() : answers[q.questionId],
+        answer: isEssay(q)
+          ? (essayAnswers[q.questionId] || '').trim()
+          : isMulti(q)
+            ? chosenMulti(q.questionId)
+            : answers[q.questionId],
       })),
     })
     const data = res.data.data
@@ -1097,7 +1291,27 @@ async function submitGrade() {
   }
 }
 
-onMounted(loadList)
+onMounted(async () => {
+  await loadList()
+  const paperId = Number(route.query.paperId || 0)
+  if (route.query.take !== '1' || !paperId) return
+  await loadPapers()
+  const paper = papers.value.find((item) => item.id === paperId)
+  tab.value = 'paper'
+  await startTake(
+    paper || {
+      id: paperId,
+      paperNo: '',
+      paperName: '',
+      paperType: 'FIXED',
+      totalScore: 0,
+      passScore: 0,
+      durationMinutes: 0,
+      status: 'PUBLISHED',
+      assignedCount: 0,
+    },
+  )
+})
 </script>
 
 <style scoped>

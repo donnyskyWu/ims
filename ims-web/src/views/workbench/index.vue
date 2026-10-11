@@ -166,7 +166,8 @@
                 <router-link
                   v-if="String(row.taskType) === 'exam'"
                   class="btn btn-txt"
-                  to="/ims/perf/exam"
+                  data-testid="wb-exam-go"
+                  :to="Number(row.refId || 0) ? `/ims/perf/exam?paperId=${row.refId}&take=1` : '/ims/perf/exam'"
                 >
                   去考试
                 </router-link>

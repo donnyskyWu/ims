@@ -59,26 +59,16 @@ def q2(value) -> Decimal:
 
 
 def iso_utc(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+    """库内 naive UTC 对外写成 Asia/Shanghai 的 ISO，页面不再看到 Z 的 UTC 墙钟。"""
+    from app.clock import format_iso
+
+    return format_iso(dt)
 
 
 def parse_instant(value: str) -> datetime | None:
-    text = (value or "").strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=BJ)
-    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    from app.clock import parse_to_utc_naive
+
+    return parse_to_utc_naive(value)
 
 
 def canonical_type(raw: str) -> str | None:
@@ -520,6 +510,179 @@ def list_papers(
     return paged([paper_vo(row) for row in rows], int(total or 0), page_no, size)
 
 
+class QuestionBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    question_type: str = Field(alias="questionType")
+    content: str = ""
+    stem: str = ""
+    options: list[str] | None = None
+    answer: object | None = None
+    score: float = 0
+    knowledge_domain: str = Field(default="", alias="knowledgeDomain")
+
+
+def next_question_no(db: Session, tenant_id: int) -> str:
+    rows = db.scalars(select(ExamQuestion.question_no).where(ExamQuestion.tenant_id == tenant_id)).all()
+    best = 0
+    for raw in rows:
+        text = (raw or "").strip()
+        if text.startswith("EQ-") and text[3:].isdigit():
+            best = max(best, int(text[3:]))
+    return f"EQ-{best + 1:03d}"
+
+
+def pack_question(body: QuestionBody) -> tuple[dict | None, object | None]:
+    stem = (body.content or body.stem or "").strip()
+    if not stem:
+        return None, fail(1001, "题干必填")
+    if len(stem) > 512:
+        return None, fail(1001, "题干不超过 512 字")
+    domain = (body.knowledge_domain or "").strip().upper()
+    if domain not in DOMAINS:
+        return None, fail(1001, "知识域必填")
+    qtype = canonical_type(body.question_type or "")
+    if qtype is None:
+        return None, fail(1001, "题型无效")
+    if q2(body.score) <= 0:
+        return None, fail(1001, "分值须大于 0")
+    options = [str(item).strip() for item in (body.options or []) if str(item).strip()]
+    answer = body.answer
+    if qtype in {"SINGLE", "MULTIPLE"}:
+        if len(options) < 2:
+            return None, fail(1001, "选项至少 2 项")
+        if qtype == "SINGLE":
+            try:
+                index = int(answer)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None, fail(1001, "参考答案无效")
+            if index < 0 or index >= len(options):
+                return None, fail(1001, "参考答案无效")
+            answer = index
+        else:
+            if not isinstance(answer, list) or not answer:
+                return None, fail(1001, "多选至少选择一个答案")
+            try:
+                indexes = sorted({int(item) for item in answer})
+            except (TypeError, ValueError):
+                return None, fail(1001, "参考答案无效")
+            if any(index < 0 or index >= len(options) for index in indexes):
+                return None, fail(1001, "参考答案无效")
+            answer = indexes
+    elif qtype == "JUDGE":
+        if isinstance(answer, str):
+            if answer in {"true", "True", "对"}:
+                answer = True
+            elif answer in {"false", "False", "错"}:
+                answer = False
+        if not isinstance(answer, bool):
+            return None, fail(1001, "判断题答案无效")
+        if len(options) < 2:
+            options = ["对", "错"]
+    else:
+        answer = "" if answer is None else str(answer)
+        options = None
+    return {
+        "stem": stem,
+        "domain": domain,
+        "qtype": qtype,
+        "score": float(q2(body.score)),
+        "options": options,
+        "answer": answer,
+    }, None
+
+
+def fixed_score_conflict(db: Session, tenant_id: int, question_id: int, new_score: float) -> bool:
+    papers = db.scalars(
+        select(ExamPaper).where(
+            ExamPaper.deleted == 0,
+            ExamPaper.tenant_id == tenant_id,
+            ExamPaper.paper_type == "FIXED",
+        )
+    ).all()
+    for paper in papers:
+        ids: list[int] = []
+        for item in paper.question_ids or []:
+            try:
+                ids.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        if question_id not in ids:
+            continue
+        others = [qid for qid in ids if qid != question_id]
+        found: dict[int, Decimal] = {}
+        if others:
+            rows = db.scalars(select(ExamQuestion).where(ExamQuestion.id.in_(others))).all()
+            found = {int(row.id): q2(row.score) for row in rows}
+        summed = q2(new_score) + sum((found.get(qid, Decimal("0")) for qid in others), Decimal("0"))
+        if summed != q2(paper.total_score):
+            return True
+    return False
+
+
+def apply_question(row: ExamQuestion, packed: dict) -> None:
+    row.stem = packed["stem"]
+    row.knowledge_domain = packed["domain"]
+    row.question_type = packed["qtype"]
+    row.score = packed["score"]
+    row.options = packed["options"]
+    row.answer = packed["answer"]
+    row.updated_at = utcnow()
+    flag_modified(row, "options")
+    flag_modified(row, "answer")
+
+
+@router.post("/exam/question")
+def create_question(
+    body: QuestionBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_bank(db, actor)
+    packed, error = pack_question(body)
+    if error is not None:
+        return error
+    assert packed is not None
+    row = ExamQuestion(
+        question_no=next_question_no(db, tenant_id),
+        stem=packed["stem"],
+        knowledge_domain=packed["domain"],
+        question_type=packed["qtype"],
+        score=packed["score"],
+        options=packed["options"],
+        answer=packed["answer"],
+        ref_count=0,
+        created_by=actor.id,
+        tenant_id=tenant_id,
+    )
+    db.add(row)
+    db.flush()
+    return ok({"id": row.id, "questionNo": row.question_no})
+
+
+@router.put("/exam/question/{question_id}")
+def update_question(
+    question_id: int,
+    body: QuestionBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    ensure_bank(db, actor)
+    row = db.get(ExamQuestion, question_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "题目不存在")
+    packed, error = pack_question(body)
+    if error is not None:
+        return error
+    assert packed is not None
+    if q2(row.score) != q2(packed["score"]) and fixed_score_conflict(db, tenant_id, row.id, packed["score"]):
+        return fail(1159, "总分校验失败（Σ题目分 ≠ totalScore）")
+    apply_question(row, packed)
+    db.flush()
+    return ok({"id": row.id, "questionNo": row.question_no})
+
+
 @router.post("/exam/paper")
 def create_paper(
     body: PaperBody,
@@ -691,7 +854,9 @@ def start_exam(
     if assignment is None or now < assignment.window_from or now > assignment.window_to:
         window = ""
         if assignment is not None:
-            window = f"（{iso_utc(assignment.window_from)} ~ {iso_utc(assignment.window_to)}）"
+            from app.clock import format_display
+
+            window = f"（{format_display(assignment.window_from)} ~ {format_display(assignment.window_to)}）"
         return fail(1161, f"不在考试窗口内{window}")
 
     record = db.scalar(
