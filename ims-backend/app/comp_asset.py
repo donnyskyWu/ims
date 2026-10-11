@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
-from app.core import utcnow
+from app.core import SessionLocal, utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
-from app.models import CompAsset, User
+from app.models import CompAsset, CompAssetSeq, User
 from app.ops_models import ExternalAccount, ExternalWork
 
 router = APIRouter(prefix="/comp/asset", tags=["comp-asset"])
@@ -32,86 +32,106 @@ class AssetBody(BaseModel):
     engagementRate: float = Field(ge=0, default=0.0)
 
 
-_CP_DAY = re.compile(r"^(CP\d{8})")
-
-
-def known_asset_nos(db: Session, tenant_id: int) -> set[str]:
-    found = {
+def _used_seq(db: Session, tenant_id: int, prefix: str) -> int:
+    numbers = {
         no
         for no in db.scalars(
             select(CompAsset.asset_no).where(
-                CompAsset.deleted == 0,
                 CompAsset.tenant_id == tenant_id,
-                CompAsset.asset_no != "",
+                CompAsset.asset_no.like(f"{prefix}%"),
             )
         ).all()
         if no
     }
     for obj in list(db.new) + list(db.dirty):
-        if (
-            isinstance(obj, CompAsset)
-            and int(obj.tenant_id or 0) == int(tenant_id)
-            and not obj.deleted
-            and obj.asset_no
-        ):
-            found.add(obj.asset_no)
-    return found
-
-
-def next_asset_no(
-    db: Session,
-    tenant_id: int,
-    *,
-    prefix: str | None = None,
-    reserved: set[str] | None = None,
-) -> str:
-    day = datetime.now(BJ).strftime("%Y%m%d")
-    prefix = prefix or f"CP{day}"
-    numbers = known_asset_nos(db, tenant_id)
-    if reserved:
-        numbers |= reserved
-    seq = 0
+        if isinstance(obj, CompAsset) and int(obj.tenant_id or 0) == int(tenant_id) and obj.asset_no:
+            numbers.add(obj.asset_no)
+    best = 0
     for no in numbers:
-        if not no.startswith(prefix):
+        if not str(no).startswith(prefix):
             continue
-        tail = no[len(prefix) :]
+        tail = str(no)[len(prefix) :]
         if tail.isdigit():
-            seq = max(seq, int(tail))
-    seq += 1
-    candidate = f"{prefix}{seq:03d}"
-    while candidate in numbers:
-        seq += 1
-        candidate = f"{prefix}{seq:03d}"
-    return candidate
+            best = max(best, int(tail))
+    return best
 
 
-def repair_duplicate_asset_nos(db: Session, tenant_id: int) -> int:
-    """同一租户里重复的 asset_no 只保留 id 最小的一条，其余改成同日前缀的下一个空号。
+def _ensure_seq_row(tenant_id: int, day: str) -> None:
+    """用短事务建序号行。并发插入冲突或死锁时重试，不碰调用方事务。"""
+    from sqlalchemy.exc import OperationalError
 
-    无表结构变更。列表读取时执行，重复消失后不再 UPDATE。
-    """
-    rows = list(
-        db.scalars(
-            select(CompAsset)
-            .where(CompAsset.deleted == 0, CompAsset.tenant_id == tenant_id)
-            .order_by(CompAsset.id.asc())
-        ).all()
+    for _ in range(5):
+        db = SessionLocal()
+        try:
+            found = db.scalar(
+                select(CompAssetSeq.id).where(
+                    CompAssetSeq.tenant_id == tenant_id,
+                    CompAssetSeq.biz_date == day,
+                )
+            )
+            if found is not None:
+                return
+            db.add(CompAssetSeq(biz_date=day, tenant_id=tenant_id, seq_val=0))
+            db.commit()
+            return
+        except IntegrityError:
+            db.rollback()
+        except OperationalError as exc:
+            db.rollback()
+            if "1213" not in str(exc):
+                raise
+        finally:
+            db.close()
+
+
+def _lock_day_seq(db: Session, tenant_id: int, day: str) -> CompAssetSeq:
+    stmt = (
+        select(CompAssetSeq)
+        .where(CompAssetSeq.tenant_id == tenant_id, CompAssetSeq.biz_date == day)
+        .with_for_update()
     )
-    seen: set[str] = set()
-    changed = 0
-    for row in rows:
-        current = row.asset_no or ""
-        if current and current not in seen:
-            seen.add(current)
-            continue
-        matched = _CP_DAY.match(current)
-        row.asset_no = next_asset_no(db, tenant_id, prefix=matched.group(1) if matched else None, reserved=seen)
-        row.updated_at = utcnow()
-        seen.add(row.asset_no)
-        changed += 1
-    if changed:
-        db.flush()
-    return changed
+    _ensure_seq_row(tenant_id, day)
+    row = db.scalar(stmt)
+    if row is None:
+        _ensure_seq_row(tenant_id, day)
+        row = db.scalar(stmt)
+    if row is None:
+        raise RuntimeError("竞品单号序号行不存在")
+    return row
+
+
+def next_asset_no(db: Session, tenant_id: int) -> str:
+    """锁当日序号行后取下一个空号。已有单号（含软删）只参与占号，不会被改写。"""
+    day = datetime.now(BJ).strftime("%Y%m%d")
+    prefix = f"CP{day}"
+    row = _lock_day_seq(db, tenant_id, day)
+    floor = _used_seq(db, tenant_id, prefix)
+    if int(row.seq_val or 0) < floor:
+        row.seq_val = floor
+    row.seq_val = int(row.seq_val or 0) + 1
+    db.flush()
+    return f"{prefix}{int(row.seq_val):03d}"
+
+
+def assign_and_flush(db: Session, row: CompAsset) -> str:
+    """写入新档案。单号唯一冲突时重新取号，名称冲突原样抛出。"""
+    last: Exception | None = None
+    for _ in range(5):
+        if row in db:
+            db.expunge(row)
+        row.asset_no = next_asset_no(db, int(row.tenant_id or 0))
+        try:
+            with db.begin_nested():
+                db.add(row)
+            return row.asset_no
+        except IntegrityError as exc:
+            last = exc
+            message = str(getattr(exc, "orig", exc))
+            if "uk_comp_asset_no" not in message:
+                raise
+    if last is not None:
+        raise last
+    raise RuntimeError("竞品单号分配失败")
 
 
 def normalize_name(name: str) -> str:
@@ -239,9 +259,9 @@ def ensure_seed_assets(db: Session, tenant_id: int, actor_id: int) -> None:
         ("悦跑圈", "XIAOHONGSHU", "", 860_000, 55, 5.4),
     ]
     for name, platform, acc_id, fans, works, rate in seeds:
-        db.add(
+        assign_and_flush(
+            db,
             CompAsset(
-                asset_no=next_asset_no(db, tenant_id),
                 comp_name_std=name,
                 comp_account_id=acc_id,
                 platform=platform,
@@ -256,9 +276,8 @@ def ensure_seed_assets(db: Session, tenant_id: int, actor_id: int) -> None:
                 status="APPROVED",
                 created_by=actor_id,
                 tenant_id=tenant_id,
-            )
+            ),
         )
-    db.flush()
 
 
 @router.get("/list")
@@ -275,7 +294,6 @@ def asset_list(
     if err := check_enum(db, "dict_platform_type", platform or None, False):
         return err
     ensure_seed_assets(db, tenant_id, actor.id)
-    repair_duplicate_asset_nos(db, tenant_id)
 
     stmt = select(CompAsset).where(CompAsset.deleted == 0, CompAsset.tenant_id == tenant_id)
     if compName.strip():
@@ -315,7 +333,6 @@ def create_asset(
     if exists:
         return fail(1203, "竞品名称已存在")
     row = CompAsset(
-        asset_no=next_asset_no(db, tenant_id),
         comp_name_std=name,
         comp_account_id=(body.compAccountId or "").strip(),
         platform=body.platform.strip(),
@@ -331,8 +348,7 @@ def create_asset(
         created_by=actor.id,
         tenant_id=tenant_id,
     )
-    db.add(row)
-    db.flush()
+    assign_and_flush(db, row)
     return ok(asset_vo(row, enrich_metrics(ops, tenant_id, row)))
 
 

@@ -1866,9 +1866,23 @@ class AirExpertGrant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CompAssetSeq(Base):
+    """竞品库按日序号。分配单号时锁这一行再递增。"""
+
+    __tablename__ = "ims_comp_asset_seq"
+    __table_args__ = (UniqueConstraint("tenant_id", "biz_date", name="uk_comp_asset_seq_day"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    biz_date: Mapped[str] = mapped_column(String(8))
+    seq_val: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
 class CompAsset(Base):
     __tablename__ = "ims_comp_asset"
-    __table_args__ = (UniqueConstraint("tenant_id", "comp_name_std", name="uk_comp_asset_name"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "comp_name_std", name="uk_comp_asset_name"),
+        UniqueConstraint("tenant_id", "asset_no", name="uk_comp_asset_no"),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     asset_no: Mapped[str] = mapped_column(String(32), default="", index=True)
     comp_name_std: Mapped[str] = mapped_column(String(128), default="")

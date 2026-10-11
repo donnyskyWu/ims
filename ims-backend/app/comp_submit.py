@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
-from app.comp_asset import asset_vo, enrich_metrics, next_asset_no
+from app.comp_asset import asset_vo, assign_and_flush, enrich_metrics
 from app.core import utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
 from app.models import CompAnalysis, CompAsset, Role, Todo, User, UserRole, WorkMessage
@@ -369,7 +369,6 @@ def store_asset(
     }
     if asset is None:
         asset = CompAsset(
-            asset_no=next_asset_no(db, tenant_id),
             comp_name_std=row.comp_name,
             comp_account_id=(row.comp_account_id or "").strip(),
             platform=row.platform,
@@ -391,8 +390,7 @@ def store_asset(
             created_by=actor_id,
             tenant_id=tenant_id,
         )
-        db.add(asset)
-        db.flush()
+        assign_and_flush(db, asset)
     else:
         info = dict(asset.base_info or {})
         timeline = list(info.get("versionTimeline") or [])
