@@ -254,6 +254,7 @@ def test_phone_forward_chain_follows_bound_accounts_and_session_cost():
                 topic="手机场次",
                 session_status="ENDED",
                 platform="DOUYIN",
+                responsible_user_id=1,
                 tenant_id=0,
             )
         )
