@@ -9,10 +9,24 @@
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.dateFrom" type="date" style="width: 140px" />
       <input v-model="filters.dateTo" type="date" style="width: 140px" />
+      <select v-model="filters.reportType" style="width: 120px">
+        <option value="">全部类型</option>
+        <option value="LIVE">直播</option>
+        <option value="SHORT_VIDEO">短视频</option>
+        <option value="OPS">运营</option>
+        <option value="ADMIN">行政</option>
+      </select>
       <select v-model="filters.submitStatus" style="width: 120px">
         <option value="">全部状态</option>
         <option value="SUBMITTED">已提交</option>
-        <option value="READ">已审阅</option>
+        <option value="SUPPLEMENT">已补交</option>
+        <option value="LATE">迟交</option>
+      </select>
+      <select v-model="filters.reviewState" style="width: 120px">
+        <option value="">全部审阅</option>
+        <option value="PENDING">待审阅</option>
+        <option value="REVIEWED">已审阅</option>
+        <option value="RETURNED">已退回</option>
       </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
@@ -25,27 +39,29 @@
             <tr>
               <th>日期</th>
               <th>提交人</th>
-              <th>部门</th>
+              <th>类型</th>
+              <th>字段完成度</th>
+              <th>提交时间</th>
               <th>状态</th>
-              <th>按时</th>
-              <th>今日完成</th>
+              <th>审阅状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7"><div class="empty"><div class="et">{{ error || '暂无团队日报' }}</div></div></td>
+              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无团队日报' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="num">{{ row.reportDate }}</td>
               <td>{{ row.userName }}</td>
-              <td>{{ row.deptName || '—' }}</td>
-              <td><span class="tag" :class="statusClass(row.submitStatus)">{{ statusLabel(row.submitStatus) }}</span></td>
-              <td>{{ row.submitStatus !== 'DRAFT' ? (row.isOnTime ? '是' : '否') : '—' }}</td>
-              <td style="max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{ row.contentDone }}</td>
+              <td>{{ row.reportTypeLabel || '—' }}</td>
+              <td class="num">{{ row.fieldCompleteness ?? '—' }}%</td>
+              <td class="num" style="font-size: 12px">{{ row.submittedAt || '—' }}</td>
+              <td><span class="tag" :class="statusClass(row.submitStatus)">{{ displayStatus(row) }}</span></td>
+              <td>{{ reviewLabel(row.reviewStatus) }}</td>
               <td><button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">查看</button></td>
             </tr>
           </tbody>
@@ -59,11 +75,16 @@
           <button type="button" class="btn btn-sec btn-sm" @click="drawerOpen = false">关闭</button>
         </div>
         <div v-if="detail" class="drawer-b">
+          <p><strong>提交人</strong> {{ detail.userName }} · <strong>字段完成度</strong> {{ detail.fieldCompleteness ?? '—' }}%</p>
           <p><strong>今日完成</strong><br />{{ detail.contentDone }}</p>
           <p><strong>明日计划</strong><br />{{ detail.contentPlan }}</p>
           <p><strong>问题与风险</strong><br />{{ detail.contentIssue }}</p>
           <p v-if="detail.weekSummary"><strong>周小结</strong><br />{{ detail.weekSummary }}</p>
           <p v-if="detail.supplement"><strong>补充说明</strong><br />{{ detail.supplement }}</p>
+          <p><strong>审阅流</strong></p>
+          <p v-for="step in reviewSteps" :key="step.level">
+            {{ step.title }}：{{ step.reviewer }} · {{ step.action }} · {{ step.comment }} · {{ step.time }}
+          </p>
         </div>
       </div>
     </div>
@@ -71,7 +92,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
 
 type DailyRow = {
@@ -85,8 +106,20 @@ type DailyRow = {
   contentIssue: string
   weekSummary?: string
   supplement?: string
+  reportTypeLabel?: string
+  fieldCompleteness?: number
+  reviewStatus?: string
+  submittedAt?: string
   submitStatus: string
   isOnTime: boolean
+}
+
+type ReviewRecord = {
+  reviewLevel: number
+  reviewerName?: string
+  action?: string
+  comment?: string
+  reviewedAt?: string
 }
 
 const rows = ref<DailyRow[]>([])
@@ -94,7 +127,35 @@ const loading = ref(false)
 const error = ref('')
 const drawerOpen = ref(false)
 const detail = ref<DailyRow | null>(null)
-const filters = reactive({ dateFrom: '', dateTo: '', submitStatus: '' })
+const filters = reactive({ dateFrom: '', dateTo: '', submitStatus: '', reportType: '', reviewState: '' })
+const reviews = ref<ReviewRecord[]>([])
+const reviewSteps = computed(() => {
+  const actionName: Record<string, string> = { READ: '已读', COMMENT: '点评', MARK_FOLLOW_UP: '标记跟进' }
+  return [1, 2].map((level) => {
+    const row = reviews.value.find((item) => item.reviewLevel === level)
+    return {
+      level,
+      title: level === 1 ? '一级直属上级' : '二级部门负责人',
+      reviewer: row?.reviewerName || '待审',
+      action: row ? actionName[row.action || ''] || row.action || '—' : '—',
+      comment: row?.comment || '—',
+      time: row?.reviewedAt || '—',
+    }
+  })
+})
+
+function displayStatus(row: DailyRow) {
+  if (row.supplement) return '已补交'
+  if (!row.isOnTime) return '迟交'
+  return '已提交'
+}
+
+function reviewLabel(state?: string) {
+  if (state === 'PENDING') return '待审阅'
+  if (state === 'REVIEWED') return '已审阅'
+  if (state === 'RETURNED') return '已退回'
+  return '—'
+}
 
 function statusLabel(s: string) {
   if (s === 'DRAFT') return '草稿'
@@ -117,6 +178,8 @@ async function loadList() {
     if (filters.dateFrom) params.dateFrom = filters.dateFrom
     if (filters.dateTo) params.dateTo = filters.dateTo
     if (filters.submitStatus) params.submitStatus = filters.submitStatus
+    if (filters.reportType) params.reportType = filters.reportType
+    if (filters.reviewState) params.reviewState = filters.reviewState
     const res = await http.get('/meet/daily/team/list', { params })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
@@ -135,12 +198,21 @@ function resetFilters() {
   filters.dateFrom = ''
   filters.dateTo = ''
   filters.submitStatus = ''
+  filters.reportType = ''
+  filters.reviewState = ''
   loadList()
 }
 
-function openDetail(row: DailyRow) {
+async function openDetail(row: DailyRow) {
   detail.value = row
+  reviews.value = []
   drawerOpen.value = true
+  try {
+    const res = await http.get('/meet/review/records', { params: { reportId: row.id, pageNo: 1, pageSize: 10 } })
+    reviews.value = res.data.data?.list || []
+  } catch {
+    reviews.value = []
+  }
 }
 
 onMounted(loadList)

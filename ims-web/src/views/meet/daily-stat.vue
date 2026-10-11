@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>提交率统计</h1>
-        <div class="sub">MEET-003 · BR-103 按时提交率 · 03 MEET</div>
+        <div class="sub">MEET-003 · BR-103 按时提交率</div>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">

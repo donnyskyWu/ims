@@ -125,7 +125,7 @@ const visibleGroups = computed(() => {
           const mod = mods[item]
           const label = mod?.name || item
           if (hit(label) || hit(name)) {
-            visible.push({ kind: 'leaf', key: item, id: item, label, icon: mod?.icon || 'doc', code: codeLabel(mod) })
+            visible.push({ kind: 'leaf', key: item, id: item, label, icon: mod?.icon || 'doc', code: menuBadge(mod) })
           }
           continue
         }
@@ -140,7 +140,7 @@ const visibleGroups = computed(() => {
             id: item.id,
             label: item.label,
             icon: folder?.icon || 'doc',
-            code: codeLabel(folder),
+            code: menuBadge(folder),
             active: item.children.includes(currentId.value),
             children,
           })
@@ -150,6 +150,11 @@ const visibleGroups = computed(() => {
     })
     .filter((group) => group.items.length)
 })
+
+function menuBadge(mod: Parameters<typeof codeLabel>[0]) {
+  if (mod?.code === 'MEET') return ''
+  return codeLabel(mod)
+}
 
 function onResize() {
   wide.value = window.innerWidth >= 1024

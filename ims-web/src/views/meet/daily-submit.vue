@@ -13,27 +13,27 @@
     <div class="card" style="padding: 16px; max-width: 720px">
       <label class="fld">
         <span>日报类型</span>
-        <select v-model="form.reportType" data-testid="daily-type">
+        <select v-model="form.reportType" data-testid="daily-type" :disabled="locked">
           <option value="">请选择</option>
           <option v-for="item in reportTypes" :key="item.value" :value="item.value">{{ item.label }}</option>
         </select>
       </label>
       <label class="fld">
         <span>今日完成 *</span>
-        <textarea v-model="form.contentDone" rows="4" data-testid="daily-done" />
+        <textarea v-model="form.contentDone" rows="4" data-testid="daily-done" :readonly="locked" />
         <p v-if="fieldErrors.contentDone" class="err">{{ fieldErrors.contentDone }}</p>
       </label>
       <label class="fld">
         <span>明日计划</span>
-        <textarea v-model="form.contentPlan" rows="3" data-testid="daily-plan" />
+        <textarea v-model="form.contentPlan" rows="3" data-testid="daily-plan" :readonly="locked" />
       </label>
       <label class="fld">
         <span>问题与风险</span>
-        <textarea v-model="form.contentIssue" rows="3" data-testid="daily-issue" />
+        <textarea v-model="form.contentIssue" rows="3" data-testid="daily-issue" :readonly="locked" />
       </label>
       <label v-if="weekSummaryEnabled" class="fld">
         <span>周小结 *</span>
-        <textarea v-model="form.weekSummary" rows="3" data-testid="daily-week" />
+        <textarea v-model="form.weekSummary" rows="3" data-testid="daily-week" :readonly="locked" />
         <p v-if="fieldErrors.weekSummary" class="err">{{ fieldErrors.weekSummary }}</p>
       </label>
       <div v-if="locked" class="hint" style="margin: 12px 0">正文已提交，仅可追加补充说明。</div>
@@ -119,6 +119,7 @@ async function loadTemplateAndToday() {
   const cur = await http.get(`/meet/daily/${reportDate.value}`)
   if (cur.data.code === 0 && cur.data.data) {
     applyRow(cur.data.data)
+    if (locked.value) msg.value = '今日日报已存在'
   }
 }
 
@@ -174,6 +175,12 @@ async function save(asDraft: boolean) {
       toast.value = '已提交'
     }
   } catch (e: unknown) {
+    const body = e as { code?: number; data?: Record<string, unknown> }
+    if (body?.code === 1111 && body.data) {
+      applyRow(body.data)
+      msg.value = '今日日报已存在'
+      return
+    }
     msg.value = errorMessage(e)
   } finally {
     saving.value = false
