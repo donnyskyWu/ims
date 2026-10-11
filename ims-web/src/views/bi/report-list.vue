@@ -93,25 +93,10 @@
             <div class="csub" style="margin-top: 6px">{{ row.category }} / {{ row.subCategory || '—' }}</div>
             <div class="csub mono" style="margin-top: 4px">{{ row.reportNo }} · {{ statusText(row.status) }} · v{{ row.version || 1 }}</div>
             <div class="csub" style="margin-top: 4px">{{ formatShanghai(row.updatedAt) }} · {{ scopeText(row.shareScope) }} · {{ opText(row.opPerm) }} · {{ rowPermText(row.rowPerm) }}</div>
-            <div class="rowline" style="margin-top: 10px; gap: 8px; flex-wrap: wrap; position: relative">
-              <button v-if="row.canPublish !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
-              <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-edit" @click="openDesigner(row.id)">编辑设计</button>
-              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click.stop="toggleMore(row)">更多</button>
-              <div v-if="moreRow?.id === row.id" data-testid="bi-more-menu" style="position: absolute; z-index: 30; right: 0; top: calc(100% + 4px); min-width: 220px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 8px" @click.stop>
-                <p class="csub" data-testid="bi-more-type">类型：{{ row.reportType === 'DASHBOARD' ? '大屏' : '报表' }}</p>
-                <p class="csub" data-testid="bi-more-dataset">数据源：{{ row.dataset || '—' }}</p>
-                <p class="csub" data-testid="bi-more-status">状态：{{ statusText(row.status) }}</p>
-                <p class="csub" data-testid="bi-more-count">组件数：{{ row.compCount ?? 0 }}</p>
-                <p class="csub" data-testid="bi-more-tags">标签：{{ (row.tags || []).join('、') || '—' }}</p>
-                <div class="rowline" style="margin-top: 8px; gap: 6px; flex-wrap: wrap">
-                  <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-design" @click="openDesigner(row.id)">进入设计器</button>
-                  <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-share" @click="openShare(row)">分享设置</button>
-                  <button v-if="row.canCopy !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(row)">复制</button>
-                  <button v-if="row.canDelete !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(row)">删除</button>
-                  <button v-if="row.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(row)">导出模板 JSON</button>
-                  <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(row)">发布管理</button>
-                </div>
-              </div>
+            <div class="rowline" style="margin-top: 10px; gap: 8px; flex-wrap: wrap">
+              <button v-if="row.canPublish !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
+              <button v-if="row.canEdit !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-edit" @click="openDesigner(row.id)">编辑设计</button>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="openMore(row)">更多</button>
             </div>
           </div>
           <div v-if="!loading && !rows.length" class="card" style="grid-column: 1 / -1">
@@ -147,16 +132,10 @@
               <td>{{ statusText(row.status) }}</td>
               <td>v{{ row.version || 1 }}</td>
               <td class="csub">{{ formatShanghai(row.updatedAt) }}</td>
-                  <td style="position: relative">
-                    <button v-if="row.canPublish !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
-                    <button v-if="row.canEdit !== false" class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button>
-                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click.stop="toggleMore(row)">更多</button>
-                    <div v-if="moreRow?.id === row.id" data-testid="bi-more-menu" style="position: absolute; z-index: 30; right: 0; top: calc(100% + 4px); min-width: 220px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 8px" @click.stop>
-                      <button v-if="row.canCopy !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(row)">复制</button>
-                      <button v-if="row.canDelete !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(row)">删除</button>
-                      <button v-if="row.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(row)">导出模板 JSON</button>
-                      <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(row)">发布管理</button>
-                    </div>
+                  <td>
+                    <button v-if="row.canPublish !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-card-publish" @click="openListPublish(row)">📤 发布</button>
+                    <button v-if="row.canEdit !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" @click="openDesigner(row.id)">编辑</button>
+                    <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more" @click="openMore(row)">更多</button>
                   </td>
                 </tr>
               </tbody>
@@ -173,6 +152,40 @@
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="deleteTarget = null">取消</button>
           <button class="btn btn-pri btn-sm" type="button" data-testid="bi-delete-ok" @click="confirmDelete">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="moreRow" class="modal-mask" data-testid="bi-more-drawer" @click.self="moreRow = null">
+      <div class="card" data-testid="bi-more-menu" style="width: 600px; padding: 18px">
+        <h3 style="margin: 0 0 8px">报表操作 · {{ moreRow.reportName }}</h3>
+        <p class="csub">报表「{{ moreRow.reportName }}」· {{ moreRow.reportNo }} · 当前 v{{ moreRow.version || 1 }}</p>
+        <div style="display: grid; grid-template-columns: 88px 1fr; gap: 8px 12px; margin-top: 12px">
+          <span class="csub">类型</span>
+          <span data-testid="bi-more-type">{{ moreRow.reportType === 'DASHBOARD' ? '数据大屏' : '普通报表' }}</span>
+          <span class="csub">可见范围</span>
+          <span data-testid="bi-more-scope">{{ drawerScopeText(moreRow.shareScope) }}</span>
+          <span class="csub">数据源</span>
+          <span data-testid="bi-more-dataset">{{ moreRow.dataset || '—' }}</span>
+          <span class="csub">状态</span>
+          <span data-testid="bi-more-status">{{ drawerStatus(moreRow) }}</span>
+          <span class="csub">组件数</span>
+          <span data-testid="bi-more-count">{{ moreRow.compCount ?? 0 }} 个</span>
+          <span class="csub">标签</span>
+          <span data-testid="bi-more-tags">{{ (moreRow.tags || []).join('、') || '—' }}</span>
+        </div>
+        <div style="margin: 14px 0 8px; font-weight: 600">可执行操作</div>
+        <div class="rowline" style="gap: 8px; flex-wrap: wrap">
+          <button v-if="moreRow.canEdit !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-design" @click="openDesigner(moreRow.id)">编辑设计器</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-preview" @click="openPreview(moreRow)">预览</button>
+          <button v-if="moreRow.canPublish !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-publish" @click="openPublishManage(moreRow)">发布管理</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="bi-more-share" @click="openShare(moreRow)">分享设置</button>
+          <button v-if="moreRow.canCopy !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-copy" @click="copyReport(moreRow)">复制</button>
+          <button v-if="moreRow.canExport !== false" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-export" @click="exportTemplate(moreRow)">导出模板 JSON</button>
+          <button v-if="moreRow.canDelete !== false && editAllowed" v-perm="'bi:report:edit'" class="btn btn-sec btn-sm" type="button" data-testid="bi-more-delete" @click="askDelete(moreRow)">删除</button>
+        </div>
+        <div class="acts" style="margin-top: 14px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="moreRow = null">关闭</button>
         </div>
       </div>
     </div>
@@ -351,11 +364,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
+const user = useUserStore()
+const editAllowed = ref(false)
 
 type Row = {
   id: number
@@ -530,12 +546,38 @@ function scopeText(value?: string) {
   return '私有'
 }
 
-function toggleMore(row: Row) {
-  moreRow.value = moreRow.value?.id === row.id ? null : row
+function openMore(row: Row) {
+  moreRow.value = row
 }
 
-function closeMore() {
+function drawerScopeText(value?: string) {
+  if (value === 'ALL') return '公开（登录用户）'
+  if (value === 'SPECIFIED') return '指定人 / 角色'
+  return '私有（仅创建者）'
+}
+
+function drawerStatus(row: Row) {
+  if (row.status === 'DRAFT') return '草稿 DRAFT'
+  if (row.status === 'PUBLISHED') return '已发布 PUBLISHED'
+  return row.status
+}
+
+function openPreview(row: Row) {
   moreRow.value = null
+  void router.push({ path: '/ims/bi/report/preview', query: { reportId: String(row.id) } })
+}
+
+async function loadEditPerm() {
+  try {
+    const res = await http.get('/bi/report/edit-perm')
+    const data = res.data.data as { allowed?: boolean; granted?: boolean; permCode?: string }
+    editAllowed.value = Boolean(data?.allowed)
+    if (data?.granted && data.permCode && !user.permCodes.includes(data.permCode)) {
+      user.permCodes = [...user.permCodes, data.permCode]
+    }
+  } catch {
+    editAllowed.value = false
+  }
 }
 
 async function copyPublishLink(item: PublishRecord) {
@@ -928,11 +970,8 @@ watch(
 )
 
 onMounted(async () => {
-  document.addEventListener('click', closeMore)
+  await loadEditPerm()
   await loadCategories()
   await loadList()
-})
-onBeforeUnmount(() => {
-  document.removeEventListener('click', closeMore)
 })
 </script>
