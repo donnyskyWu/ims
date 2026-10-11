@@ -148,8 +148,39 @@ def daily_vo(row: MeetDailyReport) -> dict:
         "supplement": row.supplement or None,
         "submittedAt": iso(row.submitted_at),
         "isOnTime": bool(row.is_on_time),
+        "fieldCompleteness": field_completeness(row),
+        "reviewStatus": review_state_of(row),
         "createdAt": iso(row.created_at),
     }
+
+
+def field_completeness(row: MeetDailyReport) -> float:
+    fields = [row.content_done, row.content_plan, row.content_issue]
+    if is_friday(row.report_date):
+        fields.append(row.week_summary or "")
+    filled = sum(1 for item in fields if (item or "").strip())
+    return round(100.0 * filled / len(fields), 1) if fields else 0.0
+
+
+def review_state_of(row: MeetDailyReport) -> str:
+    if row.submit_status == "READ":
+        return "REVIEWED"
+    if row.submit_status == "SUBMITTED":
+        return "PENDING"
+    return ""
+
+
+def body_changes_submitted(row: MeetDailyReport, body: DailySubmitBody) -> bool:
+    report_type = normalize_report_type(body.reportType)
+    return any(
+        [
+            (body.contentDone or "") != (row.content_done or ""),
+            (body.contentPlan or "") != (row.content_plan or ""),
+            (body.contentIssue or "") != (row.content_issue or ""),
+            (body.weekSummary or "") != (row.week_summary or ""),
+            bool(report_type) and report_type != (row.report_type or ""),
+        ]
+    )
 
 
 def validate_submit_body(body: DailySubmitBody, *, require_content: bool) -> str | None:
@@ -360,22 +391,15 @@ def upsert_daily(db: Session, actor: User, body: DailySubmitBody):
         db.flush()
         return ok(daily_vo(row))
 
-    if existing.submit_status == "SUBMITTED" and not body.asDraft:
-        if body.supplement is None and (
-            body.contentDone != existing.content_done
-            or body.contentPlan != existing.content_plan
-            or body.contentIssue != existing.content_issue
-        ):
+    if existing.submit_status != "DRAFT":
+        if body_changes_submitted(existing, body):
             return fail(1112, "已提交不可再编辑正文，须走补充说明")
         if body.supplement is not None:
             existing.supplement = body.supplement
             existing.updated_at = now
             db.flush()
             return ok(daily_vo(existing))
-        return fail(1111, "该日日报已提交")
-
-    if existing.submit_status != "DRAFT":
-        return fail(1112, "已提交不可再编辑正文，须走补充说明")
+        return fail(1111, "今日日报已存在", daily_vo(existing))
 
     apply_body(existing, body, allow_main=True)
     existing.updated_at = now
@@ -429,6 +453,8 @@ def _daily_list_query(
     userId: int | None,
     deptId: int | None,
     submitStatus: str,
+    reportType: str,
+    reviewState: str,
     dateFrom: str,
     dateTo: str,
     only_mine: bool,
@@ -444,8 +470,21 @@ def _daily_list_query(
         stmt = stmt.where(MeetDailyReport.user_id == userId)
     if deptId:
         stmt = stmt.where(MeetDailyReport.dept_id == deptId)
-    if submitStatus:
+    if submitStatus == "LATE":
+        stmt = stmt.where(MeetDailyReport.submit_status != "DRAFT", MeetDailyReport.is_on_time == 0)
+    elif submitStatus == "SUPPLEMENT":
+        stmt = stmt.where(MeetDailyReport.supplement != "")
+    elif submitStatus:
         stmt = stmt.where(MeetDailyReport.submit_status == submitStatus)
+    report_type = normalize_report_type(reportType)
+    if report_type:
+        stmt = stmt.where(MeetDailyReport.report_type == report_type)
+    if reviewState == "PENDING":
+        stmt = stmt.where(MeetDailyReport.submit_status == "SUBMITTED")
+    elif reviewState == "REVIEWED":
+        stmt = stmt.where(MeetDailyReport.submit_status == "READ")
+    elif reviewState == "RETURNED":
+        stmt = stmt.where(MeetDailyReport.id < 0)
     if dateFrom:
         stmt = stmt.where(MeetDailyReport.report_date >= dateFrom[:10])
     if dateTo:
@@ -470,6 +509,8 @@ def daily_team_list(
     userId: int | None = None,
     deptId: int | None = None,
     submitStatus: str = "",
+    reportType: str = "",
+    reviewState: str = "",
     dateFrom: str = "",
     dateTo: str = "",
     db: Session = Depends(db_session),
@@ -482,6 +523,8 @@ def daily_team_list(
         userId=userId,
         deptId=deptId,
         submitStatus=submitStatus,
+        reportType=reportType,
+        reviewState=reviewState,
         dateFrom=dateFrom,
         dateTo=dateTo,
         only_mine=False,
@@ -500,6 +543,8 @@ def daily_list(
     userId: int | None = None,
     deptId: int | None = None,
     submitStatus: str = "",
+    reportType: str = "",
+    reviewState: str = "",
     dateFrom: str = "",
     dateTo: str = "",
     onlyMine: bool = False,
@@ -513,6 +558,8 @@ def daily_list(
         userId=userId,
         deptId=deptId,
         submitStatus=submitStatus,
+        reportType=reportType,
+        reviewState=reviewState,
         dateFrom=dateFrom,
         dateTo=dateTo,
         only_mine=onlyMine,
@@ -1210,6 +1257,23 @@ def minutes_visible(row: MeetMinutes, actor: User, scope: DataScope | None) -> b
     return False
 
 
+def in_meeting_bucket(row: MeetMinutes, bucket: str) -> bool:
+    if row.meeting_date is None:
+        return False
+    start = as_bj(row.meeting_date)
+    end = start + timedelta(minutes=int(row.duration_minutes or 60))
+    now = datetime.now(BJ)
+    today = now.date()
+    if bucket == "today":
+        return start.date() == today
+    if bucket == "week":
+        monday = today - timedelta(days=today.weekday())
+        return monday <= start.date() <= monday + timedelta(days=6)
+    if bucket == "ended":
+        return end < now
+    return True
+
+
 def load_visible_minutes(db: Session, actor: User, scope: DataScope | None, stmt):
     rows = list(
         db.scalars(stmt.order_by(MeetMinutes.meeting_date.desc(), MeetMinutes.id.desc())).all()
@@ -1226,6 +1290,7 @@ def minutes_list(
     minutesStatus: str = "",
     dateFrom: str = "",
     dateTo: str = "",
+    bucket: str = "",
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -1240,6 +1305,8 @@ def minutes_list(
         stmt = stmt.where(MeetMinutes.meeting_date <= parse_meeting_date(dateTo[:10] + "T23:59:59+08:00"))
     page_no, size = page_args(pageNo, pageSize)
     rows = load_visible_minutes(db, actor, request.state.scope, stmt)
+    if bucket in ("today", "week", "ended"):
+        rows = [row for row in rows if in_meeting_bucket(row, bucket)]
     total = len(rows)
     page = rows[(page_no - 1) * size : page_no * size]
     return paged([minutes_vo(row) for row in page], total, page_no, size)

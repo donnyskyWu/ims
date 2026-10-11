@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>会议管理</h1>
-        <div class="sub">MEET-004 · 纪要登记 · 03 MEET</div>
+        <div class="sub">MEET-004 · 纪要登记</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="meet-book" @click="openCreate">预约会议</button>
@@ -14,45 +14,58 @@
       <div class="card stat"><span class="l">已归档</span><div class="n">{{ archiveStat.archivedCount }}</div></div>
       <div class="card stat"><span class="l">留痕率 BR-116</span><div class="n">{{ archiveStat.traceRate }}%</div></div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
+    <form class="qbar" @submit.prevent="search">
       <input v-model="filters.meetingTitle" placeholder="主题" style="width: 140px" />
-      <select v-model="filters.minutesStatus" style="width: 120px">
+      <select v-model="filters.minutesStatus" style="width: 140px">
         <option value="">全部纪要状态</option>
-        <option value="REGISTERED">已登记</option>
+        <option value="REGISTERED">会议已登记</option>
         <option value="MINUTES_RECORDED">纪要已录</option>
         <option value="ARCHIVED">已归档</option>
       </select>
+      <button class="btn btn-sec btn-sm" :class="{ 'btn-pri': filters.bucket === 'today' }" type="button" @click="setBucket('today')">今天</button>
+      <button class="btn btn-sec btn-sm" :class="{ 'btn-pri': filters.bucket === 'week' }" type="button" @click="setBucket('week')">本周</button>
+      <button class="btn btn-sec btn-sm" :class="{ 'btn-pri': filters.bucket === 'ended' }" type="button" @click="setBucket('ended')">已结束</button>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
     </form>
+    <div class="card" style="padding: 12px; margin-bottom: 12px" data-testid="meet-timeline">
+      <b>今日时间轴</b>
+      <p v-if="!timeline.length" class="hint">今天没有会议</p>
+      <div v-for="item in timeline" :key="item.id" class="hint">
+        {{ timeLabel(item.meetingDate) }} · {{ item.meetingTitle }} · {{ item.durationMinutes }} 分钟 · {{ item.meetingRoom || '未指定会议室' }}
+      </div>
+    </div>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
             <tr>
-              <th>纪要编号</th>
+              <th>会议编号</th>
               <th>主题</th>
               <th>组织者</th>
               <th>时间</th>
+              <th>时长</th>
               <th>会议室</th>
-              <th>参会</th>
+              <th>参会人数</th>
               <th>纪要状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无会议' }}</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无会议' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.minutesNo }}</td>
               <td style="font-weight: 500">{{ row.meetingTitle }}</td>
               <td>{{ row.organizerName || row.recorderName }}</td>
               <td class="mono">{{ row.meetingDate || '—' }}</td>
+              <td class="num">{{ row.durationMinutes || '—' }} 分钟</td>
               <td>{{ row.meetingRoom || '—' }}</td>
               <td class="num">{{ row.attendeeCount }} 人</td>
               <td>{{ statusLabel(row.minutesStatus) }}</td>
@@ -62,6 +75,12 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      <div class="pager">
+        <span class="pg-total">共 {{ total }} 条</span>
+        <span class="pg-sp"></span>
+        <button class="pg-n" :class="{ dis: pageNo <= 1 }" type="button" @click="prevPage">上一页</button>
+        <button class="pg-n" :class="{ dis: pageNo * pageSize >= total }" type="button" @click="nextPage">下一页</button>
       </div>
     </div>
 
@@ -194,6 +213,7 @@ type Row = {
   meetingTitle: string
   meetingDate: string
   meetingRoom?: string
+  durationMinutes?: number
   organizerName?: string
   recorderName: string
   attendeeCount: number
@@ -201,14 +221,18 @@ type Row = {
 }
 
 const rows = ref<Row[]>([])
+const timeline = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
+const total = ref(0)
+const pageNo = ref(1)
+const pageSize = 10
 const showForm = ref(false)
 const formError = ref('')
 const detail = ref<Record<string, any> | null>(null)
 const archiveStat = ref({ totalMeetings: 0, archivedCount: 0, traceRate: 0 })
 
-const filters = reactive({ meetingTitle: '', minutesStatus: '' })
+const filters = reactive({ meetingTitle: '', minutesStatus: '', bucket: '' })
 const rooms = ['2F-会议室 A', '3F-大会议室', '1F-会议室 B', '线上']
 const people = ref<{ userId: number; userName: string; username: string }[]>([])
 const form = reactive({
@@ -235,7 +259,7 @@ const editor = reactive({
 
 function statusLabel(s: string) {
   const map: Record<string, string> = {
-    REGISTERED: '已登记',
+    REGISTERED: '会议已登记',
     MINUTES_RECORDED: '纪要已录',
     ARCHIVED: '已归档',
   }
@@ -254,24 +278,72 @@ async function loadList() {
   try {
     const res = await http.get('/meet/minutes/list', {
       params: {
-        pageNo: 1,
-        pageSize: 20,
+        pageNo: pageNo.value,
+        pageSize,
         meetingTitle: filters.meetingTitle || undefined,
         minutesStatus: filters.minutesStatus || undefined,
+        bucket: filters.bucket || undefined,
       },
     })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
+      total.value = 0
       return
     }
     rows.value = res.data.data?.list || []
+    total.value = Number(res.data.data?.total || 0)
   } catch (e: unknown) {
     error.value = errorMessage(e)
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function timeLabel(value?: string) {
+  if (!value) return '—'
+  const match = value.match(/T(\d{2}:\d{2})/)
+  return match ? match[1] : value
+}
+
+async function loadTimeline() {
+  try {
+    const res = await http.get('/meet/minutes/list', { params: { pageNo: 1, pageSize: 20, bucket: 'today' } })
+    timeline.value = res.data.data?.list || []
+  } catch {
+    timeline.value = []
+  }
+}
+
+function search() {
+  pageNo.value = 1
+  loadList()
+}
+
+function setBucket(bucket: string) {
+  filters.bucket = filters.bucket === bucket ? '' : bucket
+  search()
+}
+
+function resetFilters() {
+  filters.meetingTitle = ''
+  filters.minutesStatus = ''
+  filters.bucket = ''
+  search()
+}
+
+function prevPage() {
+  if (pageNo.value <= 1) return
+  pageNo.value -= 1
+  loadList()
+}
+
+function nextPage() {
+  if (pageNo.value * pageSize >= total.value) return
+  pageNo.value += 1
+  loadList()
 }
 
 function bizDateTime(value: string) {
@@ -338,6 +410,7 @@ async function submit() {
     toast.value = no ? `会议已登记 · ${no}` : '会议已登记'
     showForm.value = false
     await loadList()
+    await loadTimeline()
     await loadArchiveRate()
   } catch (e: unknown) {
     formError.value = errorMessage(e)
@@ -482,6 +555,7 @@ async function archiveDetail() {
 
 onMounted(() => {
   loadList()
+  loadTimeline()
   loadArchiveRate()
 })
 </script>

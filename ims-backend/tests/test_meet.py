@@ -688,3 +688,57 @@ def test_meet_room_conflict_and_invitation():
     db.close()
     assert len(notes) == 1
     assert notes[0].title == "会议邀请"
+
+
+def test_meet_daily_duplicate_echoes_1111_and_locks_body():
+    auth = headers()
+    day = "2026-10-08"
+    created = client.post(
+        "/admin-api/ims/meet/daily/submit",
+        headers=auth,
+        json={"reportDate": day, "reportType": "OPS", "contentDone": "运营事项", "asDraft": False},
+    )
+    assert created.json()["code"] == 0
+    again = client.post(
+        "/admin-api/ims/meet/daily/submit",
+        headers=auth,
+        json={"reportDate": day, "reportType": "OPS", "contentDone": "运营事项", "asDraft": False},
+    )
+    assert again.json()["code"] == 1111
+    assert again.json()["msg"] == "今日日报已存在"
+    assert again.json()["data"]["contentDone"] == "运营事项"
+    changed = client.post(
+        "/admin-api/ims/meet/daily/submit",
+        headers=auth,
+        json={"reportDate": day, "contentDone": "改掉正文", "asDraft": False},
+    )
+    assert changed.json()["code"] == 1112
+    listed = client.get(
+        "/admin-api/ims/meet/daily/list",
+        headers=auth,
+        params={"onlyMine": True, "reportType": "OPS", "reviewState": "PENDING", "pageSize": 20},
+    )
+    assert any(row["reportDate"] == day and row["fieldCompleteness"] >= 0 for row in listed.json()["data"]["list"])
+
+
+def test_meet_minutes_bucket_today_and_ended():
+    auth = headers()
+    today = datetime.now(BJ).strftime("%Y-%m-%dT09:30:00+08:00")
+    past = (datetime.now(BJ) - timedelta(days=3)).strftime("%Y-%m-%dT09:00:00+08:00")
+    client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={"meetingTitle": "今天这场", "meetingDate": today, "durationMinutes": 30, "attendees": [{"userName": "admin"}]},
+    )
+    client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={"meetingTitle": "已经结束", "meetingDate": past, "durationMinutes": 30, "attendees": [{"userName": "admin"}]},
+    )
+    today_list = client.get("/admin-api/ims/meet/minutes/list", headers=auth, params={"bucket": "today", "pageSize": 20})
+    titles = [row["meetingTitle"] for row in today_list.json()["data"]["list"]]
+    assert "今天这场" in titles
+    assert "已经结束" not in titles
+    ended = client.get("/admin-api/ims/meet/minutes/list", headers=auth, params={"bucket": "ended", "pageSize": 20})
+    ended_titles = [row["meetingTitle"] for row in ended.json()["data"]["list"]]
+    assert "已经结束" in ended_titles
