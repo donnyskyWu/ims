@@ -44,14 +44,12 @@
             <tr v-for="row in subs" v-else :key="row.id">
               <td>{{ row.subName }}</td>
               <td>
-                {{ periodLabel(row.period) }}
-                <span class="csub" data-testid="bi-sub-period-code">{{ periodCode(row.period) }}</span>
-                {{ row.pushTime }}
+                {{ periodLabel(row.period, row.pushTime) }} {{ clockOf(row.pushTime) }}
                 <div class="csub" data-testid="bi-sub-next-push">下次 {{ row.nextPushAt || '不调度' }}</div>
               </td>
               <td>{{ row.reportName }}</td>
               <td>{{ channelLabel(row.channels) }}</td>
-              <td><span class="tag" :style="subStatusStyle(row.status)"><span class="dot"></span>{{ row.status === 'ACTIVE' ? '生效' : '暂停' }}</span></td>
+              <td><span class="tag" :style="subStatusStyle(row.status)" data-testid="bi-sub-status"><span class="dot"></span>{{ row.status === 'ACTIVE' ? '订阅中' : '已暂停' }}</span></td>
               <td>
                 <span class="tag" :style="pushStatusStyle(row.lastPushStatus)">{{ pushStatusLabel(row.lastPushStatus) }}</span>
               </td>
@@ -210,27 +208,36 @@
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 400px; padding: 18px">
         <h3 style="margin: 0 0 10px">{{ editingId ? '编辑订阅' : '新建订阅' }}</h3>
-        <label class="fld">名称</label>
+        <label class="fld">名称<i class="req">*</i></label>
         <input v-model="form.subName" class="fld-in" data-testid="bi-sub-name" />
-        <label class="fld">报表</label>
+        <p v-if="fieldErrors.subName" class="hint" data-testid="bi-sub-err-name" style="color: var(--red)">{{ fieldErrors.subName }}</p>
+        <label class="fld">报表<i class="req">*</i></label>
         <select v-model="form.reportId" class="fld-in" data-testid="bi-sub-report">
           <option value="">请选择报表</option>
           <option v-for="item in reportOptions" :key="item.id" :value="String(item.id)">{{ item.reportName }}</option>
         </select>
-        <label class="fld">周期</label>
+        <p v-if="fieldErrors.reportId" class="hint" data-testid="bi-sub-err-report" style="color: var(--red)">{{ fieldErrors.reportId }}</p>
+        <label class="fld">周期<i class="req">*</i></label>
         <select v-model="form.period" class="fld-in" data-testid="bi-sub-period">
+          <option value="">请选择周期</option>
           <option value="DAILY">每日</option>
           <option value="WEEKLY">每周</option>
+          <option value="WEEKLY_MON">每周一</option>
           <option value="MONTHLY">每月</option>
+          <option value="MONTHLY_1">每月 1 日</option>
         </select>
-        <label class="fld">推送渠道</label>
+        <p v-if="fieldErrors.period" class="hint" data-testid="bi-sub-err-period" style="color: var(--red)">{{ fieldErrors.period }}</p>
+        <label class="fld">推送渠道<i class="req">*</i></label>
         <select v-model="form.channels" class="fld-in" data-testid="bi-sub-channel">
+          <option value="">请选择渠道</option>
           <option value="SITE">站内</option>
           <option value="SITE+DING">站内+钉钉</option>
           <option value="MAIL">邮件</option>
         </select>
-        <label class="fld">推送时刻</label>
+        <p v-if="fieldErrors.channels" class="hint" data-testid="bi-sub-err-channel" style="color: var(--red)">{{ fieldErrors.channels }}</p>
+        <label class="fld">推送时刻<i class="req">*</i></label>
         <input v-model="form.pushTime" class="fld-in" data-testid="bi-sub-push-time" placeholder="09:00" />
+        <p v-if="fieldErrors.pushTime" class="hint" data-testid="bi-sub-err-time" style="color: var(--red)">{{ fieldErrors.pushTime }}</p>
         <p class="csub" style="margin: 8px 0 0">下次推送按本地时刻估算，不触发外部定时任务。时刻写 HH:mm，也可写「周一 09:00」。</p>
         <p v-if="formError" class="hint" data-testid="bi-sub-form-error" style="color: var(--red)">{{ formError }}</p>
         <p v-if="pushTimeError" class="hint" data-testid="bi-sub-push-error" style="color: var(--red)">{{ pushTimeError }}</p>
@@ -389,7 +396,8 @@ const snapshot = ref<{
 } | null>(null)
 const showForm = ref(false)
 const showShareForm = ref(false)
-const form = reactive({ subName: '', reportId: '', period: 'DAILY', pushTime: '09:00', channels: 'SITE+DING' })
+const form = reactive({ subName: '', reportId: '', period: '', pushTime: '', channels: '' })
+const fieldErrors = reactive({ subName: '', reportId: '', period: '', pushTime: '', channels: '' })
 const reportOptions = ref<{ id: number; reportName: string; shareScope?: string }[]>([])
 const editingId = ref(0)
 const statusTarget = ref<SubRow | null>(null)
@@ -432,16 +440,26 @@ function switchTab(key: string) {
   loadTab()
 }
 
-function periodLabel(p: string) {
+function periodLabel(p: string, pushTime = '') {
+  const clock = pushTime || ''
+  if ((p === 'WEEK' || p === 'WEEKLY' || p === 'WEEKLY_MON') && clock.includes('周一')) return '每周一'
+  if ((p === 'MONTH' || p === 'MONTHLY' || p === 'MONTHLY_1') && /1\s*日/.test(clock)) return '每月 1 日'
   const map: Record<string, string> = {
     DAY: '每日',
     DAILY: '每日',
     WEEK: '每周',
     WEEKLY: '每周',
+    WEEKLY_MON: '每周一',
     MONTH: '每月',
     MONTHLY: '每月',
+    MONTHLY_1: '每月 1 日',
   }
   return map[p] || p
+}
+
+function clockOf(pushTime: string) {
+  const matched = String(pushTime || '').match(/(\d{1,2}:\d{2})/)
+  return matched ? matched[1] : pushTime || ''
 }
 
 function periodCode(p: string) {
@@ -561,9 +579,14 @@ async function openCreate() {
   editingId.value = 0
   form.subName = ''
   form.reportId = ''
-  form.period = 'DAILY'
-  form.pushTime = '09:00'
-  form.channels = 'SITE+DING'
+  form.period = ''
+  form.pushTime = ''
+  form.channels = ''
+  fieldErrors.subName = ''
+  fieldErrors.reportId = ''
+  fieldErrors.period = ''
+  fieldErrors.pushTime = ''
+  fieldErrors.channels = ''
   await loadReportOptions()
   showForm.value = true
 }
@@ -574,34 +597,62 @@ async function openEdit(row: SubRow) {
   editingId.value = row.id
   form.subName = row.subName
   form.reportId = String(row.reportId || '')
-  form.period = row.period === 'DAY' ? 'DAILY' : row.period === 'WEEK' ? 'WEEKLY' : row.period === 'MONTH' ? 'MONTHLY' : row.period
-  form.pushTime = row.pushTime || '09:00'
+  form.period = periodChoice(row.period, row.pushTime)
+  form.pushTime = clockOf(row.pushTime) || '09:00'
   form.channels = row.channels || 'SITE+DING'
   await loadReportOptions()
   showForm.value = true
 }
 
+function periodChoice(period: string, pushTime: string) {
+  if ((period === 'WEEK' || period === 'WEEKLY') && (pushTime || '').includes('周一')) return 'WEEKLY_MON'
+  if ((period === 'MONTH' || period === 'MONTHLY') && /1\s*日/.test(pushTime || '')) return 'MONTHLY_1'
+  if (period === 'DAY') return 'DAILY'
+  if (period === 'WEEK') return 'WEEKLY'
+  if (period === 'MONTH') return 'MONTHLY'
+  return period
+}
+
+function clearFieldErrors() {
+  fieldErrors.subName = ''
+  fieldErrors.reportId = ''
+  fieldErrors.period = ''
+  fieldErrors.pushTime = ''
+  fieldErrors.channels = ''
+}
+
 async function submitSub() {
   formError.value = ''
   pushTimeError.value = ''
-  if (!form.subName.trim()) {
-    formError.value = '订阅名称必填'
-    return
-  }
-  if (!Number(form.reportId)) {
-    formError.value = '请选择报表'
+  clearFieldErrors()
+  if (!form.subName.trim()) fieldErrors.subName = '必填项，请填写'
+  if (!Number(form.reportId)) fieldErrors.reportId = '必填项，请填写'
+  if (!form.period) fieldErrors.period = '必填项，请填写'
+  if (!form.channels) fieldErrors.channels = '必填项，请填写'
+  if (!form.pushTime.trim()) fieldErrors.pushTime = '必填项，请填写'
+  if (fieldErrors.subName || fieldErrors.reportId || fieldErrors.period || fieldErrors.channels || fieldErrors.pushTime) {
+    formError.value = '必填项，请填写'
     return
   }
   if (!pushClockOk(form.pushTime)) {
     pushTimeError.value = '推送时刻应为 HH:mm'
     return
   }
+  let period = form.period
+  let pushTime = form.pushTime.trim()
+  if (period === 'WEEKLY_MON') {
+    period = 'WEEKLY'
+    pushTime = `周一 ${pushTime}`
+  } else if (period === 'MONTHLY_1') {
+    period = 'MONTHLY'
+    pushTime = `1日 ${pushTime}`
+  }
   try {
     const payload = {
       subName: form.subName.trim(),
       reportId: Number(form.reportId),
-      period: form.period,
-      pushTime: form.pushTime,
+      period,
+      pushTime,
       channels: form.channels,
     }
     const res = editingId.value
@@ -631,7 +682,7 @@ async function confirmToggle() {
   statusTarget.value = null
   try {
     await http.put(`/bi/subscribe/${row.id}`, { status })
-    statusToast.value = status === 'PAUSED' ? '已暂停' : '已恢复'
+    statusToast.value = '状态已更新'
     await loadSubs()
   } catch (error: unknown) {
     statusToast.value = errorMessage(error)
