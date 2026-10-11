@@ -126,7 +126,7 @@ SPECS = {
     "ims_content_layout_template": Spec(creator=True, creator_col="created_by"),
     "ims_file": Spec(creator=True),
     "ims_eff_relation": Spec(creator=True, creator_col="changed_by"),
-    "ims_air_skill": Spec(dept=True, creator=True, creator_col="owner_user_id"),
+    "ims_air_skill": Spec(creator=True, creator_col="owner_user_id"),
     "ims_air_expert": Spec(creator=True, creator_col="owner_user_id"),
     "ims_bi_report_def": Spec(dept=True, creator=True, creator_col="creator_id", br212=True),
     "ims_bi_query_log": Spec(),
