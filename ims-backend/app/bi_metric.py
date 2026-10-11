@@ -509,16 +509,6 @@ ANALYSIS_FROM = "2026-09-01"
 ANALYSIS_TO = "2026-09-30"
 # 数仓未接时的开发/E2E 种子。只在分析窗口内返回，不读 formula，也不执行 SQL。
 SEED_IP_GROUPS = (("电竞一组", 1284600), ("体育二组", 892400))
-TREND_DAYS = (
-    "2026-09-24",
-    "2026-09-25",
-    "2026-09-26",
-    "2026-09-27",
-    "2026-09-28",
-    "2026-09-29",
-    "2026-09-30",
-)
-TREND_SCALE = (0.767, 0.811, 0.878, 0.844, 0.947, 0.920, 1.0)
 
 
 def analysis_day(raw: str) -> str | None:
@@ -585,17 +575,24 @@ def seed_detail_rows(metric: BiMetric, date_start: str, date_end: str, ip_group_
 
 
 def seed_series(metric: BiMetric, date_start: str, date_end: str, ip_group_name: str) -> list[dict]:
-    start = (date_start or ANALYSIS_FROM)[:10]
-    end = (date_end or ANALYSIS_TO)[:10]
-    series: list[dict] = []
-    for name, base in seed_groups(ip_group_name):
-        points = []
-        for day, scale in zip(TREND_DAYS, TREND_SCALE, strict=True):
-            if day < start or day > end:
-                continue
-            points.append({"date": day, "value": seed_value(metric, base, scale), "ipGroupName": name})
-        series.append({"metricCode": metric.metric_code, "metricName": metric.metric_name, "ipGroupName": name, "points": points})
-    return series
+    """趋势点与明细行同一份种子，不另造日期。"""
+    grouped: dict[str, list[dict]] = {}
+    order: list[str] = []
+    for row in seed_detail_rows(metric, date_start, date_end, ip_group_name):
+        name = str(row["ipGroupName"])
+        if name not in grouped:
+            grouped[name] = []
+            order.append(name)
+        grouped[name].append({"date": row["statDate"], "value": row["value"], "ipGroupName": name})
+    return [
+        {
+            "metricCode": metric.metric_code,
+            "metricName": metric.metric_name,
+            "ipGroupName": name,
+            "points": grouped[name],
+        }
+        for name in order
+    ]
 
 
 @router.get("/{metric_id}/analyze")

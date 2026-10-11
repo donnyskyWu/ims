@@ -80,7 +80,7 @@
       </div>
     </div>
 
-    <div v-if="hasSeries && tab === 'TREND'" class="tbl-block" data-testid="bi-analysis-chart">
+    <div v-if="resultRows.length && tab === 'TREND'" class="tbl-block" data-testid="bi-analysis-chart">
       <div class="card" style="padding: 12px 16px">
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px">
           <span class="csub">图表类型</span>
@@ -122,29 +122,19 @@ const total = ref(0)
 const pageNo = ref(1)
 const pageSize = ref(20)
 
-const hasSeries = computed(() => series.value.some((item) => item.points?.length))
+const detailPoints = computed<ChartPoint[]>(() =>
+  resultRows.value.map((row) => ({
+    k: `${String(row.statDate || '').slice(5)} ${row.ipGroupName || row.metricName || ''}`.trim(),
+    v: Number(row.value) || 0,
+  })),
+)
 
 const chartSvg = computed(() => {
-  if (chartType.value === 'pie') {
-    const slices: ChartPoint[] = []
-    for (const item of series.value) {
-      const last = item.points[item.points.length - 1]
-      if (!last) continue
-      slices.push({ k: item.ipGroupName || item.metricCode, v: Number(last.value) })
-    }
-    return slices.length ? bi0SvgPie(slices) : ''
-  }
-  const byDate = new Map<string, number>()
-  for (const item of series.value) {
-    for (const point of item.points) {
-      byDate.set(point.date, (byDate.get(point.date) || 0) + Number(point.value))
-    }
-  }
-  const points: ChartPoint[] = [...byDate.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, value]) => ({ k: date.slice(5), v: value }))
+  const points = detailPoints.value
   if (!points.length) return ''
-  return chartType.value === 'line' ? bi0SvgLine(points) : bi0SvgBars(points)
+  if (chartType.value === 'pie') return bi0SvgPie(points)
+  if (chartType.value === 'line') return bi0SvgLine(points)
+  return bi0SvgBars(points)
 })
 
 async function loadMetrics() {

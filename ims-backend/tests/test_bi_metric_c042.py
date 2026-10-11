@@ -45,7 +45,9 @@ def test_tc_r9_analysis_seed_rows_trend_and_ip_filter():
     assert body["data"]["rows"][0]["statDate"] == "2026-09-30"
     assert body["data"]["total"] == 2
     assert body["data"]["series"]
-    assert len(body["data"]["series"][0]["points"]) >= 2
+    assert body["data"]["series"][0]["points"] == [
+        {"date": "2026-09-30", "value": body["data"]["rows"][0]["value"], "ipGroupName": body["data"]["rows"][0]["ipGroupName"]}
+    ]
 
     one = client.post(
         "/admin-api/ims/bi/metric/analysis/run",
