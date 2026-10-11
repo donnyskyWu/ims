@@ -38,6 +38,7 @@ class ReportCreateBody(BaseModel):
     category: str = "内容分析"
     subCategory: str = ""
     shareScope: str = "PRIVATE"
+    metricNote: str = ""
 
 
 class CategoryBody(BaseModel):
@@ -357,6 +358,7 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "subCategory": row.sub_category,
         "status": row.status,
         "shareScope": row.share_scope or "PRIVATE",
+        "metricNote": row.metric_note or "",
         "layoutMode": layout.get("layoutMode", "FREE"),
         "comps": layout.get("comps", []),
         "creatorName": names.get(row.creator_id, ""),
@@ -758,6 +760,7 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
         sub_category=body.subCategory.strip(),
         status="DRAFT",
         share_scope=scope,
+        metric_note=(body.metricNote or "").strip()[:512],
         layout_json="{}",
         creator_id=actor.id,
         dept_id=primary_dept_id(db, actor.id, tenant_id),

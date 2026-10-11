@@ -135,7 +135,7 @@
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">新建报表</h3>
-        <label class="fld">报表类型</label>
+        <label class="fld">报表类型<i class="req">*</i></label>
         <div class="rowline" style="gap: 8px; margin-bottom: 10px">
           <button
             type="button"
@@ -154,16 +154,26 @@
             大屏
           </button>
         </div>
-        <label class="fld">名称</label>
-        <input v-model="form.reportName" class="fld-in" />
+        <p v-if="fieldErrors.reportType" class="hint" data-testid="bi-new-type-error" style="color: var(--red)">{{ fieldErrors.reportType }}</p>
+        <label class="fld">报表名称<i class="req">*</i></label>
+        <input v-model="form.reportName" class="fld-in" data-testid="bi-new-name" />
+        <p v-if="fieldErrors.reportName" class="hint" data-testid="bi-new-name-error" style="color: var(--red)">{{ fieldErrors.reportName }}</p>
         <label class="fld">分类</label>
-        <select v-model="form.category" class="fld-in">
+        <select v-model="form.category" class="fld-in" data-testid="bi-new-category">
           <option v-for="name in flatNames" :key="name" :value="name">{{ name }}</option>
         </select>
+        <label class="fld">可见范围</label>
+        <select v-model="form.shareScope" class="fld-in" data-testid="bi-new-scope">
+          <option value="PRIVATE">私有</option>
+          <option value="SPECIFIED">指定人</option>
+          <option value="ALL">公开</option>
+        </select>
+        <label class="fld">指标口径说明</label>
+        <textarea v-model="form.metricNote" class="fld-in" data-testid="bi-new-note" rows="3" />
         <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submitCreate">保存草稿</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-new-submit" @click="submitCreate">创建并进入设计器</button>
         </div>
       </div>
     </div>
@@ -254,10 +264,11 @@ const loading = ref(false)
 const viewMode = ref<'card' | 'table'>('card')
 const showForm = ref(false)
 const formError = ref('')
+const fieldErrors = reactive({ reportName: '', reportType: '' })
 const filters = reactive({ keyword: '', reportType: '', category: '', shareScope: '', status: '' })
 const listFiltered = ref(false)
 const emptyText = computed(() => (listFiltered.value ? '当前筛选下暂无报表' : '暂无报表，点击新建'))
-const form = reactive({ reportName: '', reportType: 'REPORT', category: '未分类' })
+const form = reactive({ reportName: '', reportType: 'REPORT', category: '未分类', shareScope: 'PRIVATE', metricNote: '' })
 const showCats = ref(false)
 const catError = ref('')
 const catMsg = ref('')
@@ -325,21 +336,33 @@ function openCreate() {
   form.reportName = ''
   form.reportType = 'REPORT'
   form.category = flatNames.value.includes('未分类') ? '未分类' : flatNames.value[0] || '未分类'
+  form.shareScope = 'PRIVATE'
+  form.metricNote = ''
   formError.value = ''
+  fieldErrors.reportName = ''
+  fieldErrors.reportType = ''
   showForm.value = true
 }
 
 async function submitCreate() {
   formError.value = ''
-  if (!form.reportName.trim()) {
-    formError.value = '请输入名称'
+  fieldErrors.reportName = form.reportName.trim() ? '' : '必填项，请填写'
+  fieldErrors.reportType = form.reportType ? '' : '必填项，请填写'
+  if (fieldErrors.reportName || fieldErrors.reportType) return
+  let res
+  try {
+    res = await http.post('/bi/report', {
+      reportName: form.reportName.trim(),
+      reportType: form.reportType,
+      category: form.category,
+      shareScope: form.shareScope,
+      metricNote: form.metricNote.trim(),
+    })
+  } catch (err) {
+    const body = err as { msg?: string }
+    formError.value = body.msg || '保存失败'
     return
   }
-  const res = await http.post('/bi/report', {
-    reportName: form.reportName.trim(),
-    reportType: form.reportType,
-    category: form.category,
-  })
   if (res.data.code !== 0) {
     formError.value = res.data.msg || '保存失败'
     return

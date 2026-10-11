@@ -236,12 +236,15 @@ def ensure_bi_report_scope_column() -> None:
     if "ims_bi_report_def" not in insp.get_table_names():
         return
     cols = {c["name"] for c in insp.get_columns("ims_bi_report_def")}
-    if "share_scope" in cols:
+    alters: list[str] = []
+    if "share_scope" not in cols:
+        alters.append("ADD COLUMN share_scope VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'")
+    if "metric_note" not in cols:
+        alters.append("ADD COLUMN metric_note VARCHAR(512) NOT NULL DEFAULT ''")
+    if not alters:
         return
     with engine.begin() as conn:
-        conn.execute(
-            text("ALTER TABLE ims_bi_report_def ADD COLUMN share_scope VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'")
-        )
+        conn.execute(text(f"ALTER TABLE ims_bi_report_def {', '.join(alters)}"))
 
 
 def ensure_bi_br212_columns() -> None:

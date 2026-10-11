@@ -4,7 +4,7 @@
       <div>
         <h1>报表设计器</h1>
         <div class="sub">
-          {{ report?.reportName || '加载中…' }} · 隐藏路由 /ims/bi/report/designer · BI-001
+          {{ report?.reportName || '加载中…' }} · {{ report?.status === 'PUBLISHED' ? '已发布' : '新建草稿' }} · 隐藏路由 /ims/bi/report/designer · BI-001
           <span v-if="dirty" data-testid="bi-dirty"> · ● 有未保存修改</span>
         </div>
       </div>

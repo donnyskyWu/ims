@@ -89,6 +89,21 @@ def test_bi_category_tree_import_and_scope_filter():
     assert created.json()["code"] == 0
     rid = created.json()["data"]["id"]
     assert created.json()["data"]["shareScope"] == "ALL"
+    noted = client.post(
+        "/admin-api/ims/bi/report",
+        headers=auth,
+        json={
+            "reportName": "口径说明报表",
+            "reportType": "REPORT",
+            "category": "日报",
+            "shareScope": "PRIVATE",
+            "metricNote": "GMV 为支付金额",
+        },
+    )
+    assert noted.json()["code"] == 0
+    assert noted.json()["data"]["status"] == "DRAFT"
+    assert noted.json()["data"]["metricNote"] == "GMV 为支付金额"
+    assert noted.json()["data"]["shareScope"] == "PRIVATE"
 
     scoped = client.get(
         "/admin-api/ims/bi/report/list",
