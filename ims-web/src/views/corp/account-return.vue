@@ -14,9 +14,15 @@
       <input v-model="returnNo" data-testid="return-filter-no" placeholder="归还单号" style="width: 160px" />
       <label>
         离职人
-        <select v-model="filterUserId" data-testid="return-filter-user" style="width: 140px">
+        <input
+          v-model="userKeyword"
+          data-testid="return-filter-user-search"
+          placeholder="搜索姓名"
+          style="width: 120px"
+        />
+        <select v-model="filterUserId" data-testid="return-filter-user" style="width: 160px">
           <option value="">全部</option>
-          <option v-for="user in users" :key="String(user.id)" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+          <option v-for="user in filteredUsers" :key="String(user.id)" :value="String(user.id)">{{ userLabel(user) }}</option>
         </select>
       </label>
       <select v-model="status" data-testid="return-filter-status" style="width: 140px">
@@ -176,6 +182,7 @@ const actor = useUserStore()
 const canGenerate = ref(actor.profile?.username === 'admin')
 const orders = ref<Row[]>([])
 const users = ref<UserOpt[]>([])
+const userKeyword = ref('')
 const listError = ref('')
 const returnNo = ref('')
 const status = ref('')
@@ -282,20 +289,38 @@ function rejectText(error: unknown): string {
   return errorMessage(error)
 }
 
+function userLabel(user: UserOpt) {
+  return String(user.nickname || user.username || user.id || '').trim()
+}
+
+const filteredUsers = computed(() => {
+  const keyword = userKeyword.value.trim().toLowerCase()
+  if (!keyword) return users.value
+  return users.value.filter((user) => {
+    const name = userLabel(user).toLowerCase()
+    const login = String(user.username || '').toLowerCase()
+    return name.includes(keyword) || login.includes(keyword)
+  })
+})
+
 async function loadUsers() {
-  const firstRes = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 100 } })
-  const payload = (firstRes.data?.data || {}) as { list?: UserOpt[]; total?: number }
-  const first = payload.list || []
-  const total = payload.total || first.length
-  if (total <= first.length) {
-    users.value = first
-    return
+  const collected: UserOpt[] = []
+  let page = 1
+  let total = 0
+  try {
+    do {
+      const res = await http.get('/system/user/page', { params: { pageNo: page, pageSize: 100 } })
+      const payload = (res.data?.data || {}) as { list?: UserOpt[]; total?: number }
+      const batch = payload.list || []
+      total = typeof payload.total === 'number' ? payload.total : batch.length
+      collected.push(...batch)
+      if (!batch.length) break
+      page += 1
+    } while (collected.length < total && page <= 20)
+    users.value = collected
+  } catch {
+    users.value = collected
   }
-  const lastPage = Math.ceil(total / 100)
-  const lastRes = await http.get('/system/user/page', { params: { pageNo: lastPage, pageSize: 100 } })
-  const last = ((lastRes.data?.data || {}) as { list?: UserOpt[] }).list || []
-  const seen = new Set(first.map((user) => String(user.id)))
-  users.value = first.concat(last.filter((user) => !seen.has(String(user.id))))
 }
 
 function rangeProblem() {
