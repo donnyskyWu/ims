@@ -1741,6 +1741,11 @@ async function loadRisk() {
   riskTotal.value = Number(data.abnormalTotal || 0)
 }
 
+function sameHolder(shown: unknown, typed: string) {
+  const text = String(shown || '')
+  return text === typed || text.replace(/（外协）$/, '') === typed
+}
+
 function userLabel(id: number) {
   const user = users.value.find((item) => Number(item.id) === id)
   return user?.nickname || user?.username || String(id)
@@ -1790,7 +1795,7 @@ async function loadAudit() {
           params: { pageNo: 1, pageSize: 20, holderName: holder },
         })
         const list = asList(found.data?.data)
-        const exact = list.filter((item) => String(item.holderName) === holder)
+        const exact = list.filter((item) => sameHolder(item.holderName, holder))
         if (exact.length !== 1) {
           auditRows.value = []
           auditTotal.value = 0
