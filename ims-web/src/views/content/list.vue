@@ -185,9 +185,8 @@
         </div>
         <div class="fld">
           <label>文档类型</label>
-          <select v-model="editDocType">
-            <option value="COPY">COPY</option>
-            <option value="SCRIPT">SCRIPT</option>
+          <select v-model="editDocType" data-testid="content-edit-doc-type">
+            <option v-for="item in docTypeChoices" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </div>
         <MatchSchemeEditor v-model:match-type="editMatchType" v-model:scheme="editScheme" :seed-key="editorSeed" />
@@ -200,7 +199,6 @@
         </div>
         <div class="fld">
           <label>版式图片</label>
-          <p class="hint">POST /content/file/upload · scene=content_image，写入 layout_html</p>
           <input
             data-testid="content-image-file"
             type="file"
@@ -211,7 +209,7 @@
           <p v-if="uploadError" class="hint" style="color: var(--red)">{{ uploadError }}</p>
         </div>
         <div class="fld">
-          <label>layout_html</label>
+          <label>版式 HTML</label>
           <textarea v-model="editLayoutHtml" data-testid="content-layout-html" rows="4" readonly />
         </div>
         <div class="fld">
@@ -373,6 +371,10 @@ const actionNote = ref('')
 const editContentType = ref('SHORT_VIDEO')
 const editPlatform = ref('')
 const editDocType = ref('COPY')
+const docTypeOptions = ref<{ value: string; label: string }[]>([
+  { value: 'COPY', label: '文案' },
+  { value: 'SCRIPT', label: '脚本' },
+])
 const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
 const editBody = ref('')
@@ -432,6 +434,28 @@ const accountPlatformLabels: Record<string, string> = {
 function docLabel(value: string | null | undefined) {
   if (!value) return '—'
   return docLabels[value] || value
+}
+
+const docTypeChoices = computed(() => {
+  const options = docTypeOptions.value.map((item) => ({ ...item }))
+  const current = editDocType.value
+  if (current && !options.some((item) => item.value === current)) {
+    options.push({ value: current, label: docLabel(current) })
+  }
+  return options
+})
+
+async function loadDocTypes() {
+  try {
+    const { data } = await http.get('/system/dict-data/list', { params: { dictType: 'dict_document_type' } })
+    const rows = (data.data || []) as { dictLabel?: string; dictValue?: string; status?: string }[]
+    const options = rows
+      .filter((row) => row.status === 'ENABLED' && row.dictValue)
+      .map((row) => ({ value: String(row.dictValue), label: String(row.dictLabel || row.dictValue) }))
+    if (options.length) docTypeOptions.value = options
+  } catch {
+    /* 字典不可用时保留文案 / 脚本 */
+  }
 }
 
 function statusLabel(row: { contentStatus?: string; contentStatusLabel?: string }) {
@@ -919,6 +943,7 @@ async function retrySync(id: number) {
 
 loadList()
 loadAccounts()
+loadDocTypes()
 </script>
 
 <style scoped>
