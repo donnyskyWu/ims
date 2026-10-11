@@ -582,13 +582,12 @@ function statusStyle(value: string) {
 }
 
 const listEmptyText = computed(() => {
-  const cateOnly =
-    Boolean(filters.cateId) &&
+  const positionOnly =
+    Boolean(filters.positionCode) &&
     !filters.title.trim() &&
     !filters.materialType &&
-    !filters.status &&
-    !filters.positionCode
-  if (cateOnly) return '该分类暂无资料'
+    !filters.status
+  if (positionOnly) return '该岗位暂无资料'
   if (hasActiveFilters.value) return '没有符合筛选的资料'
   return '暂无资料'
 })
@@ -978,6 +977,10 @@ function formInvalid() {
     fieldErrors.file = fieldErrors.file || '必填项，请填写'
     bad = true
   }
+  if (fieldErrors.title && fieldErrors.title !== '必填项，请填写') return fieldErrors.title
+  if (fieldErrors.link && fieldErrors.link !== '必填项，请填写') return fieldErrors.link
+  if (fieldErrors.minutes && fieldErrors.minutes !== '必填项，请填写') return fieldErrors.minutes
+  if (fieldErrors.file && fieldErrors.file !== '必填项，请填写') return fieldErrors.file
   return bad ? '请完善必填项' : ''
 }
 

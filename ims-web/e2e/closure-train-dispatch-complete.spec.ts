@@ -36,7 +36,7 @@ test.describe('train dispatch and complete closure', () => {
     const taskRow = page.locator('tr', { hasText: taskName })
     await expect(taskRow).toBeVisible()
     await taskRow.getByRole('button', { name: '学习记录' }).click()
-    await expect(page.getByText('已确认')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByRole('cell', { name: '已确认' })).toBeVisible({ timeout: 10_000 })
 
     expect(pageErrors).toEqual([])
   })

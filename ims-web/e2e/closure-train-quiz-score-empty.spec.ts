@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT_DIR = '/opt/cursor/artifacts/train-164-quiz-retake'
 
@@ -37,8 +37,8 @@ test.describe('train quiz score empty and retake entry', () => {
       .locator('label.fld', { hasText: '任务名称' })
       .locator('xpath=following-sibling::input[1]')
       .fill(taskName)
-    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
-    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(materialId) }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
     await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
 
     await modal.getByRole('button', { name: '添加题目' }).click()
@@ -137,7 +137,7 @@ test.describe('train quiz score empty and retake entry', () => {
     await page.goto('/ims/train/task')
     await page.locator('tr', { hasText: taskName }).getByRole('button', { name: '学习记录' }).click()
     const passedRecords = page.locator('.modal-mask .card').filter({ hasText: '学习记录' })
-    await expect(passedRecords.getByText('已确认')).toBeVisible()
+    await expect(passedRecords.getByRole('cell', { name: '已确认' })).toBeVisible()
     await expect(passedRecords.locator('td').filter({ hasText: /^100$/ })).toBeVisible()
     await expect(passedRecords.getByTestId('train-record-retake')).toHaveCount(0)
     await expect(passedRecords.getByTestId('train-record-score-empty')).toHaveCount(0)

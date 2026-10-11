@@ -541,10 +541,15 @@ export async function createTrainMaterialViaUi(
   return { materialId: materialId! }
 }
 
+/** 匹配「#12」时不要命中「#120」。 */
+export function hashId(id: number | string) {
+  return new RegExp(`#${id}(?!\\d)`)
+}
+
 /** TRAIN 学习任务 · 下达任务（纯 UI · 资料多选） */
 export async function createTrainTaskViaUi(
   page: Page,
-  opts: { taskName: string; materialIds: number[]; assignUserIds: number[] },
+  opts: { taskName: string; materialIds: number[]; assignUserIds?: number[]; assignAnyoneExcept?: number },
 ): Promise<{ taskId: number }> {
   await page.goto('/ims/train/task')
   await expect(page.locator('h1')).toHaveText('学习任务管理', { timeout: 15_000 })
@@ -558,10 +563,24 @@ export async function createTrainTaskViaUi(
     .fill(opts.taskName)
 
   for (const mid of opts.materialIds) {
-    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${mid}` }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(mid) }).locator('input[type="checkbox"]').check()
   }
-  for (const uid of opts.assignUserIds) {
-    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: `#${uid}` }).locator('input').check()
+  if (opts.assignAnyoneExcept != null) {
+    const labels = modal.getByTestId('train-form-users').locator('label')
+    const count = await labels.count()
+    let picked = false
+    for (let index = 0; index < count; index += 1) {
+      const text = (await labels.nth(index).innerText()).replace(/\s+/g, ' ')
+      if (!hashId(opts.assignAnyoneExcept).test(text)) {
+        await labels.nth(index).locator('input').check()
+        picked = true
+        break
+      }
+    }
+    expect(picked).toBeTruthy()
+  }
+  for (const uid of opts.assignUserIds || []) {
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(uid) }).locator('input').check()
   }
 
   const createResp = page.waitForResponse(
@@ -593,7 +612,7 @@ export async function completeTrainStudyViaUi(page: Page, taskId: number, taskNa
     const body = (await r.json()) as { code?: number; data?: { progress?: number } }
     return body.code === 0 && (body.data?.progress ?? 0) >= 100
   })
-  await page.clock.fastForward(75_000)
+  await page.clock.runFor(75_000)
   await progressed
   await expect(confirmBtn).toBeEnabled({ timeout: 15_000 })
 
@@ -607,7 +626,7 @@ export async function completeTrainStudyViaUi(page: Page, taskId: number, taskNa
   const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { confirmStatus?: string } }
   expect(confirmBody.code).toBe(0)
   expect(confirmBody.data?.confirmStatus).toBe('CONFIRMED')
-  await expect(page.getByText('学习已完成 · CONFIRMED')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('学习已完成 · 已确认')).toBeVisible({ timeout: 10_000 })
 }
 
 /** S3 FIN closure · 与 `live_fin_e2e_seed` 一致 */

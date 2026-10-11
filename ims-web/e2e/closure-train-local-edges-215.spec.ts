@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT = '/opt/cursor/artifacts'
 
@@ -52,8 +52,8 @@ test.describe('train local edges 215', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const taskForm = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await fieldAfter(taskForm, '任务名称').fill('任'.repeat(129))
-    await taskForm.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input').check()
-    await taskForm.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await taskForm.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(materialId) }).locator('input').check()
+    await taskForm.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
     await taskForm.getByRole('button', { name: '提交任务' }).click()
     await expect(taskForm.getByTestId('train-task-form-error')).toHaveText('任务名称不超过 128 字')
     await page.screenshot({ path: `${SHOT}/train-215-task-name-too-long.png`, fullPage: true })
@@ -79,7 +79,7 @@ test.describe('train local edges 215', () => {
     await expect(page.getByTestId('train-study-confirm')).toBeDisabled()
     await page.screenshot({ path: `${SHOT}/train-215-study-gap.png`, fullPage: true })
 
-    await page.clock.fastForward(70_000)
+    await page.clock.runFor(70_000)
     await expect(page.getByTestId('train-study-gap')).toHaveCount(0)
     await expect(page.getByTestId('train-study-confirm')).toBeEnabled()
 

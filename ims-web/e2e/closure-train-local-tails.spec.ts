@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT = '/opt/cursor/artifacts'
 
@@ -51,7 +51,7 @@ test.describe('train local tails', () => {
 
     await page.locator('tr', { hasText: durationName }).getByRole('button', { name: '学习记录' }).click()
     const records = page.locator('.modal-mask .card').filter({ hasText: '学习记录' })
-    await expect(records.getByText('未确认')).toBeVisible()
+    await expect(records.getByRole('cell', { name: '未确认' })).toBeVisible()
     await records.getByTestId('train-record-filter-status').selectOption('CONFIRMED')
     const emptyRecords = page.waitForResponse(
       (r) => r.url().includes('/train/task/records') && r.url().includes('confirmStatus=CONFIRMED') && r.status() === 200,
@@ -61,7 +61,7 @@ test.describe('train local tails', () => {
     await expect(records.getByTestId('train-record-empty')).toContainText('没有符合筛选的学习记录')
     await page.screenshot({ path: `${SHOT}/train-record-filter-empty.png`, fullPage: true })
     await records.getByTestId('train-record-clear').click()
-    await expect(records.getByText('未确认')).toBeVisible()
+    await expect(records.getByRole('cell', { name: '未确认' })).toBeVisible()
     await records.getByRole('button', { name: '关闭' }).click()
 
     await page.goto(`/ims/train/study/${await taskIdOf(page, quizName)}`)
@@ -144,8 +144,8 @@ async function composeQuiz(
   const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
   await expect(modal).toBeVisible()
   await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(opts.quizName)
-  await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${opts.materialId}` }).locator('input[type="checkbox"]').check()
-  await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+  await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(opts.materialId) }).locator('input[type="checkbox"]').check()
+  await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
   await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
   const first = modal.locator('.quiz-block').nth(0)
   await first.locator('input[placeholder="请输入题目"]').fill(opts.questionA)

@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT_DIR = '/opt/cursor/artifacts/train-186'
 
@@ -33,7 +33,7 @@ test.describe('train material preview and quiz tails', () => {
     const emptyCate = page.locator('.tree button.linkish', { hasText: /· 0$/ })
     if (await emptyCate.count()) {
       await emptyCate.first().click()
-      await expect(page.getByTestId('train-list-empty')).toContainText('该分类暂无资料')
+      await expect(page.getByTestId('train-list-empty')).toContainText('该岗位暂无资料')
       await shot(page, '01-cate-empty')
     }
 
@@ -47,6 +47,7 @@ test.describe('train material preview and quiz tails', () => {
     await expect(editor.getByTestId('train-material-form-error')).toContainText('外链须为 http(s) 地址')
     await shot(page, '02-link-rejected')
 
+    await editor.getByTestId('train-form-positions').locator('label').filter({ hasText: '全员通用' }).locator('input').check()
     await editor.getByTestId('train-form-link').fill(urlV1)
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/train/material') && r.request().method() === 'POST' && r.status() === 200,
@@ -65,7 +66,7 @@ test.describe('train material preview and quiz tails', () => {
     await expect(drawer.getByTestId('train-material-preview')).toContainText('只读预览，历史版本不可修改')
     await expect(drawer.getByRole('link', { name: '打开外链' })).toBeVisible()
     await expect(drawer).toContainText('尚无历史版本')
-    await expect(drawer.getByRole('button', { name: '编辑' })).toHaveCount(0)
+    await expect(drawer.getByRole('button', { name: '编辑（新版本）' })).toBeVisible()
     await shot(page, '03-preview-current')
     await drawer.getByRole('button', { name: '关闭' }).click()
 
@@ -95,7 +96,7 @@ test.describe('train material preview and quiz tails', () => {
     await expect(again.getByTestId('train-material-preview')).toContainText(urlV1)
     await expect(again.getByTestId('train-material-preview')).toContainText('历史 V1')
     await expect(again.getByTestId('train-material-preview')).not.toContainText(urlV2)
-    await expect(again.getByRole('button', { name: '编辑' })).toHaveCount(0)
+    await expect(again.getByRole('button', { name: '编辑（新版本）' })).toBeVisible()
     await shot(page, '04-preview-archive')
     await again.getByRole('button', { name: '关闭' }).click()
 
@@ -126,8 +127,8 @@ test.describe('train material preview and quiz tails', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(taskName)
-    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
-    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(materialId) }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
     await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
     const block = modal.locator('.quiz-block').first()
     await block.locator('input[placeholder="请输入题目"]').fill(question)

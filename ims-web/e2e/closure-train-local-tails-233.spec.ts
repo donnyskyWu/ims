@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT_DIR = '/opt/cursor/artifacts/train-233'
 
@@ -42,7 +42,7 @@ test.describe('train local tails 233', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(`E2E 表单 ${label}`)
-    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(materialId) }).locator('input[type="checkbox"]').check()
     await modal.getByTestId('train-form-deadline').fill('')
     await modal.getByRole('button', { name: '提交任务' }).click()
     await expect(modal.getByTestId('train-form-deadline-error')).toHaveText('必填项，请填写')
@@ -53,7 +53,7 @@ test.describe('train local tails 233', () => {
     await expect(modal.getByTestId('train-form-target-error')).toHaveText('必填项，请填写')
     await shot(page, '03-assignee-invalid')
 
-    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: '#1' }).locator('input').check()
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
     await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
     await modal.locator('.quiz-block').first().locator('input[placeholder="请输入题目"]').fill(`空选项 ${label}`)
     await modal.getByRole('button', { name: '提交任务' }).click()
@@ -110,7 +110,7 @@ test.describe('train local tails 233', () => {
       await createTrainTaskViaUi(page, {
         taskName: strangerTask,
         materialIds: [stranger.materialId],
-        assignUserIds: [99999],
+        assignAnyoneExcept: 1,
       })
     ).taskId
 
@@ -118,7 +118,7 @@ test.describe('train local tails 233', () => {
     await page.goto(`/ims/train/study/${strangerTaskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
     await expect(page.getByText(strangerTitle)).toBeVisible()
-    await page.clock.fastForward(16_000)
+    await page.clock.runFor(16_000)
     await expect(page.getByTestId('train-study-action-error')).toHaveText('仅被指派人可学习本任务', { timeout: 15_000 })
     await expect(page.getByTestId('train-study-back-workbench')).toBeVisible()
     await shot(page, '06-not-assignee')
