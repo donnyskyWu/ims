@@ -148,7 +148,7 @@
         </div>
         <div class="fld"><label>周期开始</label><input v-model="form.periodStart" placeholder="2026-07-01" /></div>
         <div class="fld"><label>周期结束</label><input v-model="form.periodEnd" placeholder="2026-09-30" /></div>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" class="hint" data-testid="perf-exec-error" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
@@ -289,8 +289,9 @@ async function submit() {
     }
     showForm.value = false
     await loadList()
-  } catch {
-    formError.value = '网络错误'
+  } catch (err) {
+    const body = err as { msg?: string }
+    formError.value = body.msg || '创建失败'
   }
 }
 

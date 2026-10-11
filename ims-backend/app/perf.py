@@ -505,6 +505,17 @@ def create_execution(
     target = db.get(User, body.targetUserId)
     if target is None or target.deleted or target.status != "ENABLED":
         return fail(1001, "被考核人无效")
+    period_key = cycle_display(body.periodType, body.periodStart.strip(), body.periodEnd.strip())
+    existing = db.scalars(
+        select(PerfRecord).where(
+            PerfRecord.deleted == 0,
+            PerfRecord.tenant_id == tenant_id,
+            PerfRecord.target_user_id == body.targetUserId,
+        )
+    ).all()
+    for prior in existing:
+        if cycle_display(prior.period_type, prior.period_start, prior.period_end) == period_key:
+            return fail(1001, "该周期已有进行中的考核记录（BR-031）")
     row = PerfRecord(
         record_no=next_record_no(db, tenant_id),
         scheme_id=scheme.id,

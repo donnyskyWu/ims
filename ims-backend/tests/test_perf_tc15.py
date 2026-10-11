@@ -229,3 +229,26 @@ def test_grade_line_is_configurable_three_bands():
         assert body["data"]["grade"] not in {"S", "A", "B", "C", "D"}
     finally:
         invalidate_param_cache()
+
+
+def test_same_user_same_period_is_blocked():
+    auth = headers()
+    scheme = _scheme(auth)
+    payload = {
+        "schemeId": scheme,
+        "targetUserId": 1,
+        "periodType": "MONTHLY",
+        "periodStart": "2026-10-01",
+        "periodEnd": "2026-10-31",
+    }
+    first = client.post("/admin-api/ims/perf/execution", headers=auth, json=payload)
+    assert first.json()["code"] == 0
+    again = client.post("/admin-api/ims/perf/execution", headers=auth, json=payload)
+    assert again.json()["code"] == 1001
+    assert again.json()["msg"] == "该周期已有进行中的考核记录（BR-031）"
+    other = client.post(
+        "/admin-api/ims/perf/execution",
+        headers=auth,
+        json={**payload, "periodStart": "2026-11-01", "periodEnd": "2026-11-30"},
+    )
+    assert other.json()["code"] == 0
