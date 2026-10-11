@@ -77,6 +77,8 @@ def test_cost_purchase_process_and_missing_account():
         json={"amount": 860, "period": "2026-09", "processSubtype": "PROCESS_RECHARGE"},
     )
     assert process.json()["code"] == 0
+    assert process.json()["data"]["processSubtypeLabel"] == "充值投流"
+    assert process.json()["data"]["handlerUserName"]
     pid = int(process.json()["data"]["id"])
 
     detail = client.get(f"/admin-api/ims/cost/account/{account_id}", headers=auth)
