@@ -212,3 +212,50 @@ def test_c059_trial_carries_object_and_inbox_once():
         params={"channel": "IN_APP", "keyword": left["alertNo"], "pageSize": 5},
     )
     assert noted.json()["data"]["total"] == 1
+
+
+def test_c060_handle_drawer_flow_keeps_direct_resolve():
+    auth = headers()
+    code = f"c060.{uuid.uuid4().hex[:8]}"
+    created = client.post(
+        "/admin-api/ims/alert/rule",
+        headers=auth,
+        json={"ruleCode": code, "ruleName": "处置抽屉", "thresholdExpr": "delayMinutes>1", "level": 2, "enabled": True},
+    )
+    assert created.json()["code"] == 0
+    rule_id = created.json()["data"]["id"]
+    alert_no = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+
+    handling = client.put(
+        f"/admin-api/ims/alert/check/{alert_no}/respond",
+        headers=auth,
+        json={"action": "CONFIRM", "handleRemark": "现场已核对"},
+    )
+    assert handling.json()["code"] == 0
+    assert handling.json()["data"]["responseStatus"] == "CONFIRMED"
+    assert handling.json()["data"]["escalationStopped"] is True
+    assert "处理说明：现场已核对" in handling.json()["data"]["content"]
+
+    detail = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth).json()["data"]
+    labels = [node["label"] for node in detail["dispositionTimeline"]]
+    assert labels == ["触发", "处置"]
+    assert detail["dispositionTimeline"][1]["note"] == "现场已核对"
+
+    recovered = client.put(
+        f"/admin-api/ims/alert/check/{alert_no}/respond",
+        headers=auth,
+        json={"action": "RESOLVE", "handleRemark": "已恢复"},
+    )
+    assert recovered.json()["code"] == 0
+    assert recovered.json()["data"]["responseStatus"] == "RESOLVED"
+    again = client.get(f"/admin-api/ims/alert/check/{alert_no}", headers=auth).json()["data"]
+    assert [node["label"] for node in again["dispositionTimeline"]] == ["触发", "处置", "恢复"]
+
+    direct = client.post(f"/admin-api/ims/alert/check/run/{rule_id}", headers=auth).json()["data"]["alertNo"]
+    closed = client.put(
+        f"/admin-api/ims/alert/check/{direct}/respond",
+        headers=auth,
+        json={"action": "HANDLE", "handleRemark": "直接处理"},
+    )
+    assert closed.json()["code"] == 0
+    assert closed.json()["data"]["responseStatus"] == "RESOLVED"

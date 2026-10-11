@@ -296,7 +296,18 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
-              <td class="mono" style="color: var(--blue)">{{ row.alertNo }}</td>
+              <td class="mono" style="color: var(--blue)">
+                <button
+                  v-if="tab === 'history'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-record-no"
+                  @click="openRecordTimeline(row.alertNo)"
+                >
+                  {{ row.alertNo }}
+                </button>
+                <span v-else>{{ row.alertNo }}</span>
+              </td>
               <td>
                 <div class="mono">{{ row.ruleCode || '—' }}</div>
                 <div>{{ row.ruleName }}</div>
@@ -333,13 +344,22 @@
                   确认
                 </button>
                 <button
-                  v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'CONFIRMED'"
+                  v-if="row.responseStatus === 'OPEN'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-handle-btn"
+                  @click="openHandle(row)"
+                >
+                  处理
+                </button>
+                <button
+                  v-if="row.responseStatus === 'CONFIRMED'"
                   class="btn btn-txt btn-sm"
                   type="button"
                   data-testid="alert-resolve-btn"
-                  @click="respond(row.alertNo, row.responseStatus === 'OPEN' ? 'HANDLE' : 'RESOLVE')"
+                  @click="respond(row.alertNo, 'RESOLVE')"
                 >
-                  处理
+                  标记恢复
                 </button>
                 <button
                   v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'CONFIRMED' || row.responseStatus === 'FALSE_ALARM'"
@@ -416,6 +436,38 @@
         <button class="btn btn-sec btn-sm" type="button" @click="dedupDetail = null">关闭</button>
       </div>
     </ProtoDrawer>
+    <ProtoDrawer :open="handleOpen" title="处置预警" width="640px" @close="handleOpen = false">
+      <div v-if="handleRow" data-testid="alert-handle-drawer">
+        <p>规则：{{ handleRow.ruleCode || '—' }} {{ handleRow.ruleName }}</p>
+        <p data-testid="alert-handle-object">对象：{{ handleRow.objectLabel || '—' }}</p>
+        <p>级别 · 持续：{{ levelName(handleRow.level) }} · {{ handleRow.durationText || '—' }}</p>
+        <p data-testid="alert-handle-level">当前升级层级：{{ handleCurrentLevel ? `${handleCurrentLevel} 级` : '尚未升级' }}</p>
+        <ol data-testid="alert-handle-chain">
+          <li v-for="step in handleChainView" :key="step.level">{{ step.title }} · {{ step.state }}</li>
+        </ol>
+        <label class="fld">处置说明</label>
+        <textarea v-model="handleNote" class="fld-in" rows="3" data-testid="alert-handle-remark" />
+        <div style="margin-top: 12px; display: flex; gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="alert-handle-submit" @click="submitHandle">
+            提交处置
+          </button>
+          <button class="btn btn-sec btn-sm" type="button" @click="handleOpen = false">取消</button>
+        </div>
+      </div>
+    </ProtoDrawer>
+    <ProtoDrawer :open="recordOpen" :title="recordAlertNo ? `处置记录 · ${recordAlertNo}` : '处置记录'" width="640px" @close="recordOpen = false">
+      <div data-testid="alert-record-timeline">
+        <ol>
+          <li v-for="node in recordTimeline" :key="`${node.key}-${node.at}`" data-testid="alert-record-node">
+            {{ node.label }} · {{ node.at || '—' }}
+            <span v-if="node.note"> · {{ node.note }}</span>
+            <span v-if="node.actorName"> · {{ node.actorName }}</span>
+          </li>
+        </ol>
+        <p v-if="!recordTimeline.length" class="hint">暂无处置时间线</p>
+        <button class="btn btn-sec btn-sm" type="button" @click="recordOpen = false">关闭</button>
+      </div>
+    </ProtoDrawer>
     <div v-if="falseTarget" class="modal-mask" @click.self="falseTarget = ''">
       <div class="card" style="width: 480px; padding: 20px" data-testid="alert-false-modal">
         <h3 style="margin: 0 0 8px">标记误报</h3>
@@ -447,6 +499,20 @@ type Channel = {
   empty?: boolean
   receiptAt?: string
   statusNote?: string
+}
+
+type EscNode = {
+  escalationLevel: number
+  skipped?: boolean
+  note?: string
+}
+
+type DispNode = {
+  key: string
+  label: string
+  at?: string
+  note?: string
+  actorName?: string
 }
 
 type Row = {
@@ -535,6 +601,25 @@ const dedupKeyword = ref('')
 const falseTarget = ref('')
 const falseReason = ref('')
 const handleRemark = ref('')
+const handleOpen = ref(false)
+const handleRow = ref<Row | null>(null)
+const handleNote = ref('')
+const handleChain = ref<EscNode[]>([])
+const handleCurrentLevel = ref<number | null>(null)
+const recordOpen = ref(false)
+const recordAlertNo = ref('')
+const recordTimeline = ref<DispNode[]>([])
+
+const handleChainView = computed(() =>
+  HANDLE_CHAIN.map((step) => {
+    const node = handleChain.value.find((item) => item.escalationLevel === step.level)
+    let state = '未到达'
+    if (node?.skipped) state = node.note || '跳过（严重级从二级起跳）'
+    else if (node && handleCurrentLevel.value === step.level) state = '当前'
+    else if (node) state = '已到达'
+    return { level: step.level, title: step.title, state }
+  }),
+)
 
 const deliveryFrom = ref('')
 const deliveryTo = ref('')
@@ -548,10 +633,15 @@ const PUSH_LABELS: Record<string, string> = {
 }
 const STATUS_TEXT: Record<string, string> = {
   OPEN: '未响应',
-  CONFIRMED: '已确认',
-  RESOLVED: '已处理',
+  CONFIRMED: '已确认 · 处理中',
+  RESOLVED: '已处理 · 已恢复',
   FALSE_ALARM: '误报',
 }
+const HANDLE_CHAIN = [
+  { level: 1, title: '一级 · 责任人 · 30 分钟' },
+  { level: 2, title: '二级 · 部门负责人 · 再 60 分钟' },
+  { level: 3, title: '三级 · 运营总监 + 系统管理员' },
+]
 const CHANNEL_NAMES: Record<string, string> = {
   WORKBENCH: '工作台',
   DINGTALK: '钉钉',
@@ -802,6 +892,62 @@ function closeReceipt() {
 
 async function openReceipt(alertNo: string) {
   await openDetail(alertNo)
+}
+
+async function openHandle(row: Row) {
+  handleRow.value = row
+  handleNote.value = ''
+  handleChain.value = []
+  handleCurrentLevel.value = null
+  handleOpen.value = true
+  try {
+    const res = await http.get(`/alert/escalate/timeline/${row.alertNo}`)
+    if (res.data.code === 0) {
+      handleChain.value = res.data.data?.timeline || []
+      handleCurrentLevel.value = res.data.data?.currentLevel ?? null
+    }
+  } catch {
+    /* 升级时间线失败时仍可填写处置 */
+  }
+}
+
+async function submitHandle() {
+  const alertNo = handleRow.value?.alertNo
+  if (!alertNo) return
+  toast.value = ''
+  try {
+    const res = await http.put(`/alert/check/${alertNo}/respond`, {
+      action: 'CONFIRM',
+      handleRemark: handleNote.value.trim(),
+    })
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '处置失败'
+      return
+    }
+    handleOpen.value = false
+    toast.value = `处置成功：处理中（${alertNo}）`
+    if (res.data.data?.escalationStopped) toast.value += ' · 响应成功，后续升级已停止'
+    await loadList()
+  } catch (error) {
+    const body = error as { msg?: string }
+    toast.value = body?.msg || errorMessage(error)
+  }
+}
+
+async function openRecordTimeline(alertNo: string) {
+  recordAlertNo.value = alertNo
+  recordTimeline.value = []
+  recordOpen.value = true
+  try {
+    const res = await http.get(`/alert/check/${alertNo}`)
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '时间线加载失败'
+      return
+    }
+    recordTimeline.value = res.data.data?.dispositionTimeline || []
+  } catch (error) {
+    toast.value = errorMessage(error)
+  }
 }
 
 function openFalse(alertNo: string) {

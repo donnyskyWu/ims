@@ -468,6 +468,8 @@ def ensure_alert_record_columns() -> None:
         alters.append("ADD COLUMN object_label VARCHAR(128) NOT NULL DEFAULT ''")
     if "merged_count" not in cols:
         alters.append("ADD COLUMN merged_count INT NOT NULL DEFAULT 1")
+    if "handle_log" not in cols:
+        alters.append("ADD COLUMN handle_log TEXT NULL")
     if not alters:
         return
     with engine.begin() as conn:

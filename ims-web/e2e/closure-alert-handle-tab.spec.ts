@@ -5,8 +5,7 @@ import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
  * Checklist **E2E-S11-切片**（acceptance · **纯 UI** · #44）
  * Given: UI 新建启用规则 → 试跑生成 OPEN 预警
  * When: `/ims/alert/live`「处理」→「处置记录」Tab →「去重合并」Tab
- * Then: toast 处置成功 · 处置记录含 RESOLVED · 去重策略表可见 DEDUP-LIVE
- * 状态已对齐契约：直接「处理」仍从 OPEN 到 RESOLVED（旧试跑→处理闭环）
+ * Then: 「处理」打开处置抽屉并进入处理中，再「标记恢复」到 RESOLVED；处置记录点编号打开时间线；去重策略表可见 DEDUP-LIVE
  */
 test.describe('alert handle tab closure S11', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
@@ -47,15 +46,30 @@ test.describe('alert handle tab closure S11', () => {
     await expect(liveRow).toBeVisible({ timeout: 15_000 })
     await expect(liveRow).toContainText('OPEN')
 
+    await liveRow.getByRole('button', { name: '处理' }).click()
+    const drawer = page.getByTestId('alert-handle-drawer')
+    await expect(drawer).toBeVisible()
+    await expect(drawer.getByTestId('alert-handle-chain')).toContainText('30 分钟')
+    await drawer.getByTestId('alert-handle-remark').fill('现场已核对')
     const handleResp = page.waitForResponse(
       (r) => r.url().includes('/alert/check/') && r.url().includes('/respond') && r.request().method() === 'PUT',
     )
-    await liveRow.getByRole('button', { name: '处理' }).click()
+    await drawer.getByTestId('alert-handle-submit').click()
     const handleBody = (await (await handleResp).json()) as { code: number; data?: { responseStatus?: string } }
     expect(handleBody.code).toBe(0)
-    expect(handleBody.data?.responseStatus).toBe('RESOLVED')
+    expect(handleBody.data?.responseStatus).toBe('CONFIRMED')
 
-    await expect(page.locator('p.hint').filter({ hasText: /处置成功/ })).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('p.hint').filter({ hasText: /处理中/ })).toBeVisible({ timeout: 10_000 })
+    await expect(liveRow).toContainText('处理中')
+    await expect(liveRow).toContainText('CONFIRMED')
+
+    const recoverResp = page.waitForResponse(
+      (r) => r.url().includes('/alert/check/') && r.url().includes('/respond') && r.request().method() === 'PUT',
+    )
+    await liveRow.getByRole('button', { name: '标记恢复' }).click()
+    const recoverBody = (await (await recoverResp).json()) as { code: number; data?: { responseStatus?: string } }
+    expect(recoverBody.code).toBe(0)
+    expect(recoverBody.data?.responseStatus).toBe('RESOLVED')
     await expect(liveRow).toContainText('RESOLVED')
 
     await page.locator('.tab', { hasText: '处置记录' }).click()
@@ -66,6 +80,13 @@ test.describe('alert handle tab closure S11', () => {
     const historyRow = page.locator('tbody tr').filter({ hasText: alertNo! })
     await expect(historyRow).toBeVisible({ timeout: 15_000 })
     await expect(historyRow).toContainText('RESOLVED')
+    await historyRow.getByTestId('alert-record-no').click()
+    const timeline = page.getByTestId('alert-record-timeline')
+    await expect(timeline).toBeVisible()
+    await expect(timeline).toContainText('触发')
+    await expect(timeline).toContainText('处置')
+    await expect(timeline).toContainText('恢复')
+    await timeline.getByRole('button', { name: '关闭' }).click()
 
     await page.locator('.tab', { hasText: '去重合并' }).click()
     await expect(page.locator('tbody tr').filter({ hasText: 'DEDUP-LIVE' })).toBeVisible({ timeout: 15_000 })

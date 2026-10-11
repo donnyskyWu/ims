@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -354,6 +355,71 @@ def duration_text(row: AlertRecord) -> str:
         return f"{hours} 小时 {rest} 分钟" if rest else f"{hours} 小时"
     days, hours = divmod(hours, 24)
     return f"{days} 天 {hours} 小时" if hours else f"{days} 天"
+
+
+def _handle_entries(row: AlertRecord) -> list[dict]:
+    raw = getattr(row, "handle_log", None) or "[]"
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def append_handle_log(row: AlertRecord, action: str, remark: str, actor: User) -> None:
+    items = _handle_entries(row)
+    items.append(
+        {
+            "action": action,
+            "at": iso(utcnow()),
+            "remark": (remark or "")[:200],
+            "actorName": ((actor.nickname or actor.username or "")[:64]),
+        }
+    )
+    row.handle_log = json.dumps(items, ensure_ascii=False)
+
+
+def disposition_timeline(row: AlertRecord) -> list[dict]:
+    """处置记录时间线：触发 → 处置 → 恢复。与升级链时间轴分开。"""
+    nodes = [
+        {
+            "key": "TRIGGER",
+            "label": "触发",
+            "at": iso(row.occurred_at),
+            "note": object_label(row) or "",
+            "actorName": "",
+        }
+    ]
+    labels = {
+        "ACK": ("HANDLE", "处置"),
+        "CONFIRM": ("HANDLE", "处置"),
+        "HANDLE": ("RECOVER", "恢复"),
+        "HANDLED": ("RECOVER", "恢复"),
+        "RESOLVE": ("RECOVER", "恢复"),
+        "FALSE_ALARM": ("FALSE", "误报"),
+        "FALSE_POSITIVE": ("FALSE", "误报"),
+        "MISREPORT": ("FALSE", "误报"),
+    }
+    for item in _handle_entries(row):
+        action = str(item.get("action") or "").upper()
+        mapped = labels.get(action)
+        if mapped is None:
+            continue
+        key, label = mapped
+        nodes.append(
+            {
+                "key": key,
+                "label": label,
+                "at": item.get("at") or "",
+                "note": item.get("remark") or "",
+                "actorName": item.get("actorName") or "",
+            }
+        )
+    return nodes
 
 
 def record_vo(row: AlertRecord, rule: AlertRule | None = None) -> dict:
@@ -724,6 +790,7 @@ def check_detail(
         data["retryNote"] = ""
     data["sourceJumpUrl"] = source_jump(row)
     data["escalationTimeline"] = []
+    data["dispositionTimeline"] = disposition_timeline(row)
     data["retryCount"] = 1 if row.push_status in (2, 3) else 0
     return ok(data)
 
@@ -770,6 +837,8 @@ def respond_alert(
         notes.append(f"处理说明：{body.handleRemark.strip()}")
     if notes:
         row.content = f"{row.content}；{'；'.join(notes)}"[:512]
+    remark = (body.handleRemark or body.falseAlarmReason or "").strip()
+    append_handle_log(row, action, remark, actor)
     row.updated_at = utcnow()
     db.flush()
     data = record_vo(row, rule)
