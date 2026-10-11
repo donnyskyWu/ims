@@ -79,7 +79,7 @@ ROLE_SPEC: dict[str, tuple[str, str, dict[str, str] | None]] = {
         "直播运营",
         "SELF",
         _pack(
-            ("R", ("home", "workbench", "ipg", "liveAlarm", "contentSop", "contentTopic", "contentPlan", "contentWork", "contentTask", "contentList", "contentLayout", "crCert", "cdOffice", "cdLive", "cdPhone", "meet", "perfRank", "perfResult", "bi0Report", "queryTool", "biPreview", "dc", "dcDashboard", "alertLive", "alertEscalate", "comp", "compAccount")),
+            ("R", ("home", "workbench", "ipg", "liveAlarm", "contentSop", "contentTopic", "contentPlan", "contentWork", "contentTask", "contentList", "contentLayout", "crCert", "cdOffice", "cdLive", "cdPhone", "meet", "perfRank", "perfResult", "bi0Report", "alertLive", "alertEscalate", "comp", "compAccount")),
             ("RW", ("live",) + _ACCOUNTS + ("dailyMine", "flow", "perfExam", "biList", "compWork")),
             ("R", ("perfMine",)),
         ),

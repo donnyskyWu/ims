@@ -196,16 +196,19 @@ def test_workbench_flow_todo_loads_without_flow_menu():
 
 def test_r5_analysis_menu_is_prd_subset():
     codes = grants_for("R5")
-    assert "menu:queryTool:query" in codes
-    assert "menu:biPreview:query" in codes
-    assert "menu:dc:query" in codes
-    assert "menu:dcDashboard:query" in codes
-    assert "menu:bi0Query:query" not in codes
-    assert "menu:eff:query" not in codes
-    assert "menu:bi0Metric:query" not in codes
-    assert "menu:bi0Analysis:query" not in codes
-    assert "menu:biList:query" not in codes or codes["menu:biList:query"]
+    for code in (
+        "menu:queryTool:query",
+        "menu:bi0Query:query",
+        "menu:biPreview:query",
+        "menu:dc:query",
+        "menu:dcDashboard:query",
+        "menu:eff:query",
+        "menu:bi0Metric:query",
+        "menu:bi0Analysis:query",
+    ):
+        assert code not in codes
     assert "menu:biList:query" in codes
+    assert "nav:bi-analysis:query" not in codes
 
 
 def test_r8_has_no_report_menu_and_r4_can_open_flow_and_review():
@@ -263,9 +266,13 @@ def test_tc_accounts_follow_matrix_and_custom_role_survives():
         routes = set(access["routes"])
         if username in ("tc_r5", "tc_r5b"):
             analysis = [ANALYSIS[route] for route in ANALYSIS if route in routes]
-            assert analysis == ["查询工具", "预览与下钻", "穿透查询", "全链路看板"]
+            assert analysis == []
             assert "/ims/bi/metric" not in routes
             assert "/ims/bi/analysis" not in routes
+            for path in ("/admin-api/ims/dc/trace/entry", "/admin-api/ims/analysis/query-tool/template/page"):
+                denied = client.get(path, headers=login(username))
+                assert denied.status_code == 403, path
+                assert denied.json()["code"] == 403
         if username == "tc_r8":
             assert "/ims/bi/report/list" not in routes
         seen[username] = l1_names(role_key)
