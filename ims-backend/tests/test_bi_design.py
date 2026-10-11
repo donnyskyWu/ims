@@ -5,8 +5,8 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
-from app.bi_report import BiCompType
 from app.main import app
+from app.bi_report import BiCompType
 
 client = TestClient(app)
 
