@@ -17,7 +17,7 @@
       <div class="pg-h" style="margin-bottom: 8px">
         <div>
           <div class="sub">PERF-004 排名区 · {{ gradeLine }}</div>
-          <p class="hint">V2 排名不含竞品分析维度（BR-110）。</p>
+          <p class="hint">V2 排名不含竞品分析维度。</p>
         </div>
         <div class="acts">
           <label>
@@ -417,7 +417,7 @@ const alertText = computed(() => {
   const row = alertRow.value
   if (!row) return ''
   if (row.grade === 'IMPROVE' || row.alerted) {
-    return `${row.evaluateeName} 综合得分 ${scoreText(row.totalScore)}，低于合格线，已触发改进预警（BR-117）`
+    return `${row.evaluateeName} 综合得分 ${scoreText(row.totalScore)}，低于合格线，已触发改进预警`
   }
   return `${row.evaluateeName} 本期未低于合格线，不触发改进预警`
 })

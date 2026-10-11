@@ -103,7 +103,7 @@
               <td class="num">{{ row.metricCode === COMPETE_CODE ? '—' : `${formatWeight(row.weight)}%` }}</td>
               <td>{{ ruleText(row) }}</td>
               <td>
-                <span class="tag" :title="row.metricCode === COMPETE_CODE ? row.enableNote || '' : ''">
+                <span class="tag" :title="row.metricCode === COMPETE_CODE ? stripReqCodes(row.enableNote || '') : ''">
                   <span class="dot"></span>{{ row.metricCode === COMPETE_CODE ? '🔒' : '' }}{{ statusLabel(row.status) }}
                 </span>
               </td>
@@ -333,9 +333,9 @@
         <div class="fld"><label>指标编码</label><div class="mono">{{ compete.metricCode }}</div></div>
         <div class="fld"><label>指标名称</label><div>{{ compete.metricName }}</div></div>
         <div class="fld"><label>状态</label><div>🔒 {{ statusLabel(compete.status) }}</div></div>
-        <div class="fld"><label>锁定说明</label><div data-testid="compete-note">{{ compete.enableNote }}</div></div>
+        <div class="fld"><label>锁定说明</label><div data-testid="compete-note">{{ stripReqCodes(compete.enableNote || '') }}</div></div>
       </div>
-      <p v-if="competeError" data-testid="compete-lock-error" class="hint" style="color: var(--red)">{{ competeError }}</p>
+      <p v-if="competeError" data-testid="compete-lock-error" class="hint" style="color: var(--red)">{{ stripReqCodes(competeError) }}</p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="competeOpen = false">关闭</button>
         <button class="btn btn-pri" type="button" data-testid="compete-enable" @click="tryEnableCompete">启用</button>
@@ -442,7 +442,7 @@ const coverageStyle = computed(() => {
 const coverageRateText = computed(() => `${Number(coverage.autoCoverageRate || 0).toFixed(2)}%`)
 const coverageFlag = computed(() => {
   if (!coverage.enabledMetricCount) return '暂无启用指标'
-  if (coverage.autoCoverageRate > 80) return '达标（BR-105 >80%）'
+  if (coverage.autoCoverageRate > 80) return '达标（>80%）'
   return '未达标'
 })
 
@@ -495,12 +495,16 @@ function ruleText(row: MetricRow) {
   return count ? `分段 ${count} 段` : '分段'
 }
 
+function stripReqCodes(text: string) {
+  return text.replace(/[（(][^）)]*(?:BR|ADR)-[^）)]*[）)]/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+}
+
 function rejectText(err: unknown) {
   if (err && typeof err === 'object' && 'code' in err) {
     const body = err as { code?: number; msg?: string }
-    return `${body.code ?? ''} ${body.msg || ''}`.trim()
+    return stripReqCodes(`${body.code ?? ''} ${body.msg || ''}`.trim())
   }
-  return errorMessage(err)
+  return stripReqCodes(errorMessage(err))
 }
 
 let metricSeq = 0

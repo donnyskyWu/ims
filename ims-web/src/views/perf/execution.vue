@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      状态 ADR-IMS-005 · canonical 七态 · P2 列表 Tag 四别名（草稿/计算中/已计算/已确认）
+      列表状态：草稿、计算中、已计算、已确认
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.evaluateeName" placeholder="被考核人" style="width: 110px" />
@@ -197,7 +197,7 @@
         </div>
         <div class="fld"><label>周期开始</label><input v-model="form.periodStart" placeholder="2026-07-01" /></div>
         <div class="fld"><label>周期结束</label><input v-model="form.periodEnd" placeholder="2026-09-30" /></div>
-        <p v-if="formError" class="hint" data-testid="perf-exec-error" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" class="hint" data-testid="perf-exec-error" style="color: var(--red)">{{ stripReqCodes(formError) }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
@@ -211,6 +211,10 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
+
+function stripReqCodes(text: string) {
+  return text.replace(/[（(][^）)]*(?:BR|ADR)-[^）)]*[）)]/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+}
 
 type ScoreLine = {
   metricName: string

@@ -58,7 +58,7 @@ test.describe('perf TC-15 follow-up', () => {
     await page.getByRole('button', { name: '创建考核' }).click()
     await fillCreate()
     await execModal.getByRole('button', { name: '保存' }).click()
-    await expect(page.getByTestId('perf-exec-error')).toContainText('该周期已有进行中的考核记录（BR-031）')
+    await expect(page.getByTestId('perf-exec-error')).toContainText('该周期已有进行中的考核记录')
     await execModal.getByRole('button', { name: '取消' }).click()
 
     const execRow = page.locator('tbody tr').filter({ hasText: recordNo }).first()
