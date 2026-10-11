@@ -6,7 +6,7 @@
         <div class="sub">{{ meta.sub }}</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri" type="button" @click="openCreate">登记账号</button>
+        <button v-if="canAccountWrite" class="btn btn-pri" type="button" @click="openCreate">登记账号</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
@@ -104,7 +104,7 @@
               <td class="acts-cell">
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
                 <button
-                  v-if="row.status === 'IN_POOL' || row.status === 'IN_USE' || row.status === 'FROZEN'"
+                  v-if="canAccountWrite && (row.status === 'IN_POOL' || row.status === 'IN_USE' || row.status === 'FROZEN')"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="acct-checkout-open"
@@ -113,7 +113,7 @@
                   领用
                 </button>
                 <button
-                  v-if="row.status === 'IN_USE'"
+                  v-if="canAccountWrite && row.status === 'IN_USE'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-return-open"
@@ -122,7 +122,7 @@
                   归还
                 </button>
                 <button
-                  v-if="row.status === 'RETURNED'"
+                  v-if="canAccountWrite && row.status === 'RETURNED'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-recycle-open"
@@ -131,7 +131,7 @@
                   回收回池
                 </button>
                 <button
-                  v-if="row.status === 'IN_USE'"
+                  v-if="canAccountWrite && row.status === 'IN_USE'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-recall-open"
@@ -140,7 +140,7 @@
                   收回
                 </button>
                 <button
-                  v-if="row.status === 'FROZEN'"
+                  v-if="canAccountWrite && row.status === 'FROZEN'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-unfreeze-open"
@@ -149,7 +149,7 @@
                   解冻
                 </button>
                 <button
-                  v-if="(row.status === 'IN_USE' && !pendingFor(row)) || row.status === 'FROZEN'"
+                  v-if="canAccountWrite && ((row.status === 'IN_USE' && !pendingFor(row)) || row.status === 'FROZEN')"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-transfer-open"
@@ -158,7 +158,7 @@
                   流转
                 </button>
                 <button
-                  v-if="canConfirmTransfer(row)"
+                  v-if="canAccountWrite && canConfirmTransfer(row)"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="acct-transfer-confirm-open"
@@ -167,7 +167,7 @@
                   确认接收
                 </button>
                 <button
-                  v-if="row.status !== 'CANCELLED'"
+                  v-if="canAccountWrite && row.status !== 'CANCELLED'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-recharge-open"
@@ -176,7 +176,7 @@
                   冲话费
                 </button>
                 <button
-                  v-if="row.status !== 'CANCELLED'"
+                  v-if="canAccountWrite && row.status !== 'CANCELLED'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-verify-open"
@@ -302,7 +302,7 @@
               <td>{{ rechargeTimeText(item.createdAt) }}</td>
               <td class="acts-cell">
                 <button
-                  v-if="!item.verifyStatus || item.verifyStatus === 'UNVERIFIED'"
+                  v-if="canAccountWrite && (!item.verifyStatus || item.verifyStatus === 'UNVERIFIED')"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-recharge-edit"
@@ -311,7 +311,7 @@
                   编辑
                 </button>
                 <button
-                  v-else
+                  v-else-if="canAccountWrite"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="acct-recharge-unlock"
@@ -818,7 +818,7 @@
       </div>
       <template #foot>
         <button
-          v-if="detail && detail.status === 'IN_POOL'"
+          v-if="canAccountWrite && detail && detail.status === 'IN_POOL'"
           class="btn btn-pri"
           type="button"
           @click="openCheckout(detail)"
@@ -826,7 +826,7 @@
           领用
         </button>
         <button
-          v-if="detail && detail.status === 'IN_USE'"
+          v-if="canAccountWrite && detail && detail.status === 'IN_USE'"
           class="btn btn-sec"
           type="button"
           @click="openReturn(detail)"
@@ -1349,10 +1349,19 @@ const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: strin
   xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: 'P-M4-008 · XIAOHONGSHU · 08 CORP-A' },
 }
 
+const ACCOUNT_PERM: Record<string, string> = {
+  DOUYIN: 'menu:caDouyin:query',
+  KUAISHOU: 'menu:caKuaishou:query',
+  WECHAT_CHANNELS: 'menu:caWechatChannels:query',
+  WECHAT_OFFICIAL: 'menu:caWechatOfficial:query',
+  XIAOHONGSHU: 'menu:caXhs:query',
+}
+
 const meta = computed(() => {
   const slug = String(route.params.platform || 'douyin')
   return PLATFORM_MAP[slug] || PLATFORM_MAP.douyin
 })
+const canAccountWrite = computed(() => userStore.canMutate(ACCOUNT_PERM[meta.value.platform] || 'menu:caDouyin:query'))
 const collectMsgTestId = computed(() => {
   if (meta.value.platform === 'DOUYIN') return 'dy-tab-collect-msg'
   if (meta.value.platform === 'KUAISHOU') return 'ks-tab-collect-msg'

@@ -42,6 +42,11 @@ export const useUserStore = defineStore('user', {
       if (this.admin || this.fullCatalog) return true
       return (this.permLevels[code] || '').includes('W')
     },
+    canMutate(code: string) {
+      if (this.canWrite(code)) return true
+      const base = code.endsWith(':query') ? code.slice(0, -'query'.length) : `${code}:`
+      return this.hasPerm(`${base}add`) || this.hasPerm(`${base}edit`)
+    },
     canOpen(path: string) {
       if (this.admin || this.fullCatalog) return true
       const target = pathname(path)

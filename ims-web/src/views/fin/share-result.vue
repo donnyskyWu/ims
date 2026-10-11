@@ -93,7 +93,7 @@
               </td>
               <td>
                 <button
-                  v-if="row.status === 'PENDING_AUDIT' && !row.finAuditPassed"
+                  v-if="canShareWrite && row.status === 'PENDING_AUDIT' && !row.finAuditPassed"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="fin-share-audit-finance"
@@ -102,7 +102,7 @@
                   财务审
                 </button>
                 <button
-                  v-if="row.status === 'PENDING_AUDIT' && !row.bizAuditPassed"
+                  v-if="canShareWrite && row.status === 'PENDING_AUDIT' && !row.bizAuditPassed"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="fin-share-audit-business"
@@ -111,7 +111,7 @@
                   业务审
                 </button>
                 <button
-                  v-if="row.status === 'PENDING_AUDIT'"
+                  v-if="canShareWrite && row.status === 'PENDING_AUDIT'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="fin-share-reject-open"
@@ -120,7 +120,7 @@
                   驳回
                 </button>
                 <button
-                  v-if="row.status === 'AUDITED'"
+                  v-if="canShareWrite && row.status === 'AUDITED'"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="fin-share-payoff-open"
@@ -129,7 +129,7 @@
                   发放登记
                 </button>
                 <button
-                  v-if="row.status === 'AUDITED' || row.status === 'PAID_OFF'"
+                  v-if="canShareWrite && (row.status === 'AUDITED' || row.status === 'PAID_OFF')"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="fin-share-reverse-open"
@@ -190,6 +190,7 @@
         </p>
         <div class="drawer-f">
           <button
+            v-if="canShareWrite"
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="fin-share-payoff-submit"
@@ -226,7 +227,7 @@
           </p>
         </div>
         <div class="drawer-f">
-          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-reverse-submit" @click="submitReverse">
+          <button v-if="canShareWrite" class="btn btn-pri btn-sm" type="button" data-testid="fin-share-reverse-submit" @click="submitReverse">
             确认冲销
           </button>
         </div>
@@ -265,6 +266,7 @@
         <p v-if="rejectError" class="hint" data-testid="fin-share-reject-error" style="color: var(--red)">{{ rejectError }}</p>
         <div class="drawer-f">
           <button
+            v-if="canShareWrite"
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="fin-share-reject-submit"
@@ -282,6 +284,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
+
+const userStore = useUserStore()
+const canShareWrite = computed(() => userStore.canMutate('menu:finShareResult:query'))
 
 type RedEntry = { item: string; amount: number | string }
 type ReverseAudit = { actorName?: string; reversedAt?: string; reason?: string; fromStatus?: string }

@@ -30,6 +30,7 @@
           "
         >{{ periodStatus || 'OPEN' }}</span>
         <button
+          v-if="canFinWrite"
           class="btn btn-pri btn-sm"
           type="button"
           data-testid="fin-period-close"
@@ -152,7 +153,7 @@
                 <span v-else>否</span>
               </td>
               <td>
-                <button class="btn btn-pri btn-sm" type="button" @click="openEntry(row)">录入</button>
+                <button v-if="canFinWrite" class="btn btn-pri btn-sm" type="button" @click="openEntry(row)">录入</button>
                 <button
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -204,7 +205,7 @@
                   对账
                 </button>
                 <button
-                  v-if="row.entryStatus === 'SUBMITTED'"
+                  v-if="canFinWrite && row.entryStatus === 'SUBMITTED'"
                   class="btn btn-pri btn-sm"
                   type="button"
                   @click="confirmCost(row.sessionCode)"
@@ -212,7 +213,7 @@
                   核准
                 </button>
                 <button
-                  v-if="row.entryStatus === 'CONFIRMED'"
+                  v-if="canFinWrite && row.entryStatus === 'CONFIRMED'"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="fin-cost-correction-open"
@@ -238,18 +239,18 @@
       <div class="form-grid">
         <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
         <label>退款（只读）<input :value="'¥' + fmt(form.costRefund)" disabled /></label>
-        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
-        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
-        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
-        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
-        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
-        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
-        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
+        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" :disabled="!canFinWrite" /></label>
+        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
       </div>
       <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
       <template #footer>
-        <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
-        <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
+        <button v-if="canFinWrite" class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
+        <button v-if="canFinWrite" class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
       </template>
     </ProtoDrawer>
 
@@ -265,10 +266,11 @@
         <div>期间已结账。锁后更正须 R4 审批通过后才能红冲调整。</div>
         <div data-testid="fin-lock-adjust-status">{{ lockAdjustStatus || '未申请' }}</div>
         <div class="acts" style="margin-top: 8px">
-          <button class="btn btn-sec btn-sm" type="button" data-testid="fin-lock-adjust-apply" @click="applyLockAdjust">
+          <button v-if="canFinWrite" class="btn btn-sec btn-sm" type="button" data-testid="fin-lock-adjust-apply" @click="applyLockAdjust">
             申请锁后更正
           </button>
           <button
+            v-if="canFinWrite"
             class="btn btn-pri btn-sm"
             type="button"
             data-testid="fin-lock-adjust-approve"
@@ -283,13 +285,13 @@
         {{ correctionError }}
       </p>
       <div class="form-grid">
-        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
-        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
-        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
-        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
-        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
-        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
-        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
+        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" :disabled="!canFinWrite" /></label>
+        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
+        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" :disabled="!canFinWrite" /></label>
         <label style="grid-column: 1 / -1">
           更正原因（必填）
           <input
@@ -318,6 +320,7 @@
       <template #footer>
         <button class="btn btn-sec" type="button" @click="correctionOpen = false">取消</button>
         <button
+          v-if="canFinWrite"
           class="btn btn-pri"
           type="button"
           data-testid="fin-cost-correction-submit"
@@ -335,8 +338,11 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
+const user = useUserStore()
+const canFinWrite = computed(() => user.canMutate('menu:finCost:query'))
 
 const tab = ref<'pending' | 'entered'>('pending')
 const loading = ref(false)

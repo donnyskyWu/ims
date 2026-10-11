@@ -7,7 +7,7 @@
       </div>
       <div class="acts">
         <button class="btn btn-sec" type="button" disabled>导出</button>
-        <button v-if="tab === 'cost'" class="btn btn-pri" type="button" @click="openProcess">登记过程成本</button>
+        <button v-if="tab === 'cost' && canCostWrite" class="btn btn-pri" type="button" @click="openProcess">登记过程成本</button>
       </div>
     </div>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
@@ -33,7 +33,7 @@
               <b>采购成本</b>
               <span class="hint" style="margin-left: 8px">单行 · PUT purchase</span>
             </div>
-            <button class="btn btn-sec btn-sm" type="button" @click="savePurchase">保存采购</button>
+            <button v-if="canCostWrite" class="btn btn-sec btn-sm" type="button" @click="savePurchase">保存采购</button>
           </div>
           <div class="qbar" style="margin-top: 10px; padding: 0">
             <input v-model.number="purchaseForm.amount" type="number" step="0.01" placeholder="金额" style="width: 120px" />
@@ -66,7 +66,7 @@
                 <td>{{ row.processSubtype || '—' }}</td>
                 <td class="num">¥{{ fmt(row.amount) }}</td>
                 <td class="num">{{ row.period || '—' }}</td>
-                <td><button class="btn-txt btn" type="button" @click="removeProcess(row.id)">删除</button></td>
+                <td><button v-if="canCostWrite" class="btn-txt btn" type="button" @click="removeProcess(row.id)">删除</button></td>
               </tr>
             </tbody>
           </table>
@@ -180,11 +180,12 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import axios from 'axios'
 import { useUserStore } from '../../stores/user'
 
 const user = useUserStore()
+const canCostWrite = computed(() => user.canMutate('menu:cost:query'))
 const tab = ref<'cost' | 'roi' | 'orders'>('cost')
 const hint = ref('')
 const accountOptions = ref<{ id: string; label: string }[]>([])
