@@ -1197,14 +1197,12 @@
           "label": "内容生产",
           "children": [
             "contentSop",
-            "contentTopic",
             "contentPlan",
             "contentWork",
             "contentTask",
             "contentList",
             "contentLayout",
-            "contentReview",
-            "contentPublish"
+            "contentReview"
           ]
         },
         {

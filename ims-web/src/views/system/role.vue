@@ -125,6 +125,7 @@
         <label :style="{ paddingLeft: `${Number(menu.depth) * 12}px` }">
           <input v-model="draft.menuIds" type="checkbox" :value="menu.id" :disabled="!menu.permCode" />
           {{ menu.name }}
+          <span class="tag">{{ typeLabel(menu.menuType) }}</span>
           <span v-if="menu.permCode" class="mono">{{ menu.permCode }}</span>
         </label>
         <select v-if="menu.permCode && draft.menuIds.includes(menu.id)" v-model="draft.levels[String(menu.permCode)]">
@@ -185,7 +186,7 @@ import { errorMessage, http } from '../../api/http'
 import { asList, cell, readData } from '../../api/read'
 import { useUserStore } from '../../stores/user'
 
-type MenuNode = { id: number; name: string; permCode?: string; children?: MenuNode[]; depth?: number }
+type MenuNode = { id: number; name: string; permCode?: string; menuType?: string; children?: MenuNode[]; depth?: number }
 
 const rows = ref<Record<string, unknown>[]>([])
 const ready = ref(false)
@@ -269,6 +270,9 @@ function menuCount(row: Record<string, unknown>) {
 function permCount(row: Record<string, unknown>) {
   const detail = row.permDetail
   return detail && typeof detail === 'object' ? Object.keys(detail as object).length : 0
+}
+function typeLabel(value?: string) {
+  return { DIR: '目录', MENU: '菜单', BUTTON: '按钮' }[value || ''] || value || ''
 }
 function scopeLabel(value: string) {
   return { ALL: '全部', DEPT: '本部门', IP_GROUP: 'IP组', SELF: '本人' }[value] || value || '—'

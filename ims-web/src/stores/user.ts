@@ -53,7 +53,9 @@ export const useUserStore = defineStore('user', {
     canSeeMenu(id: string, path: string) {
       if (this.admin || this.fullCatalog) return true
       if (PUBLIC_MENU_IDS.has(id)) return true
-      return this.canOpen(path)
+      // 侧栏按菜单路由精确匹配。不能用前缀，否则「报表中心」会把「预览与下钻」等下级菜单一并放出来。
+      const target = pathname(path)
+      return this.routes.some((route) => pathname(route) === target)
     },
     async login(username: string, password: string) {
       const cb = await http.post('/auth/login', { username, password })

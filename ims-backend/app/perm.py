@@ -21,27 +21,38 @@ FUNCTION_SKIP = (
 EXTRA_ROUTES = {
     "perf:mine": ("/ims/perf/mine",),
 }
-# (methods, prefix, perm_code, need) need: R=持有即可，W=级别含 W
-RULES = (
-    (("GET", "HEAD"), "/admin-api/ims/system/user", "system:user:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/system/user", "system:user:query", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/system/role", "system:role:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/system/role", "system:role:query", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/system/menu", "ops:system:menu", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/system/menu", "ops:system:menu", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/system/dict", "system:dict:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/system/dict", "system:dict:query", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/system/param", "system:param:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/system/param", "system:param:query", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/system/operate-log", "system:log:query", "R"),
-    (("GET", "HEAD"), "/admin-api/ims/system/login-log", "system:log:query", "R"),
-    (("GET", "HEAD"), "/admin-api/ims/system/notify", "system:notify:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/system/notify", "system:notify:query", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/auth/org", "auth:org:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/auth/org", "auth:org:query", "W"),
-    (("GET", "HEAD"), "/admin-api/ims/auth/position", "auth:position:query", "R"),
-    (("POST", "PUT", "DELETE"), "/admin-api/ims/auth/position", "auth:position:query", "W"),
-)
+def _buttons(code: str) -> dict[str, str]:
+    if code.endswith(":query"):
+        base = code[: -len("query")]
+    else:
+        base = f"{code}:"
+    return {"add": base + "add", "edit": base + "edit", "remove": base + "remove"}
+
+
+def match_code(path: str) -> str | None:
+    from app.menu_catalog import API_RULES
+
+    found = None
+    length = -1
+    for prefix, code in API_RULES:
+        if path.startswith(prefix) and len(prefix) > length:
+            found = code
+            length = len(prefix)
+    return found
+
+
+def allows(levels: dict[str, str], code: str, method: str) -> bool:
+    letters = letters_of(levels.get(code, ""))
+    buttons = _buttons(code)
+    if method in ("GET", "HEAD"):
+        return bool(letters)
+    if method == "DELETE":
+        return "D" in letters or "W" in letters or bool(levels.get(buttons["remove"]))
+    if "W" in letters:
+        return True
+    if method == "PUT":
+        return bool(levels.get(buttons["edit"]))
+    return bool(levels.get(buttons["add"]) or levels.get(buttons["edit"]))
 
 
 def deny_perm():
@@ -87,16 +98,6 @@ def level_map(db: Session, user: User) -> dict[str, str]:
     return levels
 
 
-def match_rule(method: str, path: str) -> tuple[str, str] | None:
-    found = None
-    length = -1
-    for methods, prefix, code, need in RULES:
-        if method in methods and path.startswith(prefix) and len(prefix) > length:
-            found = (code, need)
-            length = len(prefix)
-    return found
-
-
 def describe(db: Session, user: User) -> dict:
     admin = is_admin(db, user)
     levels = level_map(db, user)
@@ -132,15 +133,9 @@ def enforce_function(db: Session, request, user: User) -> None:
         return
     if is_admin(db, user):
         return
-    rule = match_rule(request.method, path)
     levels = level_map(db, user)
-    if rule is None:
-        if not levels:
-            deny_perm()
-        return
-    code, need = rule
-    level = levels.get(code, "")
-    if not level:
+    code = match_code(path)
+    if code is None:
         deny_perm()
-    if need == "W" and "W" not in letters_of(level):
+    if not allows(levels, code, request.method):
         deny_perm()

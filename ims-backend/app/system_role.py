@@ -71,6 +71,9 @@ def seed_roles(db: Session) -> None:
         if admin is not None:
             db.add(UserRole(user_id=admin.id, role_id=role.id, tenant_id=0))
     ensure_log_menus(db)
+    from app.role_matrix import ensure_role_matrix
+
+    ensure_role_matrix(db)
 
 
 def ensure_log_menus(db: Session) -> None:
