@@ -118,8 +118,23 @@ def enrich_metrics(ops: Session, tenant_id: int, asset: CompAsset) -> dict:
     }
 
 
+AUDIT_LABELS = {
+    "APPROVED": "已入库",
+    "STORED": "已入库",
+    "TRACKING": "已入库",
+    "PENDING": "待初审",
+    "SUBMITTED": "待初审",
+    "REJECTED": "已退回",
+    "PAUSED": "暂停",
+    "ARCHIVED": "归档",
+}
+
+
 def asset_vo(asset: CompAsset, metrics: dict) -> dict:
     initial = (asset.comp_name_std or "?")[:1]
+    info = dict(asset.base_info or {})
+    status = asset.status or "APPROVED"
+    stored = status in {"APPROVED", "STORED", "TRACKING"}
     return {
         "id": str(asset.id),
         "assetNo": asset.asset_no,
@@ -133,7 +148,12 @@ def asset_vo(asset: CompAsset, metrics: dict) -> dict:
         "featuredWorksIncluded": metrics["featuredWorksIncluded"],
         "latestVersion": asset.latest_version,
         "referenceCount": asset.reference_count,
-        "status": asset.status,
+        "status": status,
+        "auditStatus": "STORED" if stored else status,
+        "auditStatusLabel": AUDIT_LABELS.get(status, status),
+        "monitorSubscribed": bool(info.get("monitorSubscribed", stored)),
+        "homepageUrl": info.get("homepageUrl") or "",
+        "cardKind": "asset",
     }
 
 

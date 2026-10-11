@@ -1885,6 +1885,39 @@ class CompAsset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CompAnalysis(Base):
+    """竞品分析提交（COMP-001/002）。审核轮次留在 audit_rounds。"""
+
+    __tablename__ = "ims_comp_analysis"
+    __table_args__ = (Index("idx_comp_analysis_month", "tenant_id", "period_month", "comp_name_std"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_no: Mapped[str] = mapped_column(String(32), default="", index=True)
+    submitter_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="")
+    comp_name: Mapped[str] = mapped_column(String(128), default="")
+    comp_name_std: Mapped[str] = mapped_column(String(128), default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    homepage_url: Mapped[str] = mapped_column(String(512), default="")
+    comp_account_id: Mapped[str] = mapped_column(String(64), default="")
+    data_source: Mapped[str] = mapped_column(String(512), default="")
+    dimension_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    conclusion: Mapped[str] = mapped_column(Text, default="")
+    attachments: Mapped[list] = mapped_column(JSON, default=list)
+    submit_status: Mapped[str] = mapped_column(String(16), default="SUBMITTED", index=True)
+    audit_stage: Mapped[str] = mapped_column(String(16), default="FIRST")
+    reject_reason: Mapped[str] = mapped_column(String(512), default="")
+    reject_rounds: Mapped[int] = mapped_column(Integer, default=0)
+    asset_no: Mapped[str] = mapped_column(String(32), default="")
+    is_on_time: Mapped[int] = mapped_column(Integer, default=1)
+    audit_rounds: Mapped[list] = mapped_column(JSON, default=list)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class FlowTemplate(Base):
     __tablename__ = "ims_flow_template"
     __table_args__ = (UniqueConstraint("tenant_id", "template_code", name="uk_flow_template_code"),)
