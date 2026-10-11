@@ -276,8 +276,10 @@ def load_fin_cost(db: Session, tenant_id: int, session_code: str) -> FinCost | N
     )
 
 
-def calc_amounts(gmv: float, body: FinCostEntryBody) -> dict[str, float]:
-    commission = money(gmv * body.commissionRate)
+def calc_amounts(gmv: float, body: FinCostEntryBody, refund: float = 0) -> dict[str, float]:
+    from app.fin_policy import commission_amount
+
+    commission = commission_amount(gmv, refund, body.commissionRate)
     total = money(
         commission
         + body.adCost
@@ -373,8 +375,15 @@ def session_fin_visible(db: Session, actor: User, scope, session: LiveSession) -
     return db.scalar(stmt) is not None
 
 
-def apply_cost_row(row: FinCost, session: LiveSession, report: LiveReport, body: FinCostEntryBody, actor: User) -> None:
-    amounts = calc_amounts(float(report.gmv or 0), body)
+def apply_cost_row(
+    db: Session,
+    row: FinCost,
+    session: LiveSession,
+    report: LiveReport,
+    body: FinCostEntryBody,
+    actor: User,
+) -> None:
+    amounts = calc_amounts(float(report.gmv or 0), body, float(report.refund_amount or 0))
     row.platform = session.platform
     row.cost_gmv = money(report.gmv)
     row.cost_refund = money(report.refund_amount)
@@ -388,6 +397,10 @@ def apply_cost_row(row: FinCost, session: LiveSession, report: LiveReport, body:
     row.share_realname = money(body.shareRealname)
     row.share_cost_type = body.shareCostType
     row.total_cost = amounts["totalCost"]
+    if body.shareCostType == "ENGINE":
+        from app.fin_engine import apply_engine_shares
+
+        apply_engine_shares(db, session, report, row)
     row.entry_status = "DRAFT" if body.asDraft else "SUBMITTED"
     row.entry_user_id = actor.id
     row.entry_at = utcnow()
@@ -484,6 +497,12 @@ def upsert_profit(
     trigger_reason: str = "",
 ) -> FinProfit:
     preserve_profit_snapshot(db, tenant_id, session_code, cost)
+    if cost.share_cost_type == "ENGINE":
+        from app.fin_engine import apply_engine_shares, load_session
+
+        session = load_session(db, tenant_id, session_code)
+        if session is not None:
+            apply_engine_shares(db, session, report, cost)
     revenue = money(report.gmv)
     refund = money(report.refund_amount)
     total_cost = money(cost.total_cost)
@@ -603,7 +622,9 @@ def operating_profit(gross: float, cost: FinCost | None) -> float:
 
 
 def net_profit_rate(revenue: float, refund: float, net: float) -> float:
-    base = money(revenue) - money(refund)
+    from app.fin_policy import net_rate_denominator
+
+    base = net_rate_denominator(revenue, refund)
     if base <= 0:
         return 0.0
     return round(net * 100 / base, 2)
@@ -1163,8 +1184,25 @@ def cost_pending_sessions(
                 "approvedAt": approved_at or "",
                 "hoursSinceApprove": hrs,
                 "isOver48h": hrs >= 48,
+                "accountId": int(session.account_id or 0),
+                "ipGroupId": 0,
             }
         )
+    account_ids = {int(item["accountId"]) for item in items if item["accountId"]}
+    if account_ids:
+        from app.ops_db import ops_session
+        from app.ops_models import PlatformAccount
+
+        ops = ops_session()
+        try:
+            groups = {
+                int(row.id): int(row.ip_group_id or 0)
+                for row in ops.scalars(select(PlatformAccount).where(PlatformAccount.id.in_(account_ids))).all()
+            }
+        finally:
+            ops.close()
+        for item in items:
+            item["ipGroupId"] = groups.get(int(item["accountId"]), 0)
     total = len(items)
     start = (page_no - 1) * size
     page_items = items[start : start + size]
@@ -1178,6 +1216,7 @@ def cost_list(
     pageSize: int = 20,
     sessionCode: str = "",
     entryStatus: str = "",
+    platform: str = "",
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -1188,6 +1227,8 @@ def cost_list(
         stmt = stmt.where(FinCost.session_code.contains(sessionCode))
     if entryStatus:
         stmt = stmt.where(FinCost.entry_status == entryStatus)
+    if platform:
+        stmt = stmt.where(FinCost.platform == platform)
     rows = db.scalars(stmt.order_by(FinCost.id.desc())).all()
     visible: list[FinCost] = []
     for row in rows:
@@ -1354,7 +1395,7 @@ def cost_submit(
     if row is None:
         row = FinCost(session_code=session_code, tenant_id=tenant_id, client_token=clientToken)
         db.add(row)
-    apply_cost_row(row, session, report, body, actor)
+    apply_cost_row(db, row, session, report, body, actor)
     row.client_token = clientToken
     db.flush()
     return ok(cost_vo(db, row))
@@ -1401,9 +1442,11 @@ def cost_update(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None:
         return fail(1141, "成本未录入")
-    if row.entry_status == "CONFIRMED":
+    from app.fin_policy import EDIT_COST_BEFORE_CONFIRM
+
+    if row.entry_status == "CONFIRMED" or (row.entry_status == "SUBMITTED" and not EDIT_COST_BEFORE_CONFIRM):
         return fail(1141, "成本已核准，请走更正单")
-    apply_cost_row(row, session, report, body, actor)
+    apply_cost_row(db, row, session, report, body, actor)
     db.flush()
     return ok(cost_vo(db, row))
 
@@ -1492,7 +1535,7 @@ def cost_correction(
         return locked_adjust
     before = cost_amount_snapshot(row)
     preserve_profit_snapshot(db, tenant_id, session_code, row)
-    apply_cost_row(row, session, report, body.corrected, actor)
+    apply_cost_row(db, row, session, report, body.corrected, actor)
     row.entry_status = "CONFIRMED"
     after = cost_amount_snapshot(row)
     red, blue = correction_diff(before, after)
@@ -1608,7 +1651,16 @@ def sync_share_results(
         )
     ).all()
     active = [row for row in existing if row.deleted == 0]
-    parts = share_parts(session, cost)
+    engine = cost.share_cost_type == "ENGINE"
+    if engine:
+        from app.fin_engine import apply_engine_shares, cached_parts
+
+        parts = cached_parts(cost)
+        if parts is None:
+            report = approved_report(db, session_code, tenant_id)
+            parts = apply_engine_shares(db, session, report, cost) if report is not None else []
+    else:
+        parts = share_parts(session, cost)
     if any(row.status in ("AUDITED", "PAID_OFF") for row in active):
         return
     reversed_rows = [row for row in active if row.status == "REVERSED"]
@@ -1635,29 +1687,44 @@ def sync_share_results(
     keep = {part["shareTarget"] for part in parts}
     for part in parts:
         row = by_target.get(part["shareTarget"])
-        detail = {
-            "mode": "MANUAL",
-            "shareTotal": share_total,
-            "partAmount": part["shareAmount"],
-            "formula": "sum(shareAmount)=shareDaren+shareRealname",
-        }
+        if engine:
+            detail = {
+                "mode": "ENGINE",
+                "shareTotal": share_total,
+                "partAmount": part["shareAmount"],
+                "formula": part.get("formula") or "",
+                "shareBase": part.get("shareBase"),
+            }
+            rule_id = int(part.get("ruleId") or 0)
+            rule_name = part.get("ruleName") or "引擎计算"
+            share_base = money(part.get("shareBase") or 0)
+        else:
+            detail = {
+                "mode": "MANUAL",
+                "shareTotal": share_total,
+                "partAmount": part["shareAmount"],
+                "formula": "sum(shareAmount)=shareDaren+shareRealname",
+            }
+            rule_id = 0
+            rule_name = "手工分成"
+            share_base = money(profit.net_profit)
         created = row is None
         if row is None:
             row = FinShareResult(
                 session_code=session_code,
                 tenant_id=tenant_id,
-                rule_id=0,
-                rule_name="手工分成",
+                rule_id=rule_id,
+                rule_name=rule_name,
                 share_target=part["shareTarget"],
                 status="PENDING_AUDIT",
             )
             db.add(row)
         amount_changed = (not created) and row.deleted == 0 and money(row.share_amount) != part["shareAmount"]
-        row.rule_id = 0
-        row.rule_name = "手工分成"
+        row.rule_id = rule_id
+        row.rule_name = rule_name
         row.target_ref_id = part["targetRefId"]
         row.target_ref_name = part["targetRefName"]
-        row.share_base = money(profit.net_profit)
+        row.share_base = share_base
         row.share_amount = part["shareAmount"]
         row.calc_detail = detail
         row.deleted = 0
