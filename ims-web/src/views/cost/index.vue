@@ -357,15 +357,19 @@ async function loadAccountCost() {
     return
   }
   costDetail.value = res.data
-  if (res.data.purchase) {
-    purchaseForm.value = {
-      amount: res.data.purchase.amount,
-      period: res.data.purchase.period || '',
-      payMethod: res.data.purchase.payMethod || '',
-    }
-  } else {
-    purchaseForm.value = { amount: '', period: '', payMethod: '' }
+  echoPurchase(res.data.purchase)
+}
+
+function echoPurchase(purchase: { amount?: unknown; period?: string | null; payMethod?: string | null } | null | undefined) {
+  if (!purchase || purchase.amount == null || purchase.amount === '') {
+    purchaseForm.value.amount = ''
+    purchaseForm.value.period = ''
+    purchaseForm.value.payMethod = ''
+    return
   }
+  purchaseForm.value.amount = String(purchase.amount)
+  purchaseForm.value.period = purchase.period || ''
+  purchaseForm.value.payMethod = purchase.payMethod || ''
 }
 
 function validatePurchase() {
@@ -391,6 +395,11 @@ async function savePurchase() {
     payMethod: purchaseForm.value.payMethod,
   })
   if (res.code === 0) {
+    echoPurchase({
+      amount: res.data?.amount ?? Number(purchaseForm.value.amount),
+      period: res.data?.period ?? purchaseForm.value.period,
+      payMethod: res.data?.payMethod ?? purchaseForm.value.payMethod,
+    })
     await loadAccountCost()
     purchaseHint.value = '采购成本已保存'
     purchaseErrors.value = { amount: '', period: '' }

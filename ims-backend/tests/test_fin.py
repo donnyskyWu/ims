@@ -301,6 +301,22 @@ def test_fin_cost_correction_recalc_profit_and_share_trace():
     listed = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code})
     assert listed.json()["data"]["list"][0]["calcStatus"] == "CALCULATED"
     assert listed.json()["data"]["list"][0]["netProfit"] == 81400.0
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.core import SessionLocal
+    from app.models import FinProfit
+
+    db = SessionLocal()
+    try:
+        stored = db.scalar(select(FinProfit).where(FinProfit.session_code == code, FinProfit.deleted == 0))
+        assert stored is not None and stored.updated_at is not None
+        stored.updated_at = stored.updated_at - timedelta(hours=3)
+        db.commit()
+    finally:
+        db.close()
+    before_at = client.get("/admin-api/ims/fin/profit/list", headers=auth, params={"sessionCode": code}).json()["data"]["list"][0]["calculatedAt"]
 
     token = uuid.uuid4().hex
     corrected = client.post(
@@ -351,6 +367,9 @@ def test_fin_cost_correction_recalc_profit_and_share_trace():
     assert row["calcStatus"] == "RECALCULATED"
     assert row["netProfit"] == 79900.0
     assert row["calcVersion"] >= 2
+    assert row["calculatedAt"]
+    assert row["calculatedAt"] != before_at
+    assert "T" not in row["calculatedAt"]
 
     share = client.get(f"/admin-api/ims/dc/profit-trace/share-detail/{code}", headers=auth)
     daren = next(x for x in share.json()["data"] if x["shareTarget"] == "DAREN")

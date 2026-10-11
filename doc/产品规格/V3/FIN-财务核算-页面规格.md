@@ -367,7 +367,7 @@ type ProfitDimension = 'ACCOUNT' | 'IP_GROUP' | 'DAREN' | 'OWNER';
 | netProfitRate | 净利率 | 90 | ✓ | 百分比两位；ABNORMAL 行橙色 |
 | calcVersion | 版本 | 70 | — | V{n} |
 | calcStatus | 计算状态 | 110 | — | tag：待计算(灰)/已计算(绿)/已重算(青)/异常待核(橙) |
-| calculatedAt | 计算时间 | 150 | — | yyyy-MM-dd HH:mm |
+| calculatedAt | 计算时间 | 150 | — | 北京时间 yyyy-MM-dd HH:mm，成本更正重算后更新为本次计算时间 |
 | actions | 操作 | 110 | — | [详情][重算(R3/R1)] |
 
 **异常净利率**

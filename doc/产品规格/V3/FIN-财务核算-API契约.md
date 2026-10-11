@@ -179,7 +179,7 @@ interface FinProfitVO {
   };
   calcVersion: number;           // 重算递增
   calcStatus: 'PENDING' | 'CALCULATED' | 'RECALCULATED' | 'ABNORMAL';   // 0 待计算/1 已计算/2 已重算/3 异常待核
-  calculatedAt: string;
+  calculatedAt: string;          // 最近一次计算的北京时间 yyyy-MM-dd HH:mm:ss（含成本更正后的重算）
 }
 ```
 

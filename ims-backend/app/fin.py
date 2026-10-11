@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
@@ -553,6 +554,7 @@ def upsert_profit(
             trigger_reason = trigger_reason or "成本核准自动计算"
     now = utcnow()
     profit.updated_at = now
+    flag_modified(profit, "updated_at")
     append_profit_history(
         db,
         profit,
@@ -923,7 +925,7 @@ def profit_vo(
         "calcRuleSnapshot": calc_rule_snapshot(profit, cost),
         "calcVersion": profit.calc_version or 1,
         "calcStatus": profit.calc_status or "PENDING",
-        "calculatedAt": iso(profit.updated_at) if profit.updated_at else "",
+        "calculatedAt": beijing_clock(profit.updated_at) if profit.updated_at else "",
         "settlementStatus": settlement_status(profit.calc_status or "PENDING"),
     }
     if include_session:

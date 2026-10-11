@@ -84,6 +84,8 @@ def test_cost_purchase_process_and_missing_account():
     detail = client.get(f"/admin-api/ims/cost/account/{account_id}", headers=auth)
     body = detail.json()["data"]
     assert body["purchase"]["amount"] == 12000
+    assert body["purchase"]["period"] == "2026-09"
+    assert body["purchase"]["payMethod"] == "WECHAT"
     assert body["processTotal"] == 860
     assert body["totalCost"] == 12860
 
