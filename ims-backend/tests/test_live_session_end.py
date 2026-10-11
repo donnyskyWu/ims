@@ -253,6 +253,15 @@ def test_bind_room_on_sync_keeps_session_status():
     code = created.json()["data"]["sessionCode"]
     missing = client.post(f"/admin-api/ims/live/sessions/{code}/football-sync", headers=auth, json={})
     assert missing.json()["code"] == 1041
+    ghost = client.post(
+        f"/admin-api/ims/live/sessions/{code}/football-sync",
+        headers=auth,
+        json={"footballRoomId": "RG2-ROOM-001"},
+    )
+    assert ghost.json()["code"] == 1051
+    before = client.get(f"/admin-api/ims/live/sessions/{code}", headers=auth).json()["data"]
+    assert not before["footballRoomId"]
+    assert before["footballSyncStatus"] in (None, "", "UNLINKED")
     bound = client.post(
         f"/admin-api/ims/live/sessions/{code}/football-sync",
         headers=auth,
