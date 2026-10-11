@@ -248,7 +248,8 @@ const platforms = [
   { value: 'WECHAT_CHANNELS', label: '视频号' },
   { value: 'XIAOHONGSHU', label: '小红书' },
 ]
-const dimensions = [
+type DimensionKey = 'sales' | 'gmv' | 'priceBand' | 'contentStrategy' | 'adStrategy'
+const dimensions: { key: DimensionKey; label: string }[] = [
   { key: 'sales', label: '销售' },
   { key: 'gmv', label: 'GMV' },
   { key: 'priceBand', label: '价格带' },
@@ -361,7 +362,7 @@ function currentMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
-function emptyDimensions() {
+function emptyDimensions(): Record<DimensionKey, string> {
   return { sales: '', gmv: '', priceBand: '', contentStrategy: '', adStrategy: '' }
 }
 
