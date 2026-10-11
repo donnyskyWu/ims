@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import MeetDailyReport, Role, RolePerm, User, UserRole
+from app.models import MeetDailyReport, Role, RolePerm, Todo, User, UserRole
 
 client = TestClient(app)
 BJ = timezone(timedelta(hours=8))
@@ -489,3 +489,96 @@ def test_meet_minutes_archive_and_rate():
     rate = client.get("/admin-api/ims/meet/minutes/archive-rate", headers=auth)
     assert rate.json()["code"] == 0
     assert rate.json()["data"]["archivedCount"] >= 1
+
+
+def test_meet_minutes_record_action_ai_and_archive_lock():
+    auth = headers()
+    db = SessionLocal()
+    admin = db.scalar(select(User).where(User.username == "admin"))
+    assert admin is not None
+    admin_id = int(admin.id)
+    db.close()
+    when = datetime.now(BJ).strftime("%Y-%m-%dT18:00:00+08:00")
+    created = client.post(
+        "/admin-api/ims/meet/minutes",
+        headers=auth,
+        json={
+            "meetingTitle": "纪要主流程",
+            "meetingDate": when,
+            "agenda": "对齐行动项",
+            "attendees": [{"userId": admin_id, "userName": "admin"}],
+        },
+    )
+    assert created.json()["code"] == 0
+    mid = created.json()["data"]["id"]
+    empty = client.put(f"/admin-api/ims/meet/minutes/{mid}", headers=auth, json={"summary": "  "})
+    assert empty.json()["code"] == 1001
+
+    saved = client.put(
+        f"/admin-api/ims/meet/minutes/{mid}",
+        headers=auth,
+        json={
+            "summary": "会议结论：本周完成联调",
+            "decisions": [{"description": "按期归档"}],
+            "actionItems": [
+                {
+                    "description": "回填联调结果",
+                    "responsibleUserId": admin_id,
+                    "dueDate": "2026-10-20",
+                }
+            ],
+        },
+    )
+    body = saved.json()
+    assert body["code"] == 0
+    assert body["data"]["minutesStatus"] == "MINUTES_RECORDED"
+    assert body["data"]["decisions"][0]["description"] == "按期归档"
+    item_id = body["data"]["actionItems"][0]["itemId"]
+    assert item_id > 100
+
+    db = SessionLocal()
+    todo = db.scalar(select(Todo).where(Todo.ref_type == "meet_action", Todo.ref_id == item_id))
+    assert todo is not None
+    assert todo.assignee_user_id == admin_id
+    assert todo.status == "PENDING"
+    db.close()
+
+    missing = client.put(f"/admin-api/ims/meet/minutes/action-item/{item_id}", headers=auth, json={})
+    assert missing.json()["code"] == 1118
+    _scoped_user("meet_action_stranger", "行动路人", "SELF")
+    stranger = client.put(
+        f"/admin-api/ims/meet/minutes/action-item/{item_id}",
+        headers=_auth("meet_action_stranger"),
+        json={"closeRemark": "不是我的"},
+    )
+    assert stranger.json()["code"] == 1118
+
+    closed = client.put(
+        f"/admin-api/ims/meet/minutes/action-item/{item_id}",
+        headers=auth,
+        json={"closeRemark": "已在联调环境核对"},
+    )
+    assert closed.json()["code"] == 0
+    assert closed.json()["data"]["actionItems"][0]["status"] == "CLOSED"
+
+    draft = client.post(f"/admin-api/ims/meet/minutes/{mid}/ai-draft", headers=auth)
+    assert draft.json()["code"] == 0
+    assert draft.json()["data"]["provider"] == "stub"
+    assert "AI 初稿" in draft.json()["data"]["summary"]
+
+    archived = client.put(f"/admin-api/ims/meet/minutes/{mid}/archive", headers=auth)
+    assert archived.json()["data"]["minutesStatus"] == "ARCHIVED"
+    locked = client.put(
+        f"/admin-api/ims/meet/minutes/{mid}",
+        headers=auth,
+        json={"summary": "试图改正文"},
+    )
+    assert locked.json()["code"] == 1117
+    noted = client.put(
+        f"/admin-api/ims/meet/minutes/{mid}",
+        headers=auth,
+        json={"appendix": "会后更正：时间以日历为准"},
+    )
+    assert noted.json()["code"] == 0
+    assert "会后更正" in noted.json()["data"]["appendix"]
+    assert noted.json()["data"]["summary"] == "会议结论：本周完成联调"

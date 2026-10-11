@@ -1046,6 +1046,7 @@ class MeetMinutes(Base):
     organizer_name: Mapped[str] = mapped_column(String(64), default="")
     attendees: Mapped[list] = mapped_column(JSON, default=list)
     summary: Mapped[str] = mapped_column(Text, default="")
+    appendix: Mapped[str] = mapped_column(Text, default="")
     decisions: Mapped[list] = mapped_column(JSON, default=list)
     action_items: Mapped[list] = mapped_column(JSON, default=list)
     minutes_status: Mapped[str] = mapped_column(String(24), default="REGISTERED")

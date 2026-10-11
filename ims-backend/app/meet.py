@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timedelta, timezone
+from urllib import request as urlrequest
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, User
+from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, Todo, User
 from app.scope import DataScope, dept_ids_of
 
 router = APIRouter(prefix="/meet", tags=["meet"])
@@ -37,6 +41,8 @@ def ensure_meet_columns() -> None:
             alters.append(("ims_meet_minutes", "organizer_user_id", "BIGINT NOT NULL DEFAULT 0"))
         if "agenda" not in cols:
             alters.append(("ims_meet_minutes", "agenda", "TEXT NULL"))
+        if "appendix" not in cols:
+            alters.append(("ims_meet_minutes", "appendix", "TEXT NULL"))
     if not alters:
         return
     with engine.begin() as conn:
@@ -726,6 +732,7 @@ class DecisionItem(BaseModel):
 
 
 class ActionItemIn(BaseModel):
+    itemId: int = 0
     description: str = ""
     responsibleUserId: int = 0
     dueDate: str = ""
@@ -744,6 +751,7 @@ class MinutesCreateBody(BaseModel):
     decisions: list[DecisionItem] | None = None
     actionItems: list[ActionItemIn] | None = None
     importFromAiMinutes: str | None = None
+    appendix: str = ""
 
 
 def parse_meeting_date(raw: str) -> datetime | None:
@@ -777,25 +785,173 @@ def next_minutes_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
-def normalize_action_items(db: Session, items: list[ActionItemIn] | None) -> list[dict]:
-    if not items:
-        return []
-    ids = {int(it.responsibleUserId) for it in items if it.responsibleUserId}
+def build_action_items(
+    db: Session,
+    items: list[ActionItemIn] | None,
+    *,
+    minutes_id: int,
+    existing: list | None = None,
+) -> list[dict]:
+    old = {
+        int(it.get("itemId") or 0): it
+        for it in (existing or [])
+        if isinstance(it, dict) and int(it.get("itemId") or 0)
+    }
+    ids = {int(it.responsibleUserId) for it in (items or []) if it.responsibleUserId}
     names = user_names(db, ids)
+    used = set(old)
+    seq = 0
     out: list[dict] = []
-    for idx, it in enumerate(items, start=1):
+    for it in items or []:
+        desc = (it.description or "").strip()
         uid = int(it.responsibleUserId or 0)
+        if not desc and not uid:
+            continue
+        iid = int(it.itemId or 0)
+        prev = old.get(iid)
+        if prev is None:
+            seq += 1
+            iid = minutes_id * 100 + seq
+            while iid in used:
+                seq += 1
+                iid = minutes_id * 100 + seq
+            used.add(iid)
+            status = "OPEN"
+            close_remark = ""
+        else:
+            status = "OPEN" if prev.get("status") == "OVERDUE" else (prev.get("status") or "OPEN")
+            close_remark = prev.get("closeRemark") or ""
         out.append(
             {
-                "itemId": idx,
-                "description": it.description or "",
+                "itemId": iid,
+                "description": desc,
                 "responsibleUserId": uid,
-                "responsibleName": names.get(uid, ""),
+                "responsibleName": names.get(uid) or (prev.get("responsibleName") if prev else "") or "",
                 "dueDate": it.dueDate or "",
-                "status": "OPEN",
+                "status": status,
+                "closeRemark": close_remark,
             }
         )
     return out
+
+
+def action_item_vo(item: dict) -> dict:
+    status = item.get("status") or "OPEN"
+    due = str(item.get("dueDate") or "")[:10]
+    today = datetime.now(BJ).strftime("%Y-%m-%d")
+    if status == "OPEN" and DATE_RE.match(due) and due < today:
+        status = "OVERDUE"
+    return {
+        "itemId": item.get("itemId"),
+        "description": item.get("description") or "",
+        "responsibleUserId": item.get("responsibleUserId") or 0,
+        "responsibleName": item.get("responsibleName") or "",
+        "dueDate": item.get("dueDate") or "",
+        "status": status,
+        "closeRemark": item.get("closeRemark") or "",
+    }
+
+
+def sync_action_todos(db: Session, row: MeetMinutes) -> None:
+    now = utcnow()
+    for item in row.action_items or []:
+        if not isinstance(item, dict):
+            continue
+        uid = int(item.get("responsibleUserId") or 0)
+        item_id = int(item.get("itemId") or 0)
+        if not uid or not item_id or (item.get("status") or "OPEN") != "OPEN":
+            continue
+        found = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_action",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == uid,
+            )
+        )
+        if found is not None:
+            continue
+        due = None
+        due_text = str(item.get("dueDate") or "")[:10]
+        if DATE_RE.match(due_text):
+            due = datetime.strptime(due_text, "%Y-%m-%d")
+        db.add(
+            Todo(
+                assignee_user_id=uid,
+                task_type="MEET_ACTION",
+                ref_type="meet_action",
+                ref_id=item_id,
+                title=(item.get("description") or "会议行动项")[:128],
+                content=f"{row.minutes_no} {row.meeting_title}"[:512],
+                status="PENDING",
+                deadline=due,
+                tenant_id=row.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def find_action_item(db: Session, tenant_id: int, item_id: int) -> tuple[MeetMinutes | None, dict | None]:
+    rows = list(
+        db.scalars(
+            select(MeetMinutes).where(MeetMinutes.deleted == 0, MeetMinutes.tenant_id == tenant_id)
+        ).all()
+    )
+    for row in rows:
+        for item in row.action_items or []:
+            if isinstance(item, dict) and int(item.get("itemId") or 0) == item_id:
+                return row, item
+    return None, None
+
+
+def meet_ai_draft(row: MeetMinutes) -> dict:
+    """听记初稿。默认 stub；配置 MEET_AI_ENDPOINT 后走第三方 HTTP，不接本地模型。"""
+    endpoint = os.environ.get("MEET_AI_ENDPOINT", "").strip()
+    if endpoint:
+        remote = _meet_ai_remote(endpoint, row)
+        if remote is not None:
+            remote["provider"] = "remote"
+            remote["phase"] = "READY"
+            return remote
+    names = "、".join(
+        str(item.get("userName") or "")
+        for item in (row.attendees or [])
+        if isinstance(item, dict) and item.get("userName")
+    )
+    return {
+        "summary": (
+            f"（AI 初稿·待校对）会议「{row.meeting_title}」。"
+            f"议程：{row.agenda or '未提供'}。参会：{names or '未列'}。"
+            "请记录人核对决议与行动项后保存。"
+        ),
+        "decisions": [{"description": "待记录人确认决议"}],
+        "provider": "stub",
+        "phase": "READY",
+    }
+
+
+def _meet_ai_remote(endpoint: str, row: MeetMinutes) -> dict | None:
+    payload = {
+        "meetingTitle": row.meeting_title,
+        "agenda": row.agenda or "",
+        "meetingDate": iso(row.meeting_date),
+        "attendees": row.attendees or [],
+    }
+    req = urlrequest.Request(
+        endpoint,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+    except Exception:
+        return None
+    summary = str(data.get("summary") or "").strip()
+    if not summary:
+        return None
+    decisions = data.get("decisions") if isinstance(data.get("decisions"), list) else []
+    return {"summary": summary, "decisions": decisions}
 
 
 def minutes_vo(row: MeetMinutes) -> dict:
@@ -813,8 +969,9 @@ def minutes_vo(row: MeetMinutes) -> dict:
         "attendeeCount": len(attendees),
         "attendees": attendees,
         "summary": row.summary or "",
+        "appendix": row.appendix or "",
         "decisions": row.decisions or [],
-        "actionItems": row.action_items or [],
+        "actionItems": [action_item_vo(item) for item in (row.action_items or []) if isinstance(item, dict)],
         "minutesStatus": row.minutes_status,
         "recorderUserId": row.recorder_user_id,
         "recorderName": row.recorder_name,
@@ -915,7 +1072,6 @@ def minutes_create(
         recorder = actor
         recorder_id = actor.id
     decisions = [{"description": d.description} for d in (body.decisions or []) if d.description]
-    actions = normalize_action_items(db, body.actionItems)
     row = MeetMinutes(
         minutes_no=next_minutes_no(db, tenant_id),
         meeting_title=title,
@@ -928,7 +1084,7 @@ def minutes_create(
         attendees=attendees,
         summary=summary,
         decisions=decisions,
-        action_items=actions,
+        action_items=[],
         minutes_status=status,
         recorder_user_id=recorder.id,
         recorder_name=recorder.nickname or recorder.username,
@@ -939,6 +1095,10 @@ def minutes_create(
     )
     db.add(row)
     db.flush()
+    if body.actionItems:
+        row.action_items = build_action_items(db, body.actionItems, minutes_id=row.id)
+        sync_action_todos(db, row)
+        db.flush()
     return ok(minutes_vo(row))
 
 
@@ -992,6 +1152,48 @@ def minutes_participants(db: Session = Depends(db_session), actor: User = Depend
     )
 
 
+class ActionCloseBody(BaseModel):
+    closeRemark: str = ""
+    evidenceUrl: str = ""
+
+
+@router.put("/minutes/action-item/{item_id}")
+def minutes_action_close(
+    item_id: int,
+    body: ActionCloseBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row, item = find_action_item(db, tenant_of(actor), item_id)
+    if row is None or item is None:
+        return fail(1004, "行动项不存在")
+    owner = int(item.get("responsibleUserId") or 0)
+    if owner != actor.id:
+        return fail(1118, "非行动项责任人")
+    remark = (body.closeRemark or "").strip()
+    if not remark:
+        return fail(1118, "请填写回填说明")
+    if item.get("status") != "CLOSED":
+        item["status"] = "CLOSED"
+        item["closeRemark"] = remark
+        if (body.evidenceUrl or "").strip():
+            item["evidenceUrl"] = body.evidenceUrl.strip()
+        row.action_items = list(row.action_items or [])
+        flag_modified(row, "action_items")
+        row.updated_at = utcnow()
+        todo = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_action",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == actor.id,
+            )
+        )
+        if todo is not None and todo.status == "PENDING":
+            todo.status = "DONE"
+        db.flush()
+    return ok(minutes_vo(row))
+
+
 @router.get("/minutes/{minutes_id}")
 def minutes_detail(
     minutes_id: int,
@@ -1003,6 +1205,77 @@ def minutes_detail(
     if row is None or not minutes_visible(row, actor, request.state.scope):
         return fail(1004, "会议纪要不存在")
     return ok(minutes_vo(row))
+
+
+def _visible_minutes(db: Session, actor: User, scope: DataScope | None, minutes_id: int) -> MeetMinutes | None:
+    row = db.scalar(minutes_base(actor).where(MeetMinutes.id == minutes_id))
+    if row is None or not minutes_visible(row, actor, scope):
+        return None
+    return row
+
+
+@router.put("/minutes/{minutes_id}")
+def minutes_update(
+    minutes_id: int,
+    body: MinutesCreateBody,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = _visible_minutes(db, actor, request.state.scope, minutes_id)
+    if row is None:
+        return fail(1004, "会议纪要不存在")
+    now = utcnow()
+    if row.minutes_status == "ARCHIVED":
+        note = (body.appendix or "").strip()
+        if not note:
+            return fail(1117, "已归档纪要不可修改")
+        row.appendix = f"{row.appendix}\n{note}".strip() if row.appendix else note
+        row.updated_at = now
+        db.flush()
+        return ok(minutes_vo(row))
+    summary = (body.summary or "").strip()
+    if not summary:
+        return fail(1001, "必填项，请填写")
+    title = (body.meetingTitle or "").strip() or row.meeting_title
+    when = parse_meeting_date(body.meetingDate) if (body.meetingDate or "").strip() else row.meeting_date
+    attendees = [a.model_dump(exclude_none=True) for a in body.attendees if (a.userName or "").strip() or a.userId]
+    row.meeting_title = title
+    if when is not None:
+        row.meeting_date = when
+    if (body.meetingRoom or "").strip():
+        row.meeting_room = body.meetingRoom.strip()
+    if body.durationMinutes:
+        row.duration_minutes = body.durationMinutes
+    if (body.agenda or "").strip():
+        row.agenda = body.agenda.strip()
+    if attendees:
+        row.attendees = attendees
+    row.summary = summary
+    row.decisions = [{"description": d.description} for d in (body.decisions or []) if (d.description or "").strip()]
+    row.action_items = build_action_items(
+        db, body.actionItems, minutes_id=row.id, existing=list(row.action_items or [])
+    )
+    row.minutes_status = "MINUTES_RECORDED"
+    row.updated_at = now
+    sync_action_todos(db, row)
+    db.flush()
+    return ok(minutes_vo(row))
+
+
+@router.post("/minutes/{minutes_id}/ai-draft")
+def minutes_ai_draft(
+    minutes_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = _visible_minutes(db, actor, request.state.scope, minutes_id)
+    if row is None:
+        return fail(1004, "会议纪要不存在")
+    if row.minutes_status == "ARCHIVED":
+        return fail(1117, "已归档纪要不可修改")
+    return ok(meet_ai_draft(row))
 
 
 @router.put("/minutes/{minutes_id}/archive")
