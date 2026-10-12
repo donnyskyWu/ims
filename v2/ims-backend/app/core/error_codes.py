@@ -7,6 +7,7 @@ from dataclasses import dataclass
 # 1281～1295 与 SYS 共用，按序分配给后续批次。
 DOMAIN_RANGES: dict[str, list[tuple[int, int]]] = {
     "COMMON": [(1001, 1001), (1008, 1008), (1500, 1504), (5001, 5007)],
+    "ASSET": [(1011, 1015)],
     "AUTH": [(1002, 1007), (1009, 1010)],
     "SYS": [(1211, 1220), (1281, 1298)],
     "MASTER": [(1221, 1223)],
@@ -35,6 +36,11 @@ BASE_ENTRIES: list[ErrorEntry] = [
     _e(1003, "AUTH", "您的账号已在其他设备登录，本设备已下线", "relogin"),
     _e(1006, "AUTH", "钉钉同步失败", "toast"),
     _e(1008, "COMMON", "暂无权限", "noPermission"),
+    _e(1011, "ASSET", "资产不存在", "toast"),
+    _e(1012, "ASSET", "资产已被领用或编号冲突", "toast"),
+    _e(1013, "ASSET", "穿透层级超限", "toast"),
+    _e(1014, "ASSET", "校验工单状态不允许此操作", "toast"),
+    _e(1015, "ASSET", "当前状态不允许此操作", "toast"),
     _e(1101, "TRAIN", "资料未发布或不可用", "toast"),
     _e(1106, "TRAIN", "培训题目生成调用失败", "toast"),
     _e(1107, "TRAIN", "培训题目生成超时", "toast"),

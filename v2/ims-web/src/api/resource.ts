@@ -1,4 +1,4 @@
-import { BizError, request } from "@/api/http";
+import { BizError, clientToken, request } from "@/api/http";
 
 export interface PageData<T> {
   list: T[];
@@ -14,15 +14,22 @@ export function resourceGet<T>(url: string, params?: Record<string, unknown>): P
   return request<T>({ url, params, silent: true, inDrawer: true });
 }
 
-export function resourceSend<T>(method: string, url: string, data?: unknown): Promise<T> {
-  return request<T>({ method, url, data, silent: true, inDrawer: true });
+export function resourceSend<T>(method: string, url: string, data?: unknown, tokenKey?: string): Promise<T> {
+  return request<T>({
+    method,
+    url,
+    data,
+    silent: true,
+    inDrawer: true,
+    clientToken: tokenKey ? clientToken(tokenKey) : undefined,
+  });
 }
 
-export async function selectorPage(url: string, keyword: string, pageNo: number) {
+export async function selectorPage(url: string, keyword: string, pageNo: number, extra?: Record<string, unknown>) {
   try {
     return await request<PageData<Record<string, unknown>>>({
       url,
-      params: { keyword, pageNo, pageSize: 20 },
+      params: { keyword, pageNo, pageSize: 20, ...(extra || {}) },
       silent: true,
     });
   } catch (caught) {

@@ -272,3 +272,24 @@ def cert_expire_scan():
     from app.domains.cert.expire import scan
 
     return scan()
+
+
+@job("asset_verify_full", "0 2 * * 1")
+def asset_verify_full():
+    from app.domains.device.verify import run_full
+
+    return run_full()
+
+
+@job("asset_verify_increment", "0 2 * * *")
+def asset_verify_increment():
+    from app.domains.device.verify import run_increment
+
+    return run_increment()
+
+
+@job("asset_verify_overdue", "0 9 * * *")
+def asset_verify_overdue():
+    from app.domains.device.verify import scan_overdue
+
+    return scan_overdue()

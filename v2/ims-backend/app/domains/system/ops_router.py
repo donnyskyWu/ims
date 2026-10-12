@@ -23,6 +23,23 @@ def integrity_run():
     return integrity.run_scan(int(tenant) if tenant not in (None, "") else None, body.get("tables"))
 
 
+_JOB_LABELS = {
+    "asset_verify_full": "资产校验全量",
+    "asset_verify_increment": "资产校验增量",
+    "asset_verify_overdue": "资产校验逾期扫描",
+}
+
+
+@mark(perm="ims:system:job:query", summary="定时任务列表")
+def job_page():
+    from app.services.jobs import JOBS
+
+    return {
+        "list": [{"name": item.name, "cron": item.cron, "label": _JOB_LABELS.get(item.name, item.name)} for item in JOBS],
+        "total": len(JOBS),
+    }
+
+
 @mark(perm="ims:system:job:run", operate=("任务", "手动执行"), summary="手动执行任务")
 def job_run():
     body = _body()
@@ -36,5 +53,6 @@ def calendar_update():
 
 
 router.post("/integrity-scan/run", summary="执行引用巡检")(integrity_run)
+router.get("/job/page", summary="定时任务列表")(job_page)
 router.post("/job/run", summary="手动执行任务")(job_run)
 router.put("/calendar/update", summary="修改工作日历")(calendar_update)

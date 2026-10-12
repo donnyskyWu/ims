@@ -25,6 +25,31 @@
     "strategy": "noPermission"
   },
   {
+    "code": 1011,
+    "msg": "资产不存在",
+    "strategy": "toast"
+  },
+  {
+    "code": 1012,
+    "msg": "资产已被领用或编号冲突",
+    "strategy": "toast"
+  },
+  {
+    "code": 1013,
+    "msg": "穿透层级超限（最多 5 层）",
+    "strategy": "toast"
+  },
+  {
+    "code": 1014,
+    "msg": "校验批次不存在或工单状态不允许此操作",
+    "strategy": "toast"
+  },
+  {
+    "code": 1015,
+    "msg": "当前状态不允许此操作",
+    "strategy": "toast"
+  },
+  {
     "code": 1032,
     "msg": "该持有人已有同类型有效证件，如为新证请走换证",
     "strategy": "toast"

@@ -8,7 +8,6 @@ function placeholderRoutes(): RouteRecordRaw[] {
   const soon = () => import("@/views/workbench/SoonView.vue");
   const pages: Array<[string, string, string]> = [
     ["ims/workbench/soon", "workbench-soon", "后续功能"],
-    ["ims/asset/reverse", "asset-reverse", "我名下账号"],
     ["ims/asset/mine", "asset-mine", "我名下资产"],
     ["ims/cert/archive", "cert-archive", "我的证件"],
     ["ims/live/ledger", "live-ledger", "我的场次"],
@@ -37,6 +36,7 @@ export async function createAppRouter() {
     { path: "ims/system/log", name: "sys-log", component: () => import("@/views/system/LogView.vue"), meta: { perm: "ims:system:log:query" } },
     { path: "ims/system/notify", name: "sys-notify", component: () => import("@/views/system/NotifyView.vue"), meta: { perm: "ims:system:notify:query" } },
     { path: "ims/system/tenant", name: "sys-tenant", component: () => import("@/views/system/TenantView.vue"), meta: { perm: "ims:tenant:query" } },
+    { path: "ims/system/job", name: "sys-job", component: () => import("@/views/system/JobView.vue"), meta: { perm: "ims:system:job:query", title: "定时任务" } },
     { path: "ims/auth/org", name: "auth-org", component: () => import("@/views/auth/OrgSyncView.vue"), meta: { perm: "ims:system:org-sync:query" } },
     {
       path: "ims/auth/position",
@@ -65,6 +65,12 @@ export async function createAppRouter() {
         anyPerm: ["ims:cert:archive:query", "ims:cert:expire:query", "ims:cert:security:config", "ims:cert:security:log"],
       },
     },
+    { path: "ims/corp/device/office", name: "device-office", component: () => import("@/views/device/LedgerView.vue"), meta: { title: "办公设备管理", perm: "ims:device:asset:query", deviceKind: "office" } },
+    { path: "ims/corp/device/live", name: "device-live", component: () => import("@/views/device/LedgerView.vue"), meta: { title: "直播设备管理", perm: "ims:device:asset:query", deviceKind: "live" } },
+    { path: "ims/corp/device/phone", name: "device-phone", component: () => import("@/views/device/PhoneView.vue"), meta: { title: "手机设备管理", perm: "ims:device:phone:query" } },
+    { path: "ims/asset/ledger", redirect: (to) => ({ path: "/ims/corp/device/office", query: { ...to.query, drawer: "ledger" } }) },
+    { path: "ims/asset/reverse", redirect: (to) => ({ path: "/ims/corp/device/office", query: { ...to.query, drawer: "reverse" } }) },
+    { path: "ims/asset/verify", redirect: (to) => ({ path: "/ims/corp/device/office", query: { ...to.query, drawer: "verify" } }) },
     {
       path: "ims/cert/expire",
       name: "cert-expire",

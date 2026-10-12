@@ -37,6 +37,22 @@ def selector_sim():
     return selector.sim_cards(_page(), _params())
 
 
+@mark(login_only=True, summary="手机选择器")
+def selector_phone():
+    from app.domains.device.phone import selector as phone_selector
+
+    return phone_selector(_page(), _params())
+
+
+@mark(login_only=True, summary="资产选择器")
+def selector_asset():
+    from app.domains.device.ledger import selector as asset_selector
+
+    return asset_selector(_page(), _params())
+
+
 router.get("/selector/company", summary="公司选择器")(selector_company)
 router.get("/selector/person", summary="实名人选择器")(selector_person)
 router.get("/selector/sim-card", summary="手机卡选择器")(selector_sim)
+router.get("/selector/phone", summary="手机选择器")(selector_phone)
+router.get("/selector/asset", summary="资产选择器")(selector_asset)

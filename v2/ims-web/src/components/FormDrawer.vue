@@ -13,6 +13,7 @@ const props = withDefaults(
     model: Record<string, unknown>;
     rules?: FormRules;
     submit: (model: Record<string, unknown>) => Promise<unknown>;
+    tokenBag?: { value: string };
   }>(),
   { size: "M" },
 );
@@ -28,6 +29,7 @@ watch(open, (value) => {
   if (!value) return;
   dirty.value = false;
   tokenKey.value = crypto.randomUUID();
+  if (props.tokenBag) props.tokenBag.value = tokenKey.value;
 });
 
 watch(

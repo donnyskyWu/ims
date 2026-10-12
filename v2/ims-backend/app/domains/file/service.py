@@ -42,6 +42,11 @@ SCENES: dict[str, dict] = {
         "max_bytes": 20 * _MB,
         "watermark": True,
     },
+    "ASSET": {
+        "exts": ["jpg", "jpeg", "png"],
+        "max_bytes": 10 * _MB,
+        "watermark": False,
+    },
 }
 
 _CONTENT_TYPES = {

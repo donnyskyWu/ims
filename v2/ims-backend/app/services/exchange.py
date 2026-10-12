@@ -132,8 +132,44 @@ def remember_export(filename: str, header: list, rows: list, biz_type: str) -> d
     return {"id": task.id, "status": task.status, "fileKey": task.file_key}
 
 
+def remember_binary(filename: str, content: bytes, content_type: str, biz_type: str, expires_seconds: int | None = None) -> dict:
+    """把二进制文件记成导出任务。设置过期秒数后，过期下载返回 1001。"""
+    from datetime import timedelta
+
+    from app.core.clock import now_naive
+
+    ctx = get_ctx()
+    query = {}
+    if expires_seconds:
+        query["expiresAt"] = (now_naive() + timedelta(seconds=int(expires_seconds))).isoformat(sep=" ")
+    task = ExportTask(
+        status="SUCCESS",
+        progress=100,
+        biz_type=biz_type,
+        query_json=query,
+        creator=ctx.user_id if ctx else 0,
+        file_key=f"EXPORT/{biz_type}/{filename}",
+    )
+    get_session().add(task)
+    get_session().flush()
+    payload = {
+        "encoding": "base64",
+        "filename": filename,
+        "contentType": content_type,
+        "content": base64.b64encode(content).decode("ascii"),
+    }
+    _EXPORT_BODIES[int(task.id)] = payload
+    get_session().info[f"export:{task.id}"] = payload
+    return {"id": task.id, "status": task.status, "fileKey": task.file_key}
+
+
 def export_body(task_id: int):
+    from app.core.clock import now_naive
+
     task = _own_task(task_id)
+    expires = (task.query_json or {}).get("expiresAt")
+    if expires and str(expires) < now_naive().isoformat(sep=" "):
+        raise BizError(1001, "链接已过期，请重新导出")
     if task.status != "SUCCESS":
         raise BizError(1001, "导出尚未完成")
     cached = _EXPORT_BODIES.get(int(task.id))

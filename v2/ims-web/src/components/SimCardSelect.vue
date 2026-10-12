@@ -2,7 +2,7 @@
 import RemoteSelect, { type RemoteOption } from "./RemoteSelect.vue";
 import { selectorByIds, selectorPage } from "@/api/resource";
 
-defineProps<{ multiple?: boolean }>();
+const props = defineProps<{ multiple?: boolean; params?: Record<string, unknown> }>();
 const model = defineModel<string | string[] | null>({ default: null });
 
 function optionOf(row: Record<string, unknown>): RemoteOption {
@@ -17,7 +17,7 @@ function optionOf(row: Record<string, unknown>): RemoteOption {
 }
 
 async function fetch(keyword: string, pageNo: number) {
-  const data = await selectorPage("/master/selector/sim-card", keyword, pageNo);
+  const data = await selectorPage("/master/selector/sim-card", keyword, pageNo, props.params);
   return { list: (data.list || []).map(optionOf), total: Number(data.total || 0) };
 }
 

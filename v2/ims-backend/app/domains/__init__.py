@@ -13,6 +13,14 @@ from app.domains.auth.model import (  # noqa: F401
     PositionRuleVersion,
     UserMapping,
 )
+from app.domains.device.model import (  # noqa: F401
+    AssetBind,
+    AssetEvent,
+    AssetLedger,
+    AssetPurchaseBatch,
+    AssetVerifyBatch,
+    AssetVerifyTask,
+)
 from app.domains.demo.model import (  # noqa: F401
     DemoDeptOnly,
     DemoDoc,
