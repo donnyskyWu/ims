@@ -93,6 +93,8 @@ def sim_cards(page: Page, params: dict) -> dict:
     enabled = list(session.scalars(select(SimCard).where(SimCard.status == "ENABLED").order_by(SimCard.id.desc())))
     if keyword:
         enabled = [row for row in enabled if (row.phone_number_enc or "").endswith(keyword)]
+    if str(params.get("unboundOnly", "")).lower() in {"1", "true", "yes"}:
+        enabled = [row for row in enabled if not row.phone_id]
     if not enabled and not keyword:
         raise BizError(1221)
     start = (page.page_no - 1) * page.page_size

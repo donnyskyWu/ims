@@ -71,7 +71,8 @@ def _view(row: SimCard, *, detail: bool = False) -> dict:
         "realnameStatus": person.status if person is not None else "",
         "assignedUserId": row.assigned_user_id,
         "keeperName": keeper.nickname if keeper is not None else "",
-        "phoneName": "—",
+        "phoneId": row.phone_id,
+        "phoneName": _phone_name(row.phone_id),
         "packageName": row.package_name or "",
         "monthlyRent": fen_to_yuan(row.monthly_rent),
         "paymentCycle": row.payment_cycle or "",
@@ -220,11 +221,31 @@ def update(ident: int, body: dict) -> dict:
     return _view(row)
 
 
+def _phone_name(phone_id: int | None) -> str:
+    if not phone_id:
+        return "—"
+    from app.domains.master.model import Phone
+
+    phone = get_session().get(Phone, int(phone_id))
+    if phone is None:
+        return "—"
+    return phone.device_no or phone.model or "—"
+
+
+def _bound_phone(row: SimCard) -> None:
+    if not row.phone_id:
+        return
+    name = _phone_name(row.phone_id)
+    raise BizError(1502, f"该手机卡已绑定手机 {name}，请先解绑")
+
+
 def set_status(ident: int, body: dict) -> dict:
     row = _row(ident)
     status = text_of(body, "status")
     if status not in _STATUS:
         one("status", "状态不正确")
+    if status != "ENABLED":
+        _bound_phone(row)
     row.status = status
     assert_dict_values(row)
     get_session().flush()
@@ -232,6 +253,7 @@ def set_status(ident: int, body: dict) -> dict:
 
 
 def remove(ident: int) -> dict:
+    _bound_phone(_row(ident))
     try:
         Repository(SimCard).soft_delete(int(ident))
     except BizError as exc:

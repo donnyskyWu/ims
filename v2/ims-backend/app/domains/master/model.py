@@ -89,10 +89,22 @@ class SimCard(AuditBase):
 class Phone(AuditBase):
     __tablename__ = "ims_master_phone"
     __entity_label__ = "手机"
-    __table_args__ = (UniqueConstraint("tenant_id", "code", "deleted", name="uq_phone_code"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", "deleted", name="uq_phone_code"),
+        UniqueConstraint("tenant_id", "device_no", "deleted", name="uq_phone_device_no"),
+        UniqueConstraint("tenant_id", "imei", "deleted", name="uq_phone_imei"),
+    )
     code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_common_status"})
+    device_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    os_type: Mapped[str | None] = mapped_column(String(32), nullable=True, info={"dict": "dict_phone_os"})
+    imei: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    custodian_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
+    purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    purchase_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="IDLE", info={"dict": "dict_phone_status"})
+    remark: Mapped[str | None] = mapped_column(String(256), nullable=True)
     sim_card_id: Mapped[int | None] = ref_column(Ref("ims_master_sim_card", "RESTRICT"))
 
 

@@ -12,7 +12,7 @@ const props = withDefaults(
     size?: "S" | "M" | "L";
     model: Record<string, unknown>;
     rules?: FormRules;
-    submit: (model: Record<string, unknown>) => Promise<unknown>;
+    submit: (model: Record<string, unknown>, tokenKey?: string) => Promise<unknown>;
   }>(),
   { size: "M" },
 );
@@ -58,7 +58,7 @@ async function save() {
   if (!valid) return;
   saving.value = true;
   try {
-    const result = await props.submit(props.model);
+    const result = await props.submit(props.model, tokenKey.value);
     toast.success("保存成功");
     clearClientToken(tokenKey.value);
     dirty.value = false;

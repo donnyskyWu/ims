@@ -15,6 +15,10 @@ _EXPORT_PERMS = (
     "ims:system:org-sync:export",
     "ims:system:user:export",
     "ims:system:log:export",
+    "ims:device:phone:export",
+    "ims:device:asset:export",
+    "ims:asset:forward:export",
+    "ims:asset:reverse:export",
 )
 
 

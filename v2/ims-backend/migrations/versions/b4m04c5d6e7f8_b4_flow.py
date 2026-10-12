@@ -16,9 +16,22 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _widen_template_name() -> None:
+    """SQLite 不支持改列类型。VARCHAR 在 SQLite 中不截断，跳过不影响 MySQL 扩列。"""
+    if op.get_bind().dialect.name == "sqlite":
+        return
+    op.alter_column("ims_flow_template", "name", existing_type=sa.String(length=100), type_=sa.String(length=128), existing_nullable=False)
+
+
+def _narrow_template_name() -> None:
+    if op.get_bind().dialect.name == "sqlite":
+        return
+    op.alter_column("ims_flow_template", "name", existing_type=sa.String(length=128), type_=sa.String(length=100), existing_nullable=False)
+
+
 def upgrade() -> None:
     op.add_column("ims_sys_role", sa.Column("flow_domain", sa.String(length=64), nullable=True))
-    op.alter_column("ims_flow_template", "name", existing_type=sa.String(length=100), type_=sa.String(length=128), existing_nullable=False)
+    _widen_template_name()
     op.add_column("ims_flow_template", sa.Column("template_no", sa.String(length=32), nullable=True))
     op.add_column("ims_flow_template", sa.Column("business_domain", sa.String(length=32), nullable=True))
     op.add_column("ims_flow_template", sa.Column("current_version", sa.Integer(), nullable=False, server_default="0"))
@@ -107,5 +120,5 @@ def downgrade() -> None:
     op.drop_column("ims_flow_template", "current_version")
     op.drop_column("ims_flow_template", "business_domain")
     op.drop_column("ims_flow_template", "template_no")
-    op.alter_column("ims_flow_template", "name", existing_type=sa.String(length=128), type_=sa.String(length=100), existing_nullable=False)
+    _narrow_template_name()
     op.drop_column("ims_sys_role", "flow_domain")

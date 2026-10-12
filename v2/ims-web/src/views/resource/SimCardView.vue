@@ -167,7 +167,7 @@ onMounted(load);
     </FormDrawer>
     <DetailDrawer v-model:open="detailOpen" title="手机卡详情" status-dict="dict_corp_status" :status-value="String(current?.status || '')" :tabs="[{ key: 'base', label: '基本' }, { key: 'pay', label: '缴费' }, { key: 'rel', label: '关联账号' }]">
       <template #base>
-        <DescriptionList :items="[{ label: '编号', value: current?.simNo }, { label: '运营商', value: current?.operatorLabel }, { label: '实名人', value: current?.realnameName }, { label: '保管人', value: current?.keeperName }, { label: '绑定手机', value: '—' }]" />
+        <DescriptionList :items="[{ label: '编号', value: current?.simNo }, { label: '运营商', value: current?.operatorLabel }, { label: '实名人', value: current?.realnameName }, { label: '保管人', value: current?.keeperName }, { label: '绑定手机', value: current?.phoneName }]" />
         <p>号码 <MaskedText :value="String(plain?.phone || current?.phoneMasked || '')" /> <button v-if="current?.canPlain" v-perm="'ims:corp:sim:plain'" class="btn btn-txt" type="button" @click="showPlain">显示</button></p>
         <p>ICCID <MaskedText :value="String(plain?.iccid || current?.iccidMasked || '')" /></p>
       </template>

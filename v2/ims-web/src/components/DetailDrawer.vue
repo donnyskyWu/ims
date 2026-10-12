@@ -8,7 +8,7 @@ const open = defineModel<boolean>("open", { required: true });
 const props = withDefaults(
   defineProps<{
     title: string;
-    size?: "S" | "M" | "L";
+    size?: "S" | "M" | "L" | "XL" | "F";
     statusDict?: string;
     statusValue?: string;
     tabs?: { key: string; label: string }[];
@@ -17,7 +17,7 @@ const props = withDefaults(
   { size: "M", tabs: () => [] },
 );
 const emit = defineEmits<{ closed: []; refresh: [] }>();
-const width = { S: "480px", M: "720px", L: "880px" } as const;
+const width = { S: "480px", M: "720px", L: "880px", XL: "90%", F: "100%" } as const;
 const tab = ref(props.tabs[0]?.key || "");
 
 watch(open, (value) => {

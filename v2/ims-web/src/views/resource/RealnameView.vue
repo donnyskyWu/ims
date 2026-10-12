@@ -16,6 +16,7 @@ import MaskedText from "@/components/MaskedText.vue";
 import { confirm } from "@/components/confirm";
 import { toast } from "@/utils/toast";
 import { resourceGet, resourcePage, resourceSend } from "@/api/resource";
+import ReverseDrawer from "@/views/device/ReverseDrawer.vue";
 
 const router = useRouter();
 const query = ref<Record<string, unknown>>({ name: "", idType: "", idNo: "", status: "" });
@@ -29,6 +30,7 @@ const editing = ref<Record<string, unknown> | null>(null);
 type PersonForm = Record<string, unknown> & { idType: string; userId: string };
 const form = ref<PersonForm>({ name: "", idType: "ID_CARD", idNo: "", mobile: "", userId: "", agentName: "", agentMobile: "", remark: "", status: "ENABLED" });
 const detailOpen = ref(false);
+const reverseOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const plain = ref<Record<string, string> | null>(null);
 let plainTimer = 0;
@@ -186,7 +188,9 @@ onMounted(load);
       </template>
       <template #rel>
         <EmptyState desc="暂无关联账号" />
+        <button v-perm="'ims:asset:reverse:query'" class="btn btn-sec" type="button" @click="reverseOpen = true">反查资产</button>
       </template>
     </DetailDrawer>
+    <ReverseDrawer v-model:open="reverseOpen" :realname-id="String(current?.id || '')" />
   </section>
 </template>

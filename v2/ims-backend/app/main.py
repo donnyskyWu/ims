@@ -23,6 +23,7 @@ from app.domains.auth.position_router import router as auth_position_router
 from app.domains.auth.router import router as auth_router
 from app.domains.callback.router import router as callback_router
 from app.domains.cert.router import router as cert_router
+from app.domains.device.router import router as device_router
 from app.domains.demo.router import router as demo_router
 from app.domains.file.router import router as file_router
 from app.domains.flow.router import router as flow_router
@@ -62,6 +63,7 @@ MOUNTS = [
     ("/admin-api/ims/corp/resource", resource_router),
     ("/admin-api/ims/master", selector_router),
     ("/admin-api/ims/cert", cert_router),
+    ("/admin-api/ims", device_router),
 ]
 
 

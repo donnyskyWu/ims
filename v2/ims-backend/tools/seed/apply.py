@@ -58,6 +58,11 @@ PARAMS = [
     ("notify.cert.locked", "证件锁定通知", "证件", "TEXT", "证件已过期并锁定，请完成换证。", None, None),
     ("notify.cert.remind", "证件催办通知", "证件", "TEXT", "请尽快办理证件换证。", None, None),
     ("notify.cert.reject", "证件驳回通知", "证件", "TEXT", "证件审核未通过，请重新上传。", None, None),
+    ("notify.asset.checkout", "资产领用通知", "资产", "TEXT", "你已领用资产 {编号}", None, None),
+    ("notify.asset.transfer", "资产流转通知", "资产", "TEXT", "资产 {编号} 已流转", None, None),
+    ("notify.asset.verify.dispatch", "校验工单派发", "资产", "TEXT", "请处理资产关联异常", None, None),
+    ("notify.asset.verify.overdue", "校验逾期升级", "资产", "TEXT", "校验工单已超过限期", None, None),
+    ("notify.asset.verify.reject", "校验复审退回", "资产", "TEXT", "校验工单复审未通过", None, None),
 ]
 
 
@@ -312,11 +317,58 @@ def _shape_resource(key: str, codes: list[str], all_codes: list[str]) -> list[st
     return kept + _resource_grant(key, all_codes)
 
 
+def _device_codes(all_codes: list[str]) -> set[str]:
+    return {code for code in all_codes if code.startswith("ims:device:") or code.startswith("ims:asset:")}
+
+
+def _device_grant(key: str, all_codes: list[str]) -> list[str]:
+    bag = _device_codes(all_codes)
+
+    def keep(codes: list[str]) -> list[str]:
+        return [code for code in codes if code in bag]
+
+    phone_query = "ims:device:phone:query"
+    asset_query = "ims:device:asset:query"
+    forward_query = "ims:asset:forward:query"
+    reverse_query = "ims:asset:reverse:query"
+    if key == "R1":
+        return sorted(bag)
+    if key == "R2":
+        return sorted(code for code in bag if code != "ims:asset:cost:masked")
+    if key == "R3":
+        return keep([asset_query, forward_query, reverse_query, "ims:asset:cost:view"])
+    if key == "R4":
+        return keep(
+            [
+                phone_query,
+                asset_query,
+                "ims:device:asset:export",
+                forward_query,
+                "ims:asset:forward:export",
+                reverse_query,
+                "ims:asset:reverse:export",
+                "ims:asset:cost:view",
+                "ims:asset:verify:query",
+            ]
+        )
+    if key == "R5":
+        return keep([asset_query, forward_query, reverse_query])
+    if key == "R9":
+        return keep([phone_query, asset_query, forward_query, reverse_query, "ims:asset:cost:masked", "ims:asset:verify:query"])
+    return []
+
+
+def _shape_device(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
+    device = _device_codes(all_codes)
+    kept = [code for code in codes if code not in device]
+    return kept + _device_grant(key, all_codes)
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
-        return _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes)
+        return _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -333,7 +385,7 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
         codes.extend(sorted(managed))
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
-    return _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes)
+    return _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
 
 
 def _users(session):

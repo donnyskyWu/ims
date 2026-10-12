@@ -4,7 +4,7 @@ import { call } from "@/api/generated/endpoints";
 import { useDictStore } from "@/stores/dict";
 
 const props = withDefaults(
-  defineProps<{ status?: string; permCode?: string; deptId?: string; multiple?: boolean; placeholder?: string }>(),
+  defineProps<{ status?: string; permCode?: string; deptId?: string; multiple?: boolean; placeholder?: string; allowDisabled?: boolean }>(),
   { status: "ACTIVE", multiple: false, placeholder: "请选择人员" },
 );
 const model = defineModel<string | string[] | null>({ default: null });
@@ -39,7 +39,7 @@ async function fetchPage(keyword: string, pageNo: number) {
     if (!keyword) return true;
     return String(row.nickname || "").includes(keyword);
   });
-  return { list: list.map((row) => optionOf(row)), total: Number(data.total || list.length) };
+  return { list: list.map((row) => optionOf(row, props.allowDisabled)), total: Number(data.total || list.length) };
 }
 
 async function fetchByIds(ids: string[]) {

@@ -18,6 +18,8 @@ ROUTE_TABLE = (
     {"source_type": "COLLECT_FAIL", "type": "ALERT", "path": "/ims/alert/realtime", "delivered": False, "label": "采集失败"},
     {"source_type": "LEARN_TASK", "type": "LEARN", "path": "/ims/train/learn", "delivered": False, "label": "学习任务"},
     {"source_type": "FLOW_TASK", "type": "APPROVAL", "path": "/ims/flow/task", "delivered": True, "label": "流程任务"},
+    {"source_type": "ASSET_VERIFY", "type": "REVIEW", "path": "/ims/corp/device/office", "delivered": True, "label": "资产校验"},
+    {"source_type": "ASSET_VERIFY_ESCALATE", "type": "REVIEW", "path": "/ims/corp/device/office", "delivered": True, "label": "校验逾期"},
 )
 
 DEFAULT_BY_TYPE = {
@@ -39,6 +41,7 @@ MODULE_LABELS = {
     "alert": "告警",
     "train": "培训",
     "flow": "流程",
+    "asset": "资产",
     "system": "系统",
     "manual": "手工",
     "doc": "单据",
