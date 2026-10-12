@@ -22,6 +22,7 @@ from app.domains.auth.org_page_router import router as auth_org_router
 from app.domains.auth.position_router import router as auth_position_router
 from app.domains.auth.router import router as auth_router
 from app.domains.callback.router import router as callback_router
+from app.domains.cert.router import router as cert_router
 from app.domains.demo.router import router as demo_router
 from app.domains.file.router import router as file_router
 from app.domains.flow.router import router as flow_router
@@ -30,6 +31,8 @@ from app.domains.system.admin_router import router as system_admin_router
 from app.domains.system.extra_router import router as system_extra_router
 from app.domains.system.ops_router import router as system_ops_router
 from app.domains.system.org_router import router as org_router
+from app.domains.resource.router import router as resource_router
+from app.domains.resource.selector_router import router as selector_router
 from app.domains.system.router import router as system_router
 from app.domains.todo.router import router as todo_router
 from app.domains.export_task.router import router as export_router
@@ -56,6 +59,9 @@ MOUNTS = [
     ("/admin-api/ims/export-task", export_router),
     ("/admin-api/ims/workbench", workbench_router),
     ("/admin-api/ims/auth", workbench_alias_router),
+    ("/admin-api/ims/corp/resource", resource_router),
+    ("/admin-api/ims/master", selector_router),
+    ("/admin-api/ims/cert", cert_router),
 ]
 
 

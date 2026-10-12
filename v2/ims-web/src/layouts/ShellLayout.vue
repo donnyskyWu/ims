@@ -29,8 +29,18 @@ async function logout() {
   void router.push("/login");
 }
 
+function menuChildren(item: MenuNode) {
+  return (item.children || []).filter((child) => child.type !== "BUTTON");
+}
+
 onMounted(() => {
-  openIds.value = auth.menus.map((item) => item.id);
+  const ids = auth.menus.map((item) => item.id);
+  for (const group of auth.menus) {
+    for (const item of group.children || []) {
+      if (!item.path && menuChildren(item).length) ids.push(item.id);
+    }
+  }
+  openIds.value = ids;
 });
 
 function active(node: MenuNode): boolean {
@@ -40,6 +50,10 @@ function active(node: MenuNode): boolean {
 function navItems(group: MenuNode) {
   return (group.children || []).filter((item) => item.type !== "BUTTON");
 }
+
+function toggleGroup(item: MenuNode) {
+  openIds.value = openIds.value.includes(item.id) ? openIds.value.filter((id) => id !== item.id) : [...openIds.value, item.id];
+}
 </script>
 
 <template>
@@ -48,26 +62,26 @@ function navItems(group: MenuNode) {
       <button class="btn btn-txt fold" type="button" @click="toggle">{{ collapsed ? "展开" : "收起" }}</button>
       <template v-for="group in auth.menus" :key="group.id">
         <div class="g">{{ group.name }}</div>
-        <button
-          v-for="item in navItems(group)"
-          :key="item.id"
-          type="button"
-          class="item"
-          :class="{ on: active(item) || item.children.some((child) => active(child)) }"
-          @click="item.path ? go(item) : (openIds = openIds.includes(item.id) ? openIds.filter((id) => id !== item.id) : [...openIds, item.id])"
-        >
-          {{ collapsed ? item.name.slice(0, 1) : item.name }}
-        </button>
-        <button
-          v-for="child in (openIds.includes(group.id) ? [] : group.children.flatMap((item) => item.children))"
-          :key="child.id"
-          type="button"
-          class="sub"
-          :class="{ on: active(child) }"
-          @click="go(child)"
-        >
-          {{ child.name }}
-        </button>
+        <template v-for="item in navItems(group)" :key="item.id">
+          <button
+            type="button"
+            class="item"
+            :class="{ on: active(item) || menuChildren(item).some((child) => active(child)) }"
+            @click="item.path ? go(item) : toggleGroup(item)"
+          >
+            {{ collapsed ? item.name.slice(0, 1) : item.name }}
+          </button>
+          <button
+            v-for="child in openIds.includes(item.id) ? menuChildren(item) : []"
+            :key="child.id"
+            type="button"
+            class="sub"
+            :class="{ on: active(child) }"
+            @click="go(child)"
+          >
+            {{ child.name }}
+          </button>
+        </template>
       </template>
     </aside>
     <div class="main">

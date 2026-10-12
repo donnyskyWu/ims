@@ -25,6 +25,31 @@
     "strategy": "noPermission"
   },
   {
+    "code": 1032,
+    "msg": "该持有人已有同类型有效证件，如为新证请走换证",
+    "strategy": "toast"
+  },
+  {
+    "code": 1033,
+    "msg": "证件待审核，暂不可查看原件",
+    "strategy": "toast"
+  },
+  {
+    "code": 1034,
+    "msg": "查看级别不足，仅可见索引",
+    "strategy": "noPermission"
+  },
+  {
+    "code": 1035,
+    "msg": "查看过于频繁，已通知管理员",
+    "strategy": "toast"
+  },
+  {
+    "code": 1039,
+    "msg": "预警任务不存在",
+    "strategy": "toast"
+  },
+  {
     "code": 1101,
     "msg": "资料未发布或不可用",
     "strategy": "toast"
@@ -147,6 +172,21 @@
   {
     "code": 1220,
     "msg": "系统部门或来自钉钉的部门不能这样调整",
+    "strategy": "toast"
+  },
+  {
+    "code": 1221,
+    "msg": "选择器暂无可选数据",
+    "strategy": "toast"
+  },
+  {
+    "code": 1222,
+    "msg": "公众号容量不足（已用 {used} / 总量 {total}），不能低于已用数",
+    "strategy": "toast"
+  },
+  {
+    "code": 1223,
+    "msg": "主数据已变化，请刷新",
     "strategy": "toast"
   },
   {

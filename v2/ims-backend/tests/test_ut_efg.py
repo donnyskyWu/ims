@@ -392,7 +392,7 @@ def test_ut_e02_07(client, storage):
     preview = client.get("/admin-api/ims/file/preview", headers=auth(client, "u_admin"), params={"fileKey": key})
     assert preview.status_code == 200
     assert preview.content != payload
-    assert _viewer_name(preview.content) == "管理员"
+    assert _viewer_name(preview.content).startswith("管理员 u_admin ")
     assert (storage / key).read_bytes() == payload
 
 

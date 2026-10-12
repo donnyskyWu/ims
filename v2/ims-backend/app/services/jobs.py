@@ -265,3 +265,10 @@ def position_role_revoke():
     from app.services.position import revoke_expired
 
     return revoke_expired()
+
+
+@job("cert_expire_scan", "0 8 * * *")
+def cert_expire_scan():
+    from app.domains.cert.expire import scan
+
+    return scan()

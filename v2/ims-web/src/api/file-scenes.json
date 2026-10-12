@@ -16,5 +16,11 @@
     "maxBytes": 20971520,
     "maxMb": 20,
     "watermark": true
+  },
+  "CERT": {
+    "exts": ["jpg", "png", "pdf"],
+    "maxBytes": 20971520,
+    "maxMb": 20,
+    "watermark": true
   }
 }

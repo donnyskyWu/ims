@@ -83,4 +83,5 @@ ADAPTERS = {
     "comfyui": Gateway("comfyui", 5004),
     "air_ai": Gateway("air_ai", 5001),
     "train_ai": Gateway("train_ai", 1106),
+    "ocr": Gateway("ocr", 5005),
 }

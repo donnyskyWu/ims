@@ -16,7 +16,6 @@ function placeholderRoutes(): RouteRecordRaw[] {
     ["ims/account/return", "account-return", "账号归还"],
     ["ims/content/review", "content-review", "内容审核"],
     ["ims/content/task", "content-task", "任务确认"],
-    ["ims/cert/expire", "cert-expire", "证件到期"],
     ["ims/live/alarm", "live-alarm", "直播告警"],
     ["ims/alert/realtime", "alert-realtime", "实时告警"],
     ["ims/train/learn", "train-learn", "学习任务"],
@@ -54,6 +53,23 @@ export async function createAppRouter() {
     { path: "ims/flow/timeout", name: "flow-timeout", component: () => import("@/views/flow/TimeoutView.vue"), meta: { title: "超时督办", perm: "ims:flow:timeout:query" } },
     { path: "ims/flow/version/:templateId", name: "flow-version", component: () => import("@/views/flow/VersionView.vue"), meta: { menuless: true, title: "版本管理" } },
     { path: "ims/flow/mine", redirect: "/ims/flow/task" },
+    { path: "ims/corp/resource/company", name: "corp-company", component: () => import("@/views/resource/CompanyView.vue"), meta: { title: "公司管理", perm: "ims:corp:company:query" } },
+    { path: "ims/corp/resource/realname", name: "corp-realname", component: () => import("@/views/resource/RealnameView.vue"), meta: { title: "实名人管理", perm: "ims:corp:realname:query" } },
+    { path: "ims/corp/resource/sim-card", name: "corp-sim", component: () => import("@/views/resource/SimCardView.vue"), meta: { title: "手机卡管理", perm: "ims:corp:sim:query" } },
+    {
+      path: "ims/corp/resource/certificate",
+      name: "corp-certificate",
+      component: () => import("@/views/resource/CertificateView.vue"),
+      meta: {
+        title: "证件管理",
+        anyPerm: ["ims:cert:archive:query", "ims:cert:expire:query", "ims:cert:security:config", "ims:cert:security:log"],
+      },
+    },
+    {
+      path: "ims/cert/expire",
+      name: "cert-expire",
+      redirect: (to) => ({ path: "/ims/corp/resource/certificate", query: { ...to.query, tab: "expire" } }),
+    },
     ...placeholderRoutes(),
   ];
   const routes: RouteRecordRaw[] = [
