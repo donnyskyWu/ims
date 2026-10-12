@@ -35,7 +35,19 @@ const tabs = computed(() => {
   return items;
 });
 const tab = ref("archive");
-const query = ref<Record<string, unknown>>({ realnameId: "", certType: "", certNo: "", status: "", expireRange: ["", ""] });
+type TextBag = Record<string, unknown> & { realnameId: string };
+type CertForm = Record<string, unknown> & {
+  realnameId: string;
+  certType: string;
+  certNoPlain: string;
+  issueDate: string;
+  expireDate: string;
+  fileKey: string;
+  longTerm: boolean;
+};
+type LevelForm = Record<string, unknown> & { l2RoleIds: string[]; l3UserIds: string[]; opacity: string; position: string };
+
+const query = ref<TextBag>({ realnameId: "", certType: "", certNo: "", status: "", expireRange: ["", ""] });
 const rows = ref<Record<string, unknown>[]>([]);
 const total = ref(0);
 const pageNo = ref(1);
@@ -50,7 +62,7 @@ const metricItems = computed<StatItem[]>(() => {
 });
 const metricsOpen = ref(false);
 const drawer = ref(false);
-const form = ref<Record<string, unknown>>({});
+const form = ref<CertForm>({ realnameId: "", certType: "ID_CARD", certNoPlain: "", issueDate: "", expireDate: "", fileKey: "", longTerm: false });
 const renewOf = ref<Record<string, unknown> | null>(null);
 const detailOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
@@ -60,11 +72,11 @@ const watermark = ref("");
 const logId = ref("");
 const viewingId = ref("");
 let closeTimer = 0;
-const expireQuery = ref<Record<string, unknown>>({ realnameId: "", level: "", status: "" });
+const expireQuery = ref<TextBag>({ realnameId: "", level: "", status: "" });
 const expireRows = ref<Record<string, unknown>[]>([]);
 const expireTotal = ref(0);
 const stats = ref<Record<string, unknown>>({});
-const levelForm = ref<Record<string, unknown>>({ l2RoleIds: [], l3UserIds: [], opacity: "0.12", position: "BOTTOM_RIGHT", version: 1 });
+const levelForm = ref<LevelForm>({ l2RoleIds: [], l3UserIds: [], opacity: "0.12", position: "BOTTOM_RIGHT", version: 1 });
 const logs = ref<Record<string, unknown>[]>([]);
 const risks = ref<Record<string, unknown>[]>([]);
 
@@ -130,14 +142,14 @@ const statItems = computed<StatItem[]>(() => [
 
 function blankForm(locked?: Record<string, unknown>) {
   form.value = {
-    realnameId: locked?.realnameId || query.value.realnameId || "",
-    certType: locked?.certType || "ID_CARD",
+    realnameId: String(locked?.realnameId || query.value.realnameId || ""),
+    certType: String(locked?.certType || "ID_CARD"),
     certNoPlain: "",
     issueDate: "",
     expireDate: "",
     longTerm: false,
     fileKey: "",
-    renewOfCertId: locked?.certId || locked?.id || "",
+    renewOfCertId: String(locked?.certId || locked?.id || ""),
   };
 }
 async function loadArchive() {
@@ -170,7 +182,7 @@ async function loadExpire() {
   expireTotal.value = data.total;
 }
 async function loadSecurity() {
-  if (can("ims:cert:security:config")) levelForm.value = await resourceGet("/cert/security/level-config");
+  if (can("ims:cert:security:config")) levelForm.value = await resourceGet<LevelForm>("/cert/security/level-config");
   if (can("ims:cert:security:log")) {
     const data = await resourcePage<Record<string, unknown>>("/cert/security/view-logs", { pageNo: 1, pageSize: 20 });
     logs.value = data.list;
@@ -277,7 +289,7 @@ async function scan() {
 async function saveLevel(model: Record<string, unknown>) {
   const saved = await resourceSend<Record<string, unknown>>("PUT", "/cert/security/level-config", model);
   toast.success(String(saved.hint || "下次查看即按新级别"));
-  levelForm.value = saved;
+  levelForm.value = saved as LevelForm;
   return saved;
 }
 async function exportRisk() {

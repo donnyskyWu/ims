@@ -51,7 +51,7 @@ function navItems(group: MenuNode) {
   return (group.children || []).filter((item) => item.type !== "BUTTON");
 }
 
-function toggle(item: MenuNode) {
+function toggleGroup(item: MenuNode) {
   openIds.value = openIds.value.includes(item.id) ? openIds.value.filter((id) => id !== item.id) : [...openIds.value, item.id];
 }
 </script>
@@ -67,7 +67,7 @@ function toggle(item: MenuNode) {
             type="button"
             class="item"
             :class="{ on: active(item) || menuChildren(item).some((child) => active(child)) }"
-            @click="item.path ? go(item) : toggle(item)"
+            @click="item.path ? go(item) : toggleGroup(item)"
           >
             {{ collapsed ? item.name.slice(0, 1) : item.name }}
           </button>

@@ -276,6 +276,7 @@ MENU_TREE = [
                 {"name": "查看卡号明文", "type": "BUTTON", "perm": "ims:corp:sim:plain"},
             ]},
             {"name": "证件管理", "type": "MENU", "path": "/ims/corp/resource/certificate", "perm": "ims:cert:expire:query", "children": [
+                {"name": "证件档案", "type": "BUTTON", "perm": "ims:cert:archive:query"},
                 {"name": "上传证件", "type": "BUTTON", "perm": "ims:cert:archive:upload"},
                 {"name": "审核证件", "type": "BUTTON", "perm": "ims:cert:archive:review"},
                 {"name": "数字化率", "type": "BUTTON", "perm": "ims:cert:archive:metrics"},

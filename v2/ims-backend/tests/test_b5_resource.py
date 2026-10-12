@@ -52,8 +52,11 @@ def walk(nodes):
         yield from walk(node.get("children") or [])
 
 
-def sheet_text(payload: dict) -> str:
-    book = load_workbook(io.BytesIO(base64.b64decode(payload["content"])))
+def sheet_text(client, headers, payload: dict) -> str:
+    assert payload["status"] == "SUCCESS"
+    downloaded = client.get(f"{API}/export-task/download", headers=headers, params={"id": payload["id"]}).json()
+    assert downloaded["code"] == 0, downloaded
+    book = load_workbook(io.BytesIO(base64.b64decode(downloaded["data"]["content"])))
     cells = []
     for row in book.active.iter_rows():
         cells.extend("" if cell.value is None else str(cell.value) for cell in row)
@@ -116,7 +119,7 @@ def test_company_realname_sim_and_selectors(client, monkeypatch):
     assert opened["data"]["capacityLogs"][0]["title"] == "5 → 8"
 
     exported = client.get(f"{API}/corp/resource/company/export", headers=admin).json()
-    assert "星河文化" in sheet_text(exported["data"])
+    assert "星河文化" in sheet_text(client, admin, exported["data"])
     denied = client.get(f"{API}/corp/resource/company/page", headers=auth(client, "u_self")).json()
     assert denied["code"] == 1008
 
@@ -143,7 +146,7 @@ def test_company_realname_sim_and_selectors(client, monkeypatch):
     assert resigned["code"] == 1501
     plain = client.get(f"{API}/corp/resource/realname/{person_id}/plain", headers=admin).json()
     assert plain["data"]["idNo"] == id_card("11010119900307851")
-    masked_book = sheet_text(client.get(f"{API}/corp/resource/realname/export", headers=admin).json()["data"])
+    masked_book = sheet_text(client, admin, client.get(f"{API}/corp/resource/realname/export", headers=admin).json()["data"])
     assert id_card("11010119900307851") not in masked_book
     assert "****" in masked_book
 
@@ -301,7 +304,7 @@ def test_certificate_review_level_scan_and_risk(client):
     report = client.get(f"{API}/cert/security/risk-report", headers=admin).json()
     assert report["data"]["list"]
     exported = client.get(f"{API}/cert/security/risk-report", headers=admin, params={"export": "1"}).json()
-    assert exported["data"]["filename"] == "证件异常访问.xlsx"
+    assert exported["data"]["fileKey"].endswith("证件异常访问.xlsx")
     with session_scope() as session:
         with use_context(system_context(1)):
             views = session.scalar(select(func.count()).select_from(CertViewLog))
@@ -366,6 +369,7 @@ def test_certificate_review_level_scan_and_risk(client):
     finished = client.put(f"{API}/cert/archive/{new_id}/review", headers=admin, json={"action": "APPROVE"}).json()
     assert finished["data"]["status"] == "EFFECTIVE"
     old = client.get(f"{API}/cert/archive/{cert_id}", headers=admin).json()
+    assert old["code"] == 0, old
     assert old["data"]["status"] == "RECYCLED"
     with session_scope() as session:
         with use_context(system_context(1)):

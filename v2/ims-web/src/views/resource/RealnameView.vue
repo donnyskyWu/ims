@@ -26,7 +26,8 @@ const pageSize = ref(20);
 const loading = ref(false);
 const drawer = ref(false);
 const editing = ref<Record<string, unknown> | null>(null);
-const form = ref<Record<string, unknown>>({ name: "", idType: "ID_CARD", idNo: "", mobile: "", userId: "", agentName: "", agentMobile: "", remark: "", status: "ENABLED" });
+type PersonForm = Record<string, unknown> & { idType: string; userId: string };
+const form = ref<PersonForm>({ name: "", idType: "ID_CARD", idNo: "", mobile: "", userId: "", agentName: "", agentMobile: "", remark: "", status: "ENABLED" });
 const detailOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const plain = ref<Record<string, string> | null>(null);
@@ -83,7 +84,17 @@ function openCreate() {
 }
 function openEdit(row: Record<string, unknown>) {
   editing.value = row;
-  form.value = { name: row.name, idType: row.idType, idNo: "", mobile: "", userId: row.userId || "", agentName: row.agentName, agentMobile: "", remark: row.remark, status: row.status };
+  form.value = {
+    name: row.name,
+    idType: String(row.idType || "ID_CARD"),
+    idNo: "",
+    mobile: "",
+    userId: String(row.userId || ""),
+    agentName: row.agentName,
+    agentMobile: "",
+    remark: row.remark,
+    status: row.status,
+  };
   drawer.value = true;
 }
 async function save(model: Record<string, unknown>) {

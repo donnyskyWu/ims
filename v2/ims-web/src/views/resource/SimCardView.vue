@@ -18,7 +18,9 @@ import { confirm } from "@/components/confirm";
 import { toast } from "@/utils/toast";
 import { resourceGet, resourcePage, resourceSend } from "@/api/resource";
 
-const query = ref<Record<string, unknown>>({ phone: "", operator: "", realnameId: "", assignedUserId: "", status: "" });
+type SimQuery = Record<string, unknown> & { realnameId: string; assignedUserId: string };
+type SimForm = Record<string, unknown> & { operator: string; realnameId: string; assignedUserId: string; paymentCycle: string };
+const query = ref<SimQuery>({ phone: "", operator: "", realnameId: "", assignedUserId: "", status: "" });
 const rows = ref<Record<string, unknown>[]>([]);
 const total = ref(0);
 const pageNo = ref(1);
@@ -26,7 +28,7 @@ const pageSize = ref(20);
 const loading = ref(false);
 const drawer = ref(false);
 const editing = ref<Record<string, unknown> | null>(null);
-const form = ref<Record<string, unknown>>({});
+const form = ref<SimForm>({ phone: "", operator: "CMCC", iccid: "", realnameId: "", assignedUserId: "", paymentCycle: "MONTH" });
 const detailOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const plain = ref<Record<string, string> | null>(null);
@@ -81,7 +83,7 @@ function openCreate() {
 }
 function openEdit(row: Record<string, unknown>) {
   editing.value = row;
-  form.value = { ...row, phone: "", iccid: "" };
+  form.value = { ...row, phone: "", iccid: "", operator: String(row.operator || ""), realnameId: String(row.realnameId || ""), assignedUserId: String(row.assignedUserId || ""), paymentCycle: String(row.paymentCycle || "") };
   drawer.value = true;
 }
 async function save(model: Record<string, unknown>) {
