@@ -70,7 +70,7 @@ async function save() {
       const field = formRef.value?.fields.find((entry) => String(entry.prop) === "name");
       if (field) {
         field.validateState = "error";
-        field.validateMessage = biz.msg || "同一上级部门下已有同名部门";
+        field.validateMessage = "同一上级部门下已有同名部门";
       }
     }
   } finally {

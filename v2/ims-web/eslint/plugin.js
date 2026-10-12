@@ -50,7 +50,8 @@ const noRoleCheck = {
 const noEnumText = {
   meta: { type: "problem", docs: { description: "模板不得出现纯英文枚举码" } },
   create(context) {
-    return {
+    const services = context.sourceCode?.parserServices || context.parserServices;
+    const visitor = {
       VText(node) {
         const text = String(node.value || "").trim();
         if (/^[A-Z_]{4,}$/.test(text)) {
@@ -58,6 +59,8 @@ const noEnumText = {
         }
       },
     };
+    if (services?.defineTemplateBodyVisitor) return services.defineTemplateBodyVisitor(visitor);
+    return visitor;
   },
 };
 

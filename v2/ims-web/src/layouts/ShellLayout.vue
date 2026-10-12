@@ -11,6 +11,12 @@ const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 const collapsed = ref(localStorage.getItem("ims.sider.collapsed") === "1");
+const devTodo = !import.meta.env.PROD;
+
+function openTodo() {
+  if (import.meta.env.PROD) return;
+  void router.push("/demo/workbench");
+}
 const unread = ref(0);
 const openIds = ref<string[]>([]);
 
@@ -55,7 +61,6 @@ function active(node: MenuNode): boolean {
   <div class="shell" :class="{ collapsed }">
     <aside class="sider">
       <button class="btn btn-txt fold" type="button" @click="toggle">{{ collapsed ? "展开" : "收起" }}</button>
-      <p v-if="!auth.menus.length" class="hint">您的账号尚未分配权限，请联系管理员</p>
       <template v-for="group in auth.menus" :key="group.id">
         <div class="g">{{ group.name }}</div>
         <button
@@ -85,7 +90,7 @@ function active(node: MenuNode): boolean {
         <span />
         <div class="tools">
           <button class="btn btn-txt" type="button">消息 {{ unread }}</button>
-          <button class="btn btn-txt" type="button" @click="router.push('/demo/workbench')">待办</button>
+          <button class="btn btn-txt" type="button" @click="devTodo ? openTodo() : undefined">待办</button>
           <details>
             <summary>{{ auth.user?.nickname || "账号" }}</summary>
             <button type="button" @click="router.push('/account/password')">个人中心</button>
@@ -94,7 +99,8 @@ function active(node: MenuNode): boolean {
         </div>
       </header>
       <div class="content">
-        <EmptyState v-if="!allowed" type="noPermission" />
+        <EmptyState v-if="!auth.menus.length" desc="您的账号尚未分配权限，请联系管理员" />
+        <EmptyState v-else-if="!allowed" type="noPermission" />
         <router-view v-else />
       </div>
     </div>
@@ -114,7 +120,7 @@ function active(node: MenuNode): boolean {
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .top { height: var(--header-h); display: flex; align-items: center; justify-content: flex-end; padding: 0 20px; background: var(--card); border-bottom: 1px solid var(--line); }
 .tools { display: flex; align-items: center; gap: 8px; }
-.content { padding: var(--content-y) var(--content-x); }
+.content { padding: var(--content-y) var(--content-x); max-width: var(--page-max); }
 .hint { font-size: 12px; color: var(--text2); padding: 8px; }
 summary { cursor: pointer; font-size: 13px; }
 details button { display: block; width: 100%; text-align: left; border: none; background: var(--card); padding: 6px 8px; cursor: pointer; }

@@ -45,6 +45,7 @@ const emit = defineEmits<{
 }>();
 
 const alignOf = (column: TableColumn) => (["number", "money", "percent"].includes(column.type || "") ? "right" : "left");
+const scalar = (value: unknown) => value as string | number | null;
 
 function onSort(payload: { prop: string; order: "ascending" | "descending" | null }) {
   if (!payload.order) {
@@ -83,8 +84,8 @@ const showEmpty = computed(() => !props.loading && props.data.length === 0);
           <slot :name="`cell-${column.key}`" :row="row">
             <span v-if="column.type === 'mono'" class="mono">{{ textOf(row[column.key]) }}</span>
             <span v-else-if="column.type === 'number'" class="num">{{ textOf(row[column.key]) }}</span>
-            <MoneyText v-else-if="column.type === 'money'" :value="row[column.key] as string | number | null" />
-            <PercentText v-else-if="column.type === 'percent'" :value="row[column.key] as string | number | null" />
+            <MoneyText v-else-if="column.type === 'money'" :value="scalar(row[column.key])" />
+            <PercentText v-else-if="column.type === 'percent'" :value="scalar(row[column.key])" />
             <StatusTag v-else-if="column.type === 'status'" :dict-type="column.dictType || ''" :value="row[column.key] as string" />
             <span v-else-if="column.type === 'time'">{{ fmtTime(row[column.key] as string) }}</span>
             <MaskedText v-else-if="column.type === 'masked'" :value="row[column.key] as string" />

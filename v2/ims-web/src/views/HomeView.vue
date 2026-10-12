@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const dev = !import.meta.env.PROD;
-const links = [
+const links = import.meta.env.PROD ? [] : [
   ["样式", "/demo/tokens"],
   ["请求", "/demo/request"],
   ["布局", "/demo/layout"],

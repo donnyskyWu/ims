@@ -50,7 +50,10 @@ async function timeout() {
     <div class="row">
       <button class="btn btn-pri" type="button" @click="run()">成功请求</button>
       <button class="btn btn-sec" type="button" @click="emptyForm">提交空表单</button>
+      <button class="btn btn-sec" type="button" @click="run(1001)">表单校验错误</button>
       <button class="btn btn-sec" type="button" @click="run(1008)">无权限操作</button>
+      <button class="btn btn-sec" type="button" @click="run(1002)">登录失效</button>
+      <button class="btn btn-sec" type="button" @click="run(1003)">其他设备登录</button>
       <button class="btn btn-sec" type="button" @click="detail = true">打开详情</button>
       <button class="btn btn-sec" type="button" @click="run(1504)">资源不可用</button>
       <button class="btn btn-sec" type="button" @click="run(5007)">系统异常</button>

@@ -13,6 +13,7 @@ import UserSelect from "./UserSelect.vue";
 import DeptTreeSelect from "./DeptTreeSelect.vue";
 import EmptyState from "./EmptyState.vue";
 import { fmtTime } from "@/utils/format";
+import { integerRule, lengthRule, requiredRule } from "./form/rules";
 import DeptBranch from "./DeptBranch.vue";
 import {
   ancestorIds,
@@ -156,6 +157,10 @@ async function submitForm(model: Record<string, unknown>) {
 }
 
 const dingHint = computed(() => formMode.value === "rename" && formParent.value?.source === "DINGTALK");
+const formRules = {
+  name: [requiredRule("部门名称"), lengthRule(1, 50, "部门名称")],
+  sort: [integerRule],
+};
 
 function blockedMoveIds(node: DeptNode): string[] {
   const ids = [node.id, ...node.children.flatMap((child) => [child.id, ...collect(child)])];
@@ -356,20 +361,17 @@ async function syncOrg() {
         @drop="onDrop"
       />
     </ul>
-    <FormDrawer v-model:open="formOpen" :title="formMode === 'create' ? '新增下级' : '修改部门'" size="S" :model="formModel" :submit="submitForm">
+    <FormDrawer v-model:open="formOpen" :title="formMode === 'create' ? '新增下级' : '修改部门'" size="S" :model="formModel" :rules="formRules" :submit="submitForm">
       <p v-if="dingHint" class="hint-bar">该部门来自钉钉，下次钉钉同步将以钉钉为准覆盖此修改</p>
-      <div class="fld">
-        <label><i class="req">*</i>部门名称</label>
+      <el-form-item label="部门名称" prop="name">
         <el-input v-model="formModel.name" maxlength="50" />
-      </div>
-      <div class="fld">
-        <label>负责人</label>
+      </el-form-item>
+      <el-form-item label="负责人">
         <UserSelect v-model="formModel.leaderUserId as string" />
-      </div>
-      <div class="fld">
-        <label>排序</label>
+      </el-form-item>
+      <el-form-item label="排序" prop="sort">
         <el-input v-model="formModel.sort" />
-      </div>
+      </el-form-item>
     </FormDrawer>
     <AppModal v-model:open="moveOpen" title="移动部门" :width="520">
       <p v-if="moving?.source === 'DINGTALK'" class="muted">钉钉部门不能移到本地部门下</p>

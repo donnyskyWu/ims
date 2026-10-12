@@ -76,12 +76,6 @@ function onScroll(event: Event) {
   }
 }
 
-const collapsed = computed(() => {
-  if (!props.multiple || selectedIds.value.length <= 3) return options.value;
-  return options.value;
-});
-
-void collapsed;
 </script>
 
 <template>

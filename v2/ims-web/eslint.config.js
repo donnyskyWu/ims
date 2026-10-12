@@ -1,4 +1,5 @@
 import vue from "eslint-plugin-vue";
+import vueParser from "vue-eslint-parser";
 import tseslint from "typescript-eslint";
 import ims from "./eslint/plugin.js";
 
@@ -21,7 +22,18 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/api/generated/**", "src/api/http.ts"],
+    files: ["src/**/*.vue"],
+    languageOptions: {
+      parser: vueParser,
+      parserOptions: {
+        parser: tseslint.parser,
+        extraFileExtensions: [".vue"],
+        sourceType: "module",
+      },
+    },
+  },
+  {
+    files: ["src/api/generated/**", "src/api/http.ts", "eslint/**", "**/*.test.ts"],
     rules: { "ims/no-admin-api": "off" },
   },
 );

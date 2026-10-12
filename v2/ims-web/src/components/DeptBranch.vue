@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DeptNode } from "./dept/tree-logic";
+import StatusTag from "./StatusTag.vue";
 
 const props = defineProps<{
   node: DeptNode;
@@ -36,9 +37,9 @@ const label = () =>
       <button type="button" class="exp" @click.stop="emit('toggle', node.id)">{{ expanded.includes(node.id) ? "▾" : "▸" }}</button>
       <span :class="{ off: node.status === 'DISABLED' }">{{ label() }}</span>
       <em v-if="showCount">{{ node.memberCount }}</em>
-      <span v-if="node.source === 'LOCAL'" class="mini">本地</span>
+      <StatusTag v-if="node.source === 'LOCAL'" dict-type="dict_dept_source" value="LOCAL" />
       <span v-if="node.localOrphan" class="mini warn">待确认</span>
-      <span v-if="node.status === 'DISABLED'" class="mini mute">停用</span>
+      <StatusTag v-if="node.status === 'DISABLED'" dict-type="dict_common_status" value="DISABLED" />
       <details v-if="menu(node).length" class="more" @click.stop>
         <summary>⋯</summary>
         <div>
