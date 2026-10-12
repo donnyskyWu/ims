@@ -116,6 +116,7 @@ class Role(AuditBase):
     is_standard: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    flow_domain: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class Menu(AuditBase):

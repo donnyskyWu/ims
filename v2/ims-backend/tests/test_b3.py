@@ -95,7 +95,7 @@ def test_dashboard_greeting_cards_and_menu(client):
     me = client.get(f"{API}/auth/me", headers=headers).json()
     assert "工作台" in _names(me["data"]["menus"])
     foreign = client.get(f"{API}/auth/me", headers=auth(client, "t2_admin")).json()
-    assert [node["name"] for node in foreign["data"]["menus"]] == ["系统管理"]
+    assert [node["name"] for node in foreign["data"]["menus"]] == ["系统管理", "工作流"]
     with session_scope() as session:
         assert _label(session, "dict_todo_status", "DONE") == "已处理"
         assert _label(session, "dict_todo_type", "LEARN") == "学习"

@@ -71,6 +71,9 @@ def apply(env: str = "test") -> None:
         if env == "e2e":
             _e2e_roles(session)
         session.flush()
+        from app.domains.flow.presets import ensure_presets
+
+        ensure_presets()
 
 
 def _packages(session):
@@ -195,6 +198,9 @@ def _roles(session, menus):
             session.flush()
         linked = set(session.scalars(select(RoleMenu.menu_id).where(RoleMenu.role_id == ident)))
         codes = _codes_for(key, all_codes)
+        domain = _FLOW_DOMAIN_VALUE.get(key)
+        if domain and row.flow_domain != domain:
+            row.flow_domain = domain
         for code in codes:
             menu = menus[code]
             if menu.id not in linked:
@@ -219,6 +225,33 @@ _R2_CODES = {
 }
 
 
+_FLOW_DOMAIN_VALUE = {"R2": "ADMIN", "R3": "FINANCE", "R4": "BUSINESS,COMMON"}
+_FLOW_OPERATE = [
+    "ims:flow:template:query",
+    "ims:flow:template:create",
+    "ims:flow:template:publish",
+    "ims:flow:instance:start",
+    "ims:flow:board:query",
+    "ims:flow:timeout:query",
+    "ims:flow:timeout:urge",
+    "ims:flow:task:handle",
+    "ims:flow:instance:manage",
+]
+_FLOW_NARROW_STRIP = {
+    "ims:flow:template:query",
+    "ims:flow:template:create",
+    "ims:flow:template:publish",
+    "ims:flow:template:delete",
+    "ims:flow:instance:start",
+    "ims:flow:instance:cancel",
+    "ims:flow:instance:manage",
+    "ims:flow:board:query",
+    "ims:flow:timeout:query",
+    "ims:flow:timeout:urge",
+    "ims:flow:version:rollback",
+}
+
+
 def _with_workbench(codes: list[str], all_codes: list[str]) -> list[str]:
     merged = list(codes)
     leaf = "ims:workbench:query"
@@ -227,11 +260,27 @@ def _with_workbench(codes: list[str], all_codes: list[str]) -> list[str]:
     return [code for code in merged if code in all_codes]
 
 
+def _with_flow(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
+    merged = list(codes)
+    extra: list[str] = []
+    if key in {"R2", "R3", "R4"}:
+        extra = list(_FLOW_OPERATE)
+    elif key in {"R5", "R6", "R7", "R8", "R10", "R11"}:
+        merged = [code for code in merged if code not in _FLOW_NARROW_STRIP]
+        extra = ["ims:flow:task:handle"]
+    elif key == "R9":
+        extra = ["ims:flow:template:query", "ims:flow:board:query", "ims:flow:timeout:query", "ims:flow:task:handle"]
+    for code in extra:
+        if code in all_codes and code not in merged:
+            merged.append(code)
+    return merged
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
-        return _with_workbench(codes, all_codes)
+        return _with_flow(key, _with_workbench(codes, all_codes), all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -248,7 +297,7 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
         codes.extend(sorted(managed))
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
-    return _with_workbench(codes, all_codes)
+    return _with_flow(key, _with_workbench(codes, all_codes), all_codes)
 
 
 def _users(session):

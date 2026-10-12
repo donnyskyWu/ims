@@ -50,8 +50,53 @@
     "strategy": "toast"
   },
   {
+    "code": 1131,
+    "msg": "流程图校验失败，请补齐起止或去掉环路",
+    "strategy": "fieldError"
+  },
+  {
+    "code": 1132,
+    "msg": "处理人规则非法或无法解析",
+    "strategy": "toast"
+  },
+  {
+    "code": 1133,
+    "msg": "已发布模板不可直接编辑，请升版本",
+    "strategy": "toast"
+  },
+  {
+    "code": 1134,
+    "msg": "仅最新发布版本可发起，或回滚目标版本非法",
+    "strategy": "toast"
+  },
+  {
+    "code": 1135,
+    "msg": "您不是该任务的当前处理人",
+    "strategy": "toast"
+  },
+  {
+    "code": 1136,
+    "msg": "无该模板发起权限",
+    "strategy": "noPermission"
+  },
+  {
+    "code": 1137,
+    "msg": "请等待其他并行分支完成后再流转",
+    "strategy": "toast"
+  },
+  {
+    "code": 1138,
+    "msg": "转交目标无效或与当前处理人相同",
+    "strategy": "toast"
+  },
+  {
     "code": 1139,
-    "msg": "当前流程不可撤销",
+    "msg": "无权撤销该实例",
+    "strategy": "toast"
+  },
+  {
+    "code": 1140,
+    "msg": "实例已结束，不可撤销",
     "strategy": "toast"
   },
   {

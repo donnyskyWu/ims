@@ -25,7 +25,7 @@ from app.db.session import session_scope
 from app.domains.demo.model import DemoOrder
 from app.domains.file.model import StoredFile
 from app.domains.file.service import SCENES, bind, export_scene_registry, scene_registry, unbind, upload
-from app.domains.flow.model import FlowInstance, FlowTask
+from app.domains.flow.model import FlowInstance, FlowTask, FlowTrace
 from app.domains.flow.service import callbacks
 from app.domains.flow.service import cancel as flow_cancel
 from app.domains.message.model import Message, NotifyRecord
@@ -45,7 +45,7 @@ from app.domains.system.model import (
     UserDept,
     UserRole,
 )
-from app.domains.todo.model import Todo, TodoAssignee
+from app.domains.todo.model import Todo
 from app.domains.todo.service import cancel as todo_cancel
 from app.domains.todo.service import complete, detail, todo_create, users_with_perm
 from app.integrations.dingtalk.client import ding_state
@@ -1119,15 +1119,19 @@ def test_ut_g03_10(client):
     headers = auth(client, "u_admin")
     _publish(client, headers, "G310", [{"key": "solo", "permCode": "ims:demo:order:audit"}])
     started = _start(client, headers, "G310", 1)
-    assert started["data"]["status"] == "SUSPENDED", started
+    assert started["data"]["status"] == "RUNNING", started
     with session_scope() as session:
-        with use_context(system_context(1)):
-            holders = set(users_with_perm("ims:flow:manage"))
+        names = set(
+            session.scalars(
+                select(FlowTask.assignee).where(FlowTask.instance_id == int(started["data"]["id"]), FlowTask.status == "PENDING")
+            )
+        )
+        assert U_ADMIN not in names
+        assert 1 in names
+        trace = session.scalar(select(FlowTrace).where(FlowTrace.instance_id == int(started["data"]["id"]), FlowTrace.action == "REASSIGN"))
+        assert trace is not None and "改派" in (trace.detail or "")
         todo = session.scalar(select(Todo).where(Todo.source_type == "FLOW_INSTANCE", Todo.source_id == int(started["data"]["id"])))
-        assert todo is not None
-        assert todo.assignee_perm_code == "ims:flow:manage"
-        ids = set(session.scalars(select(TodoAssignee.user_id).where(TodoAssignee.todo_id == todo.id)))
-        assert ids == holders
+        assert todo is None
     body = _act(client, headers, started["data"]["id"], "APPROVE")
     assert body["code"] == 1008
 
