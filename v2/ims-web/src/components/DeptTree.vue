@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useDeptStore } from "@/stores/dept";
 import { useAuthStore } from "@/stores/auth";
 import { call } from "@/api/generated/endpoints";
@@ -35,6 +36,7 @@ const emit = defineEmits<{ select: [id: string | null, includeChildren: boolean]
 
 const dept = useDeptStore();
 const auth = useAuthStore();
+const router = useRouter();
 const keyword = ref("");
 const applied = ref("");
 const expanded = ref<string[]>([]);
@@ -333,7 +335,7 @@ async function syncOrg() {
   <section class="panel">
     <header v-if="showSync && canSync">
       <button class="btn btn-sec btn-sm" type="button" :disabled="syncing" @click="syncOrg">{{ syncing ? "同步中…" : "同步钉钉组织" }}</button>
-      <p class="muted">{{ lastSync ? `上次同步：${lastSync}` : "尚未同步" }}</p>
+      <p class="muted">{{ lastSync ? `上次同步：${lastSync}` : "尚未同步" }} <button class="btn btn-txt btn-sm" type="button" @click="router.push('/ims/auth/org')">查看详情</button></p>
     </header>
     <input v-model="keyword" class="search" placeholder="搜索部门" />
     <label class="check"><input type="checkbox" :checked="dept.showDisabled" @change="dept.setShowDisabled(($event.target as HTMLInputElement).checked)" /> 显示停用部门</label>

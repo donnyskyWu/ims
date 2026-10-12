@@ -37,13 +37,22 @@ ROLES = [
 ]
 
 PARAMS = [
-    ("perf.grade.excellent", "优秀线", "绩效", "NUMBER", "90", "0", "100"),
-    ("content.review.level1.role", "一级审核角色", "内容", "ROLE_REF", "", None, None),
-    ("dingtalk.notify.enabled", "钉钉通知开关", "通知", "TEXT", "true", None, None),
+    ("perf.grade.excellent", "优秀线", "通用", "NUMBER", "85", "0", "100"),
+    ("perf.grade.qualified", "合格线", "通用", "NUMBER", "60", "0", "100"),
+    ("content.review.level1.role", "一级审核角色", "内容审核", "ROLE_REF", "", None, None),
+    ("content.review.level2.role", "二级审核角色", "内容审核", "ROLE_REF", "", None, None),
+    ("work.task.confirm.auto-ai-generate", "任务确认后自动生成", "内容审核", "BOOLEAN", "false", None, None),
+    ("dingtalk.notify.enabled", "钉钉工作通知", "钉钉", "BOOLEAN", "true", None, None),
+    ("dingtalk.sync.enabled", "组织同步开关", "钉钉", "BOOLEAN", "true", None, None),
     ("dingtalk.app_key", "钉钉应用标识", "钉钉", "TEXT", "test-app-key", None, None),
+    ("dingtalk_attendance.enabled", "启用考勤", "钉钉考勤", "BOOLEAN", "true", None, None),
+    ("dingtalk_attendance.mode", "考勤模式", "钉钉考勤", "ENUM", "mock", None, None, ["mock", "real"]),
     ("dingtalk_attendance.app_key", "考勤应用标识", "钉钉考勤", "TEXT", "test-att-key", None, None),
     ("dingtalk_attendance.app_secret", "考勤应用密钥", "钉钉考勤", "SECRET", "", None, None),
-    ("air.model.base_url", "内容模型地址", "内容", "TEXT", "http://127.0.0.1:9/air", None, None),
+    ("dingtalk_attendance.base_url", "考勤接口地址", "钉钉考勤", "TEXT", "http://127.0.0.1:9", None, None),
+    ("dingtalk_attendance.timeout_ms", "考勤超时毫秒", "钉钉考勤", "NUMBER", "1000", "100", "60000"),
+    ("air.key.ip_whitelist.enabled", "内容密钥地址限制", "AI", "BOOLEAN", "false", None, None),
+    ("air.model.base_url", "内容模型地址", "内容审核", "TEXT", "http://127.0.0.1:9/air", None, None),
 ]
 
 
@@ -53,8 +62,10 @@ def apply(env: str = "test") -> None:
         _packages(session)
         _dicts(session)
         menus = _menus(session)
+        _bind_pages(session)
         _params(session)
         _roles(session, menus)
+        _standard_package(session)
         _users(session)
         _tenant_dept(session)
         if env == "e2e":
@@ -142,9 +153,11 @@ def _menus(session):
 
 
 def _params(session):
-    for key, name, group, value_type, value, lo, hi in PARAMS:
-        row = session.scalar(select(Param).where(Param.param_key == key))
-        if row is None:
+    for row in PARAMS:
+        key, name, group, value_type, value, lo, hi = row[:7]
+        options = row[7] if len(row) > 7 else None
+        found = session.scalar(select(Param).where(Param.param_key == key))
+        if found is None:
             session.add(
                 Param(
                     param_key=key,
@@ -155,6 +168,7 @@ def _params(session):
                     default_value=value,
                     min_value=lo,
                     max_value=hi,
+                    options=options,
                     is_builtin=1,
                     tenant_id=1,
                 )
@@ -195,7 +209,21 @@ _POS_QUERY = "ims:auth:position-rule:query"
 _POS_PREFIX = "ims:auth:position-rule:"
 
 
+_R2_CODES = {
+    "ims:system:user:query",
+    "ims:system:user:export",
+    "ims:system:dept:query",
+    "ims:system:role:query",
+    "ims:system:dict:query",
+    "ims:system:log:query",
+}
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
+    if key == "R2":
+        codes = [code for code in all_codes if code in _R2_CODES]
+        codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
+        return codes
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -231,6 +259,60 @@ def _tenant_dept(session):
 
     if session.get(Dept, 10) is None:
         init_tenant(1, root_id=10, pending_id=15)
+
+
+_PAGE_BIND = {
+    "ims:system:user:query": ("/ims/system/user", "用户"),
+    "ims:system:role:query": ("/ims/system/role", "角色"),
+    "ims:system:menu:query": ("/ims/system/menu", "菜单"),
+    "ims:system:dict:query": ("/ims/system/dict", "字典"),
+    "ims:system:param:query": ("/ims/system/param", "参数"),
+    "ims:system:log:query": ("/ims/system/log", "日志"),
+    "ims:system:notify:query": ("/ims/system/notify", "通知"),
+    "ims:tenant:query": ("/ims/system/tenant", "租户套餐"),
+}
+
+
+def _bind_pages(session):
+    """已有按钮补上页面路由。种子菜单的权限码仍唯一，不另建一条。"""
+    for perm, (path, name) in _PAGE_BIND.items():
+        row = session.scalar(select(Menu).where(Menu.perm_code == perm))
+        if row is None:
+            continue
+        if not row.path:
+            row.path = path
+        if row.type == "BUTTON":
+            row.type = "MENU"
+        if row.name.endswith("查询") and row.type == "MENU":
+            row.name = name
+    session.flush()
+
+
+def _standard_package(session):
+    row = session.scalar(select(TenantPackage).where(TenantPackage.name == "标准套餐"))
+    if row is None:
+        row = TenantPackage(name="标准套餐", status="ENABLED", remark="本期已交付菜单", tenant_id=1)
+        session.add(row)
+        session.flush()
+    root = session.scalar(select(Menu).where(Menu.name == "系统管理", Menu.type == "DIR"))
+    if root is None:
+        return
+    menus = list(session.scalars(select(Menu)))
+    by_parent: dict[int, list] = {}
+    for menu in menus:
+        by_parent.setdefault(int(menu.parent_id or 0), []).append(menu)
+    stack = [root.id]
+    wanted = []
+    while stack:
+        current = stack.pop()
+        wanted.append(current)
+        for child in by_parent.get(current, []):
+            stack.append(child.id)
+    linked = set(session.scalars(select(TenantPackageMenu.menu_id).where(TenantPackageMenu.package_id == row.id)))
+    for menu_id in wanted:
+        if menu_id not in linked:
+            session.add(TenantPackageMenu(package_id=row.id, menu_id=menu_id, tenant_id=1))
+    session.flush()
 
 
 def _e2e_roles(session):

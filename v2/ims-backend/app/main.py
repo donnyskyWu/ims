@@ -26,6 +26,7 @@ from app.domains.demo.router import router as demo_router
 from app.domains.file.router import router as file_router
 from app.domains.flow.router import router as flow_router
 from app.domains.message.router import router as message_router
+from app.domains.system.admin_router import router as system_admin_router
 from app.domains.system.extra_router import router as system_extra_router
 from app.domains.system.ops_router import router as system_ops_router
 from app.domains.system.org_router import router as org_router
@@ -40,6 +41,7 @@ MOUNTS = [
     ("/admin-api/ims/auth", auth_org_router),
     ("/admin-api/ims/auth", auth_position_router),
     ("/admin-api/ims/system", system_router),
+    ("/admin-api/ims/system", system_admin_router),
     ("/admin-api/ims/system", system_extra_router),
     ("/admin-api/ims/demo", demo_router),
     ("/admin-api/ims/callback", callback_router),

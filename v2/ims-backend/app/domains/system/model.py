@@ -24,6 +24,7 @@ class Tenant(AuditBase):
     __entity_label__ = "租户"
     __audit_exempt__ = None
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    contact_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
     package_id: Mapped[int | None] = ref_column(Ref(_PKG, "RESTRICT", enforce_delete=False))
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED")
     expire_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -35,6 +36,7 @@ class TenantPackage(AuditBase):
     __entity_label__ = "套餐"
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED")
+    remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class TenantPackageMenu(AssocBase):
@@ -130,6 +132,7 @@ class Menu(AuditBase):
     icon: Mapped[str | None] = mapped_column(String(50), nullable=True)
     sort: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     visible: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    keep_alive: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED")
 
 

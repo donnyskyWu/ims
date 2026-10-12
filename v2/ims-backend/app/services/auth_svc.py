@@ -149,6 +149,21 @@ def change_password(user_id: int, sid: str, old_password: str, new_password: str
     return {}
 
 
+def set_password(user_id: int, sid: str, new_password: str) -> dict:
+    user = get_session().get(User, user_id)
+    if user is None:
+        raise BizError(1504)
+    if user.password_hash:
+        raise BizError(1001, data={"fieldErrors": [{"field": "newPassword", "message": "已设置密码，请使用修改密码"}]})
+    policy = validate_password_policy(new_password)
+    if policy:
+        raise BizError(1001, data={"fieldErrors": [{"field": "newPassword", "message": policy}]})
+    user.password_hash = hash_password(new_password)
+    user.pwd_reset_required = 0
+    revoke_user(user_id, except_sid=sid)
+    return {}
+
+
 def reset_password(user_id: int) -> dict:
     from app.core.security import random_password
 
