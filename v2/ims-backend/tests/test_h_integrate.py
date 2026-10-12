@@ -265,7 +265,7 @@ def test_football_stub_duration_and_select_only():
     assert get_room(1, 9101) is not None
 
 
-def test_ut_h06_06_schema_mismatch_refuses_startup():
+def test_football_schema_mismatch_names_columns():
     from tools.football_stub.seed import _writer_engine, seed
 
     engine = _writer_engine()
@@ -292,7 +292,7 @@ def create_app_for_schema():
     return create_app(load_settings("test"))
 
 
-def test_ut_h06_07_seed_twice_keeps_eight_scenarios():
+def test_football_stub_seed_twice_eight_scenarios():
     from tools.football_stub.seed import FAKE_BIND_PASSWORD, FAKE_LOGIN_PASSWORD, MISSING_ROOM_ID, SCENARIOS, seed
 
     assert len({row["live_name"] for row in SCENARIOS}) == 8

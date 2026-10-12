@@ -8,6 +8,10 @@ class SelectOnlyError(RuntimeError):
     """只读连接拒绝了非 SELECT 语句。"""
 
 
+# 只读拦截器记下的语句。测试用来证明读仓储只发出 SELECT。
+STATEMENTS: list[str] = []
+
+
 def reject_non_select(statement: str | None) -> None:
     if statement is None or not statement.strip().upper().startswith("SELECT"):
         raise SelectOnlyError("只允许 SELECT")
@@ -16,6 +20,8 @@ def reject_non_select(statement: str | None) -> None:
 def install_select_only(engine) -> None:
     @event.listens_for(engine, "before_cursor_execute")
     def _guard(conn, cursor, statement, parameters, context, executemany):
+        if statement:
+            STATEMENTS.append(statement)
         reject_non_select(statement)
 
 

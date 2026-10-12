@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.clock import now_naive, parse_input_datetime
 from app.core.crypto import encrypt, hmac_hash
@@ -11,7 +12,7 @@ from app.core.errors import BizError
 from app.core.events import events
 from app.core.fault import faults
 from app.db.changes import write_change
-from app.db.session import get_session
+from app.db.session import get_session, session_scope
 from app.domains.auth.model import OrgSyncBatch, OrgSyncDiff, OrgSyncEvent, UserMapping
 from app.domains.system.model import Dept, DictData, User, UserDept
 from app.domains.system.service import _rewrite_paths
@@ -80,7 +81,11 @@ def reconcile() -> dict:
     running = session.scalar(select(OrgSyncBatch).where(OrgSyncBatch.status == "RUNNING"))
     if running is not None:
         raise BizError(1001, "同步正在进行中")
-    directory = list_directory()
+    try:
+        directory = list_directory()
+    except BizError as exc:
+        _persist_failed_batch(exc.code)
+        raise
     batch = OrgSyncBatch(
         started_at=now_naive(),
         status="RUNNING",
@@ -206,6 +211,8 @@ def _dept_event(row: OrgSyncEvent, payload: dict) -> None:
             _retire_ding_dept(dept, {dept.id})
             dept.last_sync_at = row.event_time or now_naive()
         return
+    if row.event_type == "dept_add" and dept is not None:
+        raise BizError(1001, data={"fieldErrors": [{"field": "dingtalkDeptId", "message": "钉钉部门编号已存在"}]})
     if row.event_type == "dept_add" and dept is None:
         parent = _parent_from_payload(payload)
         name = str(payload.get("name") or "")
@@ -215,10 +222,7 @@ def _dept_event(row: OrgSyncEvent, payload: dict) -> None:
     elif dept is not None and dept.source == "DINGTALK":
         _override_name(dept, payload.get("name"))
         if "parentDingtalkDeptId" in payload or "parentId" in payload:
-            parent = _parent_from_payload(payload)
-            if parent.id != dept.parent_id:
-                dept.parent_id = parent.id
-                _rewrite_paths(dept, parent.path)
+            _apply_parent(dept, _parent_from_payload(payload))
     if dept is not None and dept.source == "DINGTALK":
         dept.last_sync_at = row.event_time or now_naive()
 
@@ -275,9 +279,7 @@ def _sync_remote_depts(batch: OrgSyncBatch, remote_depts: list[dict]) -> set[int
         if name and existing.name != name:
             _override_name(existing, name)
             changed = True
-        if existing.parent_id != parent.id:
-            existing.parent_id = parent.id
-            _rewrite_paths(existing, parent.path)
+        if _apply_parent(existing, parent):
             changed = True
         existing.last_sync_at = now_naive()
         if changed:
@@ -589,6 +591,39 @@ def _alive_ancestor(start_parent_id: int, skip_ids: set[int]) -> Dept:
     return _root_dept()
 
 
+def _apply_parent(dept: Dept, parent: Dept) -> bool:
+    if parent.id == dept.parent_id:
+        return False
+    previous = get_session().get(Dept, int(dept.parent_id or 0))
+    before = previous.name if previous is not None else str(dept.parent_id)
+    write_change("ims_sys_dept", dept.id, "parent_id", "上级部门", before, parent.name, "DINGTALK_OVERRIDE")
+    dept.parent_id = parent.id
+    _rewrite_paths(dept, parent.path)
+    return True
+
+
+def _persist_failed_batch(code: int) -> None:
+    """钉钉不可用时单独提交失败批次。请求事务回滚后组织数据仍与对账前一致。"""
+    with session_scope(commit=True) as extra:
+        extra.add(
+            OrgSyncBatch(
+                started_at=now_naive(),
+                finished_at=now_naive(),
+                status="FAILED",
+                error_code=int(code),
+                fail_count=1,
+                same_name_notes=[],
+                dept_created=0,
+                dept_updated=0,
+                dept_disabled=0,
+                user_created=0,
+                user_updated=0,
+                user_resigned=0,
+                unassigned_count=0,
+            )
+        )
+
+
 def _override_name(dept: Dept, name) -> None:
     if not name or str(name) == dept.name:
         return
@@ -622,7 +657,10 @@ def _insert_ding_dept(parent: Dept, ding_id: int, name: str, stamp) -> Dept:
         sort=0,
     )
     session.add(row)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        raise BizError(1001, data={"fieldErrors": [{"field": "dingtalkDeptId", "message": "钉钉部门编号已存在"}]}) from exc
     row.path = f"{parent.path}{row.id}/"
     return row
 

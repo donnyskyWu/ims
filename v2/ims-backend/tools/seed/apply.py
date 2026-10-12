@@ -40,6 +40,8 @@ PARAMS = [
     ("perf.grade.excellent", "优秀线", "绩效", "NUMBER", "90", "0", "100"),
     ("content.review.level1.role", "一级审核角色", "内容", "ROLE_REF", "", None, None),
     ("dingtalk.notify.enabled", "钉钉通知开关", "通知", "TEXT", "true", None, None),
+    ("dingtalk.app_key", "钉钉应用标识", "钉钉", "TEXT", "test-app-key", None, None),
+    ("dingtalk_attendance.app_key", "考勤应用标识", "钉钉考勤", "TEXT", "test-att-key", None, None),
     ("dingtalk_attendance.app_secret", "考勤应用密钥", "钉钉考勤", "SECRET", "", None, None),
     ("air.model.base_url", "内容模型地址", "内容", "TEXT", "http://127.0.0.1:9/air", None, None),
 ]

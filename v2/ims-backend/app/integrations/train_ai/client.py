@@ -11,6 +11,7 @@ from app.domains.system.model import TrainAiCallLog
 
 DEFAULT_CONFIG = {
     "mode": "mock",
+    "enabled": True,
     "api_key": "",
     "base_url": "",
     "model": "",
@@ -20,6 +21,7 @@ DEFAULT_CONFIG = {
 CONFIG_KEYS = tuple(DEFAULT_CONFIG)
 
 mock_questions: list[dict] = []
+mock_fault: str | None = None
 
 _SINGLE = {"SINGLE", "SINGLE_CHOICE"}
 _JUDGE = {"JUDGE", "TRUE_FALSE", "BOOLEAN"}
@@ -35,6 +37,63 @@ def _has_answer(item) -> bool:
     if item.get("answerBoolean") is not None:
         return True
     return False
+
+
+def _disabled(params: dict) -> bool:
+    value = params.get("enabled", True)
+    if value is True or value is None:
+        return False
+    if value is False or value == 0:
+        return True
+    return str(value).strip().lower() in {"0", "false", "no", "off"}
+
+
+def _normal_mock(single_count: int, judge_count: int) -> list[dict]:
+    rows = []
+    for index in range(max(0, int(single_count))):
+        rows.append(
+            {
+                "type": "SINGLE",
+                "stem": f"单选{index + 1}",
+                "options": ["A", "B", "C", "D"],
+                "answerIndex": 0,
+                "answer": "A",
+            }
+        )
+    for index in range(max(0, int(judge_count))):
+        rows.append({"type": "JUDGE", "stem": f"判断{index + 1}", "answer": True})
+    return rows
+
+
+def _as_quiz(item: dict) -> dict | None:
+    if not isinstance(item, dict) or not str(item.get("stem") or "").strip():
+        return None
+    kind = str(item.get("type") or item.get("questionType") or "").upper()
+    stem = str(item.get("stem"))
+    if kind in _JUDGE:
+        answer = item.get("answer")
+        if isinstance(answer, bool):
+            shown = answer
+        elif answer in (None, ""):
+            return None
+        else:
+            shown = str(answer).strip().lower() in {"1", "true", "yes", "y"}
+        return {"type": "JUDGE", "stem": stem, "answer": shown}
+    options = list(item.get("options") or ["A", "B", "C", "D"])
+    if item.get("answerIndex") is not None:
+        index = int(item["answerIndex"])
+    else:
+        answer = item.get("answer")
+        if isinstance(answer, int):
+            index = answer
+        elif isinstance(answer, str) and answer in options:
+            index = options.index(answer)
+        else:
+            index = 0
+    quiz = {"type": "SINGLE", "stem": stem, "options": options, "answerIndex": index}
+    if "answer" in item:
+        quiz["answer"] = item["answer"]
+    return quiz
 
 
 def _limit(params: dict) -> int:
@@ -156,6 +215,8 @@ class TrainQuizAiClient:
         if not material_published:
             _fail(material_id, started, 1101)
         params = self.config
+        if _disabled(params):
+            _fail(material_id, started, 1109)
         mode = str(params.get("mode") or "").strip().lower()
         if mode == "real":
             key = str(params.get("api_key") or "").strip()
@@ -170,12 +231,23 @@ class TrainQuizAiClient:
                 code = 1107 if isinstance(exc, httpx.TimeoutException) else 1106
                 _fail(material_id, started, code)
         elif mode == "mock":
-            raw = list(mock_questions)
+            if mock_fault == "timeout":
+                _fail(material_id, started, 1107)
+            if mock_fault == "fail":
+                _fail(material_id, started, 1106)
+            if mock_fault == "empty":
+                raw = []
+            elif mock_questions:
+                raw = list(mock_questions)
+            else:
+                raw = _normal_mock(single_count, judge_count)
         else:
             _fail(material_id, started, 1109)
         chosen = _select_questions(raw, single_count, judge_count, _limit(params))
-        if not chosen:
+        published = [item for item in (_as_quiz(row) for row in chosen) if item]
+        if not published:
             _fail(material_id, started, 1108)
+        chosen = published
         cost = int((time.perf_counter() - started) * 1000)
         _log(material_id, len(chosen), cost, 0)
         return chosen
@@ -185,8 +257,13 @@ _client = TrainQuizAiClient()
 
 
 def reset_config() -> None:
-    global _client
+    global _client, mock_fault
     _client = TrainQuizAiClient()
+    mock_fault = None
+
+
+def current_config() -> dict:
+    return dict(_client.config)
 
 
 def configure(**values) -> None:

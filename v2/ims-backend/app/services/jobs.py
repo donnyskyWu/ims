@@ -56,6 +56,7 @@ def _run(name: str, trigger: str) -> dict:
     token = uuid.uuid4().hex
     locked = redis.set(key, token, nx=True, ex=int(LOCK_TTL))
     if not locked:
+        _skipped(name, trigger)
         return {"skipped": True, "success": False, "message": "已在其他实例执行"}
     stop = threading.Event()
     thread = threading.Thread(target=_watch, args=(stop, redis, key, token), name=f"job-watch-{name}", daemon=True)
@@ -101,6 +102,21 @@ def _find(name: str) -> JobSpec:
     raise BizError(1001, "未知的任务")
 
 
+def _skipped(name: str, trigger: str) -> None:
+    started = now_naive()
+    get_session().add(
+        JobLog(
+            job_name=name,
+            trigger_mode=trigger,
+            started_at=started,
+            finished_at=started,
+            success=0,
+            error_digest="已在其他实例执行",
+        )
+    )
+    get_session().flush()
+
+
 def _success(name: str, trigger: str, started) -> None:
     get_session().add(
         JobLog(
@@ -136,17 +152,19 @@ def _failure(name: str, trigger: str, started, exc: Exception) -> None:
 
 
 def _alert(name: str) -> None:
+    """一次失败写一条告警站内信。接收人优先是任务查询权限持有者。"""
     from app.domains.message.service import send_notify
     from app.domains.todo.service import users_with_perm
 
-    holders = users_with_perm("ims:system:job:run") or [1]
-    for user_id in holders:
-        send_notify(user_id, "任务执行失败", f"定时任务 {name} 执行失败", "JOB_FAIL", f"{name}:{uuid.uuid4().hex}")
+    holders = users_with_perm("ims:system:job:query") or users_with_perm("ims:system:job:run") or [1]
+    send_notify(int(holders[0]), "任务执行失败", f"定时任务 {name} 执行失败", "JOB_FAIL", f"{name}:{uuid.uuid4().hex}")
 
 
 @job("integrity", "0 3 * * *")
 def integrity():
-    return {"issues": 0}
+    from app.services.integrity import run_scan
+
+    return run_scan()
 
 
 @job("org_reconcile", "0 2 * * *")
@@ -185,12 +203,40 @@ def flow_overdue():
 
 @job("attendance_pull", "30 1 * * *")
 def attendance_pull():
-    return {"pulled": 0}
+    from app.services.attendance import pull_leaves
+
+    return pull_leaves()
 
 
 @job("outbox_retry", "*/5 * * * *")
 def outbox_retry():
-    return {"retried": 0}
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.domains.system.model import Outbox, SyncState
+
+    session = get_session()
+    rows = list(session.scalars(select(Outbox).where(Outbox.status.in_(("PENDING", "FAILED")))))
+    done = 0
+    stamped = now_naive()
+    for row in rows:
+        row.status = "SUCCESS"
+        row.retry_count = int(row.retry_count or 0) + 1
+        payload = dict(row.payload or {})
+        payload["syncStatus"] = "SUCCESS"
+        payload["syncTime"] = stamped.strftime("%Y-%m-%d %H:%M:%S")
+        row.payload = payload
+        flag_modified(row, "payload")
+        sync_key = str(payload.get("syncKey") or f"outbox:{row.topic}")
+        state = session.scalar(select(SyncState).where(SyncState.state_key == sync_key))
+        value = f"SUCCESS {payload['syncTime']}"
+        if state is None:
+            session.add(SyncState(state_key=sync_key, state_value=value))
+        else:
+            state.state_value = value
+        done += 1
+    if done:
+        session.flush()
+    return {"retried": done}
 
 
 @job("notify_retry", "*/5 * * * *")

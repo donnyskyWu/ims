@@ -1,38 +1,30 @@
-"""组织同步：事件、对账、工号差异。"""
+"""组织同步 UT-D07，以及工号差异。"""
 from __future__ import annotations
 
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 
-import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from app.core.clock import advance, freeze, now_naive
+import app.services.org_sync as org_sync_mod
+from app.core.clock import freeze, now_naive
 from app.core.context import system_context, use_context
 from app.core.events import events
 from app.core.fault import faults
+from app.core.redis_client import get_redis
 from app.db.session import session_scope
-from app.domains.auth.model import OrgSyncBatch, OrgSyncDiff, OrgSyncEvent, UserMapping
-from app.domains.system.model import ChangeLog, Dept, DictData, User, UserDept
+from app.domains.auth.model import AuthEventLog, OrgSyncBatch, OrgSyncDiff, OrgSyncEvent, UserMapping
+from app.domains.system.model import ChangeLog, Dept, DictData, Menu, Role, RoleMenu, User, UserDept, UserRole
 from app.domains.todo.model import Todo, TodoAssignee
 from app.integrations.dingtalk.client import ding_state
 from app.services.org_sync import drive_retries, replay
 from tests.conftest import auth, login
-from tests.stddata import D1, D11, D12, D2, DX, ROOT, U_ADMIN, U_DEPT
+from tests.stddata import D1, D11, D12, D2, DX, PASSWORD, ROOT, U_ADMIN, U_D11, U_OVERLAP
 
-import app.domains.system.org_router  # noqa: F401  挂到 create_app 的 MOUNTS
-
-
-@pytest.fixture
-def client(app):
-    from app.domains.system.org_router import router
-
-    if not any(getattr(route, "path", "").endswith("/org-sync/process") for route in app.routes):
-        app.include_router(router, prefix="/admin-api/ims/system")
-    return TestClient(app)
+_CALLBACK = "/admin-api/ims/callback/dingtalk/event"
+_USER_ADMIN_PERM = "ims:system:user:update"
 
 
 def _post(client, headers, body):
@@ -40,11 +32,38 @@ def _post(client, headers, body):
     return response.json()
 
 
+def _callback(client, body, signature=None):
+    raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
+    if signature is None:
+        signature = hmac.new(b"test-app-secret", raw, hashlib.sha256).hexdigest()
+    response = client.post(
+        _CALLBACK,
+        content=raw,
+        headers={"Content-Type": "application/json", "X-Dingtalk-Signature": signature},
+    )
+    return response.json()
+
+
+def _event_count(event_id: str | None = None) -> int:
+    with session_scope() as session:
+        stmt = select(func.count()).select_from(OrgSyncEvent)
+        if event_id is not None:
+            stmt = stmt.where(OrgSyncEvent.event_id == event_id)
+        return int(session.scalar(stmt) or 0)
+
+
 def _event_state(event_id: str) -> dict:
     with session_scope() as session:
         row = session.scalar(select(OrgSyncEvent).where(OrgSyncEvent.event_id == event_id))
         assert row is not None
-        return {"status": row.status, "retry": row.retry_count, "next": row.next_retry_at, "count": 1}
+        return {"status": row.status, "retry": row.retry_count, "next": row.next_retry_at}
+
+
+def _status_label(code: str) -> str:
+    with session_scope() as session:
+        row = session.scalar(select(DictData).where(DictData.dict_type == "dict_org_sync_status", DictData.dict_value == code))
+    assert row is not None, code
+    return row.dict_label
 
 
 def _dept(ident: int, *, deleted: bool = False) -> dict:
@@ -66,247 +85,540 @@ def _dept(ident: int, *, deleted: bool = False) -> dict:
         }
 
 
+def _member_rows(dept_id: int) -> set[tuple]:
+    with session_scope() as session:
+        rows = session.scalars(select(UserDept).where(UserDept.dept_id == dept_id))
+        return {(row.user_id, int(row.is_main), row.source) for row in rows}
+
+
 def _run_drive():
     with session_scope(commit=True) as session:
         with use_context(system_context(1)):
             return drive_retries()
 
 
-def test_ut_d07_01(client):
-    """回调验签：坏签不入库，好签入库，重复事件仍一行。"""
-    body = {"eventId": "cb-d07-01", "eventType": "dept_modify", "eventTime": "2026-10-12T09:00:00+08:00", "dingtalkDeptId": 100, "name": "签名部门"}
-    raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode()
-    bad = client.post(
-        "/admin-api/ims/callback/dingtalk/event",
-        content=raw,
-        headers={"Content-Type": "application/json", "X-Dingtalk-Signature": "0" * 64},
+def _reconcile(client, headers):
+    return client.post("/admin-api/ims/system/org-sync/reconcile", headers=headers).json()
+
+
+def _ding_tree(extra: list[dict] | None = None, *, drop: set[int] | None = None):
+    rows = [
+        {"dingtalkDeptId": 100, "parentDingtalkDeptId": None, "name": "市场部"},
+        {"dingtalkDeptId": 101, "parentDingtalkDeptId": 100, "name": "市场一组"},
+        {"dingtalkDeptId": 200, "parentDingtalkDeptId": None, "name": "技术部"},
+    ]
+    if drop:
+        rows = [row for row in rows if int(row["dingtalkDeptId"]) not in drop]
+    if extra:
+        rows.extend(extra)
+    ding_state.departments = rows
+    ding_state.users = []
+    ding_state.error = None
+
+
+def _dept_call(client, headers, method: str, path: str, payload: dict):
+    response = getattr(client, method)(f"/admin-api/ims/system{path}", headers=headers, json=payload)
+    body = response.json()
+    assert body["code"] == 0, body
+    return body
+
+
+def _user_create(client, headers, username: str, nickname: str, dept_ids: list[int], main: int) -> int:
+    body = _dept_call(
+        client,
+        headers,
+        "post",
+        "/user/create",
+        {"username": username, "nickname": nickname, "deptIds": dept_ids, "mainDeptId": main, "password": PASSWORD},
     )
-    assert bad.json()["code"] == 1008
-    with session_scope() as session:
-        assert session.scalar(select(func.count()).select_from(OrgSyncEvent)) == 0
-    sig = hmac.new(b"test-app-secret", raw, hashlib.sha256).hexdigest()
-    headers = {"Content-Type": "application/json", "X-Dingtalk-Signature": sig}
-    ok = client.post("/admin-api/ims/callback/dingtalk/event", content=raw, headers=headers)
-    assert ok.json()["code"] == 0, ok.text
-    assert ok.json()["data"]["accepted"] is True
-    again = client.post("/admin-api/ims/callback/dingtalk/event", content=raw, headers=headers)
-    assert again.json()["code"] == 0
-    with session_scope() as session:
-        rows = list(session.scalars(select(OrgSyncEvent)))
-    assert len(rows) == 1
-    assert rows[0].event_id == "cb-d07-01"
+    return int(body["data"]["id"])
 
 
-def test_ut_d07_02_duplicate_event(client):
-    headers = auth(client, "u_admin")
-    body = {
-        "eventId": "ev-dup",
-        "eventType": "dept_modify",
-        "eventTime": "2026-10-12T09:00:00+08:00",
-        "dingtalkDeptId": 100,
-        "name": "市场改名",
-    }
-    first = _post(client, headers, body)
-    assert first["code"] == 0, first
-    assert first["data"]["duplicated"] is False
-    second = _post(client, headers, {**body, "name": "不应再生效"})
-    assert second["code"] == 0, second
-    assert second["data"]["duplicated"] is True
-    assert _dept(D1)["name"] == "市场改名"
-    with session_scope() as session:
-        count = session.scalar(select(func.count()).select_from(OrgSyncEvent).where(OrgSyncEvent.event_id == "ev-dup"))
-        logs = list(session.scalars(select(ChangeLog).where(ChangeLog.reason == "DINGTALK_OVERRIDE")))
-    assert count == 1
-    assert len(logs) == 1
+def _set_depts(client, headers, user_id: int, dept_ids: list[int], main: int):
+    _dept_call(client, headers, "put", "/user/update-depts", {"id": user_id, "deptIds": dept_ids, "mainDeptId": main})
 
 
-def test_ut_d07_03_modify_expired(client):
+def _prepare_d11_members(client, headers) -> tuple[int, int, int]:
+    """D11 只留甲（另属技术部）、乙（没有其他部门）、丙（本地用户，未绑钉钉）。"""
+    _set_depts(client, headers, U_D11, [D2], D2)
+    _set_depts(client, headers, U_OVERLAP, [D1], D1)
+    jia = _user_create(client, headers, "jia", "甲", [D11, D2], D11)
+    yi = _user_create(client, headers, "yi", "乙", [D11], D11)
+    bing = _user_create(client, headers, "bing", "丙", [D11], D11)
     with session_scope(commit=True) as session:
         with use_context(system_context(1)):
-            dept = session.get(Dept, D1)
-            dept.name = "本地改名"
-            dept.last_sync_at = datetime(2026, 10, 12, 12, 0, 0)
+            for row in session.scalars(select(UserDept).where(UserDept.user_id == jia)):
+                row.source = "DINGTALK"
+            for row in session.scalars(select(UserDept).where(UserDept.user_id == yi, UserDept.dept_id == D11)):
+                row.source = "DINGTALK"
+        ids = {row.user_id for row in session.scalars(select(UserDept).where(UserDept.dept_id == D11))}
+    assert ids == {jia, yi, bing}
+    return jia, yi, bing
+
+
+def _perm_holders(session) -> set[int]:
+    menu_ids = [row.id for row in session.scalars(select(Menu).where(Menu.perm_code == _USER_ADMIN_PERM))]
+    role_ids = [row.role_id for row in session.scalars(select(RoleMenu).where(RoleMenu.menu_id.in_(menu_ids), RoleMenu.tenant_id == 1))]
+    return {
+        row.user_id
+        for row in session.scalars(select(UserRole).where(UserRole.role_id.in_(role_ids), UserRole.manual_removed == 0, UserRole.tenant_id == 1))
+    }
+
+
+def _assert_d11_removed(jia: int, yi: int, bing: int):
+    removed = _dept(D11, deleted=True)
+    assert removed["status"] == "DISABLED"
+    assert removed["deleted"] == D11
+    with session_scope() as session:
+        assert session.scalar(select(Dept).where(Dept.id == D11)) is None
+        jia_user = session.get(User, jia)
+        yi_user = session.get(User, yi)
+        bing_user = session.get(User, bing)
+        jia_depts = {row.dept_id for row in session.scalars(select(UserDept).where(UserDept.user_id == jia))}
+        yi_links = list(session.scalars(select(UserDept).where(UserDept.user_id == yi)))
+        bing_links = list(session.scalars(select(UserDept).where(UserDept.user_id == bing)))
+        assert jia_depts == {D2}
+        assert jia_user.main_dept_id == D2
+        assert jia_user.status == "ACTIVE"
+        assert {row.dept_id for row in yi_links} == {DX}
+        assert yi_user.main_dept_id == DX
+        assert any(row.dept_id == DX and int(row.is_main) == 1 for row in yi_links)
+        assert {row.dept_id for row in bing_links} == {DX}
+        assert bing_user.main_dept_id == DX
+        assert any(row.dept_id == DX and int(row.is_main) == 1 for row in bing_links)
+        assert yi_user.status == "ACTIVE" and bing_user.status == "ACTIVE"
+        mapping = session.scalar(select(UserMapping).where(UserMapping.user_id == bing))
+        assert mapping is None
+        todos = list(session.scalars(select(Todo).where(Todo.source_type == "DEPT_UNASSIGNED")))
+        assert len(todos) == 1
+        assert "2" in todos[0].title
+        assignees = {row.user_id for row in session.scalars(select(TodoAssignee).where(TodoAssignee.todo_id == todos[0].id))}
+        holders = _perm_holders(session)
+        assert U_ADMIN in holders
+        assert assignees == holders
+
+
+def _org_snapshot():
+    with session_scope() as session:
+        depts = tuple(
+            sorted(
+                (row.id, row.name, row.parent_id, row.status, int(row.deleted or 0), row.source, row.dingtalk_dept_id, int(row.local_orphan or 0))
+                for row in session.scalars(select(Dept).execution_options(include_deleted=True))
+            )
+        )
+        users = tuple(
+            sorted(
+                (row.id, row.username, row.status, row.main_dept_id, row.password_hash, row.position_code, row.nickname)
+                for row in session.scalars(select(User).execution_options(include_deleted=True))
+            )
+        )
+        links = tuple(sorted((row.user_id, row.dept_id, int(row.is_main), row.source) for row in session.scalars(select(UserDept))))
+        maps = tuple(
+            sorted(
+                (row.user_id, row.dingtalk_user_id, row.sync_status)
+                for row in session.scalars(select(UserMapping).execution_options(include_deleted=True))
+            )
+        )
+    return depts, users, links, maps
+
+
+def _hire(client, headers, *, event_id: str, ding_id: str = "dt_new", mobile: str = "13700007013", dept_ids: list[int] | None = None, position: str = "POS_HIRE"):
+    body = _post(
+        client,
+        headers,
+        {
+            "eventId": event_id,
+            "eventType": "user_add",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkUserId": ding_id,
+            "mobile": mobile,
+            "nickname": "新同事",
+            "deptIds": [100] if dept_ids is None else dept_ids,
+            "positionCode": position,
+        },
+    )
+    assert body["code"] == 0, body
+    return body
+
+
+def test_ut_d07_01(client):
+    """UT-D07-01 验签错误：1008，事件不入库。"""
+    body = _callback(
+        client,
+        {"eventId": "evt-d07-01", "eventType": "dept_modify", "eventTime": "2026-10-12T09:00:00+08:00", "dingtalkDeptId": 100, "name": "坏签"},
+        signature="0" * 64,
+    )
+    assert body["code"] == 1008
+    assert _event_count() == 0
+    assert _event_count("evt-d07-01") == 0
+
+
+def test_ut_d07_02(client):
+    """UT-D07-02 同一 event_id 投递两次，事件表只有 1 条。"""
+    payload = {"eventId": "evt-d07-02", "eventType": "dept_modify", "eventTime": "2026-10-12T09:00:00+08:00", "dingtalkDeptId": 100, "name": "重复投递"}
+    assert _callback(client, payload)["code"] == 0
+    assert _callback(client, payload)["code"] == 0
+    assert _event_count() == 1
+    assert _event_count("evt-d07-02") == 1
+
+
+def test_ut_d07_03(client):
+    """UT-D07-03 本地把 D11 改成一组后，钉钉改名覆盖为市场 1 组，并留下被覆盖的本地值。"""
+    headers = auth(client, "u_admin")
+    _dept_call(client, headers, "put", "/dept/update", {"id": D11, "name": "一组"})
+    assert _dept(D11)["name"] == "一组"
+    body = _post(
+        client,
+        headers,
+        {
+            "eventId": "ev-d07-03",
+            "eventType": "dept_modify",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkDeptId": 101,
+            "name": "市场 1 组",
+        },
+    )
+    assert body["code"] == 0, body
+    assert _dept(D11)["name"] == "市场 1 组"
+    with session_scope() as session:
+        logs = list(session.scalars(select(ChangeLog).where(ChangeLog.biz_id == D11, ChangeLog.reason == "DINGTALK_OVERRIDE")))
+    assert any(row.field == "name" and row.before_value == "一组" for row in logs)
+
+
+def test_ut_d07_04(client):
+    """UT-D07-04 本地把 D11 移到 D2 下，全量对账按钉钉挂回 D1，并记录被覆盖的上级。"""
+    headers = auth(client, "u_admin")
+    _dept_call(client, headers, "put", "/dept/move", {"id": D11, "parentId": D2})
+    assert _dept(D11)["parent_id"] == D2
+    _ding_tree()
+    body = _reconcile(client, headers)
+    assert body["code"] == 0, body
+    assert _dept(D11)["parent_id"] == D1
+    with session_scope() as session:
+        log = session.scalar(
+            select(ChangeLog).where(ChangeLog.biz_id == D11, ChangeLog.reason == "DINGTALK_OVERRIDE", ChangeLog.field == "parent_id")
+        )
+    assert log is not None
+    assert log.before_value == "技术部"
+
+
+def test_ut_d07_05(client):
+    """UT-D07-05 钉钉新增部门 102，上级 100，建成 D1 下的 DINGTALK 部门。"""
     headers = auth(client, "u_admin")
     body = _post(
         client,
         headers,
         {
-            "eventId": "ev-expired",
+            "eventId": "ev-d07-05",
+            "eventType": "dept_add",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkDeptId": 102,
+            "parentDingtalkDeptId": 100,
+            "name": "新增部门",
+        },
+    )
+    assert body["code"] == 0, body
+    with session_scope() as session:
+        row = session.scalar(select(Dept).where(Dept.dingtalk_dept_id == 102))
+        assert row is not None
+        assert row.source == "DINGTALK"
+        assert row.parent_id == D1
+
+
+def test_ut_d07_06(client):
+    """UT-D07-06 钉钉删除 101：D11 停用并逻辑删除，甲到 D2，乙和丙进 DX，待办 1 条且人数为 2。"""
+    headers = auth(client, "u_admin")
+    jia, yi, bing = _prepare_d11_members(client, headers)
+    body = _post(
+        client,
+        headers,
+        {"eventId": "ev-d07-06", "eventType": "dept_remove", "eventTime": "2026-10-12T09:00:00+08:00", "dingtalkDeptId": 101},
+    )
+    assert body["code"] == 0, body
+    _assert_d11_removed(jia, yi, bing)
+
+
+def test_ut_d07_07(client):
+    """UT-D07-07 本地 D12 及其子部门、两名成员在全量对账后保持不变。"""
+    headers = auth(client, "u_admin")
+    child_id = int(_dept_call(client, headers, "post", "/dept/create", {"name": "D121", "parentId": D12})["data"]["id"])
+    _user_create(client, headers, "m12b", "成员乙", [D12], D12)
+    before_name = _dept(D12)["name"]
+    before_parent = _dept(D12)["parent_id"]
+    child_name = _dept(child_id)["name"]
+    child_parent = _dept(child_id)["parent_id"]
+    members = _member_rows(D12)
+    child_members = _member_rows(child_id)
+    assert before_parent == D1
+    assert child_parent == D12
+    assert len({item[0] for item in members}) == 2
+    _ding_tree()
+    body = _reconcile(client, headers)
+    assert body["code"] == 0, body
+    assert _dept(D12)["name"] == before_name
+    assert _dept(D12)["parent_id"] == before_parent
+    assert _dept(child_id)["name"] == child_name
+    assert _dept(child_id)["parent_id"] == child_parent
+    assert _member_rows(D12) == members
+    assert _member_rows(child_id) == child_members
+
+
+def test_ut_d07_08(client):
+    """UT-D07-08 钉钉删除 100 后，D12 连同 D121 挂到根部门，标记孤儿，成员不变，并有一条请确认待办。"""
+    headers = auth(client, "u_admin")
+    child_id = int(_dept_call(client, headers, "post", "/dept/create", {"name": "D121", "parentId": D12})["data"]["id"])
+    _user_create(client, headers, "m12c", "成员丙", [D12], D12)
+    members = _member_rows(D12)
+    child_members = _member_rows(child_id)
+    assert len({item[0] for item in members}) == 2
+    body = _post(
+        client,
+        headers,
+        {"eventId": "ev-d07-08", "eventType": "dept_remove", "eventTime": "2026-10-12T09:00:00+08:00", "dingtalkDeptId": 100},
+    )
+    assert body["code"] == 0, body
+    parent = _dept(D12)
+    child = _dept(child_id)
+    assert parent["parent_id"] == ROOT
+    assert child["parent_id"] == D12
+    assert parent["local_orphan"] == 1
+    assert parent["name"] == "市场二组"
+    assert child["name"] == "D121"
+    assert _member_rows(D12) == members
+    assert _member_rows(child_id) == child_members
+    with session_scope() as session:
+        todos = [row for row in session.scalars(select(Todo)) if "请确认" in (row.title or "")]
+    assert len(todos) == 1
+
+
+def test_ut_d07_09(client):
+    """UT-D07-09 只删除 D11 时，挂在其下的本地 D12 改挂到最近存活祖先 D1。"""
+    headers = auth(client, "u_admin")
+    _dept_call(client, headers, "put", "/dept/move", {"id": D12, "parentId": D11})
+    assert _dept(D12)["parent_id"] == D11
+    body = _post(
+        client,
+        headers,
+        {"eventId": "ev-d07-09", "eventType": "dept_remove", "eventTime": "2026-10-12T09:00:00+08:00", "dingtalkDeptId": 101},
+    )
+    assert body["code"] == 0, body
+    hung = _dept(D12)
+    assert hung["parent_id"] == D1
+    assert hung["parent_id"] != ROOT
+    assert hung["local_orphan"] == 1
+    removed = _dept(D11, deleted=True)
+    assert removed["status"] == "DISABLED"
+    assert removed["deleted"] == D11
+
+
+def test_ut_d07_10(client):
+    """UT-D07-10 钉钉在 D1 下新建与本地同名的市场三组，两个部门都保留，报告写出同名提示。"""
+    headers = auth(client, "u_admin")
+    local_id = int(_dept_call(client, headers, "post", "/dept/create", {"name": "市场三组", "parentId": D1})["data"]["id"])
+    _ding_tree([{"dingtalkDeptId": 102, "parentDingtalkDeptId": 100, "name": "市场三组"}])
+    body = _reconcile(client, headers)
+    assert body["code"] == 0, body
+    notes = body["data"]["sameNameNotes"] or []
+    assert any("存在同名本地部门" in str(item) for item in notes)
+    with session_scope() as session:
+        rows = list(session.scalars(select(Dept).where(Dept.parent_id == D1, Dept.name == "市场三组")))
+        assert len(rows) == 2
+        assert {row.source for row in rows} == {"LOCAL", "DINGTALK"}
+        local = session.get(Dept, local_id)
+        assert local is not None and local.source == "LOCAL" and local.dingtalk_dept_id is None
+
+
+def test_ut_d07_11(client):
+    """UT-D07-11 事件时间早于 last_sync_at，名称不变，状态记为已过期。"""
+    with session_scope(commit=True) as session:
+        with use_context(system_context(1)):
+            dept = session.get(Dept, D11)
+            dept.last_sync_at = datetime(2026, 10, 12, 10, 5, 0)
+    before = _dept(D11)["name"]
+    headers = auth(client, "u_admin")
+    body = _post(
+        client,
+        headers,
+        {
+            "eventId": "ev-d07-11",
             "eventType": "dept_modify",
             "eventTime": "2026-10-12T10:00:00+08:00",
-            "dingtalkDeptId": 100,
+            "dingtalkDeptId": 101,
             "name": "过期名",
         },
     )
     assert body["code"] == 0, body
+    assert _dept(D11)["name"] == before
     assert body["data"]["status"] == "EXPIRED"
-    assert _dept(D1)["name"] == "本地改名"
-    assert _event_state("ev-expired")["status"] == "EXPIRED"
+    assert _status_label(body["data"]["status"]) == "已过期"
+    assert _event_state("ev-d07-11")["status"] == "EXPIRED"
 
 
-def test_ut_d07_04_modify_override(client):
-    headers = auth(client, "u_admin")
-    body = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-override",
-            "eventType": "dept_modify",
-            "eventTime": "2026-10-12T09:30:00+08:00",
-            "dingtalkDeptId": 100,
-            "name": "市场总部",
-        },
-    )
-    assert body["code"] == 0, body
-    assert _dept(D1)["name"] == "市场总部"
-    with session_scope() as session:
-        log = session.scalar(select(ChangeLog).where(ChangeLog.reason == "DINGTALK_OVERRIDE", ChangeLog.biz_id == D1))
-    assert log is not None
-    assert log.before_value == "市场部"
-    assert log.after_value == "市场总部"
-
-
-def test_ut_d07_05_dept_add(client):
-    headers = auth(client, "u_admin")
-    body = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-add-dept",
-            "eventType": "dept_add",
-            "eventTime": "2026-10-12T09:00:00+08:00",
-            "dingtalkDeptId": 300,
-            "parentDingtalkDeptId": 100,
-            "name": "市场三组",
-        },
-    )
-    assert body["code"] == 0, body
-    with session_scope() as session:
-        row = session.scalar(select(Dept).where(Dept.dingtalk_dept_id == 300))
-        assert row is not None
-        assert row.source == "DINGTALK"
-        assert row.parent_id == D1
-        assert row.name == "市场三组"
-        assert row.path.startswith(f"/{ROOT}/{D1}/")
-
-
-def test_ut_d07_06_dept_remove_unassigned(client):
-    headers = auth(client, "u_admin")
-    body = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-rm-d1",
-            "eventType": "dept_remove",
-            "eventTime": "2026-10-12T09:00:00+08:00",
-            "dingtalkDeptId": 100,
-        },
-    )
-    assert body["code"] == 0, body
-    removed = _dept(D1, deleted=True)
-    assert removed["status"] == "DISABLED"
-    assert removed["deleted"] == D1
-    with session_scope() as session:
-        assert session.get(Dept, D1) is None
-        admin_links = list(session.scalars(select(UserDept).where(UserDept.user_id == U_ADMIN)))
-        admin = session.get(User, U_ADMIN)
-        dept_user = session.get(User, U_DEPT)
-        dept_links = {row.dept_id for row in session.scalars(select(UserDept).where(UserDept.user_id == U_DEPT))}
-        pending = session.get(Dept, DX)
-        todos = list(session.scalars(select(Todo).where(Todo.type == "CONFIRM", Todo.source_type == "DEPT_UNASSIGNED")))
-        assert pending.name == "待分配" and pending.source == "SYSTEM"
-        assert admin.main_dept_id == DX
-        assert {(row.dept_id, row.is_main) for row in admin_links} == {(DX, 1)}
-        assert D1 not in dept_links and D2 in dept_links
-        assert dept_user.main_dept_id == D2
-        assert len(todos) == 1
-        assert "1" in todos[0].title
-        assignees = {row.user_id for row in session.scalars(select(TodoAssignee).where(TodoAssignee.todo_id == todos[0].id))}
-        assert U_ADMIN in assignees
-        orphan = session.scalar(select(Todo).where(Todo.source_type == "DEPT_ORPHAN"))
-        local = session.get(Dept, D12)
-        assert local.parent_id == ROOT
-        assert local.local_orphan == 1
-        assert local.source == "LOCAL"
-        assert orphan is not None and "请确认" in orphan.title
-
-
-def test_ut_d07_07_local_orphan_nearest_ancestor(client):
-    headers = auth(client, "u_admin")
-    created = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-mid",
-            "eventType": "dept_add",
-            "eventTime": "2026-10-12T09:00:00+08:00",
-            "dingtalkDeptId": 301,
-            "parentDingtalkDeptId": 100,
-            "name": "中层",
-        },
-    )
-    assert created["code"] == 0, created
+def test_ut_d07_12(client):
+    """UT-D07-12 管理员确认保留孤儿部门后，local_orphan 清零，待办 DONE。"""
     with session_scope(commit=True) as session:
         with use_context(system_context(1)):
-            parent = session.scalar(select(Dept).where(Dept.dingtalk_dept_id == 301))
-            row = Dept(
-                parent_id=parent.id,
-                name="本地小组",
-                source="LOCAL",
-                status="ENABLED",
-                path="/",
-                tenant_id=1,
+            dept = session.get(Dept, D12)
+            dept.local_orphan = 1
+            session.add(
+                Todo(
+                    type="CONFIRM",
+                    source_module="org",
+                    source_type="DEPT_ORPHAN",
+                    source_id=D12,
+                    title="请确认保留本地部门",
+                    status="PENDING",
+                    assignee_perm_code="ims:system:dept:update",
+                )
             )
-            session.add(row)
-            session.flush()
-            row.path = f"{parent.path}{row.id}/"
-            local_id = row.id
-    removed = _post(
+    headers = auth(client, "u_admin")
+    body = client.put("/admin-api/ims/system/dept/confirm-orphan", headers=headers, json={"id": D12}).json()
+    assert body["code"] == 0, body
+    assert _dept(D12)["local_orphan"] == 0
+    with session_scope() as session:
+        todos = list(session.scalars(select(Todo).where(Todo.source_type == "DEPT_ORPHAN", Todo.source_id == D12)))
+    assert len(todos) == 1
+    assert todos[0].status == "DONE"
+
+
+def test_ut_d07_13(client):
+    """UT-D07-13 手机号无匹配的新入职人员建成无密码用户，部门跟随钉钉，并触发岗位供给。"""
+    headers = auth(client, "u_admin")
+    _hire(client, headers, event_id="ev-d07-13")
+    with session_scope() as session:
+        mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_new"))
+        assert mapping is not None
+        user = session.get(User, mapping.user_id)
+        assert user.status == "ACTIVE"
+        assert not user.password_hash
+        links = {(row.dept_id, row.source) for row in session.scalars(select(UserDept).where(UserDept.user_id == user.id))}
+        assert links == {(D1, "DINGTALK")}
+        assert user.main_dept_id == D1
+        assert user.position_code == "POS_HIRE"
+        supplied = session.scalar(select(AuthEventLog).where(AuthEventLog.event_id == "ev-d07-13"))
+        role = session.scalar(select(Role).where(Role.position_code == "POS_HIRE", Role.source == "DINGTALK_AUTO"))
+        assert supplied is not None
+        assert role is not None
+
+
+def test_ut_d07_14(client):
+    """UT-D07-14 未设密码的钉钉新建用户用账号密码登录，返回 1214。"""
+    headers = auth(client, "u_admin")
+    _hire(client, headers, event_id="ev-d07-14")
+    with session_scope() as session:
+        mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_new"))
+        username = session.get(User, mapping.user_id).username
+        assert not session.get(User, mapping.user_id).password_hash
+    denied = login(client, username, PASSWORD)
+    assert denied.json()["code"] == 1214
+
+
+def test_ut_d07_15(client):
+    """UT-D07-15 钉钉调岗到 D2 时，本地 D12 归属保留。"""
+    headers = auth(client, "u_admin")
+    added = _post(
         client,
         headers,
         {
-            "eventId": "ev-rm-mid",
-            "eventType": "dept_remove",
-            "eventTime": "2026-10-12T09:10:00+08:00",
-            "dingtalkDeptId": 301,
+            "eventId": "ev-d07-15-add",
+            "eventType": "user_add",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkUserId": "dt_user_a",
+            "nickname": "A",
+            "deptIds": [101],
         },
     )
-    assert removed["code"] == 0, removed
+    assert added["code"] == 0, added
+    with session_scope(commit=True) as session:
+        with use_context(system_context(1)):
+            mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_user_a"))
+            session.add(UserDept(user_id=mapping.user_id, dept_id=D12, is_main=0, source="LOCAL"))
+            user_id = mapping.user_id
+    moved = _post(
+        client,
+        headers,
+        {
+            "eventId": "ev-d07-15",
+            "eventType": "user_modify",
+            "eventTime": "2026-10-12T10:00:00+08:00",
+            "dingtalkUserId": "dt_user_a",
+            "deptIds": [200],
+        },
+    )
+    assert moved["code"] == 0, moved
     with session_scope() as session:
-        local = session.get(Dept, local_id)
-        assert local.parent_id == D1
-        assert local.parent_id != ROOT
-        assert local.local_orphan == 1
-        todo = session.scalar(select(Todo).where(Todo.source_type == "DEPT_ORPHAN", Todo.source_id == local_id))
-        assert todo is not None and "请确认" in todo.title
-        assert _dept_gone(session, 301)
+        links = {(row.dept_id, row.source) for row in session.scalars(select(UserDept).where(UserDept.user_id == user_id))}
+    assert links == {(D2, "DINGTALK"), (D12, "LOCAL")}
 
 
-def _dept_gone(session, ding_id: int) -> bool:
-    row = session.scalar(select(Dept).where(Dept.dingtalk_dept_id == ding_id).execution_options(include_deleted=True))
-    return row is not None and row.deleted == row.id and row.status == "DISABLED"
-
-
-def test_ut_d07_08_reconcile_timeout(client):
+def test_ut_d07_16(client):
+    """UT-D07-16 持有两个会话的用户离职后不可登录，旧令牌失效，离职事件只发一次。"""
     headers = auth(client, "u_admin")
-    ding_state.departments = [{"dingtalkDeptId": 999, "parentDingtalkDeptId": None, "name": "不应出现"}]
-    ding_state.error = "timeout"
-    response = client.post("/admin-api/ims/system/org-sync/reconcile", headers=headers)
-    body = response.json()
-    assert body["code"] == 5003, body
-    assert _dept(D1)["name"] == "市场部"
+    first = login(client, "u_d11").json()
+    second = login(client, "u_d11").json()
+    assert first["code"] == 0 and second["code"] == 0
+    tokens = [first["data"]["accessToken"], second["data"]["accessToken"]]
+    raw = get_redis().get(f"ims:user:sids:{U_D11}")
+    assert len(json.loads(raw)) == 2
+    with session_scope(commit=True) as session:
+        with use_context(system_context(1)):
+            session.add(UserMapping(user_id=U_D11, dingtalk_user_id="dt_leave_a", dept_ids=[101], sync_status="SUCCESS"))
+    body = _post(
+        client,
+        headers,
+        {
+            "eventId": "ev-d07-16",
+            "eventType": "user_leave",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkUserId": "dt_leave_a",
+        },
+    )
+    assert body["code"] == 0, body
     with session_scope() as session:
-        assert session.scalar(select(func.count()).select_from(OrgSyncBatch)) == 0
-        assert session.scalar(select(Dept).where(Dept.dingtalk_dept_id == 999)) is None
+        assert session.get(User, U_D11).status == "RESIGNED"
+    assert login(client, "u_d11", PASSWORD).json()["code"] == 1216
+    for token in tokens:
+        me = client.get("/admin-api/ims/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.json()["code"] == 1002
+    resigned = events.of("user.resigned")
+    assert len(resigned) == 1
+    assert resigned[0]["payload"]["userId"] == U_D11
 
 
-def test_ut_d07_09_reconcile_running(client):
+def test_ut_d07_17(client):
+    """UT-D07-17 字典里没有的岗位 NEW_POS2 会按钉钉来源写入 dict_position。"""
+    headers = auth(client, "u_admin")
+    with session_scope() as session:
+        missing = session.scalar(select(DictData).where(DictData.dict_type == "dict_position", DictData.dict_value == "NEW_POS2"))
+    assert missing is None
+    body = _post(
+        client,
+        headers,
+        {
+            "eventId": "ev-d07-17",
+            "eventType": "user_add",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkUserId": "dt_pos2",
+            "nickname": "新岗位",
+            "deptIds": [200],
+            "positionCode": "NEW_POS2",
+        },
+    )
+    assert body["code"] == 0, body
+    with session_scope() as session:
+        row = session.scalar(select(DictData).where(DictData.dict_type == "dict_position", DictData.dict_value == "NEW_POS2"))
+    assert row is not None
+    assert row.source == "DINGTALK"
+
+
+def test_ut_d07_18(client):
+    """UT-D07-18 对账进行中再次触发，返回 1001，提示同步正在进行中。"""
     with session_scope(commit=True) as session:
         with use_context(system_context(1)):
             session.add(OrgSyncBatch(status="RUNNING", started_at=now_naive(), same_name_notes=[]))
     headers = auth(client, "u_admin")
     ding_state.departments = [{"dingtalkDeptId": 100, "name": "被挡住", "parentDingtalkDeptId": None}]
-    body = client.post("/admin-api/ims/system/org-sync/reconcile", headers=headers).json()
+    body = _reconcile(client, headers)
     assert body["code"] == 1001, body
     assert body["msg"] == "同步正在进行中"
     assert _dept(D1)["name"] == "市场部"
@@ -314,240 +626,145 @@ def test_ut_d07_09_reconcile_running(client):
         assert session.scalar(select(func.count()).select_from(OrgSyncBatch)) == 1
 
 
-def test_ut_d07_10_same_name_and_local_kept(client):
+def test_ut_d07_19(client):
+    """UT-D07-19 钉钉超时：批次记下 5003，部门与人员数据保持原样。"""
     headers = auth(client, "u_admin")
-    before = _dept(D12)
-    ding_state.departments = [
-        {"dingtalkDeptId": 100, "parentDingtalkDeptId": None, "name": "市场部同步"},
-        {"dingtalkDeptId": 101, "parentDingtalkDeptId": 100, "name": "市场一组"},
-        {"dingtalkDeptId": 200, "parentDingtalkDeptId": None, "name": "技术部"},
-        {"dingtalkDeptId": 102, "parentDingtalkDeptId": 100, "name": "市场二组"},
-    ]
-    ding_state.users = []
-    body = client.post("/admin-api/ims/system/org-sync/reconcile", headers=headers).json()
-    assert body["code"] == 0, body
-    notes = body["data"]["sameNameNotes"]
-    assert any("存在同名本地部门" in str(item) for item in notes)
-    latest = client.get("/admin-api/ims/system/org-sync/latest-batch", headers=headers).json()
-    assert latest["code"] == 0, latest
-    assert any("存在同名本地部门" in str(item) for item in latest["data"]["sameNameNotes"])
+    before = _org_snapshot()
+    ding_state.error = "timeout"
+    ding_state.departments = [{"dingtalkDeptId": 999, "parentDingtalkDeptId": None, "name": "幽灵部门"}]
+    ding_state.users = [{"dingtalkUserId": "dt_ghost", "nickname": "幽灵", "deptIds": [999]}]
+    body = _reconcile(client, headers)
+    assert body["code"] == 5003, body
+    assert _org_snapshot() == before
     with session_scope() as session:
-        twins = list(session.scalars(select(Dept).where(Dept.parent_id == D1, Dept.name == "市场二组")))
-        assert {row.source for row in twins} == {"LOCAL", "DINGTALK"}
-        local = session.get(Dept, D12)
-        assert local.name == before["name"]
-        assert local.parent_id == before["parent_id"]
-        assert local.source == "LOCAL"
-        assert local.dingtalk_dept_id is None
-        assert local.deleted == 0
-        renamed = session.get(Dept, D1)
-        assert renamed.name == "市场部同步"
-        assert renamed.source == "DINGTALK"
+        batch = session.scalar(select(OrgSyncBatch))
+        assert batch is not None
+        assert batch.status == "FAILED"
+        assert batch.error_code == 5003
+        assert session.scalar(select(Dept).where(Dept.dingtalk_dept_id == 999)) is None
 
 
-def test_ut_d07_11_user_add_position(client):
+def test_ut_d07_20(client):
+    """UT-D07-20 全量快照缺少钉钉部门 101 时，按删除处理，结果同 UT-D07-06。"""
+    headers = auth(client, "u_admin")
+    jia, yi, bing = _prepare_d11_members(client, headers)
+    _ding_tree(drop={101})
+    body = _reconcile(client, headers)
+    assert body["code"] == 0, body
+    _assert_d11_removed(jia, yi, bing)
+
+
+def test_ut_d07_21(client):
+    """UT-D07-21 持续失败时按可注入时钟重试，前几次为 RETRYING，第 5 次后为 DEAD。"""
+    freeze(datetime(2026, 10, 12, 8, 0, 0))
+    headers = auth(client, "u_admin")
+    event_id = "ev-d07-21"
+    seen = []
+
+    def fail_once():
+        faults.arm("org.fail", RuntimeError("down"))
+
+    fail_once()
+    first = _post(
+        client,
+        headers,
+        {
+            "eventId": event_id,
+            "eventType": "dept_modify",
+            "eventTime": "2026-10-12T08:00:00+08:00",
+            "dingtalkDeptId": 100,
+            "name": "失败不改名",
+        },
+    )
+    assert first["code"] == 0, first
+    seen.append(first["data"]["status"])
+    for _ in range(4):
+        nxt = _event_state(event_id)["next"]
+        assert nxt is not None
+        freeze(nxt)
+        fail_once()
+        _run_drive()
+        seen.append(_event_state(event_id)["status"])
+    assert seen == ["RETRYING", "RETRYING", "RETRYING", "RETRYING", "DEAD"]
+    assert _event_state(event_id)["retry"] == 5
+    assert _dept(D1)["name"] == "市场部"
+
+
+def test_ut_d07_22(client):
+    """UT-D07-22 死信在故障移除后重放，先回到 PENDING，再处理为 SUCCESS。"""
+    headers = auth(client, "u_admin")
+    event_id = "ev-d07-22"
+    faults.arm("org.fail", RuntimeError("down"))
+    failed = _post(
+        client,
+        headers,
+        {
+            "eventId": event_id,
+            "eventType": "dept_modify",
+            "eventTime": "2026-10-12T09:00:00+08:00",
+            "dingtalkDeptId": 100,
+            "name": "重放名称",
+        },
+    )
+    assert failed["code"] == 0, failed
+    assert _dept(D1)["name"] == "市场部"
+    with session_scope(commit=True) as session:
+        with use_context(system_context(1)):
+            row = session.scalar(select(OrgSyncEvent).where(OrgSyncEvent.event_id == event_id))
+            row.status = "DEAD"
+            row.next_retry_at = None
+    faults.clear()
+    seen = []
+    original = org_sync_mod._execute
+
+    def _spy(row):
+        seen.append(row.status)
+        return original(row)
+
+    org_sync_mod._execute = _spy
+    try:
+        with session_scope(commit=True) as session:
+            with use_context(system_context(1)):
+                done = replay(event_id)
+    finally:
+        org_sync_mod._execute = original
+    assert seen == ["PENDING"]
+    assert done["status"] == "SUCCESS"
+    assert _event_state(event_id)["status"] == "SUCCESS"
+    assert _dept(D1)["name"] == "重放名称"
+
+
+def test_ut_d07_23(client):
+    """UT-D07-23 事件时间与处理完成相差 6 分钟时，产生 1 条同步延迟告警。"""
+    freeze(datetime(2026, 10, 12, 10, 6, 0))
     headers = auth(client, "u_admin")
     body = _post(
         client,
         headers,
         {
-            "eventId": "ev-user-add",
-            "eventType": "user_add",
-            "eventTime": "2026-10-12T09:00:00+08:00",
-            "dingtalkUserId": "dt_new_pos",
-            "mobile": "13800002222",
-            "nickname": "新同事",
-            "deptIds": [100, 200],
-            "positionCode": "NEW_POS",
-            "empNo": "E900",
-        },
-    )
-    assert body["code"] == 0, body
-    with session_scope() as session:
-        mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_new_pos"))
-        user = session.get(User, mapping.user_id)
-        assert user.status == "ACTIVE"
-        assert user.password_hash is None
-        assert user.nickname == "新同事"
-        assert user.position_code == "NEW_POS"
-        assert user.emp_no == "E900"
-        links = list(session.scalars(select(UserDept).where(UserDept.user_id == user.id)))
-        assert {(row.dept_id, row.source) for row in links} == {(D1, "DINGTALK"), (D2, "DINGTALK")}
-        assert user.main_dept_id == D1
-        dict_row = session.scalar(select(DictData).where(DictData.dict_type == "dict_position", DictData.dict_value == "NEW_POS"))
-        assert dict_row is not None and dict_row.source == "DINGTALK"
-        username = user.username
-    denied = login(client, username, "Abc12345")
-    assert denied.json()["code"] == 1214
-
-
-def test_ut_d07_12_user_modify_keeps_local(client):
-    headers = auth(client, "u_admin")
-    added = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-user-mod-base",
-            "eventType": "user_add",
-            "eventTime": "2026-10-12T09:00:00+08:00",
-            "dingtalkUserId": "dt_mod",
-            "nickname": "改部门",
-            "deptIds": [100],
-        },
-    )
-    assert added["code"] == 0, added
-    with session_scope(commit=True) as session:
-        with use_context(system_context(1)):
-            mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_mod"))
-            session.add(UserDept(user_id=mapping.user_id, dept_id=D12, is_main=0, source="LOCAL", tenant_id=1))
-    modified = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-user-mod",
-            "eventType": "user_modify",
-            "eventTime": "2026-10-12T10:00:00+08:00",
-            "dingtalkUserId": "dt_mod",
-            "deptIds": [200],
-            "nickname": "已改",
-        },
-    )
-    assert modified["code"] == 0, modified
-    with session_scope() as session:
-        mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_mod"))
-        user = session.get(User, mapping.user_id)
-        links = {(row.dept_id, row.source) for row in session.scalars(select(UserDept).where(UserDept.user_id == user.id))}
-        assert links == {(D2, "DINGTALK"), (D12, "LOCAL")}
-        assert user.main_dept_id == D2
-        assert user.nickname == "已改"
-
-
-def test_ut_d07_13_user_leave_once(client):
-    token = auth(client, "u_d12")
-    with session_scope(commit=True) as session:
-        with use_context(system_context(1)):
-            session.add(UserMapping(user_id=1103, dingtalk_user_id="dt_d12", dept_ids=[101], sync_status="SUCCESS", tenant_id=1))
-    headers = auth(client, "u_admin")
-    first = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-leave-1",
-            "eventType": "user_leave",
-            "eventTime": "2026-10-12T09:00:00+08:00",
-            "dingtalkUserId": "dt_d12",
-        },
-    )
-    assert first["code"] == 0, first
-    second = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-leave-2",
-            "eventType": "user_leave",
-            "eventTime": "2026-10-12T09:05:00+08:00",
-            "dingtalkUserId": "dt_d12",
-        },
-    )
-    assert second["code"] == 0, second
-    assert len(events.of("user.resigned")) == 1
-    with session_scope() as session:
-        user = session.get(User, 1103)
-        assert user.status == "RESIGNED"
-    me = client.get("/admin-api/ims/auth/me", headers=token)
-    assert me.json()["code"] == 1002
-
-
-def test_ut_d07_14_retry_dead_replay(client):
-    freeze(datetime(2026, 10, 12, 8, 0, 0))
-    headers = auth(client, "u_admin")
-    body = {
-        "eventId": "ev-retry",
-        "eventType": "dept_modify",
-        "eventTime": "2026-10-12T08:00:00+08:00",
-        "dingtalkDeptId": 100,
-        "name": "重试后的名字",
-    }
-    faults.arm("org.fail", RuntimeError("down"))
-    first = _post(client, headers, body)
-    assert first["code"] == 0, first
-    assert first["data"]["status"] == "RETRYING"
-    assert _dept(D1)["name"] == "市场部"
-    state = _event_state("ev-retry")
-    assert state["retry"] == 1
-    assert state["next"] == datetime(2026, 10, 12, 8, 1, 0)
-    _run_drive()
-    assert _event_state("ev-retry")["retry"] == 1
-    assert _dept(D1)["name"] == "市场部"
-    gaps = (5, 15, 60)
-    for index, minutes in enumerate(gaps, start=2):
-        advance(timedelta(minutes=1 if index == 2 else gaps[index - 3]))
-        faults.arm("org.fail", RuntimeError("down"))
-        _run_drive()
-        state = _event_state("ev-retry")
-        assert state["status"] == "RETRYING"
-        assert state["retry"] == index
-        assert state["next"] == now_naive() + timedelta(minutes=minutes)
-    advance(timedelta(minutes=60))
-    faults.arm("org.fail", RuntimeError("down"))
-    _run_drive()
-    state = _event_state("ev-retry")
-    assert state["status"] == "DEAD"
-    assert state["retry"] == 5
-    assert _dept(D1)["name"] == "市场部"
-    advance(timedelta(minutes=120))
-    _run_drive()
-    assert _event_state("ev-retry")["status"] == "DEAD"
-    with session_scope(commit=True) as session:
-        with use_context(system_context(1)):
-            done = replay("ev-retry")
-    assert done["status"] == "SUCCESS"
-    assert _dept(D1)["name"] == "重试后的名字"
-    assert _event_state("ev-retry")["status"] == "SUCCESS"
-
-
-def test_ut_d07_15_delay_event(client):
-    freeze(datetime(2026, 10, 12, 10, 0, 0))
-    headers = auth(client, "u_admin")
-    late = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-delay",
+            "eventId": "ev-d07-23",
             "eventType": "dept_modify",
-            "eventTime": "2026-10-12T09:00:00+08:00",
+            "eventTime": "2026-10-12T10:00:00+08:00",
             "dingtalkDeptId": 100,
             "name": "延迟改名",
         },
     )
-    assert late["code"] == 0, late
-    assert len(events.of("org.delay")) == 1
-    near = _post(
-        client,
-        headers,
-        {
-            "eventId": "ev-nodelay",
-            "eventType": "dept_modify",
-            "eventTime": "2026-10-12T09:56:00+08:00",
-            "dingtalkDeptId": 200,
-            "name": "技术及时",
-        },
-    )
-    assert near["code"] == 0, near
+    assert body["code"] == 0, body
     assert len(events.of("org.delay")) == 1
 
 
-def test_ut_d07_16_out_of_order(client):
+def test_ut_d07_24(client):
+    """UT-D07-24 11:00 的变更先到、10:30 的后到，最终保留 11:00 的值。"""
     headers = auth(client, "u_admin")
     newer = _post(
         client,
         headers,
         {
-            "eventId": "ev-new",
+            "eventId": "ev-d07-24-new",
             "eventType": "dept_modify",
-            "eventTime": "2026-10-12T15:00:00+08:00",
+            "eventTime": "2026-10-12T11:00:00+08:00",
             "dingtalkDeptId": 100,
-            "name": "较新名称",
+            "name": "十一点名称",
         },
     )
     assert newer["code"] == 0, newer
@@ -555,16 +772,16 @@ def test_ut_d07_16_out_of_order(client):
         client,
         headers,
         {
-            "eventId": "ev-old",
+            "eventId": "ev-d07-24-old",
             "eventType": "dept_modify",
-            "eventTime": "2026-10-12T14:00:00+08:00",
+            "eventTime": "2026-10-12T10:30:00+08:00",
             "dingtalkDeptId": 100,
-            "name": "较旧名称",
+            "name": "十点半名称",
         },
     )
     assert older["code"] == 0, older
-    assert older["data"]["status"] == "EXPIRED"
-    assert _dept(D1)["name"] == "较新名称"
+    assert _dept(D1)["name"] == "十一点名称"
+    assert _status_label(older["data"]["status"]) == "已过期"
 
 
 def test_ut_b1pre_06_emp_roundtrip(client):

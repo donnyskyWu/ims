@@ -1,4 +1,7 @@
-"""抽样迁移。保留源主键，未知部门进待处理，创建人是数据迁移账号。"""
+"""抽样迁移骨架。保留源主键，未知部门进待处理，创建人是数据迁移账号。
+
+开发期不连接 OPS 或 shenyu 源库。调用方必须传入本地引擎；单测使用 sqlite 样例。
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -175,6 +178,9 @@ def migrate_sample(source_engine, system: str) -> dict:
     dept_rows = _rows(source_engine, dept_table) if dept_table else []
     user_rows = _rows(source_engine, user_table) if user_table else []
     stats = {"depts": 0, "users": 0, "pending": 0, "skipped": 0}
+    user_source = 0
+    user_success = 0
+    user_pending = 0
     imported_depts: set[int] = set()
     with session_scope(commit=True) as session:
         with use_context(_ctx(1)):
@@ -197,6 +203,7 @@ def migrate_sample(source_engine, system: str) -> dict:
                 if _deleted(_pick(row, "deleted", default=0)):
                     stats["skipped"] += 1
                     continue
+                user_source += 1
                 decision, tenant_id = map_tenant(name, _pick(row, "tenant_id"))
                 if decision == "skip":
                     stats["skipped"] += 1
@@ -204,6 +211,7 @@ def migrate_sample(source_engine, system: str) -> dict:
                 if decision != "ok":
                     _ensure_pending(session, name, "user", row.get("id"), "租户未映射", row)
                     stats["pending"] += 1
+                    user_pending += 1
                     continue
                 dept_id = _pick(row, "dept_id", "main_dept_id", "department_id")
                 if dept_id not in (None, "", 0, "0"):
@@ -212,6 +220,7 @@ def migrate_sample(source_engine, system: str) -> dict:
                     if not known:
                         _ensure_pending(session, name, "user", row.get("id"), f"未知部门 {dept_id}", row)
                         stats["pending"] += 1
+                        user_pending += 1
                         continue
                 else:
                     dept_id = None
@@ -221,10 +230,19 @@ def migrate_sample(source_engine, system: str) -> dict:
                 if taken is not None and int(taken) != int(row["id"]):
                     _ensure_pending(session, name, "user", row.get("id"), "用户名已存在", row)
                     stats["pending"] += 1
+                    user_pending += 1
                     continue
                 _upsert_user(session, row, int(tenant_id), dept_id)
                 stats["users"] += 1
+                user_success += 1
             session.flush()
             _bump(session, "ims_sys_user")
             _bump(session, "ims_sys_dept")
+            from app.services.integrity import run_scan
+
+            scan = run_scan()
+            stats["source"] = user_source
+            stats["success"] = user_success
+            stats["pending"] = user_pending
+            stats["scanId"] = scan["scanId"]
     return stats

@@ -138,6 +138,7 @@ def act(instance_id: int, action: str, comment: str | None = None, user_id: int 
     if index + 1 >= len(nodes):
         instance.status = "APPROVED"
         session.flush()
+        _finish_callback(instance, "APPROVED")
         return _instance_view(instance)
     _open_node(instance, nodes, index + 1)
     session.flush()
@@ -188,8 +189,8 @@ def scan_overdue() -> int:
         task.urge_sent = 1
         if not task.assignee:
             continue
-        send_notify(int(task.assignee), "审批已超时", "有一条审批已超时，请尽快处理", "FLOW_OVERDUE", f"task:{task.id}")
-        todo_create("FLOW_TASK", task.id, "WARNING", "审批已超时", user_ids=[int(task.assignee)])
+        send_notify(int(task.assignee), "审批已超时", "督办：有一条审批已超时，请尽快处理", "FLOW_OVERDUE", f"task:{task.id}")
+        todo_create("FLOW_TASK", task.id, "WARNING", "督办", user_ids=[int(task.assignee)])
     if rows:
         session.flush()
     return len(rows)
@@ -267,10 +268,25 @@ def _leader_of(user_id: int) -> int | None:
     return int(parent.leader_user_id)
 
 
+def _finish_callback(instance: FlowInstance, result: str) -> None:
+    action = "REJECT" if result == "REJECTED" else "APPROVE"
+    payload = {
+        "instanceId": instance.id,
+        "action": action,
+        "result": result,
+        "bizType": instance.biz_type,
+        "bizId": instance.biz_id,
+        "initiator": instance.initiator,
+    }
+    for callback in list(callbacks):
+        callback(dict(payload))
+
+
 def _reject_side_effects(instance: FlowInstance) -> None:
     payload = {
         "instanceId": instance.id,
         "action": "REJECT",
+        "result": "REJECTED",
         "bizType": instance.biz_type,
         "bizId": instance.biz_id,
         "initiator": instance.initiator,

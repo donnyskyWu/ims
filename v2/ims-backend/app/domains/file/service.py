@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import uuid
 from datetime import timedelta
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from fastapi.responses import Response
 from sqlalchemy import select
@@ -53,6 +54,11 @@ _CONTENT_TYPES = {
 }
 
 
+def export_scene_registry() -> str:
+    """导出场景注册表 JSON，与 scene_registry() 同一份数据。"""
+    return json.dumps(scene_registry(), ensure_ascii=False)
+
+
 def scene_registry() -> dict:
     """供测试与调用方读取场景、扩展名、大小与水印开关。"""
     data = {}
@@ -75,7 +81,7 @@ def upload(scene: str, filename: str, data: bytes, user) -> dict:
     ext = _ext_of(original)
     if ext not in spec["exts"]:
         shown = "、".join(item for item in spec["exts"] if item != "jpeg")
-        raise BizError(5005, f"仅支持 {shown}")
+        raise BizError(5005, f"仅支持 {shown} 格式")
     payload = bytes(data or b"")
     if len(payload) > spec["max_bytes"]:
         raise BizError(5005, f"文件不能超过 {spec['max_bytes'] // _MB} MB")
@@ -221,20 +227,38 @@ def _assert_biz_scope(row: StoredFile) -> None:
 
 
 def _watermark(data: bytes, ext: str) -> bytes:
+    """图片叠加查看人姓名。PNG 第 0 行 R 通道：长度 + UTF-8 字节，并写入 viewer 文本块。"""
     import io
 
-    from PIL import Image
+    from PIL import Image, PngImagePlugin
 
-    image = Image.open(io.BytesIO(data))
-    image = image.convert("RGBA")
+    ctx = get_ctx()
+    name = "用户"
+    if ctx is not None:
+        name = (ctx.nickname or ctx.username or name).strip() or name
+    raw = name.encode("utf-8")
+    image = Image.open(io.BytesIO(data)).convert("RGBA")
+    width = max(image.width, len(raw) + 1)
+    height = max(image.height, 1)
+    if (width, height) != image.size:
+        canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+        canvas.paste(image, (0, 0))
+        image = canvas
     pixels = image.load()
-    red, green, blue, alpha = pixels[0, 0]
-    pixels[0, 0] = ((red + 80) % 256, (green + 30) % 256, blue, 255)
+    _, green, blue, _alpha = pixels[0, 0]
+    pixels[0, 0] = (len(raw), green, blue, 255)
+    for index, byte in enumerate(raw):
+        pixels[index + 1, 0] = (byte, 0, 0, 255)
     buffer = io.BytesIO()
     if ext.lower() in {"jpg", "jpeg"}:
         image.convert("RGB").save(buffer, format="JPEG", quality=85)
     else:
-        image.save(buffer, format="PNG")
+        info = PngImagePlugin.PngInfo()
+        try:
+            info.add_itxt("viewer", name, lang="zh")
+        except Exception:
+            pass
+        image.save(buffer, format="PNG", pnginfo=info)
     out = buffer.getvalue()
     if out == data:
         pixels[0, 0] = (0, 255, 0, 255)
@@ -300,7 +324,13 @@ def _safe_path(file_key: str) -> Path:
 def _reject_traversal(file_key: str) -> str:
     if not isinstance(file_key, str) or not file_key.strip():
         raise BizError(1001, "文件标识不正确")
-    text = file_key.replace("\\", "/")
+    text = file_key.strip()
+    for _ in range(3):
+        decoded = unquote(text)
+        if decoded == text:
+            break
+        text = decoded
+    text = text.replace("\\", "/")
     if "\x00" in text or text.startswith("/") or text.startswith("~"):
         raise BizError(1001, "文件标识不正确")
     if any(part == ".." for part in text.split("/")):
@@ -360,3 +390,49 @@ def _unlink(path: Path) -> None:
             path.unlink()
     except OSError:
         pass
+
+
+def _release_bound_files(session, flush_context, instances) -> None:
+    """业务记录逻辑删除时解绑文件，保留物理文件并记下 orphan_since。"""
+    if session.info.get("ims_file_release"):
+        return
+    targets: list[tuple[str, int]] = []
+    for obj in list(session.dirty):
+        table = getattr(obj.__class__, "__tablename__", None)
+        if not table or table == "ims_file":
+            continue
+        ident = getattr(obj, "id", None)
+        deleted = getattr(obj, "deleted", None)
+        if not ident or not deleted or int(deleted) != int(ident):
+            continue
+        targets.append((table, int(ident)))
+    if not targets:
+        return
+    session.info["ims_file_release"] = True
+    try:
+        for table, ident in targets:
+            rows = list(
+                session.scalars(
+                    select(StoredFile)
+                    .where(StoredFile.biz_type == table, StoredFile.biz_id == ident)
+                    .execution_options(skip_tenant=True)
+                )
+            )
+            for row in rows:
+                row.biz_id = None
+                row.orphan_since = now_naive()
+    finally:
+        session.info["ims_file_release"] = False
+
+
+def _install_release_listener() -> None:
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    if getattr(_install_release_listener, "done", False):
+        return
+    event.listen(Session, "before_flush", _release_bound_files)
+    _install_release_listener.done = True
+
+
+_install_release_listener()

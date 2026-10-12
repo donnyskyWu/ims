@@ -1,0 +1,49 @@
+# shenyu-live.live_room 结构合同。与 tools/football_stub/create.sql 同一份 DDL。
+# 只读连接必须是仅有 SELECT 的账号。shenyu 高权限账号不能当作这路连接。
+# MySQL 8 的 information_schema 会去掉整型显示宽度；校验把 bigint(20)/tinyint(4)/int(11)
+# 按数值精度对齐，不把 bit 当成 tinyint。目标库多出的列忽略。
+table: live_room
+sensitive:
+  - bind_mobile_password
+  - login_pwd
+defaults:
+  deleted: "0"
+columns:
+  id: bigint(20)
+  author_id: bigint(20)
+  nickname: varchar(128)
+  avatar_url: varchar(200)
+  live_id: varchar(32)
+  live_name: varchar(128)
+  cover: varchar(255)
+  status: tinyint(4)
+  live_mode: tinyint(4)
+  screen_type: tinyint(4)
+  template_id: varchar(32)
+  watch_type: tinyint(4)
+  enable_playback: tinyint(4)
+  enable_low_latency: tinyint(4)
+  enable_heat: tinyint(4)
+  enable_completion: tinyint(4)
+  start_time: datetime
+  end_time: datetime
+  view_url: varchar(255)
+  playback_url: varchar(255)
+  server_url: varchar(255)
+  stream_key: varchar(128)
+  flv_url: varchar(255)
+  hls_live_url: varchar(255)
+  tenant_id: bigint(20)
+  create_time: datetime
+  update_time: datetime
+  creator: varchar(100)
+  updater: varchar(100)
+  deleted: tinyint(4)
+  bind_product_id: varchar(32)
+  bind_mobile: varchar(11)
+  bind_mobile_password: varchar(128)
+  reserve_count: int(11)
+  like_count: int(11)
+  virtual_like_count: int(11)
+  viewer_count: int(11)
+  login_pwd: varchar(50)

@@ -169,7 +169,7 @@ def check_train_ai_isolation(root) -> list[str]:
     for path in base.rglob("*.py"):
         text = _read(path)
         if "air_ai" in text:
-            problems.append(f"{_rel(path, root)}: 培训 AI 不得引用内容 AI")
+            problems.append(f"{_rel(path, root)}: 培训 AI 不得引用 air_ai")
     return problems
 
 
@@ -183,6 +183,30 @@ def check_frontend_paths(root) -> list[str]:
             continue
         if needle in _read(path):
             problems.append(f"{rel}: 前端手写管理端路径")
+    return problems
+
+
+def check_router_commit(root) -> list[str]:
+    root = _root(root)
+    problems = []
+    for path in _files(root, {".py"}):
+        if not _is_router(path):
+            continue
+        if "session.commit(" in _read(path):
+            problems.append(f"{_rel(path, root)}: 路由直接提交事务")
+    return problems
+
+
+def check_plain_without_log(root) -> list[str]:
+    """返回明文的路由必须声明 sensitive_view。"""
+    root = _root(root)
+    problems = []
+    for path in _files(root, {".py"}):
+        if not _is_router(path):
+            continue
+        text = _read(path)
+        if "returns_plain=True" in text and "sensitive_view=True" not in text:
+            problems.append(f"{_rel(path, root)}: 明文接口未声明查看日志")
     return problems
 
 
@@ -227,6 +251,8 @@ def scan(root, *, summary: bool = False) -> list[str]:
     problems += check_train_ai_isolation(root)
     problems += check_frontend_paths(root)
     problems += check_seed_apply_call(root)
+    problems += check_router_commit(root)
+    problems += check_plain_without_log(root)
     if summary:
         problems += check_route_summary(root)
     return problems

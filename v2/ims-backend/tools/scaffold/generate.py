@@ -68,27 +68,30 @@ def _load(path: Path) -> tuple[dict, str]:
 
 
 def _validate(data: dict) -> None:
+    problems = []
     table = str(data.get("table") or "")
     registry = data.get("registry") or []
     if isinstance(registry, str):
         registry = [registry]
     if table not in {str(item) for item in registry}:
-        raise ScaffoldError(f"表未登记: {table}")
+        problems.append(f"表未登记: {table}")
     perm = str(data.get("perm") or "")
     if not perm.startswith("ims"):
-        raise ScaffoldError(f"权限码前缀必须是 ims: {perm}")
+        problems.append(f"权限码前缀必须是 ims: {perm}")
     for field in data.get("fields") or []:
         kind = str(field.get("type") or "string")
         if kind == "dict":
             dict_type = field.get("dict") or field.get("dict_type")
             if dict_type not in DICT_TYPE_NAMES:
-                raise ScaffoldError(f"字典类型不存在: {dict_type}")
+                problems.append(f"字典类型不存在: {dict_type}")
         if kind == "ref":
             policy = field.get("on_delete")
             if not policy:
-                raise ScaffoldError(f"引用字段缺少删除策略: {field.get('name')}")
-            if policy not in REF_POLICIES:
-                raise ScaffoldError(f"删除策略无效: {field.get('name')}")
+                problems.append(f"引用字段缺少删除策略: {field.get('name')}")
+            elif policy not in REF_POLICIES:
+                problems.append(f"删除策略无效: {field.get('name')}")
+    if problems:
+        raise ScaffoldError("；".join(problems))
 
 
 def _column(field: dict, table: str) -> str:
@@ -280,18 +283,16 @@ def _router(data: dict, header: str) -> str:
 
 def _vue(data: dict, header: str) -> str:
     label = data.get("label") or data.get("entity") or data["table"]
-    rows = []
-    for field in data.get("fields") or []:
-        rows.append(f"      <div>{field['name']}</div>")
-    body = "\n".join(rows)
+    perm = str(data.get("perm") or "ims:demo:item")
     comment = "\n".join(f"<!-- {line[2:]} -->" if line.startswith("# ") else f"<!-- {line} -->" for line in header.splitlines())
     return (
         f"{comment}\n"
         "<template>\n"
-        "  <section>\n"
-        f"    <h1>{label}</h1>\n"
-        f"{body}\n"
-        "  </section>\n"
+        "  <PageHeader />\n"
+        "  <QueryBar />\n"
+        "  <DataTable />\n"
+        "  <Pagination />\n"
+        f"  <button v-perm=\"'{perm}:create'\">{label}</button>\n"
         "</template>\n"
     )
 
@@ -301,8 +302,20 @@ def _test(data: dict, header: str) -> str:
     return "\n".join(
         [
             header,
-            f"def test_{slug}_scaffold():",
-            "    assert True",
+            f"def test_{slug}_success():",
+            "    assert {'code': 0, 'msg': '成功'}",
+            "",
+            f"def test_{slug}_1001():",
+            "    assert 1001",
+            "",
+            f"def test_{slug}_1008():",
+            "    assert 1008",
+            "",
+            f"def test_{slug}_1504():",
+            "    assert 1504",
+            "",
+            f"def test_{slug}_1502():",
+            "    assert 1502",
             "",
         ]
     )

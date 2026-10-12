@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 from app.core.config import get_settings
 from app.integrations.base import open_select_engine
-from app.integrations.football_live.schema_check import expected_columns
+from app.integrations.football_live.schema_check import expected_columns, sensitive_columns
 
 LIVE_DURATION_SQL = (
     "SELECT COUNT(*) AS cnt, COALESCE(SUM(TIMESTAMPDIFF(MINUTE, start_time, end_time)), 0) AS minutes "
@@ -21,8 +21,19 @@ class LiveDuration(NamedTuple):
     minutes: int
 
 
+DISPLAY_MASK = "******"
+
+
+def mask_sensitive(row: dict, settings) -> dict:
+    """只读展示脱敏。表里仍是 seed 假数据，这里不回写。"""
+    for name in sensitive_columns(settings):
+        if name in row and row[name] not in (None, ""):
+            row[name] = DISPLAY_MASK
+    return row
+
+
 def read_deleted(value) -> int:
-    """BIT(1) 的字节和 TINYINT 都读成 0/1。"""
+    """deleted 的真实类型是 tinyint。整数值按 0/1 读取。"""
     if isinstance(value, memoryview):
         value = value.tobytes()
     if isinstance(value, (bytes, bytearray)):
@@ -81,7 +92,7 @@ def _rows(sql: str, params: tuple, settings, executor):
 def _room_sql(settings) -> str:
     columns = list(expected_columns(settings).keys())
     selected = ", ".join(f"`{name}`" for name in columns)
-    return f"SELECT {selected} FROM live_room WHERE id=? AND tenant_id=?"
+    return f"SELECT {selected} FROM live_room WHERE id=? AND tenant_id=? AND deleted=0"
 
 
 def get_room(ims_tenant_id, room_id, settings=None, executor=None):
@@ -95,11 +106,36 @@ def get_room(ims_tenant_id, room_id, settings=None, executor=None):
     row = dict(rows[0])
     if row.get("deleted") is not None:
         row["deleted"] = read_deleted(row["deleted"])
-    return row
+        if row["deleted"] != 0:
+            return None
+    return mask_sensitive(row, settings)
 
 
 def room_exists_for_bind(ims_tenant_id, room_id, settings=None, executor=None) -> bool:
     return get_room(ims_tenant_id, room_id, settings=settings, executor=executor) is not None
+
+
+UNAVAILABLE = "UNAVAILABLE"
+
+
+def football_row_or_unavailable(loader):
+    """Football 超时或失败时返回不可用标记，不把异常抛给场次编辑。"""
+    try:
+        return loader()
+    except Exception:
+        return UNAVAILABLE
+
+
+def merge_live_metrics(ims_snapshot: dict, football_row=None) -> dict:
+    """IMS 快照始终返回。Football 不可用时只打标记，不抛给场次编辑。"""
+    snapshot = dict(ims_snapshot or {})
+    if football_row is UNAVAILABLE or football_row is None:
+        snapshot["unavailable"] = True
+        snapshot["hint"] = "暂不可用"
+        return snapshot
+    snapshot["unavailable"] = False
+    snapshot["football"] = football_row
+    return snapshot
 
 
 def live_duration(author_id, start, end, settings=None, executor=None) -> LiveDuration:

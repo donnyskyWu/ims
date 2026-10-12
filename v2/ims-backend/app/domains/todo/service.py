@@ -130,6 +130,14 @@ def my_page(page: Page, status: str | None = None) -> dict:
     return page_result([_view(row) for row in rows], int(total or 0), page)
 
 
+def detail(todo_id: int) -> dict:
+    uid = _uid()
+    row = get_session().get(Todo, int(todo_id))
+    if row is None or row.deleted or not _is_assignee(row.id, uid):
+        raise BizError(1504)
+    return _view(row)
+
+
 def my_count() -> dict:
     uid = _uid()
     rows = list(

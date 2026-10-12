@@ -1,0 +1,56 @@
+version: "2.0.0-b0a"
+db:
+  host: 127.0.0.1
+  port: 3306
+  user: ims
+  password: ims
+  name: imsV2.0
+football_live:
+  host: 127.0.0.1
+  port: 3306
+  # 本地只读账号。不要改成 shenyu 高权限账号。
+  user: ims_football_ro
+  password: ims
+  name: ims_football
+  schema_file: config/football_live_schema.yaml
+  enabled: true
+  schema_check: strict
+  tenant_map:
+    "1": 1
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 14
+jwt:
+  secret: e2e-only-jwt-secret-not-for-production
+  access_seconds: 7200
+  refresh_seconds: 604800
+file:
+  storage_root: /tmp/ims-e2e-files
+security:
+  field_key: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+  hash_key: "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+api:
+  id_as_string: true
+dingtalk:
+  mode: mock
+  app_key: e2e-app-key
+  app_secret: e2e-app-secret
+  agent_id: "1"
+dingtalk_attendance:
+  mode: mock
+integrations:
+  dingtalk:
+    mode: mock
+  dingtalk_attendance:
+    mode: mock
+  football_web:
+    mode: mock
+  collector:
+    mode: mock
+  comfyui:
+    mode: mock
+  air_ai:
+    mode: mock
+  train_ai:
+    mode: mock
