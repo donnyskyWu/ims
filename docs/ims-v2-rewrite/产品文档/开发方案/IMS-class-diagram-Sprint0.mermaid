@@ -1,0 +1,163 @@
+classDiagram
+    class LoginContext {
+        +int64 userId
+        +int64 tenantId
+        +int64[] deptIds
+        +string[] roleCodes
+        +int64[] ipGroupIds
+        +DataScope maxScope
+        +bool authenticated
+        +failClosed() bool
+    }
+    class DataScope {
+        <<enumeration>>
+        ALL
+        DEPT
+        IP_GROUP
+        SELF
+    }
+    class PermissionResolver {
+        +resolve(ctx LoginContext) RowScope
+        -unionScopes(roleIds) DataScope
+    }
+    class RowScope {
+        +bool all
+        +int64[] deptIds
+        +int64[] ipGroupIds
+        +int64 selfUserId
+        +sqlFragment(table) ScopePredicate
+        +intersect(other RowScope) RowScope
+    }
+    class ScopeRegistry {
+        +register(table, filterKeys)
+        +lookup(table) FilterSpec
+    }
+    class Role {
+        +int64 id
+        +string roleName
+        +string roleKey
+        +DataScope dataScope
+        +string dingtalkPosition
+        +RoleSource source
+        +RoleStatus status
+        +int[] menuIds
+        +map~string,PermLevel~ permDetail
+    }
+    class RoleSource {
+        <<enumeration>>
+        MANUAL
+        DINGTALK_AUTO
+    }
+    class RoleStatus {
+        <<enumeration>>
+        ENABLED
+        PENDING_CONFIG
+    }
+    class PositionRule {
+        +int64 id
+        +string ruleName
+        +string dingtalkPosition
+        +int[] grantRoleIds
+        +int version
+        +EnableStatus status
+        +int appliedUserCount
+    }
+    class DingtalkUserMapping {
+        +int64 userId
+        +string dingtalkUserId
+        +string unionId
+        +int[] deptIds
+        +SyncStatus syncStatus
+        +datetime lastSyncTime
+    }
+    class OrgSyncEvent {
+        +int64 id
+        +string dingtalkEventId
+        +OrgEventType eventType
+        +string idempotencyKey
+        +json payloadJson
+        +SyncStatus syncStatus
+        +int retryCount
+        +bool deadLetter
+    }
+    class OperationLog {
+        +int64 id
+        +string module
+        +string action
+        +int64 operatorId
+        +json detail
+    }
+    class AuthService {
+        +ssoRedirect() SsoRedirectResp
+        +ssoCallback(req) SsoCallbackResp
+        +refresh(token) SsoCallbackResp
+        +logout(ctx) void
+    }
+    class OrgService {
+        +receiveEvent(req) void
+        +pageUsers(q) PageResult
+        +reconcile() ReconcileResp
+        +syncMetrics() SyncMetricsResp
+    }
+    class PositionService {
+        +pageRules(q) PageResult
+        +saveRule(req) PositionRule
+        +deleteRule(id) void
+        +autoCreateRole(position) RoleAutoCreateResp
+    }
+    class WorkbenchService {
+        +dashboard(ctx) WorkbenchDashboardResp
+        +pageTodos(q) PageResult
+        +pageMessages(q) PageResult
+    }
+    class SysUserService {
+        +pageUsers(q) PageResult
+        +assignRoles(req) void
+    }
+    class SysRoleService {
+        +listRoles() Role[]
+        +saveRoleMenus(id, menuIds) void
+        +savePermDetail(id, detail) void
+        +saveDataScope(id, scope) void
+        +bindDingtalkPosition(id, pos) void
+        +preview(id, userId) PermDiff
+        +fromPosition(req) Role
+    }
+    class SysMenuService {
+        +tree(tenantId) MenuNode[]
+    }
+    class SysDictService {
+        +listTypes() DictType[]
+        +listData(dictType) DictData[]
+    }
+    class SysParamService {
+        +list() Param[]
+        +updateByKey(key, value) void
+    }
+    class FootballWebApiClient {
+        +listSystemUsers(keyword) UserSimple[]
+        +createArticle(dto) string
+        +pageOrdersForOps(req) Page
+        +listJcMatchesByDate(date) MatchBrief[]
+    }
+    class DingtalkClient {
+        +getUserByCode(authCode) DingUser
+        +getDepartmentList() Dept[]
+        +getUserDetail(userId) DingUser
+    }
+
+    AuthService --> LoginContext : issues
+    AuthService --> DingtalkClient
+    AuthService --> FootballWebApiClient : resolveUserId
+    OrgService --> DingtalkClient
+    OrgService --> PositionService : trigger provision
+    PositionService --> Role : auto-create (empty perms)
+    PermissionResolver --> DataScope
+    PermissionResolver --> Role
+    PermissionResolver --> RowScope
+    RowScope --> ScopeRegistry
+    SysRoleService --> Role
+    SysRoleService --> DataScope
+    SysUserService --> FootballWebApiClient
+    SysMenuService --> ScopeRegistry : menu tree (ims_sys_menu)
+    DingtalkUserMapping --> OrgSyncEvent : produced by

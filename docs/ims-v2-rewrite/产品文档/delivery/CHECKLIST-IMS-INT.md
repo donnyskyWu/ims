@@ -1,0 +1,7 @@
+# CHECKLIST-IMS-INT — 内部分析
+
+- [ ] 路由与 PRD §17 一致
+- [ ] API 契约对齐
+- [ ] tenant_id + ADR-056
+- [ ] P0: `GET .../work/page`
+- [ ] P0: `GET .../account/page`

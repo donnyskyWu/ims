@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IMS · 登录</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+body.login-body{overflow:auto;height:auto;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 16px}
+.login-card{width:min(420px,100%);background:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.10);padding:36px 32px}
+.login-card h1{font-size:28px;font-weight:700;letter-spacing:-.6px;margin:8px 0 0}
+.login-card .sub{color:var(--text2);font-size:13px;margin:6px 0 22px}
+.login-card .fld{margin-bottom:14px}
+.login-card .btn{width:100%;justify-content:center;height:36px}
+.login-note{margin-top:14px;font-size:12px;color:var(--text2);line-height:1.5}
+</style>
+</head>
+<body class="login-body">
+<!-- 原型大文件没有独立登录屏。此页用同一套设计令牌补了一张静态登录，字段为用户名 + 密码。 -->
+<form class="login-card" action="workbench.html">
+  <div class="logo" style="padding:0 0 8px"><b>IMS 一体化管理系统</b><small>神鱼体育</small></div>
+  <h1>登录</h1>
+  <div class="sub">本地账号进入系统。原型源文件无独立登录屏，本页按设计令牌静态呈现。</div>
+  <div class="fld"><label>用户名</label><input value="admin" autocomplete="username"></div>
+  <div class="fld"><label>密码</label><input type="password" value="" placeholder="密码" autocomplete="current-password"></div>
+  <button class="btn btn-pri" type="submit">登录</button>
+  <div class="login-note">静态参考页。实际登录在 ims-web，提交用户名和密码，不使用授权码。</div>
+</form>
+</body>
+</html>
