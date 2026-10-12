@@ -180,6 +180,16 @@
     "strategy": "toast"
   },
   {
+    "code": 1296,
+    "msg": "待办已处理或已作废",
+    "strategy": "toast"
+  },
+  {
+    "code": 1297,
+    "msg": "跳转目标单据不存在或已删除",
+    "strategy": "toast"
+  },
+  {
     "code": 1500,
     "msg": "关联的数据不存在",
     "strategy": "toast"

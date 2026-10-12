@@ -1,7 +1,7 @@
 """待办。同一来源只保留一条，按权限和部门展开处理人。"""
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 
 from app.core.clock import now_naive
 from app.core.context import get_ctx
@@ -56,6 +56,11 @@ def todo_create(
     user_ids: list[int] | None = None,
     perm_code: str | None = None,
     scope_dept_ids: list[int] | None = None,
+    *,
+    summary: str | None = None,
+    route: str | None = None,
+    due_time=None,
+    source_module: str | None = None,
 ) -> dict:
     todo_type = type
     session = get_session()
@@ -72,10 +77,13 @@ def todo_create(
         raise BizError(1001, data={"fieldErrors": [{"field": "userIds", "message": "请指定处理人"}]})
     row = Todo(
         type=todo_type,
-        source_module=_module_of(source_type),
+        source_module=source_module or _module_of(source_type),
         source_type=source_type,
         source_id=int(source_id),
         title=title or "",
+        summary=summary or "",
+        route=route or None,
+        due_time=due_time,
         status="PENDING",
         assignee_perm_code=perm_code,
     )
@@ -119,14 +127,65 @@ def cancel(todo_id: int, user_id: int | None = None) -> dict:
     return _view(row)
 
 
-def my_page(page: Page, status: str | None = None) -> dict:
+def complete_mine(todo_id: int, remark: str | None = None) -> dict:
+    """本人关闭待办。非待处理返回 1296；不是处理人返回 1504。"""
+    uid = _uid()
+    row = _must_assignee(int(todo_id), uid)
+    if row.status != "PENDING":
+        raise BizError(1296)
+    text = str(remark or "").strip()
+    if len(text) > 200:
+        raise BizError(1001, data={"fieldErrors": [{"field": "remark", "message": "备注不能超过 200 字"}]})
+    if text:
+        row.close_remark = text
+    return complete(int(todo_id), uid)
+
+
+def open_mine(todo_id: int) -> dict:
+    """去处理。目标未交付只返回占位，不关闭；单据已删除返回 1297。"""
+    from app.domains.workbench.routes import resolve_jump
+
+    uid = _uid()
+    row = _must_assignee(int(todo_id), uid)
+    jump = resolve_jump(row.source_type, row.type, row.route)
+    if jump["state"] == "missing" and row.status == "PENDING":
+        raise BizError(1297)
+    data = _view(row)
+    data["jump"] = jump
+    return data
+
+
+def my_page(page: Page, status: str | None = None, *, todo_type: str | None = None, keyword: str | None = None, overdue: str | None = None) -> dict:
+    from app.domains.workbench.routes import normalize_type
+
     uid = _uid()
     session = get_session()
+    current = now_naive()
     stmt = select(Todo).join(TodoAssignee, TodoAssignee.todo_id == Todo.id).where(TodoAssignee.user_id == uid)
-    if status:
-        stmt = stmt.where(Todo.status == status)
+    raw_status = (status or "").strip().upper()
+    overdue_only = raw_status in {"OVERDUE", "EXPIRED"} or str(overdue or "").strip().lower() in {"1", "true", "yes"}
+    if overdue_only:
+        stmt = stmt.where(Todo.status == "PENDING", Todo.due_time.is_not(None), Todo.due_time < current)
+    elif raw_status and raw_status not in {"ALL"}:
+        stmt = stmt.where(Todo.status == raw_status)
+    kind = normalize_type(todo_type)
+    if kind:
+        stmt = stmt.where(Todo.type == kind)
+    text = (keyword or "").strip()
+    if text:
+        if len(text) > 100:
+            raise BizError(1001, data={"fieldErrors": [{"field": "keyword", "message": "关键词过长"}]})
+        stmt = stmt.where(or_(Todo.title.contains(text), Todo.summary.contains(text)))
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = list(session.scalars(stmt.order_by(Todo.id.desc()).offset((page.page_no - 1) * page.page_size).limit(page.page_size)))
+    overdue_rank = case((and_(Todo.status == "PENDING", Todo.due_time.is_not(None), Todo.due_time < current), 0), else_=1)
+    null_due = case((Todo.due_time.is_(None), 1), else_=0)
+    rows = list(
+        session.scalars(
+            stmt.order_by(overdue_rank.asc(), null_due.asc(), Todo.due_time.asc(), Todo.create_time.desc(), Todo.id.desc())
+            .offset((page.page_no - 1) * page.page_size)
+            .limit(page.page_size)
+        )
+    )
     return page_result([_view(row) for row in rows], int(total or 0), page)
 
 
@@ -179,15 +238,38 @@ def _module_of(source_type: str) -> str:
 
 
 def _view(row: Todo) -> dict:
+    from app.domains.workbench.routes import module_label, resolve_jump
+
     assignees = list(get_session().scalars(select(TodoAssignee.user_id).where(TodoAssignee.todo_id == row.id)))
+    current = now_naive()
+    overdue = bool(row.status == "PENDING" and row.due_time is not None and row.due_time < current)
+    days = 0
+    if overdue and row.due_time is not None:
+        days = max(1, (current.date() - row.due_time.date()).days)
+    due = row.due_time.isoformat() if row.due_time else None
+    deadline_text = ""
+    if row.due_time is not None:
+        deadline_text = row.due_time.strftime("%Y-%m-%d %H:%M")
+        if overdue:
+            deadline_text = f"{deadline_text} 逾期 {days} 天"
     return {
         "id": row.id,
         "type": row.type,
         "title": row.title,
+        "summary": row.summary or "",
         "status": row.status,
         "sourceType": row.source_type,
         "sourceId": row.source_id,
+        "sourceModule": row.source_module,
+        "sourceModuleLabel": module_label(row.source_module),
+        "route": row.route or "",
         "doneBy": row.done_by,
         "assigneeIds": assignees,
-        "dueTime": row.due_time.isoformat() if row.due_time else None,
+        "dueTime": due,
+        "deadline": due,
+        "deadlineText": deadline_text,
+        "overdue": overdue,
+        "overdueDays": days,
+        "createTime": row.create_time.isoformat() if row.create_time else None,
+        "jump": resolve_jump(row.source_type, row.type, row.route),
     }

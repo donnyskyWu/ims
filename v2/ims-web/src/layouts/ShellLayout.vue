@@ -5,19 +5,12 @@ import { useAuthStore, type MenuNode } from "@/stores/auth";
 import { routeAllowed } from "@/router/access";
 import EmptyState from "@/components/EmptyState.vue";
 import DownloadBar from "@/components/DownloadBar.vue";
-import { call } from "@/api/generated/endpoints";
+import MessageBell from "@/views/workbench/MessageBell.vue";
 
 const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 const collapsed = ref(localStorage.getItem("ims.sider.collapsed") === "1");
-const devTodo = !import.meta.env.PROD;
-
-function openTodo() {
-  if (import.meta.env.PROD) return;
-  void router.push("/demo/workbench");
-}
-const unread = ref(0);
 const openIds = ref<string[]>([]);
 
 const allowed = computed(() => routeAllowed(route, auth.menus, auth.permCodes));
@@ -36,20 +29,8 @@ async function logout() {
   void router.push("/login");
 }
 
-async function poll() {
-  if (!auth.loggedIn) return;
-  try {
-    const data = await call<{ count: number }>("message_unread_count_admin_api_ims_message_unread_count_get", { silent: true });
-    unread.value = Number(data.count || 0);
-  } catch {
-    unread.value = 0;
-  }
-}
-
 onMounted(() => {
   openIds.value = auth.menus.map((item) => item.id);
-  void poll();
-  window.setInterval(() => void poll(), 60_000);
 });
 
 function active(node: MenuNode): boolean {
@@ -93,8 +74,8 @@ function navItems(group: MenuNode) {
       <header class="top">
         <span />
         <div class="tools">
-          <button class="btn btn-txt" type="button">消息 {{ unread }}</button>
-          <button class="btn btn-txt" type="button" @click="devTodo ? openTodo() : undefined">待办</button>
+          <MessageBell />
+          <button class="btn btn-txt" type="button" @click="router.push('/ims/workbench/todos')">待办</button>
           <details>
             <summary>{{ auth.user?.nickname || "账号" }}</summary>
             <button type="button" @click="router.push('/ims/profile')">个人中心</button>

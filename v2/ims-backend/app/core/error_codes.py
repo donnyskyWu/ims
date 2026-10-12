@@ -1,4 +1,4 @@
-"""错误码注册表。1281～1286 为本批登录与组织权限扩展段。"""
+"""错误码注册表。1281～1286 为本批登录与组织权限扩展段。1296、1297 为个人工作台；1298 保留未启用。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 DOMAIN_RANGES: dict[str, list[tuple[int, int]]] = {
     "COMMON": [(1001, 1001), (1008, 1008), (1500, 1504), (5001, 5007)],
     "AUTH": [(1002, 1007), (1009, 1010)],
-    "SYS": [(1211, 1220), (1281, 1295)],
+    "SYS": [(1211, 1220), (1281, 1298)],
     "TRAIN": [(1101, 1110)],
     "FLOW": [(1131, 1140)],
     "FOOTBALL": [(1271, 1280)],
@@ -61,6 +61,8 @@ BASE_ENTRIES: list[ErrorEntry] = [
     _e(1291, "SYS", "非平台租户不可访问租户套餐管理", "noPermission"),
     _e(1292, "SYS", "手机号已被其他用户使用", "fieldError"),
     _e(1293, "SYS", "确认文字不一致，未执行危险操作", "toast"),
+    _e(1296, "SYS", "待办已处理或已作废", "toast"),
+    _e(1297, "SYS", "跳转目标单据不存在或已删除", "toast"),
     _e(1271, "FOOTBALL", "直播数据读取超时", "toast"),
     _e(1272, "FOOTBALL", "直播服务返回失败", "toast"),
     _e(1273, "FOOTBALL", "直播服务鉴权失败", "toast"),

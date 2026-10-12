@@ -51,6 +51,7 @@ PERM_CODES = {
     "ims:tenant:query",
     "ims:tenant:update",
     "ims:tenant:package:update",
+    "ims:workbench:query",
     "ims:demo:order:query",
     "ims:demo:order:create",
     "ims:demo:order:update",
@@ -75,7 +76,7 @@ PERM_CODES = {
     "ims:train:quiz:create",
 }
 
-COLOR_TYPES = {"primary", "success", "warning", "danger", "info", "neutral", "purple", "cyan"}
+COLOR_TYPES = {"primary", "success", "warning", "danger", "info", "neutral", "purple", "cyan", "yellow"}
 
 ANON_ROUTES = {
     ("GET", "/health"),
@@ -100,6 +101,9 @@ PWD_RESET_ALLOW = {
 
 # 目录菜单（无权限码）与按钮。parent 用名称，种子时解析。
 MENU_TREE = [
+    {"name": "工作台", "type": "DIR", "path": "/ims/workbench", "sort": -1, "children": [
+        {"name": "工作台", "type": "MENU", "path": "/ims/workbench", "perm": "ims:workbench:query"},
+    ]},
     {"name": "权限管理", "type": "DIR", "path": "/ims/auth", "sort": 0, "children": [
         {"name": "组织架构同步", "type": "MENU", "path": "/ims/auth/org", "perm": "ims:system:org-sync:query", "children": [
             {"name": "手动对账", "type": "BUTTON", "perm": "ims:system:org-sync:run"},
@@ -213,14 +217,14 @@ DICT_ROWS = [
     ("dict_common_status", "ENABLED", "启用", "success", None),
     ("dict_common_status", "DISABLED", "停用", "neutral", None),
     ("dict_todo_type", "APPROVAL", "审批", "primary", None),
-    ("dict_todo_type", "RETURN", "归还", "info", None),
-    ("dict_todo_type", "REVIEW", "审核", "info", None),
-    ("dict_todo_type", "CONFIRM", "确认", "warning", None),
-    ("dict_todo_type", "WARNING", "预警", "warning", None),
+    ("dict_todo_type", "RETURN", "归还", "warning", None),
+    ("dict_todo_type", "REVIEW", "审核", "purple", None),
+    ("dict_todo_type", "CONFIRM", "确认", "cyan", None),
+    ("dict_todo_type", "WARNING", "预警", "yellow", None),
     ("dict_todo_type", "ALERT", "告警", "danger", None),
-    ("dict_todo_type", "LEARN", "学习", "success", None),
+    ("dict_todo_type", "LEARN", "学习", "info", None),
     ("dict_todo_status", "PENDING", "待处理", "warning", None),
-    ("dict_todo_status", "DONE", "已完成", "success", None),
+    ("dict_todo_status", "DONE", "已处理", "success", None),
     ("dict_todo_status", "CANCELLED", "已作废", "neutral", None),
     ("dict_login_result", "SUCCESS", "成功", "success", None),
     ("dict_login_result", "BAD_CREDENTIAL", "密码错", "danger", None),

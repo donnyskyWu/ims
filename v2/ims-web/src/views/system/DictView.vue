@@ -19,7 +19,7 @@ const typeForm = ref<Row>({ dictType: "", name: "", remark: "" });
 const valueOpen = ref(false);
 const valueEditing = ref(false);
 const valueForm = ref<Row>({ dictType: "", dictValue: "", dictLabel: "", colorType: "neutral", sort: 0, remark: "" });
-const colors = ["primary", "success", "warning", "danger", "info", "neutral", "purple", "cyan"];
+const colors = ["primary", "success", "warning", "danger", "info", "neutral", "purple", "cyan", "yellow"];
 
 const columns: TableColumn[] = [
   { key: "dictLabel", label: "名称" },

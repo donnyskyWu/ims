@@ -219,11 +219,19 @@ _R2_CODES = {
 }
 
 
+def _with_workbench(codes: list[str], all_codes: list[str]) -> list[str]:
+    merged = list(codes)
+    leaf = "ims:workbench:query"
+    if leaf in all_codes and leaf not in merged:
+        merged.append(leaf)
+    return [code for code in merged if code in all_codes]
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
-        return codes
+        return _with_workbench(codes, all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -240,7 +248,7 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
         codes.extend(sorted(managed))
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
-    return [code for code in codes if code in all_codes]
+    return _with_workbench(codes, all_codes)
 
 
 def _users(session):
