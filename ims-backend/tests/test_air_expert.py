@@ -27,6 +27,18 @@ def test_air_expert_create_page_grant():
     assert skill.json()["code"] == 0
     skill_id = skill.json()["data"]["id"]
     client.put(f"/admin-api/ims/air/skill/{skill_id}/submit-audit", headers=auth)
+    from app.core import SessionLocal
+    from app.models import AirSkill, User
+
+    db = SessionLocal()
+    try:
+        other = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).one()
+        row = db.get(AirSkill, skill_id)
+        assert row is not None
+        row.owner_user_id = other.id
+        db.commit()
+    finally:
+        db.close()
     pub_skill = client.put(f"/admin-api/ims/air/skill/{skill_id}/audit", headers=auth, json={"approve": True})
     assert pub_skill.json()["data"]["status"] == "PUBLISHED"
 
@@ -80,3 +92,12 @@ def test_air_expert_create_page_grant():
     assert grant.json()["data"]["syncEventId"].startswith("air-evt-")
     again = client.get(f"/admin-api/ims/air/expert/{expert_id}", headers=auth)
     assert any(item["grantType"] == "PERSON" and item["status"] == "ACTIVE" for item in again.json()["data"]["grants"])
+
+    everyone = client.post(
+        "/admin-api/ims/air/expert/grant",
+        headers=auth,
+        json={"expertId": expert_id, "allStaff": True, "expireAt": "2027-03-31"},
+    )
+    assert everyone.json()["code"] == 0
+    assert everyone.json()["data"]["allStaff"] is True
+    assert everyone.json()["data"]["grantName"] == "全员"

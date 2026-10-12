@@ -12,7 +12,20 @@ from sqlalchemy.orm import Session
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import AirEvent, AirSkill, AirSkillGrant, Role, User, UserDept, UserMapping, UserRole
+from app.models import (
+    AirApiKey,
+    AirEvent,
+    AirExpert,
+    AirKb,
+    AirKbDoc,
+    AirSkill,
+    AirSkillGrant,
+    Role,
+    User,
+    UserDept,
+    UserMapping,
+    UserRole,
+)
 
 router = APIRouter(prefix="/air/skill", tags=["air-skill"])
 
@@ -24,6 +37,9 @@ class SkillBody(BaseModel):
     skillName: str
     category: str = "内容生产"
     versionLabel: str = "v1.0"
+    ownerUserId: int = 0
+    capability: str = ""
+    promptTemplate: str = ""
 
 
 class SkillAuditBody(BaseModel):
@@ -55,11 +71,15 @@ def skill_vo(row: AirSkill, names: dict[int, str]) -> dict:
         "skillName": row.skill_name,
         "category": row.category,
         "versionLabel": row.version_label,
+        "capability": row.capability or "",
+        "promptTemplate": row.prompt_template or "",
         "status": row.status,
         "auditStatus": row.audit_status,
+        "ownerUserId": row.owner_user_id,
         "ownerName": names.get(row.owner_user_id, ""),
         "grantCount": row.grant_count,
         "invokeCount": row.invoke_count,
+        "auditNote": row.audit_note or "",
         "createdAt": iso(row.created_at),
     }
 
@@ -99,7 +119,41 @@ def skill_summary(db: Session = Depends(db_session), actor: User = Depends(curre
         )
         or 0
     )
-    return ok({"skillCount": total, "publishedCount": published, "pendingAuditCount": pending, "invokeTotal": invoke})
+    expert_count = int(
+        db.scalar(
+            select(func.count()).select_from(AirExpert).where(AirExpert.deleted == 0, AirExpert.tenant_id == tenant_id)
+        )
+        or 0
+    )
+    kb_count = int(
+        db.scalar(select(func.count()).select_from(AirKb).where(AirKb.deleted == 0, AirKb.tenant_id == tenant_id)) or 0
+    )
+    doc_count = int(
+        db.scalar(
+            select(func.count()).select_from(AirKbDoc).where(AirKbDoc.deleted == 0, AirKbDoc.tenant_id == tenant_id)
+        )
+        or 0
+    )
+    key_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(AirApiKey)
+            .where(AirApiKey.deleted == 0, AirApiKey.tenant_id == tenant_id, AirApiKey.status == "ACTIVE")
+        )
+        or 0
+    )
+    return ok(
+        {
+            "skillCount": total,
+            "expertCount": expert_count,
+            "kbCount": kb_count,
+            "publishedCount": published,
+            "pendingAuditCount": pending,
+            "invokeTotal": invoke,
+            "docCount": doc_count,
+            "activeKeyCount": key_count,
+        }
+    )
 
 
 @router.get("/list")
@@ -134,15 +188,21 @@ def skill_create(body: SkillBody, db: Session = Depends(db_session), actor: User
     name = body.skillName.strip()
     if not name:
         return fail(1001, "技能名称必填")
+    owner_id = int(body.ownerUserId or 0) or actor.id
+    owner = db.get(User, owner_id)
+    if owner is None or owner.deleted:
+        return fail(1004, "责任人不存在")
     now = utcnow()
     row = AirSkill(
         skill_no=next_skill_no(db, tenant_id),
         skill_name=name,
         category=body.category.strip() or "内容生产",
         version_label=body.versionLabel.strip() or "v1.0",
+        capability=(body.capability or "").strip(),
+        prompt_template=(body.promptTemplate or "").strip(),
         status="DRAFT",
         audit_status="NONE",
-        owner_user_id=actor.id,
+        owner_user_id=owner_id,
         tenant_id=tenant_id,
         created_at=now,
         updated_at=now,
@@ -181,6 +241,12 @@ def skill_audit(
         return fail(1504, "资源不可用")
     if row.audit_status != "PENDING":
         return fail(1001, "非待审核状态")
+    if row.owner_user_id == actor.id:
+        return fail(1057, "审核人不可审自己提交的内容")
+    note = (body.auditNote or "").strip()
+    if not body.approve and not note:
+        return fail(1001, "驳回须填写意见")
+    row.audit_note = note
     row.updated_at = utcnow()
     if body.approve:
         row.status = "PUBLISHED"

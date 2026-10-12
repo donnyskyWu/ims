@@ -365,6 +365,124 @@ def ensure_air_key_columns() -> None:
             conn.execute(text("CREATE INDEX idx_air_api_key_hash ON ims_air_api_key (key_hash)"))
 
 
+def ensure_air_kb_library_columns() -> None:
+    """已有库补知识库编号、状态、文档密级与来源。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "ims_kb" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_kb")}
+        alters: list[str] = []
+        if "kb_no" not in cols:
+            alters.append("ADD COLUMN kb_no VARCHAR(32) NOT NULL DEFAULT ''")
+        if "description" not in cols:
+            alters.append("ADD COLUMN description VARCHAR(512) NOT NULL DEFAULT ''")
+        if "status" not in cols:
+            alters.append("ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'PUBLISHED'")
+        if "provider" not in cols:
+            alters.append("ADD COLUMN provider VARCHAR(16) NOT NULL DEFAULT 'LOCAL'")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_kb {', '.join(alters)}"))
+    if "ims_kb_doc" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_kb_doc")}
+        alters = []
+        if "secret_level" not in cols:
+            alters.append("ADD COLUMN secret_level VARCHAR(24) NOT NULL DEFAULT ''")
+        if "source_type" not in cols:
+            alters.append("ADD COLUMN source_type VARCHAR(16) NOT NULL DEFAULT 'FILE'")
+        if "source_ref" not in cols:
+            alters.append("ADD COLUMN source_ref VARCHAR(64) NOT NULL DEFAULT ''")
+        if "audit_note" not in cols:
+            alters.append("ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''")
+        if alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_kb_doc {', '.join(alters)}"))
+        cols = {c["name"] for c in insp.get_columns("ims_kb_doc")}
+        if "body" not in cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE ims_kb_doc ADD COLUMN body TEXT NULL"))
+
+
+def ensure_air_skill_audit_columns() -> None:
+    """已有库补技能审核意见。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_skill" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_skill")}
+    if "audit_note" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN audit_note VARCHAR(512) NOT NULL DEFAULT ''"))
+
+
+def ensure_air_prompt_columns() -> None:
+    """已有库补提示词模板名称。不回写已有模板的名称。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_prompt_config" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_prompt_config")}
+    if "prompt_name" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_air_prompt_config ADD COLUMN prompt_name VARCHAR(128) NOT NULL DEFAULT ''"))
+
+
+def ensure_air_model_columns() -> None:
+    """已有库补模型显示名、密钥掩码与默认标记。不改已有行的连接状态。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_model_config" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_model_config")}
+    alters: list[str] = []
+    if "display_name" not in cols:
+        alters.append("ADD COLUMN display_name VARCHAR(128) NOT NULL DEFAULT ''")
+    if "api_key_mask" not in cols:
+        alters.append("ADD COLUMN api_key_mask VARCHAR(64) NOT NULL DEFAULT ''")
+    if "is_default" not in cols:
+        alters.append("ADD COLUMN is_default INT NOT NULL DEFAULT 0")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE ims_air_model_config {', '.join(alters)}"))
+
+
+def ensure_air_expert_grant_columns() -> None:
+    """已有库补专家授权全员可见。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_expert_grant" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_expert_grant")}
+    if "all_staff" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_air_expert_grant ADD COLUMN all_staff INT NOT NULL DEFAULT 0"))
+
+
+def ensure_air_skill_form_columns() -> None:
+    """已有库补技能能力说明与提示词模板。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_air_skill" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_air_skill")}
+    with engine.begin() as conn:
+        if "capability" not in cols:
+            conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN capability TEXT NULL"))
+        if "prompt_template" not in cols:
+            conn.execute(text("ALTER TABLE ims_air_skill ADD COLUMN prompt_template TEXT NULL"))
+
+
 def ensure_air_slice92_columns() -> None:
     """已有库补审计列与冻结原因。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -511,6 +629,12 @@ def init_db() -> None:
     ensure_live_approve_comment_column()
     ensure_cert_file_key_column()
     ensure_air_key_columns()
+    ensure_air_kb_library_columns()
+    ensure_air_skill_audit_columns()
+    ensure_air_skill_form_columns()
+    ensure_air_expert_grant_columns()
+    ensure_air_model_columns()
+    ensure_air_prompt_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
     from app.ops_db import ensure_ops

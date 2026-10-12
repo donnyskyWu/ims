@@ -30,10 +30,12 @@ def test_air_kb_upload_page_download_stub():
     )
     assert cate_tree.json()["code"] == 0
 
+    payload = b"%PDF-1.4\npolicy-bytes\n"
     up = client.post(
         "/admin-api/ims/air/kb/doc/upload",
         headers=auth,
-        json={"title": "制度汇编", "fileKey": "kb/2026/policy.pdf", "fileSize": 1024},
+        data={"title": "制度汇编"},
+        files={"file": ("policy.pdf", payload, "application/pdf")},
     )
     assert up.json()["code"] == 0
     assert up.json()["data"]["auditStatus"] == ["PENDING"]
@@ -41,6 +43,8 @@ def test_air_kb_upload_page_download_stub():
 
     blocked = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
     assert blocked.json()["code"] == 1001
+    assert blocked.json()["msg"] == "未发布文档不可下载"
+    assert "attachment" not in blocked.headers.get("content-disposition", "")
 
     audit = client.post(
         "/admin-api/ims/air/kb/doc/audit",
@@ -50,14 +54,20 @@ def test_air_kb_upload_page_download_stub():
     assert audit.json()["code"] == 0
     assert audit.json()["data"]["auditStatus"] == "PUBLISHED"
 
-    page = client.get("/admin-api/ims/air/kb/page", headers=auth, params={"pageNo": 1, "pageSize": 5})
+    page = client.get("/admin-api/ims/air/kb/doc/page", headers=auth, params={"pageNo": 1, "pageSize": 20})
     assert page.json()["code"] == 0
     assert any(r["id"] == doc_id for r in page.json()["data"]["list"])
+    libs = client.get("/admin-api/ims/air/kb/page", headers=auth, params={"pageNo": 1, "pageSize": 5})
+    assert libs.json()["code"] == 0
+    assert libs.json()["data"]["list"]
+    assert libs.json()["data"]["list"][0]["kbName"]
 
     dl = client.get(f"/admin-api/ims/air/kb/doc/{doc_id}/download", headers=auth)
-    assert dl.json()["code"] == 0
-    assert dl.json()["data"]["stub"] is True
-    assert "policy.pdf" in dl.json()["data"]["fileKey"]
+    assert dl.status_code == 200
+    assert "attachment" in dl.headers["content-disposition"]
+    assert "policy.pdf" in dl.headers["content-disposition"]
+    assert dl.headers["content-type"].startswith("application/pdf")
+    assert dl.content == payload
 
 
 def test_air_kb_audit_reject_requires_note():

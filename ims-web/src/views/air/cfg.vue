@@ -14,10 +14,10 @@
       <button class="btn btn-sm" :class="tab === 'prompt' ? 'btn-pri' : 'btn-sec'" type="button" @click="switchTab('prompt')">
         提示词
       </button>
-      <button class="btn btn-sm" :class="tab === 'key' ? 'btn-pri' : 'btn-sec'" type="button" @click="switchTab('key')">
+      <button v-if="opsTabVisible" class="btn btn-sm" :class="tab === 'key' ? 'btn-pri' : 'btn-sec'" type="button" @click="switchTab('key')">
         Key 管理
       </button>
-      <button class="btn btn-sm" :class="tab === 'audit' ? 'btn-pri' : 'btn-sec'" type="button" @click="switchTab('audit')">
+      <button v-if="opsTabVisible" class="btn btn-sm" :class="tab === 'audit' ? 'btn-pri' : 'btn-sec'" type="button" @click="switchTab('audit')">
         审计监控
       </button>
       <span class="sp"></span>
@@ -27,6 +27,8 @@
         生成 Key
       </button>
     </div>
+
+    <p v-if="toast" class="hint" data-testid="air-cfg-toast">{{ toast }}</p>
 
     <div v-if="tab === 'key'" class="tbl-block">
       <form class="qbar" data-testid="air-key-query" @submit.prevent="loadKeys">
@@ -388,26 +390,31 @@
         <table>
           <thead>
             <tr>
-              <th>编号</th>
-              <th>厂商</th>
-              <th>模型</th>
-              <th>场景</th>
-              <th>状态</th>
+              <th>名称</th>
+              <th>供应商</th>
+              <th>model</th>
+              <th>用途</th>
+              <th>连接</th>
+              <th>默认</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading"><td colspan="6"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-if="loading"><td colspan="7"><div class="empty"><div class="et">加载中</div></div></td></tr>
             <tr v-else-if="!models.length">
-              <td colspan="6"><div class="empty" data-testid="air-model-empty"><div class="et">暂无模型连接</div></div></td>
+              <td colspan="7"><div class="empty" data-testid="air-model-empty"><div class="et">暂无模型连接</div></div></td>
             </tr>
             <tr v-for="row in models" v-else :key="row.id">
-              <td class="mono">{{ row.configCode }}</td>
+              <td>{{ row.displayName || row.modelName }}</td>
               <td>{{ row.vendor }}</td>
-              <td>{{ row.modelName }}</td>
+              <td class="mono">{{ row.modelName }}</td>
               <td>{{ row.useCase }}</td>
-              <td>{{ row.status }}</td>
-              <td><button class="btn btn-sec btn-sm" type="button" @click="openModelForm(row)">编辑</button></td>
+              <td data-testid="air-model-status">{{ row.status }}</td>
+              <td>{{ row.isDefault ? '默认' : '—' }}</td>
+              <td>
+                <button class="btn btn-sec btn-sm" type="button" @click="openModelForm(row)">编辑</button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="air-model-test" @click="testModel(row)">测试</button>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -419,7 +426,7 @@
         <table>
           <thead>
             <tr>
-              <th>编号</th>
+              <th>模板</th>
               <th>场景</th>
               <th>文档类型</th>
               <th>版本</th>
@@ -433,7 +440,7 @@
               <td colspan="6"><div class="empty" data-testid="air-prompt-empty"><div class="et">暂无提示词</div></div></td>
             </tr>
             <tr v-for="row in prompts" v-else :key="row.id">
-              <td class="mono">{{ row.promptCode }}</td>
+              <td>{{ row.promptName || row.promptCode }}</td>
               <td>{{ row.scene }}</td>
               <td>{{ row.docType || '—' }}</td>
               <td>{{ row.versionLabel }}</td>
@@ -558,40 +565,65 @@
     </div>
 
     <div v-if="showModel" class="modal-mask" @click.self="showModel = false">
-      <div class="card" style="width: 440px; padding: 20px">
-        <h3 style="margin: 0 0 12px">{{ modelForm.id ? '编辑模型' : '新增模型' }}</h3>
-        <label class="fld">厂商</label>
-        <input v-model="modelForm.vendor" class="fld-in" placeholder="QWEN / GPT …" />
-        <label class="fld">模型名</label>
-        <input v-model="modelForm.modelName" class="fld-in" />
-        <label class="fld">Endpoint</label>
-        <input v-model="modelForm.endpointUrl" class="fld-in" />
-        <label class="fld">状态</label>
-        <select v-model="modelForm.status" class="fld-in">
-          <option value="CONNECTED">CONNECTED</option>
-          <option value="DISCONNECTED">DISCONNECTED</option>
+      <div class="card" style="width: 520px; padding: 20px" data-testid="air-model-form">
+        <h3 style="margin: 0 0 12px">{{ modelForm.id ? '编辑模型' : '新增模型连接' }}</h3>
+        <label class="fld">名称 <i class="req">*</i></label>
+        <input v-model="modelForm.displayName" class="fld-in" data-testid="air-model-name" />
+        <p v-if="modelErrors.displayName" class="hint" style="color: var(--red)">{{ modelErrors.displayName }}</p>
+        <label class="fld">供应商 <i class="req">*</i></label>
+        <select v-model="modelForm.vendor" class="fld-in" data-testid="air-model-vendor">
+          <option value="">请选择</option>
+          <option v-for="item in vendorOptions" :key="item" :value="item">{{ item }}</option>
         </select>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="modelErrors.vendor" class="hint" style="color: var(--red)">{{ modelErrors.vendor }}</p>
+        <label class="fld">model <i class="req">*</i></label>
+        <input v-model="modelForm.modelName" class="fld-in" data-testid="air-model-id" />
+        <p v-if="modelErrors.modelName" class="hint" style="color: var(--red)">{{ modelErrors.modelName }}</p>
+        <label class="fld">用途</label>
+        <select v-model="modelForm.useCase" class="fld-in" data-testid="air-model-use">
+          <option v-for="item in modelUses" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <label class="fld">API Key</label>
+        <input v-model="modelForm.apiKey" class="fld-in" data-testid="air-model-key" placeholder="已加密，留空不更新" />
+        <p v-if="modelForm.apiKeyMask" class="hint">当前 {{ modelForm.apiKeyMask }}</p>
+        <label class="fld" style="display: flex; gap: 8px; align-items: center">
+          <input v-model="modelForm.isDefault" type="checkbox" />
+          设为默认
+        </label>
+        <p class="hint">连接状态只由「测试」更新。修改供应商、API Key 或地址后会重置为 DISCONNECTED。Football jingcai 使用环境变量，不在本页保存明文 Key。连通测试不访问第三方。</p>
+        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="air-model-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showModel = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="saveModel">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-model-save" @click="saveModel">保存</button>
         </div>
       </div>
     </div>
 
     <div v-if="showPrompt" class="modal-mask" @click.self="showPrompt = false">
-      <div class="card" style="width: 480px; padding: 20px">
+      <div class="card" style="width: 560px; padding: 20px" data-testid="air-prompt-form">
         <h3 style="margin: 0 0 12px">{{ promptForm.id ? '编辑提示词' : '新增提示词' }}</h3>
-        <label class="fld">场景</label>
-        <input v-model="promptForm.scene" class="fld-in" />
-        <label class="fld">文档类型</label>
-        <input v-model="promptForm.docType" class="fld-in" />
-        <label class="fld">正文</label>
-        <textarea v-model="promptForm.content" class="fld-in" rows="5" />
+        <label class="fld">模板名称 <i class="req">*</i></label>
+        <input v-model="promptForm.promptName" class="fld-in" data-testid="air-prompt-name" />
+        <p v-if="promptErrors.promptName" class="hint" style="color: var(--red)">{{ promptErrors.promptName }}</p>
+        <label class="fld">场景 <i class="req">*</i></label>
+        <select v-model="promptForm.scene" class="fld-in" data-testid="air-prompt-scene">
+          <option value="">请选择</option>
+          <option v-for="item in promptScenes" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <p v-if="promptErrors.scene" class="hint" style="color: var(--red)">{{ promptErrors.scene }}</p>
+        <label class="fld">文档类型 <i class="req">*</i></label>
+        <select v-model="promptForm.docType" class="fld-in" data-testid="air-prompt-doc">
+          <option value="">请选择</option>
+          <option v-for="item in promptDocs" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <p v-if="promptErrors.docType" class="hint" style="color: var(--red)">{{ promptErrors.docType }}</p>
+        <label class="fld">正文（&#123;&#123;变量&#125;&#125;） <i class="req">*</i></label>
+        <textarea v-model="promptForm.content" class="fld-in" rows="5" data-testid="air-prompt-content" placeholder="你是神鱼体育运营助手……" />
+        <p v-if="promptErrors.content" class="hint" style="color: var(--red)" data-testid="air-prompt-error">{{ promptErrors.content }}</p>
         <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showPrompt = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="savePrompt">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-prompt-save" @click="savePrompt">保存</button>
         </div>
       </div>
     </div>
@@ -606,16 +638,20 @@ import { errorMessage, http } from '../../api/http'
 type ModelRow = {
   id: number
   configCode: string
+  displayName?: string
   vendor: string
   modelName: string
   useCase: string
   endpointUrl: string
+  apiKeyMask?: string
+  isDefault?: boolean
   status: string
 }
 
 type PromptRow = {
   id: number
   promptCode: string
+  promptName?: string
   scene: string
   docType: string
   versionLabel: string
@@ -627,8 +663,14 @@ type TabId = 'model' | 'prompt' | 'key' | 'audit'
 
 const route = useRoute()
 const router = useRouter()
+const promptScenes = ['内容生成', '短视频文案', '直播脚本', 'AI排版语义']
+const promptDocs = ['通用', '短视频文案', '正式方案', '预热前瞻']
+const vendorOptions = ['Football jingcai', 'OpenAI 兼容', '自建网关']
+const modelUses = ['内容生成 / 润色', 'AI_TYPESET_SEMANTIC', '降级直连']
 const tab = ref<TabId>('model')
+const toast = ref('')
 const loading = ref(false)
+const opsTabVisible = computed(() => route.query.tab === 'key' || route.query.tab === 'audit')
 const models = ref<ModelRow[]>([])
 const prompts = ref<PromptRow[]>([])
 type KeyRow = {
@@ -749,19 +791,29 @@ const formError = ref('')
 
 const modelForm = reactive({
   id: 0,
+  displayName: '',
   vendor: '',
   modelName: '',
-  endpointUrl: '',
-  status: 'CONNECTED',
+  useCase: 'AI_TYPESET_SEMANTIC',
+  apiKey: '',
+  apiKeyMask: '',
+  isDefault: false,
 })
+const modelErrors = reactive({ displayName: '', vendor: '', modelName: '' })
 
 const promptForm = reactive({
   id: 0,
+  promptName: '',
   scene: '',
   docType: '',
   content: '',
   status: 'ENABLED',
 })
+const promptErrors = reactive({ promptName: '', scene: '', docType: '', content: '' })
+
+function say(message: string) {
+  toast.value = message
+}
 
 function tabFromRoute(): TabId {
   const q = String(route.query.tab || '')
@@ -1196,60 +1248,98 @@ async function loadPrompts() {
 
 function openModelForm(row?: ModelRow) {
   formError.value = ''
+  modelErrors.displayName = ''
+  modelErrors.vendor = ''
+  modelErrors.modelName = ''
   modelForm.id = row?.id || 0
+  modelForm.displayName = row?.displayName || ''
   modelForm.vendor = row?.vendor || ''
   modelForm.modelName = row?.modelName || ''
-  modelForm.endpointUrl = row?.endpointUrl || ''
-  modelForm.status = row?.status || 'CONNECTED'
+  modelForm.useCase = row?.useCase && modelUses.includes(row.useCase) ? row.useCase : row?.useCase || 'AI_TYPESET_SEMANTIC'
+  modelForm.apiKey = ''
+  modelForm.apiKeyMask = row?.apiKeyMask || ''
+  modelForm.isDefault = !!row?.isDefault
+  if (modelForm.vendor && !vendorOptions.includes(modelForm.vendor)) vendorOptions.push(modelForm.vendor)
   showModel.value = true
+}
+
+async function testModel(row: ModelRow) {
+  say('处理中')
+  try {
+    const res = await http.post(`/air/cfg/model/${row.id}/test`)
+    const latency = res.data.data?.latencyMs
+    say(latency ? `连接正常（CONNECTED · 延迟 ${latency}ms）` : '连接正常（CONNECTED）')
+  } catch (error) {
+    say(errorMessage(error))
+  }
+  await loadModels()
 }
 
 function openPromptForm(row?: PromptRow) {
   formError.value = ''
+  promptErrors.promptName = ''
+  promptErrors.scene = ''
+  promptErrors.docType = ''
+  promptErrors.content = ''
   promptForm.id = row?.id || 0
+  promptForm.promptName = row?.promptName || ''
   promptForm.scene = row?.scene || ''
   promptForm.docType = row?.docType || ''
   promptForm.content = row?.content || ''
   promptForm.status = row?.status || 'ENABLED'
+  if (promptForm.scene && !promptScenes.includes(promptForm.scene)) promptScenes.push(promptForm.scene)
+  if (promptForm.docType && !promptDocs.includes(promptForm.docType)) promptDocs.push(promptForm.docType)
   showPrompt.value = true
 }
 
 async function saveModel() {
   formError.value = ''
+  modelErrors.displayName = modelForm.displayName.trim() ? '' : '必填项，请填写'
+  modelErrors.vendor = modelForm.vendor ? '' : '必填项，请填写'
+  modelErrors.modelName = modelForm.modelName.trim() ? '' : '必填项，请填写'
+  if (modelErrors.displayName || modelErrors.vendor || modelErrors.modelName) return
   const body = {
+    displayName: modelForm.displayName.trim(),
     vendor: modelForm.vendor,
-    modelName: modelForm.modelName,
-    endpointUrl: modelForm.endpointUrl,
-    status: modelForm.status,
+    modelName: modelForm.modelName.trim(),
+    useCase: modelForm.useCase,
+    apiKey: modelForm.apiKey.trim(),
+    isDefault: modelForm.isDefault,
   }
-  const res = modelForm.id
-    ? await http.put(`/air/cfg/model/${modelForm.id}`, body)
-    : await http.post('/air/cfg/model', body)
-  if (res.data.code !== 0) {
-    formError.value = res.data.msg || '保存失败'
-    return
+  try {
+    if (modelForm.id) await http.put(`/air/cfg/model/${modelForm.id}`, body)
+    else await http.post('/air/cfg/model', body)
+    showModel.value = false
+    say('模型已保存')
+    await loadModels()
+  } catch (error) {
+    formError.value = errorMessage(error)
   }
-  showModel.value = false
-  await loadModels()
 }
 
 async function savePrompt() {
   formError.value = ''
+  promptErrors.promptName = promptForm.promptName.trim() ? '' : '必填项，请填写'
+  promptErrors.scene = promptForm.scene ? '' : '必填项，请填写'
+  promptErrors.docType = promptForm.docType ? '' : '必填项，请填写'
+  promptErrors.content = promptForm.content.trim() ? '' : '必填项，请填写'
+  if (promptErrors.promptName || promptErrors.scene || promptErrors.docType || promptErrors.content) return
   const body = {
+    promptName: promptForm.promptName.trim(),
     scene: promptForm.scene,
     docType: promptForm.docType,
-    content: promptForm.content,
+    content: promptForm.content.trim(),
     status: promptForm.status,
   }
-  const res = promptForm.id
-    ? await http.put(`/air/cfg/prompt/${promptForm.id}`, body)
-    : await http.post('/air/cfg/prompt', body)
-  if (res.data.code !== 0) {
-    formError.value = res.data.msg || '保存失败'
-    return
+  try {
+    if (promptForm.id) await http.put(`/air/cfg/prompt/${promptForm.id}`, body)
+    else await http.post('/air/cfg/prompt', body)
+    showPrompt.value = false
+    say('提示词已保存')
+    await loadPrompts()
+  } catch (error) {
+    formError.value = errorMessage(error)
   }
-  showPrompt.value = false
-  await loadPrompts()
 }
 
 watch(

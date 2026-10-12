@@ -6,9 +6,11 @@
         <div class="sub">专家包组装（Prompt+技能）与授权 · /ims/air/expert</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="air-expert-export" @click="exportExperts">导出</button>
         <button class="btn btn-pri btn-sm" type="button" data-testid="air-expert-create" @click="openCreate">新增专家</button>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="air-expert-export-note">{{ exportNote }}</p>
 
     <div v-if="summary" class="g4" style="margin-bottom: 12px">
       <div class="card stat">
@@ -148,7 +150,11 @@
           <option value="ROLE">角色</option>
           <option value="PERSON">人员</option>
         </select>
-        <template v-if="grantForm.grantType === 'PERSON'">
+        <label class="fld" style="display: flex; gap: 8px; align-items: center">
+          <input v-model="grantForm.allStaff" type="checkbox" data-testid="air-expert-grant-all-staff" />
+          全员可见
+        </label>
+        <template v-if="!grantForm.allStaff && grantForm.grantType === 'PERSON'">
           <label class="fld">人员</label>
           <div style="display: flex; gap: 8px">
             <input v-model="userKeyword" class="fld-in" placeholder="用户名" data-testid="air-expert-grant-user-search" />
@@ -157,7 +163,7 @@
             </button>
           </div>
         </template>
-        <template v-if="grantForm.grantType === 'DEPT'">
+        <template v-if="!grantForm.allStaff && grantForm.grantType === 'DEPT'">
           <label class="fld">部门</label>
           <div style="display: flex; gap: 8px">
             <input v-model="deptKeyword" class="fld-in" placeholder="组织人员姓名" data-testid="air-expert-grant-dept-search" />
@@ -166,8 +172,10 @@
             </button>
           </div>
         </template>
-        <label class="fld">授权对象</label>
-        <select v-model="grantForm.grantId" class="fld-in" data-testid="air-expert-grant-target">
+        <label class="fld">授权有效期 <i class="req">*</i></label>
+        <input v-model="grantForm.expireAt" class="fld-in" type="date" data-testid="air-expert-grant-expire" />
+        <label v-if="!grantForm.allStaff" class="fld">授权对象</label>
+        <select v-if="!grantForm.allStaff" v-model="grantForm.grantId" class="fld-in" data-testid="air-expert-grant-target">
           <option value="">请选择</option>
           <option v-for="opt in targetOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
         </select>
@@ -235,7 +243,7 @@ type Row = {
 }
 type SkillRef = { code: string; name: string; ver: string; md?: string }
 type Preview = { systemPrompt: string; guidelines: string; skillRefs: SkillRef[] }
-type GrantRow = { grantId: number; grantType: string; grantName: string; status: string }
+type GrantRow = { grantId: number; grantType: string; grantName: string; allStaff?: boolean; status: string }
 type Option = { id: string; label: string }
 
 const publishedTag = { background: 'rgba(52,199,89,.12)', color: '#1e8e3e' }
@@ -253,13 +261,40 @@ const preview = ref<Preview | null>(null)
 const grantExpert = ref<Row | null>(null)
 const grants = ref<GrantRow[]>([])
 const grantError = ref('')
-const grantForm = reactive({ grantType: 'PERSON', grantId: '' })
+const grantForm = reactive({ grantType: 'PERSON', grantId: '', allStaff: false, expireAt: '' })
+const exportNote = ref('')
 const targetOptions = ref<Option[]>([])
 const userKeyword = ref('')
 const deptKeyword = ref('')
 
 function grantTypeLabel(item: GrantRow) {
+  if (item.allStaff) return '全员'
   return ({ DEPT: '部门', ROLE: '角色', PERSON: '人员' } as Record<string, string>)[item.grantType] || item.grantType
+}
+
+function exportExperts() {
+  const header = ['编号', '名称', '场景', '版本', '状态', '授权', '累计组装', '责任人']
+  const lines = rows.value.map((row) => [
+    row.expertCode,
+    row.expertName,
+    row.scene,
+    row.ver,
+    row.status,
+    String(row.grantCount),
+    String(row.assembleCount),
+    row.ownerName,
+  ])
+  const csv = [header, ...lines]
+    .map((cols) => cols.map((value) => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))
+    .join('\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = '专家包台账.csv'
+  link.click()
+  URL.revokeObjectURL(url)
+  exportNote.value = `已导出 ${rows.value.length} 条专家包`
 }
 
 async function loadSummary() {
@@ -338,6 +373,8 @@ async function openGrant(row: Row) {
   grantExpert.value = row
   grantForm.grantType = 'PERSON'
   grantForm.grantId = ''
+  grantForm.allStaff = false
+  grantForm.expireAt = ''
   userKeyword.value = ''
   deptKeyword.value = ''
   targetOptions.value = []
@@ -397,7 +434,11 @@ async function searchDepts() {
 async function submitGrant() {
   if (!grantExpert.value) return
   grantError.value = ''
-  if (!grantForm.grantId) {
+  if (!grantForm.expireAt) {
+    grantError.value = '必填项，请填写'
+    return
+  }
+  if (!grantForm.allStaff && !grantForm.grantId) {
     grantError.value = '请选择授权对象'
     return
   }
@@ -405,7 +446,9 @@ async function submitGrant() {
     await http.post('/air/expert/grant', {
       expertId: grantExpert.value.id,
       grantType: grantForm.grantType,
-      grantId: Number(grantForm.grantId),
+      grantId: grantForm.allStaff ? 0 : Number(grantForm.grantId),
+      allStaff: grantForm.allStaff,
+      expireAt: grantForm.expireAt,
     })
     grantForm.grantId = ''
     await loadGrants(grantExpert.value.id)

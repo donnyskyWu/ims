@@ -10,15 +10,24 @@
       </div>
     </div>
 
-    <div v-if="summary" class="g4" style="margin-bottom: 12px">
-      <div class="card stat"><span class="l">技能总数</span><div class="n">{{ summary.skillCount }}</div></div>
-      <div class="card stat"><span class="l">已发布</span><div class="n" style="color: var(--green)">{{ summary.publishedCount }}</div></div>
-      <div class="card stat"><span class="l">待审核</span><div class="n">{{ summary.pendingAuditCount }}</div></div>
+    <p v-if="toast" class="hint" data-testid="air-skill-toast">{{ toast }}</p>
+
+    <div v-if="summary" class="g4" style="margin-bottom: 12px" data-testid="air-skill-stats">
+      <div class="card stat">
+        <span class="l">技能 / 专家 / 知识库</span>
+        <div class="n" style="font-size: 21px">{{ summary.skillCount }} / {{ summary.expertCount }} / {{ summary.kbCount }}</div>
+      </div>
+      <div class="card stat"><span class="l">启用中 Key</span><div class="n" style="color: var(--green)">{{ summary.activeKeyCount }}</div></div>
       <div class="card stat"><span class="l">累计调用</span><div class="n">{{ summary.invokeTotal }}</div></div>
+      <div class="card stat"><span class="l">知识文档</span><div class="n">{{ summary.docCount }}</div></div>
     </div>
 
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.skillName" placeholder="技能名称" style="width: 140px" />
+      <select v-model="filters.category" style="width: 140px" data-testid="air-skill-category-filter">
+        <option value="">全部分类</option>
+        <option v-for="item in skillCategories" :key="item" :value="item">{{ item }}</option>
+      </select>
       <select v-model="filters.status" style="width: 120px">
         <option value="">全部状态</option>
         <option value="DRAFT">草稿</option>
@@ -43,14 +52,15 @@
               <th>审核</th>
               <th>责任人</th>
               <th>授权</th>
+              <th>累计调用</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="loading"><td colspan="9"><div class="empty"><div class="et">加载中</div></div></td></tr>
-            <tr v-else-if="!rows.length"><td colspan="9"><div class="empty"><div class="et">暂无技能</div></div></td></tr>
+            <tr v-if="loading"><td colspan="10"><div class="empty"><div class="et">加载中</div></div></td></tr>
+            <tr v-else-if="!rows.length"><td colspan="10"><div class="empty"><div class="et">暂无技能</div></div></td></tr>
             <tr v-for="row in rows" v-else :key="row.id">
-              <td class="mono">{{ row.skillNo }}</td>
+              <td class="mono"><button class="skill-no" type="button" data-testid="air-skill-no" @click="openDetail(row)">{{ row.skillNo }}</button></td>
               <td style="font-weight: 500">{{ row.skillName }}</td>
               <td>{{ row.category }}</td>
               <td>{{ row.versionLabel }}</td>
@@ -58,11 +68,11 @@
               <td>{{ auditLabel(row.auditStatus) }}</td>
               <td>{{ row.ownerName }}</td>
               <td class="num" data-testid="air-skill-grant-count">{{ row.grantCount }}</td>
+              <td class="num" data-testid="air-skill-invoke">{{ row.invokeCount }}</td>
               <td>
                 <div style="display: flex; gap: 4px; flex-wrap: wrap">
                   <button v-if="row.status === 'DRAFT'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-submit" @click="submitAudit(row.id)">提交审核</button>
-                  <button v-if="row.auditStatus === 'PENDING'" class="btn btn-pri btn-sm" type="button" data-testid="air-skill-approve" @click="audit(row.id, true)">通过</button>
-                  <button v-if="row.auditStatus === 'PENDING'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-reject" @click="audit(row.id, false)">驳回</button>
+                  <button v-if="canAudit(row)" class="btn btn-pri btn-sm" type="button" data-testid="air-skill-audit" @click="openAudit(row)">审核</button>
                   <button v-if="row.status === 'PUBLISHED'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-grant" @click="openGrant(row)">授权</button>
                   <button v-if="row.status === 'PUBLISHED'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-disable" @click="askDisable(row)">停用</button>
                   <button v-if="row.status === 'DISABLED'" class="btn btn-sec btn-sm" type="button" data-testid="air-skill-enable" @click="setStatus(row.id, 'ENABLED')">启用</button>
@@ -75,16 +85,70 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 400px; padding: 20px" data-testid="air-skill-form">
+      <div class="card" style="width: 480px; padding: 20px; max-height: 86vh; overflow: auto" data-testid="air-skill-form">
         <h3 style="margin: 0 0 12px">新增技能</h3>
-        <label class="fld">技能名称</label>
+        <label class="fld">技能名称 <i class="req">*</i></label>
         <input v-model="form.skillName" class="fld-in" data-testid="air-skill-name" />
-        <label class="fld">分类</label>
-        <input v-model="form.category" class="fld-in" />
+        <p v-if="formErrors.skillName" class="hint" style="color: var(--red)">{{ formErrors.skillName }}</p>
+        <label class="fld">技能分类 <i class="req">*</i></label>
+        <select v-model="form.category" class="fld-in" data-testid="air-skill-category">
+          <option value="">请选择</option>
+          <option v-for="item in skillCategories" :key="item" :value="item">{{ item }}</option>
+        </select>
+        <p v-if="formErrors.category" class="hint" style="color: var(--red)">{{ formErrors.category }}</p>
+        <label class="fld">初始版本</label>
+        <input v-model="form.versionLabel" class="fld-in" data-testid="air-skill-version" placeholder="v1.0" />
+        <label class="fld">维护责任人 <i class="req">*</i></label>
+        <select v-model="form.ownerUserId" class="fld-in" data-testid="air-skill-owner">
+          <option value="">请选择</option>
+          <option v-for="item in owners" :key="item.id" :value="item.id">{{ item.label }}</option>
+        </select>
+        <p v-if="formErrors.ownerUserId" class="hint" style="color: var(--red)">{{ formErrors.ownerUserId }}</p>
+        <label class="fld">能力说明 <i class="req">*</i></label>
+        <textarea v-model="form.capability" class="fld-in" rows="3" data-testid="air-skill-capability" placeholder="输入输出契约、适用场景、边界约束" />
+        <p v-if="formErrors.capability" class="hint" style="color: var(--red)">{{ formErrors.capability }}</p>
+        <label class="fld">提示词模板 <i class="req">*</i></label>
+        <textarea v-model="form.promptTemplate" class="fld-in" rows="4" data-testid="air-skill-prompt" placeholder="Prompt 模板（支持 {变量} 占位符）" />
+        <p v-if="formErrors.promptTemplate" class="hint" style="color: var(--red)">{{ formErrors.promptTemplate }}</p>
         <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-save" @click="submitCreate">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-save" @click="submitCreate">提交审核</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="detail" class="modal-mask" @click.self="detail = null">
+      <div class="card" style="width: 620px; padding: 20px" data-testid="air-skill-detail">
+        <h3 style="margin: 0 0 12px">技能详情 · {{ detail.skillNo }}</h3>
+        <div class="kv">
+          <div><div class="k">技能 ID</div><div class="v mono">{{ detail.skillNo }}</div></div>
+          <div><div class="k">状态</div><div class="v">{{ statusLabel(detail.status) }}</div></div>
+          <div><div class="k">安全审核</div><div class="v">{{ auditLabel(detail.auditStatus) }}</div></div>
+          <div><div class="k">版本</div><div class="v">{{ detail.versionLabel }}</div></div>
+          <div><div class="k">授权范围</div><div class="v">{{ grantScope(detail) }}</div></div>
+          <div><div class="k">调用方式</div><div class="v mono">MCP skills.get</div></div>
+        </div>
+        <p v-if="detail.capability" style="font-size: 13px; line-height: 1.6">{{ detail.capability }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="detail = null">关闭</button>
+          <button v-if="detail.status === 'PUBLISHED'" class="btn btn-pri btn-sm" type="button" @click="openGrantFromDetail">授权</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="auditSkill" class="modal-mask" @click.self="auditSkill = null">
+      <div class="card" style="width: 560px; padding: 20px" data-testid="air-skill-audit-form">
+        <h3 style="margin: 0 0 12px">技能审核 · {{ auditSkill.skillName }}</h3>
+        <p class="hint">责任人 {{ auditSkill.ownerName || '—' }} · 当前状态 {{ statusLabel(auditSkill.status) }}</p>
+        <p v-if="auditSkill.capability" style="font-size: 13px; line-height: 1.6">{{ auditSkill.capability }}</p>
+        <label class="fld">意见（驳回时必填）</label>
+        <textarea v-model="auditNote" class="fld-in" rows="4" placeholder="说明通过与驳回原因" data-testid="air-skill-audit-note" />
+        <p v-if="auditError" class="hint" style="color: var(--red)" data-testid="air-skill-audit-error">{{ auditError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="auditSkill = null">取消</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="air-skill-reject" @click="submitAuditDecision(false)">驳回</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-approve" @click="submitAuditDecision(true)">审核通过</button>
         </div>
       </div>
     </div>
@@ -129,6 +193,8 @@
             <button class="btn btn-sec btn-sm" type="button" data-testid="air-grant-dept-find" @click="searchDepts">查找</button>
           </div>
         </template>
+        <label class="fld">授权有效期 <i class="req">*</i></label>
+        <input v-model="grantForm.expireAt" class="fld-in" type="date" data-testid="air-grant-expire" />
         <label v-if="!grantForm.allStaff" class="fld">授权对象</label>
         <select v-if="!grantForm.allStaff" v-model="grantForm.grantId" class="fld-in" data-testid="air-grant-target">
           <option value="">请选择</option>
@@ -171,6 +237,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { errorMessage, http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
 
 type Row = {
   id: number
@@ -180,8 +247,12 @@ type Row = {
   versionLabel: string
   status: string
   auditStatus: string
+  ownerUserId: number
   ownerName: string
   grantCount: number
+  invokeCount: number
+  capability?: string
+  promptTemplate?: string
 }
 
 type GrantRow = {
@@ -194,21 +265,48 @@ type GrantRow = {
 
 type Option = { id: string; label: string }
 
-const summary = ref<{ skillCount: number; publishedCount: number; pendingAuditCount: number; invokeTotal: number } | null>(null)
+const skillCategories = ['内容生产', '数据分析', '运营支持', '财务', '人事行政']
+const userStore = useUserStore()
+const summary = ref<{
+  skillCount: number
+  expertCount: number
+  kbCount: number
+  publishedCount: number
+  pendingAuditCount: number
+  invokeTotal: number
+  docCount: number
+  activeKeyCount: number
+} | null>(null)
 const rows = ref<Row[]>([])
 const loading = ref(false)
+const toast = ref('')
 const showForm = ref(false)
+const detail = ref<(Row & { grants?: GrantRow[] }) | null>(null)
 const formError = ref('')
-const filters = reactive({ skillName: '', status: '' })
-const form = reactive({ skillName: '', category: '内容生产' })
+const formErrors = reactive({ skillName: '', category: '', ownerUserId: '', capability: '', promptTemplate: '' })
+const filters = reactive({ skillName: '', category: '', status: '' })
+const form = reactive({ skillName: '', category: '', versionLabel: 'v1.0', ownerUserId: '', capability: '', promptTemplate: '' })
+const owners = ref<Option[]>([])
 const disableTarget = ref<Row | null>(null)
+const auditSkill = ref<Row | null>(null)
+const auditNote = ref('')
+const auditError = ref('')
 const grantSkill = ref<Row | null>(null)
 const grants = ref<GrantRow[]>([])
 const grantError = ref('')
-const grantForm = reactive({ grantType: 'DEPT', grantId: '', allStaff: false })
+const grantForm = reactive({ grantType: 'DEPT', grantId: '', allStaff: false, expireAt: '' })
 const targetOptions = ref<Option[]>([])
 const userKeyword = ref('')
 const deptKeyword = ref('')
+
+function say(message: string) {
+  toast.value = message
+}
+
+function grantScope(row: Row & { grants?: GrantRow[] }) {
+  const names = (row.grants || []).filter((item) => item.status === 'ACTIVE').map((item) => item.grantName || grantTypeLabel(item))
+  return names.length ? names.join('、') : '暂无授权'
+}
 
 function statusLabel(status: string) {
   return ({ DRAFT: '草稿', PENDING: '审核中', PUBLISHED: '已发布', DISABLED: '已停用' } as Record<string, string>)[status] || status
@@ -216,6 +314,13 @@ function statusLabel(status: string) {
 
 function auditLabel(status: string) {
   return ({ NONE: '未提交', PENDING: '待审核', APPROVED: '已通过', REJECTED: '已驳回' } as Record<string, string>)[status] || status
+}
+
+function canAudit(row: Row) {
+  if (row.auditStatus !== 'PENDING') return false
+  const mine = userStore.profile?.userId
+  if (mine && String(row.ownerUserId) === String(mine)) return false
+  return true
 }
 
 function grantTypeLabel(item: GrantRow) {
@@ -232,7 +337,13 @@ async function loadList() {
   loading.value = true
   try {
     const res = await http.get('/air/skill/list', {
-      params: { pageNo: 1, pageSize: 20, skillName: filters.skillName || undefined, status: filters.status || undefined },
+      params: {
+        pageNo: 1,
+        pageSize: 20,
+        skillName: filters.skillName || undefined,
+        category: filters.category || undefined,
+        status: filters.status || undefined,
+      },
     })
     if (res.data.code === 0) rows.value = res.data.data.list || []
   } finally {
@@ -240,18 +351,60 @@ async function loadList() {
   }
 }
 
-function openCreate() {
+async function loadOwners() {
+  const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50 } })
+  const list = res.data.data?.list || []
+  owners.value = list.map((item: { id: string | number; username: string; nickname?: string }) => ({
+    id: String(item.id),
+    label: item.nickname ? `${item.nickname}（${item.username}）` : item.username,
+  }))
+}
+
+async function openCreate() {
   formError.value = ''
+  formErrors.skillName = ''
+  formErrors.category = ''
+  formErrors.ownerUserId = ''
+  formErrors.capability = ''
+  formErrors.promptTemplate = ''
   form.skillName = ''
-  form.category = '内容生产'
+  form.category = ''
+  form.versionLabel = 'v1.0'
+  form.capability = ''
+  form.promptTemplate = ''
+  if (!owners.value.length) await loadOwners().catch(() => undefined)
+  const mine = userStore.profile?.userId ? String(userStore.profile.userId) : ''
+  if (mine && !owners.value.some((item) => item.id === mine)) {
+    const label = userStore.profile?.nickname || userStore.profile?.username || '当前用户'
+    owners.value.unshift({ id: mine, label })
+  }
+  form.ownerUserId = mine
   showForm.value = true
 }
 
 async function submitCreate() {
   formError.value = ''
+  formErrors.skillName = form.skillName.trim() ? '' : '必填项，请填写'
+  formErrors.category = form.category ? '' : '必填项，请填写'
+  formErrors.ownerUserId = form.ownerUserId ? '' : '必填项，请填写'
+  formErrors.capability = form.capability.trim() ? '' : '必填项，请填写'
+  formErrors.promptTemplate = form.promptTemplate.trim() ? '' : '必填项，请填写'
+  if (formErrors.skillName || formErrors.category || formErrors.ownerUserId || formErrors.capability || formErrors.promptTemplate) {
+    return
+  }
   try {
-    await http.post('/air/skill', form)
+    const created = await http.post('/air/skill', {
+      skillName: form.skillName.trim(),
+      category: form.category,
+      versionLabel: form.versionLabel.trim() || 'v1.0',
+      ownerUserId: Number(form.ownerUserId),
+      capability: form.capability.trim(),
+      promptTemplate: form.promptTemplate.trim(),
+    })
+    const id = created.data.data?.id
+    if (id) await http.put(`/air/skill/${id}/submit-audit`)
     showForm.value = false
+    say('技能已提交，进入强制审核')
     await loadSummary()
     await loadList()
   } catch (error) {
@@ -261,14 +414,52 @@ async function submitCreate() {
 
 async function submitAudit(id: number) {
   await http.put(`/air/skill/${id}/submit-audit`)
+  say('已提交审核')
   await loadList()
   await loadSummary()
 }
 
-async function audit(id: number, approve: boolean) {
-  await http.put(`/air/skill/${id}/audit`, { approve })
-  await loadList()
-  await loadSummary()
+async function openDetail(row: Row) {
+  try {
+    const res = await http.get(`/air/skill/${row.id}`)
+    detail.value = res.data.code === 0 ? res.data.data : row
+  } catch (error) {
+    say(errorMessage(error))
+  }
+}
+
+function openGrantFromDetail() {
+  if (!detail.value) return
+  const row = detail.value
+  detail.value = null
+  openGrant(row)
+}
+
+function openAudit(row: Row) {
+  auditSkill.value = row
+  auditNote.value = ''
+  auditError.value = ''
+}
+
+async function submitAuditDecision(approve: boolean) {
+  if (!auditSkill.value) return
+  auditError.value = ''
+  if (!approve && !auditNote.value.trim()) {
+    auditError.value = '必填项，请填写'
+    return
+  }
+  try {
+    await http.put(`/air/skill/${auditSkill.value.id}/audit`, {
+      approve,
+      auditNote: auditNote.value.trim(),
+    })
+    auditSkill.value = null
+    say(approve ? '审核通过，技能已发布' : '已驳回，技能退回草稿')
+    await loadList()
+    await loadSummary()
+  } catch (error) {
+    auditError.value = errorMessage(error)
+  }
 }
 
 function askDisable(row: Row) {
@@ -284,6 +475,7 @@ async function confirmDisable() {
 
 async function setStatus(id: number, status: 'ENABLED' | 'DISABLED') {
   await http.put(`/air/skill/${id}/status`, { status })
+  say(status === 'DISABLED' ? '已停用' : '已启用')
   await loadList()
   await loadSummary()
 }
@@ -299,6 +491,7 @@ async function openGrant(row: Row) {
   grantForm.grantType = 'DEPT'
   grantForm.grantId = ''
   grantForm.allStaff = false
+  grantForm.expireAt = ''
   userKeyword.value = ''
   deptKeyword.value = ''
   targetOptions.value = []
@@ -362,6 +555,10 @@ async function searchDepts() {
 async function submitGrant() {
   if (!grantSkill.value) return
   grantError.value = ''
+  if (!grantForm.expireAt) {
+    grantError.value = '必填项，请填写'
+    return
+  }
   if (!grantForm.allStaff && !grantForm.grantId) {
     grantError.value = '请选择授权对象'
     return
@@ -372,9 +569,11 @@ async function submitGrant() {
       grantType: grantForm.grantType,
       grantId: grantForm.allStaff ? 0 : Number(grantForm.grantId),
       allStaff: grantForm.allStaff,
+      expireAt: grantForm.expireAt,
     })
     grantForm.grantId = ''
     grantForm.allStaff = false
+    say('授权成功')
     await loadGrants(grantSkill.value.id)
     await loadList()
     await loadSummary()
@@ -386,6 +585,7 @@ async function submitGrant() {
 async function revokeGrant(grantId: number) {
   if (!grantSkill.value) return
   await http.delete(`/air/skill/grant/${grantId}`)
+  say('已收回授权')
   await loadGrants(grantSkill.value.id)
   await loadList()
 }
@@ -395,3 +595,33 @@ onMounted(async () => {
   await loadList()
 })
 </script>
+
+<style>
+.skill-no {
+  background: none;
+  border: none;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.kv {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.kv .k {
+  font-size: 12px;
+  color: var(--text2);
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+</style>

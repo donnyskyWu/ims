@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, loginAdmin, loginAs } from './closure-helpers'
 
 /**
  * Checklist E2E-S8-03 / E2E-S8-11 的页面侧（acceptance · 纯 UI）。
@@ -16,7 +16,7 @@ test.describe('air expert assemble and audit closure S8', () => {
     test.setTimeout(120_000)
     const pageErrors = attachClosurePageHooks(page)
     fs.mkdirSync(shotDir, { recursive: true })
-    await loginAdmin(page)
+    await loginAs(page, 'e2e_author')
 
     const skillName = `E2E组装技能${Date.now()}`
     await page.goto('/ims/air/skill')
@@ -24,12 +24,17 @@ test.describe('air expert assemble and audit closure S8', () => {
     await page.getByTestId('air-skill-create').click()
     const skillForm = page.getByTestId('air-skill-form')
     await skillForm.getByTestId('air-skill-name').fill(skillName)
+    await skillForm.getByTestId('air-skill-category').selectOption('内容生产')
+    await skillForm.getByTestId('air-skill-capability').fill('组装用能力说明')
+    await skillForm.getByTestId('air-skill-prompt').fill('模板 {topic}')
     const createdSkill = page.waitForResponse(
       (response) => response.url().includes('/air/skill') && response.request().method() === 'POST',
     )
+    const submitted = page.waitForResponse((response) => response.url().includes('/submit-audit'))
     await skillForm.getByTestId('air-skill-save').click()
     const skillBody = await (await createdSkill).json()
     expect(skillBody.code).toBe(0)
+    expect((await (await submitted).json()).code).toBe(0)
     const skillNo = skillBody.data.skillNo as string
 
     await page.locator('input[placeholder="技能名称"]').fill(skillName)
@@ -39,16 +44,24 @@ test.describe('air expert assemble and audit closure S8', () => {
     await page.getByRole('button', { name: '查询' }).click()
     await listed
     const skillRow = page.locator('tbody tr').filter({ hasText: skillName })
-    const submitted = page.waitForResponse((response) => response.url().includes('/submit-audit'))
-    await skillRow.getByTestId('air-skill-submit').click()
-    expect((await (await submitted).json()).code).toBe(0)
     await expect(skillRow.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PENDING')
+    await loginAdmin(page)
+    await page.goto('/ims/air/skill')
+    await expect(page.locator('h1')).toHaveText('技能库', { timeout: 15_000 })
+    await page.locator('input[placeholder="技能名称"]').fill(skillName)
+    const relisted = page.waitForResponse(
+      (response) => response.url().includes('/air/skill/list') && response.request().method() === 'GET',
+    )
+    await page.getByRole('button', { name: '查询' }).click()
+    await relisted
+    const pendingRow = page.locator('tbody tr').filter({ hasText: skillName })
+    await pendingRow.getByTestId('air-skill-audit').click()
     const approved = page.waitForResponse(
       (response) => response.url().includes('/audit') && response.request().method() === 'PUT',
     )
-    await skillRow.getByTestId('air-skill-approve').click()
+    await page.getByTestId('air-skill-audit-form').getByTestId('air-skill-approve').click()
     expect((await (await approved).json()).code).toBe(0)
-    await expect(skillRow.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PUBLISHED')
+    await expect(pendingRow.getByTestId('air-skill-status')).toHaveAttribute('data-status', 'PUBLISHED')
 
     const expertName = `E2E组装专家${Date.now()}`
     const prompt = '你是直播复盘专家，只下发组装包。'
@@ -109,6 +122,7 @@ test.describe('air expert assemble and audit closure S8', () => {
     await card.getByTestId('air-expert-grant').click()
     const drawer = page.getByTestId('air-expert-grant-form')
     await expect(drawer).toBeVisible()
+    await drawer.getByTestId('air-expert-grant-expire').fill('2027-03-31')
 
     await drawer.getByTestId('air-expert-grant-type').selectOption('PERSON')
     await drawer.getByTestId('air-expert-grant-user-search').fill('admin')
