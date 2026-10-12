@@ -1,0 +1,50 @@
+version: "2.0.0-b0a"
+db:
+  host: 127.0.0.1
+  port: 3306
+  user: ims
+  password: ims
+  name: imsV2.0
+football_live:
+  enabled: false
+  schema_check: strict
+  tenant_map:
+    "1": 1
+  schema_file: config/football_live_schema.yaml
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 0
+jwt:
+  secret: prod-placeholder-override-by-env
+  access_seconds: 7200
+  refresh_seconds: 604800
+file:
+  storage_root: /tmp/ims-prod-files
+security:
+  field_key: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+  hash_key: "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+api:
+  id_as_string: true
+dingtalk:
+  mode: real
+  app_key: ""
+  app_secret: ""
+  agent_id: ""
+dingtalk_attendance:
+  mode: mock
+integrations:
+  dingtalk:
+    mode: real
+  dingtalk_attendance:
+    mode: mock
+  football_web:
+    mode: mock
+  collector:
+    mode: real
+  comfyui:
+    mode: mock
+  air_ai:
+    mode: real
+  train_ai:
+    mode: mock

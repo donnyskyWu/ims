@@ -1,0 +1,182 @@
+[
+  {
+    "code": 1001,
+    "msg": "参数校验失败",
+    "strategy": "fieldError"
+  },
+  {
+    "code": 1002,
+    "msg": "登录已失效，请重新登录",
+    "strategy": "relogin"
+  },
+  {
+    "code": 1003,
+    "msg": "您的账号已在其他设备登录，本设备已下线",
+    "strategy": "relogin"
+  },
+  {
+    "code": 1006,
+    "msg": "钉钉同步失败",
+    "strategy": "toast"
+  },
+  {
+    "code": 1008,
+    "msg": "暂无权限",
+    "strategy": "noPermission"
+  },
+  {
+    "code": 1101,
+    "msg": "资料未发布或不可用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1106,
+    "msg": "培训题目生成调用失败",
+    "strategy": "toast"
+  },
+  {
+    "code": 1107,
+    "msg": "培训题目生成超时",
+    "strategy": "toast"
+  },
+  {
+    "code": 1108,
+    "msg": "有效题目数量为 0",
+    "strategy": "toast"
+  },
+  {
+    "code": 1109,
+    "msg": "培训题目生成未配置或未启用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1139,
+    "msg": "当前流程不可撤销",
+    "strategy": "toast"
+  },
+  {
+    "code": 1211,
+    "msg": "主键不可修改",
+    "strategy": "toast"
+  },
+  {
+    "code": 1212,
+    "msg": "权限码不存在",
+    "strategy": "toast"
+  },
+  {
+    "code": 1213,
+    "msg": "未知的参数项",
+    "strategy": "toast"
+  },
+  {
+    "code": 1214,
+    "msg": "用户名或密码错误",
+    "strategy": "toast"
+  },
+  {
+    "code": 1215,
+    "msg": "账号已锁定，请 {n} 分钟后再试",
+    "strategy": "toast"
+  },
+  {
+    "code": 1216,
+    "msg": "账号已冻结或已离职，无法登录",
+    "strategy": "toast"
+  },
+  {
+    "code": 1217,
+    "msg": "未找到与钉钉账号对应的用户，请联系管理员",
+    "strategy": "toast"
+  },
+  {
+    "code": 1218,
+    "msg": "部门不能移动到自身或下级部门之下",
+    "strategy": "toast"
+  },
+  {
+    "code": 1219,
+    "msg": "同一上级部门下已有同名部门",
+    "strategy": "toast"
+  },
+  {
+    "code": 1220,
+    "msg": "系统部门或来自钉钉的部门不能这样调整",
+    "strategy": "toast"
+  },
+  {
+    "code": 1271,
+    "msg": "直播数据读取超时",
+    "strategy": "toast"
+  },
+  {
+    "code": 1272,
+    "msg": "直播服务返回失败",
+    "strategy": "toast"
+  },
+  {
+    "code": 1273,
+    "msg": "直播服务鉴权失败",
+    "strategy": "toast"
+  },
+  {
+    "code": 1500,
+    "msg": "关联的数据不存在",
+    "strategy": "toast"
+  },
+  {
+    "code": 1501,
+    "msg": "关联的数据已停用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1502,
+    "msg": "存在关联数据，不能删除或停用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1503,
+    "msg": "字典值不合法",
+    "strategy": "toast"
+  },
+  {
+    "code": 1504,
+    "msg": "资源不可用",
+    "strategy": "toast"
+  },
+  {
+    "code": 5001,
+    "msg": "数据库异常，请稍后再试",
+    "strategy": "toast"
+  },
+  {
+    "code": 5002,
+    "msg": "缓存服务异常，请稍后再试",
+    "strategy": "toast"
+  },
+  {
+    "code": 5003,
+    "msg": "钉钉服务超时，请稍后再试",
+    "strategy": "toast"
+  },
+  {
+    "code": 5004,
+    "msg": "绘图服务暂不可用",
+    "strategy": "toast"
+  },
+  {
+    "code": 5005,
+    "msg": "文件处理失败",
+    "strategy": "toast"
+  },
+  {
+    "code": 5006,
+    "msg": "定时任务执行失败",
+    "strategy": "toast"
+  },
+  {
+    "code": 5007,
+    "msg": "系统繁忙，请稍后再试",
+    "strategy": "toast"
+  }
+]

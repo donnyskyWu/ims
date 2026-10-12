@@ -1,0 +1,1342 @@
+{
+  "components": {
+    "schemas": {
+      "Body_file_upload_admin_api_ims_file_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "scene": {
+            "title": "Scene",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene",
+          "file"
+        ],
+        "title": "Body_file_upload_admin_api_ims_file_upload_post",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "IMS",
+    "version": "2.0.0-b0a"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/admin-api/ims/auth/change-password": {
+      "post": {
+        "operationId": "change_password_admin_api_ims_auth_change_password_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改密码"
+      }
+    },
+    "/admin-api/ims/auth/login": {
+      "post": {
+        "operationId": "login_admin_api_ims_auth_login_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "账号密码登录"
+      }
+    },
+    "/admin-api/ims/auth/logout": {
+      "post": {
+        "operationId": "logout_admin_api_ims_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "退出登录"
+      }
+    },
+    "/admin-api/ims/auth/me": {
+      "get": {
+        "operationId": "me_admin_api_ims_auth_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "当前用户"
+      }
+    },
+    "/admin-api/ims/auth/refresh-token": {
+      "post": {
+        "operationId": "refresh_token_admin_api_ims_auth_refresh_token_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "刷新令牌"
+      }
+    },
+    "/admin-api/ims/auth/sso/dingtalk/callback": {
+      "get": {
+        "operationId": "sso_callback_admin_api_ims_auth_sso_dingtalk_callback_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "钉钉登录回调"
+      }
+    },
+    "/admin-api/ims/auth/sso/dingtalk/redirect": {
+      "get": {
+        "operationId": "sso_redirect_admin_api_ims_auth_sso_dingtalk_redirect_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "钉钉登录跳转"
+      }
+    },
+    "/admin-api/ims/callback/dingtalk/event": {
+      "post": {
+        "operationId": "dingtalk_event_admin_api_ims_callback_dingtalk_event_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "钉钉事件回调"
+      }
+    },
+    "/admin-api/ims/demo/error": {
+      "get": {
+        "operationId": "demo_error_admin_api_ims_demo_error_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "按错误码返回示例"
+      }
+    },
+    "/admin-api/ims/demo/order/create": {
+      "post": {
+        "operationId": "order_create_admin_api_ims_demo_order_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建示例订单"
+      }
+    },
+    "/admin-api/ims/demo/order/delete": {
+      "delete": {
+        "operationId": "order_delete_admin_api_ims_demo_order_delete_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "删除示例订单"
+      }
+    },
+    "/admin-api/ims/demo/order/echo": {
+      "post": {
+        "operationId": "order_echo_admin_api_ims_demo_order_echo_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "幂等示例"
+      }
+    },
+    "/admin-api/ims/demo/order/export": {
+      "post": {
+        "operationId": "order_export_admin_api_ims_demo_order_export_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "导出示例订单"
+      }
+    },
+    "/admin-api/ims/demo/order/get": {
+      "get": {
+        "operationId": "order_get_admin_api_ims_demo_order_get_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "示例订单详情"
+      }
+    },
+    "/admin-api/ims/demo/order/import": {
+      "post": {
+        "operationId": "order_import_admin_api_ims_demo_order_import_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "导入示例订单"
+      }
+    },
+    "/admin-api/ims/demo/order/page": {
+      "get": {
+        "operationId": "order_page_admin_api_ims_demo_order_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "示例订单分页"
+      }
+    },
+    "/admin-api/ims/demo/order/plain": {
+      "get": {
+        "operationId": "order_plain_admin_api_ims_demo_order_plain_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "查看证件原件"
+      }
+    },
+    "/admin-api/ims/demo/order/update": {
+      "put": {
+        "operationId": "order_update_admin_api_ims_demo_order_update_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改示例订单"
+      }
+    },
+    "/admin-api/ims/demo/share/create": {
+      "post": {
+        "operationId": "share_create_admin_api_ims_demo_share_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "发布示例分享"
+      }
+    },
+    "/admin-api/ims/demo/share/page": {
+      "get": {
+        "operationId": "share_page_admin_api_ims_demo_share_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "示例分享列表"
+      }
+    },
+    "/admin-api/ims/export-task/download": {
+      "get": {
+        "operationId": "export_download_admin_api_ims_export_task_download_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "下载导出文件"
+      }
+    },
+    "/admin-api/ims/export-task/my/page": {
+      "get": {
+        "operationId": "export_my_page_admin_api_ims_export_task_my_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "我的导出任务"
+      }
+    },
+    "/admin-api/ims/file/download": {
+      "get": {
+        "operationId": "file_download_admin_api_ims_file_download_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "下载文件"
+      }
+    },
+    "/admin-api/ims/file/preview": {
+      "get": {
+        "operationId": "file_preview_admin_api_ims_file_preview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "预览文件"
+      }
+    },
+    "/admin-api/ims/file/upload": {
+      "post": {
+        "operationId": "file_upload_admin_api_ims_file_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_file_upload_admin_api_ims_file_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "上传文件"
+      }
+    },
+    "/admin-api/ims/flow/act": {
+      "post": {
+        "operationId": "flow_act_admin_api_ims_flow_act_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "办理流程"
+      }
+    },
+    "/admin-api/ims/flow/cancel": {
+      "post": {
+        "operationId": "flow_cancel_admin_api_ims_flow_cancel_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "撤销流程"
+      }
+    },
+    "/admin-api/ims/flow/start": {
+      "post": {
+        "operationId": "flow_start_admin_api_ims_flow_start_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "发起流程"
+      }
+    },
+    "/admin-api/ims/flow/template": {
+      "post": {
+        "operationId": "flow_template_admin_api_ims_flow_template_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "发布流程模板"
+      }
+    },
+    "/admin-api/ims/message/my/page": {
+      "get": {
+        "operationId": "message_my_page_admin_api_ims_message_my_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "我的消息"
+      }
+    },
+    "/admin-api/ims/message/notify/resend": {
+      "post": {
+        "operationId": "notify_resend_admin_api_ims_message_notify_resend_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "补发通知"
+      }
+    },
+    "/admin-api/ims/message/read": {
+      "post": {
+        "operationId": "message_read_admin_api_ims_message_read_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "标记已读"
+      }
+    },
+    "/admin-api/ims/message/read-all": {
+      "post": {
+        "operationId": "message_read_all_admin_api_ims_message_read_all_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "全部已读"
+      }
+    },
+    "/admin-api/ims/message/send": {
+      "post": {
+        "operationId": "message_send_admin_api_ims_message_send_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "发送消息"
+      }
+    },
+    "/admin-api/ims/message/unread-count": {
+      "get": {
+        "operationId": "message_unread_count_admin_api_ims_message_unread_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "未读数量"
+      }
+    },
+    "/admin-api/ims/system/calendar/update": {
+      "put": {
+        "operationId": "calendar_update_admin_api_ims_system_calendar_update_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改工作日历"
+      }
+    },
+    "/admin-api/ims/system/dept/confirm-orphan": {
+      "put": {
+        "operationId": "confirm_orphan_admin_api_ims_system_dept_confirm_orphan_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "确认保留本地部门"
+      }
+    },
+    "/admin-api/ims/system/dept/create": {
+      "post": {
+        "operationId": "dept_create_admin_api_ims_system_dept_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建部门"
+      }
+    },
+    "/admin-api/ims/system/dept/delete": {
+      "delete": {
+        "operationId": "dept_delete_admin_api_ims_system_dept_delete_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "删除部门"
+      }
+    },
+    "/admin-api/ims/system/dept/move": {
+      "put": {
+        "operationId": "dept_move_admin_api_ims_system_dept_move_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "移动部门"
+      }
+    },
+    "/admin-api/ims/system/dept/tree": {
+      "get": {
+        "operationId": "dept_tree_admin_api_ims_system_dept_tree_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "部门树"
+      }
+    },
+    "/admin-api/ims/system/dept/update": {
+      "put": {
+        "operationId": "dept_update_admin_api_ims_system_dept_update_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改部门"
+      }
+    },
+    "/admin-api/ims/system/dept/update-status": {
+      "put": {
+        "operationId": "dept_status_admin_api_ims_system_dept_update_status_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改部门状态"
+      }
+    },
+    "/admin-api/ims/system/dict/data/create": {
+      "post": {
+        "operationId": "dict_data_create_admin_api_ims_system_dict_data_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建字典值"
+      }
+    },
+    "/admin-api/ims/system/dict/data/delete": {
+      "delete": {
+        "operationId": "dict_data_delete_admin_api_ims_system_dict_data_delete_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "删除字典值"
+      }
+    },
+    "/admin-api/ims/system/dict/data/update": {
+      "put": {
+        "operationId": "dict_data_update_admin_api_ims_system_dict_data_update_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改字典值"
+      }
+    },
+    "/admin-api/ims/system/dict/type/create": {
+      "post": {
+        "operationId": "dict_type_create_admin_api_ims_system_dict_type_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建字典类型"
+      }
+    },
+    "/admin-api/ims/system/integrity-scan/run": {
+      "post": {
+        "operationId": "integrity_run_admin_api_ims_system_integrity_scan_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "执行引用巡检"
+      }
+    },
+    "/admin-api/ims/system/job/run": {
+      "post": {
+        "operationId": "job_run_admin_api_ims_system_job_run_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "手动执行任务"
+      }
+    },
+    "/admin-api/ims/system/menu/create": {
+      "post": {
+        "operationId": "menu_create_admin_api_ims_system_menu_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建菜单"
+      }
+    },
+    "/admin-api/ims/system/org-sync/latest-batch": {
+      "get": {
+        "operationId": "org_latest_batch_admin_api_ims_system_org_sync_latest_batch_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "最近同步批次"
+      }
+    },
+    "/admin-api/ims/system/org-sync/process": {
+      "post": {
+        "operationId": "org_process_admin_api_ims_system_org_sync_process_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "处理组织事件"
+      }
+    },
+    "/admin-api/ims/system/org-sync/reconcile": {
+      "post": {
+        "operationId": "org_reconcile_admin_api_ims_system_org_sync_reconcile_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "组织对账"
+      }
+    },
+    "/admin-api/ims/system/param/list": {
+      "get": {
+        "operationId": "param_list_admin_api_ims_system_param_list_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "参数列表"
+      }
+    },
+    "/admin-api/ims/system/param/update": {
+      "put": {
+        "operationId": "param_update_admin_api_ims_system_param_update_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改参数"
+      }
+    },
+    "/admin-api/ims/system/position/event": {
+      "post": {
+        "operationId": "position_event_admin_api_ims_system_position_event_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "投递岗位变更"
+      }
+    },
+    "/admin-api/ims/system/position/rule": {
+      "post": {
+        "operationId": "position_rule_admin_api_ims_system_position_rule_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "保存岗位供给规则"
+      }
+    },
+    "/admin-api/ims/system/role/create": {
+      "post": {
+        "operationId": "role_create_admin_api_ims_system_role_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建角色"
+      }
+    },
+    "/admin-api/ims/system/role/data-scope": {
+      "put": {
+        "operationId": "role_scope_admin_api_ims_system_role_data_scope_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "保存角色数据范围"
+      }
+    },
+    "/admin-api/ims/system/role/delete": {
+      "delete": {
+        "operationId": "role_delete_admin_api_ims_system_role_delete_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "删除角色"
+      }
+    },
+    "/admin-api/ims/system/role/grant": {
+      "post": {
+        "operationId": "role_grant_admin_api_ims_system_role_grant_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "角色授权"
+      }
+    },
+    "/admin-api/ims/system/role/simple-list": {
+      "get": {
+        "operationId": "role_simple_admin_api_ims_system_role_simple_list_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "角色简表"
+      }
+    },
+    "/admin-api/ims/system/role/update-status": {
+      "put": {
+        "operationId": "role_status_admin_api_ims_system_role_update_status_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改角色状态"
+      }
+    },
+    "/admin-api/ims/system/user/create": {
+      "post": {
+        "operationId": "user_create_admin_api_ims_system_user_create_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建用户"
+      }
+    },
+    "/admin-api/ims/system/user/delete": {
+      "delete": {
+        "operationId": "user_delete_admin_api_ims_system_user_delete_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "删除用户"
+      }
+    },
+    "/admin-api/ims/system/user/kick": {
+      "post": {
+        "operationId": "kick_admin_api_ims_system_user_kick_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "强制下线"
+      }
+    },
+    "/admin-api/ims/system/user/page": {
+      "get": {
+        "operationId": "user_page_admin_api_ims_system_user_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "用户分页"
+      }
+    },
+    "/admin-api/ims/system/user/reset-password": {
+      "post": {
+        "operationId": "reset_password_admin_api_ims_system_user_reset_password_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "重置密码"
+      }
+    },
+    "/admin-api/ims/system/user/simple-page": {
+      "get": {
+        "operationId": "user_simple_admin_api_ims_system_user_simple_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "用户简表"
+      }
+    },
+    "/admin-api/ims/system/user/unlock": {
+      "post": {
+        "operationId": "unlock_admin_api_ims_system_user_unlock_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "解锁账号"
+      }
+    },
+    "/admin-api/ims/system/user/update-depts": {
+      "put": {
+        "operationId": "update_depts_admin_api_ims_system_user_update_depts_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "调整用户部门"
+      }
+    },
+    "/admin-api/ims/system/user/update-status": {
+      "put": {
+        "operationId": "user_status_admin_api_ims_system_user_update_status_put",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "修改用户状态"
+      }
+    },
+    "/admin-api/ims/system/user/update/{ident}": {
+      "put": {
+        "operationId": "user_update_admin_api_ims_system_user_update__ident__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "修改用户"
+      }
+    },
+    "/admin-api/ims/todo/my/count": {
+      "get": {
+        "operationId": "todo_my_count_admin_api_ims_todo_my_count_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "待办数量"
+      }
+    },
+    "/admin-api/ims/todo/my/page": {
+      "get": {
+        "operationId": "todo_my_page_admin_api_ims_todo_my_page_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "我的待办"
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "健康检查"
+      }
+    }
+  }
+}
