@@ -97,6 +97,7 @@ class FlowStatus(CodeEnum):
     REJECTED = "REJECTED"
     CANCELLED = "CANCELLED"
     SUSPENDED = "SUSPENDED"
+    TIMEOUT = "TIMEOUT"
 
 
 class NotifyStatus(CodeEnum):

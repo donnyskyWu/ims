@@ -11,7 +11,7 @@ from app.core.context import RequestContext, use_context
 from app.core.errors import BizError
 from app.core.events import events
 from app.db.session import session_scope
-from app.domains.flow.model import FlowInstance, FlowTask, FlowTemplateVersion
+from app.domains.flow.model import FlowInstance, FlowTask, FlowTemplate, FlowTemplateVersion, FlowTrace
 from app.domains.flow.router import router as flow_router
 from app.domains.flow.service import act, callbacks, cancel, edit_nodes, publish_template, scan_overdue, start
 from app.domains.message.model import Message
@@ -159,24 +159,38 @@ def test_leader_perm_and_self_suspension():
         assert 1 in names
         with use_context(_ctx(U_SELF, ["ims:flow:start"])):
             publish_template("SELF", "自己", [{"key": "me", "assigneeUserId": U_SELF}])
-            suspended = start("SELF", "leave", 3)
-        assert suspended["status"] == "SUSPENDED"
-        manage = session.scalar(select(Todo).where(Todo.source_type == "FLOW_INSTANCE", Todo.source_id == suspended["id"]))
-        assert manage is not None and manage.assignee_perm_code == "ims:flow:manage"
+            moved = start("SELF", "leave", 3)
+        assert moved["status"] == "RUNNING"
+        names = list(session.scalars(select(FlowTask.assignee).where(FlowTask.instance_id == moved["id"], FlowTask.status == "PENDING")))
+        assert U_SELF not in names
+        assert 1 in names and U_ADMIN in names
+        trace = session.scalar(select(FlowTrace).where(FlowTrace.instance_id == moved["id"], FlowTrace.action == "REASSIGN"))
+        assert trace is not None and str(trace.detail or "").startswith("审批人为发起人，已改派给")
+        manage = session.scalar(select(Todo).where(Todo.source_type == "FLOW_INSTANCE", Todo.source_id == moved["id"]))
+        assert manage is None
         with use_context(_ctx(U_SELF, ["ims:flow:act"])):
             with pytest.raises(BizError) as denied:
-                act(suspended["id"], "APPROVE")
+                act(moved["id"], "APPROVE")
             assert denied.value.code == 1008
         link = session.scalar(select(UserRole).where(UserRole.user_id == 1, UserRole.role_id == 101))
         session.delete(link)
         session.flush()
         with use_context(_ctx(U_ADMIN, ["ims:flow:start"])):
             publish_template("ONLY", "仅自己", [{"key": "solo", "permCode": "ims:flow:manage"}])
-            alone = start("ONLY", "leave", 4)
-        assert alone["status"] == "SUSPENDED"
+            with pytest.raises(BizError) as alone:
+                start("ONLY", "leave", 4)
+            assert alone.value.code == 1132
+        template = session.scalar(select(FlowTemplate).where(FlowTemplate.code == "ONLY"))
+        version_ids = list(session.scalars(select(FlowTemplateVersion.id).where(FlowTemplateVersion.template_id == template.id)))
+        parked = session.scalar(select(FlowInstance).where(FlowInstance.template_version_id.in_(version_ids)))
+        assert parked is not None and parked.status == "RUNNING"
+        pending = list(session.scalars(select(FlowTask).where(FlowTask.instance_id == parked.id, FlowTask.status == "PENDING")))
+        assert pending == []
+        notice = session.scalar(select(Message).where(Message.title == "流程缺少处理人"))
+        assert notice is not None
         with use_context(_ctx(U_ADMIN, ["ims:flow:act"])):
             with pytest.raises(BizError) as only:
-                act(alone["id"], "APPROVE")
+                act(parked.id, "APPROVE")
             assert only.value.code == 1008
 
 

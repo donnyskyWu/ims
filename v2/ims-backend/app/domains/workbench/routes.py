@@ -17,7 +17,7 @@ ROUTE_TABLE = (
     {"source_type": "LIVE_ALARM", "type": "ALERT", "path": "/ims/live/alarm", "delivered": False, "label": "直播告警"},
     {"source_type": "COLLECT_FAIL", "type": "ALERT", "path": "/ims/alert/realtime", "delivered": False, "label": "采集失败"},
     {"source_type": "LEARN_TASK", "type": "LEARN", "path": "/ims/train/learn", "delivered": False, "label": "学习任务"},
-    {"source_type": "FLOW_TASK", "type": "APPROVAL", "path": "/ims/flow/mine", "delivered": False, "label": "流程任务"},
+    {"source_type": "FLOW_TASK", "type": "APPROVAL", "path": "/ims/flow/task", "delivered": True, "label": "流程任务"},
 )
 
 DEFAULT_BY_TYPE = {
@@ -78,7 +78,7 @@ def path_for(source_type: str | None, todo_type: str | None) -> str:
     if found:
         return found["path"]
     if (source_type or "").startswith("FLOW"):
-        return "/ims/flow/mine"
+        return "/ims/flow/task"
     return DEFAULT_BY_TYPE.get(todo_type or "", "/ims/workbench/soon")
 
 

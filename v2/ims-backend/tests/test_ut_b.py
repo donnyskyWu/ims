@@ -627,7 +627,7 @@ def test_ut_b04_12(client):
     names = menu_names(me["data"]["menus"])
     assert "系统管理" in names
     assert "示例域" not in names
-    assert [node["name"] for node in me["data"]["menus"]] == ["系统管理"]
+    assert [node["name"] for node in me["data"]["menus"]] == ["系统管理", "工作流"]
 
 
 def test_ut_b04_13(client):

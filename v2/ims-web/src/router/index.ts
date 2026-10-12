@@ -20,7 +20,6 @@ function placeholderRoutes(): RouteRecordRaw[] {
     ["ims/live/alarm", "live-alarm", "直播告警"],
     ["ims/alert/realtime", "alert-realtime", "实时告警"],
     ["ims/train/learn", "train-learn", "学习任务"],
-    ["ims/flow/mine", "flow-mine", "我的流程"],
   ];
   return pages.map(([path, name, title]) => ({ path, name, component: soon, meta: { menuless: true, title } }));
 }
@@ -49,6 +48,12 @@ export async function createAppRouter() {
     { path: "ims/workbench", name: "workbench", component: () => import("@/views/workbench/HomeView.vue"), meta: { menuless: true, title: "工作台" } },
     { path: "ims/workbench/todos", name: "workbench-todos", component: () => import("@/views/workbench/TodosView.vue"), meta: { menuless: true, title: "待办中心" } },
     { path: "ims/workbench/messages", name: "workbench-messages", component: () => import("@/views/workbench/MessagesView.vue"), meta: { menuless: true, title: "消息中心" } },
+    { path: "ims/flow/task", name: "flow-task", component: () => import("@/views/flow/TaskView.vue"), meta: { title: "我的流程" } },
+    { path: "ims/flow/board", name: "flow-board", component: () => import("@/views/flow/BoardView.vue"), meta: { title: "流程看板", perm: "ims:flow:board:query" } },
+    { path: "ims/flow/template", name: "flow-template", component: () => import("@/views/flow/TemplateView.vue"), meta: { title: "模板管理", perm: "ims:flow:template:query" } },
+    { path: "ims/flow/timeout", name: "flow-timeout", component: () => import("@/views/flow/TimeoutView.vue"), meta: { title: "超时督办", perm: "ims:flow:timeout:query" } },
+    { path: "ims/flow/version/:templateId", name: "flow-version", component: () => import("@/views/flow/VersionView.vue"), meta: { menuless: true, title: "版本管理" } },
+    { path: "ims/flow/mine", redirect: "/ims/flow/task" },
     ...placeholderRoutes(),
   ];
   const routes: RouteRecordRaw[] = [
