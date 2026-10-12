@@ -1,0 +1,64 @@
+:root {
+  --bg: #f5f5f7;
+  --card: #fff;
+  --text: #1d1d1f;
+  --text2: #86868b;
+  --blue: #0071e3;
+  --blue-h: #0077ed;
+  --blue-bg: #e8f2fe;
+  --green: #34c759;
+  --orange: #ff9500;
+  --red: #ff3b30;
+  --gray: #8e8e93;
+  --cyan: #5ac8fa;
+  --purple: #af52da;
+  --yellow: #ffcc00;
+  --line: rgba(0, 0, 0, 0.08);
+  --line2: rgba(0, 0, 0, 0.12);
+  --sh: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --sh-h: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --font: -apple-system, "SF Pro Text", "SF Pro Display", "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  --r: 12px;
+  --r-s: 8px;
+  --r-xs: 5px;
+
+  --sider-w: 232px;
+  --sider-collapsed: 64px;
+  --header-h: 56px;
+  --content-y: 28px;
+  --content-x: 32px;
+  --page-max: 1240px;
+  --drawer-s: 480px;
+  --drawer-m: 720px;
+  --drawer-l: 880px;
+  --tree-w: 240px;
+  --desc-label: 120px;
+  --designer-side: 168px;
+  --designer-prop: 292px;
+  --grid: 24px;
+
+  --table-head: #fafafc;
+  --row-line: rgba(0, 0, 0, 0.05);
+  --mask: rgba(0, 0, 0, 0.4);
+  --focus: rgba(0, 113, 227, 0.12);
+  --on-primary: #fff;
+  --qbar-r: 10px;
+  --control-r: 6px;
+
+  --st-primary-fg: #0071e3;
+  --st-primary-bg: rgba(0, 113, 227, 0.12);
+  --st-success-fg: #1e8e3e;
+  --st-success-bg: rgba(52, 199, 89, 0.12);
+  --st-warning-fg: #c46a00;
+  --st-warning-bg: rgba(255, 149, 0, 0.12);
+  --st-danger-fg: #d70015;
+  --st-danger-bg: rgba(255, 59, 48, 0.12);
+  --st-neutral-fg: #6d6d72;
+  --st-neutral-bg: rgba(142, 142, 147, 0.12);
+  --st-info-fg: #0e7fb8;
+  --st-info-bg: rgba(90, 200, 250, 0.12);
+  --st-purple-fg: #8944ab;
+  --st-purple-bg: rgba(175, 82, 218, 0.12);
+  --st-yellow-fg: #a07d00;
+  --st-yellow-bg: rgba(255, 204, 0, 0.12);
+}

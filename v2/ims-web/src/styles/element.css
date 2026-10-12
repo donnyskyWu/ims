@@ -1,0 +1,54 @@
+:root {
+  --el-color-primary: var(--blue);
+  --el-color-primary-light-3: var(--blue-h);
+  --el-color-primary-dark-2: var(--blue);
+  --el-color-success: var(--green);
+  --el-color-warning: var(--orange);
+  --el-color-danger: var(--red);
+  --el-color-info: var(--cyan);
+  --el-border-radius-base: var(--r-s);
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text);
+  --el-text-color-secondary: var(--text2);
+  --el-border-color: var(--line2);
+  --el-bg-color: var(--card);
+  --el-fill-color-blank: var(--card);
+  --el-font-family: var(--font);
+  --el-font-size-base: 13px;
+}
+
+.el-button { height: 32px; border-radius: var(--r-s); font-weight: 500; }
+.el-button--small { height: 26px; border-radius: var(--r-xs); }
+.el-input__wrapper { min-height: 34px; border-radius: var(--r-s); }
+.qbar .el-input__wrapper,
+.qbar .el-select__wrapper { min-height: 30px; border-radius: var(--control-r); }
+.el-input__inner { font-size: 13px; }
+.qbar .el-input__inner { font-size: 12.5px; }
+
+.el-table th.el-table__cell {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  background: var(--table-head);
+}
+.el-table td.el-table__cell { font-size: 13px; padding: 10px 0; }
+.el-table { --el-table-border-color: var(--row-line); border-radius: var(--r); }
+.el-pagination .el-pager li {
+  min-width: 26px;
+  height: 26px;
+  line-height: 26px;
+  border-radius: var(--control-r);
+}
+.el-pagination .el-pager li.is-active {
+  background: var(--blue);
+  color: var(--on-primary);
+}
+.el-drawer { background: var(--card); }
+.el-drawer__header { margin-bottom: 0; padding: 16px 20px; color: var(--text); font-size: 16px; font-weight: 600; }
+.el-drawer__body { padding: 20px; }
+.el-overlay { background: var(--mask); }
+.el-dialog { border-radius: var(--r); }
+.el-form-item__label { font-size: 12px; font-weight: 500; color: var(--text2); }
+.el-form-item__error { font-size: 12px; color: var(--red); }
+.is-error .el-input__wrapper { box-shadow: 0 0 0 1px var(--red) inset; }
+.el-input__wrapper.is-focus { box-shadow: 0 0 0 1px var(--blue) inset, 0 0 0 3px var(--focus); }

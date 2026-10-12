@@ -1,0 +1,20 @@
+{
+  "TRAIN_DOC": {
+    "exts": ["pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"],
+    "maxBytes": 104857600,
+    "maxMb": 100,
+    "watermark": false
+  },
+  "TRAIN_VIDEO": {
+    "exts": ["mp4"],
+    "maxBytes": 524288000,
+    "maxMb": 500,
+    "watermark": false
+  },
+  "TEST_IMAGE": {
+    "exts": ["png", "jpg"],
+    "maxBytes": 20971520,
+    "maxMb": 20,
+    "watermark": true
+  }
+}
