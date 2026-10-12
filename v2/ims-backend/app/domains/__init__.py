@@ -70,4 +70,9 @@ from app.db.base import Base
 
 
 def all_models():
-    return [mapper.class_ for mapper in Base.registry.mappers]
+    """只收录应用内模型。测试里临时映射的类仍留在 registry，不能参与启动校验。"""
+    return [
+        mapper.class_
+        for mapper in Base.registry.mappers
+        if mapper.class_.__module__.startswith("app.")
+    ]

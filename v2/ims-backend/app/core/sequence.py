@@ -1,6 +1,7 @@
 """编号生成。Redis 优先，库表行锁兜底，恢复后取较大值续号。"""
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 
 from sqlalchemy import select
@@ -22,6 +23,9 @@ PLATFORM_EXT = {
     "OTHER": "OTH",
 }
 TTL = 48 * 3600
+# 同一进程内串行分配。100 路并发打到同一 Redis 连接时，INCR 已在服务端生效但客户端超时，
+# 再走库表兜底会发出重复号。
+_ALLOC_LOCK = threading.Lock()
 
 
 def _date(when: datetime | None) -> str:
@@ -73,23 +77,31 @@ def _save_allocated(rule: str, day: str, group: str, value: int) -> None:
 def next_value(rule: str, group: str = "", when: datetime | None = None) -> int:
     day = _date(when)
     key = f"ims:seq:{rule}:{day}:{group}"
+    allocated: int | None = None
     try:
         from app.core.fault import faults
 
         faults.raise_if("redis.seq")
-        redis = get_redis()
-        # 键不存在时用库中已发最大值播种，恢复后从较大值续号；并发时序号只来自 INCR。
-        if redis.get(key) is None:
-            stored = _db_get(rule, day, group)
-            base = int(stored.current_value) if stored is not None else 0
-            redis.set(key, str(base), nx=True, ex=TTL)
-        value = int(redis.incr(key))
-        redis.expire(key, TTL)
-        _save_allocated(rule, day, group, value)
-        return value
+        with _ALLOC_LOCK:
+            redis = get_redis()
+            # 键不存在时用库中已发最大值播种，恢复后从较大值续号；并发时序号只来自 INCR。
+            if redis.get(key) is None:
+                stored = _db_get(rule, day, group)
+                base = int(stored.current_value) if stored is not None else 0
+                redis.set(key, str(base), nx=True, ex=TTL)
+            allocated = int(redis.incr(key))
+            try:
+                redis.expire(key, TTL)
+            except Exception:
+                pass
+            _save_allocated(rule, day, group, allocated)
+        return allocated
     except BizError:
         raise
     except Exception:
+        # Redis 已经发出的号必须原样返回，不能再 _db_incr，否则与已发出的号重复。
+        if allocated is not None:
+            return allocated
         try:
             get_session().rollback()
         except Exception:
