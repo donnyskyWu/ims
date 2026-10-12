@@ -53,6 +53,11 @@ PARAMS = [
     ("dingtalk_attendance.timeout_ms", "考勤超时毫秒", "钉钉考勤", "NUMBER", "1000", "100", "60000"),
     ("air.key.ip_whitelist.enabled", "内容密钥地址限制", "AI", "BOOLEAN", "false", None, None),
     ("air.model.base_url", "内容模型地址", "内容审核", "TEXT", "http://127.0.0.1:9/air", None, None),
+    ("notify.cert.yellow", "证件黄色预警", "证件", "TEXT", "证件将在 30 天内到期，请尽快换证。", None, None),
+    ("notify.cert.red", "证件红色预警", "证件", "TEXT", "证件将在 7 天内到期，请立即换证。", None, None),
+    ("notify.cert.locked", "证件锁定通知", "证件", "TEXT", "证件已过期并锁定，请完成换证。", None, None),
+    ("notify.cert.remind", "证件催办通知", "证件", "TEXT", "请尽快办理证件换证。", None, None),
+    ("notify.cert.reject", "证件驳回通知", "证件", "TEXT", "证件审核未通过，请重新上传。", None, None),
 ]
 
 
@@ -276,11 +281,42 @@ def _with_flow(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
     return merged
 
 
+def _resource_grant(key: str, all_codes: list[str]) -> list[str]:
+    resource = [code for code in all_codes if code.startswith("ims:corp:") or code.startswith("ims:cert:")]
+    bag = set(resource)
+    query = [
+        "ims:corp:company:query",
+        "ims:corp:realname:query",
+        "ims:corp:sim:query",
+        "ims:cert:archive:query",
+        "ims:cert:expire:query",
+    ]
+    if key == "R1":
+        return sorted(bag)
+    if key == "R2":
+        return sorted(code for code in bag if not code.startswith("ims:cert:security:"))
+    if key == "R4":
+        return [code for code in [*query, "ims:cert:archive:metrics"] if code in bag]
+    if key == "R9":
+        return sorted(code for code in bag if code.endswith(":query") and "plain" not in code and not code.startswith("ims:cert:security:"))
+    if key == "R5":
+        return [code for code in ("ims:cert:expire:query",) if code in bag]
+    if key == "R7":
+        return [code for code in ("ims:cert:archive:query", "ims:cert:expire:query") if code in bag]
+    return []
+
+
+def _shape_resource(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
+    resource = {code for code in all_codes if code.startswith("ims:corp:") or code.startswith("ims:cert:")}
+    kept = [code for code in codes if code not in resource]
+    return kept + _resource_grant(key, all_codes)
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
-        return _with_flow(key, _with_workbench(codes, all_codes), all_codes)
+        return _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -297,7 +333,7 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
         codes.extend(sorted(managed))
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
-    return _with_flow(key, _with_workbench(codes, all_codes), all_codes)
+    return _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes)
 
 
 def _users(session):

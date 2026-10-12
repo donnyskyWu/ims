@@ -1,4 +1,5 @@
 """导入全部模型，保证元数据只注册一次。"""
+from app.domains.cert.model import CertExpireTask, CertLevelConfig, CertViewLog  # noqa: F401
 from app.domains.auth.model import (  # noqa: F401
     AuthEventLog,
     OrgSyncBatch,
@@ -37,6 +38,7 @@ from app.domains.master.model import (  # noqa: F401
     SimCard,
 )
 from app.domains.message.model import Message, NotifyRecord  # noqa: F401
+from app.domains.resource.model import CompanyCapacityLog  # noqa: F401
 from app.domains.system.model import (  # noqa: F401
     ChangeLog,
     Dept,

@@ -229,13 +229,18 @@ def _mask_params(raw) -> str:
         return ""
 
     def mask(key, value):
-        low = key.lower()
+        low = key.lower().replace("_", "")
         if low in {"password", "secret", "apikey", "token", "appsecret"} or "password" in low:
             return "******"
         if "mobile" in low and isinstance(value, str) and len(value) >= 7:
             return value[:3] + "****" + value[-4:]
-        if "idcard" in low.replace("_", "") and isinstance(value, str) and len(value) >= 8:
+        if low == "idcard" and isinstance(value, str) and len(value) >= 8:
             return value[:3] + "*" * (len(value) - 7) + value[-4:]
+        hidden = {"phone", "phonenumber", "idno", "certno", "certnoplain", "iccid"}
+        if low in hidden and isinstance(value, str) and value:
+            if len(value) <= 7:
+                return "****"
+            return value[:3] + "****" + value[-4:]
         if isinstance(value, dict):
             return {k: mask(k, v) for k, v in value.items()}
         return value

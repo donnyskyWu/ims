@@ -5,6 +5,7 @@ import { uploadFile } from "@/api/generated/endpoints";
 import { BizError } from "@/api/http";
 
 const props = withDefaults(defineProps<{ scene: string; limit?: number; accept?: string }>(), { limit: 1 });
+const emit = defineEmits<{ uploaded: [payload: Record<string, unknown>] }>();
 const model = defineModel<string | string[] | null>({ default: null });
 const names = ref<Record<string, string>>({});
 const progress = ref(0);
@@ -31,10 +32,11 @@ async function onChange(event: Event) {
     progress.value = Math.min(90, progress.value + 8);
   }, 200);
   try {
-    const saved = await uploadFile<{ fileKey: string; fileName?: string; originalName?: string }>(props.scene, file);
+    const saved = await uploadFile<Record<string, unknown>>(props.scene, file);
     progress.value = 100;
-    const key = saved.fileKey;
-    names.value[key] = saved.originalName || saved.fileName || file.name;
+    const key = String(saved.fileKey || "");
+    emit("uploaded", saved);
+    names.value[key] = String(saved.originalName || saved.fileName || file.name);
     if (props.limit <= 1) model.value = key;
     else model.value = [...keys(), key];
   } catch (caught) {

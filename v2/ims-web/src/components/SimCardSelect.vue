@@ -1,11 +1,32 @@
 <script setup lang="ts">
-import BizRemote from "./BizRemote.vue";
-import { simCards } from "@/demo/master-data";
+import RemoteSelect, { type RemoteOption } from "./RemoteSelect.vue";
+import { selectorByIds, selectorPage } from "@/api/resource";
 
 defineProps<{ multiple?: boolean }>();
 const model = defineModel<string | string[] | null>({ default: null });
+
+function optionOf(row: Record<string, unknown>): RemoteOption {
+  const disabled = Boolean(row.disabled) || row.status === "DISABLED";
+  const name = String(row.realnameName || "");
+  return {
+    id: String(row.id),
+    label: `${String(row.phoneMasked || "手机卡")}${name ? " · " + name : ""}`,
+    disabled,
+    reason: disabled ? "已停用" : "",
+  };
+}
+
+async function fetch(keyword: string, pageNo: number) {
+  const data = await selectorPage("/master/selector/sim-card", keyword, pageNo);
+  return { list: (data.list || []).map(optionOf), total: Number(data.total || 0) };
+}
+
+async function fetchByIds(ids: string[]) {
+  const rows = await selectorByIds("/master/selector/sim-card", ids);
+  return rows.map(optionOf);
+}
 </script>
 
 <template>
-  <BizRemote v-model="model" :rows="simCards" :multiple="multiple" placeholder="请选择手机卡" />
+  <RemoteSelect v-model="model" :multiple="multiple" placeholder="请选择手机卡" :fetch="fetch" :fetch-by-ids="fetchByIds" />
 </template>

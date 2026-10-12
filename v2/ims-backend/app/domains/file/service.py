@@ -37,6 +37,11 @@ SCENES: dict[str, dict] = {
         "max_bytes": 20 * _MB,
         "watermark": True,
     },
+    "CERT": {
+        "exts": ["jpg", "jpeg", "png", "pdf"],
+        "max_bytes": 20 * _MB,
+        "watermark": True,
+    },
 }
 
 _CONTENT_TYPES = {
@@ -112,7 +117,12 @@ def upload(scene: str, filename: str, data: bytes, user) -> dict:
     except Exception:
         _unlink(path)
         raise
-    return _view(row)
+    result = _view(row)
+    if scene == "CERT":
+        from app.domains.cert.ocr import recognize
+
+        result["ocr"] = recognize()
+    return result
 
 
 def bind(file_key: str, biz_type: str, biz_id: int) -> dict:
@@ -226,24 +236,41 @@ def _assert_biz_scope(row: StoredFile) -> None:
     Repository(model).get(int(row.biz_id))
 
 
-def _watermark(data: bytes, ext: str) -> bytes:
-    """图片叠加查看人姓名。PNG 第 0 行 R 通道：长度 + UTF-8 字节，并写入 viewer 文本块。"""
-    import io
-
-    from PIL import Image, PngImagePlugin
+def viewer_label() -> str:
+    """水印文本：查看人姓名、登录账号、时间到秒。"""
+    from app.core.clock import now_naive
 
     ctx = get_ctx()
     name = "用户"
+    account = ""
     if ctx is not None:
         name = (ctx.nickname or ctx.username or name).strip() or name
-    raw = name.encode("utf-8")
+        account = (ctx.username or "").strip()
+    stamp = now_naive().strftime("%Y-%m-%d %H:%M:%S")
+    return f"{name} {account} {stamp}".strip()
+
+
+def _watermark(data: bytes, ext: str) -> bytes:
+    """图片平铺水印。PNG 第 0 行 R 通道在绘制之后写入姓名、账号与时间。"""
+    import io
+
+    from PIL import Image, ImageDraw, PngImagePlugin
+
+    if (ext or "").lower() == "pdf":
+        return data
+    text = viewer_label()
+    raw = text.encode("utf-8")[:255]
     image = Image.open(io.BytesIO(data)).convert("RGBA")
-    width = max(image.width, len(raw) + 1)
-    height = max(image.height, 1)
+    width = max(image.width, len(raw) + 1, 64)
+    height = max(image.height, 32)
     if (width, height) != image.size:
         canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
         canvas.paste(image, (0, 0))
         image = canvas
+    draw = ImageDraw.Draw(image)
+    for top in range(0, image.height, 24):
+        for left in range(0, image.width, 220):
+            draw.text((left, top), text, fill=(160, 160, 160, 96))
     pixels = image.load()
     _, green, blue, _alpha = pixels[0, 0]
     pixels[0, 0] = (len(raw), green, blue, 255)
