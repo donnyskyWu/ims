@@ -13,6 +13,7 @@ export interface MenuNode {
   permCode: string | null;
   type: string;
   path: string | null;
+  icon: string | null;
   children: MenuNode[];
 }
 
@@ -42,6 +43,7 @@ function normalizeMenus(nodes: unknown): MenuNode[] {
       permCode: node.permCode ? String(node.permCode) : null,
       type: String(node.type || ""),
       path: node.path ? String(node.path) : null,
+      icon: node.icon ? String(node.icon) : null,
       children: normalizeMenus(node.children),
     };
   });

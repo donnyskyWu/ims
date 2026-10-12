@@ -21,12 +21,13 @@ describe("auth store", () => {
       username: "qa",
       nickname: "测试",
       permCodes: ["ims:demo:order:query"],
-      menus: [{ id: "7", name: "示例", permCode: "ims:demo:order:query", type: "MENU", children: [] }],
+      menus: [{ id: 7, name: "示例", permCode: "ims:demo:order:query", type: "MENU", icon: "star", children: [] }],
       dataScopeText: "全部数据",
       permDetails: { "ims:demo:order:query": { r: 1, w: 0, d: 0 } },
     });
     expect(store.user?.id).toBe("42");
     expect(store.menus[0].id).toBe("7");
+    expect(store.menus[0].icon).toBe("star");
     expect(store.permDetails["ims:demo:order:query"].w).toBe(0);
   });
 

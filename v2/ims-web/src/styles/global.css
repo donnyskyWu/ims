@@ -1,5 +1,8 @@
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
 body {
   font-family: var(--font);
   background: var(--bg);

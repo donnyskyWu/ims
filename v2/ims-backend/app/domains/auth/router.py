@@ -140,6 +140,7 @@ def _menu_tree(ctx) -> list[dict]:
             "permCode": menu.perm_code,
             "type": menu.type,
             "path": menu.path,
+            "icon": menu.icon,
             "children": [node(child) for child in sorted(by_parent.get(menu.id, []), key=lambda item: item.sort)],
         }
 
