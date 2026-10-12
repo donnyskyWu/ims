@@ -4,11 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # 号段：域 -> 允许的闭区间。COMMON 显式拥有跨域通用码。
-# 1281～1290 与 SYS 共用，按序分配给后续批次。
+# 1281～1295 与 SYS 共用，按序分配给后续批次。
 DOMAIN_RANGES: dict[str, list[tuple[int, int]]] = {
     "COMMON": [(1001, 1001), (1008, 1008), (1500, 1504), (5001, 5007)],
     "AUTH": [(1002, 1007), (1009, 1010)],
-    "SYS": [(1211, 1220), (1281, 1290)],
+    "SYS": [(1211, 1220), (1281, 1295)],
     "TRAIN": [(1101, 1110)],
     "FLOW": [(1131, 1140)],
     "FOOTBALL": [(1271, 1280)],
@@ -55,6 +55,12 @@ BASE_ENTRIES: list[ErrorEntry] = [
     _e(1284, "SYS", "规则名称已存在", "toast"),
     _e(1285, "SYS", "规则已被他人修改（当前 v{n}），请刷新后重试", "toast"),
     _e(1286, "SYS", "事件状态已变化，请刷新后重试", "toast"),
+    _e(1287, "SYS", "请先指定主部门", "fieldError"),
+    _e(1289, "SYS", "套餐仍被租户使用，不可删除", "toast"),
+    _e(1290, "SYS", "平台租户不可停用或删除", "toast"),
+    _e(1291, "SYS", "非平台租户不可访问租户套餐管理", "noPermission"),
+    _e(1292, "SYS", "手机号已被其他用户使用", "fieldError"),
+    _e(1293, "SYS", "确认文字不一致，未执行危险操作", "toast"),
     _e(1271, "FOOTBALL", "直播数据读取超时", "toast"),
     _e(1272, "FOOTBALL", "直播服务返回失败", "toast"),
     _e(1273, "FOOTBALL", "直播服务鉴权失败", "toast"),

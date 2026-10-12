@@ -55,6 +55,10 @@ onMounted(() => {
 function active(node: MenuNode): boolean {
   return Boolean(node.path && route.path === node.path);
 }
+
+function navItems(group: MenuNode) {
+  return (group.children || []).filter((item) => item.type !== "BUTTON");
+}
 </script>
 
 <template>
@@ -64,7 +68,7 @@ function active(node: MenuNode): boolean {
       <template v-for="group in auth.menus" :key="group.id">
         <div class="g">{{ group.name }}</div>
         <button
-          v-for="item in group.children"
+          v-for="item in navItems(group)"
           :key="item.id"
           type="button"
           class="item"
@@ -93,6 +97,7 @@ function active(node: MenuNode): boolean {
           <button class="btn btn-txt" type="button" @click="devTodo ? openTodo() : undefined">待办</button>
           <details>
             <summary>{{ auth.user?.nickname || "账号" }}</summary>
+            <button type="button" @click="router.push('/ims/profile')">个人中心</button>
             <button type="button" @click="router.push('/password-reset')">修改密码</button>
             <button type="button" @click="logout">退出登录</button>
           </details>

@@ -260,7 +260,16 @@ def confirm_orphan(ident: int) -> dict:
     return dump_row(row)
 
 
-def user_page(page: Page, dept_id: int | None, include_children: bool, keyword: str | None, status: str | None) -> dict:
+def user_page(
+    page: Page,
+    dept_id: int | None,
+    include_children: bool,
+    keyword: str | None,
+    status: str | None,
+    username: str | None = None,
+    nickname: str | None = None,
+    mobile: str | None = None,
+) -> dict:
     session = get_session()
     repo = Repository(User)
     where = []
@@ -268,14 +277,19 @@ def user_page(page: Page, dept_id: int | None, include_children: bool, keyword: 
         where.append(User.status == status)
     if keyword:
         where.append(or_(User.username.contains(keyword), User.nickname.contains(keyword), User.emp_no.contains(keyword)))
+    if username:
+        where.append(User.username.contains(username))
+    if nickname:
+        where.append(User.nickname.contains(nickname))
+    if mobile:
+        where.append(User.mobile_hash == hmac_hash(mobile))
     if dept_id:
         rows = list(session.scalars(select(Dept)))
         ids = _subtree_ids(dept_id, rows) if include_children else {dept_id}
         where.append(User.id.in_(select(UserDept.user_id).where(UserDept.dept_id.in_(ids))))
     order = [User.id.desc()]
     items, total = repo.page(page, *where, order=order)
-    data = [dump_row(item, ["id", "username", "nickname", "emp_no", "status", "main_dept_id", "position_code"]) for item in items]
-    return page_result(data, total, page)
+    return page_result(_user_rows(items), total, page)
 
 
 def user_simple(page: Page) -> dict:
@@ -317,8 +331,10 @@ def user_create(username: str, nickname: str, dept_ids: list[int], main_dept_id:
         source="LOCAL",
     )
     if mobile:
+        _assert_mobile_free(mobile)
         user.mobile_enc = encrypt(mobile)
         user.mobile_hash = hmac_hash(mobile)
+    user.pwd_reset_required = 1
     Repository(User).create(user)
     for ident in dept_ids:
         session.add(UserDept(user_id=user.id, dept_id=ident, is_main=1 if ident == main_dept_id else 0, source="LOCAL"))
@@ -378,6 +394,8 @@ def user_delete(ident: int) -> dict:
         raise BizError(1504)
     if user.status == "RESIGNED":
         raise BizError(1502, data={"refs": [{"entity": "离职用户", "count": 1}]})
+    if user.last_login_time is not None:
+        raise BizError(1502, data={"refs": [{"entity": "登录记录", "count": 1}]})
     refs = protect_counts(user)
     if refs:
         raise BizError(1502, data={"refs": refs})
@@ -473,6 +491,7 @@ def role_grant(role_id: int, perm_codes: list[str], details: list[dict] | None =
             if exists is None:
                 session.add(RoleMenu(role_id=role_id, menu_id=menus[code].id))
     session.flush()
+    _bump_role_members(role_id)
     saved = list(session.scalars(select(RolePermDetail).where(RolePermDetail.role_id == role_id)))
     return {"details": [{"permCode": row.perm_code, "r": row.r, "w": row.w, "d": row.d} for row in saved]}
 
@@ -539,6 +558,8 @@ def dict_data_delete(ident: int) -> dict:
     row = get_session().get(DictData, ident)
     if row is None:
         raise BizError(1504)
+    if row.is_builtin:
+        raise BizError(1502, data={"refs": [{"entity": "内置字典值", "count": 1}]})
     if row.status != "ENABLED":
         raise BizError(1502, data={"refs": [{"entity": "字典值", "count": 1}]})
     if _dict_value_used(row.dict_type, row.dict_value):
@@ -563,12 +584,17 @@ def _dict_value_used(dict_type: str, dict_value: str) -> bool:
 
 
 def param_list() -> list[dict]:
-    rows = list(get_session().scalars(select(Param)))
+    session = get_session()
+    rows = list(session.scalars(select(Param)))
     data = []
     for row in rows:
-        item = dump_row(row, ["id", "param_key", "name", "value_type", "value", "group_name"])
+        item = dump_row(row, ["id", "param_key", "name", "value_type", "value", "group_name", "min_value", "max_value", "remark"])
+        item["options"] = list(row.options or [])
         if row.value_type == "SECRET":
             item["value"] = "******"
+        if row.value_type == "ROLE_REF" and row.value:
+            role = session.get(Role, int(row.value)) if str(row.value).isdigit() else None
+            item["roleName"] = role.name if role is not None else ""
         data.append(item)
     return data
 
@@ -579,6 +605,16 @@ def param_update(param_key: str, value: str | None) -> dict:
         raise BizError(1213)
     if row.value_type == "SECRET" and (value is None or value == ""):
         return {"paramKey": param_key, "value": "******"}
+    before = "******" if row.value_type == "SECRET" else row.value
+    if row.value_type == "BOOLEAN":
+        token = str(value or "").strip().lower()
+        if token not in {"true", "false", "1", "0"}:
+            raise BizError(1001, data={"fieldErrors": [{"field": "value", "message": "须为是或否"}]})
+        value = "true" if token in {"true", "1"} else "false"
+    if row.value_type == "ENUM":
+        allowed = list(row.options or [])
+        if str(value) not in {str(item) for item in allowed}:
+            raise BizError(1001, data={"fieldErrors": [{"field": "value", "message": "不在允许的选项中"}]})
     if row.value_type == "NUMBER":
         try:
             number = float(value)
@@ -594,9 +630,99 @@ def param_update(param_key: str, value: str | None) -> dict:
             raise BizError(1500, data={"field": "value"})
     if row.value_type == "SECRET" and value:
         row.value = encrypt(value)
+        after = "******"
     else:
         row.value = value
+        after = row.value
+    _param_history(row, before, after)
     return {"paramKey": param_key, "value": "******" if row.value_type == "SECRET" else row.value}
+
+
+def _param_history(row: Param, before, after) -> None:
+    from app.core.context import get_ctx
+    from app.domains.system.model import ChangeLog
+
+    ctx = get_ctx()
+    get_session().add(
+        ChangeLog(
+            biz_type="PARAM",
+            biz_id=row.id,
+            field="value",
+            field_label=row.name or row.param_key,
+            before_value=None if before is None else str(before),
+            after_value=None if after is None else str(after),
+            reason="USER_EDIT",
+            operator_id=ctx.user_id if ctx else None,
+        )
+    )
+
+
+def _assert_mobile_free(mobile: str, except_user_id: int | None = None) -> None:
+    hashed = hmac_hash(mobile)
+    found = get_session().scalar(select(User).where(User.mobile_hash == hashed))
+    if found is not None and found.id != except_user_id:
+        raise BizError(1292, data={"fieldErrors": [{"field": "mobile", "message": "手机号已被其他用户使用"}]})
+
+
+def _bump_role_members(role_id: int) -> None:
+    session = get_session()
+    user_ids = list(session.scalars(select(UserRole.user_id).where(UserRole.role_id == role_id, UserRole.manual_removed == 0)))
+    if not user_ids:
+        return
+    for user in session.scalars(select(User).where(User.id.in_(user_ids))):
+        user.perm_version = int(user.perm_version or 1) + 1
+
+
+def mask_mobile(stored: str | None) -> str:
+    if not stored:
+        return ""
+    from app.core.crypto import decrypt
+
+    try:
+        plain = decrypt(stored)
+    except Exception:
+        return ""
+    if len(plain) < 7:
+        return "****"
+    return f"{plain[:3]}****{plain[-4:]}"
+
+
+def _user_rows(items: list[User]) -> list[dict]:
+    from app.domains.auth.model import UserMapping
+
+    session = get_session()
+    if not items:
+        return []
+    ids = [item.id for item in items]
+    dept_ids = {item.main_dept_id for item in items if item.main_dept_id}
+    links = list(session.scalars(select(UserDept).where(UserDept.user_id.in_(ids))))
+    dept_ids.update(link.dept_id for link in links)
+    dept_name = {}
+    if dept_ids:
+        dept_name = {row.id: row.name for row in session.scalars(select(Dept).where(Dept.id.in_(dept_ids)))}
+    role_links = list(session.scalars(select(UserRole).where(UserRole.user_id.in_(ids), UserRole.manual_removed == 0)))
+    role_ids = {link.role_id for link in role_links}
+    role_name = {}
+    if role_ids:
+        role_name = {row.id: row.name for row in session.scalars(select(Role).where(Role.id.in_(role_ids)))}
+    bound = set(session.scalars(select(UserMapping.user_id).where(UserMapping.user_id.in_(ids))))
+    dept_by_user: dict[int, list[str]] = {}
+    for link in links:
+        dept_by_user.setdefault(link.user_id, []).append(dept_name.get(link.dept_id, ""))
+    roles_by_user: dict[int, list[dict]] = {}
+    for link in role_links:
+        roles_by_user.setdefault(link.user_id, []).append({"id": link.role_id, "name": role_name.get(link.role_id, ""), "source": link.source})
+    data = []
+    for item in items:
+        row = dump_row(item, ["id", "username", "nickname", "emp_no", "status", "main_dept_id", "position_code", "last_login_time", "source"])
+        row["mainDeptName"] = dept_name.get(item.main_dept_id, "")
+        row["deptNames"] = [name for name in dept_by_user.get(item.id, []) if name]
+        row["roles"] = roles_by_user.get(item.id, [])
+        row["dingtalkBound"] = item.id in bound
+        row["mobile"] = mask_mobile(item.mobile_enc)
+        row["locked"] = bool(item.lock_until and item.lock_until > now_naive())
+        data.append(row)
+    return data
 
 
 class DictCache:

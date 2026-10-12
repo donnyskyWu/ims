@@ -55,6 +55,31 @@ def change_password():
     return auth_svc.change_password(ctx.user_id, ctx.session_id, str(body.get("oldPassword") or ""), str(body.get("newPassword") or ""))
 
 
+@mark(login_only=True, summary="设置密码")
+def set_password():
+    ctx = get_ctx()
+    body = _body()
+    return auth_svc.set_password(ctx.user_id, ctx.session_id, str(body.get("newPassword") or ""))
+
+
+@mark(login_only=True, summary="我的会话")
+def my_sessions():
+    from app.services.sessions import list_user_sessions
+
+    ctx = get_ctx()
+    return list_user_sessions(ctx.user_id, ctx.session_id)
+
+
+@mark(login_only=True, summary="下线会话")
+def drop_session(sid: str):
+    from app.services.sessions import revoke_sid
+
+    ctx = get_ctx()
+    current = sid == ctx.session_id
+    revoke_sid(ctx.user_id, sid)
+    return {"sid": sid, "logout": current}
+
+
 def _scope_text(ctx) -> str:
     from app.domains.system.model import Dept
 
@@ -122,6 +147,31 @@ def _menu_tree(ctx) -> list[dict]:
     return [node(menu) for menu in sorted(roots, key=lambda item: item.sort)]
 
 
+def _profile(user) -> dict:
+    from sqlalchemy import select
+
+    from app.domains.auth.model import UserMapping
+    from app.domains.system.model import Dept, Role, UserRole
+    from app.domains.system.service import mask_mobile
+
+    session = get_session()
+    dept = session.get(Dept, user.main_dept_id) if user.main_dept_id else None
+    links = list(session.scalars(select(UserRole).where(UserRole.user_id == user.id, UserRole.manual_removed == 0)))
+    names = []
+    for link in links:
+        role = session.get(Role, link.role_id)
+        if role is not None:
+            names.append(role.name)
+    bound = session.scalar(select(UserMapping.id).where(UserMapping.user_id == user.id))
+    return {
+        "mobile": mask_mobile(user.mobile_enc),
+        "mainDeptName": dept.name if dept is not None else "",
+        "roleNames": names,
+        "dingtalkBound": bound is not None,
+        "hasPassword": bool(user.password_hash),
+    }
+
+
 @mark(login_only=True, summary="当前用户")
 def me():
     ctx = get_ctx()
@@ -130,6 +180,7 @@ def me():
     if not ctx.perm_codes:
         hint = "您的账号尚未分配权限，请联系管理员"
     user = get_session().get(User, ctx.user_id)
+    profile = _profile(user) if user is not None else {}
     return {
         "id": ctx.user_id,
         "username": ctx.username,
@@ -139,6 +190,7 @@ def me():
         "menus": menus,
         "hint": hint,
         "pwdResetRequired": bool(user.pwd_reset_required) if user is not None else False,
+        **profile,
     }
 
 
@@ -253,6 +305,10 @@ router.post("/login", summary="账号密码登录")(login)
 router.post("/refresh-token", summary="刷新令牌")(refresh_token)
 router.post("/logout", summary="退出登录")(logout)
 router.post("/change-password", summary="修改密码")(change_password)
+router.post("/password/change", summary="修改密码")(change_password)
+router.post("/password/set", summary="设置密码")(set_password)
+router.get("/sessions/my", summary="我的会话")(my_sessions)
+router.delete("/sessions/{sid}", summary="下线会话")(drop_session)
 router.get("/me", summary="当前用户")(me)
 router.get("/sso/dingtalk/redirect", summary="钉钉登录跳转")(sso_redirect)
 router.get("/sso/dingtalk/callback", summary="钉钉登录回调")(sso_callback)

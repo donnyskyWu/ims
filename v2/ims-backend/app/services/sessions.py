@@ -44,7 +44,8 @@ def issue_session(user, *, keep_sid: str | None = None) -> dict:
     stamp = int(now().timestamp())
     items = _load_list(user.id)
     if keep_sid is None:
-        items.append({"sid": sid, "at": stamp})
+        ip, ua = _client_meta()
+        items.append({"sid": sid, "at": stamp, "ip": ip, "ua": ua})
         while len(items) > MAX_SESSIONS:
             old = items.pop(0)
             redis.set(f"ims:sess:kick:{old['sid']}", "1", ex=8 * 86400)
@@ -67,6 +68,38 @@ def issue_session(user, *, keep_sid: str | None = None) -> dict:
         "pwdResetRequired": bool(user.pwd_reset_required),
         "sessionId": sid,
     }
+
+
+def _client_meta() -> tuple[str, str]:
+    try:
+        from app.api.runtime import current_request
+
+        request = current_request()
+    except Exception:
+        request = None
+    if request is None:
+        return "", ""
+    ip = getattr(request.state, "client_ip", "") or ""
+    ua = (request.headers.get("user-agent") or "")[:180]
+    return ip, ua
+
+
+def list_user_sessions(uid: int, current_sid: str) -> list[dict]:
+    redis = get_redis()
+    rows = []
+    for item in _load_list(uid):
+        if not redis.get(f"ims:sess:{item['sid']}"):
+            continue
+        rows.append(
+            {
+                "sid": item["sid"],
+                "loginAt": item.get("at"),
+                "ip": item.get("ip") or "",
+                "device": item.get("ua") or "",
+                "current": item["sid"] == current_sid,
+            }
+        )
+    return rows
 
 
 def revoke_sid(uid: int, sid: str) -> None:

@@ -67,7 +67,16 @@ def user_page():
     page = parse_page(dict(request.query_params), ["createTime"])
     include = request.query_params.get("includeChildren", "true")
     dept = request.query_params.get("deptId")
-    return service.user_page(page, int(dept) if dept else None, str(include).lower() != "false", request.query_params.get("keyword"), request.query_params.get("status"))
+    return service.user_page(
+        page,
+        int(dept) if dept else None,
+        str(include).lower() != "false",
+        request.query_params.get("keyword"),
+        request.query_params.get("status"),
+        request.query_params.get("username"),
+        request.query_params.get("nickname"),
+        request.query_params.get("mobile"),
+    )
 
 
 @mark(login_only=True, summary="用户简表")
@@ -106,7 +115,8 @@ def user_update(ident: int):
 
 @mark(perm="ims:system:user:delete", operate=("用户", "删除用户"), summary="删除用户")
 def user_delete():
-    return service.user_delete(int(_q("id")))
+    ident = _q("id") or (_body().get("id") if _body() else None)
+    return service.user_delete(int(ident))
 
 
 @mark(perm="ims:system:user:update", operate=("用户", "修改状态"), summary="修改用户状态")

@@ -150,6 +150,36 @@
     "strategy": "toast"
   },
   {
+    "code": 1287,
+    "msg": "请先指定主部门",
+    "strategy": "fieldError"
+  },
+  {
+    "code": 1289,
+    "msg": "套餐仍被租户使用，不可删除",
+    "strategy": "toast"
+  },
+  {
+    "code": 1290,
+    "msg": "平台租户不可停用或删除",
+    "strategy": "toast"
+  },
+  {
+    "code": 1291,
+    "msg": "非平台租户不可访问租户套餐管理",
+    "strategy": "noPermission"
+  },
+  {
+    "code": 1292,
+    "msg": "手机号已被其他用户使用",
+    "strategy": "fieldError"
+  },
+  {
+    "code": 1293,
+    "msg": "确认文字不一致，未执行危险操作",
+    "strategy": "toast"
+  },
+  {
     "code": 1500,
     "msg": "关联的数据不存在",
     "strategy": "toast"

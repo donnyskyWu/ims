@@ -6,6 +6,8 @@ import MoneyText from "./MoneyText.vue";
 import PercentText from "./PercentText.vue";
 import MaskedText from "./MaskedText.vue";
 import Perm from "./Perm.vue";
+import { useAuthStore } from "@/stores/auth";
+import { hasPerm } from "@/utils/perm";
 import { fmtTime, emptyText as textOf } from "@/utils/format";
 
 export interface ColumnAction {
@@ -13,6 +15,7 @@ export interface ColumnAction {
   perm?: string;
   danger?: boolean;
   disabled?: (row: Record<string, unknown>) => boolean;
+  show?: (row: Record<string, unknown>) => boolean;
   hint?: (row: Record<string, unknown>) => string;
   onClick: (row: Record<string, unknown>) => void;
 }
@@ -57,6 +60,12 @@ function onSort(payload: { prop: string; order: "ascending" | "descending" | nul
   emit("sort-change", { sortField: payload.prop, sortOrder: payload.order === "ascending" ? "asc" : "desc" });
 }
 
+const auth = useAuthStore();
+const shown = (action: ColumnAction, row: Record<string, unknown>) => {
+  if (action.show && !action.show(row)) return false;
+  if (!action.perm) return true;
+  return hasPerm({ permCodes: auth.permCodes, permDetails: auth.permDetails }, action.perm);
+};
 const visibleActions = (column: TableColumn) => (column.actions || []).slice(0, 3);
 const moreActions = (column: TableColumn) => (column.actions || []).slice(3);
 const showEmpty = computed(() => !props.loading && props.data.length === 0);
@@ -93,18 +102,23 @@ const showEmpty = computed(() => !props.loading && props.data.length === 0);
             <MaskedText v-else-if="column.type === 'masked'" :value="row[column.key] as string" />
             <span v-else-if="column.type === 'actions'" class="acts">
               <template v-for="action in visibleActions(column)" :key="action.label">
-                <Perm v-if="action.perm" :code="action.perm">
-                  <button :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" :disabled="action.disabled?.(row)" :title="action.hint?.(row) || ''" @click="action.onClick(row)">{{ action.label }}</button>
-                </Perm>
-                <button v-else :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" :disabled="action.disabled?.(row)" :title="action.hint?.(row) || ''" @click="action.onClick(row)">{{ action.label }}</button>
+                <template v-if="shown(action, row)">
+                  <Perm v-if="action.perm" :code="action.perm">
+                    <button :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" :disabled="action.disabled?.(row)" :title="action.hint?.(row) || ''" @click="action.onClick(row)">{{ action.label }}</button>
+                  </Perm>
+                  <button v-else :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" :disabled="action.disabled?.(row)" :title="action.hint?.(row) || ''" @click="action.onClick(row)">{{ action.label }}</button>
+                </template>
               </template>
-              <el-dropdown v-if="moreActions(column).length">
+              <el-dropdown v-if="moreActions(column).some((action) => shown(action, row))">
                 <button class="btn btn-txt" type="button">更多</button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item v-for="action in moreActions(column)" :key="action.label" @click="action.onClick(row)">
-                      {{ action.label }}
-                    </el-dropdown-item>
+                    <template v-for="action in moreActions(column)" :key="action.label">
+                      <el-dropdown-item v-if="shown(action, row)" @click="action.onClick(row)">
+                        <Perm v-if="action.perm" :code="action.perm">{{ action.label }}</Perm>
+                        <span v-else>{{ action.label }}</span>
+                      </el-dropdown-item>
+                    </template>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>

@@ -10,7 +10,12 @@ from app.services import exchange
 router = APIRouter()
 
 
-_EXPORT_PERMS = ("ims:demo:order:export", "ims:system:org-sync:export")
+_EXPORT_PERMS = (
+    "ims:demo:order:export",
+    "ims:system:org-sync:export",
+    "ims:system:user:export",
+    "ims:system:log:export",
+)
 
 
 @mark(any_perm=_EXPORT_PERMS, summary="我的导出任务")

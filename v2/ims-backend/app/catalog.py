@@ -15,12 +15,17 @@ PERM_CODES = {
     "ims:system:user:delete",
     "ims:system:user:kick",
     "ims:system:user:unlock",
+    "ims:system:user:reset-pwd",
+    "ims:system:user:export",
     "ims:system:role:query",
     "ims:system:role:create",
     "ims:system:role:update",
     "ims:system:role:delete",
     "ims:system:role:grant",
+    "ims:system:menu:query",
     "ims:system:menu:create",
+    "ims:system:menu:update",
+    "ims:system:menu:delete",
     "ims:system:dict:query",
     "ims:system:dict:create",
     "ims:system:dict:update",
@@ -39,7 +44,13 @@ PERM_CODES = {
     "ims:system:integrity:query",
     "ims:system:job:run",
     "ims:system:calendar:update",
+    "ims:system:log:query",
+    "ims:system:log:export",
+    "ims:system:notify:query",
     "ims:system:notify:resend",
+    "ims:tenant:query",
+    "ims:tenant:update",
+    "ims:tenant:package:update",
     "ims:demo:order:query",
     "ims:demo:order:create",
     "ims:demo:order:update",
@@ -64,7 +75,7 @@ PERM_CODES = {
     "ims:train:quiz:create",
 }
 
-COLOR_TYPES = {"primary", "success", "warning", "danger", "info", "neutral"}
+COLOR_TYPES = {"primary", "success", "warning", "danger", "info", "neutral", "purple", "cyan"}
 
 ANON_ROUTES = {
     ("GET", "/health"),
@@ -80,8 +91,11 @@ ANON_ROUTES = {
 
 PWD_RESET_ALLOW = {
     ("POST", "/admin-api/ims/auth/change-password"),
+    ("POST", "/admin-api/ims/auth/password/change"),
+    ("POST", "/admin-api/ims/auth/password/set"),
     ("POST", "/admin-api/ims/auth/logout"),
     ("GET", "/admin-api/ims/auth/me"),
+    ("GET", "/admin-api/ims/auth/sessions/my"),
 }
 
 # 目录菜单（无权限码）与按钮。parent 用名称，种子时解析。
@@ -98,34 +112,54 @@ MENU_TREE = [
             {"name": "刷新供给规则", "type": "BUTTON", "perm": "ims:auth:position-rule:refresh"},
         ]},
     ]},
-    {"name": "系统管理", "type": "DIR", "path": "/system", "sort": 1, "children": [
-        {"name": "部门查询", "type": "BUTTON", "perm": "ims:system:dept:query"},
-        {"name": "部门新建", "type": "BUTTON", "perm": "ims:system:dept:create"},
-        {"name": "部门修改", "type": "BUTTON", "perm": "ims:system:dept:update"},
-        {"name": "部门删除", "type": "BUTTON", "perm": "ims:system:dept:delete"},
-        {"name": "用户查询", "type": "BUTTON", "perm": "ims:system:user:query"},
-        {"name": "用户新建", "type": "BUTTON", "perm": "ims:system:user:create"},
-        {"name": "用户修改", "type": "BUTTON", "perm": "ims:system:user:update"},
-        {"name": "用户删除", "type": "BUTTON", "perm": "ims:system:user:delete"},
-        {"name": "强制下线", "type": "BUTTON", "perm": "ims:system:user:kick"},
-        {"name": "解锁账号", "type": "BUTTON", "perm": "ims:system:user:unlock"},
-        {"name": "角色查询", "type": "BUTTON", "perm": "ims:system:role:query"},
-        {"name": "角色新建", "type": "BUTTON", "perm": "ims:system:role:create"},
-        {"name": "角色修改", "type": "BUTTON", "perm": "ims:system:role:update"},
-        {"name": "角色删除", "type": "BUTTON", "perm": "ims:system:role:delete"},
-        {"name": "角色授权", "type": "BUTTON", "perm": "ims:system:role:grant"},
-        {"name": "菜单新建", "type": "BUTTON", "perm": "ims:system:menu:create"},
-        {"name": "字典查询", "type": "BUTTON", "perm": "ims:system:dict:query"},
-        {"name": "字典新建", "type": "BUTTON", "perm": "ims:system:dict:create"},
-        {"name": "字典修改", "type": "BUTTON", "perm": "ims:system:dict:update"},
-        {"name": "字典删除", "type": "BUTTON", "perm": "ims:system:dict:delete"},
-        {"name": "参数查询", "type": "BUTTON", "perm": "ims:system:param:query"},
-        {"name": "参数修改", "type": "BUTTON", "perm": "ims:system:param:update"},
+    {"name": "系统管理", "type": "DIR", "path": "/ims/system", "sort": 1, "children": [
+        {"name": "用户", "type": "MENU", "path": "/ims/system/user", "perm": "ims:system:user:query", "children": [
+            {"name": "部门查询", "type": "BUTTON", "perm": "ims:system:dept:query"},
+            {"name": "部门新建", "type": "BUTTON", "perm": "ims:system:dept:create"},
+            {"name": "部门修改", "type": "BUTTON", "perm": "ims:system:dept:update"},
+            {"name": "部门删除", "type": "BUTTON", "perm": "ims:system:dept:delete"},
+            {"name": "用户新建", "type": "BUTTON", "perm": "ims:system:user:create"},
+            {"name": "用户修改", "type": "BUTTON", "perm": "ims:system:user:update"},
+            {"name": "用户删除", "type": "BUTTON", "perm": "ims:system:user:delete"},
+            {"name": "重置密码", "type": "BUTTON", "perm": "ims:system:user:reset-pwd"},
+            {"name": "强制下线", "type": "BUTTON", "perm": "ims:system:user:kick"},
+            {"name": "解锁账号", "type": "BUTTON", "perm": "ims:system:user:unlock"},
+            {"name": "导出用户", "type": "BUTTON", "perm": "ims:system:user:export"},
+            {"name": "同步钉钉组织", "type": "BUTTON", "perm": "ims:system:org-sync:run"},
+        ]},
+        {"name": "角色", "type": "MENU", "path": "/ims/system/role", "perm": "ims:system:role:query", "children": [
+            {"name": "角色新建", "type": "BUTTON", "perm": "ims:system:role:create"},
+            {"name": "角色修改", "type": "BUTTON", "perm": "ims:system:role:update"},
+            {"name": "角色删除", "type": "BUTTON", "perm": "ims:system:role:delete"},
+            {"name": "角色授权", "type": "BUTTON", "perm": "ims:system:role:grant"},
+        ]},
+        {"name": "菜单", "type": "MENU", "path": "/ims/system/menu", "perm": "ims:system:menu:query", "children": [
+            {"name": "菜单新建", "type": "BUTTON", "perm": "ims:system:menu:create"},
+            {"name": "菜单修改", "type": "BUTTON", "perm": "ims:system:menu:update"},
+            {"name": "菜单删除", "type": "BUTTON", "perm": "ims:system:menu:delete"},
+        ]},
+        {"name": "字典", "type": "MENU", "path": "/ims/system/dict", "perm": "ims:system:dict:query", "children": [
+            {"name": "字典新建", "type": "BUTTON", "perm": "ims:system:dict:create"},
+            {"name": "字典修改", "type": "BUTTON", "perm": "ims:system:dict:update"},
+            {"name": "字典删除", "type": "BUTTON", "perm": "ims:system:dict:delete"},
+        ]},
+        {"name": "参数", "type": "MENU", "path": "/ims/system/param", "perm": "ims:system:param:query", "children": [
+            {"name": "参数修改", "type": "BUTTON", "perm": "ims:system:param:update"},
+        ]},
+        {"name": "日志", "type": "MENU", "path": "/ims/system/log", "perm": "ims:system:log:query", "children": [
+            {"name": "导出日志", "type": "BUTTON", "perm": "ims:system:log:export"},
+        ]},
+        {"name": "通知", "type": "MENU", "path": "/ims/system/notify", "perm": "ims:system:notify:query", "children": [
+            {"name": "通知补发", "type": "BUTTON", "perm": "ims:system:notify:resend"},
+        ]},
+        {"name": "租户套餐", "type": "MENU", "path": "/ims/system/tenant", "perm": "ims:tenant:query", "children": [
+            {"name": "租户维护", "type": "BUTTON", "perm": "ims:tenant:update"},
+            {"name": "套餐维护", "type": "BUTTON", "perm": "ims:tenant:package:update"},
+        ]},
         {"name": "巡检执行", "type": "BUTTON", "perm": "ims:system:integrity:run"},
         {"name": "巡检查询", "type": "BUTTON", "perm": "ims:system:integrity:query"},
         {"name": "任务执行", "type": "BUTTON", "perm": "ims:system:job:run"},
         {"name": "日历维护", "type": "BUTTON", "perm": "ims:system:calendar:update"},
-        {"name": "通知补发", "type": "BUTTON", "perm": "ims:system:notify:resend"},
     ]},
     {"name": "示例域", "type": "DIR", "path": "/demo", "sort": 2, "children": [
         {"name": "订单查询", "type": "BUTTON", "perm": "ims:demo:order:query"},
@@ -237,6 +271,8 @@ DICT_ROWS = [
     ("dict_notify_status", "FAILED", "失败", "danger", None),
     ("dict_notify_status", "SKIPPED_DUP", "去重跳过", "neutral", None),
     ("dict_notify_status", "DISABLED", "已关闭", "neutral", None),
+    ("dict_notify_channel", "SITE", "站内", "primary", None),
+    ("dict_notify_channel", "DINGTALK", "钉钉", "info", None),
     ("dict_demo_status", "ACTIVE", "有效", "success", None),
     ("dict_demo_status", "CLOSED", "关闭", "neutral", None),
     ("dict_platform_type", "DOUYIN", "抖音", "primary", "DYS"),
@@ -270,6 +306,7 @@ DICT_TYPE_NAMES = {
     "dict_login_channel": "登录渠道",
     "dict_flow_status": "流程状态",
     "dict_notify_status": "通知状态",
+    "dict_notify_channel": "通知渠道",
     "dict_demo_status": "示例状态",
     "dict_platform_type": "平台",
     "dict_msg_type": "消息类型",
