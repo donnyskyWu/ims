@@ -23,8 +23,11 @@
   --r-xs: 5px;
 
   --sider-w: 232px;
-  --sider-collapsed: 64px;
   --header-h: 56px;
+  --spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --nav-hover: rgba(0, 0, 0, 0.045);
+  --sider-shadow: 8px 0 32px rgba(0, 0, 0, 0.12);
+  --scroll-thumb: rgba(0, 0, 0, 0.15);
   --content-y: 28px;
   --content-x: 32px;
   --page-max: 1240px;

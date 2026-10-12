@@ -156,8 +156,21 @@ def _menus(session):
     for menu_id in created:
         if menu_id not in linked:
             session.add(TenantPackageMenu(package_id=1, menu_id=menu_id, tenant_id=1))
+    _paint_icons(session)
     session.flush()
     return by_perm
+
+
+def _paint_icons(session):
+    """只给还没有图标的菜单补名字，已有图标保持不动。"""
+    from app.menu_icons import icon_for
+
+    for menu in session.scalars(select(Menu)):
+        if menu.icon:
+            continue
+        found = icon_for(menu.path, menu.name)
+        if found:
+            menu.icon = found
 
 
 def _params(session):

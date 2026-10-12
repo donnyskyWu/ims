@@ -18,6 +18,7 @@ interface MenuNode {
   sort: number;
   keepAlive: number;
   seedLocked: boolean;
+  icon: string;
   children: MenuNode[];
 }
 
@@ -40,6 +41,7 @@ function nodes(raw: unknown): MenuNode[] {
       sort: Number(row.sort || 0),
       keepAlive: Number(row.keepAlive || 0),
       seedLocked: Boolean(row.seedLocked),
+      icon: String(row.icon || ""),
       children: nodes(row.children),
     };
   });
@@ -57,7 +59,7 @@ function openCreate(parent?: MenuNode) {
 
 function openEdit(node: MenuNode) {
   editing.value = node;
-  form.value = { id: node.id, name: node.name, type: node.type, permCode: node.permCode, path: node.path, sort: node.sort, visible: node.visible === 1, keepAlive: node.keepAlive === 1, icon: "" };
+  form.value = { id: node.id, name: node.name, type: node.type, permCode: node.permCode, path: node.path, sort: node.sort, visible: node.visible === 1, keepAlive: node.keepAlive === 1, icon: node.icon };
   drawer.value = true;
 }
 
