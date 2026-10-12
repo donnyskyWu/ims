@@ -1,0 +1,25 @@
+-- live_room 暂定结构。deleted 使用 TINYINT。生产环境不要执行本脚本。
+CREATE TABLE IF NOT EXISTS live_room (
+  id BIGINT NOT NULL,
+  tenant_id BIGINT NOT NULL,
+  author_id BIGINT NOT NULL,
+  nickname VARCHAR(64) NULL,
+  avatar VARCHAR(255) NULL,
+  live_id VARCHAR(64) NULL,
+  live_name VARCHAR(128) NULL,
+  cover VARCHAR(255) NULL,
+  status TINYINT NOT NULL DEFAULT 0,
+  start_time DATETIME NULL,
+  end_time DATETIME NULL,
+  screen_mode VARCHAR(32) NULL,
+  access_mode VARCHAR(32) NULL,
+  watch_url VARCHAR(512) NULL,
+  replay_url VARCHAR(512) NULL,
+  push_url VARCHAR(512) NULL,
+  viewer_count INT NOT NULL DEFAULT 0,
+  like_count INT NOT NULL DEFAULT 0,
+  reserve_count INT NOT NULL DEFAULT 0,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  create_time DATETIME NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
