@@ -18,6 +18,7 @@ class Message(AuditBase):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     route: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    source_module: Mapped[str | None] = mapped_column(String(64), nullable=True)
     read_status: Mapped[str] = mapped_column(String(16), nullable=False, default="UNREAD")
     read_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

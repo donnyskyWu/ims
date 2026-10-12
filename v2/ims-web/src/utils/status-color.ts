@@ -1,4 +1,4 @@
-const KNOWN = ["primary", "success", "warning", "danger", "neutral", "info", "purple", "yellow"] as const;
+const KNOWN = ["primary", "success", "warning", "danger", "neutral", "info", "purple", "yellow", "cyan"] as const;
 
 export type ColorType = (typeof KNOWN)[number];
 

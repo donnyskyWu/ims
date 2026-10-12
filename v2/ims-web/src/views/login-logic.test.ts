@@ -31,6 +31,10 @@ describe("login logic", () => {
     expect(landingPath([], "/ims/auth/org")).toBe("/");
   });
 
+  it("lands on the workbench when that menu exists", () => {
+    expect(landingPath([{ path: "/ims/workbench" }], "/")).toBe("/ims/workbench");
+  });
+
   it("detects the ding talk app", () => {
     expect(inDingTalk("Mozilla DingTalk")).toBe(true);
     expect(inDingTalk("Mozilla Chrome")).toBe(false);

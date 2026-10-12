@@ -3,12 +3,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, or_, select
 
 from app.core.clock import now_naive
 from app.core.context import get_ctx
 from app.core.errors import BizError
 from app.core.pagination import Page, page_result
+from app.core.serialize import parse_api_id
 from app.db.repository import assert_dict_values, validate_refs_on_write
 from app.db.session import get_session
 from app.domains.message.model import Message, NotifyRecord
@@ -16,11 +17,11 @@ from app.domains.system.model import Param
 from app.integrations.dingtalk.client import send_work_notice
 
 
-def send(receiver_id: int, title: str, content: str, event_type: str, biz_key: str) -> dict:
-    return send_notify(receiver_id, title, content, event_type, biz_key)
+def send(receiver_id: int, title: str, content: str, event_type: str, biz_key: str, *, route: str | None = None, source_module: str | None = None, msg_type: str | None = None) -> dict:
+    return send_notify(receiver_id, title, content, event_type, biz_key, route=route, source_module=source_module, msg_type=msg_type)
 
 
-def send_notify(receiver_id: int, title: str, content: str, event_type: str, biz_key: str) -> dict:
+def send_notify(receiver_id: int, title: str, content: str, event_type: str, biz_key: str, *, route: str | None = None, source_module: str | None = None, msg_type: str | None = None) -> dict:
     receiver = int(receiver_id)
     session = get_session()
     if _recent_duplicate(receiver, event_type, biz_key):
@@ -28,7 +29,15 @@ def send_notify(receiver_id: int, title: str, content: str, event_type: str, biz
         session.add(skipped)
         session.flush()
         return {"skipped": True, "status": "SKIPPED_DUP", "recordId": skipped.id, "messageId": None}
-    message = Message(receiver_id=receiver, msg_type="SYSTEM", title=title or "", content=content or "", read_status="UNREAD")
+    message = Message(
+        receiver_id=receiver,
+        msg_type=msg_type or "SYSTEM",
+        title=title or "",
+        content=content or "",
+        route=route or None,
+        source_module=source_module or "",
+        read_status="UNREAD",
+    )
     assert_dict_values(message)
     validate_refs_on_write(message)
     session.add(message)
@@ -96,7 +105,7 @@ def resend(record_id: int) -> dict:
     return {"id": row.id, "status": row.status}
 
 
-def my_page(page: Page, read_status: str = "ALL") -> dict:
+def my_page(page: Page, read_status: str = "ALL", keyword: str | None = None) -> dict:
     status = (read_status or "ALL").upper()
     if status not in {"UNREAD", "READ", "ALL"}:
         raise BizError(1001, data={"fieldErrors": [{"field": "readStatus", "message": "阅读状态不正确"}]})
@@ -105,9 +114,48 @@ def my_page(page: Page, read_status: str = "ALL") -> dict:
     stmt = select(Message).where(Message.receiver_id == uid)
     if status != "ALL":
         stmt = stmt.where(Message.read_status == status)
+    text = (keyword or "").strip()
+    if text:
+        if len(text) > 100:
+            raise BizError(1001, data={"fieldErrors": [{"field": "keyword", "message": "关键词过长"}]})
+        stmt = stmt.where(or_(Message.title.contains(text), Message.content.contains(text)))
     total = session.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = list(session.scalars(stmt.order_by(Message.id.desc()).offset((page.page_no - 1) * page.page_size).limit(page.page_size)))
+    if status == "ALL":
+        unread_first = case((Message.read_status == "UNREAD", 0), else_=1)
+        ordering = (unread_first.asc(), Message.create_time.desc(), Message.id.desc())
+    else:
+        ordering = (Message.create_time.desc(), Message.id.desc())
+    rows = list(session.scalars(stmt.order_by(*ordering).offset((page.page_no - 1) * page.page_size).limit(page.page_size)))
     return page_result([_message_view(row) for row in rows], int(total or 0), page)
+
+
+def apply_read(body: dict) -> dict:
+    if body.get("ids") is not None:
+        raw = body.get("ids")
+        if not isinstance(raw, list) or not raw:
+            raise BizError(1001, data={"fieldErrors": [{"field": "ids", "message": "请选择消息"}]})
+        if len(raw) > 100:
+            raise BizError(1001, data={"fieldErrors": [{"field": "ids", "message": "一次最多标记 100 条"}]})
+        changed = 0
+        last = None
+        for item in raw:
+            row = _own_message(parse_api_id(item))
+            if row.read_status != "READ":
+                row.read_status = "READ"
+                row.read_time = now_naive()
+                changed += 1
+            last = _message_view(row)
+        get_session().flush()
+        if len(raw) == 1:
+            return last or {}
+        return {"count": changed}
+    if body.get("id") in (None, ""):
+        raise BizError(1001, data={"fieldErrors": [{"field": "id", "message": "请选择消息"}]})
+    return mark_read(parse_api_id(body["id"]))
+
+
+def detail(message_id: int) -> dict:
+    return _message_view(_own_message(int(message_id)))
 
 
 def mark_read(message_id: int) -> dict:
@@ -208,13 +256,25 @@ def _uid() -> int:
     return int(ctx.user_id)
 
 
+def _brief(content: str | None) -> str:
+    flat = " ".join((content or "").split())
+    return flat[:80]
+
+
 def _message_view(row: Message) -> dict:
+    from app.domains.workbench.routes import module_label
+
     return {
         "id": row.id,
         "receiverId": row.receiver_id,
         "title": row.title,
         "content": row.content,
+        "summary": _brief(row.content),
         "readStatus": row.read_status,
         "readTime": row.read_time.isoformat() if row.read_time else None,
         "msgType": row.msg_type,
+        "route": row.route or "",
+        "sourceModule": row.source_module or "",
+        "sourceModuleLabel": module_label(row.source_module),
+        "createTime": row.create_time.isoformat() if row.create_time else None,
     }

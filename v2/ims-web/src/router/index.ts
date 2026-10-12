@@ -4,6 +4,27 @@ import { inDingTalk, landingPath } from "@/views/login-logic";
 
 const RESET_PATHS = new Set(["/account/password", "/password-reset"]);
 
+function placeholderRoutes(): RouteRecordRaw[] {
+  const soon = () => import("@/views/workbench/SoonView.vue");
+  const pages: Array<[string, string, string]> = [
+    ["ims/workbench/soon", "workbench-soon", "后续功能"],
+    ["ims/asset/reverse", "asset-reverse", "我名下账号"],
+    ["ims/asset/mine", "asset-mine", "我名下资产"],
+    ["ims/cert/archive", "cert-archive", "我的证件"],
+    ["ims/live/ledger", "live-ledger", "我的场次"],
+    ["ims/account/apply", "account-apply", "账号领用"],
+    ["ims/account/return", "account-return", "账号归还"],
+    ["ims/content/review", "content-review", "内容审核"],
+    ["ims/content/task", "content-task", "任务确认"],
+    ["ims/cert/expire", "cert-expire", "证件到期"],
+    ["ims/live/alarm", "live-alarm", "直播告警"],
+    ["ims/alert/realtime", "alert-realtime", "实时告警"],
+    ["ims/train/learn", "train-learn", "学习任务"],
+    ["ims/flow/mine", "flow-mine", "我的流程"],
+  ];
+  return pages.map(([path, name, title]) => ({ path, name, component: soon, meta: { menuless: true, title } }));
+}
+
 export async function createAppRouter() {
   const children: RouteRecordRaw[] = [
     { path: "", name: "home", component: () => import("@/views/HomeView.vue"), meta: { menuless: true } },
@@ -25,6 +46,10 @@ export async function createAppRouter() {
       component: () => import("@/views/auth/PositionRuleView.vue"),
       meta: { perm: "ims:auth:position-rule:query" },
     },
+    { path: "ims/workbench", name: "workbench", component: () => import("@/views/workbench/HomeView.vue"), meta: { menuless: true, title: "工作台" } },
+    { path: "ims/workbench/todos", name: "workbench-todos", component: () => import("@/views/workbench/TodosView.vue"), meta: { menuless: true, title: "待办中心" } },
+    { path: "ims/workbench/messages", name: "workbench-messages", component: () => import("@/views/workbench/MessagesView.vue"), meta: { menuless: true, title: "消息中心" } },
+    ...placeholderRoutes(),
   ];
   const routes: RouteRecordRaw[] = [
     { path: "/login", component: () => import("@/views/LoginView.vue"), meta: { public: true } },

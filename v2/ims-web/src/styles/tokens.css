@@ -61,4 +61,6 @@
   --st-purple-bg: rgba(175, 82, 218, 0.12);
   --st-yellow-fg: #a07d00;
   --st-yellow-bg: rgba(255, 204, 0, 0.12);
+  --st-cyan-fg: #0a84a8;
+  --st-cyan-bg: rgba(90, 200, 250, 0.16);
 }

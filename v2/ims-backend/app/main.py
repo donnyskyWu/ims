@@ -33,6 +33,8 @@ from app.domains.system.org_router import router as org_router
 from app.domains.system.router import router as system_router
 from app.domains.todo.router import router as todo_router
 from app.domains.export_task.router import router as export_router
+from app.domains.workbench.alias_router import router as workbench_alias_router
+from app.domains.workbench.router import router as workbench_router
 
 log = logging.getLogger("ims")
 
@@ -52,6 +54,8 @@ MOUNTS = [
     ("/admin-api/ims/system", system_ops_router),
     ("/admin-api/ims/system", org_router),
     ("/admin-api/ims/export-task", export_router),
+    ("/admin-api/ims/workbench", workbench_router),
+    ("/admin-api/ims/auth", workbench_alias_router),
 ]
 
 
