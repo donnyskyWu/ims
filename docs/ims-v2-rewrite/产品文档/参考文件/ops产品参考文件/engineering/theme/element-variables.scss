@@ -1,0 +1,144 @@
+/* Element Plus 主题变量（基于 UI 规范映射）
+ * 规范源：[开发规范/UI设计与开发规范.md § 三、色彩系统]
+ * 决策记录：[ADR-002](../../adr/ADR-002-前端规范源选择.md)
+ * 使用：在 styles/index.scss 中 @import 此文件
+ */
+
+/* 主色 */
+$--color-primary: #1890ff;
+
+/* 状态色 */
+$--color-success: #67c23a;
+$--color-warning: #e6a23c;
+$--color-danger: #f56c6c;
+$--color-info: #909399;
+
+/* 背景色 */
+$--bg-color: #ffffff;
+$--bg-color-page: #f0f2f5;
+$--bg-color-light: #fafafa;
+
+/* 边框 */
+$--border-color-base: #dcdfe6;
+$--border-color-light: #ebeef5;
+$--border-color-lighter: #ebeef5;
+
+/* 文字色 */
+$--text-color-primary: #303133;
+$--text-color-regular: #606266;
+$--text-color-secondary: #909399;
+$--text-color-placeholder: #c0c4cc;
+$--text-color-disabled: #c0c4cc;
+
+/* 字号 */
+$--font-size-extra-large: 16px;   /* 页面标题 */
+$--font-size-large: 14px;
+$--font-size-base: 14px;          /* 正文 */
+$--font-size-small: 13px;         /* 次要 */
+$--font-size-extra-small: 12px;   /* 辅助 */
+
+/* 圆角 */
+$--border-radius-base: 4px;
+$--border-radius-small: 4px;
+$--border-radius-round: 8px;      /* 卡片 */
+
+/* 阴影 */
+$--box-shadow-light: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+$--box-shadow-card: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+$--box-shadow-header: 0 2px 8px rgba(0, 0, 0, 0.08);
+
+/* 组件变量映射 */
+:root {
+  --el-color-primary: #{$--color-primary};
+  --el-color-success: #{$--color-success};
+  --el-color-warning: #{$--color-warning};
+  --el-color-danger: #{$--color-danger};
+  --el-color-info: #{$--color-info};
+
+  --el-bg-color: #{$--bg-color};
+  --el-bg-color-page: #{$--bg-color-page};
+
+  --el-text-color-primary: #{$--text-color-primary};
+  --el-text-color-regular: #{$--text-color-regular};
+  --el-text-color-secondary: #{$--text-color-secondary};
+  --el-text-color-disabled: #{$--text-color-disabled};
+
+  --el-border-color: #{$--border-color-base};
+  --el-border-color-light: #{$--border-color-light};
+  --el-border-color-lighter: #{$--border-color-lighter};
+
+  --el-border-radius-base: #{$--border-radius-base};
+  --el-box-shadow-light: #{$--box-shadow-light};
+}
+
+/* 页面布局（三栏式：左 220px，右自适应） */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  background: $--bg-color-page;
+}
+
+.app-sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 220px;
+  background: #001529;
+  z-index: 50;
+}
+
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 220px;
+  right: 0;
+  height: 64px;
+  background: #ffffff;
+  box-shadow: $--box-shadow-header;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+}
+
+.app-main {
+  margin-left: 220px;
+  padding: 24px;
+  min-height: calc(100vh - 64px);
+  background: $--bg-color-page;
+}
+
+/* 内容层级：面包屑 → 搜索 → 统计卡 → 图表 → 表格 → 分页 */
+.page-breadcrumb { margin-bottom: 16px; }
+.page-search-bar { margin-bottom: 16px; padding: 16px; background: #ffffff; border-radius: 8px; }
+.page-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.page-stats-card {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: $--box-shadow-light;
+}
+.page-chart-area { margin-bottom: 16px; }
+.page-data-table { margin-bottom: 16px; }
+.page-pagination { display: flex; justify-content: flex-end; }
+
+/* 统计卡片内部 */
+.stat-card-title {
+  font-size: 14px;
+  color: $--text-color-secondary;
+  margin-bottom: 8px;
+}
+.stat-card-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+.stat-card-value.success { color: $--color-success; }
+.stat-card-value.warning { color: $--color-warning; }
+.stat-card-value.danger { color: $--color-danger; }
+.stat-card-value.primary { color: $--color-primary; }

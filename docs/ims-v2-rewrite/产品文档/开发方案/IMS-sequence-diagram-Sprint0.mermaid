@@ -1,0 +1,127 @@
+%% ============================================================
+%% IMS Sprint 0 + AUTH/SYS 首批 —— 关键流程时序图（三段）
+%% 1) 钉钉 SSO 登录链路（AUTH-001）
+%% 2) 组织架构同步（幂等 upsert · AUTH-002）
+%% 3) 权限中间件执行链（B9：tenant → dataScope → BR-212 → fail-closed → 1504）
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    participant U as 用户浏览器
+    participant W as IMS Vue(/login)
+    participant API as cmd/api
+    participant DT as 钉钉 OAuth2
+    participant FB as Football WebAPI
+    participant R as Redis
+
+    U->>W: 访问任意路由（未登录）
+    W->>API: GET /auth/sso/redirect
+    API->>R: SET sso:state:{state}=1 EX 300
+    API-->>W: {authorizeUrl, state}
+    W-->>U: 展示二维码 / H5 免登
+    U->>DT: 扫码/确认授权
+    DT-->>W: 回跳 authCode + state
+    W->>API: POST /auth/sso/callback {authCode,state}
+    API->>R: 校验 state（5min，防 CSRF）
+    alt state 过期/无效
+        API-->>W: code=1002 会话无效
+    end
+    API->>DT: 用 authCode 换 dingtalk 用户信息
+    alt 钉钉超时/限流
+        API-->>W: code=5003 钉钉暂不可用
+    end
+    Note over API: BR-308 绑手机：mobile 命中 system_users.id
+    API->>FB: GET /admin-api/system/user/simple-list（mobile 匹配）
+    alt 无手机号 / 匹配失败
+        API->>API: 触发单用户即时同步（V1-A5）；仍失败
+        API-->>W: code=1006 钉钉同步失败（不签发 Token）
+    end
+    alt 用户离职冻结
+        API-->>W: 不签发 Token（ORG-R4）
+    end
+    API->>R: 并发会话计数（>3 → ZSET 踢最早，1003 提示）
+    API->>R: 写会话/黑名单
+    API->>API: 校验失败 5 次锁 15min（AUTH-R4）
+    API-->>W: {accessToken(2h), refreshToken(7d), userProfile}
+    W->>W: 存 Token + Pinia，跳 /ims/workbench
+    Note over API: 全链路埋点（BR-002 成功率 > 99.5%）
+
+%% ---------- 2. 组织架构同步 ----------
+sequenceDiagram
+    autonumber
+    participant DT as 钉钉事件订阅
+    participant API as cmd/api (/auth/org/event)
+    participant OB as Outbox(ims_auth_org_event)
+    participant WK as cmd/worker
+    participant DB as IMSDB
+    participant PS as PositionService
+    participant TD as 待办中心(R1)
+
+    DT->>API: POST /callback/dingtalk/event（加密原文）
+    API->>API: 验签 + 解密 + 解析
+    API->>OB: 幂等键 eventId+eventType 去重插入（唯一键）
+    API-->>DT: 200 立即 ACK（P95 < 500ms，V1-A1）
+    Note over WK: 异步消费
+    WK->>OB: 拉取 PENDING 事件
+    WK->>DB: 幂等 upsert ims_auth_user_mapping（dingtalkUserId 唯一）
+    alt hire / dept_change
+        WK->>PS: 触发岗位→角色供给
+        PS->>DB: 查询该钉钉岗位绑定角色
+        alt 无匹配角色
+            PS->>DB: 自动建角色(source=DINGTALK_AUTO,status=PENDING_CONFIG,空权限)
+            PS->>TD: 推 R1 待办「新岗位 X 已自动建角色，请配置权限」(G4)
+        end
+        PS->>DB: 授予角色（并集，G6 幂等不覆盖已配置）
+    else transfer
+        WK->>DB: 更新部门，启动 24h 权限缓冲（ORG-R3）
+    else resign
+        WK->>DB: 先冻结（ORG-R4 / BR-015 归还闭环前冻结）
+    end
+    alt 处理失败
+        WK->>OB: retry_count++，next_retry 指数退避 1m/5m/15m/1h（≤16 次）
+        alt 超过 16 次
+            WK->>OB: dead_letter=true + 告警（V1-A3）
+        end
+    else 成功
+        WK->>OB: sync_status=SUCCESS
+    end
+    Note over WK: 每日 02:00 全量对账；连续 2 次失败 → P1 告警（V1-A4）
+
+%% ---------- 3. 权限中间件执行链 ----------
+sequenceDiagram
+    autonumber
+    participant C as 前端 Axios
+    participant MW as Middleware Chain
+    participant PR as PermissionResolver
+    participant SR as ScopeRegistry
+    participant H as Handler
+    participant RP as Repository(sqlc)
+    participant DB as MySQL
+
+    C->>MW: 请求（Bearer Token）
+    MW->>MW: Recover → RequestLog → CORS
+    MW->>MW: JWTAuth：解析 JWT → 构建 LoginContext(userId,tenantId,deptIds,roleIds)
+    MW->>MW: TenantInject：ctx.tenantId（V1 恒 0；请求体不可覆盖）
+    MW->>PR: resolve(ctx)
+    PR->>PR: 取角色并集 → 求 maxScope（ENABLED 角色）
+    alt 无角色 / 全部 PENDING_CONFIG / 空权限 / 上下文缺失
+        PR-->>MW: fail-closed → 拒绝（空权限≠放行，B9-4）
+        MW-->>C: 403 / 1008
+    end
+    PR->>SR: lookup(目标表)
+    SR-->>PR: FilterSpec（过滤列：tenant_id/dept_id/ip_group_id/creator_id）
+    PR->>PR: 生成 RowScope（按 dataScope 选一条谓词）
+    Note over PR: ALL=无；DEPT=dept_id IN(ctx.deptIds 不含下级)；<br/>IP_GROUP=ip_group_id IN(ctx.ipGroupIds)；SELF=creator_id=ctx.userId
+    alt 含发布态/分享链接数据（BR-212）
+        PR->>PR: RowScope' = 创建者范围 ∩ 查看者范围（B9-3）
+    end
+    PR-->>MW: ScopePredicate{SQLFragment, Args}
+    MW->>H: 注入 ctx + ScopePredicate
+    H->>RP: 查询（传入 tenantId + ScopePredicate）
+    RP->>DB: SELECT ... WHERE tenant_id=? AND (scope 谓词) ORDER BY ... LIMIT ?
+    DB-->>RP: rows
+    alt 目标资源 tenant_id ≠ ctx.tenantId
+        RP-->>MW: 跨租户 → 1504（不泄露存在性，B9-5）
+    end
+    RP-->>H: rows
+    H-->>C: CommonResult<PageResult<T>{list,total,pageNo,pageSize}>
