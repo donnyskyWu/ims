@@ -37,10 +37,6 @@ def _files(root: Path, suffixes: set[str] | None = None):
         yield path
 
 
-def _under_seed(path: Path, root: Path) -> bool:
-    return _rel(path, root).startswith("tools/seed/")
-
-
 def _is_router(path: Path) -> bool:
     return path.suffix == ".py" and (path.name == "router.py" or path.name.endswith("_router.py"))
 
@@ -150,16 +146,30 @@ def check_ops_http(root) -> list[str]:
 
 def check_vendor_hardcode(root) -> list[str]:
     root = _root(root)
+    allowed = "tools/seed/train_ai_default.py"
     problems = []
     for path in _files(root, _TEXT_SUFFIXES):
-        if _under_seed(path, root):
+        rel = _rel(path, root)
+        if rel == allowed:
             continue
         text = _read(path)
-        rel = _rel(path, root)
         if VENDOR_HOST in text:
             problems.append(f"{rel}: 禁止硬编码 {VENDOR_HOST}")
         if VENDOR_MODEL in text:
             problems.append(f"{rel}: 禁止硬编码 {VENDOR_MODEL}")
+    return problems
+
+
+def check_train_ai_isolation(root) -> list[str]:
+    root = _root(root)
+    base = root / "app" / "integrations" / "train_ai"
+    problems = []
+    if not base.is_dir():
+        return problems
+    for path in base.rglob("*.py"):
+        text = _read(path)
+        if "air_ai" in text:
+            problems.append(f"{_rel(path, root)}: 培训 AI 不得引用内容 AI")
     return problems
 
 
@@ -214,6 +224,7 @@ def scan(root, *, summary: bool = False) -> list[str]:
     problems += check_manual_tenant(root)
     problems += check_ops_http(root)
     problems += check_vendor_hardcode(root)
+    problems += check_train_ai_isolation(root)
     problems += check_frontend_paths(root)
     problems += check_seed_apply_call(root)
     if summary:

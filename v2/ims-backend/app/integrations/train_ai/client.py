@@ -1,42 +1,28 @@
-"""培训出题。连接参数只从系统参数读取，调用日志不记录密钥。"""
+"""培训出题骨架。默认 Mock，不读系统参数。正式配置在 B10。"""
 from __future__ import annotations
 
 import json
 import time
 
-from sqlalchemy import select
-
 from app.core.context import get_ctx
 from app.core.errors import BizError
 from app.db.session import session_scope
-from app.domains.system.model import Param, TrainAiCallLog
+from app.domains.system.model import TrainAiCallLog
 
-PARAM_KEYS = (
-    "train_ai.enabled",
-    "train_ai.mode",
-    "train_ai.api_key",
-    "train_ai.base_url",
-    "train_ai.model",
-    "train_ai.timeout_ms",
-    "train_ai.max_questions",
-)
+DEFAULT_CONFIG = {
+    "mode": "mock",
+    "api_key": "",
+    "base_url": "",
+    "model": "",
+    "timeout_ms": 60000,
+    "max_questions": 20,
+}
+CONFIG_KEYS = tuple(DEFAULT_CONFIG)
 
 mock_questions: list[dict] = []
 
 _SINGLE = {"SINGLE", "SINGLE_CHOICE"}
 _JUDGE = {"JUDGE", "TRUE_FALSE", "BOOLEAN"}
-
-
-def load_params(loader=None) -> dict:
-    if loader is not None:
-        return {str(key): value for key, value in dict(loader() if callable(loader) else loader).items()}
-    with session_scope() as session:
-        rows = session.scalars(select(Param).where(Param.param_key.in_(PARAM_KEYS))).all()
-        return {row.param_key: row.value for row in rows}
-
-
-def _enabled(params: dict) -> bool:
-    return str(params.get("train_ai.enabled") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _has_answer(item) -> bool:
@@ -53,7 +39,7 @@ def _has_answer(item) -> bool:
 
 def _limit(params: dict) -> int:
     try:
-        value = int(params.get("train_ai.max_questions") or 20)
+        value = int(params.get("max_questions") or 20)
     except (TypeError, ValueError):
         return 20
     return value if value > 0 else 20
@@ -101,10 +87,10 @@ def _parse_questions(content: str):
 def _call_real(params: dict, single_count: int, judge_count: int):
     import httpx
 
-    key = str(params.get("train_ai.api_key") or "").strip()
-    base = str(params.get("train_ai.base_url") or "").strip().rstrip("/")
-    model = str(params.get("train_ai.model") or "")
-    timeout_ms = int(params.get("train_ai.timeout_ms") or 60000)
+    key = str(params.get("api_key") or "").strip()
+    base = str(params.get("base_url") or "").strip().rstrip("/")
+    model = str(params.get("model") or "")
+    timeout_ms = int(params.get("timeout_ms") or 60000)
     url = base if base.endswith("/chat/completions") else f"{base}/chat/completions"
     payload = {
         "model": model,
@@ -151,33 +137,65 @@ def _fail(material_id, started: float, code: int):
     raise BizError(code)
 
 
-def generate_quiz(material_published, single_count, judge_count, material_id=None, loader=None):
-    started = time.perf_counter()
-    if not material_published:
-        _fail(material_id, started, 1101)
-    params = load_params(loader)
-    if not _enabled(params):
-        _fail(material_id, started, 1109)
-    mode = str(params.get("train_ai.mode") or "").strip().lower()
-    if mode == "real":
-        key = str(params.get("train_ai.api_key") or "").strip()
-        base = str(params.get("train_ai.base_url") or "").strip()
-        if not key or not base:
-            _fail(material_id, started, 1109)
-        try:
-            raw = _call_real(params, single_count, judge_count)
-        except Exception as exc:
-            import httpx
+class TrainQuizAiClient:
+    """默认 Mock。Real 在密钥为空时返回 1109，且不发请求。"""
 
-            code = 1107 if isinstance(exc, httpx.TimeoutException) else 1106
-            _fail(material_id, started, code)
-    elif mode == "mock":
-        raw = list(mock_questions)
-    else:
-        _fail(material_id, started, 1109)
-    chosen = _select_questions(raw, single_count, judge_count, _limit(params))
-    if not chosen:
-        _fail(material_id, started, 1108)
-    cost = int((time.perf_counter() - started) * 1000)
-    _log(material_id, len(chosen), cost, 0)
-    return chosen
+    def __init__(self, config: dict | None = None):
+        self.config = dict(DEFAULT_CONFIG)
+        if config:
+            self.configure(config)
+
+    def configure(self, values: dict) -> None:
+        for key, value in values.items():
+            name = str(key).removeprefix("train_ai.")
+            if name in CONFIG_KEYS:
+                self.config[name] = value
+
+    def generate(self, material_published, single_count, judge_count, material_id=None):
+        started = time.perf_counter()
+        if not material_published:
+            _fail(material_id, started, 1101)
+        params = self.config
+        mode = str(params.get("mode") or "").strip().lower()
+        if mode == "real":
+            key = str(params.get("api_key") or "").strip()
+            base = str(params.get("base_url") or "").strip()
+            if not key or not base:
+                _fail(material_id, started, 1109)
+            try:
+                raw = _call_real(params, single_count, judge_count)
+            except Exception as exc:
+                import httpx
+
+                code = 1107 if isinstance(exc, httpx.TimeoutException) else 1106
+                _fail(material_id, started, code)
+        elif mode == "mock":
+            raw = list(mock_questions)
+        else:
+            _fail(material_id, started, 1109)
+        chosen = _select_questions(raw, single_count, judge_count, _limit(params))
+        if not chosen:
+            _fail(material_id, started, 1108)
+        cost = int((time.perf_counter() - started) * 1000)
+        _log(material_id, len(chosen), cost, 0)
+        return chosen
+
+
+_client = TrainQuizAiClient()
+
+
+def reset_config() -> None:
+    global _client
+    _client = TrainQuizAiClient()
+
+
+def configure(**values) -> None:
+    _client.configure(values)
+
+
+def generate_quiz(material_published, single_count, judge_count, material_id=None, loader=None):
+    client = _client
+    if loader is not None:
+        raw = loader() if callable(loader) else loader
+        client = TrainQuizAiClient(dict(raw))
+    return client.generate(material_published, single_count, judge_count, material_id)

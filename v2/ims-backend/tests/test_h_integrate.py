@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, select, text
 from app.core.config import get_settings, load_settings
 from app.core.context import system_context, use_context
 from app.core.error_codes import ErrorEntry
-from app.core.errors import BizError
+from app.core.errors import BizError, StartupError
 from app.db.session import session_scope
 from app.domains.system.model import Dept, MigrationPending, Param, TrainAiCallLog, User
 from app.integrations.base import SelectOnlyError
@@ -30,7 +30,7 @@ from app.integrations.football_live.reader import (
     room_exists_for_bind,
 )
 from app.integrations.football_live.schema_check import check_schema
-from app.integrations.train_ai.client import generate_quiz, mock_questions
+from app.integrations.train_ai.client import TrainQuizAiClient, configure, generate_quiz, mock_questions, reset_config
 from tools.export_error_codes import export_error_codes
 from tools.migrate.maps import map_tenant
 from tools.migrate.run import migrate_sample
@@ -43,15 +43,10 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(autouse=True)
 def _clear_train_mock():
     mock_questions.clear()
+    reset_config()
     yield
     mock_questions.clear()
-
-
-def _set_param(key: str, value: str) -> None:
-    with session_scope(commit=True) as session:
-        row = session.scalar(select(Param).where(Param.param_key == key))
-        assert row is not None
-        row.value = value
+    reset_config()
 
 
 def test_ut_h06_tenant_map_and_deleted_flag():
@@ -73,10 +68,38 @@ def test_ut_h06_tenant_map_and_deleted_flag():
     assert get_room(1, 42, settings=settings, executor=executor) is None
     assert seen["params"] == (42, 9)
     assert "tenant_id=?" in seen["sql"]
+    assert "deleted=0" in seen["sql"]
+    assert "avatar_url" in seen["sql"]
+    assert "screen_type" in seen["sql"]
+    assert "watch_type" in seen["sql"]
+    assert "view_url" in seen["sql"]
+    assert "playback_url" in seen["sql"]
+    assert "reserve_count" in seen["sql"]
+    assert "screen_mode" not in seen["sql"]
+    assert "watch_url" not in seen["sql"]
     assert read_deleted(b"\x01") == 1
     assert read_deleted(b"\x00") == 0
     assert read_deleted(1) == 1
     assert read_deleted(0) == 0
+
+
+def test_sys_param_secret_is_attendance_not_train():
+    from app.domains.system.service import param_list, param_update
+
+    with session_scope(commit=True) as session:
+        keys = list(session.scalars(select(Param.param_key)))
+        assert not any(str(key).startswith("train_ai.") for key in keys)
+        row = session.scalar(select(Param).where(Param.param_key == "dingtalk_attendance.app_secret"))
+        assert row is not None
+        assert row.value_type == "SECRET"
+        assert row.group_name == "钉钉考勤"
+        assert row.value in ("", None)
+        row.value = "stored-cipher"
+        listed = {item["paramKey"]: item for item in param_list()}
+        assert listed["dingtalk_attendance.app_secret"]["value"] == "******"
+        assert "培训" not in listed["dingtalk_attendance.app_secret"]["groupName"]
+        param_update("dingtalk_attendance.app_secret", "")
+        assert row.value == "stored-cipher"
 
 
 def test_map_tenant_cases():
@@ -97,20 +120,30 @@ def test_map_tenant_cases():
 
 def test_static_vendor_and_seed_url(tmp_path):
     host = "dashscope" + ".aliyuncs.com"
+    model = "qwen3" + ".8-max"
     root = tmp_path
     app = root / "app"
     app.mkdir()
     (app / "bad.py").write_text(f"url = 'https://{host}'\n", encoding="utf-8")
     seed = root / "tools" / "seed"
     seed.mkdir(parents=True)
-    (seed / "apply.py").write_text(f"URL = 'https://{host}'\n", encoding="utf-8")
+    (seed / "apply.py").write_text(f"URL = 'https://{host}'\nMODEL = '{model}'\n", encoding="utf-8")
+    (seed / "train_ai_default.py").write_text(f"URL = 'https://{host}'\nMODEL = '{model}'\n", encoding="utf-8")
     problems = scan(root)
     assert any(host in item and "app/bad.py" in item for item in problems)
-    assert not any("tools/seed/apply.py" in item for item in problems)
-    from tools.seed.apply import TRAIN_BASE_URL, TRAIN_MODEL
+    assert any(host in item and "tools/seed/apply.py" in item for item in problems)
+    assert not any("train_ai_default.py" in item for item in problems)
+    seed_text = (ROOT / "tools" / "seed" / "apply.py").read_text(encoding="utf-8")
+    default_text = (ROOT / "tools" / "seed" / "train_ai_default.py").read_text(encoding="utf-8")
+    assert host not in seed_text and model not in seed_text
+    assert "train_ai." not in seed_text
+    assert host in default_text and model in default_text
+    from tools.seed.train_ai_default import fill_missing
 
-    assert host in TRAIN_BASE_URL
-    assert ("qwen3" + ".8-max") in TRAIN_MODEL
+    kept = fill_missing({"base_url": "http://127.0.0.1:9", "model": ""})
+    assert kept["base_url"] == "http://127.0.0.1:9"
+    assert model in kept["model"]
+    assert fill_missing({"api_key": "already"})["api_key"] == "already"
 
 
 def test_train_disabled_mock_and_empty_key(monkeypatch):
@@ -132,22 +165,14 @@ def test_train_disabled_mock_and_empty_key(monkeypatch):
             raise AssertionError("httpx")
 
     monkeypatch.setattr(httpx, "Client", FakeClient)
-    _set_param("train_ai.enabled", "false")
-    with pytest.raises(BizError) as disabled:
-        generate_quiz(True, 1, 1)
-    assert disabled.value.code == 1109
-    assert calls["n"] == 0
-
-    _set_param("train_ai.enabled", "true")
-    _set_param("train_ai.mode", "real")
-    _set_param("train_ai.api_key", "")
+    assert TrainQuizAiClient().config["mode"] == "mock"
+    configure(mode="real", api_key="", base_url="http://127.0.0.1:9")
     with pytest.raises(BizError) as empty_key:
         generate_quiz(True, 1, 1)
     assert empty_key.value.code == 1109
     assert calls["n"] == 0
 
-    _set_param("train_ai.mode", "mock")
-    _set_param("train_ai.api_key", "unit-test-key")
+    configure(mode="mock", api_key="unit-test-key")
     mock_questions.append({"type": "SINGLE", "stem": "一加一", "answer": "2"})
     mock_questions.append({"type": "JUDGE", "stem": "天空是蓝的", "answer": True})
     mock_questions.append({"type": "SINGLE", "stem": "缺答案"})
@@ -172,9 +197,7 @@ def test_train_disabled_mock_and_empty_key(monkeypatch):
 
 
 def test_train_timeout_and_call_fail(monkeypatch):
-    _set_param("train_ai.mode", "real")
-    _set_param("train_ai.api_key", "unit-test-key")
-    _set_param("train_ai.base_url", "http://127.0.0.1:9")
+    configure(mode="real", api_key="unit-test-key", base_url="http://127.0.0.1:9")
 
     class TimeoutClient:
         def __init__(self, *args, **kwargs):
@@ -220,8 +243,18 @@ def test_football_stub_duration_and_select_only():
     assert (count, minutes) == (5, 240)
     room = get_room(1, 9101)
     assert room["tenant_id"] == 1
+    assert room["avatar_url"].endswith("/avatar/stub")
+    assert room["screen_type"] == 1
+    assert room["watch_type"] == 1
+    assert room["view_url"] == "http://127.0.0.1/watch/9101"
+    assert room["reserve_count"] == 0
+    assert room["deleted"] == 0
+    assert room["bind_mobile_password"] == "******"
+    assert room["login_pwd"] == "******"
     assert str(room["live_name"]).startswith("[STUB]")
+    assert get_room(1, 9103) is None
     assert room_exists_for_bind(1, 9101) is True
+    assert room_exists_for_bind(1, 9103) is False
     assert room_exists_for_bind(2, 9101) is False
     cloned = load_settings("test")
     cloned.football_live.tenant_map = {"1": 9}
@@ -230,6 +263,59 @@ def test_football_stub_duration_and_select_only():
         with football_engine().connect() as conn:
             conn.exec_driver_sql("DELETE FROM live_room WHERE id=%s", (9101,))
     assert get_room(1, 9101) is not None
+
+
+def test_ut_h06_06_schema_mismatch_refuses_startup():
+    from tools.football_stub.seed import _writer_engine, seed
+
+    engine = _writer_engine()
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE live_room DROP COLUMN cover"))
+        with pytest.raises(StartupError, match="cover"):
+            create_app_for_schema()
+        seed()
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE live_room MODIFY `status` varchar(32) NULL"))
+        with pytest.raises(StartupError, match="status"):
+            create_app_for_schema()
+    finally:
+        seed()
+        from app.integrations.football_live.reader import _engines
+
+        _engines.clear()
+
+
+def create_app_for_schema():
+    from app.main import create_app
+
+    return create_app(load_settings("test"))
+
+
+def test_ut_h06_07_seed_twice_keeps_eight_scenarios():
+    from tools.football_stub.seed import FAKE_BIND_PASSWORD, FAKE_LOGIN_PASSWORD, MISSING_ROOM_ID, SCENARIOS, seed
+
+    assert len({row["live_name"] for row in SCENARIOS}) == 8
+    assert {row["status"] for row in SCENARIOS} == {1, 2, 3, 4, 5}
+    assert seed() == 8
+    assert seed() == 8
+    with football_engine().connect() as conn:
+        count = conn.exec_driver_sql("SELECT COUNT(*) FROM live_room").scalar()
+        names = [row[0] for row in conn.exec_driver_sql("SELECT live_name FROM live_room ORDER BY id").all()]
+        secrets = conn.exec_driver_sql(
+            "SELECT bind_mobile_password, login_pwd FROM live_room WHERE id=%s",
+            (9101,),
+        ).one()
+    assert count == 8
+    assert names == [row["live_name"] for row in SCENARIOS]
+    assert all(str(name).startswith("[STUB]") for name in names)
+    assert secrets[0] == FAKE_BIND_PASSWORD
+    assert secrets[1] == FAKE_LOGIN_PASSWORD
+    shown = get_room(1, 9101)
+    assert shown["bind_mobile_password"] == "******"
+    assert shown["login_pwd"] == "******"
+    assert shown["bind_mobile_password"] != secrets[0]
+    assert get_room(1, MISSING_ROOM_ID) is None
 
 
 def test_stub_scripts_refuse_prod():
