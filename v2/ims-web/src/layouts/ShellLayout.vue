@@ -69,7 +69,7 @@ function active(node: MenuNode): boolean {
           type="button"
           class="item"
           :class="{ on: active(item) || item.children.some((child) => active(child)) }"
-          @click="item.children.length ? (openIds = openIds.includes(item.id) ? openIds.filter((id) => id !== item.id) : [...openIds, item.id]) : go(item)"
+          @click="item.path ? go(item) : (openIds = openIds.includes(item.id) ? openIds.filter((id) => id !== item.id) : [...openIds, item.id])"
         >
           {{ collapsed ? item.name.slice(0, 1) : item.name }}
         </button>
@@ -93,7 +93,7 @@ function active(node: MenuNode): boolean {
           <button class="btn btn-txt" type="button" @click="devTodo ? openTodo() : undefined">待办</button>
           <details>
             <summary>{{ auth.user?.nickname || "账号" }}</summary>
-            <button type="button" @click="router.push('/account/password')">个人中心</button>
+            <button type="button" @click="router.push('/password-reset')">修改密码</button>
             <button type="button" @click="logout">退出登录</button>
           </details>
         </div>

@@ -114,6 +114,7 @@ def _menu_tree(ctx) -> list[dict]:
             "name": menu.name,
             "permCode": menu.perm_code,
             "type": menu.type,
+            "path": menu.path,
             "children": [node(child) for child in sorted(by_parent.get(menu.id, []), key=lambda item: item.sort)],
         }
 
@@ -128,6 +129,7 @@ def me():
     hint = None
     if not ctx.perm_codes:
         hint = "您的账号尚未分配权限，请联系管理员"
+    user = get_session().get(User, ctx.user_id)
     return {
         "id": ctx.user_id,
         "username": ctx.username,
@@ -136,6 +138,7 @@ def me():
         "dataScopeText": _scope_text(ctx),
         "menus": menus,
         "hint": hint,
+        "pwdResetRequired": bool(user.pwd_reset_required) if user is not None else False,
     }
 
 
@@ -154,35 +157,94 @@ def sso_redirect():
     return RedirectResponse(url, status_code=302)
 
 
+def _sso_fail(exc: BizError) -> RedirectResponse:
+    code = int(exc.code)
+    allowed = {1002, 1006, 1008, 1216, 1217, 5003}
+    shown = code if code in allowed else 0
+    query = f"ssoError={shown or code}"
+    remain = (exc.data or {}).get("remainMinutes") if isinstance(exc.data, dict) else None
+    if remain:
+        query += f"&remainMinutes={remain}"
+    return RedirectResponse(f"/login?{query}", status_code=302)
+
+
+def _safe_redirect(target: str | None) -> str:
+    text = target or "/"
+    if not text.startswith("/") or text.startswith("//"):
+        return "/"
+    return text
+
+
+@mark(anonymous=True, summary="登录方式")
+def login_options():
+    from app.integrations.dingtalk.client import dingtalk_enabled
+
+    settings = get_settings()
+    ding = settings.dingtalk or {}
+    enabled = dingtalk_enabled()
+    return {
+        "dingtalkEnabled": enabled,
+        "corpId": ding.get("corp_id") or "" if enabled else "",
+        "clientId": ding.get("app_key") or "" if enabled else "",
+    }
+
+
+@mark(anonymous=True, summary="钉钉扫码参数")
+def authorize_params():
+    from app.integrations.dingtalk.client import dingtalk_enabled
+
+    if not dingtalk_enabled():
+        raise BizError(1008, "钉钉登录未开启")
+    request = current_request()
+    target = _safe_redirect(request.query_params.get("redirect"))
+    state = secrets.token_hex(16)
+    payload = {"redirect": target, "exp": int(now().timestamp()) + 300}
+    get_redis().set(f"ims:sso:{state}", json.dumps(payload), ex=300)
+    settings = get_settings()
+    app_key = (settings.dingtalk or {}).get("app_key") or "test"
+    return {
+        "clientId": app_key,
+        "redirectUri": "/admin-api/ims/auth/sso/dingtalk/callback",
+        "state": state,
+        "scope": "openid",
+    }
+
+
+@mark(anonymous=True, summary="钉钉免登")
+def h5_login():
+    from app.integrations.dingtalk.client import dingtalk_enabled, get_user_by_code
+
+    if not dingtalk_enabled():
+        raise BizError(1008, "钉钉登录未开启")
+    body = _body()
+    code = str(body.get("authCode") or "")
+    if not code:
+        raise BizError(1001, data={"fieldErrors": [{"field": "authCode", "message": "缺少免登码"}]})
+    try:
+        profile = get_user_by_code(code)
+        user = auth_svc.resolve_ding_user(profile, "DINGTALK_H5")
+    except BizError:
+        raise
+    return issue_session(user)
+
+
 @mark(anonymous=True, summary="钉钉登录回调")
 def sso_callback():
     request = current_request()
     state = request.query_params.get("state") or ""
-    raw = get_redis().getdel(f"ims:sso:{state}")
-    if not raw:
-        raise BizError(1002)
-    saved = json.loads(raw)
-    if int(now().timestamp()) > int(saved["exp"]):
-        raise BizError(1002)
-    profile = get_user_by_code(request.query_params.get("authCode") or request.query_params.get("code") or "")
-    userid = profile.get("userid")
-    session = get_session()
-    mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == userid).execution_options(skip_tenant=True))
-    user = session.get(User, mapping.user_id) if mapping else None
-    if user is None and profile.get("mobile"):
-        user = auth_svc.find_by_mobile_hash(profile["mobile"], 1)
-        if user is not None:
-            session.add(UserMapping(user_id=user.id, dingtalk_user_id=userid, tenant_id=user.tenant_id))
-            session.flush()
-    if user is None:
-        auth_svc._log(userid or "", None, "UNMAPPED", "DINGTALK")
-        raise BizError(1217)
-    if user.status in {"FROZEN", "RESIGNED"}:
-        auth_svc._log(user.username, user.id, "DISABLED", "DINGTALK")
-        raise BizError(1216)  # 钉钉登录同样不能只进工作台
-    auth_svc._log(user.username, user.id, "SUCCESS", "DINGTALK")
+    try:
+        raw = get_redis().getdel(f"ims:sso:{state}")
+        if not raw:
+            raise BizError(1002)
+        saved = json.loads(raw)
+        if int(now().timestamp()) > int(saved["exp"]):
+            raise BizError(1002)
+        profile = get_user_by_code(request.query_params.get("authCode") or request.query_params.get("code") or "")
+        user = auth_svc.resolve_ding_user(profile, "DINGTALK_QR")
+    except BizError as exc:
+        return _sso_fail(exc)
     tokens = issue_session(user)
-    redirect = saved.get("redirect") or "/"
+    redirect = _safe_redirect(saved.get("redirect"))
     fragment = f"/sso-callback#accessToken={tokens['accessToken']}&refreshToken={tokens['refreshToken']}&redirect={redirect}"
     return RedirectResponse(fragment, status_code=302)
 
@@ -194,3 +256,6 @@ router.post("/change-password", summary="修改密码")(change_password)
 router.get("/me", summary="当前用户")(me)
 router.get("/sso/dingtalk/redirect", summary="钉钉登录跳转")(sso_redirect)
 router.get("/sso/dingtalk/callback", summary="钉钉登录回调")(sso_callback)
+router.get("/login-options", summary="登录方式")(login_options)
+router.get("/sso/dingtalk/authorize-params", summary="钉钉扫码参数")(authorize_params)
+router.post("/sso/dingtalk/h5-login", summary="钉钉免登")(h5_login)

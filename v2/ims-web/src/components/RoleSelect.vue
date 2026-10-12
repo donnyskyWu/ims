@@ -4,7 +4,7 @@ import { call } from "@/api/generated/endpoints";
 import { useDictStore } from "@/stores/dict";
 
 const model = defineModel<string | string[] | null>({ default: null });
-const props = withDefaults(defineProps<{ multiple?: boolean }>(), { multiple: false });
+const props = withDefaults(defineProps<{ multiple?: boolean; allowInactive?: boolean }>(), { multiple: false, allowInactive: false });
 const dict = useDictStore();
 const options = ref<{ id: string; name: string; source: string; status: string }[]>([]);
 
@@ -21,6 +21,7 @@ onMounted(async () => {
 });
 
 function blocked(row: { status: string; name: string }) {
+  if (props.allowInactive) return false;
   return row.status === "DISABLED" || row.status === "PENDING_CONFIG" || row.name.includes("待配置");
 }
 </script>

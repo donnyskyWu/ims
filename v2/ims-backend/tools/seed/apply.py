@@ -95,22 +95,48 @@ def _dicts(session):
 
 def _menus(session):
     by_perm = {}
-    for item in MENU_TREE:
-        parent = session.scalar(select(Menu).where(Menu.name == item["name"], Menu.parent_id == 0, Menu.type == "DIR"))
-        if parent is None:
-            parent = Menu(name=item["name"], type="DIR", path=item.get("path"), sort=item.get("sort") or 0, status="ENABLED", tenant_id=1, parent_id=0)
-            session.add(parent)
+    created = []
+
+    def ensure(name, parent_id, type_, perm, path, sort):
+        row = None
+        if perm:
+            row = session.scalar(select(Menu).where(Menu.perm_code == perm))
+        if row is None:
+            row = session.scalar(select(Menu).where(Menu.name == name, Menu.parent_id == parent_id, Menu.type == type_))
+        if row is None:
+            row = Menu(
+                name=name,
+                type=type_,
+                perm_code=perm,
+                path=path,
+                parent_id=parent_id,
+                sort=sort,
+                status="ENABLED",
+                tenant_id=1,
+            )
+            session.add(row)
             session.flush()
-        for child in item["children"]:
-            row = session.scalar(select(Menu).where(Menu.perm_code == child["perm"]))
-            if row is None:
-                row = Menu(name=child["name"], type="BUTTON", perm_code=child["perm"], parent_id=parent.id, status="ENABLED", tenant_id=1)
-                session.add(row)
-                session.flush()
-            by_perm[child["perm"]] = row
-    if session.scalar(select(TenantPackageMenu).where(TenantPackageMenu.package_id == 1)) is None:
-        for menu in session.scalars(select(Menu)):
-            session.add(TenantPackageMenu(package_id=1, menu_id=menu.id, tenant_id=1))
+            created.append(row.id)
+        if perm:
+            by_perm[perm] = row
+        return row
+
+    def walk(items, parent_id):
+        for index, child in enumerate(items):
+            type_ = child.get("type") or "BUTTON"
+            row = ensure(child["name"], parent_id, type_, child.get("perm"), child.get("path"), child.get("sort") or index)
+            if child.get("children"):
+                walk(child["children"], row.id)
+
+    for item in MENU_TREE:
+        parent = ensure(item["name"], 0, "DIR", None, item.get("path"), item.get("sort") or 0)
+        walk(item.get("children") or [], parent.id)
+    linked = set(session.scalars(select(TenantPackageMenu.menu_id).where(TenantPackageMenu.package_id == 1)))
+    if not linked:
+        created = [menu.id for menu in session.scalars(select(Menu))]
+    for menu_id in created:
+        if menu_id not in linked:
+            session.add(TenantPackageMenu(package_id=1, menu_id=menu_id, tenant_id=1))
     session.flush()
     return by_perm
 
@@ -162,16 +188,31 @@ def _roles(session, menus):
     session.flush()
 
 
+_ORG_QUERY = "ims:system:org-sync:query"
+_ORG_RUN = "ims:system:org-sync:run"
+_ORG_EXPORT = "ims:system:org-sync:export"
+_POS_QUERY = "ims:auth:position-rule:query"
+_POS_PREFIX = "ims:auth:position-rule:"
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R1":
-        return list(all_codes)
-    if key == "R9":
-        return [code for code in all_codes if code.endswith(":query") and "plain" not in code]
-    if key == "R3":
-        return [code for code in all_codes if "plain" in code or code.endswith(":query") or code.startswith("ims:system:")]
-    if key in {"R5", "R7", "R10"}:
-        return [code for code in all_codes if code.endswith(":query")]
-    return [code for code in all_codes if code.startswith("ims:system:")]
+        base = list(all_codes)
+    elif key == "R9":
+        base = [code for code in all_codes if code.endswith(":query") and "plain" not in code]
+    elif key == "R3":
+        base = [code for code in all_codes if "plain" in code or code.endswith(":query") or code.startswith("ims:system:")]
+    elif key in {"R5", "R7", "R10"}:
+        base = [code for code in all_codes if code.endswith(":query")]
+    else:
+        base = [code for code in all_codes if code.startswith("ims:system:")]
+    managed = {code for code in all_codes if code.startswith(_POS_PREFIX) or code in {_ORG_QUERY, _ORG_RUN, _ORG_EXPORT}}
+    codes = [code for code in base if code not in managed]
+    if key == "R1":
+        codes.extend(sorted(managed))
+    elif key in {"R2", "R4"}:
+        codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
+    return [code for code in codes if code in all_codes]
 
 
 def _users(session):

@@ -120,6 +120,36 @@
     "strategy": "toast"
   },
   {
+    "code": 1281,
+    "msg": "该岗位已绑定启用中的规则「{name}」，确认替换后原规则将停用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1282,
+    "msg": "该规则还有 {n} 名在用人员，请先处理（调岗或按其他规则刷新）后再删除",
+    "strategy": "toast"
+  },
+  {
+    "code": 1283,
+    "msg": "输入的规则名称不一致，未删除",
+    "strategy": "toast"
+  },
+  {
+    "code": 1284,
+    "msg": "规则名称已存在",
+    "strategy": "toast"
+  },
+  {
+    "code": 1285,
+    "msg": "规则已被他人修改（当前 v{n}），请刷新后重试",
+    "strategy": "toast"
+  },
+  {
+    "code": 1286,
+    "msg": "事件状态已变化，请刷新后重试",
+    "strategy": "toast"
+  },
+  {
     "code": 1500,
     "msg": "关联的数据不存在",
     "strategy": "toast"

@@ -5,15 +5,25 @@ import { call } from "@/api/generated/endpoints";
 const downloads = useDownloadStore();
 
 async function download(id: string) {
-  const data = await call<{ content?: string }>("export_download_admin_api_ims_export_task_download_get", {
-    query: { id },
-    silent: true,
-  });
-  const blob = new Blob([data.content || ""], { type: "text/csv" });
+  const data = await call<{ content?: string; encoding?: string; filename?: string; contentType?: string }>(
+    "export_download_admin_api_ims_export_task_download_get",
+    { query: { id }, silent: true },
+  );
+  let blob: Blob;
+  let filename = "导出.csv";
+  if (data.encoding === "base64" && data.content) {
+    const binary = atob(data.content);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    blob = new Blob([bytes], { type: data.contentType || "application/octet-stream" });
+    filename = data.filename || "导出.xlsx";
+  } else {
+    blob = new Blob([data.content || ""], { type: "text/csv" });
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "导出.csv";
+  link.download = filename;
   link.click();
 }
 

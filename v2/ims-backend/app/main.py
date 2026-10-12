@@ -18,6 +18,8 @@ from app.db.refs import validate_refs
 from app.db.repository import register_tables
 from app.db.session import get_engine, init_engine
 from app.domains import all_models
+from app.domains.auth.org_page_router import router as auth_org_router
+from app.domains.auth.position_router import router as auth_position_router
 from app.domains.auth.router import router as auth_router
 from app.domains.callback.router import router as callback_router
 from app.domains.demo.router import router as demo_router
@@ -35,6 +37,8 @@ log = logging.getLogger("ims")
 
 MOUNTS = [
     ("/admin-api/ims/auth", auth_router),
+    ("/admin-api/ims/auth", auth_org_router),
+    ("/admin-api/ims/auth", auth_position_router),
     ("/admin-api/ims/system", system_router),
     ("/admin-api/ims/system", system_extra_router),
     ("/admin-api/ims/demo", demo_router),

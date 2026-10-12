@@ -145,8 +145,12 @@ def test_ut_b1pre_09(client):
 
 def test_ut_b1pre_10():
     registry = get_registry()
-    for code in range(1281, 1287):
-        assert code not in registry
+    assert "确认替换" in registry[1281].msg
+    assert "{n}" in registry[1282].msg
+    assert registry[1283].msg == "输入的规则名称不一致，未删除"
+    assert registry[1284].msg == "规则名称已存在"
+    assert "v{n}" in registry[1285].msg
+    assert registry[1286].msg == "事件状态已变化，请刷新后重试"
 
 
 def test_ut_d05_03_buffer(client):

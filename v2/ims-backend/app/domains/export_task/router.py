@@ -10,15 +10,21 @@ from app.services import exchange
 router = APIRouter()
 
 
-@mark(perm="ims:demo:order:export", summary="我的导出任务")
+_EXPORT_PERMS = ("ims:demo:order:export", "ims:system:org-sync:export")
+
+
+@mark(any_perm=_EXPORT_PERMS, summary="我的导出任务")
 def export_my_page():
     return exchange.my_exports()
 
 
-@mark(perm="ims:demo:order:export", summary="下载导出文件")
+@mark(any_perm=_EXPORT_PERMS, summary="下载导出文件")
 def export_download():
     request = current_request()
-    return {"content": exchange.export_body(int(request.query_params.get("id") or 0))}
+    body = exchange.export_body(int(request.query_params.get("id") or 0))
+    if isinstance(body, dict):
+        return body
+    return {"content": body}
 
 
 router.get("/my/page", summary="我的导出任务")(export_my_page)

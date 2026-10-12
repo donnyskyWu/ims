@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, BigInteger, DateTime, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import AssocBase, AuditBase
@@ -47,7 +47,10 @@ class TenantPackageMenu(AssocBase):
 class User(AuditBase):
     __tablename__ = "ims_sys_user"
     __entity_label__ = "用户"
-    __table_args__ = (UniqueConstraint("tenant_id", "username", "deleted", name="uq_user_username"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "username", "deleted", name="uq_user_username"),
+        Index("ix_user_emp_no", "tenant_id", "emp_no"),
+    )
     __scope_resolver__ = "user"
     __scope_fields__ = {"dept": "main_dept_id", "owner": "id"}
     username: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -155,6 +158,8 @@ class UserRole(AssocBase):
     manual_removed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     grant_position_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     revoke_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rule_id: Mapped[int | None] = plain_id()
+    rule_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class DictType(AuditBase):
@@ -264,6 +269,8 @@ class LoginLog(AuditBase):
     result: Mapped[str] = mapped_column(String(32), nullable=False)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fail_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ChangeLog(AuditBase):
