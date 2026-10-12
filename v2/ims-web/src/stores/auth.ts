@@ -89,7 +89,9 @@ export const useAuthStore = defineStore("auth", {
     applyMe(payload: Record<string, unknown>) {
       const nested = (payload.user || null) as Record<string, unknown> | null;
       const source = nested || payload;
-      const reset = typeof nested?.pwdResetRequired === "boolean" ? Boolean(nested.pwdResetRequired) : this.pwdResetRequired;
+      const top = payload.pwdResetRequired;
+      const nestedFlag = nested?.pwdResetRequired;
+      const reset = typeof top === "boolean" ? top : typeof nestedFlag === "boolean" ? Boolean(nestedFlag) : this.pwdResetRequired;
       this.user = {
         id: textId(source.id),
         username: String(source.username || ""),

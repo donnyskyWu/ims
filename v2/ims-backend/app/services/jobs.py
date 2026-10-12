@@ -169,7 +169,9 @@ def integrity():
 
 @job("org_reconcile", "0 2 * * *")
 def org_reconcile():
-    return {"ok": True}
+    from app.services.org_sync import reconcile
+
+    return reconcile(trigger_type="SCHEDULE")
 
 
 @job("file_cleanup", "0 4 * * *")
@@ -248,7 +250,9 @@ def notify_retry():
 
 @job("org_event_retry", "*/5 * * * *")
 def org_event_retry():
-    return {"retried": 0}
+    from app.services.org_sync import drive_retries
+
+    return {"retried": len(drive_retries())}
 
 
 @job("export_retry", "*/10 * * * *")

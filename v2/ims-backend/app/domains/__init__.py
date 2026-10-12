@@ -2,10 +2,14 @@
 from app.domains.auth.model import (  # noqa: F401
     AuthEventLog,
     OrgSyncBatch,
+    OrgSyncBatchItem,
     OrgSyncDiff,
     OrgSyncEvent,
+    OrgSyncEventAttempt,
     PositionRoleExtra,
     PositionRoleRule,
+    PositionRuleRole,
+    PositionRuleVersion,
     UserMapping,
 )
 from app.domains.demo.model import (  # noqa: F401

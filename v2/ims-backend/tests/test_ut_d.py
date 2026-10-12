@@ -338,8 +338,8 @@ def test_ut_d02_04(client):
     first = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
     assert first.status_code == 302
     second = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
-    assert second.status_code == 401
-    assert second.json()["code"] == 1002
+    assert second.status_code == 302
+    assert "ssoError=1002" in second.headers["location"]
 
 
 def test_ut_d02_05(client):
@@ -348,8 +348,8 @@ def test_ut_d02_05(client):
     _response, state = _sso_redirect(client)
     advance(timedelta(minutes=5, seconds=1))
     response = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
-    assert response.status_code == 401
-    assert response.json()["code"] == 1002
+    assert response.status_code == 302
+    assert "ssoError=1002" in response.headers["location"]
 
 
 def test_ut_d02_06(client):
@@ -374,8 +374,8 @@ def test_ut_d02_07(client):
     before = set(get_redis().keys("ims:sess:*"))
     _response, state = _sso_redirect(client)
     response = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
-    assert response.status_code != 500
-    assert response.json()["code"] == 1217
+    assert response.status_code == 302
+    assert "ssoError=1217" in response.headers["location"]
     assert set(get_redis().keys("ims:sess:*")) == before
 
 
@@ -384,13 +384,13 @@ def test_ut_d02_08(client):
     ding_state.error = "timeout"
     _response, state = _sso_redirect(client)
     timeout = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
-    assert timeout.status_code == 200
-    assert timeout.json()["code"] == 5003
+    assert timeout.status_code == 302
+    assert "ssoError=5003" in timeout.headers["location"]
     ding_state.error = "error"
     _response, state = _sso_redirect(client)
     failed = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
-    assert failed.status_code == 200
-    assert failed.json()["code"] == 1006
+    assert failed.status_code == 302
+    assert "ssoError=1006" in failed.headers["location"]
 
 
 def test_ut_d02_09(client):
@@ -402,8 +402,8 @@ def test_ut_d02_09(client):
     ding_state.profile = {"userid": "dt_frozen", "mobile": "", "name": "冻结"}
     _response, state = _sso_redirect(client)
     response = client.get("/admin-api/ims/auth/sso/dingtalk/callback", params={"state": state, "authCode": "ok"}, follow_redirects=False)
-    assert response.status_code == 200
-    assert response.json()["code"] == 1216
+    assert response.status_code == 302
+    assert "ssoError=1216" in response.headers["location"]
 
 
 def test_ut_d03_01(app):

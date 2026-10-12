@@ -27,9 +27,11 @@ async function submit() {
 
 <template>
   <form class="card page" @submit.prevent="submit">
-    <h1>修改密码</h1>
+    <h1>{{ auth.pwdResetRequired ? "请先设置新密码" : "修改密码" }}</h1>
+    <p v-if="auth.pwdResetRequired" class="muted">首次登录或管理员重置后，需要先修改密码才能继续使用。</p>
     <label class="fld">原密码<input v-model="form.oldPassword" type="password" /></label>
     <label class="fld">新密码<input v-model="form.newPassword" type="password" /></label>
+    <p class="muted">8 到 32 位，且同时包含字母和数字。</p>
     <p v-if="error" class="ferr">{{ error }}</p>
     <button class="btn btn-pri" type="submit">保存</button>
   </form>

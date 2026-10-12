@@ -113,6 +113,22 @@
         "summary": "账号密码登录"
       }
     },
+    "/admin-api/ims/auth/login-options": {
+      "get": {
+        "operationId": "login_options_admin_api_ims_auth_login_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "登录方式"
+      }
+    },
     "/admin-api/ims/auth/logout": {
       "post": {
         "operationId": "logout_admin_api_ims_auth_logout_post",
@@ -145,6 +161,731 @@
         "summary": "当前用户"
       }
     },
+    "/admin-api/ims/auth/org/diffs": {
+      "get": {
+        "operationId": "diff_page_admin_api_ims_auth_org_diffs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "同步差异列表"
+      }
+    },
+    "/admin-api/ims/auth/org/diffs/summary": {
+      "get": {
+        "operationId": "diff_summary_admin_api_ims_auth_org_diffs_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "同步差异汇总"
+      }
+    },
+    "/admin-api/ims/auth/org/events": {
+      "get": {
+        "operationId": "event_page_admin_api_ims_auth_org_events_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "同步事件列表"
+      }
+    },
+    "/admin-api/ims/auth/org/events/export": {
+      "post": {
+        "operationId": "export_events_admin_api_ims_auth_org_events_export_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "导出同步事件"
+      }
+    },
+    "/admin-api/ims/auth/org/events/replay": {
+      "post": {
+        "operationId": "replay_events_admin_api_ims_auth_org_events_replay_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "重放失败事件"
+      }
+    },
+    "/admin-api/ims/auth/org/events/replay-preview": {
+      "get": {
+        "operationId": "replay_preview_admin_api_ims_auth_org_events_replay_preview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "重放预览"
+      }
+    },
+    "/admin-api/ims/auth/org/events/{ident}": {
+      "get": {
+        "operationId": "event_detail_admin_api_ims_auth_org_events__ident__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "同步事件详情"
+      }
+    },
+    "/admin-api/ims/auth/org/events/{ident}/retry": {
+      "post": {
+        "operationId": "event_retry_admin_api_ims_auth_org_events__ident__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "重试同步事件"
+      }
+    },
+    "/admin-api/ims/auth/org/reconcile-batches": {
+      "get": {
+        "operationId": "batch_page_admin_api_ims_auth_org_reconcile_batches_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "对账批次列表"
+      }
+    },
+    "/admin-api/ims/auth/org/reconcile-batches/{ident}": {
+      "get": {
+        "operationId": "batch_detail_admin_api_ims_auth_org_reconcile_batches__ident__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "对账批次详情"
+      }
+    },
+    "/admin-api/ims/auth/org/reconcile-batches/{ident}/export": {
+      "post": {
+        "operationId": "export_batch_admin_api_ims_auth_org_reconcile_batches__ident__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "导出对账明细"
+      }
+    },
+    "/admin-api/ims/auth/org/reconcile-batches/{ident}/items": {
+      "get": {
+        "operationId": "batch_items_admin_api_ims_auth_org_reconcile_batches__ident__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "对账明细"
+      }
+    },
+    "/admin-api/ims/auth/org/sync-metrics": {
+      "get": {
+        "operationId": "sync_metrics_admin_api_ims_auth_org_sync_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "同步概览"
+      }
+    },
+    "/admin-api/ims/auth/org/users/{ident}": {
+      "get": {
+        "operationId": "user_detail_admin_api_ims_auth_org_users__ident__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "同步人员详情"
+      }
+    },
+    "/admin-api/ims/auth/position/overview": {
+      "get": {
+        "operationId": "position_overview_admin_api_ims_auth_position_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "岗位规则概览"
+      }
+    },
+    "/admin-api/ims/auth/position/rules": {
+      "get": {
+        "operationId": "position_rules_admin_api_ims_auth_position_rules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "岗位规则列表"
+      },
+      "post": {
+        "operationId": "position_rule_create_admin_api_ims_auth_position_rules_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "新建岗位规则"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}": {
+      "delete": {
+        "operationId": "position_rule_delete_admin_api_ims_auth_position_rules__ident__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "删除岗位规则"
+      },
+      "get": {
+        "operationId": "position_rule_get_admin_api_ims_auth_position_rules__ident__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "岗位规则详情"
+      },
+      "put": {
+        "operationId": "position_rule_update_admin_api_ims_auth_position_rules__ident__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "修改岗位规则"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}/disable": {
+      "post": {
+        "operationId": "position_rule_disable_admin_api_ims_auth_position_rules__ident__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "停用岗位规则"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}/enable": {
+      "post": {
+        "operationId": "position_rule_enable_admin_api_ims_auth_position_rules__ident__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "启用岗位规则"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}/refresh": {
+      "post": {
+        "operationId": "position_refresh_admin_api_ims_auth_position_rules__ident__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "按新版本刷新"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}/refresh-preview": {
+      "post": {
+        "operationId": "position_refresh_preview_admin_api_ims_auth_position_rules__ident__refresh_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "刷新预览"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}/users": {
+      "get": {
+        "operationId": "position_rule_users_admin_api_ims_auth_position_rules__ident__users_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "岗位规则套用人员"
+      }
+    },
+    "/admin-api/ims/auth/position/rules/{ident}/versions": {
+      "get": {
+        "operationId": "position_rule_versions_admin_api_ims_auth_position_rules__ident__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ident",
+            "required": true,
+            "schema": {
+              "title": "Ident",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "岗位规则版本"
+      }
+    },
     "/admin-api/ims/auth/refresh-token": {
       "post": {
         "operationId": "refresh_token_admin_api_ims_auth_refresh_token_post",
@@ -161,6 +902,22 @@
         "summary": "刷新令牌"
       }
     },
+    "/admin-api/ims/auth/sso/dingtalk/authorize-params": {
+      "get": {
+        "operationId": "authorize_params_admin_api_ims_auth_sso_dingtalk_authorize_params_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "钉钉扫码参数"
+      }
+    },
     "/admin-api/ims/auth/sso/dingtalk/callback": {
       "get": {
         "operationId": "sso_callback_admin_api_ims_auth_sso_dingtalk_callback_get",
@@ -175,6 +932,22 @@
           }
         },
         "summary": "钉钉登录回调"
+      }
+    },
+    "/admin-api/ims/auth/sso/dingtalk/h5-login": {
+      "post": {
+        "operationId": "h5_login_admin_api_ims_auth_sso_dingtalk_h5_login_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "钉钉免登"
       }
     },
     "/admin-api/ims/auth/sso/dingtalk/redirect": {

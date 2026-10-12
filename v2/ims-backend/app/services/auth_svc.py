@@ -56,7 +56,7 @@ def _raise_if_locked(username: str) -> None:
     if remain <= 0:
         _clear_state(username)
         return
-    _log(username, None, "LOCKED")
+    _log(username, None, "LOCKED", fail_code=1215)
     raise BizError(1215, n=remain, data={"remainMinutes": remain})
 
 
@@ -77,7 +77,7 @@ def _record_failure(username: str) -> None:
     raise BizError(1214)
 
 
-def _log(username: str, user_id: int | None, result: str, login_type: str = "PASSWORD") -> None:
+def _log(username: str, user_id: int | None, result: str, login_type: str = "PASSWORD", channel: str | None = None, fail_code: int | None = None) -> None:
     """登录结果单独提交。失败请求会回滚业务事务，审计不能跟着丢掉。"""
     from app.core.context import get_ctx
     from app.db.session import session_scope
@@ -90,6 +90,8 @@ def _log(username: str, user_id: int | None, result: str, login_type: str = "PAS
         result=result,
         ip=ctx.client_ip if ctx else "",
         tenant_id=ctx.tenant_id if ctx and ctx.tenant_id else 1,
+        channel=channel or ("DINGTALK_QR" if login_type == "DINGTALK" else "PASSWORD"),
+        fail_code=fail_code,
     )
     with session_scope(commit=True) as session:
         session.add(row)
@@ -100,15 +102,15 @@ def login(username: str, password: str) -> dict:
     session = get_session()
     user = session.scalar(select(User).where(User.username == username).execution_options(skip_tenant=True))
     if user is None or not verify_password(password, user.password_hash):
-        _log(username, user.id if user else None, "BAD_CREDENTIAL")
+        _log(username, user.id if user else None, "BAD_CREDENTIAL", fail_code=1214)
         _record_failure(username)
     if user.status in {"FROZEN", "RESIGNED"}:
-        _log(username, user.id, "DISABLED")
+        _log(username, user.id, "DISABLED", fail_code=1216)
         raise BizError(1216)  # 不签发任何会话，包括工作台
     try:
         assert_tenant_open(user.tenant_id)
-    except BizError:
-        _log(username, user.id, "DISABLED")
+    except BizError as exc:
+        _log(username, user.id, "DISABLED", fail_code=exc.code)
         raise
     _clear_state(username)
     user.last_login_time = now_naive()
@@ -116,7 +118,7 @@ def login(username: str, password: str) -> dict:
 
     ctx = get_ctx()
     user.last_login_ip = ctx.client_ip if ctx else ""
-    _log(username, user.id, "SUCCESS")
+    _log(username, user.id, "SUCCESS", channel="PASSWORD")
     return issue_session(user)
 
 
@@ -167,6 +169,65 @@ def unlock(username: str) -> dict:
 
 def kick(user_id: int) -> None:
     revoke_user(user_id)
+
+
+def resolve_ding_user(profile: dict, channel: str) -> User:
+    """扫码和免登共用：映射、手机号、首登即时同步，再校验能否登录。"""
+    userid = str(profile.get("userid") or "")
+    session = get_session()
+    mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == userid).execution_options(skip_tenant=True))
+    user = session.get(User, mapping.user_id) if mapping else None
+    if user is None and profile.get("mobile"):
+        user = find_by_mobile_hash(str(profile["mobile"]), 1)
+        if user is not None:
+            session.add(UserMapping(user_id=user.id, dingtalk_user_id=userid, tenant_id=user.tenant_id))
+            session.flush()
+    if user is None:
+        user = _login_sync(userid, channel)
+    if user is None:
+        _log(userid or "", None, "UNMAPPED", "DINGTALK", channel=channel, fail_code=1217)
+        raise BizError(1217)
+    if user.status in {"FROZEN", "RESIGNED"}:
+        _log(user.username, user.id, "DISABLED", "DINGTALK", channel=channel, fail_code=1216)
+        raise BizError(1216)
+    try:
+        assert_tenant_open(user.tenant_id)
+    except BizError as exc:
+        _log(user.username, user.id, "DISABLED", "DINGTALK", channel=channel, fail_code=exc.code)
+        raise
+    _log(user.username, user.id, "SUCCESS", "DINGTALK", channel=channel)
+    return user
+
+
+def _login_sync(userid: str, channel: str) -> User | None:
+    from app.integrations.dingtalk.client import fetch_user
+    from app.services.org_sync import process_event
+
+    if not userid:
+        return None
+    today = now_naive().strftime("%Y%m%d")
+    event_id = f"login-sync:{userid}:{today}"
+    detail = fetch_user(userid)
+    if detail is None:
+        return None
+    dept_ids = detail.get("deptIds") or detail.get("dept_ids") or []
+    body = {
+        "eventId": event_id,
+        "eventType": "user_add",
+        "eventTime": now_naive().strftime("%Y-%m-%dT%H:%M:%S+08:00"),
+        "dingtalkUserId": userid,
+        "nickname": detail.get("name") or detail.get("nickname") or userid,
+        "mobile": detail.get("mobile"),
+        "deptIds": dept_ids,
+        "empNo": detail.get("job_number") or detail.get("jobNumber") or detail.get("empNo"),
+        "positionCode": detail.get("title") or detail.get("positionCode"),
+    }
+    process_event(body)
+    session = get_session()
+    mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == userid).execution_options(skip_tenant=True))
+    if mapping is None:
+        return None
+    return session.get(User, mapping.user_id)
 
 
 def find_by_mobile_hash(mobile: str, tenant_id: int) -> User | None:

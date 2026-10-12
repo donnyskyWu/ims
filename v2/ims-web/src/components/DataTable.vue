@@ -12,6 +12,8 @@ export interface ColumnAction {
   label: string;
   perm?: string;
   danger?: boolean;
+  disabled?: (row: Record<string, unknown>) => boolean;
+  hint?: (row: Record<string, unknown>) => string;
   onClick: (row: Record<string, unknown>) => void;
 }
 
@@ -92,9 +94,9 @@ const showEmpty = computed(() => !props.loading && props.data.length === 0);
             <span v-else-if="column.type === 'actions'" class="acts">
               <template v-for="action in visibleActions(column)" :key="action.label">
                 <Perm v-if="action.perm" :code="action.perm">
-                  <button :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" @click="action.onClick(row)">{{ action.label }}</button>
+                  <button :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" :disabled="action.disabled?.(row)" :title="action.hint?.(row) || ''" @click="action.onClick(row)">{{ action.label }}</button>
                 </Perm>
-                <button v-else :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" @click="action.onClick(row)">{{ action.label }}</button>
+                <button v-else :class="action.danger ? 'btn btn-danger-txt' : 'btn btn-txt'" type="button" :disabled="action.disabled?.(row)" :title="action.hint?.(row) || ''" @click="action.onClick(row)">{{ action.label }}</button>
               </template>
               <el-dropdown v-if="moreActions(column).length">
                 <button class="btn btn-txt" type="button">更多</button>

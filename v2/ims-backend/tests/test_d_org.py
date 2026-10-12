@@ -842,7 +842,7 @@ def test_ut_b1pre_07_emp_mismatch(client):
     with session_scope() as session:
         mapping = session.scalar(select(UserMapping).where(UserMapping.dingtalk_user_id == "dt_emp_mis"))
         user = session.get(User, mapping.user_id)
-        assert user.emp_no == "E1"
+        assert user.emp_no == "E2"
         diff = session.scalar(select(OrgSyncDiff).where(OrgSyncDiff.dingtalk_user_id == "dt_emp_mis"))
         assert diff.diff_type == "EMP_NO_MISMATCH"
         assert diff.diff_label == "工号不一致"

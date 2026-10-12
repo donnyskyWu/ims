@@ -1,20 +1,18 @@
-"""错误码注册表。1281～1286 预留给 B1，本批不登记。"""
+"""错误码注册表。1281～1286 为本批登录与组织权限扩展段。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 # 号段：域 -> 允许的闭区间。COMMON 显式拥有跨域通用码。
+# 1281～1290 与 SYS 共用，按序分配给后续批次。
 DOMAIN_RANGES: dict[str, list[tuple[int, int]]] = {
     "COMMON": [(1001, 1001), (1008, 1008), (1500, 1504), (5001, 5007)],
     "AUTH": [(1002, 1007), (1009, 1010)],
-    "SYS": [(1211, 1220)],
+    "SYS": [(1211, 1220), (1281, 1290)],
     "TRAIN": [(1101, 1110)],
     "FLOW": [(1131, 1140)],
     "FOOTBALL": [(1271, 1280)],
 }
-
-# B1 已占用，框架禁止登记
-RESERVED_FOR_B1 = range(1281, 1287)
 
 
 @dataclass(frozen=True)
@@ -51,6 +49,12 @@ BASE_ENTRIES: list[ErrorEntry] = [
     _e(1218, "SYS", "部门不能移动到自身或下级部门之下", "toast"),
     _e(1219, "SYS", "同一上级部门下已有同名部门", "toast"),
     _e(1220, "SYS", "系统部门或来自钉钉的部门不能这样调整", "toast"),
+    _e(1281, "SYS", "该岗位已绑定启用中的规则「{name}」，确认替换后原规则将停用", "toast"),
+    _e(1282, "SYS", "该规则还有 {n} 名在用人员，请先处理（调岗或按其他规则刷新）后再删除", "toast"),
+    _e(1283, "SYS", "输入的规则名称不一致，未删除", "toast"),
+    _e(1284, "SYS", "规则名称已存在", "toast"),
+    _e(1285, "SYS", "规则已被他人修改（当前 v{n}），请刷新后重试", "toast"),
+    _e(1286, "SYS", "事件状态已变化，请刷新后重试", "toast"),
     _e(1271, "FOOTBALL", "直播数据读取超时", "toast"),
     _e(1272, "FOOTBALL", "直播服务返回失败", "toast"),
     _e(1273, "FOOTBALL", "直播服务鉴权失败", "toast"),
@@ -78,8 +82,6 @@ def _in_range(domain: str, code: int) -> bool:
 def build_registry(extra: list[ErrorEntry] | None = None) -> dict[int, ErrorEntry]:
     reg: dict[int, ErrorEntry] = {}
     for entry in list(BASE_ENTRIES) + list(extra or []):
-        if entry.code in RESERVED_FOR_B1:
-            raise ValueError(f"错误码 {entry.code} 已预留给后续批次，框架不能登记")
         if entry.code in reg:
             raise ValueError(f"错误码重复登记: {entry.code}")
         if not _in_range(entry.domain, entry.code):

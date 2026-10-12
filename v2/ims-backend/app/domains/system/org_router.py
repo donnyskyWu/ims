@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from app.api.meta import mark
 from app.api.runtime import current_request
+from app.core.context import get_ctx
 from app.services import org_sync
 
 router = APIRouter()
@@ -16,7 +17,8 @@ def _body() -> dict:
 
 @mark(perm="ims:system:org-sync:run", summary="组织对账")
 def org_reconcile():
-    return org_sync.reconcile()
+    ctx = get_ctx()
+    return org_sync.reconcile(trigger_type="MANUAL", operator_id=ctx.user_id if ctx else None)
 
 
 @mark(perm="ims:system:org-sync:query", summary="最近同步批次")
