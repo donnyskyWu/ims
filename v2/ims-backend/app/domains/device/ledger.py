@@ -300,7 +300,7 @@ def remove(ident: int) -> dict:
     return {}
 
 
-def add_event(row: AssetLedger, event_type: str, title: str, *, reason: str = "", detail: str = "", from_owner=None, to_owner=None, from_status: str | None = None, to_status: str | None = None) -> None:
+def add_event(row: AssetLedger, event_type: str, title: str, *, reason: str = "", detail: str = "", from_owner=None, to_owner=None, from_status: str | None = None, to_status: str | None = None, event_time=None) -> None:
     from app.core.clock import now_naive
 
     get_session().add(
@@ -315,7 +315,7 @@ def add_event(row: AssetLedger, event_type: str, title: str, *, reason: str = ""
             reason=reason or None,
             detail=detail or None,
             operator_id=viewer_id() or None,
-            event_time=now_naive(),
+            event_time=event_time or now_naive(),
         )
     )
 

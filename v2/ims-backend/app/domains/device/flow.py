@@ -1,6 +1,8 @@
 """设备领用、流转、归还、报废与状态标记。不发起审批。"""
 from __future__ import annotations
 
+from datetime import datetime, time
+
 from sqlalchemy import select, update
 
 from app.core.clock import today
@@ -77,7 +79,7 @@ def checkout(ident: int, body: dict) -> dict:
     previous = row.owner_user_id
     before = row.status
     _save(row, before, status="IN_USE", owner_user_id=user.id)
-    add_event(row, "CHECKOUT", "领用", reason=purpose, detail=purpose, from_owner=previous, to_owner=user.id, from_status=before, to_status="IN_USE")
+    add_event(row, "CHECKOUT", "领用", reason=purpose, detail=purpose, from_owner=previous, to_owner=user.id, from_status=before, to_status="IN_USE", event_time=datetime.combine(found, time.min))
     site_message(user.id, "资产领用", f"你已领用资产 {row.asset_code}", _page(row, row.id), "ASSET_CHECKOUT", f"checkout:{row.id}:{row.version}")
     get_session().flush()
     from app.domains.device.ledger import _view
@@ -133,7 +135,7 @@ def give_back(ident: int, body: dict) -> dict:
     operator = viewer_id()
     _save(row, "IN_USE", status="RETURNED", owner_user_id=operator or None)
     detail = CONDITION[condition] + (f"：{note}" if note else "")
-    add_event(row, "RETURN", "归还", reason=detail, detail=detail, from_owner=previous, to_owner=operator or None, from_status="IN_USE", to_status="RETURNED")
+    add_event(row, "RETURN", "归还", reason=detail, detail=detail, from_owner=previous, to_owner=operator or None, from_status="IN_USE", to_status="RETURNED", event_time=datetime.combine(found, time.min))
     get_session().flush()
     from app.domains.device.ledger import _view
 

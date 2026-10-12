@@ -34,7 +34,8 @@ const pageSize = ref(20);
 const loading = ref(false);
 const drawer = ref(false);
 const editing = ref<Record<string, unknown> | null>(null);
-const form = ref<Record<string, unknown>>({});
+const form = ref(blank());
+const tokenBag = { value: "" };
 const detailOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const forwardOpen = ref(false);
@@ -46,7 +47,17 @@ const importFile = ref<File | null>(null);
 const importResult = ref<Record<string, unknown> | null>(null);
 const lifeOpen = ref(false);
 const lifeAction = ref("");
-const lifeForm = ref<Record<string, unknown>>({});
+const lifeForm = ref({
+  userId: "",
+  checkoutDate: "",
+  purpose: "",
+  reason: "",
+  returnDate: "",
+  condition: "GOOD",
+  remark: "",
+  status: "IDLE",
+  version: "" as string | number,
+});
 
 const fields = computed<QueryField[]>(() => {
   const base: QueryField[] = [
@@ -119,13 +130,24 @@ function openCreate() {
 }
 function openEdit(row: Record<string, unknown>) {
   editing.value = row;
-  form.value = { ...blank(), ...row, photoFileKeys: [] };
+  const next = blank();
+  next.assetName = String(row.assetName || "");
+  next.assetType = String(row.assetType || "");
+  next.spec = String(row.spec || "");
+  next.purchaseDate = String(row.purchaseDate || "");
+  next.purchaseAmount = String(row.purchaseAmount || "");
+  next.ownerUserId = String(row.ownerUserId || "");
+  next.realnameId = String(row.realnameId || "");
+  next.remark = String(row.remark || "");
+  const photos = row.photoFileKeys;
+  next.photoFileKeys = Array.isArray(photos) ? photos.map((item) => String(item)) : [];
+  form.value = next;
   drawer.value = true;
 }
-async function save(model: Record<string, unknown>, tokenKey?: string) {
+async function save(model: Record<string, unknown>) {
   const payload = { ...model, scope: kind.value };
   if (editing.value?.id) return resourceSend("PUT", `/asset/ledger/${editing.value.id}`, payload);
-  return resourceSend("POST", "/asset/ledger", payload, tokenKey);
+  return resourceSend("POST", "/asset/ledger", payload, tokenBag.value);
 }
 async function openDetail(row: Record<string, unknown>) {
   current.value = await resourceGet(`/asset/ledger/${row.id}`);
@@ -138,7 +160,7 @@ function openForward(row: Record<string, unknown>) {
 function openLife(row: Record<string, unknown>, action: string) {
   current.value = row;
   lifeAction.value = action;
-  lifeForm.value = { userId: "", checkoutDate: "", purpose: "", reason: "", returnDate: "", condition: "GOOD", remark: "", status: "IDLE", version: row.version };
+  lifeForm.value = { userId: "", checkoutDate: "", purpose: "", reason: "", returnDate: "", condition: "GOOD", remark: "", status: "IDLE", version: String(row.version ?? "") };
   lifeOpen.value = true;
 }
 async function saveLife() {
@@ -224,7 +246,7 @@ onMounted(async () => {
       <template #cell-needLink="{ row }"><span v-if="row.needLink">待补关联</span></template>
     </DataTable>
     <AppPagination v-model:page-no="pageNo" v-model:page-size="pageSize" :total="total" @change="load()" />
-    <FormDrawer v-model:open="drawer" :title="editing ? '编辑资产' : '资产登记'" size="M" :model="form" :submit="save" @saved="load()">
+    <FormDrawer v-model:open="drawer" :title="editing ? '编辑资产' : '资产登记'" size="M" :model="form" :token-bag="tokenBag" :submit="save" @saved="load()">
       <el-form-item label="资产名称" required><el-input v-model="form.assetName" maxlength="64" /></el-form-item>
       <el-form-item label="资产类型" required>
         <el-input v-if="kind === 'office'" model-value="办公设备" disabled />
@@ -275,7 +297,7 @@ onMounted(async () => {
       </template>
       <button class="btn btn-pri" type="button" @click="saveLife">确认</button>
     </AppModal>
-    <AppModal v-model:open="importOpen" title="采购导入" :width="640">
+    <AppModal v-model:open="importOpen" title="采购导入" :width="800">
       <a href="/templates/asset-purchase.csv" download>下载模板</a>
       <input type="file" accept=".csv,text/csv" @change="onImport" />
       <button class="btn btn-pri" type="button" @click="startImport">开始导入</button>

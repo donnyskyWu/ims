@@ -12,7 +12,8 @@ const props = withDefaults(
     size?: "S" | "M" | "L";
     model: Record<string, unknown>;
     rules?: FormRules;
-    submit: (model: Record<string, unknown>, tokenKey?: string) => Promise<unknown>;
+    submit: (model: Record<string, unknown>) => Promise<unknown>;
+    tokenBag?: { value: string };
   }>(),
   { size: "M" },
 );
@@ -28,6 +29,7 @@ watch(open, (value) => {
   if (!value) return;
   dirty.value = false;
   tokenKey.value = crypto.randomUUID();
+  if (props.tokenBag) props.tokenBag.value = tokenKey.value;
 });
 
 watch(
@@ -58,7 +60,7 @@ async function save() {
   if (!valid) return;
   saving.value = true;
   try {
-    const result = await props.submit(props.model, tokenKey.value);
+    const result = await props.submit(props.model);
     toast.success("保存成功");
     clearClientToken(tokenKey.value);
     dirty.value = false;

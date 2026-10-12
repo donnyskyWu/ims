@@ -27,7 +27,8 @@ const pageSize = ref(20);
 const loading = ref(false);
 const drawer = ref(false);
 const editing = ref<Record<string, unknown> | null>(null);
-const form = ref<Record<string, unknown>>({});
+const form = ref(blank());
+const tokenBag = { value: "" };
 const detailOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const verifyOpen = ref(false);
@@ -88,20 +89,30 @@ function openCreate() {
 }
 function openEdit(row: Record<string, unknown>) {
   editing.value = row;
-  form.value = { ...blank(), ...row, deviceNo: row.deviceNo };
+  const next = blank();
+  next.deviceNo = String(row.deviceNo || "");
+  next.model = String(row.model || "");
+  next.osType = String(row.osType || "");
+  next.custodianUserId = String(row.custodianUserId || "");
+  next.imei = String(row.imei || "");
+  next.purchaseDate = String(row.purchaseDate || "");
+  next.purchaseAmount = String(row.purchaseAmount || "");
+  next.remark = String(row.remark || "");
+  form.value = next;
   drawer.value = true;
 }
-async function save(model: Record<string, unknown>, tokenKey?: string) {
+async function save(model: Record<string, unknown>) {
   if (editing.value?.id) return resourceSend("PUT", `/corp/device/phone/${editing.value.id}`, model);
-  return resourceSend("POST", "/corp/device/phone", model, tokenKey);
+  return resourceSend("POST", "/corp/device/phone", model, tokenBag.value);
 }
 async function openDetail(row: Record<string, unknown>) {
   current.value = await resourceGet(`/corp/device/phone/${row.id}`);
   detailOpen.value = true;
 }
 async function openBind(row: Record<string, unknown>) {
-  current.value = await resourceGet(`/corp/device/phone/${row.id}`);
-  const sims = (current.value.sims as { id?: string }[]) || [];
+  const detail = await resourceGet<Record<string, unknown>>(`/corp/device/phone/${row.id}`);
+  current.value = detail;
+  const sims = (detail.sims as { id?: string }[]) || [];
   simIds.value = sims.map((item) => String(item.id || ""));
   bindOpen.value = true;
 }
@@ -156,7 +167,7 @@ onMounted(load);
     <QueryBar v-model="query" :fields="fields" @search="pageNo = 1; load()" @reset="pageNo = 1; load()" />
     <DataTable :columns="columns" :data="rows" :loading="loading" />
     <AppPagination v-model:page-no="pageNo" v-model:page-size="pageSize" :total="total" @change="load()" />
-    <FormDrawer v-model:open="drawer" :title="editing ? '编辑手机' : '登记手机'" size="M" :model="form" :submit="save" @saved="load()">
+    <FormDrawer v-model:open="drawer" :title="editing ? '编辑手机' : '登记手机'" size="M" :model="form" :token-bag="tokenBag" :submit="save" @saved="load()">
       <el-form-item label="设备编号"><el-input v-model="form.deviceNo" maxlength="32" :disabled="Boolean(editing)" placeholder="留空自动生成" /></el-form-item>
       <el-form-item label="型号" required><el-input v-model="form.model" maxlength="64" /></el-form-item>
       <el-form-item label="类型" required><DictSelect v-model="form.osType" dict-type="dict_phone_os" /></el-form-item>

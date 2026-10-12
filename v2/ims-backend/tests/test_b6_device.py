@@ -19,9 +19,10 @@ from tests.stddata import D1, PASSWORD, U_ADMIN, U_DEPT, U_RESIGNED
 API = "/admin-api/ims"
 
 
-def _headers(client, username="u_admin", token="b6-token"):
-    headers = auth(client, username)
-    headers["X-Client-Token"] = token
+def _headers(client, username="u_admin", token=None, base=None):
+    headers = dict(base or auth(client, username))
+    if token:
+        headers["X-Client-Token"] = token
     return headers
 
 
@@ -85,54 +86,55 @@ def _sim(client, headers, phone, realname_id=None):
 
 
 def test_phone_register_bind_and_block(client):
-    headers = _headers(client, token="ph-1")
+    admin = auth(client, "u_admin")
+    headers = _headers(client, token="ph-1", base=admin)
     first = _phone(client, headers, imei="860000000000001")
     assert first["status"] == "IN_USE"
     assert str(first["deviceNo"]).startswith("PH-2026-")
-    again = _headers(client, token="ph-1")
-    replay = _ok(client.post(f"{API}/corp/device/phone", json={"model": "x", "osType": "IOS", "custodianUserId": U_DEPT}, headers=again))
+    replay = _ok(client.post(f"{API}/corp/device/phone", json={"model": "x", "osType": "IOS", "custodianUserId": U_DEPT}, headers=headers))
     assert replay["id"] == first["id"]
-    dup = _headers(client, token="ph-dup")
+    dup = _headers(client, token="ph-dup", base=admin)
     _err(client.post(f"{API}/corp/device/phone", json={"model": "A", "osType": "IOS", "custodianUserId": U_DEPT, "imei": "860000000000001"}, headers=dup), 1001)
-    person = _realname(client, headers)
-    card_a = _sim(client, headers, "13800001001", person["id"])
-    card_b = _sim(client, headers, "13800001002", person["id"])
-    card_c = _sim(client, headers, "13800001003", person["id"])
-    bound = _ok(client.put(f"{API}/corp/device/phone/{first['id']}/sim-bind", json={"simIds": [card_a["id"], card_b["id"]]}, headers=headers))
+    person = _realname(client, admin)
+    card_a = _sim(client, admin, "13800001001", person["id"])
+    card_b = _sim(client, admin, "13800001002", person["id"])
+    card_c = _sim(client, admin, "13800001003", person["id"])
+    bound = _ok(client.put(f"{API}/corp/device/phone/{first['id']}/sim-bind", json={"simIds": [card_a["id"], card_b["id"]]}, headers=admin))
     assert bound["simCount"] == 2
-    other = _phone(client, _headers(client, token="ph-2"), model="Pixel", osType="ANDROID")
-    _err(client.put(f"{API}/corp/device/phone/{other['id']}/sim-bind", json={"simIds": [card_a["id"]]}, headers=headers), 1012)
-    _err(client.put(f"{API}/corp/device/phone/{first['id']}/sim-bind", json={"simIds": [card_a["id"], card_b["id"], card_c["id"]]}, headers=headers), 1001)
-    _err(client.put(f"{API}/corp/device/phone/{first['id']}/status", json={"status": "SCRAPPED", "reason": "坏了"}, headers=headers), 1502)
-    _err(client.put(f"{API}/corp/resource/sim-card/{card_a['id']}/status", json={"status": "DISABLED"}, headers=headers), 1502)
-    page = _ok(client.get(f"{API}/corp/resource/sim-card/page", headers=headers))
+    other = _phone(client, _headers(client, token="ph-2", base=admin), model="Pixel", osType="ANDROID")
+    _err(client.put(f"{API}/corp/device/phone/{other['id']}/sim-bind", json={"simIds": [card_a["id"]]}, headers=admin), 1012)
+    _err(client.put(f"{API}/corp/device/phone/{first['id']}/sim-bind", json={"simIds": [card_a["id"], card_b["id"], card_c["id"]]}, headers=admin), 1001)
+    _err(client.put(f"{API}/corp/device/phone/{first['id']}/status", json={"status": "SCRAPPED", "reason": "坏了"}, headers=admin), 1502)
+    _err(client.put(f"{API}/corp/resource/sim-card/{card_a['id']}/status", json={"status": "DISABLED"}, headers=admin), 1502)
+    page = _ok(client.get(f"{API}/corp/resource/sim-card/page", headers=admin))
     hit = next(item for item in page["list"] if item["id"] == card_a["id"])
     assert hit["phoneName"] == first["deviceNo"]
-    _ok(client.put(f"{API}/corp/device/phone/{first['id']}/sim-bind", json={"simIds": []}, headers=headers))
-    _err(client.delete(f"{API}/corp/device/phone/{first['id']}", headers=headers), 1502)
+    _ok(client.put(f"{API}/corp/device/phone/{first['id']}/sim-bind", json={"simIds": []}, headers=admin))
+    _err(client.delete(f"{API}/corp/device/phone/{first['id']}", headers=admin), 1502)
 
 
 def test_asset_lifecycle_and_scope(client):
-    headers = _headers(client, token="as-1")
+    admin = auth(client, "u_admin")
+    headers = _headers(client, token="as-1", base=admin)
     row = _asset(client, headers)
     assert row["status"] == "PENDING_REVIEW"
     assert row["needLink"] is True
-    used = _ok(client.post(f"{API}/asset/ledger/{row['id']}/checkout", json={"userId": U_DEPT, "checkoutDate": "2026-01-03", "purpose": "直播", "version": row["version"]}, headers=headers))
+    used = _ok(client.post(f"{API}/asset/ledger/{row['id']}/checkout", json={"userId": U_DEPT, "checkoutDate": "2026-01-03", "purpose": "直播", "version": row["version"]}, headers=admin))
     assert used["status"] == "IN_USE"
-    _err(client.post(f"{API}/asset/ledger/{row['id']}/checkout", json={"userId": U_ADMIN, "checkoutDate": "2026-01-04", "version": used["version"]}, headers=headers), 1012)
-    _err(client.post(f"{API}/asset/ledger/{row['id']}/scrap", json={"reason": "坏了", "version": used["version"]}, headers=headers), 1015)
-    moved = _ok(client.post(f"{API}/asset/ledger/{row['id']}/transfer", json={"userId": U_ADMIN, "reason": "工作调整", "version": used["version"]}, headers=headers))
-    back = _ok(client.post(f"{API}/asset/ledger/{row['id']}/return", json={"returnDate": "2026-01-05", "condition": "GOOD", "version": moved["version"]}, headers=headers))
+    _err(client.post(f"{API}/asset/ledger/{row['id']}/checkout", json={"userId": U_ADMIN, "checkoutDate": "2026-01-04", "version": used["version"]}, headers=admin), 1012)
+    _err(client.post(f"{API}/asset/ledger/{row['id']}/scrap", json={"reason": "坏了", "version": used["version"]}, headers=admin), 1015)
+    moved = _ok(client.post(f"{API}/asset/ledger/{row['id']}/transfer", json={"userId": U_ADMIN, "reason": "工作调整", "version": used["version"]}, headers=admin))
+    back = _ok(client.post(f"{API}/asset/ledger/{row['id']}/return", json={"returnDate": "2026-01-05", "condition": "GOOD", "version": moved["version"]}, headers=admin))
     assert back["status"] == "RETURNED"
     assert str(back["ownerUserId"]) == str(U_ADMIN)
-    _err(client.post(f"{API}/asset/ledger/{row['id']}/return", json={"returnDate": "2026-01-05", "condition": "GOOD", "version": 1}, headers=headers), 1001)
-    idle = _ok(client.put(f"{API}/asset/ledger/{row['id']}/status", json={"status": "IDLE", "version": back["version"]}, headers=headers))
+    _err(client.post(f"{API}/asset/ledger/{row['id']}/return", json={"returnDate": "2026-01-05", "condition": "GOOD", "version": 1}, headers=admin), 1001)
+    idle = _ok(client.put(f"{API}/asset/ledger/{row['id']}/status", json={"status": "IDLE", "version": back["version"]}, headers=admin))
     assert idle["status"] == "IDLE"
-    scrapped = _ok(client.post(f"{API}/asset/ledger/{row['id']}/scrap", json={"reason": "报废", "version": idle["version"]}, headers=headers))
+    scrapped = _ok(client.post(f"{API}/asset/ledger/{row['id']}/scrap", json={"reason": "报废", "version": idle["version"]}, headers=admin))
     assert scrapped["status"] == "SCRAPPED"
     _user(3205, "b6_r5", 105)
-    own = _asset(client, _headers(client, token="as-r5"), assetName="组长的设备", ownerUserId=3205)
-    other = _asset(client, _headers(client, token="as-other"), assetName="别人的设备", ownerUserId=U_ADMIN)
+    own = _asset(client, _headers(client, token="as-r5", base=admin), assetName="组长的设备", ownerUserId=3205)
+    other = _asset(client, _headers(client, token="as-other", base=admin), assetName="别人的设备", ownerUserId=U_ADMIN)
     r5 = auth(client, "b6_r5")
     page = _ok(client.get(f"{API}/corp/device/office/page", headers=r5))
     codes = {item["assetCode"] for item in page["list"]}
@@ -147,7 +149,7 @@ def test_asset_lifecycle_and_scope(client):
 
 def test_import_partial_and_limits(client):
     headers = auth(client, "u_admin")
-    mixed = "资产编号,资产名称,资产类型,规格,采购日期,责任人工号\nAS-M-1,麦克风,办公设备,手持,2026-01-01,u_dept\nAS-M-2,灯光,,支架,2026-01-02,\n,名称为空,办公设备,,2026-01-03,\nAS-M-4,日期坏,办公设备,,2026-13-40,\nAS-M-1,重复,办公设备,,2026-01-04,\n"
+    mixed = "资产编号,资产名称,资产类型,规格,采购日期,责任人工号\nAS-M-1,麦克风,办公设备,手持,2026-01-01,u_dept\nAS-M-2,灯光,,支架,2026-01-02,\n,,办公设备,,2026-01-03,\nAS-M-4,日期坏,办公设备,,2026-13-40,\nAS-M-1,重复,办公设备,,2026-01-04,\n"
     saved = _ok(client.post(f"{API}/asset/ledger/import", files={"file": ("mixed.csv", mixed.encode(), "text/csv")}, data={"scope": "office"}, headers=headers))
     assert saved["successCount"] == 2
     assert saved["failCount"] == 3
@@ -196,30 +198,29 @@ def test_forward_reverse_and_export_expiry(client):
 
 
 def test_verify_flow_and_overdue(client):
-    headers = _headers(client, token="vf-asset")
-    bare = _asset(client, headers, assetName="缺实名")
-    denied = _headers(client, token="vf-bad")
-    _err(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_account"]}, headers=denied), 1001)
-    first = _ok(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_person"], "scope": "FULL"}, headers=_headers(client, token="vf-1")))
+    admin = auth(client, "u_admin")
+    bare = _asset(client, _headers(client, token="vf-asset", base=admin), assetName="缺实名")
+    _err(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_account"]}, headers=_headers(client, token="vf-bad", base=admin)), 1001)
+    first = _ok(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_person"], "scope": "FULL"}, headers=_headers(client, token="vf-1", base=admin)))
     assert first["errorCount"] >= 1
-    second = _ok(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_person"], "scope": "FULL"}, headers=_headers(client, token="vf-2")))
+    second = _ok(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_person"], "scope": "FULL"}, headers=_headers(client, token="vf-2", base=admin)))
     assert second["createdCount"] == 0
-    errors = _ok(client.get("/admin-api/ims/asset/verify/errors", params={"batchNo": first["batchNo"]}, headers=headers))
+    errors = _ok(client.get("/admin-api/ims/asset/verify/errors", params={"batchNo": first["batchNo"]}, headers=admin))
     task = next(item for item in errors["list"] if item["assetId"] == bare["id"])
     deadline = (today() + timedelta(days=1)).isoformat()
-    dispatched = _ok(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "DISPATCH", "ownerUserId": U_DEPT, "deadline": deadline}, headers=headers))
+    dispatched = _ok(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "DISPATCH", "ownerUserId": U_DEPT, "deadline": deadline}, headers=admin))
     assert dispatched["taskStatus"] == "REPAIRING"
-    _err(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "SUBMIT_FIX", "remark": "已补"}, headers=headers), 1008)
-    _err(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "RECHECK_PASS"}, headers=headers), 1014)
+    _err(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "SUBMIT_FIX", "remark": "已补"}, headers=admin), 1008)
+    _err(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "RECHECK_PASS"}, headers=admin), 1014)
     dept = auth(client, "u_dept")
     submitted = _ok(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "SUBMIT_FIX", "remark": "已补实名"}, headers=dept))
     assert submitted["taskStatus"] == "PENDING_RECHECK"
-    closed = _ok(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "RECHECK_PASS"}, headers=headers))
+    closed = _ok(client.put(f"{API}/asset/verify/task/{task['id']}", json={"action": "RECHECK_PASS"}, headers=admin))
     assert closed["taskStatus"] == "CLOSED"
     with session_scope() as session:
         todo = session.scalar(select(Todo).where(Todo.source_type == "ASSET_VERIFY", Todo.source_id == int(task["id"])))
         assert todo is not None and todo.status == "DONE"
-    metrics = _ok(client.get(f"{API}/asset/verify/metrics", headers=headers))
+    metrics = _ok(client.get(f"{API}/asset/verify/metrics", headers=admin))
     assert metrics["completeness"] != ""
     with session_scope(commit=True) as session:
         with use_context(system_context(1)):

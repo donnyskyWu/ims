@@ -131,7 +131,7 @@ watch(open, (value) => {
     <AppTabs v-model:active="tab" :items="[{ key: 'batch', label: '批次列表' }, { key: 'error', label: '异常工单' }]" />
     <DataTable v-if="tab === 'batch'" :columns="batchColumns" :data="batches" />
     <DataTable v-else :columns="taskColumns" :data="tasks" />
-    <AppModal v-model:open="dealOpen" title="处理工单" :width="560">
+    <AppModal v-model:open="dealOpen" title="处理工单" :width="520">
       <p>{{ current?.assetCode }} {{ current?.assetName }}</p>
       <p>{{ current?.fieldText }} <span v-if="Number(current?.overdueDays) > 0">逾期 {{ current?.overdueDays }} 天</span></p>
       <template v-if="current?.taskStatus === 'PENDING_DISPATCH'">
