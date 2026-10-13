@@ -2,7 +2,7 @@
 import RemoteSelect, { type RemoteOption } from "./RemoteSelect.vue";
 import { selectorByIds, selectorPage } from "@/api/resource";
 
-const props = defineProps<{ platform?: string; status?: string; ipGroupId?: string; multiple?: boolean }>();
+const props = defineProps<{ platform?: string; status?: string; ipGroupId?: string; multiple?: boolean; includeUnassigned?: boolean }>();
 const model = defineModel<string | string[] | null>({ default: null });
 
 function optionOf(row: Record<string, unknown>): RemoteOption {
@@ -16,6 +16,7 @@ function extra() {
   if (props.platform) params.platform = props.platform;
   if (props.status) params.status = props.status;
   if (props.ipGroupId) params.ipGroupId = props.ipGroupId;
+  if (props.includeUnassigned) params.includeUnassigned = true;
   return params;
 }
 

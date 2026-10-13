@@ -36,17 +36,47 @@
   },
   {
     "code": 1013,
-    "msg": "穿透层级超限（最多 5 层）",
+    "msg": "穿透层级超限",
     "strategy": "toast"
   },
   {
     "code": 1014,
-    "msg": "校验批次不存在或工单状态不允许此操作",
+    "msg": "校验工单状态不允许此操作",
     "strategy": "toast"
   },
   {
     "code": 1015,
     "msg": "当前状态不允许此操作",
+    "strategy": "toast"
+  },
+  {
+    "code": 1021,
+    "msg": "账号已被领用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1022,
+    "msg": "账号处于冻结态，不可领用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1023,
+    "msg": "领用 / 流转单状态非法",
+    "strategy": "toast"
+  },
+  {
+    "code": 1024,
+    "msg": "归还单未闭环，禁止关闭",
+    "strategy": "toast"
+  },
+  {
+    "code": 1025,
+    "msg": "金额超过 5000 元须上传凭证",
+    "strategy": "toast"
+  },
+  {
+    "code": 1026,
+    "msg": "月度核对差异率 ≥ 2%，已生成核查工单",
     "strategy": "toast"
   },
   {
@@ -100,6 +130,11 @@
     "strategy": "toast"
   },
   {
+    "code": 1127,
+    "msg": "作者与账号不在同一 IP 组账号池",
+    "strategy": "toast"
+  },
+  {
     "code": 1131,
     "msg": "流程图校验失败，请补齐起止或去掉环路",
     "strategy": "fieldError"
@@ -147,6 +182,26 @@
   {
     "code": 1140,
     "msg": "实例已结束，不可撤销",
+    "strategy": "toast"
+  },
+  {
+    "code": 1203,
+    "msg": "大组不可绑定账号或关联作者",
+    "strategy": "toast"
+  },
+  {
+    "code": 1204,
+    "msg": "成员用户不存在或已停用/离职",
+    "strategy": "toast"
+  },
+  {
+    "code": 1205,
+    "msg": "账号已属于其他 IP 组：{组名}",
+    "strategy": "toast"
+  },
+  {
+    "code": 1206,
+    "msg": "该 IP 组下仍有成员/账号/关联作者，禁止删除",
     "strategy": "toast"
   },
   {
@@ -211,7 +266,7 @@
   },
   {
     "code": 1223,
-    "msg": "主数据已变化，请刷新",
+    "msg": "账号所属 IP 组存在多名作者且未指定主作者（或组内无作者）",
     "strategy": "toast"
   },
   {

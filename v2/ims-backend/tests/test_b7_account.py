@@ -125,11 +125,42 @@ def _person(client, headers, name="账号实名", number="110101199003078515"):
     return _ok(client.post(f"{API}/corp/resource/realname", headers=headers, json={"name": name, "idType": "ID_CARD", "idNo": number}))
 
 
+def _pool(client, headers):
+    cached = getattr(client, "_b8_pool", None)
+    if cached:
+        return cached
+    big = _ok(
+        client.post(
+            f"{API}/ip-group/create",
+            headers=_headers(client, token=f"b8-pool-big-{id(client)}", base=headers),
+            json={"groupName": "回补大组", "groupType": "BIG"},
+        )
+    )
+    small = _ok(
+        client.post(
+            f"{API}/ip-group/create",
+            headers=_headers(client, token=f"b8-pool-small-{id(client)}", base=headers),
+            json={"groupName": "回补小组", "groupType": "SMALL", "parentId": big["id"]},
+        )
+    )
+    author = _ok(
+        client.post(
+            f"{API}/ip-group/author",
+            headers=_headers(client, token=f"b8-pool-author-{id(client)}", base=headers),
+            json={"authorName": "回补作者", "authorType": "SHORT_VIDEO", "ipGroupId": small["id"]},
+        )
+    )
+    client._b8_pool = {"ipGroupId": small["id"], "authorId": author["id"]}
+    return client._b8_pool
+
+
 def _account(client, headers, company_id, realname_id, **extra):
     body = {"platform": "DOUYIN", "nickname": "星河抖音", "companyId": company_id, "realnameId": realname_id}
     body.update(extra)
     token = extra.pop("token", "b7-acc")
     body.pop("token", None)
+    if not body.get("ipGroupId"):
+        body["ipGroupId"] = _pool(client, headers)["ipGroupId"]
     return _ok(client.post(f"{API}/corp/account", headers=_headers(client, token=token, base=headers), json=body))
 
 
@@ -218,7 +249,7 @@ def test_register_capacity_edit_delete_and_personal(client):
         client.post(
             f"{API}/corp/account",
             headers=_headers(client, token="cap-2"),
-            json={"platform": "WECHAT_MP", "nickname": "容量二", "companyId": tight["id"], "realnameId": person["id"]},
+            json={"platform": "WECHAT_MP", "nickname": "容量二", "companyId": tight["id"], "realnameId": person["id"], "ipGroupId": client._b8_pool["ipGroupId"]},
         ),
         1222,
     )

@@ -7,7 +7,7 @@ from app.core.clock import now_naive
 from app.core.context import RequestContext
 from app.core.errors import BizError
 from app.db.session import get_session
-from app.domains.master.model import IpMember
+from app.domains.master.model import IpGroup, IpMember
 from app.domains.system.model import Menu, Role, RoleMenu, Tenant, TenantPackageMenu, User, UserDept, UserRole
 from app.services.sessions import assert_tenant_open
 
@@ -48,7 +48,9 @@ def build_principal(user_id: int, tenant_id: int) -> RequestContext:
                 continue
             perm_codes.add(menu.perm_code)
     dept_ids = [row.dept_id for row in session.scalars(select(UserDept).where(UserDept.user_id == user_id))]
-    ip_ids = [row.group_id for row in session.scalars(select(IpMember).where(IpMember.user_id == user_id))]
+    member_ids = [row.group_id for row in session.scalars(select(IpMember).where(IpMember.user_id == user_id))]
+    leader_ids = list(session.scalars(select(IpGroup.id).where(IpGroup.leader_user_id == user_id)))
+    ip_ids = list({int(item) for item in [*member_ids, *leader_ids] if item})
     return RequestContext(
         user_id=user.id,
         tenant_id=user.tenant_id,

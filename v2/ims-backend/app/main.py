@@ -19,6 +19,7 @@ from app.db.repository import register_tables
 from app.db.session import get_engine, init_engine
 from app.domains import all_models
 from app.domains.account.router import router as account_router
+from app.domains.ipg.router import router as ipg_router
 from app.domains.auth.org_page_router import router as auth_org_router
 from app.domains.auth.position_router import router as auth_position_router
 from app.domains.auth.router import router as auth_router
@@ -66,6 +67,7 @@ MOUNTS = [
     ("/admin-api/ims/cert", cert_router),
     ("/admin-api/ims", device_router),
     ("/admin-api/ims", account_router),
+    ("/admin-api/ims", ipg_router),
 ]
 
 

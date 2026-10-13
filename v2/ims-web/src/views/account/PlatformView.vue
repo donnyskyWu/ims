@@ -15,9 +15,12 @@ import CompanySelect from "@/components/CompanySelect.vue";
 import RealNameSelect from "@/components/RealNameSelect.vue";
 import SimCardSelect from "@/components/SimCardSelect.vue";
 import AssetSelect from "@/components/AssetSelect.vue";
+import IpGroupSelect from "@/components/IpGroupSelect.vue";
+import AuthorSelect from "@/components/AuthorSelect.vue";
 import AppModal from "@/components/AppModal.vue";
 import { confirm } from "@/components/confirm";
 import { toast } from "@/utils/toast";
+import { BizError } from "@/api/http";
 import { resourceGet, resourcePage, resourceSend } from "@/api/resource";
 
 const route = useRoute();
@@ -26,6 +29,7 @@ const platform = computed(() => String(route.meta.platform || "DOUYIN"));
 const title = computed(() => String(route.meta.title || "账号"));
 const query = ref<Record<string, unknown>>({ keyword: "", status: "" });
 const companyId = ref("");
+const ipGroupId = ref("");
 const rows = ref<Record<string, unknown>[]>([]);
 const total = ref(0);
 const pageNo = ref(1);
@@ -55,6 +59,7 @@ const columns: TableColumn[] = [
   { key: "companyName", label: "公司" },
   { key: "realnameName", label: "实名人" },
   { key: "ownerName", label: "责任人" },
+  { key: "ipGroupText", label: "IP 组" },
   { key: "status", label: "状态", type: "status", dictType: "dict_account_status" },
   { key: "collectLabel", label: "采集" },
   { key: "rechargeTotal", label: "累计充值" },
@@ -71,7 +76,7 @@ const columns: TableColumn[] = [
 ];
 
 function blank() {
-  return { platform: platform.value, nickname: "", accountNo: "", companyId: "", realnameId: "", simCardId: "", phoneId: "", remark: "" };
+  return { platform: platform.value, nickname: "", accountNo: "", companyId: "", realnameId: "", simCardId: "", phoneId: "", ipGroupId: "", authorId: "", remark: "" };
 }
 
 async function load() {
@@ -82,6 +87,7 @@ async function load() {
       pageSize: pageSize.value,
       platform: platform.value,
       companyId: companyId.value || undefined,
+      ipGroupId: ipGroupId.value || undefined,
       ...query.value,
     });
     rows.value = data.list;
@@ -106,19 +112,37 @@ function openEdit(row: Record<string, unknown>) {
     realnameId: row.realnameId ? String(row.realnameId) : "",
     simCardId: row.simCardId ? String(row.simCardId) : "",
     phoneId: row.phoneId ? String(row.phoneId) : "",
+    ipGroupId: row.ipGroupId ? String(row.ipGroupId) : "",
+    authorId: row.authorUserId ? String(row.authorUserId) : "",
     remark: String(row.remark || ""),
   };
   drawer.value = true;
 }
+function onAccountGroup(value: string | string[] | null) {
+  const next = Array.isArray(value) ? value[0] || "" : value || "";
+  if (next !== form.value.ipGroupId) form.value.authorId = "";
+  form.value.ipGroupId = next;
+}
+
 async function save(model: Record<string, unknown>) {
-  const body = { ...model, platform: platform.value };
+  const body: Record<string, unknown> = { ...model, platform: platform.value };
+  if (!body.authorId) delete body.authorId;
   const nextCompany = String(model.companyId || "");
   const nextRealname = String(model.realnameId || "");
   if (editing.value?.id && editing.value.status === "IN_USE" && (nextCompany !== String(editing.value.companyId || "") || nextRealname !== String(editing.value.realnameId || ""))) {
     await confirm({ title: "在用账号", message: "修改公司或实名人后，已领用账号仍保持在用。", action: async () => undefined });
   }
-  if (editing.value?.id) return resourceSend("PUT", `/corp/account/${editing.value.id}`, body);
-  return resourceSend("POST", "/corp/account", body, `acct-${Date.now()}`);
+  try {
+    if (editing.value?.id) return await resourceSend("PUT", `/corp/account/${editing.value.id}`, body);
+    return await resourceSend("POST", "/corp/account", body, `acct-${Date.now()}`);
+  } catch (error) {
+    const biz = error as BizError;
+    const data = biz?.data as { fieldErrors?: { message?: string }[] } | undefined;
+    const field = data?.fieldErrors?.[0]?.message;
+    if (biz?.code === 1223) toast.error(`${biz.msg}。请到 IP 组的关联作者页设置主作者`);
+    else toast.error(field || biz?.msg || "保存失败");
+    throw error;
+  }
 }
 async function openDetail(row: Record<string, unknown>) {
   current.value = await resourceGet(`/corp/account/${row.id}`);
@@ -194,8 +218,9 @@ onMounted(load);
       </template>
     </PageHeader>
     <div class="filters">
-      <QueryBar v-model="query" :fields="fields" @search="pageNo = 1; load()" @reset="companyId = ''; pageNo = 1; load()" />
+      <QueryBar v-model="query" :fields="fields" @search="pageNo = 1; load()" @reset="companyId = ''; ipGroupId = ''; pageNo = 1; load()" />
       <CompanySelect v-model="companyId" />
+      <IpGroupSelect v-model="ipGroupId" only-small />
     </div>
     <DataTable :columns="columns" :data="rows" :loading="loading" />
     <AppPagination v-model:page-no="pageNo" v-model:page-size="pageSize" :total="total" @change="load()" />
@@ -204,12 +229,16 @@ onMounted(load);
       <el-form-item v-if="!editing" label="账号编号"><el-input v-model="form.accountNo" maxlength="32" placeholder="留空自动生成" /></el-form-item>
       <el-form-item label="公司" required><CompanySelect v-model="form.companyId" /></el-form-item>
       <el-form-item label="实名人" required><RealNameSelect v-model="form.realnameId" /></el-form-item>
+      <el-form-item label="IP 小组" required>
+        <IpGroupSelect :model-value="String(form.ipGroupId || '')" only-small @update:model-value="onAccountGroup" />
+      </el-form-item>
+      <el-form-item label="作者"><AuthorSelect v-model="form.authorId" :ip-group-id="String(form.ipGroupId || '')" /></el-form-item>
       <el-form-item label="手机卡"><SimCardSelect v-model="form.simCardId" /></el-form-item>
       <el-form-item label="备注"><el-input v-model="form.remark" maxlength="256" type="textarea" /></el-form-item>
     </FormDrawer>
     <DetailDrawer v-model:open="detailOpen" :title="String(current?.nickname || '账号详情')" status-dict="dict_account_status" :status-value="String(current?.status || '')" :tabs="[{ key: 'base', label: '基本信息' }, { key: 'collect', label: '采集' }, { key: 'time', label: '领用时间线' }, { key: 'asset', label: '关联资产' }]">
       <template #base>
-        <DescriptionList :items="[{ label: '编号', value: current?.accountNo }, { label: '平台', value: current?.platformLabel }, { label: '公司', value: current?.companyName }, { label: '实名人', value: current?.realnameName }, { label: '责任人', value: current?.ownerName }, { label: '累计充值', value: current?.rechargeTotal }, { label: 'IP组', value: current?.ipGroupText }, { label: '备注', value: current?.remark }]" />
+        <DescriptionList :items="[{ label: '编号', value: current?.accountNo }, { label: '平台', value: current?.platformLabel }, { label: '公司', value: current?.companyName }, { label: '实名人', value: current?.realnameName }, { label: '责任人', value: current?.ownerName }, { label: '累计充值', value: current?.rechargeTotal }, { label: 'IP 组', value: current?.ipGroupText }, { label: '作者', value: current?.authorName }, { label: '备注', value: current?.remark }]" />
         <p v-if="(current?.warnings as string[] | undefined)?.includes('REALNAME_MISMATCH')">实名人不一致</p>
       </template>
       <template #collect>

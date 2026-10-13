@@ -28,12 +28,14 @@ PATH_ICONS = {
     "/ims/corp/account/kuaishou": "play",
     "/ims/corp/account/xiaohongshu": "doc",
     "/ims/corp/account/personal": "user",
+    "/ims/ip-group": "people",
 }
 
 # 没有路由的目录（如「资源管理」）按名称赋值。
 NAME_ICONS = {
     "资源管理": "id",
     "账号管理": "user",
+    "日常运营": "flow",
 }
 
 
