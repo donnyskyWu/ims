@@ -135,22 +135,47 @@ class Cert(AuditBase):
 class PlatformAccount(AuditBase):
     __tablename__ = "ims_account_platform"
     __entity_label__ = "平台账号"
-    __table_args__ = (UniqueConstraint("tenant_id", "code", "deleted", name="uq_platform_code"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", "deleted", name="uq_platform_code"),
+        UniqueConstraint("tenant_id", "account_no", "deleted", name="uq_platform_account_no"),
+    )
     code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_common_status"})
+    # 状态走 dict_account_status。列上不挂字典，避免既有骨架行的 ENABLED 被 1503 拦住。
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED")
     platform: Mapped[str | None] = mapped_column(String(32), nullable=True, info={"dict": "dict_platform_type"})
     realname_id: Mapped[int | None] = ref_column(Ref("ims_master_realname", "RESTRICT"))
+    account_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    company_id: Mapped[int | None] = ref_column(Ref("ims_org_company", "RESTRICT"))
+    sim_card_id: Mapped[int | None] = ref_column(Ref("ims_master_sim_card", "RESTRICT"))
+    phone_id: Mapped[int | None] = ref_column(Ref("ims_master_phone", "RESTRICT", enforce_delete=True))
+    ip_group_id: Mapped[int | None] = ref_column(Ref("ims_ipg_group", "RESTRICT", enforce_delete=False))
+    author_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
+    owner_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
+    collect_bind_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    remark: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    recharge_total_fen: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class PersonalAccount(AuditBase):
     __tablename__ = "ims_account_personal"
     __entity_label__ = "个人账号"
-    __table_args__ = (UniqueConstraint("tenant_id", "code", "deleted", name="uq_personal_code"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", "deleted", name="uq_personal_code"),
+        UniqueConstraint("tenant_id", "account_no", "deleted", name="uq_personal_account_no"),
+    )
     code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_common_status"})
     realname_id: Mapped[int | None] = ref_column(Ref("ims_master_realname", "RESTRICT", allow_disabled=True))
+    account_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    account_type: Mapped[str | None] = mapped_column(String(32), nullable=True, info={"dict": "dict_personal_account_type"})
+    nickname: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    owner_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", enforce_delete=False))
+    mobile_mask: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    mobile_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    remark: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 
 class IpGroup(AuditBase):

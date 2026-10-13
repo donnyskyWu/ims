@@ -1,4 +1,13 @@
 """导入全部模型，保证元数据只注册一次。"""
+from app.domains.account.model import (  # noqa: F401
+    AccountApply,
+    AccountTransfer,
+    CollectCredential,
+    Recharge,
+    RechargeVerify,
+    ReturnItem,
+    ReturnOrder,
+)
 from app.domains.cert.model import CertExpireTask, CertLevelConfig, CertViewLog  # noqa: F401
 from app.domains.auth.model import (  # noqa: F401
     AuthEventLog,

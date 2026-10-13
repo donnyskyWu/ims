@@ -73,7 +73,7 @@ def _view(row: Phone, *, detail: bool = False) -> dict:
         "custodianResigned": keeper["resigned"],
         "simText": "、".join(item["phoneMasked"] for item in (_sim_view(card) for card in cards)) or "—",
         "simCount": len(cards),
-        "accountCount": 0,
+        "accountCount": len(_accounts(row.id)),
         "status": row.status,
         "statusLabel": PHONE_STATUS.get(row.status, row.status),
         "purchaseDate": row.purchase_date.isoformat() if row.purchase_date else "",
@@ -83,8 +83,9 @@ def _view(row: Phone, *, detail: bool = False) -> dict:
     }
     if detail:
         data["sims"] = [_sim_view(card) for card in cards]
-        data["accounts"] = []
-        data["accountEmpty"] = "暂无绑定账号，账号模块上线后显示"
+        accounts = _accounts(row.id)
+        data["accounts"] = accounts
+        data["accountEmpty"] = "" if accounts else "暂无绑定账号"
         data["timeline"] = phone_logs(row.id)
     return data
 
@@ -218,7 +219,14 @@ def remove(ident: int) -> dict:
     extra = [item for item in logs if item["eventType"] not in {"REGISTER"}]
     if extra:
         raise BizError(1502, "该手机已有后续操作记录，不能删除")
-    Repository(Phone).soft_delete(int(ident))
+    try:
+        Repository(Phone).soft_delete(int(ident))
+    except BizError as exc:
+        if exc.code == 1502:
+            from app.domains.resource.common import ref_blocked
+
+            ref_blocked("手机", exc)
+        raise
     return {}
 
 
@@ -265,10 +273,19 @@ def bind_sims(ident: int, body: dict) -> dict:
     return _view(row, detail=True)
 
 
+def _accounts(phone_id: int) -> list[dict]:
+    from app.domains.account.platform import linked_by_phone
+
+    return linked_by_phone(phone_id)
+
+
 def _assert_free(row: Phone, action: str) -> None:
     cards = _sims(row.id)
     if cards:
         raise BizError(1502, f"该手机已被 {len(cards)} 张手机卡引用，不能{action}")
+    accounts = _accounts(row.id)
+    if accounts:
+        raise BizError(1502, f"该手机已被{len(accounts)}个平台账号引用，不能{action}")
 
 
 def export(params: dict) -> dict:

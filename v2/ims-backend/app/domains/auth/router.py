@@ -118,6 +118,9 @@ def _menu_tree(ctx) -> list[dict]:
         if menu.type == "MENU" and not menu.perm_code and str(menu.path or "").startswith("/ims/corp/device/"):
             if "ims:device:asset:query" not in allowed_perm:
                 continue
+        if menu.type == "MENU" and not menu.perm_code and str(menu.path or "").startswith("/ims/corp/account/"):
+            if "ims:corp:account:query" not in allowed_perm:
+                continue
         if menu.perm_code and menu.perm_code not in allowed_perm:
             continue
         if menu.perm_code is None and menu.id not in menu_ids and menu.type == "DIR":

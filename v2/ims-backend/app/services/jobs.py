@@ -288,6 +288,20 @@ def asset_verify_increment():
     return run_increment()
 
 
+@job("account_apply_idle_remind", "30 9 * * *")
+def account_apply_idle_remind():
+    from app.domains.account.apply import idle_scan
+
+    return idle_scan()
+
+
+@job("account_return_overdue", "0 9 * * *")
+def account_return_overdue():
+    from app.domains.account.returns import overdue_scan
+
+    return overdue_scan()
+
+
 @job("asset_verify_overdue", "0 9 * * *")
 def asset_verify_overdue():
     from app.domains.device.verify import scan_overdue

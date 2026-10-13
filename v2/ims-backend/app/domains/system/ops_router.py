@@ -27,6 +27,8 @@ _JOB_LABELS = {
     "asset_verify_full": "资产校验全量",
     "asset_verify_increment": "资产校验增量",
     "asset_verify_overdue": "资产校验逾期扫描",
+    "account_apply_idle_remind": "领用后长期未使用",
+    "account_return_overdue": "归还逾期",
 }
 
 

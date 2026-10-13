@@ -15,6 +15,7 @@ DOMAIN_RANGES: dict[str, list[tuple[int, int]]] = {
     "TRAIN": [(1101, 1110)],
     "FLOW": [(1131, 1140)],
     "FOOTBALL": [(1271, 1280)],
+    "ACCT": [(1021, 1026)],
 }
 
 
@@ -36,6 +37,12 @@ BASE_ENTRIES: list[ErrorEntry] = [
     _e(1003, "AUTH", "您的账号已在其他设备登录，本设备已下线", "relogin"),
     _e(1006, "AUTH", "钉钉同步失败", "toast"),
     _e(1008, "COMMON", "暂无权限", "noPermission"),
+    _e(1021, "ACCT", "账号已被领用", "toast"),
+    _e(1022, "ACCT", "账号处于冻结态，不可领用", "toast"),
+    _e(1023, "ACCT", "领用 / 流转单状态非法", "toast"),
+    _e(1024, "ACCT", "归还单未闭环，禁止关闭", "toast"),
+    _e(1025, "ACCT", "金额超过 5000 元须上传凭证", "toast"),
+    _e(1026, "ACCT", "月度核对差异率 ≥ 2%，已生成核查工单", "toast"),
     _e(1011, "ASSET", "资产不存在", "toast"),
     _e(1012, "ASSET", "资产已被领用或编号冲突", "toast"),
     _e(1013, "ASSET", "穿透层级超限", "toast"),

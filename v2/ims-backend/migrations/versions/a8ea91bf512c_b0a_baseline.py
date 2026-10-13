@@ -479,7 +479,7 @@ def upgrade() -> None:
     op.create_table('ims_meet_leave_record',
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('leave_date', sa.String(length=10), nullable=False),
-    sa.Column('portion', sa.Numeric(precision=3, scale=1), nullable=False),
+    sa.Column('portion', sa.Numeric(precision=3, scale=1), nullable=False, quote=True),
     sa.Column('approval_no', sa.String(length=64), nullable=False),
     sa.Column('start_date', sa.String(length=10), nullable=True),
     sa.Column('end_date', sa.String(length=10), nullable=True),

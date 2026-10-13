@@ -37,6 +37,7 @@ _ANOMALY = {
     "OWNER_RESIGNED": "责任人已离职",
     "REALNAME_EMPTY": "未关联实名人",
     "REALNAME_DISABLED": "实名人已停用",
+    "ACCOUNT_UNBOUND": "未绑定账号",
 }
 _LOCK = "ims:asset:verify:manual"
 
@@ -78,7 +79,7 @@ def _types(body: dict) -> list[str]:
     types = [str(item) for item in raw]
     if not types:
         one("verifyType", "请选择校验类型")
-    blocked = [item for item in types if item != "asset_person"]
+    blocked = [item for item in types if item not in {"asset_person", "asset_account"}]
     if blocked:
         raise BizError(1001, "账号 / 场次模块上线后可用", data={"fieldErrors": [{"field": "verifyType", "message": "账号 / 场次模块上线后可用"}]})
     return types
@@ -115,7 +116,7 @@ def _execute(types: list[str], scope: str, trigger: str) -> dict:
     created = 0
     index = 0
     for row in rows:
-        for code, fields in _anomalies(row):
+        for code, fields in _anomalies(row, types):
             found_assets.add(int(row.id))
             if _open_task(row.id, code) is not None:
                 continue
@@ -153,20 +154,33 @@ def _targets(scope: str) -> list[AssetLedger]:
     return list(get_session().scalars(stmt))
 
 
-def _anomalies(row: AssetLedger) -> list[tuple[str, list[dict]]]:
+def _anomalies(row: AssetLedger, types: list[str] | None = None) -> list[tuple[str, list[dict]]]:
+    kinds = types or ["asset_person"]
     found = []
-    owner = user_brief(row.owner_user_id) if row.owner_user_id else {"name": "", "resigned": False}
-    if not row.owner_user_id:
-        found.append(("OWNER_EMPTY", [_field("OWNER_EMPTY", "应有在职责任人", "空")]))
-    elif owner["resigned"] and row.status == "IN_USE":
-        found.append(("OWNER_RESIGNED", [_field("OWNER_RESIGNED", "在职责任人", f"{owner['name']}已离职")]))
-    if not row.realname_id:
-        found.append(("REALNAME_EMPTY", [_field("REALNAME_EMPTY", "已关联实名人", "未关联")]))
-    else:
-        person = get_session().get(Realname, row.realname_id)
-        if person is not None and person.status != "ENABLED":
-            found.append(("REALNAME_DISABLED", [_field("REALNAME_DISABLED", "启用的实名人", f"{person.name}已停用")]))
+    if "asset_person" in kinds:
+        owner = user_brief(row.owner_user_id) if row.owner_user_id else {"name": "", "resigned": False}
+        if not row.owner_user_id:
+            found.append(("OWNER_EMPTY", [_field("OWNER_EMPTY", "应有在职责任人", "空")]))
+        elif owner["resigned"] and row.status == "IN_USE":
+            found.append(("OWNER_RESIGNED", [_field("OWNER_RESIGNED", "在职责任人", f"{owner['name']}已离职")]))
+        if not row.realname_id:
+            found.append(("REALNAME_EMPTY", [_field("REALNAME_EMPTY", "已关联实名人", "未关联")]))
+        else:
+            person = get_session().get(Realname, row.realname_id)
+            if person is not None and person.status != "ENABLED":
+                found.append(("REALNAME_DISABLED", [_field("REALNAME_DISABLED", "启用的实名人", f"{person.name}已停用")]))
+    if "asset_account" in kinds and not _active_account(row.id):
+        found.append(("ACCOUNT_UNBOUND", [_field("ACCOUNT_UNBOUND", "已绑定账号", "未绑定")]))
     return found
+
+
+def _active_account(asset_id: int) -> bool:
+    from app.domains.device.model import AssetBind
+
+    hit = get_session().scalar(
+        select(AssetBind.id).where(AssetBind.asset_id == int(asset_id), AssetBind.bind_status == "ACTIVE", AssetBind.account_id.is_not(None))
+    )
+    return hit is not None
 
 
 def _field(code: str, registered: str, actual: str) -> dict:
@@ -191,7 +205,8 @@ def metrics() -> dict:
     for row in rows:
         owner = user_brief(row.owner_user_id) if row.owner_user_id else None
         person = session.get(Realname, row.realname_id) if row.realname_id else None
-        if owner and not owner["resigned"] and person is not None and person.status == "ENABLED":
+        bound = _active_account(row.id)
+        if owner and not owner["resigned"] and person is not None and person.status == "ENABLED" and bound:
             complete += 1
     completeness = None if total == 0 else round(complete / total, 4)
     batch = session.scalar(

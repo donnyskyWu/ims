@@ -188,7 +188,8 @@ onMounted(load);
         <button v-if="current?.status !== 'SCRAPPED'" v-perm="'ims:device:phone:bind-sim'" class="btn btn-sec" type="button" @click="openBind(current || {})">绑定 / 解绑</button>
       </template>
       <template #acct>
-        <EmptyState :desc="String(current?.accountEmpty || '暂无绑定账号，账号模块上线后显示')" />
+        <EmptyState v-if="!(current?.accounts as unknown[])?.length" :desc="String(current?.accountEmpty || '暂无绑定账号')" />
+        <p v-for="item in (current?.accounts as Record<string, unknown>[]) || []" :key="String(item.id)">{{ item.accountNo }} {{ item.nickname }}</p>
       </template>
     </DetailDrawer>
     <AppModal v-model:open="bindOpen" title="绑定手机卡" :width="520">
