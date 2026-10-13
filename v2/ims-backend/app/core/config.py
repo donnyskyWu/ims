@@ -109,12 +109,63 @@ class Settings:
         return None
 
 
+def v1_dotenv_file() -> Path:
+    """V1 本地密钥文件。开发环境用它补齐或覆盖 dev.yaml，测试环境不读。"""
+    return ROOT.parents[2] / "ims-backend" / ".env"
+
+
+def _load_v1_dotenv(env_name: str) -> None:
+    """开发进程补齐 IMS_DINGTALK_*。测试进程不读该文件，避免用例连上真实钉钉。"""
+    if env_name == "test" or os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+    path = v1_dotenv_file()
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        key, raw = text.split("=", 1)
+        key = key.strip()
+        value = raw.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key and not (os.environ.get(key) or "").strip():
+            os.environ[key] = value
+
+
+def _apply_dingtalk_v1_env(data: dict, env_map: dict, env_name: str) -> None:
+    """用 V1 变量名覆盖钉钉 app_key/secret。双方都有值且不是测试环境时改为 real。"""
+    if env_name == "test":
+        return
+    aliases = {
+        "IMS_DINGTALK_CLIENT_ID": "app_key",
+        "IMS_DINGTALK_CLIENT_SECRET": "app_secret",
+        "IMS_DINGTALK_AGENT_ID": "agent_id",
+        "IMS_DINGTALK_CORP_ID": "corp_id",
+        "IMS_DINGTALK_APP_ID": "app_id",
+    }
+    block = data.get("dingtalk")
+    if not isinstance(block, dict):
+        block = {}
+        data["dingtalk"] = block
+    for env_key, field_name in aliases.items():
+        value = str(env_map.get(env_key) or "").strip()
+        if value:
+            block[field_name] = value
+    client_id = str(env_map.get("IMS_DINGTALK_CLIENT_ID") or "").strip()
+    client_secret = str(env_map.get("IMS_DINGTALK_CLIENT_SECRET") or "").strip()
+    if client_id and client_secret:
+        block["mode"] = "real"
+
+
 def load_settings(env: str | None = None, config_path: str | None = None, extra_env: dict | None = None) -> Settings:
     env_name = env or os.environ.get("IMS_ENV", "dev")
     path = Path(config_path) if config_path else CONFIG_DIR / f"{env_name}.yaml"
     if not path.exists():
         raise StartupError(f"配置文件不存在: {path.name}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    _load_v1_dotenv(env_name)
     env_map = dict(os.environ)
     if extra_env:
         env_map.update(extra_env)
@@ -125,6 +176,7 @@ def load_settings(env: str | None = None, config_path: str | None = None, extra_
             _set_path(data, key, env_map[upper])
         elif f"IMS_{upper}" in env_map and env_map[f"IMS_{upper}"] != "":
             _set_path(data, key, env_map[f"IMS_{upper}"])
+    _apply_dingtalk_v1_env(data, env_map, env_name)
     flat = _flatten(data)
     missing = [key for key in REQUIRED if flat.get(key) in (None, "")]
     if missing:
