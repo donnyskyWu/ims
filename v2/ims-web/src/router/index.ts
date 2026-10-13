@@ -77,6 +77,8 @@ export async function createAppRouter() {
     { path: "ims/account/return", name: "account-return", component: () => import("@/views/account/ReturnView.vue"), meta: { menuless: true, title: "账号归还", perm: "ims:account:return:query" } },
     { path: "ims/account/recharge", name: "account-recharge", component: () => import("@/views/account/RechargeView.vue"), meta: { menuless: true, title: "冲话费", perm: "ims:account:recharge:query" } },
     { path: "ims/account/ledger", redirect: "/ims/corp/account/douyin" },
+    { path: "ims/ip-group", name: "ip-group", component: () => import("@/views/ipg/GroupView.vue"), meta: { title: "IP 组", perm: "ims:ip-group:query" } },
+    { path: "ims/ip-group/author", name: "ip-group-author", component: () => import("@/views/ipg/GroupView.vue"), meta: { title: "作者管理", perm: "ims:ip-group:author:query" } },
     { path: "ims/master/platform-account", redirect: "/ims/corp/account/douyin" },
     { path: "ims/master/personal-account", redirect: "/ims/corp/account/personal" },
     { path: "ims/asset/ledger", redirect: (to) => ({ path: "/ims/corp/device/office", query: { ...to.query, drawer: "ledger" } }) },

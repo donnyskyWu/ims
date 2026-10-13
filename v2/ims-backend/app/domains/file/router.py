@@ -25,6 +25,10 @@ def file_upload(scene: str = Form(...), file: UploadFile = File(...)):
     return service.upload(scene, file.filename or "", payload, ctx.user_id if ctx else 0)
 
 
+# 与资产导入相同：签名跟着 __wrapped__，字符串 UploadFile 解析失败会被当成响应字段。
+file_upload.__wrapped__.__annotations__["file"] = UploadFile
+
+
 @mark(perm="ims:file:query", summary="下载文件")
 def file_download():
     return service.download(_q("fileKey") or "")

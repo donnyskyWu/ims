@@ -170,6 +170,18 @@ PERM_CODES = {
     "ims:account:recharge:voucher",
     "ims:account:timeline:query",
     "ims:account:timeline:export",
+    "ims:ip-group:query",
+    "ims:ip-group:create",
+    "ims:ip-group:update",
+    "ims:ip-group:delete",
+    "ims:ip-group:member",
+    "ims:ip-group:account",
+    "ims:ip-group:anchor",
+    "ims:ip-group:author:query",
+    "ims:ip-group:author:create",
+    "ims:ip-group:author:update",
+    "ims:ip-group:author:delete",
+    "ims:ip-group:author:export",
 }
 
 COLOR_TYPES = {"primary", "success", "warning", "danger", "info", "neutral", "purple", "cyan", "yellow"}
@@ -299,6 +311,21 @@ MENU_TREE = [
         {"name": "办理任务", "type": "BUTTON", "perm": "ims:flow:task:handle"},
         {"name": "撤销实例", "type": "BUTTON", "perm": "ims:flow:instance:cancel"},
         {"name": "流程域管理", "type": "BUTTON", "perm": "ims:flow:instance:manage"},
+    ]},
+    {"name": "日常运营", "type": "DIR", "path": "/ims/ops", "sort": 8, "children": [
+        {"name": "IP 组", "type": "MENU", "path": "/ims/ip-group", "perm": "ims:ip-group:query", "children": [
+            {"name": "新建IP组", "type": "BUTTON", "perm": "ims:ip-group:create"},
+            {"name": "编辑IP组", "type": "BUTTON", "perm": "ims:ip-group:update"},
+            {"name": "删除IP组", "type": "BUTTON", "perm": "ims:ip-group:delete"},
+            {"name": "维护成员", "type": "BUTTON", "perm": "ims:ip-group:member"},
+            {"name": "绑定账号", "type": "BUTTON", "perm": "ims:ip-group:account"},
+            {"name": "关联作者", "type": "BUTTON", "perm": "ims:ip-group:anchor"},
+            {"name": "查看作者", "type": "BUTTON", "perm": "ims:ip-group:author:query"},
+            {"name": "新建作者", "type": "BUTTON", "perm": "ims:ip-group:author:create"},
+            {"name": "编辑作者", "type": "BUTTON", "perm": "ims:ip-group:author:update"},
+            {"name": "删除作者", "type": "BUTTON", "perm": "ims:ip-group:author:delete"},
+            {"name": "导出作者", "type": "BUTTON", "perm": "ims:ip-group:author:export"},
+        ]},
     ]},
     {"name": "主数据", "type": "DIR", "path": "/master", "sort": 5, "children": [
         {"name": "实名新建", "type": "BUTTON", "perm": "ims:master:realname:create"},
@@ -534,6 +561,11 @@ DICT_ROWS = [
     ("dict_msg_type", "TODO", "待办", "primary", None),
     ("dict_position", "SALES", "销售", "primary", None),
     ("dict_position", "ANCHOR", "主播", "info", None),
+    ("dict_position", "OPS_LEADER", "运营组长", "primary", None),
+    ("dict_position", "OPERATOR", "运营", "info", None),
+    ("dict_position", "EDITOR", "编辑", "purple", None),
+    ("dict_position", "LIVE_OPERATOR", "直播运营", "cyan", None),
+    ("dict_position", "OTHER", "其他", "neutral", None),
     ("dict_corp_status", "ENABLED", "启用", "success", None),
     ("dict_corp_status", "DISABLED", "停用", "neutral", None),
     ("dict_cert_type", "ID_CARD", "身份证", "primary", None),
@@ -627,6 +659,22 @@ DICT_ROWS = [
     ("dict_recharge_verify_status", "UNVERIFIED", "未核对", "warning", None),
     ("dict_recharge_verify_status", "MATCHED", "已核对", "success", None),
     ("dict_recharge_verify_status", "DIFF", "有差异", "danger", None),
+    ("dict_ip_group_type", "BIG", "大组", "primary", None),
+    ("dict_ip_group_type", "SMALL", "小组", "info", None),
+    ("dict_ip_group_level", "S", "S级", "danger", None),
+    ("dict_ip_group_level", "A", "A级", "warning", None),
+    ("dict_ip_group_level", "B", "B级", "primary", None),
+    ("dict_ip_group_level", "C", "C级", "info", None),
+    ("dict_ip_group_status", "ENABLED", "启用", "success", None),
+    ("dict_ip_group_status", "DISABLED", "停用", "neutral", None),
+    ("dict_member_relation", "PRIMARY", "主职", "primary", None),
+    ("dict_member_relation", "PART_TIME", "兼职", "info", None),
+    ("dict_author_type", "SHORT_VIDEO", "短视频", "primary", None),
+    ("dict_author_type", "LIVE", "直播", "warning", None),
+    ("dict_author_type", "BOTH", "短视频+直播", "success", None),
+    ("dict_author_type", "OTHER", "其他", "neutral", None),
+    ("dict_author_status", "ENABLED", "启用", "success", None),
+    ("dict_author_status", "DISABLED", "停用", "neutral", None),
 ]
 
 DICT_TYPE_NAMES = {
@@ -684,6 +732,12 @@ DICT_TYPE_NAMES = {
     "dict_return_item_status": "归还项状态",
     "dict_recharge_channel": "充值渠道",
     "dict_recharge_verify_status": "充值核对状态",
+    "dict_ip_group_type": "IP组类型",
+    "dict_ip_group_level": "IP组等级",
+    "dict_ip_group_status": "IP组状态",
+    "dict_member_relation": "成员关系",
+    "dict_author_type": "作者类型",
+    "dict_author_status": "作者状态",
 }
 
 SHARED_TABLES = [
@@ -697,6 +751,7 @@ SHARED_TABLES = [
     ("ims_ipg_group", "ims_ipg_", "IP组"),
     ("ims_ipg_member", "ims_ipg_", "IP组成员"),
     ("ims_master_author", "ims_master_", "作者"),
+    ("ims_ipg_anchor", "ims_ipg_", "IP组作者"),
     ("ims_live_session", "ims_live_", "场次"),
     ("ims_comp_account", "ims_comp_", "外部账号"),
 ]

@@ -747,6 +747,19 @@ def dict_values(dict_type: str) -> list[dict]:
     return [dump_row(row) for row in rows]
 
 
+def dict_simple_list(dict_type: str, status: str | None = None) -> list[dict]:
+    """登录态字典简表。按类型一次查出，默认只返回启用值（含 colorType）。"""
+    wanted = (status or "ENABLED").strip() or "ENABLED"
+    rows = list(
+        get_session().scalars(
+            select(DictData)
+            .where(DictData.dict_type == dict_type, DictData.status == wanted)
+            .order_by(DictData.sort.asc(), DictData.id.asc())
+        )
+    )
+    return [dump_row(row, ["dict_value", "dict_label", "color_type", "status", "sort"]) for row in rows]
+
+
 def _window(params: dict, default_days: int, max_days: int | None):
     end = now_naive()
     start = end - timedelta(days=default_days)

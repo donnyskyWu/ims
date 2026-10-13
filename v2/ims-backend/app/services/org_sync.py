@@ -489,11 +489,20 @@ def _add_diff(batch_id, diff_type: str, label: str, user_id: int, ding_user_id: 
     )
 
 
+def _remote_position(payload: dict) -> str:
+    """岗位规则页读 position_code。钉钉职务在 title，全量拉取不一定带 positionCode。"""
+    for key in ("positionCode", "title", "position"):
+        value = payload.get(key)
+        if value in (None, ""):
+            continue
+        text = str(value).strip()
+        if text:
+            return text[:64]
+    return ""
+
+
 def _apply_position(user: User, payload: dict, event_id: str) -> None:
-    code = payload.get("positionCode")
-    if code in (None, ""):
-        return
-    text = str(code).strip()
+    text = _remote_position(payload)
     if not text:
         return
     _ensure_position(text)

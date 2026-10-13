@@ -74,6 +74,9 @@ def create(body: dict) -> dict:
         total = int(company.wx_official_capacity or 0)
         if used >= total:
             raise BizError(1222, f"公众号容量不足（已用 {used} / 总量 {total}）", used=used, total=total)
+    from app.domains.ipg.resolve import assign_platform_author
+
+    group_id, author_id = assign_platform_author(body, None)
     number = account_no_for(platform, text_of(body, "accountNo"))
     _unique(number, None)
     remark = limit(text_of(body, "remark"), "remark", "备注", 256)
@@ -87,7 +90,8 @@ def create(body: dict) -> dict:
         realname_id=person.id,
         sim_card_id=card.id if card else None,
         phone_id=phone.id if phone else None,
-        ip_group_id=None,
+        ip_group_id=group_id,
+        author_user_id=author_id,
         status="IN_POOL",
         collect_bind_status="UNBOUND",
         remark=remark,
@@ -128,6 +132,15 @@ def update(ident: int, body: dict) -> dict:
         row.phone_id = phone.id if phone else None
     if "remark" in body:
         row.remark = limit(text_of(body, "remark"), "remark", "备注", 256)
+    from app.domains.ipg.resolve import assign_platform_author
+
+    # 已有小组沿用；历史空组在首次保存时必须补选。
+    if row.ip_group_id or any(key in body for key in ("ipGroupId", "authorId", "authorUserId")):
+        group_id, author_id = assign_platform_author(body, row)
+        row.ip_group_id = group_id
+        row.author_user_id = author_id
+    else:
+        raise BizError(1001, data={"fieldErrors": [{"field": "ipGroupId", "message": "请选择 IP 小组"}]})
     save(row)
     payload = _view(row, detail=True)
     payload["warnings"] = mismatch(row)
@@ -341,6 +354,11 @@ def _filtered(platform: str, params: dict) -> list[PlatformAccount]:
         from app.core.serialize import parse_api_id
 
         stmt = stmt.where(PlatformAccount.owner_user_id == int(parse_api_id(owner_id)))
+    ip_group = text_of(params, "ipGroupId")
+    if ip_group:
+        from app.core.serialize import parse_api_id
+
+        stmt = stmt.where(PlatformAccount.ip_group_id == int(parse_api_id(ip_group)))
     return list(get_session().scalars(stmt))
 
 
@@ -373,7 +391,10 @@ def _view(row: PlatformAccount, *, detail: bool = False) -> dict:
         "rechargeTotal": money_text(row.recharge_total_fen),
         "rechargeTotalFen": 0 if mask_amount() else int(row.recharge_total_fen or 0),
         "remark": row.remark or "",
-        "ipGroupText": "—，IP 组模块上线后可绑定",
+        "ipGroupId": row.ip_group_id,
+        "ipGroupText": _group_text(row.ip_group_id),
+        "authorId": row.author_user_id,
+        "authorName": _author_text(row.author_user_id),
         "updateTime": when(row.update_time),
         "idle": _idle(row),
     }
@@ -469,3 +490,19 @@ def _idle(row: PlatformAccount) -> bool:
 
 def one_platform() -> None:
     raise BizError(1001, data={"fieldErrors": [{"field": "platform", "message": "平台不可修改"}]})
+
+
+def _group_text(ident: int | None) -> str:
+    if not ident:
+        return "—"
+    from app.domains.ipg.resolve import group_chain
+
+    return group_chain(ident) or "—"
+
+
+def _author_text(ident: int | None) -> str:
+    if not ident:
+        return "—"
+    from app.domains.ipg.resolve import author_label
+
+    return author_label(ident) or "—"

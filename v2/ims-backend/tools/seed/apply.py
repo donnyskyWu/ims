@@ -484,12 +484,53 @@ def _shape_account(key: str, codes: list[str], all_codes: list[str]) -> list[str
     return kept + _account_grant(key, all_codes)
 
 
+def _ipg_codes(all_codes: list[str]) -> set[str]:
+    return {code for code in all_codes if code.startswith("ims:ip-group:")}
+
+
+def _ipg_grant(key: str, all_codes: list[str]) -> list[str]:
+    """IP 组权限按角色补齐。R8/R10 不授菜单。"""
+    bag = _ipg_codes(all_codes)
+    query = sorted(code for code in bag if code.endswith(":query"))
+    operate = [code for code in ("ims:ip-group:member", "ims:ip-group:account", "ims:ip-group:anchor") if code in bag]
+    write = [
+        code
+        for code in (
+            "ims:ip-group:create",
+            "ims:ip-group:update",
+            "ims:ip-group:delete",
+            "ims:ip-group:author:create",
+            "ims:ip-group:author:update",
+            "ims:ip-group:author:delete",
+            "ims:ip-group:author:export",
+        )
+        if code in bag
+    ]
+    if key == "R1":
+        return sorted(bag)
+    if key in {"R8", "R10", "R11"}:
+        return []
+    if key in {"R2", "R3", "R9"}:
+        return query
+    if key == "R4":
+        return query + write + operate
+    if key in {"R5", "R6", "R7"}:
+        return query + operate
+    return []
+
+
+def _shape_ipg(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
+    owned = _ipg_codes(all_codes)
+    kept = [code for code in codes if code not in owned]
+    return kept + _ipg_grant(key, all_codes)
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
-        shaped = _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
-        return _shape_account(key, shaped, all_codes)
+        shaped = _shape_account(key, _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes), all_codes)
+        return _shape_ipg(key, shaped, all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -506,8 +547,8 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
         codes.extend(sorted(managed))
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
-    shaped = _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
-    return _shape_account(key, shaped, all_codes)
+    shaped = _shape_account(key, _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes), all_codes)
+    return _shape_ipg(key, shaped, all_codes)
 
 
 def _users(session):

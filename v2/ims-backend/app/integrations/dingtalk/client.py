@@ -1,7 +1,8 @@
-"""钉钉适配器。测试环境走 Mock，不访问公网。"""
+"""钉钉适配器。测试环境走 Mock，不访问公网。mode=real 时通讯录走真实拉取。"""
 from __future__ import annotations
 
 from app.core.errors import BizError
+from app.integrations.dingtalk.directory import AUTH_SCOPE_HINT, pull_org_directory
 
 
 class DingState:
@@ -59,7 +60,36 @@ def dingtalk_enabled() -> bool:
     return mode not in {"off", "disabled", "false", "0", ""}
 
 
+def _real_directory() -> bool:
+    """只有显式 real 才访问钉钉。mock / 测试保持内存目录。"""
+    if ding_state.force_off:
+        return False
+    from app.core.config import get_settings
+
+    mode = str((get_settings().dingtalk or {}).get("mode") or "mock").lower()
+    return mode == "real"
+
+
+def _reject_unusable_directory(payload: dict | None, err: str | None) -> dict:
+    """没有完整部门结果就失败返回，对账不会拿空列表去停用本地部门。"""
+    text = err or ""
+    if "50004" in text:
+        raise BizError(1006, AUTH_SCOPE_HINT)
+    if text:
+        lowered = text.lower()
+        if "timeout" in lowered or "timed out" in lowered:
+            raise BizError(5003)
+        raise BizError(1006, "钉钉组织拉取失败，已中止同步")
+    departments = (payload or {}).get("departments") or []
+    if not departments:
+        raise BizError(1006, "钉钉未返回部门，已中止同步，避免停用本地部门")
+    return payload or {}
+
+
 def list_directory() -> dict:
+    if _real_directory():
+        payload, err = pull_org_directory()
+        return _reject_unusable_directory(payload, err)
     ding_state.http_calls += 1
     if ding_state.error == "timeout":
         raise BizError(5003)

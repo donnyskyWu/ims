@@ -100,6 +100,11 @@
     "strategy": "toast"
   },
   {
+    "code": 1127,
+    "msg": "作者与账号不在同一 IP 组账号池",
+    "strategy": "toast"
+  },
+  {
     "code": 1131,
     "msg": "流程图校验失败，请补齐起止或去掉环路",
     "strategy": "fieldError"
@@ -147,6 +152,26 @@
   {
     "code": 1140,
     "msg": "实例已结束，不可撤销",
+    "strategy": "toast"
+  },
+  {
+    "code": 1203,
+    "msg": "大组不可绑定账号或关联作者",
+    "strategy": "toast"
+  },
+  {
+    "code": 1204,
+    "msg": "成员用户不存在或已停用",
+    "strategy": "toast"
+  },
+  {
+    "code": 1205,
+    "msg": "账号已属于其他分组",
+    "strategy": "toast"
+  },
+  {
+    "code": 1206,
+    "msg": "该分组下仍有成员、账号、关联作者或子组，禁止删除",
     "strategy": "toast"
   },
   {
@@ -211,7 +236,7 @@
   },
   {
     "code": 1223,
-    "msg": "主数据已变化，请刷新",
+    "msg": "账号所属 IP 组存在多名作者且未指定主作者（或组内无作者）",
     "strategy": "toast"
   },
   {

@@ -491,7 +491,7 @@ def test_docs_error_codes_and_openapi(tmp_path):
     from tools.api_gen import dump_openapi
     from tools.docs_gen import write_docs
 
-    assert len(SHARED_TABLES) == 12
+    assert len(SHARED_TABLES) == 13
     docs = write_docs(tmp_path / "docs")
     tables = next(path.read_text(encoding="utf-8") for path in docs if path.name.startswith("表名"))
     for table, prefix, title in SHARED_TABLES:

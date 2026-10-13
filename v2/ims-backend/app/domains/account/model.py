@@ -70,7 +70,8 @@ class ReturnOrder(AuditBase):
     user_id: Mapped[int] = ref_column(_USER, nullable=False)
     resign_date: Mapped[date] = mapped_column(Date, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="IN_PROGRESS", info={"dict": "dict_return_order_status"})
-    manual: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # MySQL 8.4+ 把 manual 当保留字，插入必须加反引号。
+    manual: Mapped[int] = mapped_column("manual", Integer, nullable=False, default=0, quote=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     suspend_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)

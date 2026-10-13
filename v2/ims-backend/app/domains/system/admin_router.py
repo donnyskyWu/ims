@@ -192,6 +192,12 @@ def dict_data_list():
     return svc.dict_values(str(_q("dictType") or ""))
 
 
+@mark(login_only=True, summary="字典简表")
+def dict_data_simple():
+    # 页面下拉与状态标签走此路径；须为静态路由，避免被 /dict-data/{ident} 吞掉后 GET 返回 405。
+    return svc.dict_simple_list(str(_q("dictType") or ""), _q("status"))
+
+
 @mark(perm="ims:system:dict:create", operate=("字典", "新建字典值"), summary="新建字典值")
 def dict_data_create():
     return svc.dict_data_save(_body())
@@ -335,6 +341,7 @@ router.put("/menu/{ident}/visible", summary="显示或隐藏菜单")(menu_visibl
 router.get("/dict-type/list", summary="字典类型列表")(dict_type_list)
 router.put("/dict-type", summary="修改字典类型")(dict_type_update)
 router.delete("/dict-type/{ident}", summary="删除字典类型")(dict_type_delete)
+router.get("/dict-data/simple-list", summary="字典简表")(dict_data_simple)
 router.get("/dict-data/list", summary="字典值列表")(dict_data_list)
 router.post("/dict-data", summary="新建字典值")(dict_data_create)
 router.put("/dict-data", summary="修改字典值")(dict_data_update)

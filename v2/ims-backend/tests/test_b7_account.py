@@ -128,9 +128,47 @@ def _person(client, headers, name="账号实名", number="110101199003078515"):
 def _account(client, headers, company_id, realname_id, **extra):
     body = {"platform": "DOUYIN", "nickname": "星河抖音", "companyId": company_id, "realnameId": realname_id}
     body.update(extra)
-    token = extra.pop("token", "b7-acc")
-    body.pop("token", None)
+    token = body.pop("token", "b7-acc")
+    if "ipGroupId" not in body:
+        body["ipGroupId"] = _ensure_ip(client, headers)
     return _ok(client.post(f"{API}/corp/account", headers=_headers(client, token=token, base=headers), json=body))
+
+
+def _ensure_ip(client, headers):
+    """B8 起登记账号必须挂到已有唯一作者的小组。"""
+    cached = getattr(client, "_b7_ip", None)
+    if cached:
+        return cached
+    big = _ok(
+        client.post(
+            f"{API}/ip-group/create",
+            headers=_headers(client, token="b7-ip-big", base=headers),
+            json={"groupName": "账号大组", "groupType": "BIG"},
+        )
+    )
+    small = _ok(
+        client.post(
+            f"{API}/ip-group/create",
+            headers=_headers(client, token="b7-ip-small", base=headers),
+            json={"groupName": "账号小组", "groupType": "SMALL", "parentId": big["id"]},
+        )
+    )
+    author = _ok(
+        client.post(
+            f"{API}/ip-group/author",
+            headers=_headers(client, token="b7-ip-author", base=headers),
+            json={"authorName": "账号作者", "authorType": "LIVE", "ipGroupId": small["id"]},
+        )
+    )
+    _ok(
+        client.post(
+            f"{API}/ip-group/{small['id']}/anchors",
+            headers=_headers(client, token="b7-ip-anchor", base=headers),
+            json={"authorId": author["id"]},
+        )
+    )
+    client._b7_ip = small["id"]
+    return small["id"]
 
 
 def _leader():
