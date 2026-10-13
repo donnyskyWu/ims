@@ -43,6 +43,7 @@ from app.domains.flow.model import FlowCcRecord, FlowInstance, FlowTask, FlowTem
 from app.domains.master.model import (  # noqa: F401
     Author,
     Cert,
+    IpAnchor,
     CompAccount,
     Company,
     IpGroup,

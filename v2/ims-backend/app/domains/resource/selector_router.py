@@ -66,3 +66,21 @@ def selector_account():
 
 router.get("/selector/asset", summary="资产选择器")(selector_asset)
 router.get("/selector/account", summary="账号选择器")(selector_account)
+
+
+@mark(login_only=True, summary="IP 组选择器")
+def selector_ip_group():
+    from app.domains.ipg.service import selector_groups
+
+    return selector_groups(_page(), _params())
+
+
+@mark(login_only=True, summary="作者选择器")
+def selector_author():
+    from app.domains.ipg.service import selector_authors
+
+    return selector_authors(_page(), _params())
+
+
+router.get("/selector/ip-group", summary="IP 组选择器")(selector_ip_group)
+router.get("/selector/author", summary="作者选择器")(selector_author)

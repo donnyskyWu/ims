@@ -77,6 +77,11 @@ def create(body: dict) -> dict:
     number = account_no_for(platform, text_of(body, "accountNo"))
     _unique(number, None)
     remark = limit(text_of(body, "remark"), "remark", "备注", 256)
+    from app.domains.ipg.resolve import materialize_author, require_small_group
+
+    group = require_small_group(body.get("ipGroupId"))
+    explicit = body.get("authorId", body.get("authorUserId"))
+    author_id = materialize_author(group.id, explicit_author=explicit, current_author=None)
     row = PlatformAccount(
         code=number,
         name=nickname,
@@ -87,7 +92,8 @@ def create(body: dict) -> dict:
         realname_id=person.id,
         sim_card_id=card.id if card else None,
         phone_id=phone.id if phone else None,
-        ip_group_id=None,
+        ip_group_id=group.id,
+        author_user_id=author_id,
         status="IN_POOL",
         collect_bind_status="UNBOUND",
         remark=remark,
@@ -128,6 +134,20 @@ def update(ident: int, body: dict) -> dict:
         row.phone_id = phone.id if phone else None
     if "remark" in body:
         row.remark = limit(text_of(body, "remark"), "remark", "备注", 256)
+    if "ipGroupId" in body or "authorId" in body or "authorUserId" in body or not row.ip_group_id:
+        from app.domains.ipg.resolve import materialize_author, require_small_group
+
+        raw_group = body.get("ipGroupId") if "ipGroupId" in body else row.ip_group_id
+        group = require_small_group(raw_group)
+        explicit = None
+        current = row.author_user_id
+        if "authorId" in body or "authorUserId" in body:
+            explicit = body.get("authorId") if "authorId" in body else body.get("authorUserId")
+            current = None if explicit in (None, "") else None
+            if explicit in (None, ""):
+                explicit = None
+        row.ip_group_id = group.id
+        row.author_user_id = materialize_author(group.id, explicit_author=explicit, current_author=current)
     save(row)
     payload = _view(row, detail=True)
     payload["warnings"] = mismatch(row)
@@ -272,7 +292,11 @@ def selector(page_query, params: dict) -> dict:
         _check_status(status)
         stmt = stmt.where(PlatformAccount.status == status)
     ip_group = text_of(params, "ipGroupId")
-    if ip_group:
+    include_unassigned = text_of(params, "includeUnassigned").lower() in {"1", "true", "yes"}
+    if ip_group and include_unassigned:
+        gid = int(parse_api_id(ip_group))
+        stmt = stmt.where(or_(PlatformAccount.ip_group_id == gid, PlatformAccount.ip_group_id.is_(None)))
+    elif ip_group:
         stmt = stmt.where(PlatformAccount.ip_group_id == int(parse_api_id(ip_group)))
     rows = list(session.scalars(stmt))
     keyword = text_of(params, "keyword")
@@ -341,6 +365,11 @@ def _filtered(platform: str, params: dict) -> list[PlatformAccount]:
         from app.core.serialize import parse_api_id
 
         stmt = stmt.where(PlatformAccount.owner_user_id == int(parse_api_id(owner_id)))
+    ip_group = text_of(params, "ipGroupId")
+    if ip_group:
+        from app.core.serialize import parse_api_id
+
+        stmt = stmt.where(PlatformAccount.ip_group_id == int(parse_api_id(ip_group)))
     return list(get_session().scalars(stmt))
 
 
@@ -373,10 +402,12 @@ def _view(row: PlatformAccount, *, detail: bool = False) -> dict:
         "rechargeTotal": money_text(row.recharge_total_fen),
         "rechargeTotalFen": 0 if mask_amount() else int(row.recharge_total_fen or 0),
         "remark": row.remark or "",
-        "ipGroupText": "—，IP 组模块上线后可绑定",
         "updateTime": when(row.update_time),
         "idle": _idle(row),
     }
+    from app.domains.ipg.service import account_labels
+
+    data.update(account_labels(row.ip_group_id, row.author_user_id))
     if detail:
         data["warnings"] = mismatch(row)
         data["canApply"] = row.status == "IN_POOL"
