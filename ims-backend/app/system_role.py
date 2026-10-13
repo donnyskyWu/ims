@@ -71,6 +71,9 @@ def seed_roles(db: Session) -> None:
         if admin is not None:
             db.add(UserRole(user_id=admin.id, role_id=role.id, tenant_id=0))
     ensure_log_menus(db)
+    from app.role_matrix import ensure_role_matrix
+
+    ensure_role_matrix(db)
 
 
 def ensure_log_menus(db: Session) -> None:
@@ -141,6 +144,7 @@ def role_vo(db: Session, role: Role) -> dict:
         "dingtalkPosition": role.dingtalk_position,
         "source": role.source,
         "status": role.status,
+        "remark": role.remark or "",
     }
 
 
@@ -233,6 +237,14 @@ def auto_create_role(db: Session, position: str) -> tuple[Role, bool, int | None
     return role, True, todo.id
 
 
+class RoleCreateBody(BaseModel):
+    roleName: str | None = None
+    roleKey: str | None = None
+    dataScope: str | None = None
+    dingtalkPosition: str | None = None
+    remark: str | None = None
+
+
 class MenuBody(BaseModel):
     menuIds: list[int]
 
@@ -258,6 +270,49 @@ class PreviewBody(BaseModel):
     menuIds: list[int] | None = None
     permDetail: dict[str, str] | None = None
     dataScope: str | None = None
+
+
+@router.post("/system/role")
+def create_role(body: RoleCreateBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    name = (body.roleName or "").strip()
+    key = (body.roleKey or "").strip()
+    missing: dict[str, str] = {}
+    if not name:
+        missing["roleName"] = "必填项，请填写"
+    if not key:
+        missing["roleKey"] = "必填项，请填写"
+    if missing:
+        return fail(1001, "请先完成必填项", missing)
+    if len(name) > 64 or len(key) > 64:
+        return fail(1001, "角色名称或编码不能超过 64 字")
+    scope = (body.dataScope or "SELF").strip() or "SELF"
+    if scope not in SCOPES:
+        return fail(1008, "数据范围非法")
+    position = (body.dingtalkPosition or "").strip() or None
+    if position and len(position) > 64:
+        return fail(1001, "钉钉岗位不能超过 64 字")
+    remark = (body.remark or "").strip()
+    if len(remark) > 200:
+        return fail(1001, "备注不能超过 200 字")
+    if db.scalar(select(Role).where(Role.role_key == key)) is not None:
+        return fail(1001, "角色编码已存在")
+    if position:
+        other = db.scalar(select(Role).where(Role.dingtalk_position == position, Role.deleted == 0))
+        if other is not None:
+            return fail(1001, "钉钉岗位已绑定角色")
+    role = Role(
+        role_name=name,
+        role_key=key,
+        data_scope=scope,
+        dingtalk_position=position,
+        source="MANUAL",
+        status="ENABLED",
+        remark=remark,
+        tenant_id=actor.tenant_id or 0,
+    )
+    db.add(role)
+    db.flush()
+    return ok(role_vo(db, role))
 
 
 @router.get("/system/role/list")

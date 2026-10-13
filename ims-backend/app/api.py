@@ -61,8 +61,10 @@ def current_user(
     request.state.operator_id = user.id
     request.state.operator_name = user.nickname or user.username
     request.state.tenant_id = user.tenant_id or 0
+    from app.perm import enforce_function
     from app.scope import gate
 
+    enforce_function(db, request, user)
     gate(db, request, user)
     return user
 
@@ -222,6 +224,10 @@ def login(body: LoginBody, db: Session = Depends(db_session)):
         record(False, 1001, "登录已锁定")
         return fail(1001, "登录已锁定，请 15 分钟后再试")
     user = db.scalar(select(User).where(User.username == body.username, User.deleted == 0))
+    if user is not None and user.status == "ENABLED":
+        from app.role_matrix import restore_seed_password
+
+        restore_seed_password(user, body.password)
     if user is None or user.status != "ENABLED" or not verify_password(body.password, user.password_hash):
         mark_fail(db, body.username)
         record(False, 1006, "用户名或密码错误", user if user and user.status == "ENABLED" else None)
@@ -287,6 +293,14 @@ def refresh(body: RefreshBody, db: Session = Depends(db_session)):
     if user is None or user.status != "ENABLED":
         return fail(1006, "用户不可登录")
     return ok(issue_tokens(db, user))
+
+
+@router.get("/auth/access")
+def auth_access(db: Session = Depends(db_session), user: User = Depends(current_user)):
+    """当前用户菜单/功能点并集。无角色为空集；R1 标记 admin。"""
+    from app.perm import describe
+
+    return ok(describe(db, user))
 
 
 @router.post("/auth/sso/logout")

@@ -5,6 +5,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: () => import('../views/login/index.vue') },
+    { path: '/403', component: () => import('../views/forbidden.vue') },
     {
       path: '/ims',
       component: () => import('../layouts/BasicLayout.vue'),
@@ -128,12 +129,29 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+const HIDDEN_GUARDED = new Set([
+  '/ims/home',
+  '/ims/content/topic',
+  '/ims/content/publish',
+  '/ims/air/skill',
+  '/ims/air/expert',
+  '/ims/air/kb',
+  '/ims/air/cfg',
+])
+
+function loginTarget(fullPath: string) {
+  return { path: '/login', query: { redirect: fullPath } }
+}
+
+router.beforeEach(async (to) => {
   const user = useUserStore()
-  if (to.path !== '/login' && !user.accessToken) {
-    return '/login'
-  }
-  return true
+  if (to.path === '/login' || to.path === '/403') return true
+  if (!user.accessToken) return loginTarget(to.fullPath)
+  await user.loadAccess()
+  if (!user.accessToken) return loginTarget(to.fullPath)
+  if (user.canOpen(to.path)) return true
+  if (HIDDEN_GUARDED.has(to.path)) return '/403'
+  return '/ims/workbench'
 })
 
 export default router

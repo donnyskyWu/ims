@@ -10,7 +10,12 @@ VALID_SCOPES = ("ALL", "DEPT", "IP_GROUP", "SELF")
 RANK = {"SELF": 1, "IP_GROUP": 2, "DEPT": 3, "ALL": 4}
 WHITELIST_PREFIXES = (
     "/admin-api/ims/auth/workbench",
+    "/admin-api/ims/auth/access",
     "/admin-api/ims/home",
+    # 与功能白名单一致：待办查询已按 assignee 限定本人，不按流程表的数据范围再拦一层。
+    "/admin-api/ims/flow/task/my-todo",
+    # 字典数据是页面下拉的公共参照，不按 SELF/DEPT 拦。字典类型和删除仍走数据范围。
+    "/admin-api/ims/system/dict-data/list",
 )
 
 
@@ -84,7 +89,7 @@ SPECS = {
     "oa_external_work": Spec(ip_group=True),
     "oa_external_account": Spec(ip_group=True),
     "ims_meet_daily_report": Spec(dept=True, creator=True, creator_col="user_id"),
-    "ims_meet_daily_review": Spec(creator=True, creator_col="reviewer_user_id"),
+    "ims_meet_daily_review": Spec(dept=True, creator=True, creator_col="reviewer_user_id"),
     "ims_meet_minutes": Spec(dept=True, creator=True, creator_col="recorder_user_id"),
     "ims_kb": Spec(creator=True, creator_col="owner_user_id"),
     "ims_kb_category": Spec(),
@@ -112,9 +117,10 @@ SPECS = {
     "ims_exam_paper": Spec(creator=True, creator_col="created_by"),
     "ims_exam_assignment": Spec(creator=True, creator_col="user_id"),
     "ims_exam_record": Spec(creator=True, creator_col="user_id"),
-    "ims_flow_template": Spec(creator=True, creator_col="creator_id"),
-    "ims_flow_instance": Spec(creator=True, creator_col="initiator_user_id"),
-    "ims_flow_task": Spec(creator=True, creator_col="assignee_user_id"),
+    # 本部门角色（运营总监审阅/业务流程）可以打开这些管理视图，不能因表上没有 dept_id 直接 403。
+    "ims_flow_template": Spec(dept=True, creator=True, creator_col="creator_id"),
+    "ims_flow_instance": Spec(dept=True, creator=True, creator_col="initiator_user_id"),
+    "ims_flow_task": Spec(dept=True, creator=True, creator_col="assignee_user_id"),
     "ims_alert_rule": Spec(creator=True, creator_col="created_by"),
     "ims_alert_record": Spec(),
     "ims_alert_dedup_policy": Spec(),
@@ -531,6 +537,12 @@ def gate(db: Session, request, user: User) -> None:
     if any(path.startswith(prefix) for prefix in WHITELIST_PREFIXES):
         request.state.scope = None
         return
+    if request.method in ("GET", "HEAD"):
+        from app.perm import USER_FORM_READS, holds_user_form, level_map
+
+        if path in USER_FORM_READS and holds_user_form(level_map(db, user)):
+            request.state.scope = None
+            return
     table = match_table(request.method, path)
     if table is None or table not in SPECS:
         deny()

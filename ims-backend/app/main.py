@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,7 +74,7 @@ def _ensure_fin_r9_user(db) -> None:
         nickname="财务数据分析师",
         mobile="13900000146",
         role_key="fin:r9",
-        role_name="数据分析师",
+        role_name="E2E专用-数据分析师",
     )
 
 
@@ -98,6 +99,11 @@ def _ensure_e2e_author(db) -> None:
 
 
 def seed() -> None:
+    # 改名和验收账号密码先落库。采集等后续种子抛错时，这两段不能跟着主事务回滚。
+    from app.role_matrix import commit_e2e_legacy_roles, commit_seed_passwords
+
+    commit_e2e_legacy_roles()
+    commit_seed_passwords()
     db = SessionLocal()
     try:
         if db.get(User, 1) is None and db.query(User).filter(User.username == "admin").first() is None:
@@ -131,9 +137,10 @@ def seed() -> None:
         finally:
             ops.close()
         _ensure_e2e_author(db)
-        from app.air_skill_seed import ensure_air_skill_dept_fixture
+        from app.air_skill_seed import ensure_air_skill_dept_fixture, ensure_r4_skill_grant
 
         ensure_air_skill_dept_fixture(db)
+        ensure_r4_skill_grant(db)
         author = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).first()
         if author is not None:
             refresh_user_scope(db, author.id)
@@ -177,6 +184,9 @@ def seed() -> None:
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
         refresh_wechat_channels_collect_seed()
+        from app.role_matrix import normalize_e2e_legacy_roles
+
+        normalize_e2e_legacy_roles(db)
         db.commit()
     finally:
         db.close()
@@ -479,6 +489,20 @@ def ensure_live_alarm_merge_column() -> None:
             conn.execute(text(f"ALTER TABLE ims_live_alarm_record {clause}"))
 
 
+def ensure_role_remark_column() -> None:
+    """已有库补角色备注。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_sys_role" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_sys_role")}
+    if "remark" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_sys_role ADD COLUMN remark VARCHAR(200) NOT NULL DEFAULT ''"))
+
+
 def ensure_user_mapping_position_column() -> None:
     """已有库补钉钉岗位（通讯录 title）。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -498,6 +522,7 @@ def ensure_user_mapping_position_column() -> None:
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_role_remark_column()
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()
@@ -520,8 +545,17 @@ def init_db() -> None:
     seed()
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from app.role_matrix import commit_e2e_legacy_roles, commit_seed_passwords
+
+    commit_e2e_legacy_roles()
+    commit_seed_passwords()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="IMS")
+    app = FastAPI(title="IMS", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

@@ -8,6 +8,8 @@
 | 1 | GET | `/system/user/page` | 用户分页 |
 | 2 | POST/PUT | `/system/user` | 创建/更新（不可改 id） |
 | 3 | GET | `/system/role/list` | 角色 |
+| 3a | POST | `/system/role` | **新建手工角色**（`roleName`、`roleKey` 必填且编码唯一；`dataScope`、`dingtalkPosition`、`remark` 可选；来源 `MANUAL`，状态 `ENABLED`） |
+| 3b | GET | `/auth/access` | **当前用户权限并集**（菜单路由 + 功能点级别；无角色空集 fail-closed；`sys:admin` 为 `admin`） |
 | 4 | PUT | `/system/role/{id}/menus` | 角色菜单（权限码） |
 | 4a | PUT | `/system/role/{id}/perm-detail` | **角色功能点 R/W/D 明细**（ADR-IMS-008 吸收自 AUTH-003） |
 | 4b | PUT | `/system/role/{id}/data-scope` | **角色数据范围**（ALL / DEPT / IP_GROUP / SELF；ADR-IMS-008 · BR-305 权威口径） |

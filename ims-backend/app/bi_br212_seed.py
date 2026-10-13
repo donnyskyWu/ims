@@ -75,10 +75,13 @@ def ensure_bi_r4_viewer(db) -> None:
         )
         db.add(viewer)
         db.flush()
+    from app.role_matrix import E2E_LEGACY_ROLE_NAMES
+
+    display = E2E_LEGACY_ROLE_NAMES["bi:dept-viewer"]
     role = db.scalar(select(Role).where(Role.role_key == "bi:dept-viewer", Role.deleted == 0))
     if role is None:
         role = Role(
-            role_name="BI 本部门查看",
+            role_name=display,
             role_key="bi:dept-viewer",
             data_scope="DEPT",
             source="MANUAL",
@@ -88,6 +91,8 @@ def ensure_bi_r4_viewer(db) -> None:
         db.add(role)
         db.flush()
         _clone_admin_perms(db, role.id)
+    elif role.role_name != display:
+        role.role_name = display
     if not db.scalar(select(UserDept).where(UserDept.user_id == viewer.id, UserDept.dept_id == 11)):
         db.add(UserDept(user_id=viewer.id, dept_id=11, tenant_id=0))
     if not db.scalar(select(UserRole).where(UserRole.user_id == viewer.id, UserRole.role_id == role.id)):

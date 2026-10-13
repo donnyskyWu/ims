@@ -17,6 +17,8 @@
               v-if="item.kind === 'leaf'"
               class="nav-item"
               :class="{ active: item.id === currentId }"
+              data-testid="nav-leaf"
+              :data-nav="item.id"
               @click="go(item.id)"
             >
               <Ico :name="item.icon" />
@@ -35,6 +37,8 @@
                 :key="child.id"
                 class="nav-item sub"
                 :class="{ active: child.id === currentId }"
+                data-testid="nav-leaf"
+                :data-nav="child.id"
                 @click="go(child.id)"
               >
                 <Ico :name="child.icon" :size="14" />
@@ -89,6 +93,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Ico from '../components/Ico.vue'
 import MessageBell from '../components/MessageBell.vue'
+import { folderEntry } from '../nav/folderEntry'
 import { codeLabel, crumbOf, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
 import { useUserStore } from '../stores/user'
 
@@ -117,11 +122,13 @@ const initial = computed(() => (displayName.value || 'I').slice(0, 1).toUpperCas
 const visibleGroups = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   const hit = (text: string) => !keyword || text.toLowerCase().includes(keyword)
+  const allowed = (id: string) => user.canSeeMenu(id, pathOf(id))
   return groups
     .map(([name, items]) => {
       const visible: (Leaf | Folder)[] = []
       for (const item of items) {
         if (!isSub(item)) {
+          if (!allowed(item)) continue
           const mod = mods[item]
           const label = mod?.name || item
           if (hit(label) || hit(name)) {
@@ -131,6 +138,7 @@ const visibleGroups = computed(() => {
         }
         const folder = mods[item.id]
         const children = item.children
+          .filter((id) => allowed(id))
           .filter((id) => hit(mods[id]?.name || id) || hit(item.label) || hit(name))
           .map((id) => ({ id, label: mods[id]?.name || id, icon: mods[id]?.icon || 'doc' }))
         if (children.length) {
@@ -159,6 +167,16 @@ function toggleGroup(name: string) {
   closedGroups.value = { ...closedGroups.value, [name]: !closedGroups.value[name] }
 }
 function toggleSub(id: string) {
+  const folder = visibleGroups.value
+    .flatMap((group) => group.items)
+    .find((item) => item.kind === 'folder' && item.id === id)
+  const childIds = folder && folder.kind === 'folder' ? folder.children.map((child) => child.id) : []
+  const entry = folderEntry(childIds, currentId.value)
+  if (entry) {
+    closedSubs.value = { ...closedSubs.value, [id]: false }
+    go(entry)
+    return
+  }
   closedSubs.value = { ...closedSubs.value, [id]: !closedSubs.value[id] }
 }
 function go(id: string) {

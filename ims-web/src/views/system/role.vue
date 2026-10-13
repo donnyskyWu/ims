@@ -6,8 +6,9 @@
         <div class="sub">SYS-002 · 角色=权限唯一载体 · 菜单 + 功能点 R/W/D + 数据范围 + 钉钉岗位</div>
       </div>
       <div class="acts">
-        <input v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
-        <button class="btn btn-pri" type="button" @click="fromPosition">从岗位生成角色</button>
+        <button v-if="canWriteRole" class="btn btn-pri" type="button" data-testid="role-create-open" @click="openCreate">新建角色</button>
+        <input v-if="canEditRole" v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
+        <button v-if="canWriteRole" class="btn btn-pri" type="button" @click="fromPosition">从岗位生成角色</button>
       </div>
     </div>
     <div class="hint" style="margin-bottom: 10px">本部门不含下级。待配置角色不放行任何权限。权限预览走角色接口。</div>
@@ -15,8 +16,8 @@
       <input v-model="keyword" data-testid="role-filter-keyword" placeholder="角色名 / 编码 / 岗位" style="width: 180px" />
       <select v-model="sourceFilter" data-testid="role-filter-source" style="width: 140px">
         <option value="">全部来源</option>
-        <option value="MANUAL">自建</option>
-        <option value="DINGTALK_AUTO">自动创建</option>
+        <option value="MANUAL">手工</option>
+        <option value="DINGTALK_AUTO">钉钉自动</option>
       </select>
       <button class="btn btn-sec btn-sm" type="button" data-testid="role-filter-reset" @click="resetFilters">重置</button>
     </form>
@@ -25,9 +26,9 @@
     <p v-if="error" class="hint bad" data-testid="role-form-error">{{ error }}</p>
     <div class="g4">
       <div class="card stat"><span class="l">角色总数</span><div class="n">{{ ready && !error ? rows.length : '—' }}</div><div class="d">{{ error || 'GET /system/role/list' }}</div></div>
-      <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">PENDING_CONFIG</div></div>
-      <div class="card stat"><span class="l">自动创建</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
-      <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">ENABLED</div></div>
+      <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">{{ roleStatusLabel('PENDING_CONFIG') }}</div></div>
+      <div class="card stat"><span class="l">钉钉自动</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">{{ roleSourceLabel('DINGTALK_AUTO') }}</div></div>
+      <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">{{ roleStatusLabel('ENABLED') }}</div></div>
     </div>
     <div class="cattabs" data-testid="role-status-tabs">
       <button class="cattab" :class="{ on: statusFilter === '' }" type="button" @click="statusFilter = ''">全部</button>
@@ -76,11 +77,11 @@
               <td><span class="tag">{{ sourceLabel(String(row.source || '')) }}</span></td>
               <td>
                 <span class="tag" :style="row.status === 'PENDING_CONFIG' ? 'background:rgba(255,149,0,.12);color:#c46a00' : 'background:rgba(52,199,89,.12);color:#1e8e3e'">
-                  {{ row.status === 'PENDING_CONFIG' ? '待配置' : '启用' }}
+                  {{ roleStatusLabel(row.status) || '—' }}
                 </span>
               </td>
               <td>
-                <button class="btn btn-txt" type="button" data-testid="role-edit" @click="openEdit(row)">编辑权限</button>
+                <button v-if="canWriteRole" class="btn btn-txt" type="button" data-testid="role-edit" @click="openEdit(row)">编辑权限</button>
                 <button class="btn btn-txt" type="button" @click="preview(row)">预览</button>
               </td>
             </tr>
@@ -124,6 +125,7 @@
         <label :style="{ paddingLeft: `${Number(menu.depth) * 12}px` }">
           <input v-model="draft.menuIds" type="checkbox" :value="menu.id" :disabled="!menu.permCode" />
           {{ menu.name }}
+          <span class="tag">{{ typeLabel(menu.menuType) }}</span>
           <span v-if="menu.permCode" class="mono">{{ menu.permCode }}</span>
         </label>
         <select v-if="menu.permCode && draft.menuIds.includes(menu.id)" v-model="draft.levels[String(menu.permCode)]">
@@ -140,6 +142,40 @@
         <button class="btn btn-pri" type="button" data-testid="role-save" @click="save">保存</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="createOpen" title="新建角色" @close="createOpen = false">
+      <p v-if="createSummary" class="hint bad" data-testid="role-create-error">{{ createSummary }}</p>
+      <div class="fld" style="margin-bottom: 12px">
+        <label>角色名称<i class="req">*</i></label>
+        <input v-model="createForm.roleName" data-testid="role-create-name" :class="{ err: nameError }" placeholder="如 TC-行政管理员" />
+        <p v-if="nameError" class="hint bad" data-testid="role-create-name-error">{{ nameError }}</p>
+      </div>
+      <div class="fld" style="margin-bottom: 12px">
+        <label>角色编码<i class="req">*</i></label>
+        <input v-model="createForm.roleKey" data-testid="role-create-key" :class="{ err: keyError }" placeholder="如 tc_r2，全局唯一" />
+        <p v-if="keyError" class="hint bad" data-testid="role-create-key-error">{{ keyError }}</p>
+      </div>
+      <div class="fld" style="margin-bottom: 12px">
+        <label>数据范围</label>
+        <select v-model="createForm.dataScope" data-testid="role-create-scope">
+          <option value="ALL">全部</option>
+          <option value="DEPT">本部门</option>
+          <option value="IP_GROUP">IP 组</option>
+          <option value="SELF">仅本人</option>
+        </select>
+      </div>
+      <div class="fld" style="margin-bottom: 12px">
+        <label>钉钉岗位</label>
+        <input v-model="createForm.dingtalkPosition" data-testid="role-create-position" placeholder="可选，一个岗位至多绑一个角色" />
+      </div>
+      <div class="fld" style="margin-bottom: 12px">
+        <label>备注</label>
+        <textarea v-model="createForm.remark" data-testid="role-create-remark" rows="3" placeholder="可选"></textarea>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="createOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="role-create-save" @click="createRole">保存</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
@@ -148,9 +184,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
 import { asList, cell, readData } from '../../api/read'
+import { roleSourceLabel, roleStatusLabel } from '../../roleSource'
 import { useUserStore } from '../../stores/user'
 
-type MenuNode = { id: number; name: string; permCode?: string; children?: MenuNode[]; depth?: number }
+type MenuNode = { id: number; name: string; permCode?: string; menuType?: string; children?: MenuNode[]; depth?: number }
 
 const rows = ref<Record<string, unknown>[]>([])
 const ready = ref(false)
@@ -164,11 +201,18 @@ const keyword = ref('')
 const sourceFilter = ref('')
 const permQuery = ref('')
 const drawer = ref(false)
+const createOpen = ref(false)
+const createSummary = ref('')
+const nameError = ref('')
+const keyError = ref('')
+const createForm = reactive({ roleName: '', roleKey: '', dataScope: 'SELF', dingtalkPosition: '', remark: '' })
 const saveError = ref('')
 const editingId = ref<number | string>('')
 const flatMenus = ref<MenuNode[]>([])
 const draft = reactive({ scope: 'SELF', position: '', menuIds: [] as number[], levels: {} as Record<string, string> })
 const user = useUserStore()
+const canWriteRole = computed(() => user.canWrite('system:role:query'))
+const canEditRole = computed(() => user.hasPerm('system:role:edit') || canWriteRole.value)
 
 const pending = computed(() => rows.value.filter((row) => row.status === 'PENDING_CONFIG').length)
 const autoCount = computed(() => rows.value.filter((row) => row.source === 'DINGTALK_AUTO').length)
@@ -189,7 +233,7 @@ const filtered = computed(() => {
 const filterNote = computed(() => {
   const bits: string[] = []
   if (keyword.value.trim()) bits.push(`关键词「${keyword.value.trim()}」`)
-  if (sourceFilter.value) bits.push(sourceFilter.value === 'MANUAL' ? '自建' : '自动创建')
+  if (sourceFilter.value) bits.push(roleSourceLabel(sourceFilter.value))
   if (statusFilter.value === 'PENDING_CONFIG') bits.push('待配置')
   if (statusFilter.value === 'ENABLED') bits.push('启用')
   if (!bits.length) return ''
@@ -229,11 +273,14 @@ function permCount(row: Record<string, unknown>) {
   const detail = row.permDetail
   return detail && typeof detail === 'object' ? Object.keys(detail as object).length : 0
 }
+function typeLabel(value?: string) {
+  return { DIR: '目录', MENU: '菜单', BUTTON: '按钮' }[value || ''] || value || ''
+}
 function scopeLabel(value: string) {
   return { ALL: '全部', DEPT: '本部门', IP_GROUP: 'IP组', SELF: '本人' }[value] || value || '—'
 }
 function sourceLabel(value: string) {
-  return { MANUAL: '自建', DINGTALK_AUTO: '自动创建' }[value] || value || '—'
+  return roleSourceLabel(value) || value || '—'
 }
 
 function flatten(nodes: MenuNode[], depth = 0): MenuNode[] {
@@ -277,6 +324,46 @@ async function fromPosition() {
     await load()
   } catch (e: unknown) {
     error.value = errorMessage(e)
+  }
+}
+
+function openCreate() {
+  createForm.roleName = ''
+  createForm.roleKey = ''
+  createForm.dataScope = 'SELF'
+  createForm.dingtalkPosition = ''
+  createForm.remark = ''
+  createSummary.value = ''
+  nameError.value = ''
+  keyError.value = ''
+  createOpen.value = true
+}
+
+async function createRole() {
+  const roleName = createForm.roleName.trim()
+  const roleKey = createForm.roleKey.trim()
+  nameError.value = roleName ? '' : '必填项，请填写'
+  keyError.value = roleKey ? '' : '必填项，请填写'
+  if (!roleName || !roleKey) {
+    createSummary.value = '请先完成必填项'
+    return
+  }
+  createSummary.value = ''
+  try {
+    await http.post('/system/role', {
+      roleName,
+      roleKey,
+      dataScope: createForm.dataScope,
+      dingtalkPosition: createForm.dingtalkPosition.trim(),
+      remark: createForm.remark.trim(),
+    })
+    createOpen.value = false
+    edgeNote.value = ''
+    await load()
+  } catch (e: unknown) {
+    const message = errorMessage(e)
+    createSummary.value = message
+    if (message.includes('角色编码')) keyError.value = message
   }
 }
 

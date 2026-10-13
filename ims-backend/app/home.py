@@ -1,4 +1,4 @@
-"""运营看板 HOME-001。已登录即可；聚合 IMS 内 KPI/待办，不请求 OPS/Football。"""
+"""运营看板 HOME-001。须持有 menu:home:query；聚合 IMS 内 KPI/待办，不请求 OPS/Football。"""
 
 from __future__ import annotations
 

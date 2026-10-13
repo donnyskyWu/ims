@@ -24,7 +24,7 @@
       <select v-model="filterRoleId" data-testid="pos-filter-role" style="width: 180px">
         <option value="">全部角色</option>
         <option v-for="role in filterRoles" :key="String(role.id)" :value="String(role.id)">
-          {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
+          {{ roleChoiceLabel(role) }}
         </option>
       </select>
       <select v-model="filterStatus" data-testid="pos-filter-status" style="width: 120px">
@@ -125,7 +125,7 @@
         <select v-model="roleId" data-testid="pos-create-role">
           <option value="">请选择角色</option>
           <option v-for="role in roles" :key="String(role.id)" :value="String(role.id)">
-            {{ role.roleName }}{{ role.status === 'PENDING_CONFIG' ? '（待配置）' : '' }}
+            {{ roleChoiceLabel(role) }}
           </option>
         </select>
       </div>
@@ -145,6 +145,7 @@ import { computed, onMounted, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal, cell, readData } from '../../api/read'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import { roleChoiceLabel } from '../../roleSource'
 
 const rows = ref<Record<string, unknown>[]>([])
 const roles = ref<Record<string, unknown>[]>([])
@@ -198,7 +199,7 @@ const filterNote = computed(() => {
 function roleNames(row: Record<string, unknown>) {
   const grants = row.grantRoles
   if (!Array.isArray(grants) || !grants.length) return '—'
-  return grants.map((item) => String((item as { roleName?: string }).roleName || '')).filter(Boolean).join('、') || '—'
+  return grants.map((item) => roleChoiceLabel(item as { roleName?: string; source?: string; status?: string })).filter(Boolean).join('、') || '—'
 }
 
 function captureFilters() {

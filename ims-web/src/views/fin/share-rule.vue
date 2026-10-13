@@ -5,7 +5,7 @@
         <h1>分成规则</h1>
         <div class="sub">FIN-003 · 规则维护 · 比例合计 1.0000（1146）· 同范围冲突须确认（1147）· 阶梯试算</div>
       </div>
-      <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-create" @click="openCreate">
+      <button v-if="canRuleWrite" class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-create" @click="openCreate">
         创建规则
       </button>
     </div>
@@ -80,12 +80,12 @@
               </td>
               <td>{{ row.effectiveRange?.from }} ~ {{ row.effectiveRange?.to || '长期' }}</td>
               <td>
-                <button class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
-                <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-simulate" @click="openSimulate(row)">
+                <button v-if="canRuleWrite" class="btn btn-sec btn-sm" type="button" @click="openEdit(row)">编辑</button>
+                <button v-if="canRuleWrite" class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-simulate" @click="openSimulate(row)">
                   试算
                 </button>
                 <button
-                  v-if="row.status === 'ENABLED'"
+                  v-if="canRuleWrite && row.status === 'ENABLED'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   data-testid="fin-share-rule-disable"
@@ -212,8 +212,8 @@
         <p v-if="formError" class="hint" data-testid="fin-share-rule-error" style="color: var(--red)">{{ formError }}</p>
       </div>
       <div class="drawer-f">
-        <button class="btn btn-sec btn-sm" type="button" @click="openDraftSimulate">试算</button>
-        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-save" @click="save(false)">保存</button>
+        <button v-if="canRuleWrite" class="btn btn-sec btn-sm" type="button" @click="openDraftSimulate">试算</button>
+        <button v-if="canRuleWrite" class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-save" @click="save(false)">保存</button>
       </div>
     </div>
 
@@ -250,7 +250,7 @@
         </template>
       </div>
       <div class="drawer-f">
-        <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-sim-submit" @click="runSimulate">
+        <button v-if="canRuleWrite" class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-sim-submit" @click="runSimulate">
           计算
         </button>
       </div>
@@ -261,7 +261,7 @@
         <b>优先级冲突</b>
         <p>存在同范围同对象优先级冲突规则，确认强制保存？</p>
         <div class="acts" style="gap: 8px">
-          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-conflict-confirm" @click="save(true)">
+          <button v-if="canRuleWrite" class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-conflict-confirm" @click="save(true)">
             确认强制保存
           </button>
           <button class="btn btn-sec btn-sm" type="button" @click="conflictOpen = false">取消</button>
@@ -274,7 +274,7 @@
         <b>停用规则</b>
         <p>历史分成单引用不受影响（FIN-S-R5）</p>
         <div class="acts" style="gap: 8px">
-          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-disable-confirm" @click="confirmDisable">
+          <button v-if="canRuleWrite" class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-disable-confirm" @click="confirmDisable">
             确认停用
           </button>
           <button class="btn btn-sec btn-sm" type="button" @click="disableOpen = false">取消</button>
@@ -287,6 +287,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
+import { useUserStore } from '../../stores/user'
+
+const userStore = useUserStore()
+const canRuleWrite = computed(() => userStore.canMutate('menu:finShareRule:query'))
 
 type Scope = { platforms?: string[]; accountIds?: number[]; ipGroupIds?: number[] }
 type Ladder = { min: number; max: number | null; rate: number }

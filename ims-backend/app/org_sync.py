@@ -899,7 +899,9 @@ def org_users(
     db: Session = Depends(db_session),
     user: User = Depends(current_user),
 ):
-    if not can_read_org(db, user):
+    from app.perm import holds_user_form, level_map
+
+    if not can_read_org(db, user) and not holds_user_form(level_map(db, user)):
         return fail(403, "无操作权限")
     page_no, size = clamp_page(pageNo, pageSize)
     allowed = dept_limit(request)

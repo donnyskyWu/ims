@@ -17,12 +17,36 @@ def hash_password(password: str) -> str:
     return f"{salt}${digest}"
 
 
-def verify_password(password: str, stored: str) -> bool:
-    if "$" not in stored:
+def password_hash_text(stored: object) -> str | None:
+    """库里的哈希必须是字符串。NULL 或二进制不能拿去判断，否则登录直接 500。"""
+    if isinstance(stored, bytes):
+        try:
+            stored = stored.decode()
+        except UnicodeDecodeError:
+            return None
+    if isinstance(stored, str):
+        return stored
+    return None
+
+
+def password_hash_usable(stored: object) -> bool:
+    text = password_hash_text(stored)
+    if text is None or "$" not in text:
         return False
-    salt, digest = stored.split("$", 1)
-    check = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120_000).hex()
-    return hmac.compare_digest(check, digest)
+    salt, digest = text.split("$", 1)
+    return bool(salt) and len(digest) == 64
+
+
+def verify_password(password: str, stored: object) -> bool:
+    text = password_hash_text(stored)
+    if text is None or "$" not in text:
+        return False
+    salt, digest = text.split("$", 1)
+    try:
+        check = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120_000).hex()
+        return hmac.compare_digest(check, digest)
+    except (TypeError, ValueError):
+        return False
 
 
 def encode(user_id: int, session_id: int, kind: str, minutes: int) -> str:
