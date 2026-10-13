@@ -158,6 +158,13 @@ def by_account(account_id: int) -> dict:
     return {"dimension": "account", "title": account.name, "banner": "", "summary": _summary(items), "list": items}
 
 
+def by_code(session_code: str) -> dict:
+    found = get_session().scalar(select(LiveSession).where(LiveSession.session_code == session_code))
+    if found is None or int(found.deleted or 0) != 0:
+        raise BizError(1500, "关联的场次不存在")
+    return by_session(int(found.id))
+
+
 def by_session(session_id: int) -> dict:
     found = get_session().get(LiveSession, int(session_id))
     if found is None or int(found.deleted or 0) != 0:

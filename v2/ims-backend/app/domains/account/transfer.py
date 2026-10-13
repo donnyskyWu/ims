@@ -199,7 +199,13 @@ def _recall(account, body: dict) -> dict:
     save(account)
     log_event(account.id, "TRANSFER", "收回", row.transfer_no, ref=f"/ims/account/transfer?id={row.id}")
     log_event(account.id, "FREEZE", "冻结", row.transfer_no)
+    from app.domains.live.guards import on_account_status, open_hint
+
+    hint = open_hint(account.id)
+    on_account_status(account.id, "FROZEN")
     payload = _view(row)
+    if hint:
+        payload["liveHint"] = hint
     remember(token_of(body), payload)
     return payload
 

@@ -18,6 +18,7 @@ DOMAIN_RANGES: dict[str, list[tuple[int, int]]] = {
     "FLOW": [(1131, 1140)],
     "FOOTBALL": [(1271, 1280)],
     "ACCT": [(1021, 1026)],
+    "LIVE": [(1041, 1050)],
 }
 
 
@@ -39,6 +40,16 @@ BASE_ENTRIES: list[ErrorEntry] = [
     _e(1003, "AUTH", "您的账号已在其他设备登录，本设备已下线", "relogin"),
     _e(1006, "AUTH", "钉钉同步失败", "toast"),
     _e(1008, "COMMON", "暂无权限", "noPermission"),
+    _e(1041, "LIVE", "Football 直播间不存在或不属于本租户", "toast"),
+    _e(1042, "LIVE", "当前场次状态不允许该操作", "toast"),
+    _e(1043, "LIVE", "风险级别为红色，禁止开播，请整改后重新风控", "toast"),
+    _e(1044, "LIVE", "风险级别为黄色，需运营总监审批放行后才能开播", "toast"),
+    _e(1045, "LIVE", "实名人证件已过期或锁定，风控判红", "toast"),
+    _e(1046, "LIVE", "下播数据必填项缺失：{字段}", "fieldError"),
+    _e(1047, "LIVE", "下播数据已提交，修改请走更正单", "toast"),
+    _e(1048, "LIVE", "下播已超过 24 小时未提交", "toast"),
+    _e(1049, "LIVE", "补录 / 更正的审批人不能是发起人", "toast"),
+    _e(1050, "LIVE", "告警规则表达式不合法：{原因}", "toast"),
     _e(1021, "ACCT", "账号已被领用", "toast"),
     _e(1022, "ACCT", "账号处于冻结态，不可领用", "toast"),
     _e(1023, "ACCT", "领用 / 流转单状态非法", "toast"),

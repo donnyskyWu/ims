@@ -138,6 +138,67 @@ def merge_live_metrics(ims_snapshot: dict, football_row=None) -> dict:
     return snapshot
 
 
+DISPLAY_SKIP = ("stream_key", "bind_mobile_password", "login_pwd", "bind_mobile")
+COUNT_BY_AUTHOR_SQL = "SELECT count(1) AS cnt FROM live_room WHERE author_id = ? AND create_time BETWEEN ? AND ?"
+
+
+def _display_sql(settings) -> str:
+    skip = set(DISPLAY_SKIP) | set(sensitive_columns(settings))
+    columns = [name for name in expected_columns(settings) if name not in skip]
+    selected = ", ".join(f"`{name}`" for name in columns)
+    return f"SELECT {selected} FROM live_room WHERE id=? AND tenant_id=?"
+
+
+def get_room_display(ims_tenant_id, room_id, settings=None, executor=None):
+    """展示查询不选取敏感列。已删除房间仍返回，交给调用方判 1041。"""
+    settings = settings or get_settings()
+    tenant = settings.football_tenant_for(int(ims_tenant_id))
+    if tenant is None:
+        return None
+    rows = _rows(_display_sql(settings), (room_id, tenant), settings, executor)
+    if not rows:
+        return None
+    row = dict(rows[0])
+    if row.get("deleted") is not None:
+        row["deleted"] = read_deleted(row["deleted"])
+    return row
+
+
+def count_by_author(author_id, start, end, settings=None, executor=None) -> int:
+    params = (author_id, start, end)
+    if executor is not None:
+        _mark(COUNT_BY_AUTHOR_SQL, params)
+        raw = executor(COUNT_BY_AUTHOR_SQL, params)
+        if isinstance(raw, (list, tuple)):
+            return int(raw[0] or 0)
+        return int(raw or 0)
+    rows = _fetch(COUNT_BY_AUTHOR_SQL, params, settings or get_settings())
+    if not rows:
+        return 0
+    row = rows[0]
+    value = row.get("cnt")
+    if value is None:
+        value = next(iter(row.values()))
+    return int(value or 0)
+
+
+class FootballLiveReader:
+    """只读仓储。只发 SELECT，租户经映射。"""
+
+    def __init__(self, settings=None, executor=None):
+        self.settings = settings
+        self.executor = executor
+
+    def get_room(self, ims_tenant_id, room_id):
+        return get_room(ims_tenant_id, room_id, settings=self.settings, executor=self.executor)
+
+    def display(self, ims_tenant_id, room_id):
+        return get_room_display(ims_tenant_id, room_id, settings=self.settings, executor=self.executor)
+
+    def count_by_author(self, author_id, start, end) -> int:
+        return count_by_author(author_id, start, end, settings=self.settings, executor=self.executor)
+
+
 def live_duration(author_id, start, end, settings=None, executor=None) -> LiveDuration:
     params = (author_id, start, end)
     if executor is not None:

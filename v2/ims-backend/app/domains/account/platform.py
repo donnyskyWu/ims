@@ -160,7 +160,14 @@ def cancel(ident: int, body: dict) -> dict:
     _check_status(row.status)
     save(row)
     log_event(row.id, "CANCEL", "注销", text_of(body, "reason"))
-    return _view(row, detail=True)
+    from app.domains.live.guards import on_account_status, open_hint
+
+    on_account_status(row.id, "CANCELLED")
+    payload = _view(row, detail=True)
+    hint = open_hint(row.id)
+    if hint:
+        payload["liveHint"] = hint
+    return payload
 
 
 def remove(ident: int) -> dict:
@@ -280,8 +287,16 @@ def selector(page_query, params: dict) -> dict:
     platform = text_of(params, "platform")
     if platform:
         stmt = stmt.where(PlatformAccount.platform == require_platform(platform))
+    live_only = text_of(params, "liveOnly") in {"1", "true", "yes"}
     status = text_of(params, "status")
-    if status:
+    if live_only:
+        from app.domains.live.common import LIVE_PLATFORMS, scope_mode
+
+        stmt = stmt.where(PlatformAccount.platform.in_(LIVE_PLATFORMS), PlatformAccount.status == "IN_USE")
+        kind, user_id, _groups = scope_mode()
+        if kind != "all":
+            stmt = stmt.where(PlatformAccount.owner_user_id == user_id)
+    elif status:
         _check_status(status)
         stmt = stmt.where(PlatformAccount.status == status)
     ip_group = text_of(params, "ipGroupId")

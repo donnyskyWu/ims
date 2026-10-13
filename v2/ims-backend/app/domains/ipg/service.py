@@ -686,6 +686,9 @@ def stats(group_id: int) -> dict:
     ids = [group.id]
     if group.group_type == "BIG":
         ids = list(_subtree_ids(group.id)) or []
+    from app.domains.live.service import group_live_stats
+
+    live = group_live_stats([int(item) for item in ids])
     return {
         "memberCount": sum(members.get(int(item), 0) for item in ids),
         "accountCount": sum(accounts.get(int(item), 0) for item in ids),
@@ -698,6 +701,8 @@ def stats(group_id: int) -> dict:
         "revenue": 0,
         "mock": True,
         "mockLabel": "示意数据，采集/财务上线后替换",
+        "monthSessionCount": live["count"],
+        "confirmedGmv": live["gmv"],
     }
 
 

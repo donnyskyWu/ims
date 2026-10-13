@@ -19,6 +19,7 @@ _EXPORT_PERMS = (
     "ims:device:asset:export",
     "ims:asset:forward:export",
     "ims:asset:reverse:export",
+    "ims:live:ledger:export",
 )
 
 

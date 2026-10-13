@@ -225,6 +225,9 @@ def _collect(order: ReturnOrder, user_id: int) -> None:
         if account.status == "IN_USE":
             account.status = "FROZEN"
             log_event(account.id, "FREEZE", "离职冻结", order.return_no)
+            from app.domains.live.guards import on_account_status
+
+            on_account_status(account.id, "FROZEN")
         _add_item(order, "ACCOUNT", account.id, {"accountNo": account.account_no, "nickname": account.nickname or account.name})
     assets = list(session.scalars(select(AssetLedger).where(AssetLedger.owner_user_id == user_id, AssetLedger.status != "SCRAPPED")))
     for asset in assets:
@@ -247,6 +250,9 @@ def _return_item(item: ReturnItem) -> None:
         account = account_row(item.item_id)
         if account.status != "FROZEN":
             account.status = "FROZEN"
+            from app.domains.live.guards import on_account_status
+
+            on_account_status(account.id, "FROZEN")
         save(account)
         log_event(account.id, "RETURN", "归还", "", ref=f"/ims/account/return?id={item.order_id}")
         return

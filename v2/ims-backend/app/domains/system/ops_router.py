@@ -29,6 +29,10 @@ _JOB_LABELS = {
     "asset_verify_overdue": "资产校验逾期扫描",
     "account_apply_idle_remind": "领用后长期未使用",
     "account_return_overdue": "归还逾期",
+    "live_auto_end": "直播自动下播",
+    "live_report_overdue": "直播下播录入超时",
+    "live_alarm_escalate": "直播告警升级",
+    "live_football_sync_retry": "Football同步补偿",
 }
 
 

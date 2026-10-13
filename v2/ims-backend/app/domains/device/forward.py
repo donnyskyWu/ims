@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from decimal import Decimal
 
 from app.core.errors import BizError
 from app.domains.device.ledger import holders, load
@@ -13,7 +14,7 @@ from app.domains.resource.common import text_of
 _LAYERS = ("L1", "L2", "L3", "L4", "L5")
 _EMPTY = {
     "L2": "暂无绑定账号（账号模块上线后显示）",
-    "L4": "暂无使用场次（场次模块上线后显示）",
+    "L4": "暂无使用场次",
     "L5": "暂无成本数据（财务模块上线后显示）",
 }
 
@@ -99,14 +100,21 @@ def _layer(row, layer: str, cost: str) -> dict:
             people = people[:500]
         return {"layer": "L3", "title": "实名人", "empty": "" if people else "暂无实名人", "people": people, "hint": hint}
     if layer == "L4":
-        return {"layer": "L4", "title": "使用场次", "empty": _EMPTY["L4"], "sessions": []}
-    amount = "¥****" if cost == "masked" else ""
+        from app.domains.live.guards import recent_sessions
+
+        sessions = recent_sessions(row.id)
+        return {"layer": "L4", "title": "使用场次", "empty": "" if sessions else _EMPTY["L4"], "sessions": sessions}
+    from app.domains.live.guards import confirmed_cost
+
+    spent = confirmed_cost(row.id)
+    amount = "¥****" if cost == "masked" else spent["costTotal"]
     return {
         "layer": "L5",
         "title": "成本汇总",
-        "empty": "" if cost == "masked" else _EMPTY["L5"],
+        "empty": "" if cost == "masked" or Decimal(spent["costTotal"]) else _EMPTY["L5"],
         "costMasked": cost == "masked",
         "amount": amount,
+        "adCost": "" if cost == "masked" else spent["adCost"],
         "items": [],
     }
 
