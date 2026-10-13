@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import PageHeader from "@/components/PageHeader.vue";
 import QueryBar, { type QueryField } from "@/components/QueryBar.vue";
 import DataTable, { type TableColumn } from "@/components/DataTable.vue";
@@ -24,6 +24,7 @@ import ReverseDrawer from "./ReverseDrawer.vue";
 import VerifyDrawer from "./VerifyDrawer.vue";
 
 const route = useRoute();
+const router = useRouter();
 const kind = computed(() => (route.meta.deviceKind === "live" ? "live" : "office"));
 const title = computed(() => (kind.value === "live" ? "直播设备管理" : "办公设备管理"));
 const query = ref<Record<string, unknown>>({ assetCode: "", assetName: "", assetType: "", ownerUserId: "", status: "", purchaseRange: [] });
@@ -265,7 +266,8 @@ onMounted(async () => {
         <DescriptionList :items="[{ label: '编号', value: current?.assetCode }, { label: '类型', value: current?.assetTypeLabel }, { label: '规格', value: current?.spec }, { label: '责任人', value: ownerText(current) }, { label: '实名人', value: current?.realnameName }, { label: '采购日期', value: current?.purchaseDate }, { label: '采购金额', value: current?.purchaseAmount }]" />
       </template>
       <template #acct>
-        <EmptyState :desc="String(current?.accountEmpty || '暂无绑定账号（账号模块上线后显示）')" />
+        <EmptyState v-if="!(current?.accounts as unknown[])?.length" :desc="String(current?.accountEmpty || '暂无绑定账号')" />
+        <p v-for="item in (current?.accounts as Record<string, unknown>[]) || []" :key="String(item.id)">{{ item.accountNo }} {{ item.nickname }}</p>
       </template>
       <template #time>
         <Timeline :items="logs()" />
@@ -273,6 +275,7 @@ onMounted(async () => {
       <template #footer>
         <button v-if="['PENDING_REVIEW', 'RETURNED', 'IDLE'].includes(String(current?.status))" v-perm="'ims:device:asset:lifecycle'" class="btn btn-pri" type="button" @click="openLife(current || {}, 'checkout')">领用</button>
         <button v-perm="'ims:asset:forward:query'" class="btn btn-sec" type="button" @click="forwardOpen = true">正向穿透</button>
+        <button v-perm="'ims:account:apply:create'" class="btn btn-sec" type="button" @click="router.push({ path: '/ims/account/apply', query: { assetId: String(current?.id || '') } })">账号领用</button>
       </template>
     </DetailDrawer>
     <AppModal v-model:open="lifeOpen" title="资产生命周期" :width="520">

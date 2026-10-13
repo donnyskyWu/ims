@@ -28,5 +28,17 @@
     "maxBytes": 10485760,
     "maxMb": 10,
     "watermark": false
+  },
+  "ACCOUNT": {
+    "exts": ["jpg", "png", "pdf"],
+    "maxBytes": 20971520,
+    "maxMb": 20,
+    "watermark": false
+  },
+  "ACCOUNT_COLLECT": {
+    "exts": ["jpg", "png", "pdf"],
+    "maxBytes": 20971520,
+    "maxMb": 20,
+    "watermark": false
   }
 }

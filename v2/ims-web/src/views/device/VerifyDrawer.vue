@@ -19,6 +19,7 @@ const showTrend = ref(false);
 const batches = ref<Record<string, unknown>[]>([]);
 const tasks = ref<Record<string, unknown>[]>([]);
 const running = ref(false);
+const withAccount = ref(false);
 const dealOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const ownerUserId = ref("");
@@ -72,7 +73,8 @@ async function load() {
 async function run() {
   running.value = true;
   try {
-    const data = await resourceSend<{ message?: string }>("POST", "/asset/verify/run", { verifyTypes: ["asset_person"], scope: "FULL" }, `verify-${Date.now()}`);
+    const verifyTypes = withAccount.value ? ["asset_person", "asset_account"] : ["asset_person"];
+    const data = await resourceSend<{ message?: string }>("POST", "/asset/verify/run", { verifyTypes, scope: "FULL" }, `verify-${Date.now()}`);
     toast.success(data.message || "校验完成");
     await load();
   } finally {
@@ -123,6 +125,7 @@ watch(open, (value) => {
         { title: '本周批次', value: Number(metrics.weekBatchCount || 0) },
       ]"
     />
+    <label><input v-model="withAccount" type="checkbox" /> 资产↔账号</label>
     <button v-perm="'ims:asset:verify:run'" class="btn btn-pri" type="button" :disabled="running" @click="run">{{ running ? "执行中" : "手动触发校验" }}</button>
     <div v-if="showTrend" class="trend">
       <ChartPanel type="line" :data="trendOf('completeness')" />

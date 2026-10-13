@@ -52,7 +52,7 @@ class AssetBind(AuditBase):
     __tablename__ = "ims_asset_bind"
     __entity_label__ = "资产绑定"
     asset_id: Mapped[int] = ref_column(Ref("ims_asset_ledger", "RESTRICT"), nullable=False)
-    account_id: Mapped[int | None] = plain_id()
+    account_id: Mapped[int | None] = ref_column(Ref("ims_account_platform", "RESTRICT", allow_disabled=True))
     session_id: Mapped[int | None] = plain_id()
     bind_type: Mapped[str] = mapped_column(String(32), nullable=False, default="HOLD")
     bind_status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")

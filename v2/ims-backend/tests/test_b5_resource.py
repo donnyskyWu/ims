@@ -190,8 +190,7 @@ def test_certificate_review_level_scan_and_risk(client):
     admin = auth(client, "u_admin")
     me = client.get(f"{API}/auth/me", headers=admin).json()
     names = {node["name"] for node in walk(me["data"]["menus"])}
-    assert {"公司管理", "实名人管理", "手机卡管理", "证件管理"} <= names
-    assert "账号管理" not in names and "设备管理" not in names
+    assert {"公司管理", "实名人管理", "手机卡管理", "证件管理", "账号管理", "公众号"} <= names
     assert "ims:cert:archive:upload" in me["data"]["permCodes"]
 
     person = client.post(

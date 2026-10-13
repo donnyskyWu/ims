@@ -377,11 +377,119 @@ def _shape_device(key: str, codes: list[str], all_codes: list[str]) -> list[str]
     return kept + _device_grant(key, all_codes)
 
 
+def _account_codes(all_codes: list[str]) -> set[str]:
+    return {code for code in all_codes if code.startswith("ims:corp:account") or code.startswith("ims:account:")}
+
+
+def _account_grant(key: str, all_codes: list[str]) -> list[str]:
+    bag = _account_codes(all_codes)
+    if key == "R1":
+        return sorted(bag)
+    groups = {
+        "R2": [
+            "ims:corp:account:query",
+            "ims:corp:account:create",
+            "ims:corp:account:update",
+            "ims:corp:account:delete",
+            "ims:corp:account:export",
+            "ims:corp:account:collect",
+            "ims:corp:account:personal:query",
+            "ims:corp:account:personal:create",
+            "ims:corp:account:personal:update",
+            "ims:corp:account:personal:delete",
+            "ims:corp:account:personal:export",
+            "ims:account:apply:query",
+            "ims:account:apply:create",
+            "ims:account:apply:confirm",
+            "ims:account:transfer:query",
+            "ims:account:transfer:create",
+            "ims:account:transfer:confirm",
+            "ims:account:transfer:revoke",
+            "ims:account:return:query",
+            "ims:account:return:generate",
+            "ims:account:return:handle",
+            "ims:account:return:close",
+            "ims:account:timeline:query",
+            "ims:account:timeline:export",
+        ],
+        "R3": [
+            "ims:corp:account:query",
+            "ims:account:return:query",
+            "ims:account:recharge:query",
+            "ims:account:recharge:create",
+            "ims:account:recharge:update",
+            "ims:account:recharge:verify",
+            "ims:account:recharge:export",
+            "ims:account:recharge:voucher",
+            "ims:account:timeline:query",
+        ],
+        "R4": [
+            "ims:corp:account:query",
+            "ims:corp:account:export",
+            "ims:corp:account:personal:query",
+            "ims:account:apply:query",
+            "ims:account:apply:confirm",
+            "ims:account:apply:approve",
+            "ims:account:transfer:query",
+            "ims:account:transfer:create",
+            "ims:account:transfer:confirm",
+            "ims:account:transfer:revoke",
+            "ims:account:return:query",
+            "ims:account:recharge:query",
+            "ims:account:recharge:export",
+            "ims:account:timeline:query",
+            "ims:account:timeline:export",
+        ],
+        "R5": [
+            "ims:corp:account:query",
+            "ims:account:apply:query",
+            "ims:account:apply:create",
+            "ims:account:transfer:query",
+            "ims:account:transfer:create",
+            "ims:account:transfer:confirm",
+            "ims:account:timeline:query",
+        ],
+        "R6": [
+            "ims:corp:account:query",
+            "ims:account:apply:query",
+            "ims:account:apply:create",
+            "ims:account:transfer:query",
+            "ims:account:transfer:confirm",
+            "ims:account:timeline:query",
+        ],
+        "R7": [
+            "ims:corp:account:query",
+            "ims:account:apply:query",
+            "ims:account:apply:create",
+            "ims:account:transfer:query",
+            "ims:account:transfer:confirm",
+            "ims:account:timeline:query",
+        ],
+        "R9": [
+            "ims:corp:account:query",
+            "ims:corp:account:personal:query",
+            "ims:account:apply:query",
+            "ims:account:transfer:query",
+            "ims:account:return:query",
+            "ims:account:recharge:query",
+            "ims:account:timeline:query",
+        ],
+    }
+    return [code for code in groups.get(key, []) if code in bag]
+
+
+def _shape_account(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
+    account = _account_codes(all_codes)
+    kept = [code for code in codes if code not in account]
+    return kept + _account_grant(key, all_codes)
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
-        return _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
+        shaped = _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
+        return _shape_account(key, shaped, all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -398,7 +506,8 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
         codes.extend(sorted(managed))
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
-    return _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
+    shaped = _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes)
+    return _shape_account(key, shaped, all_codes)
 
 
 def _users(session):

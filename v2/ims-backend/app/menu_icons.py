@@ -22,11 +22,18 @@ PATH_ICONS = {
     "/ims/corp/resource/realname": "user",
     "/ims/corp/resource/sim-card": "phone",
     "/ims/corp/resource/certificate": "shield",
+    "/ims/corp/account/wechat-official": "doc",
+    "/ims/corp/account/wechat-channels": "play",
+    "/ims/corp/account/douyin": "play",
+    "/ims/corp/account/kuaishou": "play",
+    "/ims/corp/account/xiaohongshu": "doc",
+    "/ims/corp/account/personal": "user",
 }
 
 # 没有路由的目录（如「资源管理」）按名称赋值。
 NAME_ICONS = {
     "资源管理": "id",
+    "账号管理": "user",
 }
 
 

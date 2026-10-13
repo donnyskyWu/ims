@@ -112,7 +112,9 @@ def _view(row: Realname, *, detail: bool = False) -> dict:
     if detail:
         data["certs"] = _certs(row.id)
         data["simCards"] = _sims(row.id)
-        data["accountSummary"] = []
+        from app.domains.account.platform import summary_by_realname
+
+        data["accountSummary"] = summary_by_realname(row.id)
     return data
 
 

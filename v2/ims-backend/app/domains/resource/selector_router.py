@@ -55,4 +55,14 @@ router.get("/selector/company", summary="公司选择器")(selector_company)
 router.get("/selector/person", summary="实名人选择器")(selector_person)
 router.get("/selector/sim-card", summary="手机卡选择器")(selector_sim)
 router.get("/selector/phone", summary="手机选择器")(selector_phone)
+
+
+@mark(login_only=True, summary="账号选择器")
+def selector_account():
+    from app.domains.account.platform import selector as account_selector
+
+    return account_selector(_page(), _params())
+
+
 router.get("/selector/asset", summary="资产选择器")(selector_asset)
+router.get("/selector/account", summary="账号选择器")(selector_account)

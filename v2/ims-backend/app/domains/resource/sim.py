@@ -33,6 +33,21 @@ from app.domains.resource.common import (
 )
 from app.services.exchange import remember_export
 
+def _account_warnings(row: SimCard) -> list[str]:
+    if not row.id or not row.realname_id:
+        return []
+    from app.domains.master.model import PlatformAccount
+
+    rows = list(
+        get_session().scalars(
+            select(PlatformAccount).where(PlatformAccount.sim_card_id == int(row.id), PlatformAccount.status != "CANCELLED")
+        )
+    )
+    if any(item.realname_id and int(item.realname_id) != int(row.realname_id) for item in rows):
+        return ["REALNAME_MISMATCH"]
+    return []
+
+
 _STATUS = {"ENABLED": "启用", "DISABLED": "停用"}
 _OPERATOR = {"CMCC": "移动", "CUCC": "联通", "CTCC": "电信", "CBN": "广电"}
 _CYCLE = {"MONTH": "月", "QUARTER": "季", "HALF_YEAR": "半年", "YEAR": "年"}
@@ -82,12 +97,14 @@ def _view(row: SimCard, *, detail: bool = False) -> dict:
         "paymentTone": _pay_tone(row.next_payment_date),
         "status": row.status,
         "statusLabel": _STATUS.get(row.status, row.status),
-        "warnings": [],
+        "warnings": _account_warnings(row),
         "canPlain": has_perm("ims:corp:sim:plain"),
         "updateTime": format_datetime(row.update_time),
     }
     if detail:
-        data["linkedAccounts"] = []
+        from app.domains.account.platform import linked_by_sim
+
+        data["linkedAccounts"] = linked_by_sim(row.id)
     return data
 
 

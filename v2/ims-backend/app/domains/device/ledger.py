@@ -37,7 +37,7 @@ from app.domains.device.support import (
     viewer_id,
 )
 from app.domains.file.model import StoredFile
-from app.domains.master.model import Realname
+from app.domains.master.model import PlatformAccount, Realname
 from app.domains.resource.common import text_of
 from app.domains.system.model import User
 from app.services.exchange import remember_export
@@ -98,6 +98,28 @@ def _realname_name(ident: int | None) -> str:
     return row.name if row is not None else ""
 
 
+def _accounts(asset_id: int) -> list[dict]:
+    session = get_session()
+    binds = list(
+        session.scalars(select(AssetBind).where(AssetBind.asset_id == int(asset_id), AssetBind.bind_status == "ACTIVE", AssetBind.account_id.is_not(None)))
+    )
+    found = []
+    for bind in binds:
+        account = session.get(PlatformAccount, bind.account_id)
+        if account is None or int(account.deleted or 0) != 0:
+            continue
+        found.append(
+            {
+                "id": account.id,
+                "accountNo": account.account_no or account.code or "",
+                "nickname": account.nickname or account.name,
+                "platform": account.platform or "",
+                "status": account.status,
+            }
+        )
+    return found
+
+
 def needs_link(row: AssetLedger) -> bool:
     if row.status == "SCRAPPED":
         return False
@@ -122,7 +144,7 @@ def _view(row: AssetLedger, *, detail: bool = False) -> dict:
         "ownerResigned": owner["resigned"],
         "realnameId": row.realname_id,
         "realnameName": _realname_name(row.realname_id),
-        "accountCount": 0,
+        "accountCount": len(_accounts(row.id)),
         "purchaseDate": row.purchase_date.isoformat() if row.purchase_date else "",
         "purchaseAmount": masked_money(row.purchase_amount),
         "needLink": needs_link(row),
@@ -133,8 +155,9 @@ def _view(row: AssetLedger, *, detail: bool = False) -> dict:
     }
     if detail:
         data["photoFileKeys"] = list(row.photo_file_keys or [])
-        data["accounts"] = []
-        data["accountEmpty"] = "暂无绑定账号（账号模块上线后显示）"
+        accounts = _accounts(row.id)
+        data["accounts"] = accounts
+        data["accountEmpty"] = "" if accounts else "暂无绑定账号"
         data["holders"] = holders(row.id)
         data["timeline"] = timeline(row.id)
     return data

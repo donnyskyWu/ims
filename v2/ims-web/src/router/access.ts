@@ -18,7 +18,10 @@ export function routeAllowed(
   menus: MenuNode[],
   permCodes: string[],
 ): boolean {
-  if (to.meta.public || to.meta.menuless) return true;
+  if (to.meta.public) return true;
+  const earlyNeed = typeof to.meta.perm === "string" ? to.meta.perm : "";
+  const earlyAny = Array.isArray(to.meta.anyPerm) ? (to.meta.anyPerm as string[]) : [];
+  if (to.meta.menuless && !earlyNeed && earlyAny.length === 0) return true;
   const need = typeof to.meta.perm === "string" ? to.meta.perm : "";
   const any = Array.isArray(to.meta.anyPerm) ? (to.meta.anyPerm as string[]) : [];
   if (!need && any.length === 0) return true;

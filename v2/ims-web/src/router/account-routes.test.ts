@@ -1,0 +1,40 @@
+import { describe, expect, it } from "vitest";
+import { createPinia, setActivePinia } from "pinia";
+import type { RouteLocationNormalized } from "vue-router";
+import { createAppRouter } from "@/router";
+import { useAuthStore } from "@/stores/auth";
+import { routeAllowed } from "@/router/access";
+
+describe("account routes", () => {
+  it("registers platform pages, hidden routes and old redirects", async () => {
+    setActivePinia(createPinia());
+    const auth = useAuthStore();
+    auth.accessToken = "token";
+    auth.ready = true;
+    auth.pwdResetRequired = false;
+    auth.permCodes = ["ims:corp:account:query", "ims:account:apply:query"];
+    const router = await createAppRouter();
+    const official = router.getRoutes().find((item) => item.name === "account-wechat-official");
+    const personal = router.getRoutes().find((item) => item.name === "account-personal");
+    const apply = router.getRoutes().find((item) => item.name === "account-apply");
+    expect(official?.meta.platform).toBe("WECHAT_MP");
+    expect(official?.meta.perm).toBe("ims:corp:account:query");
+    expect(personal?.path).toBe("/ims/corp/account/personal");
+    expect(apply?.meta.menuless).toBe(true);
+    expect(apply?.meta.perm).toBe("ims:account:apply:query");
+    expect(router.getRoutes().some((item) => item.path === "/ims/account/transfer")).toBe(true);
+    expect(router.getRoutes().some((item) => item.path === "/ims/account/return")).toBe(true);
+    expect(router.getRoutes().some((item) => item.path === "/ims/account/recharge")).toBe(true);
+    await router.push("/ims/account/ledger");
+    expect(router.currentRoute.value.path).toBe("/ims/corp/account/douyin");
+    await router.push("/ims/master/platform-account");
+    expect(router.currentRoute.value.path).toBe("/ims/corp/account/douyin");
+    await router.push("/ims/master/personal-account");
+    expect(router.currentRoute.value.path).toBe("/ims/corp/account/personal");
+    const hidden = router.resolve("/ims/account/apply") as unknown as RouteLocationNormalized;
+    expect(routeAllowed(hidden, [], auth.permCodes)).toBe(true);
+    expect(routeAllowed(hidden, [], [])).toBe(false);
+    const workbench = router.resolve("/ims/workbench") as unknown as RouteLocationNormalized;
+    expect(routeAllowed(workbench, [], [])).toBe(true);
+  });
+});

@@ -18,13 +18,17 @@ _STATUS = {"ENABLED": "启用", "DISABLED": "停用"}
 
 
 def wechat_official_used(company_id: int) -> int:
-    """公众号已用数。平台账号的公司列由 B7 写入，本批恒为 0。"""
+    """公众号已用数。只计未注销的 WECHAT_MP。"""
     from app.domains.master.model import PlatformAccount
 
     if not hasattr(PlatformAccount, "company_id"):
         return 0
     session = get_session()
-    stmt = select(PlatformAccount).where(PlatformAccount.company_id == int(company_id), PlatformAccount.platform == "WECHAT_OFFICIAL")
+    stmt = select(PlatformAccount).where(
+        PlatformAccount.company_id == int(company_id),
+        PlatformAccount.platform == "WECHAT_MP",
+        PlatformAccount.status != "CANCELLED",
+    )
     return len(list(session.scalars(stmt)))
 
 
@@ -53,7 +57,9 @@ def _view(row: Company, *, detail: bool = False) -> dict:
     }
     if detail:
         data["capacityLogs"] = _logs(row.id)
-        data["accountSummary"] = []
+        from app.domains.account.platform import summary_by_company
+
+        data["accountSummary"] = summary_by_company(row.id)
     return data
 
 
