@@ -42,6 +42,7 @@ const detailOpen = ref(false);
 const current = ref<Record<string, unknown> | null>(null);
 const logs = ref<Record<string, unknown>[]>([]);
 const assets = ref<Record<string, unknown>[]>([]);
+const sessions = ref<Record<string, unknown>[]>([]);
 const credential = ref<Record<string, unknown>>({});
 const cancelOpen = ref(false);
 const cancelReason = ref("");
@@ -144,6 +145,12 @@ async function openDetail(row: Record<string, unknown>) {
   const line = await resourceGet<{ list: Record<string, unknown>[] }>(`/account/timeline/${row.id}`);
   logs.value = line.list || [];
   assets.value = await resourceGet<Record<string, unknown>[]>(`/corp/account/${row.id}/assets`);
+  try {
+    const live = await resourcePage<Record<string, unknown>>("/live/sessions/list", { accountId: row.id, pageNo: 1, pageSize: 10 });
+    sessions.value = live.list;
+  } catch {
+    sessions.value = [];
+  }
   credential.value = {};
   detailOpen.value = true;
 }
@@ -229,7 +236,7 @@ onMounted(load);
       <el-form-item label="手机卡"><SimCardSelect v-model="form.simCardId" /></el-form-item>
       <el-form-item label="备注"><el-input v-model="form.remark" maxlength="256" type="textarea" /></el-form-item>
     </FormDrawer>
-    <DetailDrawer v-model:open="detailOpen" :title="String(current?.nickname || '账号详情')" status-dict="dict_account_status" :status-value="String(current?.status || '')" :tabs="[{ key: 'base', label: '基本信息' }, { key: 'collect', label: '采集' }, { key: 'time', label: '领用时间线' }, { key: 'asset', label: '关联资产' }]">
+    <DetailDrawer v-model:open="detailOpen" :title="String(current?.nickname || '账号详情')" status-dict="dict_account_status" :status-value="String(current?.status || '')" :tabs="[{ key: 'base', label: '基本信息' }, { key: 'collect', label: '采集' }, { key: 'time', label: '领用时间线' }, { key: 'asset', label: '关联资产' }, { key: 'live', label: '直播场次' }]">
       <template #base>
         <DescriptionList :items="[{ label: '编号', value: current?.accountNo }, { label: '平台', value: current?.platformLabel }, { label: '公司', value: current?.companyName }, { label: '实名人', value: current?.realnameName }, { label: '责任人', value: current?.ownerName }, { label: '累计充值', value: current?.rechargeTotal }, { label: 'IP 组', value: current?.ipGroupText }, { label: '作者', value: current?.authorName }, { label: '备注', value: current?.remark }]" />
         <p v-if="(current?.warnings as string[] | undefined)?.includes('REALNAME_MISMATCH')">实名人不一致</p>
@@ -247,6 +254,12 @@ onMounted(load);
       <template #time>
         <Timeline :items="logs.map((item) => ({ title: String(item.title || ''), time: String(item.eventTime || ''), detail: String(item.detail || '') }))" />
         <ExportButton v-perm="'ims:account:timeline:export'" :export-api="() => resourceGet(`/account/timeline/${current?.id}/export`)" />
+      </template>
+      <template #live>
+        <EmptyState v-if="!sessions.length" desc="暂无直播场次" />
+        <p v-for="item in sessions" :key="String(item.sessionCode)">
+          <router-link :to="`/ims/live/sessions?code=${item.sessionCode}`">{{ item.sessionCode }} {{ item.topic }} {{ item.sessionStatusLabel }}</router-link>
+        </p>
       </template>
       <template #asset>
         <EmptyState v-if="!assets.length" desc="暂无绑定资产" />

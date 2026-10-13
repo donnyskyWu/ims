@@ -40,6 +40,17 @@ from app.domains.demo.model import (  # noqa: F401
 )
 from app.domains.file.model import StoredFile  # noqa: F401
 from app.domains.flow.model import FlowCcRecord, FlowInstance, FlowTask, FlowTemplate, FlowTemplateVersion, FlowTrace  # noqa: F401
+from app.domains.live.model import (  # noqa: F401
+    LiveAlarmRecord,
+    LiveAlarmRule,
+    LiveCost,
+    LiveDataSnapshot,
+    LiveReport,
+    LiveReportCorrection,
+    LiveRiskCheck,
+    LiveSessionDevice,
+    LiveSupplement,
+)
 from app.domains.master.model import (  # noqa: F401
     Author,
     Cert,

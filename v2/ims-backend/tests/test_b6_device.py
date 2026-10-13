@@ -200,7 +200,7 @@ def test_forward_reverse_and_export_expiry(client):
 def test_verify_flow_and_overdue(client):
     admin = auth(client, "u_admin")
     bare = _asset(client, _headers(client, token="vf-asset", base=admin), assetName="缺实名")
-    _err(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_session"]}, headers=_headers(client, token="vf-bad", base=admin)), 1001)
+    _err(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["later_module"]}, headers=_headers(client, token="vf-bad", base=admin)), 1001)
     first = _ok(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_person"], "scope": "FULL"}, headers=_headers(client, token="vf-1", base=admin)))
     assert first["errorCount"] >= 1
     second = _ok(client.post(f"{API}/asset/verify/run", json={"verifyTypes": ["asset_person"], "scope": "FULL"}, headers=_headers(client, token="vf-2", base=admin)))

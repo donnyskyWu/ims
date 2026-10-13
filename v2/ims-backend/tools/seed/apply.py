@@ -84,6 +84,9 @@ def apply(env: str = "test") -> None:
         from app.domains.flow.presets import ensure_presets
 
         ensure_presets()
+        from app.domains.live.alarm import ensure_rules
+
+        ensure_rules()
 
 
 def _packages(session):
@@ -525,12 +528,66 @@ def _shape_ipg(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
     return kept + _ipg_grant(key, all_codes)
 
 
+def _live_grant(key: str, all_codes: list[str]) -> list[str]:
+    bag = set(all_codes)
+
+    def pick(*codes: str) -> list[str]:
+        return [code for code in codes if code in bag]
+
+    if key == "R1":
+        return sorted(code for code in bag if code.startswith("ims:live:"))
+    if key == "R4":
+        return pick(
+            "ims:live:session:query",
+            "ims:live:session:register",
+            "ims:live:session:approve",
+            "ims:live:session:cancel",
+            "ims:live:football:bind",
+            "ims:live:report:confirm",
+            "ims:live:report:finance",
+            "ims:live:alarm:query",
+            "ims:live:alarm:handle",
+            "ims:live:alarm:rule",
+            "ims:live:ledger:query",
+            "ims:live:ledger:export",
+            "ims:live:ledger:supplement",
+            "ims:live:ledger:supplement-approve",
+        )
+    if key in {"R5", "R7"}:
+        return pick(
+            "ims:live:session:query",
+            "ims:live:session:register",
+            "ims:live:session:cancel",
+            "ims:live:football:bind",
+            "ims:live:report:entry",
+            "ims:live:report:finance",
+            "ims:live:alarm:query",
+            "ims:live:alarm:handle",
+            "ims:live:ledger:query",
+        )
+    if key == "R2":
+        return pick("ims:live:session:query", "ims:live:alarm:query", "ims:live:ledger:query", "ims:live:ledger:export")
+    if key == "R3":
+        return pick("ims:live:session:query", "ims:live:report:finance", "ims:live:ledger:query", "ims:live:ledger:export")
+    if key == "R9":
+        return pick("ims:live:session:query", "ims:live:report:finance", "ims:live:alarm:query", "ims:live:ledger:query", "ims:live:ledger:export")
+    return []
+
+
+def _shape_live(key: str, codes: list[str], all_codes: list[str]) -> list[str]:
+    kept = [code for code in codes if not code.startswith("ims:live:") or code == "ims:live:session:update"]
+    granted = [code for code in _live_grant(key, all_codes) if code not in kept]
+    if key != "R1":
+        kept = [code for code in kept if code != "ims:live:session:update"]
+    return kept + granted
+
+
 def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     if key == "R2":
         codes = [code for code in all_codes if code in _R2_CODES]
         codes.extend([code for code in (_ORG_QUERY, _ORG_EXPORT, _POS_QUERY) if code in all_codes])
         shaped = _shape_account(key, _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes), all_codes)
-        return _shape_ipg(key, shaped, all_codes)
+        return _shape_live(key, _shape_ipg(key, shaped, all_codes), all_codes)
     if key == "R1":
         base = list(all_codes)
     elif key == "R9":
@@ -548,7 +605,7 @@ def _codes_for(key: str, all_codes: list[str]) -> list[str]:
     elif key in {"R2", "R4"}:
         codes.extend([_ORG_QUERY, _ORG_EXPORT, _POS_QUERY])
     shaped = _shape_account(key, _shape_device(key, _shape_resource(key, _with_flow(key, _with_workbench(codes, all_codes), all_codes), all_codes), all_codes), all_codes)
-    return _shape_ipg(key, shaped, all_codes)
+    return _shape_live(key, _shape_ipg(key, shaped, all_codes), all_codes)
 
 
 def _users(session):

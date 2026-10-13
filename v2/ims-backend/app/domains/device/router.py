@@ -174,7 +174,9 @@ def reverse_account(account_id: str):
 
 @mark(perm="ims:asset:reverse:query", summary="按场次反查资产")
 def reverse_session(session_id: str):
-    return reverse.by_session(_id(session_id))
+    if str(session_id).isdigit():
+        return reverse.by_session(_id(session_id))
+    return reverse.by_code(session_id)
 
 
 @mark(perm="ims:asset:reverse:export", summary="导出反查", operate=("资产反查", "导出"))

@@ -38,6 +38,7 @@ _ANOMALY = {
     "REALNAME_EMPTY": "未关联实名人",
     "REALNAME_DISABLED": "实名人已停用",
     "ACCOUNT_UNBOUND": "未绑定账号",
+    "SESSION_HELD": "使用中设备仍被已下播场次占用",
 }
 _LOCK = "ims:asset:verify:manual"
 
@@ -79,7 +80,7 @@ def _types(body: dict) -> list[str]:
     types = [str(item) for item in raw]
     if not types:
         one("verifyType", "请选择校验类型")
-    blocked = [item for item in types if item not in {"asset_person", "asset_account"}]
+    blocked = [item for item in types if item not in {"asset_person", "asset_account", "asset_session"}]
     if blocked:
         raise BizError(1001, "账号 / 场次模块上线后可用", data={"fieldErrors": [{"field": "verifyType", "message": "账号 / 场次模块上线后可用"}]})
     return types
@@ -171,6 +172,11 @@ def _anomalies(row: AssetLedger, types: list[str] | None = None) -> list[tuple[s
                 found.append(("REALNAME_DISABLED", [_field("REALNAME_DISABLED", "启用的实名人", f"{person.name}已停用")]))
     if "asset_account" in kinds and not _active_account(row.id):
         found.append(("ACCOUNT_UNBOUND", [_field("ACCOUNT_UNBOUND", "已绑定账号", "未绑定")]))
+    if "asset_session" in kinds and row.status == "IN_USE":
+        from app.domains.live.guards import held_by_ended
+
+        if held_by_ended(row.id):
+            found.append(("SESSION_HELD", [_field("SESSION_HELD", "已下播场次应释放设备", "使用中设备仍被已下播场次占用")]))
     return found
 
 

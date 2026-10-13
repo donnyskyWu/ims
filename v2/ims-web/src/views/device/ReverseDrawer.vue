@@ -13,6 +13,7 @@ const props = defineProps<{ userId?: string; realnameId?: string }>();
 const tab = ref("person");
 const userId = ref("");
 const accountId = ref("");
+const sessionCode = ref("");
 const result = ref<Record<string, unknown>>({});
 const rows = ref<Record<string, unknown>[]>([]);
 
@@ -31,6 +32,8 @@ async function search() {
   let data: Record<string, unknown>;
   if (tab.value === "account" && accountId.value) {
     data = await resourceGet(`/asset/reverse/by-account/${accountId.value}`, params);
+  } else if (tab.value === "session" && /^IMS\d{8}[A-Z]{3}\d{4,5}$/.test(sessionCode.value)) {
+    data = await resourceGet(`/asset/reverse/by-session/${sessionCode.value}`, params);
   } else if (props.realnameId) {
     params.realnameId = props.realnameId;
     data = await resourceGet("/asset/reverse/by-person/0", params);
@@ -59,9 +62,10 @@ watch(open, (value) => {
 
 <template>
   <DetailDrawer v-model:open="open" title="反查资产" size="M">
-    <AppTabs v-model:active="tab" :items="[{ key: 'person', label: '按人' }, { key: 'account', label: '按账号' }]" />
+    <AppTabs v-model:active="tab" :items="[{ key: 'person', label: '按人' }, { key: 'account', label: '按账号' }, { key: 'session', label: '按场次' }]" />
     <UserSelect v-if="tab === 'person' && !realnameId" v-model="userId" allow-disabled placeholder="选择人员，含离职" />
     <AccountSelect v-if="tab === 'account'" v-model="accountId" />
+    <el-input v-if="tab === 'session'" v-model="sessionCode" maxlength="20" placeholder="场次编号 IMS+日期+平台码+序号" />
     <button v-if="!realnameId || tab === 'account'" class="btn btn-pri" type="button" @click="search">查询</button>
     <p v-if="result.banner">{{ result.banner }}</p>
     <p>{{ (result.summary as { text?: string } | undefined)?.text }}</p>

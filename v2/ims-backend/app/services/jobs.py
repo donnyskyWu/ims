@@ -307,3 +307,6 @@ def asset_verify_overdue():
     from app.domains.device.verify import scan_overdue
 
     return scan_overdue()
+
+
+import app.domains.live.jobs  # noqa: E402,F401

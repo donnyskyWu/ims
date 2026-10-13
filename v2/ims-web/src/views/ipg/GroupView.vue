@@ -139,6 +139,8 @@ const statItems = computed(() => {
     { title: "内部内容", value: Number(row.contentCount || 0), desc: "示意" },
     { title: "成本", value: Number(row.cost || 0), desc: "示意" },
     { title: "营收", value: Number(row.revenue || 0), desc: "示意" },
+    { title: "本月场次数", value: Number(row.monthSessionCount || 0) },
+    { title: "已核准 GMV", value: String(row.confirmedGmv || "0.00") },
   ];
 });
 
