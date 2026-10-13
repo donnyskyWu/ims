@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Date, DateTime, Integer, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import AssocBase, AuditBase
@@ -151,7 +151,8 @@ class PlatformAccount(AuditBase):
     sim_card_id: Mapped[int | None] = ref_column(Ref("ims_master_sim_card", "RESTRICT"))
     phone_id: Mapped[int | None] = ref_column(Ref("ims_master_phone", "RESTRICT", enforce_delete=True))
     ip_group_id: Mapped[int | None] = ref_column(Ref("ims_ipg_group", "RESTRICT", enforce_delete=False))
-    author_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
+    # B8：author_user_id 指向作者档案，不再指向系统用户。
+    author_user_id: Mapped[int | None] = ref_column(Ref("ims_master_author", "RESTRICT", enforce_delete=True))
     owner_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
     collect_bind_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     remark: Mapped[str | None] = mapped_column(String(256), nullable=True)
@@ -179,20 +180,47 @@ class PersonalAccount(AuditBase):
 
 
 class IpGroup(AuditBase):
+    """IP 组。组名同时写入 name 与 group_name，兼容 B0a 骨架。"""
+
     __tablename__ = "ims_ipg_group"
     __entity_label__ = "IP组"
     __table_args__ = (UniqueConstraint("tenant_id", "code", "deleted", name="uq_ipg_code"),)
     code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_common_status"})
+    group_name: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    group_type: Mapped[str] = mapped_column(String(16), nullable=False, default="BIG", info={"dict": "dict_ip_group_type"})
+    parent_id: Mapped[int | None] = ref_column(Ref("ims_ipg_group", "RESTRICT", enforce_delete=False))
+    leader_user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
+    level: Mapped[str | None] = mapped_column(String(16), nullable=True, info={"dict": "dict_ip_group_level"})
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_ip_group_status"})
+    remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ding_dept_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class IpMember(AssocBase):
+    """组成员。组外键沿用骨架列 group_id，接口字段仍叫 ipGroupId。"""
+
     __tablename__ = "ims_ipg_member"
     group_id: Mapped[int] = ref_column(Ref("ims_ipg_group", "CASCADE_SOFT"), nullable=False)
-    user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", enforce_delete=False))
+    user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
     account_id: Mapped[int | None] = ref_column(Ref("ims_account_platform", "SET_NULL", enforce_delete=False))
     author_id: Mapped[int | None] = ref_column(Ref("ims_master_author", "SET_NULL", enforce_delete=False))
+    position: Mapped[str | None] = mapped_column(String(32), nullable=True, info={"dict": "dict_position"})
+    relation_type: Mapped[str | None] = mapped_column(String(16), nullable=True, info={"dict": "dict_member_relation"})
+    is_leader: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
+
+
+class IpAnchor(AuditBase):
+    """小组与作者的关联，含主作者标记。"""
+
+    __tablename__ = "ims_ipg_anchor"
+    __entity_label__ = "IP组作者"
+    __table_args__ = (UniqueConstraint("tenant_id", "ip_group_id", "author_id", "deleted", name="uq_ipg_anchor"),)
+    ip_group_id: Mapped[int] = ref_column(Ref("ims_ipg_group", "RESTRICT", enforce_delete=False), nullable=False)
+    author_id: Mapped[int] = ref_column(Ref("ims_master_author", "RESTRICT", enforce_delete=True), nullable=False)
+    anchor_type: Mapped[str | None] = mapped_column(String(32), nullable=True, info={"dict": "dict_author_type"})
+    is_primary: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
 
 
 class Author(AuditBase):
@@ -201,7 +229,15 @@ class Author(AuditBase):
     __table_args__ = (UniqueConstraint("tenant_id", "code", "deleted", name="uq_author_code"),)
     code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_common_status"})
+    author_no: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    author_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    author_type: Mapped[str | None] = mapped_column(String(32), nullable=True, info={"dict": "dict_author_type"})
+    ip_group_id: Mapped[int | None] = ref_column(Ref("ims_ipg_group", "RESTRICT", enforce_delete=False))
+    user_id: Mapped[int | None] = ref_column(Ref("ims_sys_user", "RESTRICT", allow_disabled=True, enforce_delete=False))
+    primary_account_id: Mapped[int | None] = ref_column(Ref("ims_account_platform", "RESTRICT", enforce_delete=False))
+    football_author_id: Mapped[int | None] = plain_id()
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ENABLED", info={"dict": "dict_author_status"})
+    remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class LiveSession(AuditBase):

@@ -87,6 +87,11 @@ def ledger_import(file: UploadFile = File(...), scope: str = Form("office")):
     return ledger.import_csv(file.file.read(), file.filename or "", scope or "office")
 
 
+# future 注解经 @mark 包装后，FastAPI 按包装函数的全局名解析，UploadFile 会变成未解析 ForwardRef，
+# 并被当成响应字段而无法启动。签名跟着 __wrapped__，所以把真实类型写回原函数，只作为 File 参数。
+ledger_import.__wrapped__.__annotations__["file"] = UploadFile
+
+
 @mark(perm="ims:device:asset:export", summary="导出台账", operate=("资产", "导出"))
 def ledger_export():
     return ledger.export(_params())

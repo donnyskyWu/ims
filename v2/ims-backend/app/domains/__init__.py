@@ -45,6 +45,7 @@ from app.domains.master.model import (  # noqa: F401
     Cert,
     CompAccount,
     Company,
+    IpAnchor,
     IpGroup,
     IpMember,
     LiveSession,

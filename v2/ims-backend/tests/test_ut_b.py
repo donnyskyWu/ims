@@ -686,7 +686,7 @@ def test_ut_b05_02():
 def test_ut_b05_03():
     _restore_refs()
     names = {table.name for table in Base.metadata.sorted_tables}
-    assert len(SHARED_TABLES) == 12
+    assert len(SHARED_TABLES) == 13
     for table, prefix, _title in SHARED_TABLES:
         assert table in names
         assert table.startswith(prefix)

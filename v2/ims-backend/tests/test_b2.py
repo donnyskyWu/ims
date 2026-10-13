@@ -40,6 +40,7 @@ PATHS = [
     "/admin-api/ims/system/dict-type/list",
     "/admin-api/ims/system/dict-type",
     "/admin-api/ims/system/dict-type/{ident}",
+    "/admin-api/ims/system/dict-data/simple-list",
     "/admin-api/ims/system/dict-data/list",
     "/admin-api/ims/system/dict-data",
     "/admin-api/ims/system/dict-data/{ident}",
@@ -166,6 +167,15 @@ def test_menu_dict_param(client):
     assert hidden["code"] == 0
     shown = client.put(f"{API}/menu/{locked['id']}/visible", headers=headers, json={"visible": True}).json()
     assert shown["code"] == 0
+    simple = client.get(f"{API}/dict-data/simple-list", headers=headers, params={"dictType": "dict_position"}).json()
+    assert simple["code"] == 0 and simple["data"], simple
+    assert {"dictValue", "dictLabel", "colorType", "status"} <= set(simple["data"][0])
+    assert all(item["status"] == "ENABLED" for item in simple["data"])
+    rule_status = client.get(
+        f"{API}/dict-data/simple-list", headers=headers, params={"dictType": "dict_position_rule_status"}
+    ).json()
+    assert rule_status["code"] == 0
+    assert {item["dictValue"] for item in rule_status["data"]} >= {"ENABLED", "DISABLED", "ARCHIVED"}
     values = client.get(f"{API}/dict-data/list", headers=headers, params={"dictType": "dict_user_status"}).json()
     assert values["code"] == 0 and values["data"]
     removed = client.delete(f"{API}/dict-data/{values['data'][0]['id']}", headers=headers).json()

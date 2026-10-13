@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from typing import Any
@@ -107,10 +108,13 @@ def configure_redis(settings: Settings, force_memory: bool = False):
         settings.redis_memory = True
         _client = _memory
         return _client
+    # 本地 Redis 若开启 requirepass，用环境变量传入，不把口令写入仓库。
+    password = os.environ.get("REDIS_PASSWORD") or None
     client = redis.Redis(
         host=settings.redis_host,
         port=settings.redis_port,
         db=settings.redis_db,
+        password=password,
         decode_responses=True,
         socket_connect_timeout=1,
         socket_timeout=2,
