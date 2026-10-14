@@ -150,50 +150,59 @@ def test_fin_share_rule_crud_version_disable_keeps_share_result():
 
 def test_fin_share_rule_1146_sum_boundary_and_1147_conflict():
     auth = headers()
-    single = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=0.2, ruleName="单对象"))
+    scope = {"platforms": ["JD"], "accountIds": [84111], "ipGroupIds": []}
+
+    def body(**overrides):
+        return rule_body(scope=scope, **overrides)
+
+    single = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=0.2, ruleName="单对象"))
     assert single.json()["code"] == 0
     assert client.delete(f"/admin-api/ims/fin/share/rule/{single.json()['data']['id']}", headers=auth).json()["code"] == 0
 
-    assert client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=0)).json()["code"] == 1146
-    assert client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=1.0001)).json()["code"] == 1146
-    edge = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=1, ruleName="整额", shareTarget="TEAM"))
+    zero = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=0))
+    assert zero.json()["code"] == 1146
+    assert zero.json()["msg"] == "分成比例须在 0~100% 之间"
+    over = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=1.0001))
+    assert over.json()["code"] == 1146
+    assert over.json()["msg"] == "分成比例须在 0~100% 之间"
+    edge = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=1, ruleName="整额", shareTarget="TEAM"))
     assert edge.json()["code"] == 0
     assert client.delete(f"/admin-api/ims/fin/share/rule/{edge.json()['data']['id']}", headers=auth).json()["code"] == 0
 
-    base = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=rule_body(fixedRate=0.6))
+    base = client.post("/admin-api/ims/fin/share/rule", headers=auth, json=body(fixedRate=0.6))
     assert base.json()["code"] == 0
     low = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="差一", shareTarget="REALNAME", fixedRate=0.3999, priority=9),
+        json=body(ruleName="差一", shareTarget="REALNAME", fixedRate=0.3999, priority=9),
     )
-    assert low.json()["code"] == 1146
-    assert "0.9999" in low.json()["msg"]
+    assert low.json()["code"] == 0
     high = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="超一", shareTarget="REALNAME", fixedRate=0.4001, priority=9),
+        json=body(ruleName="超一", shareTarget="REALNAME", fixedRate=0.4001, priority=9),
     )
     assert high.json()["code"] == 1146
-    assert "1.0001" in high.json()["msg"]
+    assert "100.01%" in high.json()["msg"]
+    assert client.delete(f"/admin-api/ims/fin/share/rule/{low.json()['data']['id']}", headers=auth).json()["code"] == 0
     exact = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="实名人四成", shareTarget="REALNAME", fixedRate=0.4, priority=9),
+        json=body(ruleName="实名人四成", shareTarget="REALNAME", fixedRate=0.4, priority=9),
     )
     assert exact.json()["code"] == 0
 
     clash = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="达人冲突", fixedRate=0.6, priority=30),
+        json=body(ruleName="达人冲突", fixedRate=0.6, priority=30),
     )
     assert clash.json()["code"] == 1147
     assert base.json()["data"]["id"] in clash.json()["data"]["conflictRuleIds"]
     forced = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
-        json=rule_body(ruleName="达人冲突", fixedRate=0.6, priority=30, confirmConflict=True),
+        json=body(ruleName="达人冲突", fixedRate=0.6, priority=30, confirmConflict=True),
     )
     assert forced.json()["code"] == 0
     assert forced.json()["data"]["priority"] == 30
@@ -223,6 +232,7 @@ def test_fin_share_rule_1146_sum_boundary_and_1147_conflict():
         json=ladder_body(ladderConfig=[{"min": 0, "max": None, "rate": 1.2}]),
     )
     assert bad_rate.json()["code"] == 1146
+    assert bad_rate.json()["msg"] == "分成比例须在 0~100% 之间"
     gap = client.post(
         "/admin-api/ims/fin/share/rule",
         headers=auth,
@@ -331,3 +341,235 @@ def test_fin_share_rule_ip_group_scope_roundtrip_and_distinct():
     )
     assert other.json()["code"] == 0
     assert other.json()["data"]["scope"]["ipGroupIds"] == [88009]
+
+
+def test_fin_share_rule_enable_roundtrip_and_disabled_edit_keeps_bills():
+    auth = headers()
+    scope = {"platforms": ["OTA"], "accountIds": [86001], "ipGroupIds": []}
+    created = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="可再启用", shareTarget="TEAM", fixedRate=0.3, priority=4, scope=scope),
+    )
+    assert created.json()["code"] == 0
+    rule_id = created.json()["data"]["id"]
+    version = created.json()["data"]["version"]
+
+    from app.core import SessionLocal
+    from app.models import FinShareResult
+
+    db = SessionLocal()
+    try:
+        share = FinShareResult(
+            session_code="IMS20261008OTA0460",
+            rule_id=rule_id,
+            rule_name="手工分成",
+            share_target="TEAM",
+            target_ref_name="团队",
+            share_base=1000,
+            share_amount=300,
+            calc_detail={"formula": "keep"},
+            status="PENDING_AUDIT",
+            tenant_id=0,
+        )
+        db.add(share)
+        db.commit()
+        share_id = share.id
+    finally:
+        db.close()
+
+    disabled = client.delete(f"/admin-api/ims/fin/share/rule/{rule_id}", headers=auth)
+    assert disabled.json()["code"] == 0
+    edited = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}",
+        headers=auth,
+        json=rule_body(ruleName="停用中修订", shareTarget="TEAM", fixedRate=0.25, priority=4, scope=scope),
+    )
+    assert edited.json()["code"] == 0
+    assert edited.json()["data"]["status"] == "DISABLED"
+    assert edited.json()["data"]["version"] == version + 1
+    enabled = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert enabled.json()["code"] == 0
+    assert enabled.json()["data"]["status"] == "ENABLED"
+    assert enabled.json()["data"]["version"] == version + 1
+    again = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert again.json()["code"] == 0
+    assert again.json()["data"]["status"] == "ENABLED"
+
+    assert client.delete(f"/admin-api/ims/fin/share/rule/{rule_id}", headers=auth).json()["code"] == 0
+    blocked = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="同基数占位", shareTarget="DAREN", fixedRate=0.9, priority=6, scope=scope),
+    )
+    assert blocked.json()["code"] == 0
+    crowded = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert crowded.json()["code"] == 1146
+    forced_sum = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}/enable",
+        headers=auth,
+        json={"confirmConflict": True},
+    )
+    assert forced_sum.json()["code"] == 1146
+
+    db = SessionLocal()
+    try:
+        kept = db.get(FinShareResult, share_id)
+        assert kept is not None
+        assert kept.rule_name == "手工分成"
+        assert float(kept.share_amount) == 300
+        assert kept.status == "PENDING_AUDIT"
+    finally:
+        db.close()
+
+
+def test_fin_share_rule_sum_is_per_base_and_shortfall_allowed():
+    auth = headers()
+    scope = {"platforms": ["WX"], "accountIds": [85021], "ipGroupIds": []}
+    daren = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="毛利达人一成",
+            shareTarget="DAREN",
+            baseType="GROSS_PROFIT",
+            fixedRate=0.1,
+            priority=10,
+            scope=scope,
+        ),
+    )
+    assert daren.json()["code"] == 0
+    realname = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="GMV实名人",
+            shareTarget="REALNAME",
+            baseType="GMV",
+            fixedRate=0.02,
+            priority=10,
+            scope=scope,
+        ),
+    )
+    assert realname.json()["code"] == 0
+    over = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="毛利超额",
+            shareTarget="REALNAME",
+            baseType="GROSS_PROFIT",
+            fixedRate=0.95,
+            priority=12,
+            scope=scope,
+        ),
+    )
+    assert over.json()["code"] == 1146
+    assert "105.00%" in over.json()["msg"]
+    short = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(
+            ruleName="毛利团队两成",
+            shareTarget="TEAM",
+            baseType="GROSS_PROFIT",
+            fixedRate=0.2,
+            priority=8,
+            scope=scope,
+        ),
+    )
+    assert short.json()["code"] == 0
+
+
+def test_fin_share_rule_enable_conflict_needs_confirm():
+    auth = headers()
+    scope = {"platforms": ["TM"], "accountIds": [86046], "ipGroupIds": []}
+    first = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="待停用再启用", shareTarget="TEAM", fixedRate=0.2, priority=4, scope=scope),
+    )
+    assert first.json()["code"] == 0
+    rule_id = first.json()["data"]["id"]
+    version = first.json()["data"]["version"]
+    assert client.delete(f"/admin-api/ims/fin/share/rule/{rule_id}", headers=auth).json()["code"] == 0
+    other = client.post(
+        "/admin-api/ims/fin/share/rule",
+        headers=auth,
+        json=rule_body(ruleName="同对象占位", shareTarget="TEAM", fixedRate=0.3, priority=8, scope=scope),
+    )
+    assert other.json()["code"] == 0
+    blocked = client.put(f"/admin-api/ims/fin/share/rule/{rule_id}/enable", headers=auth)
+    assert blocked.json()["code"] == 1147
+    assert blocked.json()["msg"] == "存在同范围同对象优先级冲突规则，确认强制保存？"
+    assert "1147" not in blocked.json()["msg"]
+    forced = client.put(
+        f"/admin-api/ims/fin/share/rule/{rule_id}/enable",
+        headers=auth,
+        json={"confirmConflict": True},
+    )
+    assert forced.json()["code"] == 0
+    assert forced.json()["data"]["status"] == "ENABLED"
+    assert forced.json()["data"]["version"] == version
+
+
+def _login(username: str) -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"}).json()["data"][
+        "accessToken"
+    ]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_share_rule_picker_lists_account_and_group_names():
+    auth = headers()
+    missing = client.get("/admin-api/ims/corp/account/page", headers=auth, params={"pageNo": 1, "pageSize": 20})
+    assert missing.json()["code"] == 1001
+    assert missing.json()["msg"] == "platformType 必填"
+    assert "ERR_" not in missing.json()["msg"]
+
+    accounts = client.get(
+        "/admin-api/ims/corp/account/page",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 100, "platformType": "DOUYIN"},
+    )
+    body = accounts.json()
+    assert body["code"] == 0
+    assert body["data"]["list"]
+    row = body["data"]["list"][0]
+    assert row["id"]
+    assert row.get("nickname") or row.get("accountNo")
+
+    for index in range(11):
+        created = client.post(
+            "/admin-api/ims/ip-group/create",
+            headers=auth,
+            json={"groupName": f"选择器大组{index}", "groupType": "BIG"},
+        )
+        assert created.json()["code"] == 0, created.json()
+    groups = client.get(
+        "/admin-api/ims/ip-group/list",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 200},
+    )
+    listed = groups.json()
+    assert listed["code"] == 0
+    names = [item["groupName"] for item in listed["data"]["list"]]
+    assert len(names) >= 11
+    assert "选择器大组0" in names
+    assert listed["data"]["pageSize"] == 200
+
+
+def test_r9_query_lists_share_rules_write_stays_chinese():
+    analyst = _login("e2e_fin_r9")
+    listed = client.get("/admin-api/ims/fin/share/rules", headers=analyst)
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["code"] == 0
+    assert isinstance(body["data"]["list"], list)
+
+    denied = client.post("/admin-api/ims/fin/share/rule", headers=analyst, json=rule_body())
+    assert denied.status_code == 403
+    payload = denied.json()
+    assert payload["code"] == 1008
+    assert payload["msg"] == "无分成规则维护权限"
+    assert "ERR_" not in payload["msg"]

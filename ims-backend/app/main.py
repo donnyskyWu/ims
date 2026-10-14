@@ -495,9 +495,44 @@ def ensure_user_mapping_position_column() -> None:
         )
 
 
+def ensure_share_result_archive_key() -> None:
+    """已冲销原单与补开的新分成单可以并存。create_all 不会改已有唯一键。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_fin_share_result" not in insp.get_table_names():
+        return
+    cols = {col["name"] for col in insp.get_columns("ims_fin_share_result")}
+    with engine.begin() as conn:
+        if "archive_key" not in cols:
+            conn.execute(
+                text("ALTER TABLE ims_fin_share_result ADD COLUMN archive_key BIGINT NOT NULL DEFAULT 0")
+            )
+    insp = inspect(engine)
+    matched = [
+        item
+        for item in insp.get_unique_constraints("ims_fin_share_result")
+        if item.get("name") == "uk_fin_share_session_target"
+    ]
+    columns = list(matched[0].get("column_names") or []) if matched else []
+    if "archive_key" in columns:
+        return
+    with engine.begin() as conn:
+        if matched:
+            conn.execute(text("ALTER TABLE ims_fin_share_result DROP INDEX uk_fin_share_session_target"))
+        conn.execute(
+            text(
+                "ALTER TABLE ims_fin_share_result "
+                "ADD UNIQUE KEY uk_fin_share_session_target "
+                "(tenant_id, session_code, share_target, archive_key)"
+            )
+        )
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_share_result_archive_key()
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()

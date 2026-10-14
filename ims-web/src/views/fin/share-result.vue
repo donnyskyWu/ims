@@ -332,11 +332,37 @@ const rejectRemark = ref('')
 const rejectError = ref('')
 const rejectBusy = ref(false)
 
-const splitSum = computed(() => rows.value.reduce((acc, row) => acc + Number(row.shareAmount || 0), 0))
+function amountOf(value: unknown) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+const countedRows = computed(() => {
+  if (query.status === 'REVERSED') return rows.value.filter((row) => row.status === 'REVERSED')
+  return rows.value.filter((row) => row.status !== 'REVERSED')
+})
+
+const splitSum = computed(() => {
+  const sum = countedRows.value.reduce((acc, row) => acc + amountOf(row.shareAmount), 0)
+  return Math.round(sum * 100) / 100
+})
+
 const shareTotal = computed(() => {
-  const totals = rows.value.map((row) => Number(row.calcDetail?.shareTotal ?? NaN)).filter((n) => !Number.isNaN(n))
-  if (!totals.length) return splitSum.value
-  return totals[0]
+  const bySession = new Map<string, ShareRow[]>()
+  for (const row of countedRows.value) {
+    const key = String(row.sessionCode || row.id)
+    const group = bySession.get(key) || []
+    group.push(row)
+    bySession.set(key, group)
+  }
+  let total = 0
+  for (const group of bySession.values()) {
+    const partSum = group.reduce((acc, row) => acc + amountOf(row.shareAmount), 0)
+    const stored = group.map((row) => Number(row.calcDetail?.shareTotal)).filter((n) => Number.isFinite(n))
+    const sessionTotal = stored.length ? stored[0] : partSum
+    total += sessionTotal + 0.001 < partSum ? partSum : sessionTotal
+  }
+  return Math.round(total * 100) / 100
 })
 const splitMatches = computed(() => Math.abs(splitSum.value - shareTotal.value) < 0.01)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))

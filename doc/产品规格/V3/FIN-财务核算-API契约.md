@@ -2,7 +2,7 @@
 
 > **模块范围**：11 财务核算（V3，第 28~33 周先行批次，由 V2 移入）——FIN-001 单场成本录入、FIN-002 利润自动计算、FIN-003 分成规则引擎、FIN-004 利润看板。消费 V1 直播台账（`ims_live_session`/下播数据/投放汇总），不新建直播上游台账。
 > **权威依据**：《IMS第二期PRD-V2.md》5.16~5.19；BR-107~BR-109；V2-E1~E4 财务精度约束。
-> **全局约定**：响应包裹 `{code, msg, data}`；分页 `{pageNo, pageSize}` / `{list, total, pageNo, pageSize}`；枚举/错误码引用《全局开发规范.md》第 3/4 章；字段 camelCase（`session_code → sessionCode`、`share_daren → shareDaren`）。**财务口径强制**：金额 DECIMAL(12,2)（单位元、两位小数）；比例 DECIMAL(5,4)；BigDecimal 全链路（V2-E1）；`sessionCode` 引用 V1 19 位 IMS 编码（`IMS+yyyyMMdd+3 位平台码+4 位序列`，BR-011 修正口径）；多对象分成比例求和校验 = 1.0000（V2-E2）；红冲+蓝补更正模式（V2-E3）；金额变更幂等（clientToken 请求头）。周次波浪号格式。
+> **全局约定**：响应包裹 `{code, msg, data}`；分页 `{pageNo, pageSize}` / `{list, total, pageNo, pageSize}`；枚举/错误码引用《全局开发规范.md》第 3/4 章；字段 camelCase（`session_code → sessionCode`、`share_daren → shareDaren`）。**财务口径强制**：金额 DECIMAL(12,2)（单位元、两位小数）；比例 DECIMAL(5,4)；BigDecimal 全链路（V2-E1）；`sessionCode` 引用 V1 19 位 IMS 编码（`IMS+yyyyMMdd+3 位平台码+4 位序列`，BR-011 修正口径）；同一范围同一基数分成比例合计超过 1 拦截，不足归公司（V2-E2）；红冲+蓝补更正模式（V2-E3）；金额变更幂等（clientToken 请求头）。周次波浪号格式。
 
 ---
 
@@ -22,10 +22,11 @@
 | 10 | POST | `/admin-api/ims/fin/profit/recalc/{sessionCode}` | 手动触发重算（新版本） | R3/R1 |
 | 11 | GET | `/admin-api/ims/fin/profit/abnormal` | 异常净利率清单（2σ 偏离） | R1/R3/R4/R9 |
 | 12 | GET | `/admin-api/ims/fin/profit/history/{sessionCode}` | 重算版本历史 | R1/R3/R4 |
-| 13 | GET | `/admin-api/ims/fin/share/rules` | 分成规则列表（分页） | R1/R3/R4 |
+| 13 | GET | `/admin-api/ims/fin/share/rules` | 分成规则列表（分页） | 具备查询权限的角色（含 R1/R3/R4/R9） |
 | 14 | POST | `/admin-api/ims/fin/share/rule` | 创建分成规则 | R3（主责） |
 | 15 | PUT | `/admin-api/ims/fin/share/rule/{id}` | 编辑规则（生成新版本） | R3 |
 | 16 | DELETE | `/admin-api/ims/fin/share/rule/{id}` | 停用规则 | R3/R1 |
+| 16a | PUT | `/admin-api/ims/fin/share/rule/{id}/enable` | 重新启用（不递增版本） | R3/R1 |
 | 17 | POST | `/admin-api/ims/fin/share/simulate` | 规则试算（给定基数预估） | R3/R4 |
 | 18 | GET | `/admin-api/ims/fin/share/results` | 分成单列表（分页） | R1/R3/R4/R7（本人分成单）/R9（脱敏） |
 | 19 | PUT | `/admin-api/ims/fin/share/result/{id}/audit` | 分成单审批（双审之一） | R3（财务审）+ R4（业务审） |
@@ -47,7 +48,7 @@
 
 **请求**（Query）：`PageParam` + `{ platform?: PlatformType; sessionCode?: string; approvedDateRange?: [string, string] }`
 
-**响应** `data`：`PageResult<{ sessionCode: string; platform: PlatformType; sessionTitle: string; gmv: number; refund: number; adCost: number; approvedAt: string; hoursSinceApprove: number; isOver48h: boolean }>`（仅 V1 下播数据"已核准"场次，FIN-C-R1；核准后 48 小时未录入触发 BR-118 预警）。
+**响应** `data`：`PageResult<{ sessionCode: string; platform: PlatformType; sessionTitle: string; gmv: number; refund: number; adCost: number; approvedAt: string; hoursSinceApprove: number; isOver48h: boolean }>`（仅 V1 下播数据"已核准"场次，FIN-C-R1；核准后 48 小时未录入触发 BR-118 预警）。R9 的 `gmv`、`refund`、`adCost` 返回 `"***"`。
 
 #### 2.1.2 POST /admin-api/ims/fin/cost/{sessionCode} — 提交成本录入
 
@@ -94,8 +95,10 @@ interface FinCostVO {
   sampleCost: number;
   shareDaren: number;
   shareRealname: number;
+  /** 团队/阶梯分成。无独立列，由成本合计减去其余项得到，计入 shares */
+  shareTeam: number;
   shareCostType: 'MANUAL' | 'ENGINE';
-  /** 成本合计 = commission + ad + recharge + fixed + sample + shares */
+  /** 成本合计 = commission + ad + recharge + fixed + sample + shares（含达人、实名人、团队/阶梯）。录入预览、详情、列表同一口径 */
   totalCost: number;
   entryStatus: 'DRAFT' | 'SUBMITTED' | 'CONFIRMED';   // 0 草稿 / 1 已提交 / 2 已核准
   entryUserId: number;
@@ -103,6 +106,14 @@ interface FinCostVO {
   entryAt: string;
   /** 客户端幂等令牌（与请求头一致，重试返回已有单据） */
   clientToken: string;
+  /** 仅成本详情返回。草稿/已提交状态下的编辑留痕，按字段一行 */
+  editLogs?: Array<{
+    editorName: string;
+    editedAt: string;            // 北京时间 yyyy-MM-dd HH:mm:ss
+    field: string;
+    oldValue: string;
+    newValue: string;
+  }>;
 }
 ```
 
@@ -110,11 +121,13 @@ interface FinCostVO {
 
 #### 2.1.3 GET /admin-api/ims/fin/cost/{sessionCode} — 成本详情
 
-**响应** `data`：`FinCostVO`。
+**响应** `data`：`FinCostVO`。R9 的 `costGmv`、`costRefund` 以及其他金额字段（含 `totalCost`、投放/分成）返回 `"***"`；佣金率等比率保持原值。已录入列表 `GET /fin/cost/list` 对同一批金额字段脱敏。R1/R3/R4 仍返回数字。
 
 #### 2.1.4 PUT /admin-api/ims/fin/cost/{sessionCode} — 编辑成本（核准前）
 
-**请求**：`FinCostEntryReq` → **响应** `data`：`FinCostVO`。仅 `DRAFT`/`SUBMITTED` 状态可编辑；核准后修改走更正单（2.1.6）。
+**请求**：`FinCostEntryReq` → **响应** `data`：`FinCostVO`。`DRAFT` 与已提交未核准（`SUBMITTED`）可编辑，保存后状态保持原值（已提交不会退回草稿）。已核准（`CONFIRMED`）拒绝更新，`msg` 为「成本已核准，请走更正单」，改数走更正单（2.1.6）。
+
+草稿和已提交状态下的每次编辑，按实际变更字段写入修改记录（修改人、北京时间、字段、旧值、新值）。同一 `clientToken` 的幂等重放不新增记录。记录随 `GET /fin/cost/{sessionCode}` 的 `editLogs` 返回，在成本详情中展示。核准后的红冲蓝补仍走更正单，不写这条记录。
 
 #### 2.1.5 PUT /admin-api/ims/fin/cost/{sessionCode}/confirm — 财务核准
 
@@ -160,11 +173,13 @@ interface FinProfitVO {
   /** 计算时公式与参数快照（BigDecimal 全链路，V2-E1） */
   calcRuleSnapshot: {
     formula: string;             // BR-108 表达式
-    params: Record<string, number>;
+    params: Record<string, number>; // 含 shareTeam
+    /** 当前未冲销分成，瀑布逐笔扣减（含团队阶梯） */
+    shareLines?: Array<{ shareTarget: string; ruleName: string; shareAmount: number }>;
   };
   calcVersion: number;           // 重算递增
   calcStatus: 'PENDING' | 'CALCULATED' | 'RECALCULATED' | 'ABNORMAL';   // 0 待计算/1 已计算/2 已重算/3 异常待核
-  calculatedAt: string;
+  calculatedAt: string;          // 最近一次计算的北京时间 yyyy-MM-dd HH:mm:ss（含成本更正后的重算）
 }
 ```
 
@@ -195,6 +210,8 @@ interface FinProfitVO {
 #### 2.3.1 GET /admin-api/ims/fin/share/rules — 规则列表（分页）
 
 **请求**（Query）：`PageParam` + `{ shareTarget?: 'DAREN' | 'REALNAME' | 'TEAM'; status?: 'ENABLED' | 'DISABLED' }`
+
+具备分成规则查询权限的角色（含 R9）可读取列表。创建、编辑、停用、启用、试算仍须维护权限；无维护权限时 `code=1008`、`msg` 为「无分成规则维护权限」。无查询权限时返回「无数据权限」。页面只展示中文 `msg`，不展示 `ERR_BAD_REQUEST` 等传输层错误码。
 
 **响应** `data`：`PageResult<FinShareRuleVO>`
 
@@ -227,7 +244,7 @@ interface FinShareRuleVO {
 
 **请求**：`Omit<FinShareRuleVO, 'id' | 'version' | 'status'>` → **响应** `data`：`FinShareRuleVO`。
 
-**错误码**：1146（规则参数非法：fixedRate 超出 (0,1] 或阶梯区间重叠/比例非法）、1147（同范围同对象优先级冲突须显式确认）。**校验**：同一场次多分成对象比例求和 ≤ 1.0000，多对象集合求和必须 = 1.0000（V2-E2）。
+**错误码**：1146（规则参数非法：比例须在 0~100% 之间，或阶梯区间重叠）、1147（同范围同对象优先级冲突须显式确认）。**校验**：同一范围且同一基数的固定比例，多对象合计超过 1 时拦截（1146）；合计不足 1 不拦截，剩余归公司。不同基数不互相求和。合计超限时文案按百分数展示当前合计（如 `100.01%`），与页面按 % 录入一致。存储仍为 DECIMAL (0, 1]。
 
 #### 2.3.3 PUT /admin-api/ims/fin/share/rule/{id} — 编辑规则（新版本）
 
@@ -235,7 +252,11 @@ interface FinShareRuleVO {
 
 #### 2.3.4 DELETE /admin-api/ims/fin/share/rule/{id} — 停用规则
 
-**响应**：`data: null`（状态 → `DISABLED`，历史分成单引用不受影响）。
+**响应**：`data: null`（状态 → `DISABLED`，不递增 version，历史分成单引用不受影响）。
+
+#### 2.3.4a PUT /admin-api/ims/fin/share/rule/{id}/enable — 重新启用
+
+已停用规则可重新启用。启用前按当前规则重查 1146（同一范围同一基数合计超过 1）和 1147（同范围同对象冲突）。请求体可省略；`{ confirmConflict: true }` 仅放行 1147，不放行 1146。未确认时 1147 的 `msg` 为业务句「存在同范围同对象优先级冲突规则，确认强制保存？」，由页面弹窗确认后带 `confirmConflict` 重试。不递增 version，不改写历史分成单。已是 `ENABLED` 时幂等返回当前规则。
 
 #### 2.3.5 POST /admin-api/ims/fin/share/simulate — 规则试算
 
@@ -278,7 +299,7 @@ interface FinShareResultVO {
 
 **请求**：`{ payoffVoucher?: { fileName: string; fileKey: string }; payoffNote?: string; reverse?: boolean; reverseReason?: string }` → **响应**：`data: null`（状态 → `PAID_OFF`）。
 
-**负向调整（#90，仍走本接口，不另开路径）**：`reverse=true` 时不发放。仅 `AUDITED` / `PAID_OFF` 可冲销，状态改为 `REVERSED`，`shareAmount` 不改，`calcDetail.redEntries` 写入负数红冲分录，并在 `ims_sys_operate_log` 留下 `action=冲销分成单`。原因为空 **1144**。未双审或已冲销再冲 **1150**。驳回仍走 `PUT …/audit` 的 `REJECT`，同样写红冲。全部对象已冲销后若成本更正改变分成额，受唯一键限制不新插单据，原单标记「已冲销（新单已补）」。
+**负向调整（#90，仍走本接口，不另开路径）**：`reverse=true` 时不发放。仅 `AUDITED` / `PAID_OFF` 可冲销，状态改为 `REVERSED`，`shareAmount` 不改，`calcDetail.redEntries` 写入负数红冲分录，并在 `ims_sys_operate_log` 留下 `action=冲销分成单`。原因为空 **1144**。未双审或已冲销再冲 **1150**。驳回仍走 `PUT …/audit` 的 `REJECT`，同样写红冲。成本更正触发利润重算后，若按启用规则算出的分成额变了：原单标「已冲销（新单已补）」（`status=REVERSED` 且 `replacedNote`），并另开一张待审分成单。已审、已发放的分成单不改写。分成单冲销不反向更正成本，也不重算利润。
 
 ### 2.4 利润看板（FIN-004）
 
@@ -338,14 +359,14 @@ PENDING_AUDIT ──财务审（R3）+业务审（R4）双审通过──▶ AUD
       └──任一环节驳回──────────────────────────────────┴──冲销──▶ REVERSED（红冲分录）
 ```
 
-**分成规则（FinShareRuleVO.status）**：`ENABLED ↔ DISABLED`（变更生成新版本，历史分成单不受影响）。
+**分成规则（FinShareRuleVO.status）**：`ENABLED ↔ DISABLED`（启用与停用不生成新版本；编辑生成新版本并沿用当前状态。历史分成单不受影响）。
 
 ### 3.2 业务规则引用（PRD）
 
 | 规则 | 约束 | API 落点 |
 |------|------|----------|
 | BR-107 | 成本录入完整率 > 95%（联动 V1 BR-006/007） | 2.1.7 |
-| BR-108 | 净利润 = GMV−退款−佣金−投放−冲话费−固定−样品−达人分成−实名人分成 | 2.2.1 calcRuleSnapshot |
+| BR-108 | 净利润 = GMV−退款−佣金−投放−冲话费−固定−样品−全部分成（达人、实名人、团队/阶梯） | 2.2.1 calcRuleSnapshot |
 | BR-109 | 分成 = 基数×比例（阶梯逐档求和） | 2.3.5 simulate |
 | BR-118 | 核准后 48h 未录成本触发预警 | 2.1.1 isOver48h（联动 ALERT） |
 | FIN-C-R1 | 仅已核准场次可录成本 | 2.1.2 错误码 1141 |
@@ -365,7 +386,7 @@ PENDING_AUDIT ──财务审（R3）+业务审（R4）双审通过──▶ AUD
 | FIN-B-R2 | 下钻最深到场次明细 | 2.4.3 drillToSession |
 | FIN-B-R3 | 看板数据权限同角色矩阵 | 2.4.x 服务端过滤 |
 | V2-E1 | 金额 DECIMAL(12,2)、BigDecimal 全链路（禁 float/double） | 全模块 |
-| V2-E2 | 分成比例 DECIMAL(5,4)，多对象求和 = 1.0000 | 2.3.2 校验 |
+| V2-E2 | 分成比例 DECIMAL(5,4)。同一范围同一基数合计超过 1 拦截；不足 1 剩余归公司；不同基数不求和 | 2.3.2 校验 |
 | V2-E3 | 更正红冲+蓝补（不做物理修改） | 2.1.6 / 2.3.8 |
 | V2-E4 | 金额写接口 clientToken 幂等 | 2.1.2 / 2.1.6 请求头 |
 

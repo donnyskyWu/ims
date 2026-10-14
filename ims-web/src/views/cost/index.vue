@@ -35,11 +35,37 @@
             </div>
             <button class="btn btn-sec btn-sm" type="button" @click="savePurchase">保存采购</button>
           </div>
-          <div class="qbar" style="margin-top: 10px; padding: 0">
-            <input v-model.number="purchaseForm.amount" type="number" step="0.01" placeholder="金额" style="width: 120px" />
-            <input v-model="purchaseForm.period" placeholder="期间 YYYY-MM" style="width: 120px" />
-            <input v-model="purchaseForm.payMethod" placeholder="支付方式" style="width: 100px" />
+          <div class="qbar" style="margin-top: 10px; padding: 0; align-items: flex-start">
+            <div class="fld" style="width: 160px; margin-bottom: 0">
+              <label for="cost-purchase-amount">金额<i class="req">*</i></label>
+              <input
+                id="cost-purchase-amount"
+                v-model="purchaseForm.amount"
+                type="number"
+                step="0.01"
+                placeholder="金额"
+                data-testid="cost-purchase-amount"
+                :class="{ err: purchaseErrors.amount }"
+              />
+              <div v-if="purchaseErrors.amount" class="ferr" data-testid="cost-purchase-amount-error">{{ purchaseErrors.amount }}</div>
+            </div>
+            <div class="fld" style="width: 160px; margin-bottom: 0">
+              <label for="cost-purchase-period">期间<i class="req">*</i></label>
+              <input
+                id="cost-purchase-period"
+                v-model="purchaseForm.period"
+                placeholder="YYYY-MM"
+                data-testid="cost-purchase-period"
+                :class="{ err: purchaseErrors.period }"
+              />
+              <div v-if="purchaseErrors.period" class="ferr" data-testid="cost-purchase-period-error">{{ purchaseErrors.period }}</div>
+            </div>
+            <div class="fld" style="width: 140px; margin-bottom: 0">
+              <label for="cost-purchase-pay">支付方式</label>
+              <input id="cost-purchase-pay" v-model="purchaseForm.payMethod" placeholder="支付方式" />
+            </div>
           </div>
+          <p v-if="purchaseHint" class="hint" style="margin-top: 8px; color: var(--green)" data-testid="cost-purchase-hint">{{ purchaseHint }}</p>
           <p v-if="costDetail.purchase" class="hint" style="margin-top: 8px">
             当前 ¥{{ fmt(costDetail.purchase.amount) }} · {{ costDetail.purchase.period || '—' }}
           </p>
@@ -49,9 +75,9 @@
             <thead>
               <tr>
                 <th>类型</th>
-                <th>子类</th>
                 <th>金额</th>
-                <th>期间</th>
+                <th>周期</th>
+                <th>经办人</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -62,11 +88,14 @@
                 </td>
               </tr>
               <tr v-for="row in costDetail.processCosts" v-else :key="row.id">
-                <td>过程成本</td>
-                <td>{{ row.processSubtype || '—' }}</td>
+                <td>{{ row.processSubtypeLabel || subtypeLabel(row.processSubtype) }}</td>
                 <td class="num">¥{{ fmt(row.amount) }}</td>
                 <td class="num">{{ row.period || '—' }}</td>
-                <td><button class="btn-txt btn" type="button" @click="removeProcess(row.id)">删除</button></td>
+                <td>{{ row.handlerUserName || '—' }}</td>
+                <td>
+                  <button class="btn-txt btn" type="button" @click="editProcess(row)">编辑</button>
+                  <button class="btn-txt btn" type="button" @click="removeProcess(row.id)">删除</button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -176,13 +205,81 @@
         </div>
       </div>
     </template>
+
+    <ProtoDrawer
+      :open="processOpen"
+      :title="processEditingId ? '编辑过程成本' : '登记过程成本'"
+      width="480px"
+      @close="processOpen = false"
+    >
+      <div class="fld">
+        <label for="cost-process-type">类型<i class="req">*</i></label>
+        <select id="cost-process-type" v-model="processForm.processSubtype" data-testid="cost-process-type" :class="{ err: processErrors.type }">
+          <option value="">请选择</option>
+          <option v-for="opt in processTypes" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <div v-if="processErrors.type" class="ferr">{{ processErrors.type }}</div>
+      </div>
+      <div class="fld">
+        <label for="cost-process-amount">金额<i class="req">*</i></label>
+        <input
+          id="cost-process-amount"
+          v-model="processForm.amount"
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="金额"
+          data-testid="cost-process-amount"
+          :class="{ err: processErrors.amount }"
+        />
+        <div v-if="processErrors.amount" class="ferr">{{ processErrors.amount }}</div>
+      </div>
+      <div class="fld">
+        <label for="cost-process-period">周期<i class="req">*</i></label>
+        <input
+          id="cost-process-period"
+          v-model="processForm.period"
+          placeholder="YYYY-MM"
+          data-testid="cost-process-period"
+          :class="{ err: processErrors.period }"
+        />
+        <div v-if="processErrors.period" class="ferr">{{ processErrors.period }}</div>
+      </div>
+      <div class="fld">
+        <label for="cost-process-handler">经办人<i class="req">*</i></label>
+        <select id="cost-process-handler" v-model="processForm.handlerUserId" data-testid="cost-process-handler" :class="{ err: processErrors.handler }">
+          <option value="">请选择</option>
+          <option v-for="u in handlerOptions" :key="u.id" :value="u.id">{{ u.label }}</option>
+        </select>
+        <div v-if="processErrors.handler" class="ferr">{{ processErrors.handler }}</div>
+      </div>
+      <template #footer>
+        <button class="btn btn-sec" type="button" @click="processOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="cost-process-save" @click="saveProcess">保存</button>
+      </template>
+    </ProtoDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import axios from 'axios'
+import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { useUserStore } from '../../stores/user'
+
+const processTypes = [
+  { value: 'PROCESS_RENT', label: '租赁' },
+  { value: 'PROCESS_CERT', label: '注册认证' },
+  { value: 'PROCESS_RECHARGE', label: '充值投流' },
+  { value: 'PROCESS_HUMAN', label: '人力' },
+  { value: 'PROCESS_DEVICE', label: '设备' },
+  { value: 'PROCESS_OPS', label: '运营' },
+  { value: 'PROCESS_OTHER', label: '其他' },
+] as const
+
+function subtypeLabel(code: string | null | undefined) {
+  return processTypes.find((item) => item.value === code)?.label || code || '—'
+}
 
 const user = useUserStore()
 const tab = ref<'cost' | 'roi' | 'orders'>('cost')
@@ -190,8 +287,18 @@ const hint = ref('')
 const accountOptions = ref<{ id: string; label: string }[]>([])
 const selectedAccountId = ref('')
 const costDetail = ref<any>(null)
-const purchaseForm = ref({ amount: 0, period: '', payMethod: '' })
-const processForm = ref({ amount: 860, period: '2026-09', processSubtype: 'PROCESS_RECHARGE' })
+const purchaseForm = ref<{ amount: string | number; period: string; payMethod: string }>({
+  amount: '',
+  period: '',
+  payMethod: '',
+})
+const purchaseErrors = ref({ amount: '', period: '' })
+const purchaseHint = ref('')
+const processOpen = ref(false)
+const processEditingId = ref('')
+const processForm = ref({ amount: '' as string | number, period: '', processSubtype: '', handlerUserId: '' })
+const processErrors = ref({ type: '', amount: '', period: '', handler: '' })
+const handlerOptions = ref<{ id: string; label: string }[]>([])
 const roiRange = ref({ start: '2026-09-01', end: '2026-09-30', dimension: 'ACCOUNT' })
 const roi = ref<any>(null)
 const orderRange = ref({ start: '2026-09-01', end: '2026-09-30', authorId: '' })
@@ -250,34 +357,132 @@ async function loadAccountCost() {
     return
   }
   costDetail.value = res.data
-  if (res.data.purchase) {
-    purchaseForm.value = {
-      amount: res.data.purchase.amount,
-      period: res.data.purchase.period || '',
-      payMethod: res.data.purchase.payMethod || '',
-    }
+  echoPurchase(res.data.purchase)
+}
+
+function echoPurchase(purchase: { amount?: unknown; period?: string | null; payMethod?: string | null } | null | undefined) {
+  if (!purchase || purchase.amount == null || purchase.amount === '') {
+    purchaseForm.value.amount = ''
+    purchaseForm.value.period = ''
+    purchaseForm.value.payMethod = ''
+    return
   }
+  purchaseForm.value.amount = String(purchase.amount)
+  purchaseForm.value.period = purchase.period || ''
+  purchaseForm.value.payMethod = purchase.payMethod || ''
+}
+
+function validatePurchase() {
+  const errors = { amount: '', period: '' }
+  const raw = purchaseForm.value.amount
+  if (raw === '' || raw === null || raw === undefined || Number.isNaN(Number(raw))) {
+    errors.amount = '必填项，请填写'
+  } else if (Number(raw) < 0) {
+    errors.amount = '金额须为非负数'
+  }
+  if (!String(purchaseForm.value.period || '').trim()) errors.period = '必填项，请填写'
+  purchaseErrors.value = errors
+  return !errors.amount && !errors.period
 }
 
 async function savePurchase() {
   if (!selectedAccountId.value) return
-  const res = await apiPut(`/cost/account/${selectedAccountId.value}/purchase`, purchaseForm.value)
-  hint.value = res.code === 0 ? '采购成本已保存' : res.msg
-  if (res.code === 0) await loadAccountCost()
+  purchaseHint.value = ''
+  if (!validatePurchase()) return
+  const res = await apiPut(`/cost/account/${selectedAccountId.value}/purchase`, {
+    amount: Number(purchaseForm.value.amount),
+    period: purchaseForm.value.period,
+    payMethod: purchaseForm.value.payMethod,
+  })
+  if (res.code === 0) {
+    echoPurchase({
+      amount: res.data?.amount ?? Number(purchaseForm.value.amount),
+      period: res.data?.period ?? purchaseForm.value.period,
+      payMethod: res.data?.payMethod ?? purchaseForm.value.payMethod,
+    })
+    await loadAccountCost()
+    purchaseHint.value = '采购成本已保存'
+    purchaseErrors.value = { amount: '', period: '' }
+    return
+  }
+  if (res.code === 1001 && String(res.msg || '').includes('非负')) {
+    purchaseErrors.value = { ...purchaseErrors.value, amount: '金额须为非负数' }
+  }
+  purchaseHint.value = ''
+  hint.value = res.msg
 }
 
-function openProcess() {
+function blankProcessForm() {
+  processEditingId.value = ''
+  processForm.value = { amount: '', period: '', processSubtype: '', handlerUserId: '' }
+  processErrors.value = { type: '', amount: '', period: '', handler: '' }
+}
+
+async function loadHandlers() {
+  if (handlerOptions.value.length) return
+  const res = await apiGet('/system/user/page', { pageNo: 1, pageSize: 100, status: 'ENABLED' })
+  if (res.code !== 0) return
+  handlerOptions.value = (res.data?.list || []).map((row: any) => ({
+    id: String(row.id),
+    label: row.nickname ? `${row.nickname}（${row.username}）` : row.username,
+  }))
+}
+
+async function openProcess() {
   if (!selectedAccountId.value) {
     hint.value = '请先选择账号'
     return
   }
-  void createProcess()
+  blankProcessForm()
+  await loadHandlers()
+  processOpen.value = true
 }
 
-async function createProcess() {
-  const res = await apiPost(`/cost/account/${selectedAccountId.value}/process`, processForm.value)
+function editProcess(row: any) {
+  processEditingId.value = String(row.id)
+  processForm.value = {
+    amount: row.amount,
+    period: row.period || '',
+    processSubtype: row.processSubtype || '',
+    handlerUserId: row.handlerUserId ? String(row.handlerUserId) : '',
+  }
+  processErrors.value = { type: '', amount: '', period: '', handler: '' }
+  void loadHandlers().then(() => {
+    processOpen.value = true
+  })
+}
+
+function validateProcess() {
+  const errors = { type: '', amount: '', period: '', handler: '' }
+  if (!processForm.value.processSubtype) errors.type = '必填项，请填写'
+  const raw = processForm.value.amount
+  if (raw === '' || raw === null || raw === undefined || Number.isNaN(Number(raw))) {
+    errors.amount = '必填项，请填写'
+  } else if (Number(raw) < 0) {
+    errors.amount = '金额须为非负数'
+  }
+  if (!String(processForm.value.period || '').trim()) errors.period = '必填项，请填写'
+  if (!processForm.value.handlerUserId) errors.handler = '必填项，请填写'
+  processErrors.value = errors
+  return !errors.type && !errors.amount && !errors.period && !errors.handler
+}
+
+async function saveProcess() {
+  if (!selectedAccountId.value || !validateProcess()) return
+  const payload = {
+    amount: Number(processForm.value.amount),
+    period: processForm.value.period,
+    processSubtype: processForm.value.processSubtype,
+    handlerUserId: Number(processForm.value.handlerUserId),
+  }
+  const res = processEditingId.value
+    ? await apiPut(`/cost/account/${selectedAccountId.value}/process`, { ...payload, id: Number(processEditingId.value) })
+    : await apiPost(`/cost/account/${selectedAccountId.value}/process`, payload)
   hint.value = res.code === 0 ? '过程成本已登记' : res.msg
-  if (res.code === 0) await loadAccountCost()
+  if (res.code === 0) {
+    processOpen.value = false
+    await loadAccountCost()
+  }
 }
 
 async function removeProcess(id: string) {
@@ -327,3 +532,7 @@ onMounted(() => {
   void loadAccounts()
 })
 </script>
+
+<style scoped>
+.fld { margin-bottom: 12px; }
+</style>

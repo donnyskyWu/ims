@@ -107,12 +107,34 @@
         <option value="SUBMITTED">已提交</option>
         <option value="CONFIRMED">已核准</option>
       </select>
+      <select
+        v-if="tab === 'entered'"
+        v-model="query.platform"
+        data-testid="fin-cost-platform-filter"
+        style="width: 140px"
+      >
+        <option value="">全部平台</option>
+        <option v-for="opt in platformOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+      </select>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="button" @click="loadTab">查询</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="fin-cost-filter-reset" @click="resetQuery">重置</button>
     </form>
 
     <div v-if="error" class="hint" style="color: var(--red); margin: 8px 0">{{ error }}</div>
+
+    <div v-if="confirmOpen" class="mask on" style="z-index: 140" data-testid="fin-cost-confirm-dialog">
+      <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 420px; padding: 16px">
+        <b>核准成本</b>
+        <p data-testid="fin-cost-confirm-session">场次号 {{ confirmTarget }}</p>
+        <p>成本合计 {{ yuan(confirmTotal) }}</p>
+        <p>核准后 5 分钟内自动计算利润</p>
+        <div class="acts" style="gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-cost-confirm-ok" @click="submitConfirm">财务核准</button>
+          <button class="btn btn-sec btn-sm" type="button" @click="confirmOpen = false">取消</button>
+        </div>
+      </div>
+    </div>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
@@ -144,8 +166,8 @@
               <td class="mono">{{ row.sessionCode }}</td>
               <td>{{ row.sessionTitle }}</td>
               <td>{{ row.platform }}</td>
-              <td class="num">¥{{ fmt(row.gmv) }}</td>
-              <td class="num">¥{{ fmt(row.refund) }}</td>
+              <td class="num">{{ yuan(row.gmv) }}</td>
+              <td class="num">{{ yuan(row.refund) }}</td>
               <td>{{ row.approvedAt || '—' }}</td>
               <td>
                 <span v-if="row.isOver48h" class="tag" style="background: rgba(255, 59, 48, 0.12); color: #c0392b">是</span>
@@ -190,7 +212,7 @@
             <tr v-for="row in enteredRows" v-else :key="row.id">
               <td class="mono">{{ row.sessionCode }}</td>
               <td>{{ row.platform }}</td>
-              <td class="num">¥{{ fmt(row.totalCost) }}</td>
+              <td class="num">{{ yuan(row.totalCost) }}</td>
               <td>{{ statusLabel(row.entryStatus) }}</td>
               <td>{{ row.entryUserName || row.entryUserId }}</td>
               <td>
@@ -235,21 +257,105 @@
     >
       <p class="hint">GMV / 退款来自 LIVE 下播核准数据，财务侧只读（FIN-C-R2）</p>
       <p v-if="error" data-testid="fin-cost-entry-error" class="hint" style="color: var(--red)">{{ error }}</p>
-      <div class="form-grid">
-        <label>GMV（只读）<input :value="'¥' + fmt(form.costGmv)" disabled /></label>
-        <label>退款（只读）<input :value="'¥' + fmt(form.costRefund)" disabled /></label>
-        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
-        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
-        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
-        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
-        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
-        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
-        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
-      </div>
+      <p v-if="entryLocked" class="hint" data-testid="fin-cost-entry-readonly">已核准，修改请走更正单</p>
+      <fieldset class="form-grid" :disabled="entryLocked" style="border: 0; padding: 0; margin: 0; min-width: 0">
+        <div>
+          <label>平台<input :value="platformLabel(form.platform)" data-testid="fin-cost-platform" disabled /></label>
+        </div>
+        <div>
+          <label>GMV（只读）<input :value="yuan(form.costGmv)" disabled /></label>
+        </div>
+        <div>
+          <label>退款（只读）<input :value="yuan(form.costRefund)" disabled /></label>
+        </div>
+        <div>
+          <label>分成方式
+            <select v-model="form.shareCostType" data-testid="fin-cost-share-type">
+              <option value="MANUAL">手工</option>
+              <option value="ENGINE">引擎计算</option>
+            </select>
+          </label>
+        </div>
+        <div>
+          <label>佣金率（%）<i class="req">*</i><input v-model="form.commissionRate" type="number" step="0.01" min="0" max="100" data-testid="fin-cost-commission-rate" /></label>
+          <div v-if="fieldErrors.commissionRate" class="ferr">{{ fieldErrors.commissionRate }}</div>
+        </div>
+        <div>
+          <label>投放成本<i class="req">*</i><input v-model="form.adCost" :type="moneyInputType(form.adCost)" step="0.01" min="0" /></label>
+          <div v-if="fieldErrors.adCost" class="ferr">{{ fieldErrors.adCost }}</div>
+        </div>
+        <div>
+          <label>冲话费摊销<i class="req">*</i><input v-model="form.rechargeCost" :type="moneyInputType(form.rechargeCost)" step="0.01" min="0" /></label>
+          <div v-if="fieldErrors.rechargeCost" class="ferr">{{ fieldErrors.rechargeCost }}</div>
+        </div>
+        <div>
+          <label>固定成本<i class="req">*</i><input v-model="form.fixedCost" :type="moneyInputType(form.fixedCost)" step="0.01" min="0" /></label>
+          <div v-if="fieldErrors.fixedCost" class="ferr">{{ fieldErrors.fixedCost }}</div>
+        </div>
+        <div>
+          <label>样品成本<i class="req">*</i><input v-model="form.sampleCost" :type="moneyInputType(form.sampleCost)" step="0.01" min="0" /></label>
+          <div v-if="fieldErrors.sampleCost" class="ferr">{{ fieldErrors.sampleCost }}</div>
+        </div>
+        <div>
+          <label>达人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareDaren" :type="moneyInputType(form.shareDaren)" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
+          <div v-if="fieldErrors.shareDaren" class="ferr">{{ fieldErrors.shareDaren }}</div>
+        </div>
+        <div>
+          <label>实名人分成<i v-if="form.shareCostType === 'MANUAL'" class="req">*</i><input v-model="form.shareRealname" :type="moneyInputType(form.shareRealname)" step="0.01" min="0" :disabled="form.shareCostType === 'ENGINE'" /></label>
+          <div v-if="fieldErrors.shareRealname" class="ferr">{{ fieldErrors.shareRealname }}</div>
+        </div>
+        <div v-if="form.shareCostType === 'ENGINE' || isMask(form.shareTeam) || Number(form.shareTeam) > 0">
+          <label>团队分成<input :value="maskOrFmt(form.shareTeam)" data-testid="fin-cost-share-team" disabled /></label>
+        </div>
+      </fieldset>
       <p class="hint" data-testid="fin-cost-entry-total" style="margin-top: 8px">成本合计 {{ yuan(entryTotal) }}</p>
+      <div v-if="editLogs" data-testid="fin-cost-edit-log" class="hint" style="margin-top: 12px">
+        <div>修改记录</div>
+        <div v-if="!editLogs.length">暂无修改记录</div>
+        <table v-else>
+          <thead>
+            <tr>
+              <th>修改人</th>
+              <th>时间</th>
+              <th>字段</th>
+              <th>旧值</th>
+              <th>新值</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(log, index) in editLogs" :key="index">
+              <td>{{ log.editorName }}</td>
+              <td>{{ log.editedAt }}</td>
+              <td>{{ log.field }}</td>
+              <td>{{ log.oldValue }}</td>
+              <td>{{ log.newValue }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <template #footer>
-        <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
-        <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
+        <button
+          v-if="form.entryStatus === 'SUBMITTED'"
+          class="btn btn-pri"
+          type="button"
+          data-testid="fin-cost-save-edit"
+          @click="saveSubmitted"
+        >
+          保存修改
+        </button>
+        <template v-else-if="!entryLocked">
+          <button class="btn btn-sec" type="button" @click="submitEntry(true)">保存草稿</button>
+          <button class="btn btn-pri" type="button" @click="submitEntry(false)">提交</button>
+        </template>
+        <button
+          v-else
+          class="btn btn-pri"
+          type="button"
+          data-testid="fin-cost-detail-correct"
+          @click="openCorrectionFromDetail"
+        >
+          更正
+        </button>
       </template>
     </ProtoDrawer>
 
@@ -283,13 +389,14 @@
         {{ correctionError }}
       </p>
       <div class="form-grid">
-        <label>佣金率<input v-model.number="form.commissionRate" type="number" step="0.0001" min="0" max="1" /></label>
-        <label>投放成本<input v-model.number="form.adCost" type="number" step="0.01" min="0" /></label>
-        <label>冲话费摊销<input v-model.number="form.rechargeCost" type="number" step="0.01" min="0" /></label>
-        <label>固定成本<input v-model.number="form.fixedCost" type="number" step="0.01" min="0" /></label>
-        <label>样品成本<input v-model.number="form.sampleCost" type="number" step="0.01" min="0" /></label>
-        <label>达人分成<input v-model.number="form.shareDaren" type="number" step="0.01" min="0" /></label>
-        <label>实名人分成<input v-model.number="form.shareRealname" type="number" step="0.01" min="0" /></label>
+        <label>佣金率（%）<input v-model.number="form.commissionRate" type="number" step="0.01" min="0" max="100" /></label>
+        <label>投放成本<input v-model="form.adCost" :type="moneyInputType(form.adCost)" step="0.01" min="0" /></label>
+        <label>冲话费摊销<input v-model="form.rechargeCost" :type="moneyInputType(form.rechargeCost)" step="0.01" min="0" /></label>
+        <label>固定成本<input v-model="form.fixedCost" :type="moneyInputType(form.fixedCost)" step="0.01" min="0" /></label>
+        <label>样品成本<input v-model="form.sampleCost" :type="moneyInputType(form.sampleCost)" step="0.01" min="0" /></label>
+        <label>达人分成<input v-model="form.shareDaren" :type="moneyInputType(form.shareDaren)" step="0.01" min="0" /></label>
+        <label>实名人分成<input v-model="form.shareRealname" :type="moneyInputType(form.shareRealname)" step="0.01" min="0" /></label>
+        <label v-if="form.shareCostType === 'ENGINE' || isMask(form.shareTeam) || Number(form.shareTeam) > 0">团队分成<input :value="maskOrFmt(form.shareTeam)" disabled /></label>
         <label style="grid-column: 1 / -1">
           更正原因（必填）
           <input
@@ -331,7 +438,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http } from '../../api/http'
@@ -345,6 +452,11 @@ const rate = ref<Record<string, any> | null>(null)
 const pendingRows = ref<Record<string, any>[]>([])
 const enteredRows = ref<Record<string, any>[]>([])
 const drawerOpen = ref(false)
+const editLogs = ref<Array<{ editorName: string; editedAt: string; field: string; oldValue: string; newValue: string }> | null>(null)
+const confirmOpen = ref(false)
+const confirmTarget = ref('')
+const confirmTotal = ref<number | string>(0)
+const AMOUNT_MASK = '***'
 const correctionOpen = ref(false)
 const correctionReason = ref('')
 const correctionPreview = ref<Record<string, any> | null>(null)
@@ -369,7 +481,24 @@ const periodCloseHint = computed(() => {
 })
 const pendingFailed = ref(false)
 const enteredFailed = ref(false)
-const query = reactive({ sessionCode: '', entryStatus: '' })
+const query = reactive({ sessionCode: '', entryStatus: '', platform: '' })
+const platformOptions = [
+  { value: 'DOUYIN', label: '抖音' },
+  { value: 'KUAISHOU', label: '快手' },
+  { value: 'WECHAT_CHANNELS', label: '视频号' },
+  { value: 'TAOBAO', label: '淘宝' },
+  { value: 'JD', label: '京东' },
+  { value: 'OTHER', label: '其他' },
+]
+const fieldErrors = reactive({
+  commissionRate: '',
+  adCost: '',
+  rechargeCost: '',
+  fixedCost: '',
+  sampleCost: '',
+  shareDaren: '',
+  shareRealname: '',
+})
 const costFiltered = ref(false)
 const pendingEmptyText = computed(() => {
   if (pendingFailed.value) return '待录入清单加载失败，请重试'
@@ -390,25 +519,135 @@ function currentPeriodMonth() {
 
 const form = reactive({
   sessionCode: '',
-  costGmv: 0,
-  costRefund: 0,
-  commissionRate: 0.05,
-  adCost: 0,
-  rechargeCost: 0,
-  fixedCost: 0,
-  sampleCost: 0,
-  shareDaren: 0,
-  shareRealname: 0,
+  platform: '',
+  accountId: 0,
+  ipGroupId: 0,
+  costGmv: 0 as string | number,
+  costRefund: 0 as string | number,
+  commissionRate: '' as string | number,
+  adCost: '' as string | number,
+  rechargeCost: '' as string | number,
+  fixedCost: '' as string | number,
+  sampleCost: '' as string | number,
+  shareDaren: '' as string | number,
+  shareRealname: '' as string | number,
+  shareTeam: '' as string | number,
   shareCostType: 'MANUAL',
+  entryStatus: '',
   remark: '',
 })
+
+const entryLocked = computed(() => form.entryStatus === 'CONFIRMED')
+
+const shareRules = ref<Array<Record<string, any>>>([])
+
+function platformCodes(code: string) {
+  const raw = (code || '').toUpperCase()
+  const alias: Record<string, string> = {
+    DOUYIN: 'DYS',
+    KUAISHOU: 'KS',
+    WECHAT_CHANNELS: 'WX',
+    WECHAT_VIDEO: 'WX',
+    TAOBAO: 'TM',
+    OTHER: 'OTA',
+  }
+  return new Set([raw, alias[raw] || raw].filter(Boolean))
+}
+
+async function ensureShareRules() {
+  if (shareRules.value.length) return
+  try {
+    const res = await http.get('/fin/share/rules', { params: { pageNo: 1, pageSize: 200, status: 'ENABLED' } })
+    shareRules.value = res.data?.data?.list || []
+  } catch {
+    shareRules.value = []
+  }
+}
+
+async function previewEngine() {
+  if (form.shareCostType !== 'ENGINE') return
+  if ([form.costGmv, form.costRefund, form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost].some(isMask)) return
+  await ensureShareRules()
+  const gmv = finite(form.costGmv) || 0
+  const refund = finite(form.costRefund) || 0
+  const rate = percentToRate(form.commissionRate)
+  const commission = round2(gmv * (Number.isFinite(rate) ? rate : 0))
+  const gross = round2(gmv - refund - commission)
+  const ad = finite(form.adCost)
+  const recharge = finite(form.rechargeCost)
+  const fixed = finite(form.fixedCost)
+  const sample = finite(form.sampleCost)
+  const preShare = round2(gross - (Number.isFinite(ad) ? ad : 0) - (Number.isFinite(recharge) ? recharge : 0) - (Number.isFinite(fixed) ? fixed : 0) - (Number.isFinite(sample) ? sample : 0))
+  const bases: Record<string, number> = { GMV: gmv, GROSS_PROFIT: gross, NET_PROFIT: preShare }
+  const codes = platformCodes(form.platform)
+  const winners = new Map<string, Record<string, any>>()
+  for (const rule of shareRules.value) {
+    if (rule.status && rule.status !== 'ENABLED') continue
+    const scope = rule.scope || {}
+    const platforms = scope.platforms || []
+    const accounts = (scope.accountIds || []).map(Number)
+    const groups = (scope.ipGroupIds || []).map(Number)
+    if (platforms.length && !platforms.some((item: string) => codes.has(String(item).toUpperCase()))) continue
+    if (accounts.length && !accounts.includes(Number(form.accountId))) continue
+    if (groups.length && !groups.includes(Number(form.ipGroupId))) continue
+    const prev = winners.get(rule.shareTarget)
+    if (!prev || Number(rule.priority) > Number(prev.priority) || (Number(rule.priority) === Number(prev.priority) && Number(rule.id) > Number(prev.id))) {
+      winners.set(rule.shareTarget, rule)
+    }
+  }
+  const amountOf = (target: string) => {
+    const rule = winners.get(target)
+    if (!rule) return 0
+    const base = bases[rule.baseType] ?? preShare
+    if (rule.rateType === 'LADDER') return ladderShare(base, rule.ladderConfig || [])
+    return round2(Math.max(base, 0) * Number(rule.fixedRate || 0))
+  }
+  form.shareDaren = amountOf('DAREN')
+  form.shareRealname = amountOf('REALNAME')
+  if (winners.has('TEAM')) form.shareTeam = amountOf('TEAM')
+}
+
+function ladderShare(base: number, ladders: Array<Record<string, unknown>>) {
+  let total = 0
+  const value = Math.max(base, 0)
+  for (const row of ladders || []) {
+    const lower = Number(row.min)
+    const upper = row.max == null || row.max === '' ? null : Number(row.max)
+    const rate = Number(row.rate)
+    if (!Number.isFinite(lower) || !Number.isFinite(rate) || !(value > lower)) continue
+    const cap = upper == null || !Number.isFinite(upper) ? value : Math.min(value, upper)
+    const portion = round2(cap - lower)
+    if (portion <= 0) continue
+    total = round2(total + round2(portion * rate))
+  }
+  return total
+}
+
+function platformLabel(code: string) {
+  return platformOptions.find((item) => item.value === code)?.label || ({ DYS: '抖音', KS: '快手', WX: '视频号', TM: '淘宝', OTA: '其他' } as Record<string, string>)[code] || code || '—'
+}
+
+function isMask(n: unknown) {
+  return n === AMOUNT_MASK
+}
 
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function yuan(n: unknown) {
+  if (isMask(n)) return AMOUNT_MASK
   return `¥${fmt(n)}`
+}
+
+function moneyInputType(n: unknown) {
+  return isMask(n) ? 'text' : 'number'
+}
+
+function maskOrFmt(n: unknown) {
+  if (n === '' || n === null || n === undefined) return ''
+  if (isMask(n)) return AMOUNT_MASK
+  return fmt(n)
 }
 
 function round2(n: number) {
@@ -420,12 +659,36 @@ function finite(n: unknown) {
   return Number.isFinite(value) ? value : Number.NaN
 }
 
+function percentToRate(raw: unknown) {
+  const value = finite(raw)
+  if (!Number.isFinite(value)) return 0
+  return Math.round(value * 100) / 10000
+}
+
+function rateToPercent(raw: unknown) {
+  const value = finite(raw)
+  if (!Number.isFinite(value)) return ''
+  return Math.round(value * 10000) / 100
+}
+
 const entryTotal = computed(() => {
-  const rate = finite(form.commissionRate)
+  const watched = [
+    form.costGmv,
+    form.costRefund,
+    form.adCost,
+    form.rechargeCost,
+    form.fixedCost,
+    form.sampleCost,
+    form.shareDaren,
+    form.shareRealname,
+    form.shareTeam,
+  ]
+  if (watched.some(isMask)) return AMOUNT_MASK
+  const rate = percentToRate(form.commissionRate)
   const gmv = finite(form.costGmv)
-  const commission = round2((Number.isFinite(gmv) ? gmv : 0) * (Number.isFinite(rate) ? rate : 0))
-  const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname]
-  const extra = parts.reduce((acc, raw) => {
+  const commission = round2((Number.isFinite(gmv) ? gmv : 0) * rate)
+  const parts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname, form.shareTeam]
+  const extra = parts.reduce<number>((acc, raw) => {
     const value = finite(raw)
     return acc + (Number.isFinite(value) ? value : 0)
   }, 0)
@@ -439,15 +702,51 @@ function moneyError(raw: unknown) {
   return ''
 }
 
+function blank(raw: unknown) {
+  return raw === '' || raw === null || raw === undefined
+}
+
 function entryFormError() {
-  const rate = finite(form.commissionRate)
-  if (!Number.isFinite(rate) || rate <= 0 || rate > 1) return '1001 佣金率须大于 0 且不超过 1'
-  const amounts = [form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.shareDaren, form.shareRealname]
-  for (const raw of amounts) {
-    const msg = moneyError(raw)
-    if (msg) return msg
+  fieldErrors.commissionRate = ''
+  fieldErrors.adCost = ''
+  fieldErrors.rechargeCost = ''
+  fieldErrors.fixedCost = ''
+  fieldErrors.sampleCost = ''
+  fieldErrors.shareDaren = ''
+  fieldErrors.shareRealname = ''
+  const issues: string[] = []
+  if (blank(form.commissionRate)) {
+    fieldErrors.commissionRate = '必填项，请填写'
+    issues.push('必填项，请填写')
+  } else {
+    const percent = finite(form.commissionRate)
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 100) {
+      fieldErrors.commissionRate = '佣金率须在 0~100% 之间'
+      issues.push(fieldErrors.commissionRate)
+    }
   }
-  return ''
+  const amounts: Array<['adCost' | 'rechargeCost' | 'fixedCost' | 'sampleCost' | 'shareDaren' | 'shareRealname', unknown]> = [
+    ['adCost', form.adCost],
+    ['rechargeCost', form.rechargeCost],
+    ['fixedCost', form.fixedCost],
+    ['sampleCost', form.sampleCost],
+  ]
+  if (form.shareCostType !== 'ENGINE') {
+    amounts.push(['shareDaren', form.shareDaren], ['shareRealname', form.shareRealname])
+  }
+  for (const [key, raw] of amounts) {
+    if (blank(raw)) {
+      fieldErrors[key] = '必填项，请填写'
+      issues.push('必填项，请填写')
+      continue
+    }
+    const msg = moneyError(raw)
+    if (msg) {
+      fieldErrors[key] = msg
+      issues.push(msg)
+    }
+  }
+  return issues.join('；')
 }
 
 function failMsg(err: unknown, fallback: string) {
@@ -469,7 +768,9 @@ async function loadRate() {
 }
 
 function markCostFiltered() {
-  costFiltered.value = Boolean(query.sessionCode.trim() || (tab.value === 'entered' && query.entryStatus))
+  costFiltered.value = Boolean(
+    query.sessionCode.trim() || (tab.value === 'entered' && (query.entryStatus || query.platform)),
+  )
 }
 
 function jumpLedger(code: string) {
@@ -481,6 +782,7 @@ function jumpLedger(code: string) {
 function resetQuery() {
   query.sessionCode = ''
   query.entryStatus = ''
+  query.platform = ''
   loadTab()
 }
 
@@ -515,6 +817,7 @@ async function loadEntered() {
         pageSize: 50,
         sessionCode: query.sessionCode || undefined,
         entryStatus: query.entryStatus || undefined,
+        platform: query.platform || undefined,
       },
     })
     enteredRows.value = res.data.data?.list || []
@@ -540,19 +843,51 @@ function switchTab(next: 'pending' | 'entered') {
 function openEntry(row: Record<string, unknown>) {
   error.value = ''
   form.sessionCode = String(row.sessionCode)
-  form.costGmv = Number(row.gmv || 0)
-  form.costRefund = Number(row.refund || 0)
-  form.commissionRate = 0.05
-  form.adCost = Number(row.adCost || 0)
-  form.rechargeCost = 0
-  form.fixedCost = 0
-  form.sampleCost = 0
-  form.shareDaren = 0
-  form.shareRealname = 0
+  form.platform = String(row.platform || '')
+  form.accountId = Number(row.accountId || 0)
+  form.ipGroupId = Number(row.ipGroupId || 0)
+  form.costGmv = isMask(row.gmv) ? AMOUNT_MASK : Number(row.gmv || 0)
+  form.costRefund = isMask(row.refund) ? AMOUNT_MASK : Number(row.refund || 0)
+  form.commissionRate = ''
+  form.adCost = ''
+  form.rechargeCost = ''
+  form.fixedCost = ''
+  form.sampleCost = ''
+  form.shareDaren = ''
+  form.shareRealname = ''
+  form.shareTeam = ''
+  form.shareCostType = 'MANUAL'
+  form.entryStatus = ''
+  entryFormError()
+  fieldErrors.commissionRate = ''
+  fieldErrors.adCost = ''
+  fieldErrors.rechargeCost = ''
+  fieldErrors.fixedCost = ''
+  fieldErrors.sampleCost = ''
+  fieldErrors.shareDaren = ''
+  fieldErrors.shareRealname = ''
+  error.value = ''
+  editLogs.value = null
   drawerOpen.value = true
 }
 
+function entryPayload(asDraft: boolean) {
+  return {
+    commissionRate: percentToRate(form.commissionRate),
+    adCost: Number(form.adCost || 0),
+    rechargeCost: Number(form.rechargeCost || 0),
+    fixedCost: Number(form.fixedCost || 0),
+    sampleCost: Number(form.sampleCost || 0),
+    shareCostType: form.shareCostType,
+    shareDaren: form.shareCostType === 'ENGINE' ? 0 : Number(form.shareDaren || 0),
+    shareRealname: form.shareCostType === 'ENGINE' ? 0 : Number(form.shareRealname || 0),
+    remark: form.remark,
+    asDraft,
+  }
+}
+
 async function submitEntry(asDraft: boolean) {
+  if (entryLocked.value || form.entryStatus === 'SUBMITTED') return
   const invalid = entryFormError()
   if (invalid) {
     error.value = invalid
@@ -563,18 +898,7 @@ async function submitEntry(asDraft: boolean) {
   try {
   const res = await http.post(
     `/fin/cost/${form.sessionCode}`,
-    {
-      commissionRate: form.commissionRate,
-      adCost: form.adCost,
-      rechargeCost: form.rechargeCost,
-      fixedCost: form.fixedCost,
-      sampleCost: form.sampleCost,
-      shareCostType: 'MANUAL',
-      shareDaren: form.shareDaren,
-      shareRealname: form.shareRealname,
-      remark: form.remark,
-      asDraft,
-    },
+    entryPayload(asDraft),
     { headers: { clientToken: token } },
   )
   if (res.data?.code !== 0) {
@@ -589,18 +913,44 @@ async function submitEntry(asDraft: boolean) {
   }
 }
 
+async function saveSubmitted() {
+  if (form.entryStatus !== 'SUBMITTED') return
+  const invalid = entryFormError()
+  if (invalid) {
+    error.value = invalid
+    return
+  }
+  error.value = ''
+  try {
+    const res = await http.put(`/fin/cost/${form.sessionCode}`, entryPayload(false))
+    if (res.data?.code !== 0) {
+      error.value = res.data?.msg || '保存失败'
+      return
+    }
+    assignFormFromCost(res.data.data)
+    editLogs.value = res.data.data.editLogs || []
+    await loadTab()
+  } catch (err) {
+    error.value = failMsg(err, '保存失败')
+  }
+}
+
 function assignFormFromCost(d: Record<string, unknown>) {
   Object.assign(form, {
     sessionCode: d.sessionCode,
     costGmv: d.costGmv,
     costRefund: d.costRefund,
-    commissionRate: d.commissionRate,
+    commissionRate: rateToPercent(d.commissionRate),
     adCost: d.adCost,
     rechargeCost: d.rechargeCost,
     fixedCost: d.fixedCost,
     sampleCost: d.sampleCost,
     shareDaren: d.shareDaren,
     shareRealname: d.shareRealname,
+    shareTeam: d.shareTeam ?? 0,
+    shareCostType: d.shareCostType || 'MANUAL',
+    entryStatus: d.entryStatus || '',
+    platform: d.platform || form.platform,
   })
 }
 
@@ -608,6 +958,7 @@ async function viewDetail(sessionCode: string) {
   const res = await http.get(`/fin/cost/${sessionCode}`)
   if (res.data?.code === 0) {
     assignFormFromCost(res.data.data)
+    editLogs.value = res.data.data.editLogs || []
     drawerOpen.value = true
   }
 }
@@ -653,6 +1004,12 @@ async function closePeriod() {
   } finally {
     periodBusy.value = false
   }
+}
+
+function openCorrectionFromDetail() {
+  const sessionCode = form.sessionCode
+  drawerOpen.value = false
+  void openCorrection(sessionCode)
 }
 
 async function openCorrection(sessionCode: string) {
@@ -755,14 +1112,14 @@ async function submitCorrection() {
     {
       correctionReason: correctionReason.value.trim(),
       corrected: {
-        commissionRate: form.commissionRate,
+        commissionRate: percentToRate(form.commissionRate),
         adCost: form.adCost,
         rechargeCost: form.rechargeCost,
         fixedCost: form.fixedCost,
         sampleCost: form.sampleCost,
-        shareCostType: 'MANUAL',
-        shareDaren: form.shareDaren,
-        shareRealname: form.shareRealname,
+        shareCostType: form.shareCostType,
+        shareDaren: form.shareCostType === 'ENGINE' ? Number(form.shareDaren || 0) : Number(form.shareDaren || 0),
+        shareRealname: form.shareCostType === 'ENGINE' ? Number(form.shareRealname || 0) : Number(form.shareRealname || 0),
         remark: form.remark,
         asDraft: false,
       },
@@ -786,15 +1143,36 @@ async function submitCorrection() {
   }
 }
 
-async function confirmCost(sessionCode: string) {
-  const res = await http.put(`/fin/cost/${sessionCode}/confirm`)
-  if (res.data?.code !== 0) {
-    error.value = res.data?.msg || '核准失败'
-    return
-  }
-  await loadRate()
-  await loadEntered()
+function confirmCost(sessionCode: string) {
+  const row = enteredRows.value.find((item) => item.sessionCode === sessionCode)
+  confirmTarget.value = sessionCode
+  confirmTotal.value = isMask(row?.totalCost) ? AMOUNT_MASK : Number(row?.totalCost || 0)
+  confirmOpen.value = true
 }
+
+async function submitConfirm() {
+  const sessionCode = confirmTarget.value
+  if (!sessionCode) return
+  confirmOpen.value = false
+  try {
+    const res = await http.put(`/fin/cost/${sessionCode}/confirm`)
+    if (res.data?.code !== 0) {
+      error.value = res.data?.msg || '核准失败'
+      return
+    }
+    await loadRate()
+    await loadEntered()
+  } catch (err) {
+    error.value = failMsg(err, '核准失败')
+  }
+}
+
+watch(
+  () => [form.shareCostType, form.commissionRate, form.adCost, form.rechargeCost, form.fixedCost, form.sampleCost, form.costGmv, form.costRefund, form.platform],
+  () => {
+    if (form.shareCostType === 'ENGINE') void previewEngine()
+  },
+)
 
 onMounted(async () => {
   await loadPeriod()

@@ -15,6 +15,17 @@ from app.ops_models import AccountCost, Company, IpGroup, PlatformAccount
 
 router = APIRouter()
 
+PROCESS_SUBTYPE_LABELS = {
+    "PROCESS_RENT": "租赁",
+    "PROCESS_CERT": "注册认证",
+    "PROCESS_RECHARGE": "充值投流",
+    "PROCESS_HUMAN": "人力",
+    "PROCESS_DEVICE": "设备",
+    "PROCESS_OPS": "运营",
+    "PROCESS_OTHER": "其他",
+}
+
+
 def _date_ok(value: str) -> bool:
     import re
 
@@ -40,19 +51,30 @@ def football_author_key(account: PlatformAccount) -> str:
     return str(account.id)
 
 
-def cost_vo(row: AccountCost) -> dict:
+def cost_vo(row: AccountCost, names: dict[int, str] | None = None) -> dict:
+    subtype = row.process_subtype or None
+    handler_name = None
+    if row.handler_user_id and names:
+        handler_name = names.get(int(row.handler_user_id))
     return {
         "id": str(row.id),
         "accountId": str(row.account_id),
         "costType": row.cost_type,
-        "processSubtype": row.process_subtype or None,
+        "processSubtype": subtype,
+        "processSubtypeLabel": PROCESS_SUBTYPE_LABELS.get(subtype, subtype) if subtype else None,
         "amount": round(float(row.amount or 0), 2),
         "payMethod": row.pay_method or None,
         "payDate": row.pay_date or None,
         "period": row.period or None,
         "handlerUserId": str(row.handler_user_id) if row.handler_user_id else None,
+        "handlerUserName": handler_name,
         "remark": row.remark or "",
     }
+
+
+def _handler_names(db: Session, rows: list[AccountCost]) -> dict[int, str]:
+    ids = {int(row.handler_user_id) for row in rows if row.handler_user_id}
+    return user_names(db, ids)
 
 
 def account_cost_total(ops: Session, account_id: int, tenant_id: int) -> float:
@@ -89,6 +111,7 @@ class ProcessBody(BaseModel):
 @router.get("/account/{account_id}")
 def get_account_cost(
     account_id: int,
+    db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
@@ -115,13 +138,15 @@ def get_account_cost(
         .order_by(AccountCost.id.desc())
     ).all()
     process_total = round(sum(float(row.amount or 0) for row in processes), 2)
+    named = ([purchase] if purchase else []) + list(processes)
+    names = _handler_names(db, named)
     return ok(
         {
             "accountId": str(account.id),
             "accountNo": account.account_no,
             "accountName": account.account_name,
-            "purchase": cost_vo(purchase) if purchase else None,
-            "processCosts": [cost_vo(row) for row in processes],
+            "purchase": cost_vo(purchase, names) if purchase else None,
+            "processCosts": [cost_vo(row, names) for row in processes],
             "processTotal": process_total,
             "totalCost": round((float(purchase.amount) if purchase else 0) + process_total, 2),
         }
@@ -138,8 +163,8 @@ def upsert_purchase(
     account = load_account(ops, actor, account_id)
     if account is None:
         return fail(1231, "账号不存在")
-    if body.amount is None or body.amount < 0.01:
-        return fail(2015, "金额非法")
+    if body.amount is None or body.amount < 0:
+        return fail(1001, "金额须为非负数")
     if body.payDate and not _date_ok(body.payDate):
         return fail(2016, "日期范围非法")
     if body.period and not _period_ok(body.period):
@@ -177,6 +202,7 @@ def upsert_purchase(
 def create_process(
     account_id: int,
     body: ProcessBody,
+    db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
@@ -203,13 +229,14 @@ def create_process(
     )
     ops.add(row)
     ops.flush()
-    return ok(cost_vo(row))
+    return ok(cost_vo(row, _handler_names(db, [row])))
 
 
 @router.put("/account/{account_id}/process")
 def update_process(
     account_id: int,
     body: ProcessBody,
+    db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
@@ -234,7 +261,7 @@ def update_process(
     if body.handlerUserId is not None:
         row.handler_user_id = body.handlerUserId
     row.updated_at = utcnow()
-    return ok(cost_vo(row))
+    return ok(cost_vo(row, _handler_names(db, [row])))
 
 
 @router.delete("/account/{account_id}/process")

@@ -781,7 +781,7 @@ async function fillAfterReportSettle(page: Page, input: Locator, value: string, 
   await expect(input).toHaveValue(value)
 }
 
-/** FIN 成本录入 + 核准（纯 UI）。costs 只覆盖传入项，缺省与 #50 样例一致。 */
+/** FIN 成本录入 + 核准（纯 UI）。costs 只覆盖传入项，缺省与 #50 样例一致。佣金率按百分数填（5 = 5%）。 */
 export async function submitAndConfirmFinCostViaUi(
   page: Page,
   sessionCode: string,
@@ -808,7 +808,7 @@ export async function submitAndConfirmFinCostViaUi(
   await row.getByRole('button', { name: '录入' }).click()
   const entryDrawer = page.locator('.drawer.on').filter({ hasText: '成本录入' })
   await expect(entryDrawer).toBeVisible()
-  await entryDrawer.getByRole('spinbutton', { name: '佣金率' }).fill(costs?.commissionRate ?? '0.05')
+  await entryDrawer.getByRole('spinbutton', { name: /佣金率/ }).fill(costs?.commissionRate ?? '5')
   await entryDrawer.getByRole('spinbutton', { name: '投放成本' }).fill(costs?.adCost ?? '5000')
   await entryDrawer.getByRole('spinbutton', { name: '冲话费摊销' }).fill(costs?.rechargeCost ?? '100')
   await entryDrawer.getByRole('spinbutton', { name: '固定成本' }).fill(costs?.fixedCost ?? '2000')
@@ -837,6 +837,11 @@ export async function submitAndConfirmFinCostViaUi(
     (r) => r.url().includes('/fin/cost/') && r.url().includes('/confirm') && r.request().method() === 'PUT',
   )
   await enteredRow.getByRole('button', { name: '核准' }).click()
+  const confirmDialog = page.getByTestId('fin-cost-confirm-dialog')
+  await expect(confirmDialog).toBeVisible()
+  await expect(confirmDialog).toContainText('成本合计')
+  await expect(confirmDialog).toContainText('核准后 5 分钟内自动计算利润')
+  await confirmDialog.getByTestId('fin-cost-confirm-ok').click()
   const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { entryStatus?: string } }
   expect(confirmBody.code).toBe(0)
   expect(confirmBody.data?.entryStatus).toBe('CONFIRMED')

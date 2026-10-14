@@ -77,11 +77,15 @@ def test_cost_purchase_process_and_missing_account():
         json={"amount": 860, "period": "2026-09", "processSubtype": "PROCESS_RECHARGE"},
     )
     assert process.json()["code"] == 0
+    assert process.json()["data"]["processSubtypeLabel"] == "充值投流"
+    assert process.json()["data"]["handlerUserName"]
     pid = int(process.json()["data"]["id"])
 
     detail = client.get(f"/admin-api/ims/cost/account/{account_id}", headers=auth)
     body = detail.json()["data"]
     assert body["purchase"]["amount"] == 12000
+    assert body["purchase"]["period"] == "2026-09"
+    assert body["purchase"]["payMethod"] == "WECHAT"
     assert body["processTotal"] == 860
     assert body["totalCost"] == 12860
 
@@ -96,6 +100,26 @@ def test_cost_purchase_process_and_missing_account():
     assert deleted.json()["code"] == 0
     after = client.get(f"/admin-api/ims/cost/account/{account_id}", headers=auth).json()["data"]
     assert after["processTotal"] == 0
+
+
+def test_purchase_rejects_negative_and_accepts_zero():
+    auth = headers()
+    account_id = seed_account()
+    negative = client.put(
+        f"/admin-api/ims/cost/account/{account_id}/purchase",
+        headers=auth,
+        json={"amount": -1, "period": "2026-09"},
+    )
+    assert negative.json()["code"] == 1001
+    assert negative.json()["msg"] == "金额须为非负数"
+
+    zero = client.put(
+        f"/admin-api/ims/cost/account/{account_id}/purchase",
+        headers=auth,
+        json={"amount": 0, "period": "2026-09"},
+    )
+    assert zero.json()["code"] == 0
+    assert zero.json()["data"]["amount"] == 0
 
 
 def test_roi_revenue_delay_without_football():

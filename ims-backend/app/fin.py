@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
@@ -17,6 +18,7 @@ from app.corp import page_args, tenant_of, user_names
 from app.live import get_session, iso, restrict_sessions, role_tags
 from app.models import (
     FinCost,
+    FinCostEditLog,
     FinPeriod,
     FinProfit,
     FinProfitHistory,
@@ -46,8 +48,10 @@ AMOUNT_MASK = "***"
 FIN_MONEY_KEYS = frozenset(
     {
         "gmv",
+        "costGmv",
         "revenue",
         "refund",
+        "costRefund",
         "totalGmv",
         "totalRefund",
         "totalCost",
@@ -66,6 +70,7 @@ FIN_MONEY_KEYS = frozenset(
         "sampleCost",
         "shareDaren",
         "shareRealname",
+        "shareTeam",
         "amount",
         "cost",
         "totalAmount",
@@ -276,8 +281,25 @@ def load_fin_cost(db: Session, tenant_id: int, session_code: str) -> FinCost | N
     )
 
 
-def calc_amounts(gmv: float, body: FinCostEntryBody) -> dict[str, float]:
-    commission = money(gmv * body.commissionRate)
+def share_team_amount(row: FinCost) -> float:
+    """团队分成没有独立列，含在成本合计里。差额即团队/阶梯分成。"""
+    residual = money(
+        money(row.total_cost)
+        - money(row.commission_amount)
+        - money(row.ad_cost)
+        - money(row.recharge_cost)
+        - money(row.fixed_cost)
+        - money(row.sample_cost)
+        - money(row.share_daren)
+        - money(row.share_realname)
+    )
+    return residual if residual > 0 else 0.0
+
+
+def calc_amounts(gmv: float, body: FinCostEntryBody, refund: float = 0) -> dict[str, float]:
+    from app.fin_policy import commission_amount
+
+    commission = commission_amount(gmv, refund, body.commissionRate)
     total = money(
         commission
         + body.adCost
@@ -323,12 +345,12 @@ def validate_body(body: FinCostEntryBody) -> str | None:
     return None
 
 
-def cost_vo(db: Session, row: FinCost) -> dict:
+def cost_vo(db: Session, row: FinCost, *, with_edits: bool = False) -> dict:
     names = user_names(db, [row.entry_user_id])
     session = live_session_row(db, row.tenant_id, row.session_code)
     plan = session.plan_start_time if session is not None else ""
     month = session_period_month(plan, row.session_code)
-    return {
+    payload = {
         "id": row.id,
         "sessionCode": row.session_code,
         "platform": row.platform,
@@ -342,6 +364,7 @@ def cost_vo(db: Session, row: FinCost) -> dict:
         "sampleCost": money(row.sample_cost),
         "shareDaren": money(row.share_daren),
         "shareRealname": money(row.share_realname),
+        "shareTeam": share_team_amount(row),
         "shareCostType": row.share_cost_type,
         "totalCost": money(row.total_cost),
         "entryStatus": row.entry_status,
@@ -353,6 +376,9 @@ def cost_vo(db: Session, row: FinCost) -> dict:
         "periodMonth": month,
         "financeStatus": finance_status_of(db, row.tenant_id, month),
     }
+    if with_edits:
+        payload["editLogs"] = cost_edit_log_vos(db, row)
+    return payload
 
 
 def hours_since(ts: str | None) -> float:
@@ -373,8 +399,15 @@ def session_fin_visible(db: Session, actor: User, scope, session: LiveSession) -
     return db.scalar(stmt) is not None
 
 
-def apply_cost_row(row: FinCost, session: LiveSession, report: LiveReport, body: FinCostEntryBody, actor: User) -> None:
-    amounts = calc_amounts(float(report.gmv or 0), body)
+def apply_cost_row(
+    db: Session,
+    row: FinCost,
+    session: LiveSession,
+    report: LiveReport,
+    body: FinCostEntryBody,
+    actor: User,
+) -> None:
+    amounts = calc_amounts(float(report.gmv or 0), body, float(report.refund_amount or 0))
     row.platform = session.platform
     row.cost_gmv = money(report.gmv)
     row.cost_refund = money(report.refund_amount)
@@ -388,6 +421,10 @@ def apply_cost_row(row: FinCost, session: LiveSession, report: LiveReport, body:
     row.share_realname = money(body.shareRealname)
     row.share_cost_type = body.shareCostType
     row.total_cost = amounts["totalCost"]
+    if body.shareCostType == "ENGINE":
+        from app.fin_engine import apply_engine_shares
+
+        apply_engine_shares(db, session, report, row)
     row.entry_status = "DRAFT" if body.asDraft else "SUBMITTED"
     row.entry_user_id = actor.id
     row.entry_at = utcnow()
@@ -484,6 +521,12 @@ def upsert_profit(
     trigger_reason: str = "",
 ) -> FinProfit:
     preserve_profit_snapshot(db, tenant_id, session_code, cost)
+    if cost.share_cost_type == "ENGINE":
+        from app.fin_engine import apply_engine_shares, load_session
+
+        session = load_session(db, tenant_id, session_code)
+        if session is not None:
+            apply_engine_shares(db, session, report, cost)
     revenue = money(report.gmv)
     refund = money(report.refund_amount)
     total_cost = money(cost.total_cost)
@@ -513,6 +556,7 @@ def upsert_profit(
             trigger_reason = trigger_reason or "成本核准自动计算"
     now = utcnow()
     profit.updated_at = now
+    flag_modified(profit, "updated_at")
     append_profit_history(
         db,
         profit,
@@ -536,6 +580,109 @@ CORRECTION_ITEMS: tuple[tuple[str, str], ...] = (
     ("shareDaren", "达人分成"),
     ("shareRealname", "实名人分成"),
 )
+
+
+COST_EDIT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("commissionRate", "佣金率"),
+    ("commissionAmount", "平台佣金"),
+    ("adCost", "投放成本"),
+    ("rechargeCost", "冲话费摊销"),
+    ("fixedCost", "固定成本"),
+    ("sampleCost", "样品成本"),
+    ("shareDaren", "达人分成"),
+    ("shareRealname", "实名人分成"),
+    ("shareCostType", "分成方式"),
+    ("remark", "备注"),
+    ("entryStatus", "录入状态"),
+)
+EDIT_STATUS_LABEL = {"DRAFT": "草稿", "SUBMITTED": "已提交", "CONFIRMED": "已核准"}
+EDIT_SHARE_LABEL = {"MANUAL": "手工", "ENGINE": "引擎计算"}
+
+
+def beijing_clock(dt: datetime | None) -> str:
+    """库内 naive 时间是 UTC。详情展示换成北京时间。"""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BJ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def show_edit_value(key: str, value) -> str:
+    if key == "entryStatus":
+        return EDIT_STATUS_LABEL.get(str(value), str(value))
+    if key == "shareCostType":
+        return EDIT_SHARE_LABEL.get(str(value), str(value))
+    if key == "remark":
+        return str(value or "")
+    if key == "commissionRate":
+        return f"{round(float(value or 0), 4):.4f}"
+    return f"{money(value):.2f}"
+
+
+def cost_edit_snapshot(row: FinCost) -> dict:
+    return {
+        "commissionRate": round(float(row.commission_rate or 0), 4),
+        "commissionAmount": money(row.commission_amount),
+        "adCost": money(row.ad_cost),
+        "rechargeCost": money(row.recharge_cost),
+        "fixedCost": money(row.fixed_cost),
+        "sampleCost": money(row.sample_cost),
+        "shareDaren": money(row.share_daren),
+        "shareRealname": money(row.share_realname),
+        "shareCostType": row.share_cost_type or "MANUAL",
+        "remark": row.remark or "",
+        "entryStatus": row.entry_status or "DRAFT",
+    }
+
+
+def append_cost_edits(db: Session, row: FinCost, before: dict, actor: User) -> None:
+    """草稿、已提交的编辑按变更字段留痕。首次录入和核准后更正不写。"""
+    if before.get("entryStatus") not in ("DRAFT", "SUBMITTED"):
+        return
+    after = cost_edit_snapshot(row)
+    now = utcnow()
+    name = actor_display(actor)
+    for key, label in COST_EDIT_FIELDS:
+        if before.get(key) == after.get(key):
+            continue
+        db.add(
+            FinCostEditLog(
+                session_code=row.session_code,
+                field_label=label,
+                old_value=show_edit_value(key, before.get(key)),
+                new_value=show_edit_value(key, after.get(key)),
+                editor_user_id=actor.id,
+                editor_name=name,
+                edited_at=now,
+                deleted=0,
+                tenant_id=row.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def cost_edit_log_vos(db: Session, row: FinCost) -> list[dict]:
+    logs = db.scalars(
+        select(FinCostEditLog)
+        .where(
+            FinCostEditLog.tenant_id == row.tenant_id,
+            FinCostEditLog.session_code == row.session_code,
+            FinCostEditLog.deleted == 0,
+        )
+        .order_by(FinCostEditLog.id.desc())
+    ).all()
+    return [
+        {
+            "editorUserId": item.editor_user_id,
+            "editorName": item.editor_name,
+            "editedAt": beijing_clock(item.edited_at),
+            "field": item.field_label,
+            "oldValue": item.old_value,
+            "newValue": item.new_value,
+        }
+        for item in logs
+    ]
 
 
 def cost_amount_snapshot(row: FinCost) -> dict[str, float]:
@@ -603,7 +750,9 @@ def operating_profit(gross: float, cost: FinCost | None) -> float:
 
 
 def net_profit_rate(revenue: float, refund: float, net: float) -> float:
-    base = money(revenue) - money(refund)
+    from app.fin_policy import net_rate_denominator
+
+    base = net_rate_denominator(revenue, refund)
     if base <= 0:
         return 0.0
     return round(net * 100 / base, 2)
@@ -690,7 +839,32 @@ def abnormal_marks(rows: list[tuple[FinProfit, LiveSession, FinCost | None]]) ->
     return found
 
 
-def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
+def active_share_lines(db: Session, tenant_id: int, session_code: str) -> list[dict]:
+    rows = db.scalars(
+        select(FinShareResult).where(
+            FinShareResult.tenant_id == tenant_id,
+            FinShareResult.session_code == session_code,
+            FinShareResult.deleted == 0,
+            FinShareResult.archive_key == 0,
+            FinShareResult.status != "REVERSED",
+        ).order_by(FinShareResult.id.asc())
+    ).all()
+    lines = []
+    for row in rows:
+        amount = money(row.share_amount)
+        if amount <= 0:
+            continue
+        lines.append(
+            {
+                "shareTarget": row.share_target,
+                "ruleName": row.rule_name or "",
+                "shareAmount": amount,
+            }
+        )
+    return lines
+
+
+def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None, share_lines: list[dict] | None = None) -> dict:
     params: dict[str, float] = {
         "revenue": money(profit.revenue),
         "refund": money(profit.refund_amount),
@@ -706,9 +880,10 @@ def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
                 "sampleCost": money(cost.sample_cost),
                 "shareDaren": money(cost.share_daren),
                 "shareRealname": money(cost.share_realname),
+                "shareTeam": share_team_amount(cost),
             }
         )
-    return {
+    snapshot = {
         "formula": (
             "netProfit = revenue - refund - totalCost; "
             "grossProfit = revenue - refund - commission; "
@@ -716,6 +891,9 @@ def calc_rule_snapshot(profit: FinProfit, cost: FinCost | None) -> dict:
         ),
         "params": params,
     }
+    if share_lines is not None:
+        snapshot["shareLines"] = share_lines
+    return snapshot
 
 
 def settlement_status(calc_status: str) -> str:
@@ -749,7 +927,7 @@ def profit_vo(
         "calcRuleSnapshot": calc_rule_snapshot(profit, cost),
         "calcVersion": profit.calc_version or 1,
         "calcStatus": profit.calc_status or "PENDING",
-        "calculatedAt": iso(profit.updated_at) if profit.updated_at else "",
+        "calculatedAt": beijing_clock(profit.updated_at) if profit.updated_at else "",
         "settlementStatus": settlement_status(profit.calc_status or "PENDING"),
     }
     if include_session:
@@ -1012,6 +1190,11 @@ def profit_detail(
     if profit is None or profit.calc_status in ("", "PENDING") or cost is None or cost.entry_status != "CONFIRMED":
         return fail(1145, "该场次成本未核准，利润未计算")
     vo = profit_vo(db, profit, session, cost, include_session=True)
+    vo["calcRuleSnapshot"] = calc_rule_snapshot(
+        profit,
+        cost,
+        active_share_lines(db, tenant_id, session_code),
+    )
     month, status = period_of_session(db, tenant_id, session)
     vo["periodMonth"] = month
     vo["financeStatus"] = status
@@ -1163,12 +1346,29 @@ def cost_pending_sessions(
                 "approvedAt": approved_at or "",
                 "hoursSinceApprove": hrs,
                 "isOver48h": hrs >= 48,
+                "accountId": int(session.account_id or 0),
+                "ipGroupId": 0,
             }
         )
+    account_ids = {int(item["accountId"]) for item in items if item["accountId"]}
+    if account_ids:
+        from app.ops_db import ops_session
+        from app.ops_models import PlatformAccount
+
+        ops = ops_session()
+        try:
+            groups = {
+                int(row.id): int(row.ip_group_id or 0)
+                for row in ops.scalars(select(PlatformAccount).where(PlatformAccount.id.in_(account_ids))).all()
+            }
+        finally:
+            ops.close()
+        for item in items:
+            item["ipGroupId"] = groups.get(int(item["accountId"]), 0)
     total = len(items)
     start = (page_no - 1) * size
     page_items = items[start : start + size]
-    return ok({"list": page_items, "total": total, "pageNo": page_no, "pageSize": size})
+    return ok(fin_view(db, actor, {"list": page_items, "total": total, "pageNo": page_no, "pageSize": size}))
 
 
 @router.get("/cost/list")
@@ -1178,6 +1378,7 @@ def cost_list(
     pageSize: int = 20,
     sessionCode: str = "",
     entryStatus: str = "",
+    platform: str = "",
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -1188,6 +1389,8 @@ def cost_list(
         stmt = stmt.where(FinCost.session_code.contains(sessionCode))
     if entryStatus:
         stmt = stmt.where(FinCost.entry_status == entryStatus)
+    if platform:
+        stmt = stmt.where(FinCost.platform == platform)
     rows = db.scalars(stmt.order_by(FinCost.id.desc())).all()
     visible: list[FinCost] = []
     for row in rows:
@@ -1207,12 +1410,16 @@ def cost_list(
     start = (page_no - 1) * size
     page_rows = visible[start : start + size]
     return ok(
-        {
-            "list": [cost_vo(db, row) for row in page_rows],
-            "total": total,
-            "pageNo": page_no,
-            "pageSize": size,
-        }
+        fin_view(
+            db,
+            actor,
+            {
+                "list": [cost_vo(db, row) for row in page_rows],
+                "total": total,
+                "pageNo": page_no,
+                "pageSize": size,
+            },
+        )
     )
 
 
@@ -1351,10 +1558,17 @@ def cost_submit(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is not None and row.entry_status == "CONFIRMED":
         return fail(1141, "成本已核准，请走更正单")
+    existed = row is not None
+    before = cost_edit_snapshot(row) if existed else None
+    keep_submitted = existed and row.entry_status == "SUBMITTED"
     if row is None:
         row = FinCost(session_code=session_code, tenant_id=tenant_id, client_token=clientToken)
         db.add(row)
-    apply_cost_row(row, session, report, body, actor)
+    apply_cost_row(db, row, session, report, body, actor)
+    if keep_submitted:
+        row.entry_status = "SUBMITTED"
+    if existed and before is not None:
+        append_cost_edits(db, row, before, actor)
     row.client_token = clientToken
     db.flush()
     return ok(cost_vo(db, row))
@@ -1374,7 +1588,7 @@ def cost_detail(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None:
         return fail(1141, "成本未录入")
-    return ok(cost_vo(db, row))
+    return ok(fin_view(db, actor, cost_vo(db, row, with_edits=True)))
 
 
 @router.put("/cost/{session_code}")
@@ -1401,11 +1615,19 @@ def cost_update(
     row = load_fin_cost(db, tenant_id, session_code)
     if row is None:
         return fail(1141, "成本未录入")
-    if row.entry_status == "CONFIRMED":
+    from app.fin_policy import EDIT_COST_BEFORE_CONFIRM
+
+    # 已提交未核准可改。已核准只能走更正单。
+    if row.entry_status == "CONFIRMED" or (row.entry_status == "SUBMITTED" and not EDIT_COST_BEFORE_CONFIRM):
         return fail(1141, "成本已核准，请走更正单")
-    apply_cost_row(row, session, report, body, actor)
+    before = cost_edit_snapshot(row)
+    keep_submitted = row.entry_status == "SUBMITTED"
+    apply_cost_row(db, row, session, report, body, actor)
+    if keep_submitted:
+        row.entry_status = "SUBMITTED"
+    append_cost_edits(db, row, before, actor)
     db.flush()
-    return ok(cost_vo(db, row))
+    return ok(cost_vo(db, row, with_edits=True))
 
 
 @router.put("/cost/{session_code}/confirm")
@@ -1492,7 +1714,7 @@ def cost_correction(
         return locked_adjust
     before = cost_amount_snapshot(row)
     preserve_profit_snapshot(db, tenant_id, session_code, row)
-    apply_cost_row(row, session, report, body.corrected, actor)
+    apply_cost_row(db, row, session, report, body.corrected, actor)
     row.entry_status = "CONFIRMED"
     after = cost_amount_snapshot(row)
     red, blue = correction_diff(before, after)
@@ -1584,6 +1806,40 @@ def share_parts(session: LiveSession, cost: FinCost) -> list[dict]:
     return parts
 
 
+def mark_share_replaced(row: FinShareResult, new_amount: float) -> None:
+    detail = dict(row.calc_detail or {})
+    detail["replaced"] = True
+    detail["replacementAmount"] = money(new_amount)
+    detail["replacedNote"] = "已冲销（新单已补）"
+    row.calc_detail = detail
+    row.status = "REVERSED"
+    row.archive_key = int(row.id or 0)
+
+
+def replacement_share_bill(session_code: str, tenant_id: int, part: dict, new_amount: float) -> FinShareResult:
+    amount = money(new_amount)
+    return FinShareResult(
+        session_code=session_code,
+        tenant_id=tenant_id,
+        rule_id=int(part.get("ruleId") or 0),
+        rule_name=part.get("ruleName") or "引擎计算",
+        share_target=part["shareTarget"],
+        target_ref_id=int(part.get("targetRefId") or 0),
+        target_ref_name=part.get("targetRefName") or "",
+        share_base=money(part.get("shareBase") or 0),
+        share_amount=amount,
+        calc_detail={
+            "mode": "ENGINE",
+            "partAmount": amount,
+            "formula": part.get("formula") or "",
+            "shareBase": money(part.get("shareBase") or 0),
+        },
+        status="PENDING_AUDIT",
+        archive_key=0,
+        deleted=0,
+    )
+
+
 def sync_share_results(
     db: Session,
     tenant_id: int,
@@ -1591,7 +1847,11 @@ def sync_share_results(
     cost: FinCost,
     profit: FinProfit,
 ) -> None:
-    """利润落库后按手工分成额生成/刷新待审分成单。已审/已发放不改写。全部已冲销时只标记新单已补。"""
+    """利润落库后生成或刷新待审分成单。已审/已发放不改写。
+
+    引擎分成额变化时，原单标「已冲销（新单已补）」并按规则另开一张待审单。
+    分成单冲销本身不进这里，不反向改成本或利润。
+    """
     session = db.scalar(
         select(LiveSession).where(
             LiveSession.session_code == session_code,
@@ -1608,56 +1868,90 @@ def sync_share_results(
         )
     ).all()
     active = [row for row in existing if row.deleted == 0]
-    parts = share_parts(session, cost)
+    engine = cost.share_cost_type == "ENGINE"
+    if engine:
+        from app.fin_engine import apply_engine_shares, cached_parts
+
+        parts = cached_parts(cost)
+        if parts is None:
+            report = approved_report(db, session_code, tenant_id)
+            parts = apply_engine_shares(db, session, report, cost) if report is not None else []
+    else:
+        parts = share_parts(session, cost)
     if any(row.status in ("AUDITED", "PAID_OFF") for row in active):
         return
     reversed_rows = [row for row in active if row.status == "REVERSED"]
     pending_rows = [row for row in active if row.status == "PENDING_AUDIT"]
     if reversed_rows and not pending_rows:
-        # 唯一键是场次+对象，不能再插一张待审单。金额变化时在原单留「新单已补」。
         by_part = {part["shareTarget"]: part for part in parts}
         for row in reversed_rows:
             part = by_part.get(row.share_target)
             new_amount = money(part["shareAmount"]) if part else 0.0
             if money(row.share_amount) == new_amount:
                 continue
-            detail = dict(row.calc_detail or {})
-            detail["replaced"] = True
-            detail["replacementAmount"] = new_amount
-            detail["replacedNote"] = "已冲销（新单已补）"
-            row.calc_detail = detail
+            mark_share_replaced(row, new_amount)
+            if engine and part is not None and new_amount > 0:
+                db.flush()
+                db.add(replacement_share_bill(session_code, tenant_id, part, new_amount))
         db.flush()
         return
-    if any(row.status in LOCKED_SHARE_STATUSES for row in active):
+    current_rows = [row for row in active if int(row.archive_key or 0) == 0 and row.status != "REVERSED"]
+    if any(row.status in ("AUDITED", "PAID_OFF") for row in current_rows):
         return
     share_total = money(sum(part["shareAmount"] for part in parts))
-    by_target = {row.share_target: row for row in existing}
+    by_target = {}
+    for row in current_rows:
+        prev = by_target.get(row.share_target)
+        if prev is None or int(row.id or 0) > int(prev.id or 0):
+            by_target[row.share_target] = row
     keep = {part["shareTarget"] for part in parts}
     for part in parts:
         row = by_target.get(part["shareTarget"])
-        detail = {
-            "mode": "MANUAL",
-            "shareTotal": share_total,
-            "partAmount": part["shareAmount"],
-            "formula": "sum(shareAmount)=shareDaren+shareRealname",
-        }
+        if engine:
+            detail = {
+                "mode": "ENGINE",
+                "shareTotal": share_total,
+                "partAmount": part["shareAmount"],
+                "formula": part.get("formula") or "",
+                "shareBase": part.get("shareBase"),
+            }
+            rule_id = int(part.get("ruleId") or 0)
+            rule_name = part.get("ruleName") or "引擎计算"
+            share_base = money(part.get("shareBase") or 0)
+        else:
+            detail = {
+                "mode": "MANUAL",
+                "shareTotal": share_total,
+                "partAmount": part["shareAmount"],
+                "formula": "sum(shareAmount)=shareDaren+shareRealname",
+            }
+            rule_id = 0
+            rule_name = "手工分成"
+            share_base = money(profit.net_profit)
         created = row is None
+        amount_changed = (
+            row is not None and row.deleted == 0 and money(row.share_amount) != part["shareAmount"]
+        )
+        if engine and amount_changed and row is not None and row.status == "PENDING_AUDIT":
+            mark_share_replaced(row, part["shareAmount"])
+            db.flush()
+            db.add(replacement_share_bill(session_code, tenant_id, part, part["shareAmount"]))
+            continue
         if row is None:
             row = FinShareResult(
                 session_code=session_code,
                 tenant_id=tenant_id,
-                rule_id=0,
-                rule_name="手工分成",
+                rule_id=rule_id,
+                rule_name=rule_name,
                 share_target=part["shareTarget"],
                 status="PENDING_AUDIT",
             )
             db.add(row)
-        amount_changed = (not created) and row.deleted == 0 and money(row.share_amount) != part["shareAmount"]
-        row.rule_id = 0
-        row.rule_name = "手工分成"
+        row.rule_id = rule_id
+        row.rule_name = rule_name
         row.target_ref_id = part["targetRefId"]
         row.target_ref_name = part["targetRefName"]
-        row.share_base = money(profit.net_profit)
+        row.share_base = share_base
         row.share_amount = part["shareAmount"]
         row.calc_detail = detail
         row.deleted = 0

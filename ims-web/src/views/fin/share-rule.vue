@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>分成规则</h1>
-        <div class="sub">FIN-003 · 规则维护 · 比例合计 1.0000（1146）· 同范围冲突须确认（1147）· 阶梯试算</div>
+        <div class="sub">同一范围、同一基数合计超过 100% 不能保存；不足部分归公司。同范围冲突须确认。</div>
       </div>
       <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-create" @click="openCreate">
         创建规则
@@ -93,6 +93,15 @@
                 >
                   停用
                 </button>
+                <button
+                  v-else
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="fin-share-rule-enable"
+                  @click="enableRule(row)"
+                >
+                  启用
+                </button>
               </td>
             </tr>
           </tbody>
@@ -126,37 +135,45 @@
       <div class="drawer-b">
         <p class="hint">规则变更不影响已生成分成单，重算需人工触发</p>
         <label class="fld">
-          <span>规则名称</span>
-          <input v-model="form.ruleName" data-testid="fin-share-rule-name" maxlength="64" />
+          <span>规则名称<i class="req">*</i></span>
+          <input v-model="form.ruleName" data-testid="fin-share-rule-name" maxlength="64" :class="{ err: fieldErrors.name }" />
+          <div v-if="fieldErrors.name" class="ferr">{{ fieldErrors.name }}</div>
         </label>
         <label class="fld">
-          <span>分成对象</span>
-          <select v-model="form.shareTarget" data-testid="fin-share-rule-target">
+          <span>分成对象<i class="req">*</i></span>
+          <select v-model="form.shareTarget" data-testid="fin-share-rule-target" :class="{ err: fieldErrors.target }">
+            <option value="">请选择</option>
             <option value="DAREN">达人</option>
             <option value="REALNAME">实名人</option>
             <option value="TEAM">团队</option>
           </select>
+          <div v-if="fieldErrors.target" class="ferr">{{ fieldErrors.target }}</div>
         </label>
         <label class="fld">
-          <span>分成基数</span>
-          <select v-model="form.baseType" data-testid="fin-share-rule-base">
+          <span>分成基数<i class="req">*</i></span>
+          <select v-model="form.baseType" data-testid="fin-share-rule-base" :class="{ err: fieldErrors.base }">
+            <option value="">请选择</option>
             <option value="GMV">GMV</option>
             <option value="GROSS_PROFIT">毛利</option>
             <option value="NET_PROFIT">净利润</option>
           </select>
+          <div v-if="fieldErrors.base" class="ferr">{{ fieldErrors.base }}</div>
         </label>
         <label class="fld">
-          <span>比例方式</span>
-          <select v-model="form.rateType" data-testid="fin-share-rule-rate-type">
+          <span>比例方式<i class="req">*</i></span>
+          <select v-model="form.rateType" data-testid="fin-share-rule-rate-type" :class="{ err: fieldErrors.rateType }">
+            <option value="">请选择</option>
             <option value="FIXED">固定比例</option>
             <option value="LADDER">阶梯</option>
           </select>
+          <div v-if="fieldErrors.rateType" class="ferr">{{ fieldErrors.rateType }}</div>
         </label>
         <label v-if="form.rateType === 'FIXED'" class="fld">
-          <span>固定比例（%）</span>
-          <input v-model="form.fixedPercent" data-testid="fin-share-rule-fixed-rate" inputmode="decimal" />
+          <span>比例（%）<i class="req">*</i></span>
+          <input v-model="form.fixedPercent" data-testid="fin-share-rule-fixed-rate" inputmode="decimal" :class="{ err: fieldErrors.rate }" />
+          <div v-if="fieldErrors.rate" class="ferr">{{ fieldErrors.rate }}</div>
         </label>
-        <div v-else>
+        <div v-else-if="form.rateType === 'LADDER'">
           <div v-for="(ladder, index) in form.ladders" :key="index" class="acts" style="gap: 8px; margin-bottom: 8px">
             <label class="fld" style="flex: 1">
               <span>下限</span>
@@ -183,27 +200,77 @@
           <button class="btn btn-sec btn-sm" type="button" data-testid="fin-share-rule-ladder-add" @click="form.ladders.push({ min: '', max: '', rate: '' })">
             添加档
           </button>
-          <p v-if="ladderOverlap" class="hint" data-testid="fin-share-rule-ladder-error" style="color: var(--red)">1146 阶梯区间重叠</p>
+          <p v-if="ladderOverlap" class="hint" data-testid="fin-share-rule-ladder-error" style="color: var(--red)">阶梯区间重叠</p>
+          <div v-if="fieldErrors.rate" class="ferr">{{ fieldErrors.rate }}</div>
         </div>
+        <div class="fld" data-testid="fin-share-rule-platforms">
+          <span>平台</span>
+          <div class="pills">
+            <label v-for="opt in platformOptions" :key="opt.value" class="pill" :class="{ on: form.platforms.includes(opt.value) }">
+              <input type="checkbox" :value="opt.value" :checked="form.platforms.includes(opt.value)" @change="togglePlatform(opt.value)" />
+              <span>{{ opt.label }}</span>
+            </label>
+          </div>
+        </div>
+        <div class="fld" data-testid="fin-share-rule-accounts">
+          <span>账号</span>
+          <input
+            v-model="accountKeyword"
+            placeholder="按名称搜索"
+            data-testid="fin-share-rule-account-search"
+            @change="loadAccounts"
+            @keydown.enter.prevent="loadAccounts"
+          />
+          <div class="pills" style="margin-top: 8px">
+            <label v-for="opt in accountOptions" :key="opt.id" class="pill" :class="{ on: form.accountIds.includes(opt.id) }">
+              <input
+                type="checkbox"
+                :data-testid="'fin-share-rule-account-' + opt.id"
+                :checked="form.accountIds.includes(opt.id)"
+                @change="toggleAccount(opt.id)"
+              />
+              <span>{{ opt.label }}</span>
+            </label>
+            <span v-if="accountLoading" class="hint">账号加载中</span>
+            <span v-else-if="accountError" class="hint" data-testid="fin-share-rule-account-error" style="color: var(--red)">{{ accountError }}</span>
+            <span v-else-if="!accountOptions.length" class="hint">暂无账号</span>
+            <span v-else-if="accountHint" class="hint">{{ accountHint }}</span>
+          </div>
+        </div>
+        <div class="fld" data-testid="fin-share-rule-groups">
+          <span>IP 组</span>
+          <input
+            v-model="groupKeyword"
+            placeholder="按名称搜索"
+            data-testid="fin-share-rule-group-search"
+            @change="loadGroups"
+            @keydown.enter.prevent="loadGroups"
+          />
+          <div class="pills" style="margin-top: 8px">
+            <label v-for="opt in groupOptions" :key="opt.id" class="pill" :class="{ on: form.ipGroups.includes(opt.id) }">
+              <input
+                type="checkbox"
+                :data-testid="'fin-share-rule-group-' + opt.id"
+                :checked="form.ipGroups.includes(opt.id)"
+                @change="toggleGroup(opt.id)"
+              />
+              <span>{{ opt.label }}</span>
+            </label>
+            <span v-if="groupLoading" class="hint">IP 组加载中</span>
+            <span v-else-if="groupError" class="hint" data-testid="fin-share-rule-group-error" style="color: var(--red)">{{ groupError }}</span>
+            <span v-else-if="!groupOptions.length" class="hint">暂无 IP 组</span>
+          </div>
+        </div>
+        <p class="hint" data-testid="fin-share-rule-draft-sum">{{ draftSumText }}</p>
         <label class="fld">
-          <span>平台（逗号分隔，可空）</span>
-          <input v-model="form.platforms" data-testid="fin-share-rule-platforms" placeholder="DYS,KS" />
+          <span>优先级<i class="req">*</i></span>
+          <input v-model="form.priority" data-testid="fin-share-rule-priority" :class="{ err: fieldErrors.priority }" />
+          <div v-if="fieldErrors.priority" class="ferr">{{ fieldErrors.priority }}</div>
         </label>
         <label class="fld">
-          <span>账号 ID（逗号分隔，可空）</span>
-          <input v-model="form.accountIds" data-testid="fin-share-rule-accounts" />
-        </label>
-        <label class="fld">
-          <span>IP 组 ID（逗号分隔，可空，与平台、账号同时生效）</span>
-          <input v-model="form.ipGroups" data-testid="fin-share-rule-groups" placeholder="88001,88002" />
-        </label>
-        <label class="fld">
-          <span>优先级</span>
-          <input v-model="form.priority" data-testid="fin-share-rule-priority" />
-        </label>
-        <label class="fld">
-          <span>生效开始</span>
-          <input v-model="form.effectiveFrom" data-testid="fin-share-rule-from" type="date" />
+          <span>生效期起<i class="req">*</i></span>
+          <input v-model="form.effectiveFrom" data-testid="fin-share-rule-from" type="date" :class="{ err: fieldErrors.from }" />
+          <div v-if="fieldErrors.from" class="ferr">{{ fieldErrors.from }}</div>
         </label>
         <label class="fld">
           <span>生效结束（可空）</span>
@@ -269,6 +336,19 @@
       </div>
     </div>
 
+    <div v-if="enableConflictOpen" class="mask on" style="z-index: 140" data-testid="fin-share-rule-enable-conflict">
+      <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 400px; padding: 16px">
+        <b>优先级冲突</b>
+        <p>存在同范围同对象优先级冲突规则，确认强制保存？</p>
+        <div class="acts" style="gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-enable-confirm" @click="confirmEnable">
+            确认强制启用
+          </button>
+          <button class="btn btn-sec btn-sm" type="button" @click="enableConflictOpen = false">取消</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="disableOpen" class="mask on" style="z-index: 140" data-testid="fin-share-rule-disable-dialog">
       <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 400px; padding: 16px">
         <b>停用规则</b>
@@ -285,8 +365,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { errorMessage, http } from '../../api/http'
 
 type Scope = { platforms?: string[]; accountIds?: number[]; ipGroupIds?: number[] }
 type Ladder = { min: number; max: number | null; rate: number }
@@ -320,6 +400,8 @@ const drawerOpen = ref(false)
 const editingId = ref<number | null>(null)
 const clientToken = ref('')
 const conflictOpen = ref(false)
+const enableConflictOpen = ref(false)
+const enableRow = ref<RuleRow | null>(null)
 const disableOpen = ref(false)
 const disableRow = ref<RuleRow | null>(null)
 const simOpen = ref(false)
@@ -327,17 +409,53 @@ const simRuleId = ref<number | null>(null)
 const simBase = ref('10000')
 const simError = ref('')
 const simResult = ref<SimResult | null>(null)
+const platformOptions = [
+  { value: 'DYS', label: '抖音直播' },
+  { value: 'KS', label: '快手' },
+  { value: 'WX', label: '视频号' },
+  { value: 'TM', label: '淘宝' },
+  { value: 'JD', label: '京东' },
+  { value: 'OTA', label: '其他' },
+]
+/** 分成平台码 → 账号档案 platformType。淘宝/京东无对应档案平台。 */
+const CORP_BY_SHARE: Record<string, string[]> = {
+  DYS: ['DOUYIN'],
+  KS: ['KUAISHOU'],
+  WX: ['WECHAT_CHANNELS'],
+  OTA: ['XIAOHONGSHU', 'WECHAT_OFFICIAL'],
+}
+const ALL_CORP_PLATFORMS = ['DOUYIN', 'KUAISHOU', 'WECHAT_CHANNELS', 'WECHAT_OFFICIAL', 'XIAOHONGSHU']
+const accountOptions = ref<{ id: number; label: string }[]>([])
+const groupOptions = ref<{ id: number; label: string }[]>([])
+const accountNames = ref<Record<number, string>>({})
+const groupNames = ref<Record<number, string>>({})
+const accountKeyword = ref('')
+const groupKeyword = ref('')
+const accountLoading = ref(false)
+const groupLoading = ref(false)
+const accountError = ref('')
+const groupError = ref('')
+const accountHint = ref('')
+const fieldErrors = reactive({
+  name: '',
+  target: '',
+  base: '',
+  rateType: '',
+  rate: '',
+  priority: '',
+  from: '',
+})
 const form = reactive({
   ruleName: '',
-  shareTarget: 'DAREN',
-  baseType: 'NET_PROFIT',
-  rateType: 'FIXED',
+  shareTarget: '',
+  baseType: '',
+  rateType: '',
   fixedPercent: '',
-  platforms: '',
-  accountIds: '',
-  ipGroups: '',
-  priority: '10',
-  effectiveFrom: '2026-10-08',
+  platforms: [] as string[],
+  accountIds: [] as number[],
+  ipGroups: [] as number[],
+  priority: '',
+  effectiveFrom: '',
   effectiveTo: '',
   ladders: [
     { min: '0', max: '10000', rate: '10' },
@@ -352,33 +470,66 @@ const emptyText = computed(() => {
   return '本页无规则'
 })
 
-const sumText = computed(() => {
-  const groups = new Map<string, Map<string, RuleRow>>()
-  for (const row of rows.value) {
-    if (row.status !== 'ENABLED' || row.rateType !== 'FIXED' || row.fixedRate == null) continue
-    const key = scopeKey(row.scope)
+function scopeLabel(scope: Scope | undefined) {
+  const platforms = (scope?.platforms || []).map((code) => platformOptions.find((item) => item.value === code)?.label || code)
+  const accounts = (scope?.accountIds || []).map((id) => accountNames.value[id] || `账号#${id}`)
+  const groups = (scope?.ipGroupIds || []).map((id) => groupNames.value[id] || `IP组#${id}`)
+  const parts = [...platforms, ...accounts, ...groups]
+  return parts.length ? parts.join(' / ') : '全范围'
+}
+
+function sumParts(rowsIn: RuleRow[], extra?: { scope: Scope; baseType: string; shareTarget: string; priority: number; rate: number }) {
+  const groups = new Map<string, Map<string, { priority: number; rate: number }>>()
+  const consider = (scope: Scope | undefined, baseType: string, target: string, priority: number, rate: number) => {
+    const key = `${scopeKey(scope)}|${baseType}`
     if (!groups.has(key)) groups.set(key, new Map())
     const bucket = groups.get(key)!
-    const prev = bucket.get(row.shareTarget)
-    if (!prev || row.priority >= prev.priority) bucket.set(row.shareTarget, row)
+    const prev = bucket.get(target)
+    if (!prev || priority >= prev.priority) bucket.set(target, { priority, rate })
   }
-  if (!groups.size) return '暂无'
-  const parts: string[] = []
+  for (const row of rowsIn) {
+    if (row.status !== 'ENABLED' || row.rateType !== 'FIXED' || row.fixedRate == null) continue
+    consider(row.scope, row.baseType, row.shareTarget, row.priority, Number(row.fixedRate))
+  }
+  if (extra && Number.isFinite(extra.rate)) {
+    consider(extra.scope, extra.baseType, extra.shareTarget, extra.priority, extra.rate)
+  }
+  const parts: { key: string; text: string }[] = []
   for (const [key, bucket] of groups) {
-    const basis = [...bucket.values()].reduce((acc, row) => acc + Math.round(Number(row.fixedRate) * 10000), 0)
-    const parsed = JSON.parse(key) as Scope
-    const account = parsed.accountIds?.[0]
-    const group = parsed.ipGroupIds?.[0]
-    const label = account
-      ? `账号#${account}`
-      : group
-        ? `IP组#${group}`
-        : parsed.platforms?.length
-          ? parsed.platforms.join('+')
-          : '全范围'
-    parts.push(`${label} ${(basis / 10000).toFixed(4)}`)
+    const basis = [...bucket.values()].reduce((acc, row) => acc + Math.round(row.rate * 10000), 0)
+    const splitAt = key.lastIndexOf('|')
+    const rawScope = key.slice(0, splitAt)
+    const baseType = key.slice(splitAt + 1)
+    const parsed = JSON.parse(rawScope) as Scope
+    const percent = (basis / 100).toFixed(2)
+    const remain = basis < 10000 ? '，剩余归公司' : ''
+    parts.push({ key, text: `${scopeLabel(parsed)} · ${baseLabel(baseType)} ${percent}%${remain}` })
   }
-  return parts.join('；')
+  return parts
+}
+
+const sumText = computed(() => {
+  const parts = sumParts(rows.value)
+  return parts.length ? parts.map((item) => item.text).join('；') : '暂无'
+})
+
+const draftSumText = computed(() => {
+  if (form.rateType !== 'FIXED' || form.fixedPercent === '' || !form.baseType || !form.shareTarget) {
+    return '同一基数合计不足 100% 时，剩余归公司'
+  }
+  const rate = Number(form.fixedPercent) / 100
+  if (!Number.isFinite(rate)) return '同一基数合计不足 100% 时，剩余归公司'
+  const scope = { platforms: form.platforms, accountIds: form.accountIds, ipGroupIds: form.ipGroups }
+  const parts = sumParts(rows.value.filter((row) => editingId.value == null || row.id !== editingId.value), {
+    scope,
+    baseType: form.baseType,
+    shareTarget: form.shareTarget,
+    priority: Number(form.priority || 0),
+    rate,
+  })
+  const currentKey = `${scopeKey(scope)}|${form.baseType}`
+  const current = parts.find((item) => item.key === currentKey)
+  return current?.text || '同一基数合计不足 100% 时，剩余归公司'
 })
 
 function scopeKey(scope: Scope | undefined) {
@@ -416,18 +567,12 @@ function rateTitle(row: RuleRow) {
 }
 
 function scopeSummary(scope: Scope | undefined) {
-  const platforms = scope?.platforms?.length || 0
-  const accounts = scope?.accountIds?.length || 0
-  const groups = scope?.ipGroupIds?.length || 0
-  if (!platforms && !accounts && !groups) return '全部'
-  return `平台×${platforms}+账号×${accounts}+IP组×${groups}`
+  const text = scopeLabel(scope)
+  return text === '全范围' ? '全部' : text
 }
 
 function scopeTitle(scope: Scope | undefined) {
-  const platforms = scope?.platforms?.length ? scope.platforms.join(',') : '—'
-  const accounts = scope?.accountIds?.length ? scope.accountIds.join(',') : '—'
-  const groups = scope?.ipGroupIds?.length ? scope.ipGroupIds.join(',') : '—'
-  return `平台 ${platforms}；账号 ${accounts}；IP组 ${groups}`
+  return scopeLabel(scope)
 }
 
 function targetStyle(value: string) {
@@ -453,56 +598,127 @@ const ladderOverlap = computed(() => {
   return false
 })
 
+function clearFieldErrors() {
+  fieldErrors.name = ''
+  fieldErrors.target = ''
+  fieldErrors.base = ''
+  fieldErrors.rateType = ''
+  fieldErrors.rate = ''
+  fieldErrors.priority = ''
+  fieldErrors.from = ''
+}
+
+function syncFormError() {
+  const messages = Object.values(fieldErrors).filter(Boolean)
+  formError.value = messages.length ? messages.join('；') : ''
+}
+
 function resetForm() {
   form.ruleName = ''
-  form.shareTarget = 'DAREN'
-  form.baseType = 'NET_PROFIT'
-  form.rateType = 'FIXED'
+  form.shareTarget = ''
+  form.baseType = ''
+  form.rateType = ''
   form.fixedPercent = ''
-  form.platforms = ''
-  form.accountIds = ''
-  form.ipGroups = ''
-  form.priority = '10'
-  form.effectiveFrom = '2026-10-08'
+  form.platforms = []
+  form.accountIds = []
+  form.ipGroups = []
+  form.priority = ''
+  form.effectiveFrom = ''
   form.effectiveTo = ''
   form.ladders = [
     { min: '0', max: '10000', rate: '10' },
     { min: '10000', max: '', rate: '20' },
   ]
+  clearFieldErrors()
 }
 
-function splitIds(raw: string) {
-  return raw
-    .split(/[,，\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+function togglePlatform(value: string) {
+  form.platforms = form.platforms.includes(value)
+    ? form.platforms.filter((item) => item !== value)
+    : [...form.platforms, value]
+  void loadAccounts()
 }
 
-function parseIdList(raw: string) {
-  const ids: number[] = []
-  for (const token of splitIds(raw)) {
-    if (!/^[1-9]\d*$/.test(token)) return null
-    ids.push(Number(token))
+function toggleAccount(id: number) {
+  form.accountIds = form.accountIds.includes(id) ? form.accountIds.filter((item) => item !== id) : [...form.accountIds, id]
+}
+
+function toggleGroup(id: number) {
+  form.ipGroups = form.ipGroups.includes(id) ? form.ipGroups.filter((item) => item !== id) : [...form.ipGroups, id]
+  void loadAccounts()
+}
+
+function rateOutOfRange(raw: string) {
+  if (raw.trim() === '') return false
+  const value = Number(raw)
+  return !Number.isFinite(value) || value <= 0 || value > 100
+}
+
+watch(
+  () => [
+    form.ruleName,
+    form.shareTarget,
+    form.baseType,
+    form.rateType,
+    form.fixedPercent,
+    form.priority,
+    form.effectiveFrom,
+    form.ladders.map((row) => `${row.min}|${row.max}|${row.rate}`).join(';'),
+  ],
+  () => {
+    if (fieldErrors.name && form.ruleName.trim()) fieldErrors.name = ''
+    if (fieldErrors.target && form.shareTarget) fieldErrors.target = ''
+    if (fieldErrors.base && form.baseType) fieldErrors.base = ''
+    if (fieldErrors.rateType && form.rateType) fieldErrors.rateType = ''
+    if (fieldErrors.priority && form.priority.trim()) fieldErrors.priority = ''
+    if (fieldErrors.from && form.effectiveFrom) fieldErrors.from = ''
+    if (fieldErrors.rate) {
+      if (form.rateType === 'FIXED' && form.fixedPercent.trim() !== '' && !rateOutOfRange(form.fixedPercent)) {
+        fieldErrors.rate = ''
+      } else if (form.rateType === 'LADDER') {
+        const incomplete = !form.ladders.length || form.ladders.some((row) => row.min.trim() === '' || row.rate.trim() === '')
+        const badRate = form.ladders.some((row) => row.rate.trim() !== '' && rateOutOfRange(row.rate))
+        if (!incomplete && !badRate) fieldErrors.rate = ''
+      }
+    }
+    if (Object.values(fieldErrors).some(Boolean) || formError.value) syncFormError()
+  },
+)
+
+function validateForm() {
+  clearFieldErrors()
+  if (!form.ruleName.trim()) fieldErrors.name = '必填项，请填写'
+  if (!form.shareTarget) fieldErrors.target = '必填项，请填写'
+  if (!form.baseType) fieldErrors.base = '必填项，请填写'
+  if (!form.rateType) fieldErrors.rateType = '必填项，请填写'
+  if (form.rateType === 'FIXED') {
+    if (form.fixedPercent.trim() === '') fieldErrors.rate = '必填项，请填写'
+    else if (rateOutOfRange(form.fixedPercent)) fieldErrors.rate = '分成比例须在 0~100% 之间'
+  } else if (form.rateType === 'LADDER') {
+    if (!form.ladders.length || form.ladders.some((row) => row.rate.trim() === '' || row.min.trim() === '')) {
+      fieldErrors.rate = '必填项，请填写'
+    } else if (form.ladders.some((row) => rateOutOfRange(row.rate))) {
+      fieldErrors.rate = '分成比例须在 0~100% 之间'
+    }
   }
-  return ids
+  if (form.priority.trim() === '') fieldErrors.priority = '必填项，请填写'
+  if (!form.effectiveFrom) fieldErrors.from = '必填项，请填写'
+  const messages = Object.values(fieldErrors).filter(Boolean)
+  formError.value = messages.length ? messages.join('；') : ''
+  return messages.length === 0
 }
 
 function buildPayload(confirmConflict: boolean) {
-  const accountIds = parseIdList(form.accountIds)
-  const ipGroupIds = parseIdList(form.ipGroups)
-  if (!accountIds || !ipGroupIds) {
-    formError.value = '1001 适用范围编号非法'
-    return null
-  }
+  if (!validateForm()) return null
   const payload: Record<string, unknown> = {
     ruleName: form.ruleName.trim(),
     shareTarget: form.shareTarget,
     baseType: form.baseType,
     rateType: form.rateType,
     scope: {
-      platforms: splitIds(form.platforms),
-      accountIds,
-      ipGroupIds,
+      platforms: [...form.platforms],
+      accountIds: [...form.accountIds],
+      ipGroupIds: [...form.ipGroups],
     },
     priority: Number(form.priority),
     effectiveRange: { from: form.effectiveFrom, to: form.effectiveTo || undefined },
@@ -522,9 +738,7 @@ function buildPayload(confirmConflict: boolean) {
 }
 
 function errText(err: unknown) {
-  const body = err as ApiErr
-  if (body?.code) return `${body.code} ${body.msg || ''}`.trim()
-  return '请求失败'
+  return errorMessage(err)
 }
 
 async function loadList() {
@@ -569,6 +783,107 @@ function goPage(raw: number) {
   return loadList()
 }
 
+function corpPlatformsForScope() {
+  if (!form.platforms.length) return ALL_CORP_PLATFORMS
+  const picked = new Set<string>()
+  for (const code of form.platforms) {
+    for (const corp of CORP_BY_SHARE[code] || []) picked.add(corp)
+  }
+  return [...picked]
+}
+
+type AccountRow = { id: number; accountNo?: string; accountName?: string; nickname?: string }
+
+function accountLabel(row: AccountRow) {
+  return `${row.accountNo || row.id} ${row.nickname || row.accountName || ''}`.trim()
+}
+
+async function loadAccounts() {
+  accountLoading.value = true
+  accountError.value = ''
+  let platforms = corpPlatformsForScope()
+  if (!platforms.length) {
+    platforms = [...ALL_CORP_PLATFORMS]
+    accountHint.value = '淘宝/京东没有账号档案，已列出全部账号'
+  } else {
+    accountHint.value = ''
+  }
+  const groupIds: Array<number | undefined> = form.ipGroups.length ? [...form.ipGroups] : [undefined]
+  const results = await Promise.all(
+    platforms.flatMap((platformType) =>
+      groupIds.map(async (ipGroupId) => {
+        try {
+          const res = await http.get('/corp/account/page', {
+            params: {
+              pageNo: 1,
+              pageSize: 100,
+              platformType,
+              keyword: accountKeyword.value.trim() || undefined,
+              ...(ipGroupId ? { ipGroupId } : {}),
+            },
+          })
+          return { ok: true as const, list: (res.data?.data?.list || []) as AccountRow[] }
+        } catch (err) {
+          return { ok: false as const, message: errorMessage(err) }
+        }
+      }),
+    ),
+  )
+  const seen = new Set<number>()
+  const options: { id: number; label: string }[] = []
+  for (const item of results) {
+    if (!item.ok) continue
+    for (const row of item.list) {
+      const id = Number(row.id)
+      if (!Number.isFinite(id) || seen.has(id)) continue
+      seen.add(id)
+      options.push({ id, label: accountLabel(row) })
+    }
+  }
+  const fetched = options.length
+  for (const id of form.accountIds) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    options.push({ id, label: accountNames.value[id] || `账号#${id}` })
+  }
+  accountOptions.value = options
+  const names = { ...accountNames.value }
+  for (const item of options) names[item.id] = item.label
+  accountNames.value = names
+  const failure = results.find((item): item is { ok: false; message: string } => !item.ok)
+  accountError.value = fetched === 0 && failure ? failure.message : ''
+  accountLoading.value = false
+}
+
+async function loadGroups() {
+  groupLoading.value = true
+  groupError.value = ''
+  try {
+    const res = await http.get('/ip-group/list', {
+      params: { pageNo: 1, pageSize: 200, keyword: groupKeyword.value.trim() || undefined },
+    })
+    const options = ((res.data?.data?.list || []) as Array<{ id: number; groupName?: string }>).map((row) => ({
+      id: Number(row.id),
+      label: row.groupName || `IP组#${row.id}`,
+    }))
+    const seen = new Set(options.map((item) => item.id))
+    for (const id of form.ipGroups) {
+      if (seen.has(id)) continue
+      options.push({ id, label: groupNames.value[id] || `IP组#${id}` })
+    }
+    groupOptions.value = options.filter((item) => Number.isFinite(item.id))
+    const names = { ...groupNames.value }
+    for (const item of groupOptions.value) names[item.id] = item.label
+    groupNames.value = names
+  } catch (err) {
+    groupError.value = errorMessage(err)
+    const kept = form.ipGroups.map((id) => ({ id, label: groupNames.value[id] || `IP组#${id}` }))
+    groupOptions.value = kept
+  } finally {
+    groupLoading.value = false
+  }
+}
+
 function openCreate() {
   editingId.value = null
   clientToken.value = `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -576,6 +891,8 @@ function openCreate() {
   conflictOpen.value = false
   resetForm()
   drawerOpen.value = true
+  void loadAccounts()
+  void loadGroups()
 }
 
 function openEdit(row: RuleRow) {
@@ -587,9 +904,12 @@ function openEdit(row: RuleRow) {
   form.baseType = row.baseType
   form.rateType = row.rateType
   form.fixedPercent = row.fixedRate == null ? '' : (Number(row.fixedRate) * 100).toFixed(2)
-  form.platforms = (row.scope?.platforms || []).join(',')
-  form.accountIds = (row.scope?.accountIds || []).join(',')
-  form.ipGroups = (row.scope?.ipGroupIds || []).join(',')
+  form.platforms = [...(row.scope?.platforms || [])]
+  form.accountIds = [...(row.scope?.accountIds || [])].map(Number)
+  form.ipGroups = [...(row.scope?.ipGroupIds || [])].map(Number)
+  clearFieldErrors()
+  void loadAccounts()
+  void loadGroups()
   form.priority = String(row.priority)
   form.effectiveFrom = row.effectiveRange?.from || ''
   form.effectiveTo = row.effectiveRange?.to || ''
@@ -670,6 +990,38 @@ function askDisable(row: RuleRow) {
   disableOpen.value = true
 }
 
+async function enableRule(row: RuleRow) {
+  error.value = ''
+  enableRow.value = row
+  try {
+    await http.put(`/fin/share/rule/${row.id}/enable`, {})
+    enableConflictOpen.value = false
+    enableRow.value = null
+    await loadList()
+  } catch (err) {
+    const body = err as ApiErr
+    if (body?.code === 1147) {
+      enableConflictOpen.value = true
+      return
+    }
+    error.value = errText(err)
+  }
+}
+
+async function confirmEnable() {
+  if (!enableRow.value) return
+  error.value = ''
+  try {
+    await http.put(`/fin/share/rule/${enableRow.value.id}/enable`, { confirmConflict: true })
+    enableConflictOpen.value = false
+    enableRow.value = null
+    await loadList()
+  } catch (err) {
+    enableConflictOpen.value = false
+    error.value = errText(err)
+  }
+}
+
 async function confirmDisable() {
   if (!disableRow.value) return
   error.value = ''
@@ -684,3 +1036,13 @@ async function confirmDisable() {
 
 onMounted(loadList)
 </script>
+
+<style scoped>
+.fld > span {
+  display: block;
+  font-size: 12px;
+  color: var(--text2);
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+</style>

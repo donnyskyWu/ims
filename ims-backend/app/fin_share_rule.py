@@ -1,7 +1,7 @@
 """FIN-003 分成规则：列表 / 创建 / 编辑新版本 / 停用 / 试算。
 
-校验：fixedRate 与阶梯比例落在 (0, 1]；阶梯区间不重叠且连续（1146）。
-同范围启用的固定比例按分成对象各取一条（优先级高者生效），对象不少于 2 个时合计必须等于 1.0000（V2-E2，1146）。
+校验：fixedRate 与阶梯比例落在 (0, 1]，提示「分成比例须在 0~100% 之间」；阶梯区间不重叠且连续（1146）。
+同范围、同一基数的启用固定比例按分成对象各取一条（优先级高者生效）。对象不少于 2 个且合计超过 1 时拦截（1146）；不足 1 不拦截，剩余归公司。不同基数不互相求和。
 同范围同对象已有启用规则时须 confirmConflict 显式确认（1147）。
 编辑只递增 version，不回写 ims_fin_share_result（FIN-S-R5）。
 """
@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal, ROUND_HALF_UP
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,7 +32,7 @@ BASE_TYPES = frozenset({"GMV", "GROSS_PROFIT", "NET_PROFIT"})
 RATE_TYPES = frozenset({"FIXED", "LADDER"})
 PLATFORMS = frozenset({"DYS", "KS", "WX", "TM", "JD", "OTA"})
 DATE_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$")
-MSG_1146_RATE = "固定比例须在 (0, 1] 内"
+MSG_1146_RATE = "分成比例须在 0~100% 之间"
 MSG_1147 = "存在同范围同对象优先级冲突规则，确认强制保存？"
 
 
@@ -71,6 +71,11 @@ class FinShareRuleBody(BaseModel):
     clientToken: str | None = None
 
 
+class EnableBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    confirmConflict: bool = False
+
+
 class FinShareSimulateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     ruleId: int | None = None
@@ -92,6 +97,11 @@ def dec(value) -> Decimal:
 
 def rate_text(value: Decimal) -> str:
     return f"{q_rate(value):.4f}"
+
+
+def percent_text(value: Decimal) -> str:
+    pct = (q_rate(value) * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{pct:.2f}%"
 
 
 def money_text(value: Decimal) -> str:
@@ -168,7 +178,7 @@ def normalize_ladder(items: list[LadderItem] | None) -> tuple[list[dict] | None,
                 return None, "阶梯区间重叠"
         rated, err = parse_rate(item.rate)
         if err or rated is None:
-            return None, "阶梯比例须在 (0, 1] 内"
+            return None, MSG_1146_RATE
         parsed.append({"min": lower, "max": upper, "rate": rated})
     parsed.sort(key=lambda row: row["min"])
     for index, row in enumerate(parsed):
@@ -326,8 +336,9 @@ def conflicts_of(rows: list[FinShareRule], payload: dict, rule_id: int | None) -
     return found
 
 
-def winning_rates(rows: list[FinShareRule], payload: dict, rule_id: int | None) -> dict[str, Decimal]:
-    best: dict[str, tuple[int, Decimal]] = {}
+def winning_rates(rows: list[FinShareRule], payload: dict, rule_id: int | None) -> dict[str, dict[str, Decimal]]:
+    """同一范围下，按基数再按分成对象取优先级最高的固定比例。"""
+    best: dict[tuple[str, str], tuple[int, Decimal]] = {}
     for row in rows:
         if rule_id is not None and row.id == rule_id:
             continue
@@ -335,24 +346,30 @@ def winning_rates(rows: list[FinShareRule], payload: dict, rule_id: int | None) 
             continue
         if not same_scope(row, payload["scope"]):
             continue
+        key = (str(row.base_type), str(row.share_target))
         rate = q_rate(dec(row.fixed_rate))
-        prev = best.get(row.share_target)
-        if prev is None or row.priority >= prev[0]:
-            best[row.share_target] = (int(row.priority or 0), rate)
+        prev = best.get(key)
+        if prev is None or int(row.priority or 0) >= prev[0]:
+            best[key] = (int(row.priority or 0), rate)
     if payload["rateType"] == "FIXED" and payload["fixedRate"] is not None:
+        key = (str(payload["baseType"]), str(payload["shareTarget"]))
         rate = q_rate(payload["fixedRate"])
-        prev = best.get(payload["shareTarget"])
+        prev = best.get(key)
         if prev is None or int(payload["priority"]) >= prev[0]:
-            best[payload["shareTarget"]] = (int(payload["priority"]), rate)
-    return {key: value[1] for key, value in best.items()}
+            best[key] = (int(payload["priority"]), rate)
+    grouped: dict[str, dict[str, Decimal]] = {}
+    for (base, target), (_priority, rate) in best.items():
+        grouped.setdefault(base, {})[target] = rate
+    return grouped
 
 
-def sum_error(rates: dict[str, Decimal]) -> str | None:
-    if len(rates) < 2:
-        return None
-    total = q_rate(sum(rates.values(), Decimal("0")))
-    if total != ONE:
-        return f"多对象分成比例合计须等于 1.0000（当前 {rate_text(total)}）"
+def sum_error(grouped: dict[str, dict[str, Decimal]]) -> str | None:
+    for rates in grouped.values():
+        if len(rates) < 2:
+            continue
+        total = q_rate(sum(rates.values(), Decimal("0")))
+        if total > ONE:
+            return f"同一范围同一基数的分成比例合计不能超过 100%（当前 {percent_text(total)}）"
     return None
 
 
@@ -429,9 +446,7 @@ def share_rules(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    denied = reject_writer(db, actor)
-    if denied is not None:
-        return denied
+    # 查询权限由 scope 门禁放行。只读角色（含 R9）要能打开列表；写操作仍走 reject_writer。
     tenant_id = tenant_of(actor)
     page_no, size = page_args(pageNo, pageSize)
     stmt = select(FinShareRule).where(FinShareRule.deleted == 0, FinShareRule.tenant_id == tenant_id)
@@ -521,6 +536,48 @@ def share_rule_update(
             return fail(1147, MSG_1147, {"conflictRuleIds": hit})
     apply_payload(row, payload)
     row.version = int(row.version or 1) + 1
+    db.flush()
+    return ok(rule_vo(row))
+
+
+def payload_from_row(row: FinShareRule) -> dict:
+    scope, _err = norm_scope(row.rule_scope or {})
+    return {
+        "shareTarget": row.share_target,
+        "baseType": row.base_type,
+        "rateType": row.rate_type,
+        "fixedRate": None if row.fixed_rate is None else q_rate(dec(row.fixed_rate)),
+        "scope": scope or {"platforms": [], "accountIds": [], "ipGroupIds": []},
+        "priority": int(row.priority or 0),
+    }
+
+
+@router.put("/share/rule/{rule_id}/enable")
+def share_rule_enable(
+    rule_id: int,
+    body: EnableBody | None = Body(default=None),
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    denied = reject_writer(db, actor)
+    if denied is not None:
+        return denied
+    tenant_id = tenant_of(actor)
+    row = load_rule(db, tenant_id, rule_id)
+    if row is None:
+        return fail(1504, "分成规则不存在")
+    if row.status == "ENABLED":
+        return ok(rule_vo(row))
+    payload = payload_from_row(row)
+    rows = enabled_rules(db, tenant_id)
+    summed = sum_error(winning_rates(rows, payload, row.id))
+    if summed:
+        return fail(1146, summed)
+    hit = conflicts_of(rows, payload, row.id)
+    if hit and not (body and body.confirmConflict):
+        return fail(1147, MSG_1147, {"conflictRuleIds": hit})
+    row.status = "ENABLED"
+    row.updated_at = utcnow()
     db.flush()
     return ok(rule_vo(row))
 

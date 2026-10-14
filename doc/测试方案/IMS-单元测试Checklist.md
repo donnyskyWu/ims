@@ -240,7 +240,7 @@
 | UT-FIN-002-01 | 利润计算：收入−成本聚合口径正确（场次维度） | FIN-002 |
 | UT-FIN-002-02 | ProfitCalcStatus 四值（PENDING→CALCULATED→RECALCULATED/ABNORMAL）；重算幂等 | G4/G6 |
 | UT-FIN-002-03 | 计算精度：金额全程 BigDecimal（scale 2、舍入模式统一）；典型样例 3 组复算误差为零 | BR-107 |
-| UT-FIN-003-01 | 分成规则：同一场次多分成对象比例求和 ≤ 1.0000 且多对象集合求和 = 1.0000（V2-E2 口径）；边界 0.9999/1.0000/1.0001；fixedRate 超出 (0,1] 或阶梯区间重叠/比例非法返回 1146，优先级冲突返回 1147 | FIN-003 |
+| UT-FIN-003-01 | 分成规则：同一范围同一基数合计超过 1 返回 1146，不足 1 允许且剩余归公司，不同基数不求和；比例须在 0~100% 之间；阶梯区间重叠返回 1146，优先级冲突返回 1147 | FIN-003 |
 | UT-FIN-003-02 | ShareResultStatus 四值（PENDING_AUDIT→AUDITED→PAID_OFF→REVERSED）；冲销（REVERSED）负向记账 | G4 |
 | UT-FIN-003-03 | 分成金额拆分精度：比例拆分累计 = 总额（尾差处理规则验证） | BR-107 |
 | UT-FIN-004-01 | 期间结账：已结账期间录入返回 **1142**（归并原 1010 · FinanceStatus.LOCKED）（**#59** `test_fin_period_close_locks_writes_then_r4_red_correction`） | BR-118 |
