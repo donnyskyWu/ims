@@ -10,16 +10,24 @@
       </div>
     </div>
 
-    <p v-if="loadError" class="hint" style="color: var(--red)">{{ loadError }}</p>
+    <p v-if="loadError" class="hint" data-testid="train-study-load-error" style="color: var(--red)">{{ loadError }}</p>
+    <p v-if="notAssignee && !task" style="margin-top: 8px">
+      <router-link class="btn btn-sec btn-sm" to="/ims/workbench" data-testid="train-study-back-workbench">
+        返回工作台
+      </router-link>
+    </p>
     <div v-else-if="task" class="g2">
       <div class="card head">
         <div style="font-weight: 600; font-size: 16px">{{ task.taskName }}</div>
-        <div class="meta">编号 {{ task.taskNo }} · 截止 {{ task.deadline }} · {{ confirmTypeLabel }}</div>
+        <div class="meta">
+          编号 {{ task.taskNo }} · 截止 <span data-testid="train-study-deadline">{{ deadlineText }}</span> · {{ confirmTypeLabel }}
+        </div>
         <p v-if="overdueDays > 0" class="hint overdue-banner" data-testid="train-study-overdue">
           本任务已逾期 {{ overdueDays }} 天，补学仍计入完成率统计
         </p>
         <div class="meta">
           总进度 <strong>{{ progressPct }}%</strong>
+          · 学时 <strong data-testid="train-study-hours">{{ studyHoursText }}</strong>
           · 确认状态
           <span :class="confirmStatus === 'CONFIRMED' ? 'ok' : 'pending'">{{ confirmStatusLabel }}</span>
         </div>
@@ -28,18 +36,16 @@
       <div class="card" style="padding: 12px">
         <div style="font-weight: 600; margin-bottom: 8px">资料清单</div>
         <ul v-if="materials.length" class="mat-list">
-          <li v-for="m in materials" :key="m.id">
+          <li
+            v-for="m in materials"
+            :key="m.id"
+            :class="{ on: activeMaterialId === m.id }"
+            @click="activeMaterialId = m.id"
+          >
             <div>
               <div>{{ m.title }}</div>
-              <a
-                v-if="m.materialType === 'LINK' && m.linkUrl"
-                class="hint"
-                :href="m.linkUrl"
-                target="_blank"
-                rel="noopener"
-              >打开外链</a>
-              <div v-else-if="m.fileKey" class="hint mono">文件留档 {{ m.fileKey }}</div>
-              <div v-else class="hint" data-testid="train-study-material-empty">暂无可预览</div>
+              <div class="hint">{{ materialKindLabel(m) }}</div>
+              <div class="hint">要求 {{ m.requiredMinutes || 1 }} 分钟 · 已学 {{ learnedMinutes(m.id) }} 分钟</div>
             </div>
             <span class="mono">{{ materialPct(m.id) }}%</span>
           </li>
@@ -55,23 +61,75 @@
           <div v-else class="et">无关联资料</div>
         </div>
 
+        <div v-if="activeMaterial" class="stage" data-testid="train-study-player">
+          <div class="stage-title">{{ activeMaterial.title }}</div>
+          <div v-if="previewMode === 'video'" class="stage-body">
+            <video
+              v-if="previewUrl"
+              ref="videoRef"
+              data-testid="train-study-video"
+              controls
+              playsinline
+              :src="previewUrl"
+              @play="onVideoPlay"
+              @pause="onVideoPause"
+            />
+            <p v-else-if="previewLoading" class="hint">视频加载中</p>
+            <p v-else class="hint" data-testid="train-study-preview-error">{{ previewError || '暂无可播放的视频' }}</p>
+          </div>
+          <div v-else-if="previewMode === 'doc'" class="stage-body">
+            <iframe
+              v-if="previewUrl && docEmbeddable"
+              data-testid="train-study-doc"
+              :src="previewUrl"
+              title="文档预览"
+            />
+            <object
+              v-else-if="previewUrl"
+              data-testid="train-study-doc"
+              :data="previewUrl"
+              :type="previewMime || 'application/octet-stream'"
+            >
+              <p class="hint">当前格式请打开资料查看</p>
+            </object>
+            <p v-else-if="previewLoading" class="hint">文档加载中</p>
+            <p v-else class="hint" data-testid="train-study-preview-error">{{ previewError || '暂无可预览的文档' }}</p>
+            <a v-if="previewUrl" class="linkish" :href="previewUrl" target="_blank" rel="noopener">打开资料</a>
+          </div>
+          <div v-else-if="previewMode === 'link'" class="stage-body">
+            <a class="linkish" :href="activeMaterial.linkUrl" target="_blank" rel="noopener">打开外链</a>
+            <p class="hint">打开资料后点击开始学习，学习时长计入学时</p>
+          </div>
+          <div v-else class="empty" data-testid="train-study-material-empty">
+            <div class="et">暂无可预览</div>
+          </div>
+          <div v-if="confirmStatus !== 'CONFIRMED'" class="acts" style="margin-top: 12px">
+            <button
+              class="btn btn-pri btn-sm"
+              type="button"
+              data-testid="train-study-start"
+              :disabled="busy || (studying && previewMode !== 'video')"
+              @click="startStudy"
+            >
+              {{ studying ? '学习中' : '开始学习' }}
+            </button>
+          </div>
+        </div>
+
         <p
-          v-if="materials.length && task.confirmType !== 'QUIZ' && confirmStatus !== 'CONFIRMED' && remainingMaterials > 0"
+          v-if="materials.length && task.confirmType !== 'QUIZ' && confirmStatus !== 'CONFIRMED' && remainMinutes > 0"
           class="hint"
           data-testid="train-study-gap"
         >
-          还差 {{ remainingMaterials }} 份资料未学完，学完后才能完成确认
+          还差 {{ remainMinutes }} 分钟学时，学时达标后才能完成确认
         </p>
-        <div v-if="materials.length && confirmStatus !== 'CONFIRMED'" class="acts" style="margin-top: 16px; flex-wrap: wrap; gap: 8px">
-          <button class="btn btn-sec btn-sm" type="button" :disabled="busy" @click="markCurrentMaterialDone">
-            标记当前资料已学完
-          </button>
+        <div v-if="materials.length && confirmStatus !== 'CONFIRMED' && task.confirmType !== 'QUIZ'" class="acts" style="margin-top: 16px; flex-wrap: wrap; gap: 8px">
           <button
-            v-if="task.confirmType !== 'QUIZ'"
             class="btn btn-pri btn-sm"
             type="button"
-            :disabled="busy || !allMaterialsDone"
-            :title="allMaterialsDone ? '' : `还差 ${remainingMaterials} 份资料未学完`"
+            data-testid="train-study-confirm"
+            :disabled="busy || !hoursMet"
+            :title="hoursMet ? '' : `还差 ${remainMinutes} 分钟学时`"
             @click="confirmComplete"
           >
             完成确认
@@ -79,7 +137,7 @@
         </div>
 
         <div v-if="task.confirmType === 'QUIZ' && confirmStatus !== 'CONFIRMED'" class="quiz-paper">
-          <div class="quiz-head">自测问卷 · 及格 {{ task.passScore }} 分 · 共 {{ quiz.length }} 题</div>
+          <div class="quiz-head" data-testid="train-quiz-full-score">满分 100 / 及格分 {{ task.passScore }} · 共 {{ quiz.length }} 题</div>
           <p class="hint">全部题目必答。提交后将判分，未及格可重答，成绩保留最新一次。</p>
           <p v-if="mustAllCorrect" class="hint" data-testid="train-study-quiz-all-correct">须全部答对才能通过</p>
           <p v-if="latestScore == null" class="hint score-empty" data-testid="train-quiz-score-empty">暂无成绩</p>
@@ -138,11 +196,11 @@
           </router-link>
         </p>
         <p v-if="confirmStatus === 'CONFIRMED'" class="hint ok-banner">
-          学习已完成 · CONFIRMED<span v-if="passedScore != null"> · 得分 {{ passedScore }}</span>
+          学习已完成 · 已确认<span v-if="passedScore != null"> · 得分 {{ passedScore }}</span>
         </p>
       </div>
     </div>
-    <div v-else class="empty"><div class="et">加载中…</div></div>
+    <div v-else-if="!loadError" class="empty"><div class="et">加载中…</div></div>
 
     <div v-if="showQuizConfirm" class="modal-mask" @click.self="showQuizConfirm = false">
       <div class="card" style="width: 360px; padding: 20px">
@@ -158,10 +216,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
-import { useUserStore } from '../../stores/user'
 
 type QuizPublic = { question: string; options: string[] }
 
@@ -176,7 +233,14 @@ type TaskRow = {
   quiz?: QuizPublic[]
 }
 
-type MatRow = { id: number; title: string; materialType: string; fileKey?: string; linkUrl?: string }
+type MatRow = {
+  id: number
+  title: string
+  materialType: string
+  fileKey?: string
+  linkUrl?: string
+  requiredMinutes?: number
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -184,7 +248,9 @@ const taskId = computed(() => Number(route.params.taskId))
 const task = ref<TaskRow | null>(null)
 const materials = ref<MatRow[]>([])
 const materialProgress = ref<Record<number, number>>({})
+const materialSeconds = ref<Record<number, number>>({})
 const progressPct = ref(0)
+const studySeconds = ref(0)
 const confirmStatus = ref<'NOT_CONFIRMED' | 'CONFIRMED'>('NOT_CONFIRMED')
 const loadError = ref('')
 const actionError = ref('')
@@ -196,10 +262,46 @@ const busy = ref(false)
 const showQuizConfirm = ref(false)
 const activeMaterialId = ref(0)
 const answers = reactive<(number | null)[]>([])
+const studying = ref(false)
+const previewUrl = ref('')
+const previewError = ref('')
+const previewLoading = ref(false)
+const previewMime = ref('')
+const videoRef = ref<HTMLVideoElement | null>(null)
+let previewBlob = ''
 
 const confirmStatusLabel = computed(() =>
   confirmStatus.value === 'CONFIRMED' ? '已确认' : '未确认',
 )
+
+const studyHoursText = computed(() => {
+  const minutes = Math.floor(studySeconds.value / 60)
+  if (minutes <= 0) return '0 分钟'
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest ? `${hours} 小时 ${rest} 分钟` : `${hours} 小时`
+})
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)) return raw
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
+const deadlineText = computed(() => fmtBj(task.value?.deadline))
 
 const confirmTypeLabel = computed(() =>
   task.value?.confirmType === 'QUIZ' ? '自测问卷' : '学时达标',
@@ -220,7 +322,7 @@ const unansweredCount = computed(
 const mustAllCorrect = computed(() => {
   const paper = quiz.value
   const line = task.value?.passScore ?? 0
-  return paper.length > 0 && line === paper.length
+  return paper.length > 0 && line === 100
 })
 
 const overdueDays = computed(() => {
@@ -241,9 +343,74 @@ const overdueDays = computed(() => {
   return days >= 1 ? days : 1
 })
 
-const remainingMaterials = computed(() => {
+const activeMaterial = computed(
+  () => materials.value.find((item) => item.id === activeMaterialId.value) || null,
+)
+
+const previewMode = computed(() => {
+  const item = activeMaterial.value
+  if (!item) return 'empty'
+  if (item.materialType === 'LINK' && item.linkUrl) return 'link'
+  if (item.materialType === 'VIDEO' || ['mp4', 'mov'].includes(fileExt(item.fileKey || ''))) return 'video'
+  if (item.fileKey) return 'doc'
+  return 'empty'
+})
+
+const docEmbeddable = computed(() => {
+  const ext = fileExt(activeMaterial.value?.fileKey || '')
+  return ext === 'pdf' || previewMime.value.includes('pdf')
+})
+
+const previewKey = computed(() => {
+  const item = activeMaterial.value
+  if (!item) return ''
+  return `${item.id}:${item.materialType}:${item.fileKey || ''}:${item.linkUrl || ''}`
+})
+
+function fileExt(key: string) {
+  const base = key.split('/').pop() || ''
+  const dot = base.lastIndexOf('.')
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+function materialKindLabel(item: MatRow) {
+  if (item.materialType === 'VIDEO') return '视频'
+  if (item.materialType === 'LINK') return '外链'
+  return '文档'
+}
+
+function revokePreview() {
+  if (previewBlob) URL.revokeObjectURL(previewBlob)
+  previewBlob = ''
+  previewUrl.value = ''
+}
+
+function learnedSeconds(id: number) {
+  return materialSeconds.value[id] ?? 0
+}
+
+function learnedMinutes(id: number) {
+  return Math.floor(learnedSeconds(id) / 60)
+}
+
+function needSeconds(id: number) {
+  const mat = materials.value.find((item) => item.id === id)
+  return Math.max(1, mat?.requiredMinutes || 1) * 60
+}
+
+const remainMinutes = computed(() => {
   const ids = task.value?.materialIds || []
-  return ids.filter((id) => (materialProgress.value[id] ?? 0) < 100).length
+  let remain = 0
+  for (const id of ids) {
+    const gap = needSeconds(id) - learnedSeconds(id)
+    if (gap > 0) remain += gap
+  }
+  return remain <= 0 ? 0 : Math.ceil(remain / 60)
+})
+
+const hoursMet = computed(() => {
+  const ids = task.value?.materialIds || []
+  return ids.length > 0 && remainMinutes.value === 0 && hiddenMaterialCount.value === 0
 })
 
 const hiddenMaterialCount = computed(() => {
@@ -253,20 +420,18 @@ const hiddenMaterialCount = computed(() => {
   return ids.filter((id) => !visible.has(id)).length
 })
 
-const allMaterialsDone = computed(() => {
-  if (!task.value?.materialIds?.length) return false
-  return remainingMaterials.value === 0
-})
+function isAssigneeDenial(err: unknown): boolean {
+  return errorMessage(err).includes('仅被指派人')
+}
 
 function noteActionFailure(err: unknown, fallback: string) {
-  const code =
-    err && typeof err === 'object' && 'code' in err ? Number((err as { code?: unknown }).code) : Number.NaN
-  if (code === 1105) {
+  const msg = errorMessage(err)
+  if (isAssigneeDenial(err)) {
     notAssignee.value = true
-    actionError.value = '仅被指派人可学习本任务'
+    actionError.value = msg
     return
   }
-  const msg = errorMessage(err)
+  notAssignee.value = false
   actionError.value = msg === '加载失败' ? fallback : msg
 }
 
@@ -294,63 +459,47 @@ function parseMatProgress(raw: Record<string, number> | undefined) {
 
 async function loadTaskAndProgress() {
   loadError.value = ''
-  const listRes = await http.get('/train/task/list', { params: { pageNo: 1, pageSize: 100 } })
-  if (listRes.data.code !== 0) {
-    loadError.value = listRes.data.msg || '任务加载失败'
-    return
-  }
-  const found = (listRes.data.data.list || []).find((r: TaskRow) => r.id === taskId.value)
-  if (!found) {
-    loadError.value = '任务不存在或无权查看'
-    return
-  }
-  task.value = found
-  activeMaterialId.value = found.materialIds[0] ?? 0
-  answers.splice(0, answers.length, ...((found.quiz || []).map(() => null)))
-
-  materials.value = await loadVisibleMaterials(found.materialIds || [])
-
-  const userStore = useUserStore()
-  const uid = Number(userStore.profile?.userId || 0)
-  const recParams: Record<string, number> = { taskId: taskId.value, pageNo: 1, pageSize: 1 }
-  if (uid > 0) recParams.userId = uid
-  const recRes = await http.get('/train/task/records', { params: recParams })
-  if (recRes.data.code === 0 && recRes.data.data.list?.length) {
-    const rec = recRes.data.data.list[0]
-    materialProgress.value = parseMatProgress(rec.materialProgress)
-    progressPct.value = rec.progress ?? 0
-    confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
-    if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
-      passedScore.value = rec.confirmScore
-      latestScore.value = rec.confirmScore
-    } else if (found.confirmType === 'QUIZ' && rec.confirmScore != null) {
-      latestScore.value = rec.confirmScore
-      gradeText.value = failGradeText(rec.confirmScore, found.passScore ?? 0)
+  notAssignee.value = false
+  try {
+    const res = await http.get(`/train/study/${taskId.value}`)
+    const data = res.data.data || {}
+    const found = data.task as TaskRow | undefined
+    if (!found) {
+      task.value = null
+      loadError.value = '任务不存在或无权查看'
+      return
     }
-  }
-}
+    task.value = found
+    activeMaterialId.value = found.materialIds[0] ?? 0
+    answers.splice(0, answers.length, ...((found.quiz || []).map(() => null)))
+    materials.value = (data.materials || []) as MatRow[]
 
-async function loadVisibleMaterials(ids: number[]) {
-  const wanted = new Set(ids)
-  if (!wanted.size) return [] as MatRow[]
-  const found: MatRow[] = []
-  let page = 1
-  let total = 0
-  let seen = 0
-  do {
-    const matRes = await http.get('/train/material/list', {
-      params: { status: 'PUBLISHED', pageNo: page, pageSize: 100 },
-    })
-    const list = (matRes.data.data?.list || []) as MatRow[]
-    total = Number(matRes.data.data?.total || 0)
-    for (const item of list) {
-      if (wanted.has(item.id)) found.push(item)
+    const rec = data.progress
+    if (rec) {
+      materialProgress.value = parseMatProgress(rec.materialProgress)
+      materialSeconds.value = parseMatProgress(rec.materialSeconds)
+      progressPct.value = rec.progress ?? 0
+      studySeconds.value = Number(rec.studySeconds || 0)
+      confirmStatus.value = rec.confirmStatus === 'CONFIRMED' ? 'CONFIRMED' : 'NOT_CONFIRMED'
+      if (rec.confirmStatus === 'CONFIRMED' && rec.confirmScore != null) {
+        passedScore.value = rec.confirmScore
+        latestScore.value = rec.confirmScore
+      } else if (found.confirmType === 'QUIZ' && rec.confirmScore != null) {
+        latestScore.value = rec.confirmScore
+        gradeText.value = failGradeText(rec.confirmScore, found.passScore ?? 0)
+      }
     }
-    seen += list.length
-    page += 1
-    if (found.length >= wanted.size || !list.length) break
-  } while (seen < total && page <= 8)
-  return found
+  } catch (err) {
+    task.value = null
+    const msg = errorMessage(err)
+    if (isAssigneeDenial(err)) {
+      notAssignee.value = true
+      loadError.value = msg
+      return
+    }
+    notAssignee.value = false
+    loadError.value = msg === '加载失败' ? '任务加载失败' : msg
+  }
 }
 
 async function submitQuiz() {
@@ -359,7 +508,7 @@ async function submitQuiz() {
   gradeText.value = ''
   busy.value = true
   try {
-    const res = await http.post(`/train/task/${taskId.value}/confirm`, {
+    const res = await http.post(`/train/study/${taskId.value}/confirm`, {
       answers: quiz.value.map((_, index) => ({
         questionIndex: index,
         answerIndex: answers[index],
@@ -389,30 +538,108 @@ async function submitQuiz() {
   }
 }
 
-async function markCurrentMaterialDone() {
-  if (!task.value || !activeMaterialId.value) return
-  actionError.value = ''
-  notAssignee.value = false
-  busy.value = true
+function syncLocalProgress() {
+  const ids = task.value?.materialIds || []
+  const next: Record<number, number> = {}
+  let sum = 0
+  for (const id of ids) {
+    const pct = Math.min(100, Math.floor((learnedSeconds(id) * 100) / needSeconds(id)))
+    next[id] = pct
+    sum += pct
+  }
+  materialProgress.value = next
+  progressPct.value = ids.length ? Math.floor(sum / ids.length) : 0
+  studySeconds.value = ids.reduce((acc, id) => acc + learnedSeconds(id), 0)
+}
+
+async function pushProgress(materialId: number, seconds: number) {
   try {
-    const res = await http.put(`/train/task/${taskId.value}/progress`, {
-      materialId: activeMaterialId.value,
-      currentPage: 1,
-      totalPages: 1,
-      watchedSeconds: 60,
+    const res = await http.put(`/train/study/${taskId.value}/progress`, {
+      materialId,
+      watchedSeconds: seconds,
       heartbeatAt: new Date().toISOString(),
     })
-    if (res.data.code !== 0) {
-      actionError.value = res.data.msg || '进度上报失败'
-      return
+    const data = res.data.data || {}
+    const serverSeconds = parseMatProgress(data.materialSeconds)
+    const merged = { ...materialSeconds.value }
+    for (const [key, value] of Object.entries(serverSeconds)) {
+      merged[Number(key)] = Math.max(merged[Number(key)] || 0, value)
     }
-    const data = res.data.data
-    materialProgress.value = parseMatProgress(data.materialProgress)
-    progressPct.value = data.progress ?? progressPct.value
+    materialSeconds.value = merged
+    syncLocalProgress()
   } catch (err) {
     noteActionFailure(err, '进度上报失败')
+  }
+}
+
+let sinceBeat = 0
+function onStudyTick() {
+  if (!studying.value || !task.value || confirmStatus.value === 'CONFIRMED' || !activeMaterialId.value) return
+  if (!materials.value.some((item) => item.id === activeMaterialId.value)) return
+  const id = activeMaterialId.value
+  materialSeconds.value = { ...materialSeconds.value, [id]: learnedSeconds(id) + 1 }
+  syncLocalProgress()
+  sinceBeat += 1
+  if (sinceBeat >= 15) {
+    sinceBeat = 0
+    void pushProgress(id, learnedSeconds(id))
+  }
+}
+
+function startStudy() {
+  actionError.value = ''
+  studying.value = true
+  if (previewMode.value === 'video') void videoRef.value?.play()
+}
+
+function onVideoPlay() {
+  studying.value = true
+}
+
+function onVideoPause() {
+  studying.value = false
+  sinceBeat = 0
+  const id = activeMaterialId.value
+  if (id) void pushProgress(id, learnedSeconds(id))
+}
+
+async function flushStudy() {
+  const ids = materials.value.map((item) => item.id)
+  for (const id of ids) {
+    if (learnedSeconds(id) > 0) await pushProgress(id, learnedSeconds(id))
+  }
+}
+
+async function loadPreview() {
+  revokePreview()
+  previewError.value = ''
+  previewMime.value = ''
+  const item = activeMaterial.value
+  if (!item || (previewMode.value !== 'doc' && previewMode.value !== 'video') || !item.fileKey) {
+    previewLoading.value = false
+    return
+  }
+  previewLoading.value = true
+  const key = previewKey.value
+  try {
+    const token = localStorage.getItem('ims_access')
+    const res = await fetch(`/admin-api/ims/train/study/${taskId.value}/material/${item.id}/file`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    const mime = res.headers.get('content-type') || ''
+    if (!res.ok || mime.includes('application/json')) {
+      previewError.value = '资料文件暂不可预览'
+      return
+    }
+    if (previewKey.value !== key) return
+    const blob = await res.blob()
+    previewMime.value = blob.type || mime
+    previewBlob = URL.createObjectURL(blob)
+    previewUrl.value = previewBlob
+  } catch {
+    if (previewKey.value === key) previewError.value = '资料文件暂不可预览'
   } finally {
-    busy.value = false
+    if (previewKey.value === key) previewLoading.value = false
   }
 }
 
@@ -421,7 +648,8 @@ async function confirmComplete() {
   notAssignee.value = false
   busy.value = true
   try {
-    const res = await http.post(`/train/task/${taskId.value}/confirm`, {})
+    await flushStudy()
+    const res = await http.post(`/train/study/${taskId.value}/confirm`, {})
     if (res.data.code !== 0) {
       actionError.value = res.data.msg || '确认失败'
       return
@@ -435,7 +663,19 @@ async function confirmComplete() {
   }
 }
 
-onMounted(loadTaskAndProgress)
+let tickHandle = 0
+watch(previewKey, () => {
+  void loadPreview()
+})
+onMounted(async () => {
+  await loadTaskAndProgress()
+  tickHandle = window.setInterval(onStudyTick, 1000)
+})
+onUnmounted(() => {
+  window.clearInterval(tickHandle)
+  if (studying.value) void flushStudy()
+  revokePreview()
+})
 </script>
 
 <style scoped>
@@ -463,6 +703,30 @@ onMounted(loadTaskAndProgress)
   justify-content: space-between;
   padding: 8px 0;
   border-bottom: 1px solid var(--border, #eee);
+  cursor: pointer;
+}
+.mat-list li.on {
+  background: rgba(0, 0, 0, 0.04);
+}
+.stage {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #eee);
+}
+.stage-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.stage-body video,
+.stage-body iframe,
+.stage-body object {
+  width: 100%;
+  min-height: 320px;
+  border: 0;
+  background: #111;
+}
+.stage-body video {
+  background: #000;
 }
 .ok {
   color: var(--green);

@@ -6,6 +6,7 @@
         <div class="sub">TRAIN-002 · 资料多选 · DURATION/QUIZ · 02 TRAIN</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-ai-open" @click="openAi">AI 生成试卷</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">下达学习任务</button>
       </div>
     </div>
@@ -45,23 +46,26 @@
         <table>
           <thead>
             <tr>
-              <th>编号</th>
+              <th>任务编号</th>
               <th>任务名称</th>
               <th>资料数</th>
+              <th>指派范围</th>
               <th>应完成</th>
+              <th>已完成</th>
               <th>完成率</th>
               <th>确认方式</th>
               <th>截止时间</th>
+              <th>发布时间</th>
               <th>状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="12"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="9">
+              <td colspan="12">
                 <div class="empty" data-testid="train-task-empty">
                   <div class="et">{{ error || (hasActiveFilters ? '没有符合筛选的任务' : '暂无任务') }}</div>
                   <div v-if="!error && hasActiveFilters" class="es">调整任务名称、状态或确认方式后再查询</div>
@@ -81,7 +85,9 @@
               <td class="mono">{{ row.taskNo }}</td>
               <td style="font-weight: 500">{{ row.taskName }}</td>
               <td class="num">{{ row.materialCount }}</td>
+              <td>{{ assignScopeLabel(row.assignScope) }}</td>
               <td class="num">{{ row.assignedCount }}</td>
+              <td class="num" data-testid="train-task-finished">{{ row.finishedCount ?? 0 }}</td>
               <td :style="{ color: finishColor(row.finishRate) }">{{ row.finishRate }}%</td>
               <td>{{ confirmLabel(row.confirmType) }}</td>
               <td
@@ -89,11 +95,12 @@
                 data-testid="train-task-deadline"
                 :class="{ 'due-over': deadlineTone(row) === 'over' }"
               >
-                {{ row.deadline }}
+                {{ fmtBj(row.deadline) }}
                 <span v-if="deadlineTone(row) === 'soon'" class="tag due-tag" data-testid="train-task-due-soon">即将到期</span>
                 <span v-else-if="deadlineTone(row) === 'over'" class="tag due-tag over" data-testid="train-task-overdue">已逾期</span>
               </td>
-              <td>{{ row.status }}</td>
+              <td class="mono" data-testid="train-task-published">{{ fmtBj(row.createdAt) }}</td>
+              <td>{{ statusLabel(row.status) }}</td>
               <td>
                 <button
                   class="btn btn-sec btn-sm"
@@ -105,7 +112,18 @@
                 >
                   编辑
                 </button>
-                <button class="btn btn-sec btn-sm" type="button" @click="goStudy(row)">去学习</button>
+                <button
+                  v-if="row.confirmType === 'QUIZ'"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="train-task-enter-quiz"
+                  @click="goStudy(row)"
+                >
+                  进入作答
+                </button>
+                <button v-else class="btn btn-sec btn-sm" type="button" data-testid="train-task-enter-study" @click="goStudy(row)">
+                  进入学习
+                </button>
                 <button class="btn btn-sec btn-sm" type="button" @click="openRecords(row)">学习记录</button>
               </td>
             </tr>
@@ -115,32 +133,102 @@
       <div class="hint" style="margin-top: 8px" data-testid="train-task-total">共 {{ total }} 条</div>
     </div>
 
+    <div v-if="showAi" class="modal-mask" @click.self="showAi = false">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto" data-testid="train-ai-wizard">
+        <h3 style="margin: 0 0 12px">AI 生成试卷 · 第 {{ aiStep }} / 4 步</h3>
+        <template v-if="aiStep === 1">
+          <p class="hint">选择已发布资料，至少 1 份。</p>
+          <div v-if="publishedMaterials.length" class="mat-pick" data-testid="train-ai-materials">
+            <label v-for="m in publishedMaterials" :key="m.id" class="mat-opt">
+              <input v-model="aiMaterialIds" type="checkbox" :value="m.id" />
+              {{ m.title }} <small class="mono">#{{ m.id }}</small>
+            </label>
+          </div>
+          <p v-else class="hint">暂无已发布资料</p>
+        </template>
+        <template v-else-if="aiStep === 2">
+          <label class="fld">题量（5～30）</label>
+          <input v-model.number="aiCount" class="fld-in" type="number" min="5" max="30" data-testid="train-ai-count" />
+          <label class="fld">难度</label>
+          <select v-model="aiDifficulty" class="fld-in" data-testid="train-ai-difficulty">
+            <option value="EASY">容易</option>
+            <option value="MEDIUM">中等</option>
+            <option value="HARD">困难</option>
+          </select>
+        </template>
+        <template v-else-if="aiStep === 3">
+          <p data-testid="train-ai-generating">AI 生成中</p>
+          <p class="hint">当前为样题桩，不调用真实模型。</p>
+        </template>
+        <template v-else>
+          <p class="hint">预览 {{ aiQuestions.length }} 题。采纳后可在自测问卷任务中使用。</p>
+          <ol data-testid="train-ai-preview">
+            <li v-for="(q, index) in aiQuestions" :key="index">
+              {{ q.stem || q.question }}
+              <span class="hint">（{{ q.type === 'TRUE_FALSE' ? '判断' : '单选' }}）</span>
+            </li>
+          </ol>
+        </template>
+        <p v-if="aiError" class="hint" style="color: var(--red)" data-testid="train-ai-error">{{ aiError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; gap: 8px">
+          <button class="btn btn-sec btn-sm" type="button" @click="showAi = false">关闭</button>
+          <button v-if="aiStep > 1 && aiStep < 3" class="btn btn-sec btn-sm" type="button" @click="aiStep -= 1">上一步</button>
+          <button v-if="aiStep < 3" class="btn btn-pri btn-sm" type="button" data-testid="train-ai-next" @click="aiNext">下一步</button>
+          <button v-if="aiStep === 4" class="btn btn-pri btn-sm" type="button" data-testid="train-ai-adopt" :disabled="aiBusy" @click="adoptAi">
+            采纳
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto">
         <h3 style="margin: 0 0 12px">{{ editingId ? '编辑学习任务' : '下达学习任务' }}</h3>
-        <label class="fld">任务名称</label>
-        <input v-model="form.taskName" class="fld-in" />
-        <label class="fld">已发布资料（多选）</label>
-        <div v-if="publishedMaterials.length" class="mat-pick">
+        <label class="fld">任务名称<span class="req">*</span></label>
+        <input v-model="form.taskName" class="fld-in" data-testid="train-form-task-name" />
+        <p v-if="fieldErrors.taskName" class="hint err" data-testid="train-form-task-name-error">{{ fieldErrors.taskName }}</p>
+        <label class="fld">指派范围<span class="req">*</span></label>
+        <select v-model="form.assignScope" class="fld-in" data-testid="train-form-scope" @change="onScopeChange">
+          <option value="BY_USER">按人</option>
+          <option value="BY_POSITION">按岗位</option>
+        </select>
+        <label class="fld">指派对象<span class="req">*</span></label>
+        <div v-if="form.assignScope === 'BY_USER'" class="mat-pick" data-testid="train-form-users">
+          <label v-for="person in people" :key="person.id" class="mat-opt">
+            <input v-model="form.userIds" type="checkbox" :value="person.id" />
+            {{ person.nickname }} <small class="mono">#{{ person.id }}</small>
+          </label>
+          <p v-if="!people.length" class="hint">暂无可选人员</p>
+        </div>
+        <div v-else class="mat-pick" data-testid="train-form-assign-positions">
+          <label v-for="item in assignPositions" :key="item.code" class="mat-opt">
+            <input v-model="form.positionCodes" type="checkbox" :value="item.code" @change="refreshAssignPreview" />
+            {{ item.name }}
+          </label>
+          <p v-if="form.positionCodes.length" class="hint" data-testid="train-assign-preview">目标人数 {{ assignPreview }}</p>
+        </div>
+        <p v-if="fieldErrors.target" class="hint err" data-testid="train-form-target-error">{{ fieldErrors.target }}</p>
+        <label class="fld">截止时间<span class="req">*</span></label>
+        <input v-model="form.deadline" class="fld-in" type="datetime-local" data-testid="train-form-deadline" />
+        <p v-if="fieldErrors.deadline" class="hint err" data-testid="train-form-deadline-error">{{ fieldErrors.deadline }}</p>
+        <label class="fld">学习资料<span class="req">*</span></label>
+        <div v-if="publishedMaterials.length" class="mat-pick" data-testid="train-form-materials">
           <label v-for="m in publishedMaterials" :key="m.id" class="mat-opt">
             <input v-model="form.materialIds" type="checkbox" :value="m.id" />
             {{ m.title }} <small class="mono">#{{ m.id }}</small>
           </label>
         </div>
         <p v-else class="hint">暂无已发布资料，请先在资料库发布</p>
-        <label class="fld">指派用户 ID（逗号）</label>
-        <input v-model="form.userIdsText" class="fld-in" placeholder="如 1" />
-        <label class="fld">截止时间 ISO</label>
-        <input v-model="form.deadline" class="fld-in" placeholder="2026-12-31T18:00:00+08:00" />
-        <label class="fld">确认方式</label>
-        <select v-model="form.confirmType" class="fld-in">
+        <p v-if="fieldErrors.material" class="hint err" data-testid="train-form-material-error">{{ fieldErrors.material }}</p>
+        <label class="fld">确认方式<span class="req">*</span></label>
+        <select v-model="form.confirmType" class="fld-in" data-testid="train-form-confirm">
           <option value="DURATION">学时达标</option>
           <option value="QUIZ">自测问卷</option>
         </select>
         <div v-if="form.confirmType === 'QUIZ'" class="quiz-editor">
-          <p class="hint">手工组卷：每题 1 分。及格分是需要答对的题数，不能超过题目数。</p>
-          <label class="fld">及格分（答对题数）</label>
-          <input v-model.number="form.passScore" class="fld-in" type="number" min="1" />
+          <p class="hint">试卷满分 100，各题平均分配。及格分填写 0～100。</p>
+          <label class="fld">及格分（百分制）</label>
+          <input v-model.number="form.passScore" class="fld-in" type="number" min="0" max="100" data-testid="train-form-pass-score" />
           <div v-for="(q, qi) in form.quiz" :key="qi" class="quiz-block" :data-qi="qi">
             <label class="fld">题目 {{ qi + 1 }}</label>
             <input v-model="q.question" class="fld-in" placeholder="请输入题目" />
@@ -170,14 +258,15 @@
         <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-task-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="train-task-submit" @click="submit">提交任务</button>
         </div>
       </div>
     </div>
 
     <div v-if="showRecords" class="modal-mask" @click.self="showRecords = false">
-      <div class="card" style="width: 640px; padding: 20px; max-height: 85vh; overflow: auto">
+      <div class="card" style="width: 880px; padding: 20px; max-height: 85vh; overflow: auto">
         <h3 style="margin: 0 0 8px">学习记录 · {{ recordsTaskName }}</h3>
+        <p class="hint" data-testid="train-record-makeup-note">逾期仍可补学，计入完成率分母</p>
         <form class="qbar" @submit.prevent="loadRecords">
           <select v-model="recordFilters.confirmStatus" data-testid="train-record-filter-status">
             <option value="">全部确认状态</option>
@@ -198,6 +287,8 @@
               <th>进度</th>
               <th>确认状态</th>
               <th>得分</th>
+              <th>开始</th>
+              <th>完成</th>
               <th>逾期</th>
               <th v-if="recordsConfirmType === 'QUIZ'">操作</th>
             </tr>
@@ -226,7 +317,7 @@
               <td>{{ r.userName || r.userId }}</td>
               <td>{{ r.deptName || '未分配' }}</td>
               <td class="num">{{ r.progress }}%</td>
-              <td>{{ r.confirmStatus }}</td>
+              <td>{{ confirmStatusLabel(r.confirmStatus) }}</td>
               <td class="num">
                 <span
                   v-if="recordsConfirmType === 'QUIZ' && r.confirmScore == null"
@@ -234,6 +325,8 @@
                 >暂无成绩</span>
                 <template v-else>{{ r.confirmScore == null ? '—' : r.confirmScore }}</template>
               </td>
+              <td class="mono">{{ fmtBj(r.startedAt) }}</td>
+              <td class="mono">{{ r.finishedAt ? fmtBj(r.finishedAt) : '—' }}</td>
               <td>
                 <span v-if="r.isOverdue" data-testid="train-record-overdue">已逾期 {{ r.overdueDays || '' }}天</span>
                 <span v-else>—</span>
@@ -274,12 +367,16 @@ type Row = {
   taskNo: string
   taskName: string
   materialIds?: number[]
+  assignScope?: string
   assignTargetUserIds?: number[]
+  assignTargetPositionCodes?: string[]
   materialCount: number
+  finishedCount?: number
   assignedCount: number
   finishRate: number
   confirmType: string
   deadline: string
+  createdAt?: string
   status: string
   passScore?: number
   quiz?: QuizDraft[]
@@ -290,11 +387,26 @@ const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
+const showAi = ref(false)
+const aiStep = ref(1)
+const aiError = ref('')
+const aiBusy = ref(false)
+const aiMaterialIds = ref<number[]>([])
+const aiCount = ref(10)
+const aiDifficulty = ref('MEDIUM')
+const aiDraftId = ref('')
+const aiQuestions = ref<Array<{ stem?: string; question?: string; type?: string; options?: string[]; answerIndex?: number }>>([])
 const editingId = ref(0)
 const formError = ref('')
 const filters = reactive({ taskName: '', status: '', confirmType: '' })
 type MatPick = { id: number; title: string }
+type PersonOpt = { id: number; nickname: string }
+type PositionOpt = { code: string; name: string }
 const publishedMaterials = ref<MatPick[]>([])
+const people = ref<PersonOpt[]>([])
+const assignPositions = ref<PositionOpt[]>([])
+const assignPreview = ref(0)
+const fieldErrors = reactive({ taskName: '', target: '', deadline: '', material: '' })
 const showRecords = ref(false)
 const recordsLoading = ref(false)
 const recordsTaskId = ref(0)
@@ -309,11 +421,13 @@ const recordRows = ref<
     progress: number
     confirmStatus: string
     confirmScore: number | null
+    startedAt?: string
+    finishedAt?: string
     isOverdue: boolean
     overdueDays: number
   }>
 >([])
-const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 7 : 6))
+const recordsColspan = computed(() => (recordsConfirmType.value === 'QUIZ' ? 9 : 8))
 const userStore = useUserStore()
 
 function isSelfRecord(userId: number) {
@@ -338,7 +452,7 @@ const filterSummary = computed(() => {
 const recordFilterOn = computed(() => Boolean(recordFilters.confirmStatus || recordFilters.overdueOnly))
 
 const mustAnswerAll = computed(
-  () => form.confirmType === 'QUIZ' && form.quiz.length > 0 && form.passScore === form.quiz.length,
+  () => form.confirmType === 'QUIZ' && form.quiz.length > 0 && Number(form.passScore) === 100,
 )
 
 type QuizDraft = { question: string; options: string[]; answerIndex: number }
@@ -350,10 +464,12 @@ function blankQuestion(): QuizDraft {
 const form = reactive({
   taskName: '',
   materialIds: [] as number[],
-  userIdsText: '1',
-  deadline: '2026-12-31T18:00:00+08:00',
+  assignScope: 'BY_USER',
+  userIds: [] as number[],
+  positionCodes: [] as string[],
+  deadline: '',
   confirmType: 'DURATION',
-  passScore: 1,
+  passScore: 60,
   quiz: [blankQuestion()] as QuizDraft[],
 })
 
@@ -363,6 +479,41 @@ function confirmLabel(value: string) {
   return value
 }
 
+function statusLabel(value: string) {
+  if (value === 'IN_PROGRESS') return '进行中'
+  if (value === 'FINISHED') return '已结束'
+  return value
+}
+
+function confirmStatusLabel(value: string) {
+  if (value === 'CONFIRMED') return '已确认'
+  if (value === 'NOT_CONFIRMED') return '未确认'
+  return value
+}
+
+function assignScopeLabel(value?: string) {
+  if (value === 'BY_POSITION') return '按岗位'
+  if (value === 'BY_USER') return '按人'
+  return value || '—'
+}
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
 function addQuestion() {
   form.quiz.push(blankQuestion())
 }
@@ -370,7 +521,6 @@ function addQuestion() {
 function removeQuestion(index: number) {
   if (form.quiz.length <= 1) return
   form.quiz.splice(index, 1)
-  if (form.passScore > form.quiz.length) form.passScore = form.quiz.length
 }
 
 function addOption(questionIndex: number) {
@@ -398,17 +548,70 @@ function quizError(): string {
     if (new Set(options).size !== options.length) return '选项内容不能重复'
     if (question.answerIndex < 0 || question.answerIndex >= options.length) return '请设定正确答案'
   }
-  if (!form.passScore || form.passScore < 1 || form.passScore > form.quiz.length) {
-    return '及格分须在 1 到题目数之间'
+  const passScore = Number(form.passScore)
+  if (!Number.isInteger(passScore) || passScore < 0 || passScore > 100) {
+    return '及格分须在 0 到 100 之间'
   }
   return ''
 }
 
 function defaultDeadline() {
-  const d = new Date()
-  d.setMonth(d.getMonth() + 3)
+  const d = new Date(Date.now() + 7 * 24 * 3600 * 1000)
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00:00+08:00`
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00`
+}
+
+function toLocalDeadline(raw: string) {
+  if (!raw) return defaultDeadline()
+  return raw.slice(0, 16)
+}
+
+function clearFieldErrors() {
+  fieldErrors.taskName = ''
+  fieldErrors.target = ''
+  fieldErrors.deadline = ''
+  fieldErrors.material = ''
+}
+
+async function loadPeople() {
+  try {
+    const res = await http.get('/system/user/page', { params: { pageNo: 1, pageSize: 50, status: 'ENABLED' } })
+    people.value = (res.data.data.list || []).map((row: { id: string | number; nickname?: string; username?: string }) => ({
+      id: Number(row.id),
+      nickname: row.nickname || row.username || `用户${row.id}`,
+    }))
+  } catch {
+    people.value = []
+  }
+}
+
+async function loadAssignPositions() {
+  try {
+    const res = await http.get('/train/material/positions')
+    assignPositions.value = res.data.data || []
+  } catch {
+    assignPositions.value = []
+  }
+}
+
+async function refreshAssignPreview() {
+  if (form.assignScope !== 'BY_POSITION' || !form.positionCodes.length) {
+    assignPreview.value = 0
+    return
+  }
+  try {
+    const res = await http.get('/train/task/assign-preview', {
+      params: { positionCodes: form.positionCodes.join(',') },
+    })
+    assignPreview.value = Number(res.data.data?.count || 0)
+  } catch {
+    assignPreview.value = 0
+  }
+}
+
+function onScopeChange() {
+  fieldErrors.target = ''
+  void refreshAssignPreview()
 }
 
 async function loadPublishedMaterials() {
@@ -541,13 +744,12 @@ function openEdit(row: Row) {
   editingId.value = row.id
   form.taskName = row.taskName
   form.materialIds = [...(row.materialIds || [])]
-  form.userIdsText = (row.assignTargetUserIds && row.assignTargetUserIds.length
-    ? row.assignTargetUserIds
-    : [1]
-  ).join(',')
-  form.deadline = row.deadline || defaultDeadline()
+  form.assignScope = row.assignScope || 'BY_USER'
+  form.userIds = [...(row.assignTargetUserIds || [])]
+  form.positionCodes = [...(row.assignTargetPositionCodes || [])]
+  form.deadline = toLocalDeadline(row.deadline || '')
   form.confirmType = row.confirmType || 'DURATION'
-  form.passScore = row.passScore || 1
+  form.passScore = row.passScore ?? 60
   form.quiz =
     row.quiz && row.quiz.length
       ? row.quiz.map((question) => ({
@@ -557,61 +759,147 @@ function openEdit(row: Row) {
         }))
       : [blankQuestion()]
   formError.value = ''
+  clearFieldErrors()
   void loadPublishedMaterials()
+  void loadPeople()
+  void loadAssignPositions()
+  void refreshAssignPreview()
   showForm.value = true
+}
+
+function openAi() {
+  aiStep.value = 1
+  aiError.value = ''
+  aiMaterialIds.value = []
+  aiCount.value = 10
+  aiDifficulty.value = 'MEDIUM'
+  aiDraftId.value = ''
+  aiQuestions.value = []
+  showAi.value = true
+  void loadPublishedMaterials()
+}
+
+async function aiNext() {
+  aiError.value = ''
+  if (aiStep.value === 1) {
+    if (!aiMaterialIds.value.length) {
+      aiError.value = '请至少选择 1 份已发布资料'
+      return
+    }
+    aiStep.value = 2
+    return
+  }
+  if (aiCount.value < 5 || aiCount.value > 30) {
+    aiError.value = '题量须在 5 到 30'
+    return
+  }
+  aiStep.value = 3
+  aiBusy.value = true
+  try {
+    const res = await http.post('/train/quiz/ai-generate', {
+      materialIds: [...aiMaterialIds.value],
+      questionCount: aiCount.value,
+      difficulty: aiDifficulty.value,
+    })
+    aiDraftId.value = res.data.data.draftId
+    aiQuestions.value = res.data.data.questions || []
+    aiStep.value = 4
+  } catch (err) {
+    aiError.value = errorMessage(err)
+    aiStep.value = 2
+  } finally {
+    aiBusy.value = false
+  }
+}
+
+async function adoptAi() {
+  if (!aiDraftId.value) return
+  aiBusy.value = true
+  aiError.value = ''
+  try {
+    const res = await http.post('/train/quiz/ai-adopt', { draftId: aiDraftId.value })
+    const quiz = (res.data.data.quiz || []) as QuizDraft[]
+    const passScore = Number(res.data.data.passScore ?? 60)
+    openCreate()
+    form.confirmType = 'QUIZ'
+    form.materialIds = [...aiMaterialIds.value]
+    form.quiz = quiz.map((question) => ({
+      question: question.question,
+      options: [...(question.options || [])],
+      answerIndex: question.answerIndex || 0,
+    }))
+    form.passScore = passScore
+    showAi.value = false
+  } catch (err) {
+    aiError.value = errorMessage(err)
+  } finally {
+    aiBusy.value = false
+  }
 }
 
 function openCreate() {
   editingId.value = 0
   form.taskName = ''
   form.materialIds = []
-  form.userIdsText = '1'
+  form.assignScope = 'BY_USER'
+  form.userIds = []
+  form.positionCodes = []
   form.deadline = defaultDeadline()
   form.confirmType = 'DURATION'
-  form.passScore = 1
+  form.passScore = 60
   form.quiz = [blankQuestion()]
   formError.value = ''
+  clearFieldErrors()
+  assignPreview.value = 0
   void loadPublishedMaterials()
+  void loadPeople()
+  void loadAssignPositions()
   showForm.value = true
 }
 
 async function submit() {
   formError.value = ''
+  clearFieldErrors()
   const materialIds = [...form.materialIds]
-  const userIds = parseIds(form.userIdsText)
-  if (!form.taskName.trim()) {
-    formError.value = '任务名称必填'
-    return
+  let bad = false
+  const name = form.taskName.trim()
+  if (!name) {
+    fieldErrors.taskName = '必填项，请填写'
+    bad = true
+  } else if (name.length > 128) {
+    fieldErrors.taskName = '任务名称不超过 128 字'
+    formError.value = '任务名称不超过 128 字'
+    bad = true
   }
   if (!materialIds.length) {
-    formError.value = '请选择已发布资料'
-    return
+    fieldErrors.material = '必填项，请填写'
+    bad = true
   }
-  if (!form.userIdsText.trim()) {
-    formError.value = '请填写指派用户'
-    return
+  if (form.assignScope === 'BY_USER' && !form.userIds.length) {
+    fieldErrors.target = '必填项，请填写'
+    bad = true
   }
-  if (!userIds.length) {
-    formError.value = '指派用户 ID 无效'
-    return
+  if (form.assignScope === 'BY_POSITION' && !form.positionCodes.length) {
+    fieldErrors.target = '必填项，请填写'
+    bad = true
   }
-  const deadlineBad = deadlineFormatError(form.deadline)
-  if (deadlineBad) {
-    formError.value = deadlineBad
-    return
+  if (!form.deadline) {
+    fieldErrors.deadline = '必填项，请填写'
+    bad = true
   }
-  if (form.taskName.trim().length > 128) {
-    formError.value = '任务名称不超过 128 字'
+  if (bad) {
+    formError.value = formError.value || '请完善必填项'
     return
   }
   const payload: Record<string, unknown> = {
-    taskName: form.taskName.trim(),
+    taskName: name,
     materialIds,
-    assignScope: 'BY_USER',
-    assignTargetUserIds: userIds,
+    assignScope: form.assignScope,
     deadline: form.deadline,
     confirmType: form.confirmType,
   }
+  if (form.assignScope === 'BY_POSITION') payload.assignTargetPositionCodes = [...form.positionCodes]
+  else payload.assignTargetUserIds = [...form.userIds]
   if (form.confirmType === 'QUIZ') {
     const invalid = quizError()
     if (invalid) {
@@ -674,6 +962,13 @@ onMounted(async () => {
 .fld-in {
   width: 100%;
   box-sizing: border-box;
+}
+.req {
+  color: var(--red);
+  margin-left: 2px;
+}
+.hint.err {
+  color: var(--red);
 }
 .mat-pick {
   max-height: 160px;

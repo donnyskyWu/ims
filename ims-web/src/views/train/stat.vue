@@ -5,8 +5,14 @@
         <h1>培训统计看板</h1>
         <div class="sub">TRAIN-003 · BR-102 完成率 / 逾期督办 · 02 TRAIN</div>
       </div>
-      <router-link class="btn btn-sec btn-sm" to="/ims/train/task">学习任务</router-link>
+      <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-stat-export" @click="exportOverdue">
+          导出逾期清单
+        </button>
+        <router-link class="btn btn-sec btn-sm" to="/ims/train/task">学习任务</router-link>
+      </div>
     </div>
+    <p v-if="exportMsg" class="hint" data-testid="train-stat-export-msg">{{ exportMsg }}</p>
 
     <form class="qbar" @submit.prevent="reloadAll">
       <button
@@ -41,7 +47,7 @@
         data-testid="train-stat-range"
       />
       <span class="sp"></span>
-      <button class="btn btn-pri btn-sm" type="submit">刷新</button>
+      <button class="btn btn-pri btn-sm" type="submit" data-testid="train-stat-refresh">刷新</button>
     </form>
     <p v-if="rangeError" class="hint" style="color: var(--red)" data-testid="train-stat-range-error">{{ rangeError }}</p>
 
@@ -72,13 +78,14 @@
               <div class="d">BR-102 目标 &gt;90%</div>
             </div>
             <div class="card stat">
-              <span class="l">按任务条目</span>
-              <div class="n">{{ finish.byTask.length }}</div>
-              <div class="d">Top10 完成率</div>
+              <span class="l">逾期未完成</span>
+              <div class="n" data-testid="train-stat-overdue-count">{{ overdueTotal ?? '—' }}</div>
+              <div class="d">未确认且已过截止时间</div>
             </div>
             <div class="card stat">
-              <span class="l">按部门</span>
-              <div class="n">{{ finish.byDept.length }}</div>
+              <span class="l">统计截至</span>
+              <div class="n as-of" data-testid="train-stat-as-of-card">{{ asOf || '—' }}</div>
+              <div class="d">每日凌晨汇总，刷新可重算</div>
             </div>
           </div>
 
@@ -92,6 +99,7 @@
                   <tr>
                     <th>任务编号</th>
                     <th>任务名称</th>
+                    <th data-testid="train-stat-task-published-h">发布时间</th>
                     <th>应完成</th>
                     <th>已完成</th>
                     <th>完成率</th>
@@ -99,14 +107,15 @@
                 </thead>
                 <tbody>
                   <tr v-if="loading">
-                    <td colspan="5"><div class="empty"><div class="et">加载中</div></div></td>
+                    <td colspan="6"><div class="empty"><div class="et">加载中</div></div></td>
                   </tr>
                   <tr v-else-if="!finish?.byTask?.length">
-                    <td colspan="5"><div class="empty"><div class="et">暂无统计数据</div></div></td>
+                    <td colspan="6"><div class="empty"><div class="et">暂无统计数据</div></div></td>
                   </tr>
                   <tr v-for="row in (finish?.byTask || []).slice(0, 10)" v-else :key="row.taskNo">
                     <td class="mono">{{ row.taskNo }}</td>
                     <td>{{ row.taskName }}</td>
+                    <td class="mono" data-testid="train-stat-task-published">{{ fmtBj(row.createdAt) }}</td>
                     <td class="num">{{ row.assignedCount }}</td>
                     <td class="num">{{ row.finishedCount }}</td>
                     <td :style="{ color: rateColor(row.finishRate) }">{{ row.finishRate }}%</td>
@@ -331,12 +340,7 @@
             <input v-model="overdueTaskId" placeholder="任务 ID" style="width: 120px" data-testid="train-stat-overdue-task" />
             <input v-model="overdueDeptId" placeholder="部门 ID" style="width: 120px" data-testid="train-stat-overdue-dept" />
             <button class="btn btn-pri btn-sm" type="submit">筛选</button>
-            <span class="sp"></span>
-            <button class="btn btn-sec btn-sm" type="button" data-testid="train-stat-export" @click="exportOverdue">
-              导出 Excel
-            </button>
           </form>
-          <p v-if="exportMsg" class="hint" data-testid="train-stat-export-msg">{{ exportMsg }}</p>
           <p v-if="panelError" class="hint" style="color: var(--red)">{{ panelError }}</p>
           <div class="tbl-block">
             <div class="tbl-wrap">
@@ -484,6 +488,7 @@ import { http } from '../../api/http'
 type FinishRow = {
   taskNo: string
   taskName: string
+  createdAt?: string
   assignedCount: number
   finishedCount: number
   finishRate: number
@@ -505,6 +510,7 @@ type PersonRow = {
 }
 type FinishResp = {
   totalFinishRate: number
+  asOf?: string
   byTask: FinishRow[]
   byDept: DeptFinishRow[]
   byPerson: PersonRow[]
@@ -561,6 +567,7 @@ const rankRows = ref<RankRow[]>([])
 const rankDimension = ref<'DEPT' | 'PERSON'>('DEPT')
 const topN = ref(10)
 const overdueRows = ref<OverdueRow[]>([])
+const overdueTotal = ref<number | null>(null)
 const overdueTaskId = ref('')
 const overdueDeptId = ref('')
 const exportMsg = ref('')
@@ -582,7 +589,7 @@ const personPageRows = computed(() => {
   return all.slice(start, start + personPageSize)
 })
 
-const asOf = computed(() => deptRows.value[0]?.statDate || '')
+const asOf = computed(() => finish.value?.asOf || deptRows.value[0]?.statDate || '')
 
 const overdueFilterOn = computed(() => Boolean(overdueTaskId.value.trim() || overdueDeptId.value.trim()))
 
@@ -612,6 +619,24 @@ const deptDrawerAlert = computed(() => deptDrawerRows.value.some((row) => row.al
 const deptDrawerTrend = computed(() =>
   [...deptDrawerRows.value].sort((a, b) => a.statDate.localeCompare(b.statDate)),
 )
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(raw)) return raw
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
 
 function fmtDate(d: Date) {
   const y = d.getFullYear()
@@ -782,6 +807,15 @@ async function fetchOverduePage(pageNo: number) {
   return res.data.data as { list: OverdueRow[]; total: number }
 }
 
+async function loadOverdueTotal() {
+  try {
+    const res = await http.get('/train/stat/overdue', { params: { pageNo: 1, pageSize: 1 } })
+    overdueTotal.value = Number(res.data.data?.total || 0)
+  } catch {
+    overdueTotal.value = null
+  }
+}
+
 async function loadOverdue() {
   panelLoading.value = true
   panelError.value = ''
@@ -789,6 +823,7 @@ async function loadOverdue() {
   try {
     const data = await fetchOverduePage(1)
     overdueRows.value = data.list || []
+    if (!overdueFilterOn.value) overdueTotal.value = Number(data.total || 0)
   } catch (err) {
     panelError.value = errText(err, '逾期清单加载失败')
     overdueRows.value = []
@@ -905,9 +940,8 @@ async function reloadAll() {
   } else {
     rangeError.value = ''
   }
-  await Promise.all([loadFinishRate(), loadHeat()])
-  if (tab.value === 'dept') await loadDept()
-  else if (tab.value === 'rank') await loadRank()
+  await Promise.all([loadFinishRate(), loadHeat(), loadDept(), loadOverdueTotal()])
+  if (tab.value === 'rank') await loadRank()
   else if (tab.value === 'overdue') await loadOverdue()
 }
 
@@ -917,6 +951,10 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.as-of {
+  font-size: 18px;
+  line-height: 1.3;
+}
 .stat-body {
   display: flex;
   gap: 16px;

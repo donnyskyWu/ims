@@ -488,17 +488,16 @@ export async function registerWorkTaskRowViaUi(
   expect((confirmBody.data?.generatedTaskCount ?? 0) >= 1).toBeTruthy()
 }
 
-/** TRAIN 资料库 · 发布 DOC 资料（纯 UI） */
+/** TRAIN 资料库 · 发布 DOC 资料（纯 UI · 岗位多选 + 本地文件） */
 export async function createTrainMaterialViaUi(
   page: Page,
   opts: { title: string },
 ): Promise<{ materialId: number }> {
   await page.goto('/ims/train/material')
   await expect(page.locator('h1')).toHaveText('培训资料库', { timeout: 15_000 })
-
-  const firstCate = page.locator('.tree button.linkish').first()
-  await expect(firstCate).toBeVisible({ timeout: 15_000 })
-  await firstCate.click()
+  await expect(page.getByTestId('train-position-node').filter({ hasText: '全员通用' })).toBeVisible({
+    timeout: 15_000,
+  })
 
   await page.getByRole('button', { name: '上传资料' }).click()
   const modal = page.locator('.modal-mask .card').filter({ hasText: '上传资料' })
@@ -507,9 +506,30 @@ export async function createTrainMaterialViaUi(
     .locator('label.fld', { hasText: '标题' })
     .locator('xpath=following-sibling::input[1]')
     .fill(opts.title)
+  await modal
+    .getByTestId('train-form-positions')
+    .locator('label')
+    .filter({ hasText: '全员通用' })
+    .locator('input')
+    .check()
+
+  const fileResp = page.waitForResponse(
+    (r) => r.url().includes('/train/material/file') && r.request().method() === 'POST' && r.status() === 200,
+  )
+  await modal.getByTestId('train-material-file').setInputFiles({
+    name: 'train-e2e.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n'),
+  })
+  const uploaded = (await (await fileResp).json()) as { code: number }
+  expect(uploaded.code).toBe(0)
 
   const createResp = page.waitForResponse(
-    (r) => r.url().includes('/train/material') && r.request().method() === 'POST' && r.status() === 200,
+    (r) =>
+      r.url().includes('/train/material') &&
+      !r.url().includes('/train/material/file') &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
   )
   await modal.getByRole('button', { name: '发布' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: { id?: number } }
@@ -521,10 +541,15 @@ export async function createTrainMaterialViaUi(
   return { materialId: materialId! }
 }
 
+/** 匹配「#12」时不要命中「#120」。 */
+export function hashId(id: number | string) {
+  return new RegExp(`#${id}(?!\\d)`)
+}
+
 /** TRAIN 学习任务 · 下达任务（纯 UI · 资料多选） */
 export async function createTrainTaskViaUi(
   page: Page,
-  opts: { taskName: string; materialIds: number[]; assignUserIds: number[] },
+  opts: { taskName: string; materialIds: number[]; assignUserIds?: number[]; assignAnyoneExcept?: number },
 ): Promise<{ taskId: number }> {
   await page.goto('/ims/train/task')
   await expect(page.locator('h1')).toHaveText('学习任务管理', { timeout: 15_000 })
@@ -538,14 +563,30 @@ export async function createTrainTaskViaUi(
     .fill(opts.taskName)
 
   for (const mid of opts.materialIds) {
-    await modal.locator('label.mat-opt').filter({ hasText: `#${mid}` }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(mid) }).locator('input[type="checkbox"]').check()
   }
-  await modal.locator('input[placeholder="如 1"]').fill(opts.assignUserIds.join(','))
+  if (opts.assignAnyoneExcept != null) {
+    const labels = modal.getByTestId('train-form-users').locator('label')
+    const count = await labels.count()
+    let picked = false
+    for (let index = 0; index < count; index += 1) {
+      const text = (await labels.nth(index).innerText()).replace(/\s+/g, ' ')
+      if (!hashId(opts.assignAnyoneExcept).test(text)) {
+        await labels.nth(index).locator('input').check()
+        picked = true
+        break
+      }
+    }
+    expect(picked).toBeTruthy()
+  }
+  for (const uid of opts.assignUserIds || []) {
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(uid) }).locator('input').check()
+  }
 
   const createResp = page.waitForResponse(
-    (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
+    (r) => r.url().includes('/train/task') && !r.url().includes('/assign-preview') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: { id?: number } }
   expect(body.code).toBe(0)
   const taskId = body.data?.id
@@ -555,21 +596,26 @@ export async function createTrainTaskViaUi(
   return { taskId: taskId! }
 }
 
-/** TRAIN 学习中心 · 标记学完并确认（纯 UI） */
+/** TRAIN 学习中心 · 累计要求学时后确认（纯 UI，用时钟快进心跳） */
 export async function completeTrainStudyViaUi(page: Page, taskId: number, taskName: string) {
+  await page.clock.install()
   await page.goto(`/ims/train/study/${taskId}`)
   await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
   await expect(page.getByText(taskName)).toBeVisible()
+  const confirmBtn = page.getByTestId('train-study-confirm')
+  await expect(confirmBtn).toBeDisabled()
+  await page.getByTestId('train-study-start').click()
 
-  const progressResp = page.waitForResponse(
-    (r) =>
-      r.url().includes(`/train/task/${taskId}/progress`) &&
-      r.request().method() === 'PUT' &&
-      r.status() === 200,
-  )
-  await page.getByRole('button', { name: '标记当前资料已学完' }).click()
-  const progBody = (await (await progressResp).json()) as { code: number }
-  expect(progBody.code).toBe(0)
+  const progressed = page.waitForResponse(async (r) => {
+    if (!r.url().includes(`/train/task/${taskId}/progress`) || r.request().method() !== 'PUT' || r.status() !== 200) {
+      return false
+    }
+    const body = (await r.json()) as { code?: number; data?: { progress?: number } }
+    return body.code === 0 && (body.data?.progress ?? 0) >= 100
+  })
+  await page.clock.runFor(75_000)
+  await progressed
+  await expect(confirmBtn).toBeEnabled({ timeout: 15_000 })
 
   const confirmResp = page.waitForResponse(
     (r) =>
@@ -577,11 +623,11 @@ export async function completeTrainStudyViaUi(page: Page, taskId: number, taskNa
       r.request().method() === 'POST' &&
       r.status() === 200,
   )
-  await page.getByRole('button', { name: '完成确认' }).click()
+  await confirmBtn.click()
   const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { confirmStatus?: string } }
   expect(confirmBody.code).toBe(0)
   expect(confirmBody.data?.confirmStatus).toBe('CONFIRMED')
-  await expect(page.getByText('学习已完成 · CONFIRMED')).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('学习已完成 · 已确认')).toBeVisible({ timeout: 10_000 })
 }
 
 /** S3 FIN closure · 与 `live_fin_e2e_seed` 一致 */

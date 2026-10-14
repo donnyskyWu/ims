@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT = '/opt/cursor/artifacts'
 
@@ -51,7 +51,7 @@ test.describe('train local tails', () => {
 
     await page.locator('tr', { hasText: durationName }).getByRole('button', { name: '学习记录' }).click()
     const records = page.locator('.modal-mask .card').filter({ hasText: '学习记录' })
-    await expect(records.getByText('NOT_CONFIRMED')).toBeVisible()
+    await expect(records.getByRole('cell', { name: '未确认' })).toBeVisible()
     await records.getByTestId('train-record-filter-status').selectOption('CONFIRMED')
     const emptyRecords = page.waitForResponse(
       (r) => r.url().includes('/train/task/records') && r.url().includes('confirmStatus=CONFIRMED') && r.status() === 200,
@@ -61,7 +61,7 @@ test.describe('train local tails', () => {
     await expect(records.getByTestId('train-record-empty')).toContainText('没有符合筛选的学习记录')
     await page.screenshot({ path: `${SHOT}/train-record-filter-empty.png`, fullPage: true })
     await records.getByTestId('train-record-clear').click()
-    await expect(records.getByText('NOT_CONFIRMED')).toBeVisible()
+    await expect(records.getByRole('cell', { name: '未确认' })).toBeVisible()
     await records.getByRole('button', { name: '关闭' }).click()
 
     await page.goto(`/ims/train/study/${await taskIdOf(page, quizName)}`)
@@ -105,7 +105,7 @@ test.describe('train local tails', () => {
     await queryTasks(page)
     const overdueRow = page.locator('tr', { hasText: 'E2E-TRAIN-OD-76' })
     await expect(overdueRow).toBeVisible({ timeout: 15_000 })
-    await overdueRow.getByRole('button', { name: '去学习' }).click()
+    await overdueRow.getByRole('button', { name: '进入学习' }).click()
     await expect(page.getByTestId('train-study-overdue')).toContainText('本任务已逾期')
     await expect(page.getByTestId('train-study-overdue')).toContainText('补学仍计入完成率统计')
     await page.screenshot({ path: `${SHOT}/train-study-overdue.png`, fullPage: true })
@@ -144,14 +144,14 @@ async function composeQuiz(
   const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
   await expect(modal).toBeVisible()
   await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(opts.quizName)
-  await modal.locator('label.mat-opt').filter({ hasText: `#${opts.materialId}` }).locator('input[type="checkbox"]').check()
-  await modal.locator('input[placeholder="如 1"]').fill('1')
-  await modal.locator('select').selectOption('QUIZ')
+  await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(opts.materialId) }).locator('input[type="checkbox"]').check()
+  await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
+  await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
   const first = modal.locator('.quiz-block').nth(0)
   await first.locator('input[placeholder="请输入题目"]').fill(opts.questionA)
   await first.locator('input[placeholder="选项内容"]').nth(0).fill('相同')
   await first.locator('input[placeholder="选项内容"]').nth(1).fill('相同')
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   await expect(modal.getByTestId('train-task-form-error')).toHaveText('选项内容不能重复')
   await page.screenshot({ path: `${SHOT}/train-quiz-duplicate-option.png`, fullPage: true })
 
@@ -162,16 +162,16 @@ async function composeQuiz(
   await second.locator('input[placeholder="选项内容"]').nth(0).fill('是')
   await second.locator('input[placeholder="选项内容"]').nth(1).fill('否')
   await second.locator('input[type="radio"]').nth(1).check()
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   await expect(modal.getByTestId('train-task-form-error')).toHaveText('题目不能重复')
 
   await second.locator('input[placeholder="请输入题目"]').fill(opts.questionB)
-  await modal.locator('input[type="number"]').fill('2')
+  await modal.getByTestId('train-form-pass-score').fill('100')
   await expect(modal.getByTestId('train-quiz-all-correct')).toHaveText('须全部答对才能通过')
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await modal.getByRole('button', { name: '保存' }).click()
+  await modal.getByRole('button', { name: '提交任务' }).click()
   const created = (await (await createResp).json()) as { code: number }
   expect(created.code).toBe(0)
   await expect(page.locator('tr', { hasText: opts.quizName })).toBeVisible({ timeout: 15_000 })

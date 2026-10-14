@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { test, expect } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, createTrainTaskViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT_DIR = '/opt/cursor/artifacts/train-233'
 
@@ -24,8 +24,8 @@ test.describe('train local tails 233', () => {
     await expect(page.locator('h1')).toHaveText('培训资料库', { timeout: 15_000 })
     await page.getByRole('button', { name: '上传资料' }).click()
     const editor = page.locator('.modal-mask .card').filter({ hasText: '上传资料' })
-    await expect(editor.getByTestId('train-material-position-hint')).toContainText(/关联岗位 R\d/)
-    await expect(editor.getByTestId('train-material-position-hint')).toContainText('发布后该岗位学员可见')
+    await expect(editor.getByTestId('train-form-positions')).toContainText('全员通用')
+    await expect(editor.getByTestId('train-form-positions')).toContainText('直播运营')
     await shot(page, '01-position-hint')
     expect(pageErrors).toEqual([])
   })
@@ -42,23 +42,21 @@ test.describe('train local tails 233', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const modal = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await modal.locator('label.fld', { hasText: '任务名称' }).locator('xpath=following-sibling::input[1]').fill(`E2E 表单 ${label}`)
-    await modal.locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input[type="checkbox"]').check()
-    await modal.locator('input[placeholder="如 1"]').fill('1')
-    await modal.locator('input[placeholder="2026-12-31T18:00:00+08:00"]').fill('昨天')
-    await modal.getByRole('button', { name: '保存' }).click()
-    await expect(modal.getByTestId('train-task-form-error')).toHaveText('截止时间格式无效')
+    await modal.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(materialId) }).locator('input[type="checkbox"]').check()
+    await modal.getByTestId('train-form-deadline').fill('')
+    await modal.getByRole('button', { name: '提交任务' }).click()
+    await expect(modal.getByTestId('train-form-deadline-error')).toHaveText('必填项，请填写')
     await shot(page, '02-deadline-format')
 
-    await modal.locator('input[placeholder="2026-12-31T18:00:00+08:00"]').fill('2026-12-31T18:00:00+08:00')
-    await modal.locator('input[placeholder="如 1"]').fill('abc')
-    await modal.getByRole('button', { name: '保存' }).click()
-    await expect(modal.getByTestId('train-task-form-error')).toHaveText('指派用户 ID 无效')
+    await modal.getByTestId('train-form-deadline').fill('2026-12-31T18:00')
+    await modal.getByRole('button', { name: '提交任务' }).click()
+    await expect(modal.getByTestId('train-form-target-error')).toHaveText('必填项，请填写')
     await shot(page, '03-assignee-invalid')
 
-    await modal.locator('input[placeholder="如 1"]').fill('1')
-    await modal.locator('select').selectOption('QUIZ')
+    await modal.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
+    await modal.getByTestId('train-form-confirm').selectOption('QUIZ')
     await modal.locator('.quiz-block').first().locator('input[placeholder="请输入题目"]').fill(`空选项 ${label}`)
-    await modal.getByRole('button', { name: '保存' }).click()
+    await modal.getByRole('button', { name: '提交任务' }).click()
     await expect(modal.getByTestId('train-task-form-error')).toHaveText('选项内容不能为空')
     await shot(page, '04-quiz-blank-option')
 
@@ -112,15 +110,17 @@ test.describe('train local tails 233', () => {
       await createTrainTaskViaUi(page, {
         taskName: strangerTask,
         materialIds: [stranger.materialId],
-        assignUserIds: [99999],
+        assignAnyoneExcept: 1,
       })
     ).taskId
 
+    await page.clock.install()
     await page.goto(`/ims/train/study/${strangerTaskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
     await expect(page.getByText(strangerTitle)).toBeVisible()
-    await page.getByRole('button', { name: '标记当前资料已学完' }).click()
-    await expect(page.getByTestId('train-study-action-error')).toHaveText('仅被指派人可学习本任务')
+    await page.getByTestId('train-study-start').click()
+    await page.clock.runFor(16_000)
+    await expect(page.getByTestId('train-study-action-error')).toHaveText('仅被指派人可学习本任务', { timeout: 15_000 })
     await expect(page.getByTestId('train-study-back-workbench')).toBeVisible()
     await shot(page, '06-not-assignee')
 

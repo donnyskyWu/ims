@@ -144,7 +144,7 @@ test.describe('train stat remaining tabs closure', () => {
 
     await overdueRow.getByRole('button', { name: '去督办' }).click()
     await expect(page.getByText('学习记录 · E2E-TRAIN-OD-76')).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.modal-mask').getByText('NOT_CONFIRMED')).toBeVisible()
+    await expect(page.locator('.modal-mask').getByRole('cell', { name: '未确认' })).toBeVisible()
 
     expect(pageErrors).toEqual([])
   })

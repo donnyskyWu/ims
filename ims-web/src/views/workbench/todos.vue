@@ -75,6 +75,14 @@
                 >
                   去考试
                 </router-link>
+                <router-link
+                  v-if="row.taskType === 'train_study'"
+                  class="btn btn-sec btn-sm"
+                  :to="'/ims/train/study/' + row.refId"
+                  data-testid="todo-train-study-entry"
+                >
+                  进入学习
+                </router-link>
                 <button
                   v-if="row.status === 'PENDING' && transferTodoPath(row)"
                   class="btn btn-pri btn-sm"
@@ -174,6 +182,7 @@ const typeNames: Record<string, string> = {
   recharge_verify: '充值核对',
   exam: '考试',
   acct_transfer: '账号流转',
+  train_study: '学习',
 }
 
 const rows = ref<Row[]>([])

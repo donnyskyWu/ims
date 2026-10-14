@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import time
+import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
+from app.content_file import file_url, storage
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.bi_br212 import primary_dept_id
 from app.models import (
+    DictData,
+    ImsFile,
+    OrgEvent,
+    Role,
+    Todo,
     TrainMaterial,
     TrainMaterialCate,
     TrainMaterialVersion,
@@ -22,6 +32,8 @@ from app.models import (
     TrainTask,
     TrainTaskRecord,
     User,
+    UserMapping,
+    UserRole,
 )
 
 router = APIRouter(prefix="/train", tags=["train"])
@@ -32,24 +44,52 @@ MATERIAL_STATUSES = frozenset({"DRAFT", "PUBLISHED", "OFFLINE"})
 ASSIGN_SCOPES = frozenset({"BY_USER", "BY_POSITION"})
 CONFIRM_TYPES = frozenset({"DURATION", "QUIZ"})
 TASK_STATUSES = frozenset({"IN_PROGRESS", "FINISHED"})
+TRAIN_TODO = "train_study"
+TRAIN_REF = "train_task"
+ALL_STAFF = "全员通用"
+DOC_EXTS = frozenset({"pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx"})
+VIDEO_EXTS = frozenset({"mp4", "mov"})
+MAX_MATERIAL_BYTES = 20 * 1024 * 1024
+FILE_MEDIA = {
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "ppt": "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "xls": "application/vnd.ms-excel",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "mp4": "video/mp4",
+    "mov": "video/quicktime",
+}
 
 
 class MaterialBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     title: str
-    cateId: int
+    cateId: int = 0
     materialType: str = "DOC"
     fileKey: str = ""
     linkUrl: str = ""
     positionCodes: list[str] = Field(default_factory=list)
+    requiredMinutes: int = 1
     publish: bool = False
 
 
 def iso(dt: datetime | None) -> str:
+    """Naive values are Beijing wall clock, used for deadlines."""
     if dt is None:
         return ""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=BJ)
+    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+def iso_utc(dt: datetime | None) -> str:
+    """Naive values are UTC instants (created / updated / finished)."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
@@ -179,7 +219,7 @@ def material_versions(db: Session, material_id: int, tenant_id: int) -> list[dic
             "fileKey": row.file_key or None,
             "linkUrl": row.link_url or None,
             "editorName": names.get(row.editor_user_id, ""),
-            "updatedAt": iso(row.updated_at),
+            "updatedAt": iso_utc(row.updated_at),
         }
         for row in rows
     ]
@@ -197,12 +237,13 @@ def material_vo(db: Session, row: TrainMaterial) -> dict:
         "fileKey": row.file_key,
         "linkUrl": row.link_url,
         "positionCodes": codes,
+        "requiredMinutes": int(row.required_minutes or 1),
         "version": row.version,
         "versions": material_versions(db, row.id, row.tenant_id),
         "status": row.status,
         "uploaderUserId": row.uploader_user_id,
         "uploaderName": names.get(row.uploader_user_id, ""),
-        "updatedAt": iso(row.updated_at),
+        "updatedAt": iso_utc(row.updated_at),
     }
 
 
@@ -212,6 +253,50 @@ def resolved_position_codes(body: MaterialBody, cate: TrainMaterialCate) -> list
         return codes
     fallback = (cate.position_code or "").strip()
     return [fallback] if fallback else []
+
+
+def file_ext(name: str) -> str:
+    base = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if "." not in base:
+        return ""
+    return base.rsplit(".", 1)[-1].lower()
+
+
+def allowed_exts(material_type: str) -> frozenset[str]:
+    if material_type == "VIDEO":
+        return VIDEO_EXTS
+    if material_type == "DOC":
+        return DOC_EXTS
+    return frozenset()
+
+
+def file_type_error(material_type: str, file_key: str):
+    ext = file_ext(file_key)
+    if ext not in allowed_exts(material_type):
+        return fail(1001, "类型不支持")
+    return None
+
+
+def resolve_cate(db: Session, tenant_id: int, cate_id: int):
+    ensure_default_cates(db, tenant_id)
+    if cate_id:
+        cate = db.get(TrainMaterialCate, cate_id)
+        if cate is None or cate.deleted or cate.tenant_id != tenant_id:
+            return fail(1101, "分类不存在")
+        return cate
+    child = db.scalar(
+        select(TrainMaterialCate)
+        .where(
+            TrainMaterialCate.deleted == 0,
+            TrainMaterialCate.tenant_id == tenant_id,
+            TrainMaterialCate.parent_id.is_not(None),
+        )
+        .order_by(TrainMaterialCate.id.asc())
+        .limit(1)
+    )
+    if child is None:
+        return fail(1101, "分类不存在")
+    return child
 
 
 def is_http_url(value: str) -> bool:
@@ -233,9 +318,9 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
         return fail(1001, "标题不超过 128 字")
     if body.materialType not in MATERIAL_TYPES:
         return fail(1001, "materialType 无效")
-    cate = db.get(TrainMaterialCate, body.cateId)
-    if cate is None or cate.deleted or cate.tenant_id != tenant_id:
-        return fail(1101, "分类不存在")
+    cate = resolve_cate(db, tenant_id, body.cateId)
+    if not isinstance(cate, TrainMaterialCate):
+        return cate
     if body.materialType == "LINK":
         if not body.linkUrl.strip():
             return fail(1001, "linkUrl 必填")
@@ -243,8 +328,14 @@ def validate_material_body(db: Session, tenant_id: int, body: MaterialBody):
             return fail(1001, "linkUrl 须为 http(s) 地址")
     elif not body.fileKey.strip():
         return fail(1001, "fileKey 必填")
+    else:
+        rejected = file_type_error(body.materialType, body.fileKey)
+        if rejected:
+            return rejected
     if not resolved_position_codes(body, cate):
         return fail(1001, "岗位必填")
+    if body.requiredMinutes < 1 or body.requiredMinutes > 24 * 60:
+        return fail(1001, "要求学时须在 1 到 1440 分钟")
     return cate
 
 
@@ -270,11 +361,12 @@ def archive_material(db: Session, row: TrainMaterial) -> None:
 def apply_material_fields(row: TrainMaterial, body: MaterialBody, cate: TrainMaterialCate, actor: User) -> None:
     codes = resolved_position_codes(body, cate)
     row.title = body.title.strip()
-    row.cate_id = body.cateId
+    row.cate_id = cate.id
     row.material_type = body.materialType
     row.file_key = body.fileKey.strip()
     row.link_url = body.linkUrl.strip()
     row.position_codes = codes
+    row.required_minutes = int(body.requiredMinutes)
     if body.publish:
         row.status = "PUBLISHED"
     elif row.status != "OFFLINE":
@@ -308,6 +400,115 @@ def material_cates(
     return ok(cate_tree_vo(db, tenant_id))
 
 
+def position_catalog(db: Session, tenant_id: int) -> list[dict]:
+    """钉钉岗位字典 + 全员通用 + 资料上已有岗位。数量只计已发布。"""
+    ensure_default_cates(db, tenant_id)
+    labels: dict[str, str] = {ALL_STAFF: ALL_STAFF}
+    roots = list(
+        db.scalars(
+            select(TrainMaterialCate).where(
+                TrainMaterialCate.deleted == 0,
+                TrainMaterialCate.tenant_id == tenant_id,
+                TrainMaterialCate.parent_id.is_(None),
+            )
+        ).all()
+    )
+    for root in roots:
+        code = (root.position_code or "").strip()
+        if code:
+            labels[code] = (root.cate_name or code).strip() or code
+    for label in db.scalars(
+        select(DictData.dict_label).where(
+            DictData.deleted == 0,
+            DictData.status == "ENABLED",
+            DictData.dict_type == "dict_position",
+        )
+    ).all():
+        text = str(label or "").strip()
+        if not text or text in labels or text in labels.values():
+            continue
+        labels[text] = text
+    from app.org_sync import collect_synced_positions
+
+    for name in collect_synced_positions(db):
+        text = (name or "").strip()
+        if not text or text in labels or text in labels.values():
+            continue
+        labels[text] = text
+    counts: dict[str, int] = {code: 0 for code in labels}
+    rows = list(
+        db.scalars(
+            select(TrainMaterial).where(TrainMaterial.deleted == 0, TrainMaterial.tenant_id == tenant_id)
+        ).all()
+    )
+    for row in rows:
+        codes = row.position_codes if isinstance(row.position_codes, list) else []
+        for raw in codes:
+            code = str(raw).strip()
+            if not code:
+                continue
+            labels.setdefault(code, code)
+            if row.status == "PUBLISHED":
+                counts[code] = counts.get(code, 0) + 1
+    ordered = [ALL_STAFF] + sorted(code for code in labels if code != ALL_STAFF)
+    return [
+        {"code": code, "name": labels[code], "materialCount": int(counts.get(code, 0))}
+        for code in ordered
+    ]
+
+
+@router.get("/material/positions")
+def material_positions(
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    return ok(position_catalog(db, tenant_of(actor)))
+
+
+@router.post("/material/file")
+def upload_material_file(
+    file: UploadFile | None = File(default=None),
+    materialType: str = Form(default="DOC"),
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    kind = (materialType or "DOC").strip()
+    if kind not in {"DOC", "VIDEO"}:
+        return fail(1001, "materialType 无效")
+    if file is None or not (file.filename or "").strip():
+        return fail(1001, "请选择文件")
+    name = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].replace("\x00", "").strip()[:200]
+    ext = file_ext(name)
+    if ext not in allowed_exts(kind):
+        return fail(1001, "类型不支持")
+    raw = file.file.read(MAX_MATERIAL_BYTES + 1)
+    if not raw:
+        return fail(1001, "文件为空")
+    if len(raw) > MAX_MATERIAL_BYTES:
+        return fail(5005, "文件超过大小限制")
+    tenant_id = tenant_of(actor)
+    try:
+        file_key = storage.save("material", tenant_id, ext, raw)
+    except OSError:
+        return fail(5005, "文件上传失败，请重试")
+    db.add(
+        ImsFile(
+            file_name=name,
+            file_key=file_key,
+            file_size=len(raw),
+            content_type=FILE_MEDIA.get(ext, "application/octet-stream"),
+            scene="material",
+            sha256=hashlib.sha256(raw).hexdigest(),
+            creator=actor.id,
+            deleted=0,
+            tenant_id=tenant_id,
+            created_at=utcnow(),
+        )
+    )
+    db.flush()
+    return ok({"fileKey": file_key, "fileUrl": file_url(file_key), "fileName": name, "sizeBytes": len(raw)})
+
+
 @router.post("/material")
 def create_material(
     body: MaterialBody,
@@ -321,11 +522,12 @@ def create_material(
     row = TrainMaterial(
         material_no=next_material_no(db, tenant_id),
         title=body.title.strip(),
-        cate_id=body.cateId,
+        cate_id=cate.id,
         material_type=body.materialType,
         file_key=body.fileKey.strip(),
         link_url=body.linkUrl.strip(),
         position_codes=resolved_position_codes(body, cate),
+        required_minutes=int(body.requiredMinutes),
         status="PUBLISHED" if body.publish else "DRAFT",
         uploader_user_id=actor.id,
         tenant_id=tenant_id,
@@ -367,9 +569,9 @@ def material_list(
         stmt = stmt.where(TrainMaterial.status == status)
     if positionCode and positionCode.strip():
         code = positionCode.strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", code):
+        if len(code) > 64 or any(ch in code for ch in '"\\\x00%_'):
             return fail(1001, "positionCode 无效")
-        stmt = stmt.where(func.json_contains(TrainMaterial.position_codes, f'"{code}"'))
+        stmt = stmt.where(func.json_search(TrainMaterial.position_codes, "one", code).is_not(None))
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = list(
         db.scalars(
@@ -414,7 +616,7 @@ def weekly_update_metrics(
             {
                 "materialNo": row.material_no,
                 "title": row.title,
-                "lastUpdatedAt": iso(touched),
+                "lastUpdatedAt": iso_utc(touched),
                 "ownerName": names.get(row.uploader_user_id, ""),
             }
         )
@@ -464,6 +666,8 @@ def offline_material(
     row = db.get(TrainMaterial, material_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1500, "资料不存在")
+    if row.status != "PUBLISHED":
+        return fail(1001, "仅已发布资料可下架")
     row.status = "OFFLINE"
     row.updated_at = utcnow()
     db.flush()
@@ -568,14 +772,107 @@ def as_date(value) -> date:
     return value
 
 
+_DEPT_PLACEHOLDER = re.compile(r"^部门\s*#?\s*(\d+)$")
+
+
 def dept_label(dept_id: int) -> str:
-    return f"部门#{dept_id}" if dept_id else "未分配"
+    return f"部门 {dept_id}" if dept_id else "未分配"
 
 
-def dept_of(db: Session, cache: dict[int, int], user_id: int, tenant_id: int) -> int:
-    if user_id not in cache:
-        cache[user_id] = primary_dept_id(db, user_id, tenant_id)
+def placeholder_dept_name(name: str, dept_id: int) -> bool:
+    text = (name or "").strip()
+    if not text or text == "未分配":
+        return True
+    match = _DEPT_PLACEHOLDER.fullmatch(text)
+    return match is not None and int(match.group(1)) == int(dept_id or 0)
+
+
+def remember_dept_name(found: dict[int, str], dept_id, name: str) -> None:
+    if not str(dept_id).isdigit():
+        return
+    dept = int(dept_id)
+    text = (name or "").strip()
+    if dept and text and not placeholder_dept_name(text, dept):
+        found[dept] = text
+
+
+def dept_name_catalog(db: Session) -> dict[int, str]:
+    """部门编号 → 名称。组织事件、日报和绩效里的真名都算，占位「部门 {编号}」不算。"""
+    stored = getattr(db, "_train_dept_catalog", None)
+    if isinstance(stored, dict):
+        return stored
+    from app.models import MeetDailyReport, PerfCalcResult, PerfRank
+    from app.org_sync import read_payload
+
+    found: dict[int, str] = {}
+    rows = db.execute(
+        select(OrgEvent.payload_json, OrgEvent.after_dept).order_by(OrgEvent.id.asc())
+    ).all()
+    for payload_json, after_dept in rows:
+        payload = read_payload(payload_json or "")
+        raw_ids = payload.get("deptIds") or []
+        raw_names = payload.get("deptNames") or []
+        if isinstance(raw_ids, list):
+            dept_ids = [int(item) for item in raw_ids if str(item).isdigit()]
+            labels = [str(item).strip() for item in raw_names] if isinstance(raw_names, list) else []
+            for index, dept_id in enumerate(dept_ids):
+                label = labels[index] if index < len(labels) else ""
+                remember_dept_name(found, dept_id, label)
+            if len(dept_ids) == 1:
+                after = (after_dept or "").strip() or str(payload.get("afterDept") or "").strip()
+                remember_dept_name(found, dept_ids[0], after)
+        for key in ("departments", "deptList", "depts"):
+            block = payload.get(key)
+            if not isinstance(block, list):
+                continue
+            for item in block:
+                if not isinstance(item, dict):
+                    continue
+                remember_dept_name(
+                    found,
+                    item.get("deptId") or item.get("dept_id") or item.get("id"),
+                    str(item.get("deptName") or item.get("dept_name") or item.get("name") or ""),
+                )
+    for model in (MeetDailyReport, PerfCalcResult, PerfRank):
+        named = db.execute(
+            select(model.dept_id, model.dept_name).where(model.deleted == 0, model.dept_name != "")
+        ).all()
+        for dept_id, dept_name in named:
+            remember_dept_name(found, dept_id, dept_name)
+    try:
+        setattr(db, "_train_dept_catalog", found)
+    except Exception:
+        pass
+    return found
+
+
+def user_dept_view(db: Session, user_id: int, tenant_id: int, cache: dict[int, tuple[int, str]]) -> tuple[int, str]:
+    """部门编号沿用主部门。名称取组织事件；没有名称时才显示「部门 {编号}」。"""
+    found = cache.get(user_id)
+    if found is not None:
+        return found
+    from app.api import user_dept_snapshot
+
+    ids, names = user_dept_snapshot(db, user_id, tenant_id)
+    dept_id = int(ids[0]) if ids else primary_dept_id(db, user_id, tenant_id)
+    raw_name = ""
+    if ids and names and len(names) == len(ids):
+        try:
+            index = [int(item) for item in ids].index(dept_id)
+            raw_name = str(names[index]).strip()
+        except ValueError:
+            raw_name = str(names[0]).strip()
+    elif names:
+        raw_name = str(names[0]).strip()
+    if placeholder_dept_name(raw_name, dept_id):
+        raw_name = dept_name_catalog(db).get(dept_id, "")
+    name = raw_name if raw_name and not placeholder_dept_name(raw_name, dept_id) else dept_label(dept_id)
+    cache[user_id] = (dept_id, name)
     return cache[user_id]
+
+
+# 完成率汇总只排除草稿和已撤销。进行中、已结束、逾期都算已发布。
+EXCLUDED_ROLLUP_STATUSES = frozenset({"DRAFT", "REVOKED"})
 
 
 def stat_pairs(
@@ -585,7 +882,7 @@ def stat_pairs(
     end: datetime | None,
     user_id: int | None,
 ) -> list[tuple[TrainTaskRecord, TrainTask]]:
-    """与 finish-rate 相同的取数：任务创建时间落在范围内的指派记录。user_id 非空时只看本人。"""
+    """部门/排行/热度仍按任务发布时间落在所选日期内取数。user_id 非空时只看本人。"""
     stmt = (
         select(TrainTaskRecord, TrainTask)
         .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
@@ -593,6 +890,7 @@ def stat_pairs(
             TrainTaskRecord.deleted == 0,
             TrainTaskRecord.tenant_id == tenant_id,
             TrainTask.deleted == 0,
+            TrainTask.status.notin_(tuple(EXCLUDED_ROLLUP_STATUSES)),
         )
     )
     if start and end:
@@ -600,6 +898,37 @@ def stat_pairs(
     if user_id is not None:
         stmt = stmt.where(TrainTaskRecord.user_id == user_id)
     return list(db.execute(stmt).all())
+
+
+def finish_rollup_pairs(
+    db: Session,
+    tenant_id: int,
+    cutoff: datetime,
+    user_id: int | None,
+) -> list[tuple[TrainTaskRecord, TrainTask]]:
+    """TRN-S-R1：发布时间不晚于统计截至的任务全部计入，不按近 N 天裁切。"""
+    stmt = (
+        select(TrainTaskRecord, TrainTask)
+        .join(TrainTask, TrainTask.id == TrainTaskRecord.task_id)
+        .where(
+            TrainTaskRecord.deleted == 0,
+            TrainTaskRecord.tenant_id == tenant_id,
+            TrainTask.deleted == 0,
+            TrainTask.created_at <= cutoff,
+            TrainTask.status.notin_(tuple(EXCLUDED_ROLLUP_STATUSES)),
+        )
+    )
+    if user_id is not None:
+        stmt = stmt.where(TrainTaskRecord.user_id == user_id)
+    return list(db.execute(stmt).all())
+
+
+def refresh_train_finish_rollup(db: Session, tenant_id: int, cutoff: datetime | None = None) -> datetime:
+    """启动或手动刷新时重写部门日汇总。完成率看板读同一次截至时刻的全量指派。"""
+    moment = cutoff or utcnow()
+    pairs = finish_rollup_pairs(db, tenant_id, moment, None)
+    persist_dept_daily(db, tenant_id, None, None, aggregate_dept_daily(db, tenant_id, pairs))
+    return moment
 
 
 def scoped_user_id(actor: User) -> int | None:
@@ -613,18 +942,18 @@ def duration_minutes(study_seconds: int) -> int:
 def aggregate_dept_daily(
     db: Session, tenant_id: int, pairs: list[tuple[TrainTaskRecord, TrainTask]]
 ) -> list[dict]:
-    cache: dict[int, int] = {}
+    cache: dict[int, tuple[int, str]] = {}
     buckets: dict[tuple[str, int], dict] = {}
     for record, task in pairs:
         created = task.created_at or utcnow()
         stat_date = created.date().isoformat()
-        dept_id = dept_of(db, cache, record.user_id, tenant_id)
+        dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, cache)
         bucket = buckets.setdefault(
             (stat_date, dept_id),
             {
                 "statDate": stat_date,
                 "deptId": dept_id,
-                "deptName": dept_label(dept_id),
+                "deptName": dept_name,
                 "assignedCount": 0,
                 "finishedCount": 0,
                 "studySeconds": 0,
@@ -753,7 +1082,7 @@ def aggregate_rank(
     dimension: str,
     top_n: int,
 ) -> list[dict]:
-    cache: dict[int, int] = {}
+    cache: dict[int, tuple[int, str]] = {}
     groups: dict[int, dict] = {}
     if dimension == "PERSON":
         names = user_names(db, {record.user_id for record, _ in pairs})
@@ -784,10 +1113,10 @@ def aggregate_rank(
         items.sort(key=lambda item: (-item["totalDurationMinutes"], -item["finishRate"], item["userName"]))
     else:
         for record, _task in pairs:
-            dept_id = dept_of(db, cache, record.user_id, tenant_id)
+            dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, cache)
             bucket = groups.setdefault(
                 dept_id,
-                {"deptName": dept_label(dept_id), "assigned": 0, "finished": 0, "seconds": 0},
+                {"deptName": dept_name, "assigned": 0, "finished": 0, "seconds": 0},
             )
             bucket["assigned"] += 1
             if record.confirm_status == 1:
@@ -873,6 +1202,15 @@ def deadline_text(dt: datetime | None) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+def bj_clock(dt: datetime | None) -> str:
+    """Naive values are UTC instants. Display is Beijing yyyy-MM-dd HH:mm."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BJ).strftime("%Y-%m-%d %H:%M")
+
+
 def overdue_day_count(deadline: datetime, now: datetime) -> int:
     days = (now.date() - deadline.date()).days
     return days if days >= 1 else 1
@@ -886,10 +1224,58 @@ def clamp_top_n(top_n: int | None):
     return top_n, None
 
 
-def finish_rate(db: Session, task_id: int, assigned: int) -> float:
-    if assigned <= 0:
-        return 0.0
-    done = int(
+def upsert_study_todos(db: Session, tenant_id: int, task: TrainTask, user_ids: list[int]) -> None:
+    """被指派人工作台学习待办。点开进学习中心 /ims/train/study/{taskId}。"""
+    title = f"学习待办：{task.task_name}"[:128]
+    content = "进入学习中心完成本任务"
+    for uid in user_ids:
+        row = db.scalar(
+            select(Todo).where(
+                Todo.tenant_id == tenant_id,
+                Todo.assignee_user_id == uid,
+                Todo.task_type == TRAIN_TODO,
+                Todo.ref_type == TRAIN_REF,
+                Todo.ref_id == task.id,
+                Todo.status == "PENDING",
+            )
+        )
+        if row is None:
+            db.add(
+                Todo(
+                    assignee_user_id=uid,
+                    task_type=TRAIN_TODO,
+                    ref_type=TRAIN_REF,
+                    ref_id=task.id,
+                    title=title,
+                    content=content,
+                    status="PENDING",
+                    deadline=task.deadline,
+                    tenant_id=tenant_id,
+                )
+            )
+            continue
+        row.title = title
+        row.content = content
+        row.deadline = task.deadline
+
+
+def close_study_todo(db: Session, tenant_id: int, user_id: int, task_id: int) -> None:
+    row = db.scalar(
+        select(Todo).where(
+            Todo.tenant_id == tenant_id,
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == TRAIN_TODO,
+            Todo.ref_type == TRAIN_REF,
+            Todo.ref_id == task_id,
+            Todo.status == "PENDING",
+        )
+    )
+    if row is not None:
+        row.status = "DONE"
+
+
+def finished_count(db: Session, task_id: int) -> int:
+    return int(
         db.scalar(
             select(func.count())
             .select_from(TrainTaskRecord)
@@ -901,7 +1287,147 @@ def finish_rate(db: Session, task_id: int, assigned: int) -> float:
         )
         or 0
     )
-    return round(done * 100.0 / assigned, 2)
+
+
+def finish_rate(db: Session, task_id: int, assigned: int) -> float:
+    if assigned <= 0:
+        return 0.0
+    return round(finished_count(db, task_id) * 100.0 / assigned, 2)
+
+
+_AI_DRAFTS: dict[str, tuple[float, list[dict]]] = {}
+AI_DRAFT_TTL = 15 * 60
+
+
+class AiGenerateBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    materialIds: list[int] = Field(default_factory=list)
+    questionCount: int = 10
+    difficulty: str = "MEDIUM"
+
+
+class AiAdoptBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    draftId: str = ""
+    taskId: int | None = None
+
+
+def _purge_ai_drafts() -> None:
+    now = time.time()
+    stale = [key for key, (created, _) in _AI_DRAFTS.items() if now - created > AI_DRAFT_TTL]
+    for key in stale:
+        _AI_DRAFTS.pop(key, None)
+
+
+def stub_ai_questions(materials: list[TrainMaterial], count: int) -> list[dict]:
+    """无真实模型。单选与判断约 7:3，判断题用「正确/错误」便于现有问卷判分。"""
+    single = count if count < 2 else max(1, round(count * 0.7))
+    if single >= count:
+        single = count - (1 if count > 1 else 0)
+    true_false = count - single
+    if true_false < 0:
+        single, true_false = count, 0
+    out: list[dict] = []
+    for index in range(single):
+        mat = materials[index % len(materials)]
+        out.append(
+            {
+                "type": "SINGLE",
+                "stem": f"《{mat.title}》要点 {index + 1}",
+                "options": ["按资料执行", "跳过资料", "随意发挥"],
+                "answerIndex": 0,
+                "materialId": mat.id,
+                "source": "AI_DRAFT",
+            }
+        )
+    for index in range(true_false):
+        mat = materials[(single + index) % len(materials)]
+        out.append(
+            {
+                "type": "TRUE_FALSE",
+                "stem": f"《{mat.title}》可以不阅读直接上岗",
+                "options": ["正确", "错误"],
+                "answerIndex": 1,
+                "answerBoolean": False,
+                "materialId": mat.id,
+                "source": "AI_DRAFT",
+            }
+        )
+    return out
+
+
+def adopt_quiz_rows(questions: list[dict]) -> list[dict]:
+    rows: list[dict] = []
+    for item in questions:
+        options = list(item.get("options") or [])
+        if item.get("type") == "TRUE_FALSE" and len(options) < 2:
+            options = ["正确", "错误"]
+        answer = item.get("answerIndex")
+        if answer is None and "answerBoolean" in item:
+            answer = 0 if item.get("answerBoolean") else 1
+        rows.append(
+            {
+                "question": str(item.get("stem") or item.get("question") or "").strip(),
+                "options": [str(opt) for opt in options],
+                "answerIndex": int(answer or 0),
+            }
+        )
+    return rows
+
+
+@router.post("/quiz/ai-generate")
+def ai_generate_quiz(
+    body: AiGenerateBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """ADR-IMS-004 桩：不调用模型，返回可采纳的样题。"""
+    if not body.materialIds:
+        return fail(1001, "请至少选择 1 份已发布资料")
+    if body.questionCount == 0:
+        return fail(1114, "题量为 0")
+    if body.questionCount < 5 or body.questionCount > 30:
+        return fail(1001, "题量须在 5 到 30")
+    if body.difficulty not in {"EASY", "MEDIUM", "HARD"}:
+        return fail(1001, "difficulty 无效")
+    tenant_id = tenant_of(actor)
+    materials: list[TrainMaterial] = []
+    for mid in body.materialIds:
+        mat = db.get(TrainMaterial, mid)
+        if mat is None or mat.deleted or mat.tenant_id != tenant_id or mat.status != "PUBLISHED":
+            return fail(1111, "资料未发布或不存在")
+        materials.append(mat)
+    questions = stub_ai_questions(materials, body.questionCount)
+    if not questions:
+        return fail(1114, "题量为 0")
+    draft_id = uuid.uuid4().hex
+    _purge_ai_drafts()
+    _AI_DRAFTS[draft_id] = (time.time(), questions)
+    return ok(
+        {
+            "draftId": draft_id,
+            "questions": questions,
+            "meta": {
+                "modelCode": "stub-train-quiz",
+                "promptCode": "TRAIN-QUIZ-STUB",
+                "generatedAt": iso_utc(utcnow()),
+                "difficulty": body.difficulty,
+            },
+        }
+    )
+
+
+@router.post("/quiz/ai-adopt")
+def ai_adopt_quiz(
+    body: AiAdoptBody,
+    _: User = Depends(current_user),
+):
+    _purge_ai_drafts()
+    found = _AI_DRAFTS.get((body.draftId or "").strip())
+    if found is None:
+        return fail(1112, "试卷草稿不存在或已过期")
+    quiz = adopt_quiz_rows(found[1])
+    return ok({"quiz": quiz, "passScore": 60, "taskId": body.taskId})
 
 
 def public_quiz(raw) -> list[dict]:
@@ -920,14 +1446,22 @@ def public_quiz(raw) -> list[dict]:
     return out
 
 
+def question_points(count: int) -> list[int]:
+    """满分 100，各题均分，余数分给前面的题，合计正好 100。"""
+    if count <= 0:
+        return []
+    base, extra = divmod(100, count)
+    return [base + (1 if index < extra else 0) for index in range(count)]
+
+
 def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
-    """手工组卷：每题 1 分，及格分是需要答对的题数。"""
+    """手工组卷：满分 100，及格分是 0～100 的百分数。"""
     if not quiz:
         return fail(1001, "quiz 必填")
     if pass_score is None:
         return fail(1001, "passScore 必填")
-    if pass_score < 1 or pass_score > len(quiz):
-        return fail(1001, "及格分须在 1 到题目数之间")
+    if pass_score < 0 or pass_score > 100:
+        return fail(1001, "及格分须在 0 到 100 之间")
     normalized: list[dict] = []
     seen_questions: set[str] = set()
     for item in quiz:
@@ -957,37 +1491,42 @@ def normalize_quiz(quiz: list[QuizItem] | None, pass_score: int | None):
 
 
 def parse_quiz_answers(quiz: list, answers: list) -> tuple[dict[int, int] | None, str]:
-    """返回 (作答, 错误文案)。缺题与越界选项分开说明。"""
+    """返回 (作答, 错误文案)。缺题按未作答计数，越界选项单独说明。"""
     found: dict[int, int] = {}
     for raw in answers:
         if not isinstance(raw, dict) or "questionIndex" not in raw or "answerIndex" not in raw:
-            return None, "问卷未答完"
+            continue
         try:
             found[int(raw["questionIndex"])] = int(raw["answerIndex"])
         except (TypeError, ValueError):
-            return None, "问卷未答完"
+            continue
+    missing = 0
     for idx, item in enumerate(quiz):
         options = item.get("options") if isinstance(item, dict) else None
         option_count = len(options) if isinstance(options, list) else 0
         given = found.get(idx)
         if given is None:
-            return None, "问卷未答完"
+            missing += 1
+            continue
         if given < 0 or given >= option_count:
             return None, "选项无效，请重新选择"
+    if missing:
+        return None, f"还有 {missing} 题未作答"
     return found, ""
 
 
 def score_quiz(quiz: list, chosen: dict[int, int]) -> int:
+    points = question_points(len(quiz))
     score = 0
     for idx, item in enumerate(quiz):
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or idx >= len(points):
             continue
         try:
             expected = int(item.get("answerIndex", -1))
         except (TypeError, ValueError):
             continue
         if chosen.get(idx) == expected:
-            score += 1
+            score += points[idx]
     return score
 
 
@@ -1003,6 +1542,7 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "materialIds": material_ids,
         "assignScope": row.assign_scope,
         "assignTargetUserIds": user_ids if row.assign_scope == "BY_USER" else [],
+        "assignTargetPositionCodes": [str(item) for item in targets] if row.assign_scope == "BY_POSITION" else [],
         "assignedCount": row.assigned_count,
         "deadline": iso(row.deadline),
         "confirmType": row.confirm_type,
@@ -1010,8 +1550,117 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "questionCount": len(quiz),
         "quiz": quiz,
         "status": resolve_task_status(row),
-        "createdAt": iso(row.created_at),
+        "createdAt": iso_utc(row.created_at),
     }
+
+
+def enabled_user_ids(db: Session, tenant_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(User.id).where(
+                User.deleted == 0,
+                User.tenant_id == tenant_id,
+                User.status == "ENABLED",
+            )
+        ).all()
+    )
+
+
+def users_in_positions(db: Session, tenant_id: int, codes: list[str]) -> list[int]:
+    wanted = {code.strip() for code in codes if code and code.strip()}
+    enabled = set(enabled_user_ids(db, tenant_id))
+    if not wanted or not enabled:
+        return []
+    if ALL_STAFF in wanted:
+        return sorted(enabled)
+    matched: set[int] = set()
+    mappings = db.scalars(
+        select(UserMapping).where(
+            UserMapping.deleted == 0,
+            UserMapping.tenant_id == tenant_id,
+            UserMapping.dingtalk_position.in_(wanted),
+        )
+    ).all()
+    matched.update(int(row.user_id) for row in mappings)
+    roles = db.scalars(
+        select(Role).where(
+            Role.deleted == 0,
+            Role.status == "ENABLED",
+            (Role.dingtalk_position.in_(wanted)) | (Role.role_key.in_(wanted)) | (Role.role_name.in_(wanted)),
+        )
+    ).all()
+    role_ids = [row.id for row in roles]
+    if role_ids:
+        linked = db.scalars(select(UserRole.user_id).where(UserRole.role_id.in_(role_ids))).all()
+        matched.update(int(uid) for uid in linked)
+    return sorted(uid for uid in matched if uid in enabled)
+
+
+def position_codes_of_user(db: Session, user: User) -> set[str]:
+    """岗位码、角色键、角色名、钉钉岗位，用来判断按岗位指派是否包含此人。"""
+    codes: set[str] = set()
+    mapping = db.scalar(
+        select(UserMapping).where(UserMapping.user_id == user.id, UserMapping.deleted == 0)
+    )
+    if mapping is not None:
+        text = (mapping.dingtalk_position or "").strip()
+        if text:
+            codes.add(text)
+    role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id)).all())
+    if not role_ids:
+        return codes
+    roles = db.scalars(
+        select(Role).where(Role.id.in_(role_ids), Role.deleted == 0, Role.status == "ENABLED")
+    ).all()
+    for role in roles:
+        for raw in (role.dingtalk_position, role.role_key, role.role_name):
+            text = (raw or "").strip()
+            if text:
+                codes.add(text)
+    return codes
+
+
+def task_target_user_ids(task: TrainTask) -> set[int]:
+    targets = task.assign_targets if isinstance(task.assign_targets, list) else []
+    ids: set[int] = set()
+    for item in targets:
+        if isinstance(item, int) or (isinstance(item, str) and item.isdigit()):
+            ids.add(int(item))
+    return ids
+
+
+def task_target_codes(task: TrainTask) -> set[str]:
+    targets = task.assign_targets if isinstance(task.assign_targets, list) else []
+    return {str(item).strip() for item in targets if str(item).strip() and not str(item).isdigit()}
+
+
+def user_is_assignee(db: Session, task: TrainTask, user: User) -> bool:
+    if task.assign_scope == "BY_USER" and user.id in task_target_user_ids(task):
+        return True
+    codes = task_target_codes(task)
+    if task.assign_scope == "BY_POSITION" and codes:
+        if ALL_STAFF in codes and user.deleted == 0 and user.status == "ENABLED":
+            return True
+        if codes & position_codes_of_user(db, user):
+            return True
+        if user.id in set(users_in_positions(db, task.tenant_id or 0, list(codes))):
+            return True
+    return False
+
+
+def user_has_study_todo(db: Session, user_id: int, task_id: int) -> bool:
+    """工作台学习待办即被指派。PENDING 与 DONE 都算，不按租户过滤。"""
+    row = db.scalar(
+        select(Todo.id)
+        .where(
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == TRAIN_TODO,
+            Todo.ref_id == task_id,
+            Todo.status.in_(("PENDING", "DONE")),
+        )
+        .limit(1)
+    )
+    return row is not None
 
 
 def expand_assignees(db: Session, tenant_id: int, body: TaskBody) -> list[int] | dict:
@@ -1025,18 +1674,23 @@ def expand_assignees(db: Session, tenant_id: int, body: TaskBody) -> list[int] |
     codes = [c.strip() for c in (body.assignTargetPositionCodes or []) if c and c.strip()]
     if not codes:
         return fail(1001, "assignTargetPositionCodes 必填")
-    users = list(
-        db.scalars(
-            select(User.id).where(
-                User.deleted == 0,
-                User.tenant_id == tenant_id,
-                User.status == "ENABLED",
-            )
-        ).all()
-    )
+    users = users_in_positions(db, tenant_id, codes)
     if not users:
         return fail(1001, "岗位下无可用用户")
     return users
+
+
+@router.get("/task/assign-preview")
+def assign_preview(
+    positionCodes: str = "",
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    codes = [part.strip() for part in (positionCodes or "").split(",") if part.strip()]
+    if not codes:
+        return fail(1001, "岗位必填")
+    users = users_in_positions(db, tenant_of(actor), codes)
+    return ok({"count": len(users), "positionCodes": codes})
 
 
 def validate_materials(db: Session, tenant_id: int, material_ids: list[int]) -> dict | None:
@@ -1079,7 +1733,7 @@ def create_task(
     else:
         quiz_rows, pass_score = [], 0
     assignees = expand_assignees(db, tenant_id, body)
-    if isinstance(assignees, dict):
+    if not isinstance(assignees, list):
         return assignees
     unique_users = sorted(set(assignees))
     row = TrainTask(
@@ -1107,6 +1761,7 @@ def create_task(
                 tenant_id=tenant_id,
             )
         )
+    upsert_study_todos(db, tenant_id, row, unique_users)
     db.flush()
     return ok(task_vo(db, row))
 
@@ -1174,6 +1829,7 @@ def update_task(
         db.add(TrainTaskRecord(task_id=row.id, user_id=uid, tenant_id=tenant_id))
         have.add(uid)
     row.assigned_count = len(have)
+    upsert_study_todos(db, tenant_id, row, sorted(have))
     db.flush()
     return ok(task_vo(db, row))
 
@@ -1186,22 +1842,24 @@ def stat_summary(
     tenant_id = tenant_of(actor)
     rows = list(
         db.scalars(
-            select(TrainTask).where(TrainTask.deleted == 0, TrainTask.tenant_id == tenant_id)
+            select(TrainTask).where(
+                TrainTask.deleted == 0,
+                TrainTask.tenant_id == tenant_id,
+                TrainTask.status.notin_(tuple(EXCLUDED_ROLLUP_STATUSES)),
+            )
         ).all()
     )
     in_progress = 0
-    rates: list[float] = []
     for row in rows:
-        st = resolve_task_status(row)
-        if st == "IN_PROGRESS":
+        if resolve_task_status(row) == "IN_PROGRESS":
             in_progress += 1
-        rates.append(finish_rate(db, row.id, row.assigned_count))
-    avg = round(sum(rates) / len(rates), 2) if rates else 0.0
+    pairs = finish_rollup_pairs(db, tenant_id, utcnow(), None)
+    finished = sum(1 for rec, _task in pairs if rec.confirm_status == 1)
     return ok(
         {
             "taskCount": len(rows),
             "inProgress": in_progress,
-            "avgFinishRate": avg,
+            "avgFinishRate": rate_pct(finished, len(pairs)),
         }
     )
 
@@ -1212,12 +1870,19 @@ def stat_finish_rate(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    """TRAIN-003 · BR-102 完成率（分母含未确认指派记录）。"""
+    """TRAIN-003 · BR-102。已完成人次 / 应完成人次，含进行中与逾期。
+
+    dateRange 仍校验格式，但不按创建时间裁掉更早发布的任务。看板数字来自
+    截至此刻的日汇总，启动时会先算一遍，页面刷新会再算一遍。
+    """
     tenant_id = tenant_of(actor)
-    start, end, error = parse_bounded_range(dateRange)
+    _start, _end, error = parse_bounded_range(dateRange)
     if error:
         return fail(1001, error)
-    rows = stat_pairs(db, tenant_id, start, end, scoped_user_id(actor))
+    cutoff = utcnow()
+    if actor.username == "admin":
+        refresh_train_finish_rollup(db, tenant_id, cutoff)
+    rows = finish_rollup_pairs(db, tenant_id, cutoff, scoped_user_id(actor))
 
     total_assigned = len(rows)
     total_finished = sum(1 for rec, _ in rows if rec.confirm_status == 1)
@@ -1228,6 +1893,7 @@ def stat_finish_rate(
     by_person: dict[int, dict] = {}
     user_ids = {rec.user_id for rec, _ in rows}
     names = user_names(db, user_ids)
+    dept_cache: dict[int, tuple[int, str]] = {}
 
     for record, task in rows:
         finished = record.confirm_status == 1
@@ -1236,6 +1902,7 @@ def stat_finish_rate(
             by_task[tid] = {
                 "taskNo": task.task_no,
                 "taskName": task.task_name,
+                "createdAt": iso_utc(task.created_at),
                 "assignedCount": 0,
                 "finishedCount": 0,
             }
@@ -1243,11 +1910,11 @@ def stat_finish_rate(
         if finished:
             by_task[tid]["finishedCount"] += 1
 
-        dept_id = primary_dept_id(db, record.user_id, tenant_id)
+        dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, dept_cache)
         if dept_id not in by_dept:
             by_dept[dept_id] = {
                 "deptId": dept_id,
-                "deptName": dept_label(dept_id),
+                "deptName": dept_name,
                 "assignedCount": 0,
                 "finishedCount": 0,
             }
@@ -1290,6 +1957,7 @@ def stat_finish_rate(
     return ok(
         {
             "totalFinishRate": total_finish_rate,
+            "asOf": bj_clock(cutoff),
             "byTask": task_items,
             "byDept": dept_items,
             "byPerson": person_items,
@@ -1388,11 +2056,11 @@ def stat_overdue(
     if scoped_user_id(actor) is not None:
         stmt = stmt.where(TrainTaskRecord.user_id == actor.id)
     rows = list(db.execute(stmt).all())
-    cache: dict[int, int] = {}
+    cache: dict[int, tuple[int, str]] = {}
     names = user_names(db, {record.user_id for record, _ in rows})
     items = []
     for record, task in rows:
-        dept_id = dept_of(db, cache, record.user_id, tenant_id)
+        dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, cache)
         if deptId is not None and dept_id != deptId:
             continue
         deadline = task.deadline
@@ -1403,7 +2071,7 @@ def stat_overdue(
                 "taskName": task.task_name,
                 "userId": record.user_id,
                 "userName": names.get(record.user_id, ""),
-                "deptName": dept_label(dept_id),
+                "deptName": dept_name,
                 "deadline": deadline_text(deadline),
                 "overdueDays": overdue_day_count(deadline, now) if deadline else 1,
                 "progress": int(record.progress or 0),
@@ -1458,7 +2126,10 @@ def task_list(
     items = []
     for row in rows:
         vo = task_vo(db, row)
-        vo["finishRate"] = finish_rate(db, row.id, row.assigned_count)
+        done = finished_count(db, row.id)
+        vo["finishedCount"] = done
+        assigned = int(row.assigned_count or 0)
+        vo["finishRate"] = round(done * 100.0 / assigned, 2) if assigned else 0.0
         vo["materialCount"] = len(vo["materialIds"])
         items.append(vo)
     return paged(items, total, page_no, size)
@@ -1467,14 +2138,26 @@ def task_list(
 def record_for_user(
     db: Session, tenant_id: int, task_id: int, user_id: int
 ) -> TrainTaskRecord | None:
-    return db.scalar(
-        select(TrainTaskRecord).where(
-            TrainTaskRecord.deleted == 0,
-            TrainTaskRecord.tenant_id == tenant_id,
-            TrainTaskRecord.task_id == task_id,
-            TrainTaskRecord.user_id == user_id,
-        )
+    """先按租户找未删除记录。对不上时仍认同一任务、同一用户的记录（含软删）。"""
+    rows = list(
+        db.scalars(
+            select(TrainTaskRecord)
+            .where(
+                TrainTaskRecord.task_id == task_id,
+                TrainTaskRecord.user_id == user_id,
+            )
+            .order_by(TrainTaskRecord.deleted.asc(), TrainTaskRecord.id.asc())
+        ).all()
     )
+    if not rows:
+        return None
+    for row in rows:
+        if row.deleted == 0 and (row.tenant_id or 0) == (tenant_id or 0):
+            return row
+    for row in rows:
+        if row.deleted == 0:
+            return row
+    return rows[0]
 
 
 def confirm_status_label(status: int) -> str:
@@ -1490,6 +2173,40 @@ def material_progress_map(record: TrainTaskRecord) -> dict[int, int]:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def material_seconds_map(record: TrainTaskRecord) -> dict[int, int]:
+    raw = record.material_seconds if isinstance(record.material_seconds, dict) else {}
+    out: dict[int, int] = {}
+    for key, val in raw.items():
+        try:
+            out[int(key)] = max(0, int(val))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def required_seconds_of(db: Session, material_id: int) -> int:
+    mat = db.get(TrainMaterial, material_id)
+    minutes = int(mat.required_minutes or 1) if mat is not None else 1
+    if minutes < 1:
+        minutes = 1
+    return minutes * 60
+
+
+def duration_gap_message(db: Session, task: TrainTask, record: TrainTaskRecord) -> str | None:
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    seconds_map = material_seconds_map(record)
+    remain = 0
+    for mid in material_ids:
+        need = required_seconds_of(db, int(mid))
+        got = seconds_map.get(int(mid), 0)
+        if got < need:
+            remain += need - got
+    if remain <= 0:
+        return None
+    minutes = (remain + 59) // 60
+    return f"学时未达标，还差 {minutes} 分钟"
 
 
 def recompute_overall_progress(task: TrainTask, mat_prog: dict[int, int]) -> int:
@@ -1510,7 +2227,7 @@ def progress_vo(
     mid = material_id or (
         int(task.material_ids[0]) if isinstance(task.material_ids, list) and task.material_ids else 0
     )
-    finished = iso(record.finished_at) if record.finished_at else None
+    finished = iso_utc(record.finished_at) if record.finished_at else None
     return {
         "taskId": task.id,
         "userId": record.user_id,
@@ -1519,8 +2236,10 @@ def progress_vo(
         "materialProgress": {str(k): v for k, v in mat_prog.items()},
         "confirmStatus": confirm_status_label(record.confirm_status),
         "confirmScore": record.confirm_score,
-        "startedAt": iso(record.created_at),
+        "startedAt": iso_utc(record.created_at),
         "finishedAt": finished,
+        "studySeconds": int(record.study_seconds or 0),
+        "materialSeconds": {str(k): v for k, v in material_seconds_map(record).items()},
     }
 
 
@@ -1530,7 +2249,7 @@ def confirm_payload(task: TrainTask, record: TrainTaskRecord) -> dict:
         "confirmStatus": confirm_status_label(record.confirm_status),
         "confirmScore": record.confirm_score,
         "isPassed": passed,
-        "finishedAt": iso(record.finished_at) if record.finished_at else None,
+        "finishedAt": iso_utc(record.finished_at) if record.finished_at else None,
     }
     if task.confirm_type == "QUIZ":
         data["passScore"] = int(task.pass_score or 0)
@@ -1551,76 +2270,111 @@ class ConfirmBody(BaseModel):
     answers: list[dict] | None = None
 
 
-@router.put("/task/{task_id}/progress")
-def report_progress(
-    task_id: int,
-    body: ProgressBody,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
-):
+STUDY_DENIED = "仅被指派人可学习本任务"
+
+
+def open_assignee(db: Session, actor: User, task_id: int, denied_code: int, denied_msg: str):
     tenant_id = tenant_of(actor)
     task = db.get(TrainTask, task_id)
     if task is None or task.deleted or task.tenant_id != tenant_id:
-        return fail(1500, "任务不存在")
+        return None, None, fail(1500, "任务不存在")
+    record = record_for_user(db, tenant_id, task_id, actor.id)
+    has_todo = user_has_study_todo(db, actor.id, task.id)
+    assignee = (
+        user_is_assignee(db, task, actor)
+        or (record is not None and record.deleted == 0)
+        or has_todo
+    )
+    if not assignee:
+        return None, None, fail(denied_code, denied_msg)
+    if record is not None and record.deleted:
+        record.deleted = 0
+        record.updated_at = utcnow()
+        db.flush()
+    if record is None:
+        record = TrainTaskRecord(
+            task_id=task.id,
+            user_id=actor.id,
+            tenant_id=task.tenant_id or 0,
+        )
+        db.add(record)
+        task.assigned_count = int(task.assigned_count or 0) + 1
+        task.updated_at = utcnow()
+        db.flush()
+        if not has_todo:
+            upsert_study_todos(db, task.tenant_id or 0, task, [actor.id])
+    return task, record, None
+
+
+def published_study_materials(db: Session, task: TrainTask) -> list[dict]:
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    items: list[dict] = []
+    for mid in material_ids:
+        mat = db.get(TrainMaterial, int(mid))
+        if mat is None or mat.deleted or mat.tenant_id != task.tenant_id or mat.status != "PUBLISHED":
+            continue
+        items.append(
+            {
+                "id": mat.id,
+                "title": mat.title,
+                "materialType": mat.material_type,
+                "fileKey": mat.file_key,
+                "linkUrl": mat.link_url,
+                "requiredMinutes": int(mat.required_minutes or 1),
+                "status": mat.status,
+            }
+        )
+    return items
+
+
+def apply_progress(db: Session, task: TrainTask, record: TrainTaskRecord, body: ProgressBody):
     material_ids = task.material_ids if isinstance(task.material_ids, list) else []
     if body.materialId not in material_ids:
         return fail(1101, "资料不存在或未发布")
-    record = record_for_user(db, tenant_id, task_id, actor.id)
-    if record is None:
-        return fail(1105, "非被指派人无权上报进度")
     if record.confirm_status == 1:
         return ok(progress_vo(db, task, record, body.materialId))
 
-    pct = 0
-    if body.totalPages and body.totalPages > 0 and body.currentPage is not None:
-        pct = min(100, int(body.currentPage * 100 / body.totalPages))
-    elif body.watchedSeconds is not None and body.watchedSeconds >= 60:
-        pct = 100
-    elif body.watchedSeconds is not None and body.watchedSeconds > 0:
-        pct = min(99, body.watchedSeconds)
-
+    seconds_map = material_seconds_map(record)
+    if body.watchedSeconds is not None and int(body.watchedSeconds) > 0:
+        watched = int(body.watchedSeconds)
+        seconds_map[body.materialId] = max(seconds_map.get(body.materialId, 0), watched)
+    record.material_seconds = {str(k): v for k, v in seconds_map.items()}
+    need = required_seconds_of(db, body.materialId)
+    got = seconds_map.get(body.materialId, 0)
+    pct = min(100, int(got * 100 / need)) if need else 0
     mat_prog = material_progress_map(record)
-    mat_prog[body.materialId] = max(mat_prog.get(body.materialId, 0), pct)
+    mat_prog[body.materialId] = pct
     record.material_progress = {str(k): v for k, v in mat_prog.items()}
     record.progress = recompute_overall_progress(task, mat_prog)
-    if body.watchedSeconds is not None and body.watchedSeconds > 0:
-        record.study_seconds = max(int(record.study_seconds or 0), int(body.watchedSeconds))
+    record.study_seconds = sum(seconds_map.get(int(mid), 0) for mid in material_ids)
     record.updated_at = utcnow()
     db.flush()
     return ok(progress_vo(db, task, record, body.materialId))
 
 
-@router.post("/task/{task_id}/confirm")
-def confirm_task(
-    task_id: int,
-    body: ConfirmBody | None = None,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
+def apply_confirm(
+    db: Session,
+    actor: User,
+    task: TrainTask,
+    record: TrainTaskRecord,
+    body: ConfirmBody | None,
 ):
-    tenant_id = tenant_of(actor)
-    task = db.get(TrainTask, task_id)
-    if task is None or task.deleted or task.tenant_id != tenant_id:
-        return fail(1500, "任务不存在")
-    record = record_for_user(db, tenant_id, task_id, actor.id)
-    if record is None:
-        return fail(1105, "非被指派人无权上报进度")
     if record.confirm_status == 1:
         return ok(confirm_payload(task, record))
 
     if task.confirm_type == "DURATION":
-        material_ids = task.material_ids if isinstance(task.material_ids, list) else []
-        mat_prog = material_progress_map(record)
-        if not all(mat_prog.get(int(mid), 0) >= 100 for mid in material_ids):
-            return fail(1104, "学时未达标")
+        gap = duration_gap_message(db, task, record)
+        if gap:
+            return fail(1104, gap)
     elif task.confirm_type == "QUIZ":
         quiz = task.quiz if isinstance(task.quiz, list) else []
         if not quiz:
             return fail(1104, "问卷未配置")
         chosen, answer_error = parse_quiz_answers(quiz, (body.answers if body else None) or [])
         if chosen is None:
-            return fail(1001, answer_error or "问卷未答完")
+            return fail(1001, answer_error or "还有 1 题未作答")
         score = score_quiz(quiz, chosen)
-        pass_line = int(task.pass_score or len(quiz))
+        pass_line = int(task.pass_score if task.pass_score is not None else 0)
         now = utcnow()
         record.confirm_score = score
         record.updated_at = now
@@ -1635,8 +2389,121 @@ def confirm_task(
     record.progress = 100
     record.finished_at = now
     record.updated_at = now
+    close_study_todo(db, tenant_of(actor), actor.id, task.id)
     db.flush()
     return ok(confirm_payload(task, record))
+
+
+@router.get("/study/{task_id}")
+def study_detail(
+    task_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    return ok(
+        {
+            "task": task_vo(db, task),
+            "materials": published_study_materials(db, task),
+            "progress": progress_vo(db, task, record),
+        }
+    )
+
+
+@router.get("/study/{task_id}/material/{material_id}/file")
+def study_material_file(
+    task_id: int,
+    material_id: int,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, _record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    material_ids = task.material_ids if isinstance(task.material_ids, list) else []
+    if material_id not in material_ids:
+        return fail(1101, "资料不存在或未发布")
+    mat = db.get(TrainMaterial, material_id)
+    if mat is None or mat.deleted or mat.tenant_id != task.tenant_id or mat.status != "PUBLISHED":
+        return fail(1101, "资料不存在或未发布")
+    key = (mat.file_key or "").strip()
+    if not key or ".." in key.split("/") or "\\" in key or key.startswith("/"):
+        return fail(1504, "资源不可用")
+    stored = db.scalar(
+        select(ImsFile).where(
+            ImsFile.file_key == key,
+            ImsFile.deleted == 0,
+            ImsFile.tenant_id == task.tenant_id,
+        )
+    )
+    if stored is None:
+        return fail(1504, "资源不可用")
+    try:
+        path = storage.path_for(key)
+    except ValueError:
+        return fail(1504, "资源不可用")
+    if not path.is_file():
+        return fail(1504, "资源不可用")
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return fail(5005, "文件读取失败")
+    media = stored.content_type or FILE_MEDIA.get(file_ext(key), "application/octet-stream")
+    return Response(content=data, media_type=media)
+
+
+@router.put("/study/{task_id}/progress")
+def study_progress(
+    task_id: int,
+    body: ProgressBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    return apply_progress(db, task, record, body)
+
+
+@router.post("/study/{task_id}/confirm")
+def study_confirm(
+    task_id: int,
+    body: ConfirmBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 403, STUDY_DENIED)
+    if err is not None:
+        return err
+    return apply_confirm(db, actor, task, record, body)
+
+
+@router.put("/task/{task_id}/progress")
+def report_progress(
+    task_id: int,
+    body: ProgressBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 1105, "非被指派人无权上报进度")
+    if err is not None:
+        return err
+    return apply_progress(db, task, record, body)
+
+
+@router.post("/task/{task_id}/confirm")
+def confirm_task(
+    task_id: int,
+    body: ConfirmBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    task, record, err = open_assignee(db, actor, task_id, 1105, "非被指派人无权上报进度")
+    if err is not None:
+        return err
+    return apply_confirm(db, actor, task, record, body)
 
 
 @router.get("/task/records")
@@ -1691,14 +2558,14 @@ def task_records(
     names = user_names(db, {rec.user_id for rec, _ in rows})
     items = []
     now = utcnow()
-    dept_cache: dict[int, int] = {}
+    dept_cache: dict[int, tuple[int, str]] = {}
     for record, task in rows:
         vo = progress_vo(db, task, record)
         vo["taskNo"] = task.task_no
         vo["taskName"] = task.task_name
         vo["userName"] = names.get(record.user_id, "")
-        dept_id = dept_of(db, dept_cache, record.user_id, tenant_id)
-        vo["deptName"] = dept_label(dept_id)
+        _dept_id, dept_name = user_dept_view(db, record.user_id, tenant_id, dept_cache)
+        vo["deptName"] = dept_name
         deadline = task.deadline
         vo["isOverdue"] = bool(
             record.confirm_status == 0 and deadline and deadline < now.replace(tzinfo=None)

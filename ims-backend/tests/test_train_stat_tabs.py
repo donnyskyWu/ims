@@ -1,7 +1,12 @@
-"""#76 培训统计看板：部门日汇总、时长排行、逾期、资料热度。口径与 finish-rate 一致。"""
+"""#76 培训统计看板：部门日汇总、时长排行、逾期、资料热度。
+
+完成率总览是截至时刻的人次汇总，不再按近 N 天裁掉更早发布的任务。
+"""
 
 import os
-from datetime import datetime
+import re
+import uuid
+from datetime import datetime, timedelta
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -11,7 +16,7 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import TrainStatDaily, TrainTask
+from app.models import TrainStatDaily, TrainTask, TrainTaskRecord
 from app.train_stat_e2e_seed import E2E_OVERDUE_TASK_NAME
 
 client = TestClient(app)
@@ -100,14 +105,24 @@ def test_dept_rank_heat_match_finish_rate_caliber():
     ).json()
     assert rate["code"] == 0
     assert dept["code"] == 0
-    assert sum(row["assignedCount"] for row in rate["data"]["byDept"]) == sum(
-        row["assignedCount"] for row in dept["data"]
-    )
-    assert sum(row["finishedCount"] for row in rate["data"]["byDept"]) == sum(
-        row["finishedCount"] for row in dept["data"]
-    )
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", rate["data"]["asOf"])
+    names = {row["taskName"] for row in rate["data"]["byTask"]}
+    assert "看板完成率任务" in names
+    assert E2E_OVERDUE_TASK_NAME in names
+    assert "PERF95-TRAIN" in names
+    assigned = sum(row["assignedCount"] for row in rate["data"]["byTask"])
+    finished = sum(row["finishedCount"] for row in rate["data"]["byTask"])
+    assert rate["data"]["totalFinishRate"] == round(finished * 100.0 / assigned, 2)
     hit = next(row for row in rate["data"]["byTask"] if row["taskName"] == "看板完成率任务")
     assert hit["finishRate"] == 100.0
+    overdue = next(row for row in rate["data"]["byTask"] if row["taskName"] == E2E_OVERDUE_TASK_NAME)
+    assert overdue["assignedCount"] == 1
+    assert overdue["finishedCount"] == 0
+    perf = next(row for row in rate["data"]["byTask"] if row["taskName"] == "PERF95-TRAIN")
+    assert perf["assignedCount"] == 1
+    assert perf["finishedCount"] == 1
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00", perf["createdAt"])
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00", hit["createdAt"])
     today_rows = [row for row in dept["data"] if row["statDate"] == today]
     assert today_rows
     assert today_rows[0]["avgDurationMinutes"] == 2
@@ -231,3 +246,93 @@ def test_dept_marks_two_consecutive_weeks_under_85():
     assert flagged
     assert all(row["finishRate"] < 85 for row in flagged)
     assert {row["statDate"] for row in flagged} >= {"2026-09-04", "2026-09-11"}
+
+
+def test_finish_rollup_person_times_exclude_draft_and_revoked():
+    auth = headers()
+    material_id, task_id = _material_and_task(auth, "人次口径资料", "人次口径任务")
+    progress = client.put(
+        f"/admin-api/ims/train/task/{task_id}/progress",
+        headers=auth,
+        json={
+            "materialId": material_id,
+            "watchedSeconds": 60,
+            "heartbeatAt": "2026-10-11T12:00:00+08:00",
+        },
+    )
+    assert progress.json()["code"] == 0
+    confirmed = client.post(f"/admin-api/ims/train/task/{task_id}/confirm", headers=auth, json={})
+    assert confirmed.json()["data"]["confirmStatus"] == "CONFIRMED"
+
+    db = SessionLocal()
+    try:
+        task = db.get(TrainTask, task_id)
+        assert task is not None
+        task.created_at = utcnow() - timedelta(days=60)
+        for extra_user in (9101, 9102):
+            db.add(
+                TrainTaskRecord(
+                    task_id=task_id,
+                    user_id=extra_user,
+                    tenant_id=task.tenant_id,
+                    confirm_status=0,
+                )
+            )
+        task.assigned_count = 3
+        draft = TrainTask(
+            task_no=f"TTDRAFT{uuid.uuid4().hex[:6]}",
+            task_name="草稿任务不入汇总",
+            material_ids=[material_id],
+            assign_scope="BY_USER",
+            assign_targets=[1],
+            confirm_type="DURATION",
+            assigned_count=1,
+            status="DRAFT",
+            creator_user_id=1,
+            tenant_id=task.tenant_id,
+            created_at=utcnow() - timedelta(days=2),
+        )
+        revoked = TrainTask(
+            task_no=f"TTREVOKE{uuid.uuid4().hex[:6]}",
+            task_name="撤销任务不入汇总",
+            material_ids=[material_id],
+            assign_scope="BY_USER",
+            assign_targets=[1],
+            confirm_type="DURATION",
+            assigned_count=1,
+            status="REVOKED",
+            creator_user_id=1,
+            tenant_id=task.tenant_id,
+            created_at=utcnow() - timedelta(days=2),
+        )
+        db.add(draft)
+        db.add(revoked)
+        db.flush()
+        db.add(TrainTaskRecord(task_id=draft.id, user_id=1, tenant_id=task.tenant_id, confirm_status=1))
+        db.add(TrainTaskRecord(task_id=revoked.id, user_id=1, tenant_id=task.tenant_id, confirm_status=1))
+        db.commit()
+    finally:
+        db.close()
+
+    today = utcnow().strftime("%Y-%m-%d")
+    rate = client.get(
+        "/admin-api/ims/train/stat/finish-rate",
+        headers=auth,
+        params={"dateRange": f"{today},{today}"},
+    ).json()
+    assert rate["code"] == 0
+    by_task = rate["data"]["byTask"]
+    names = {row["taskName"] for row in by_task}
+    assert "人次口径任务" in names
+    assert "草稿任务不入汇总" not in names
+    assert "撤销任务不入汇总" not in names
+    assert E2E_OVERDUE_TASK_NAME in names
+    wide = next(row for row in by_task if row["taskName"] == "人次口径任务")
+    assert wide["assignedCount"] == 3
+    assert wide["finishedCount"] == 1
+    assert wide["finishRate"] == 33.33
+    assigned = sum(row["assignedCount"] for row in by_task)
+    finished = sum(row["finishedCount"] for row in by_task)
+    assert rate["data"]["totalFinishRate"] == round(finished * 100.0 / assigned, 2)
+    mean = round(sum(row["finishRate"] for row in by_task) / len(by_task), 2)
+    assert rate["data"]["totalFinishRate"] != mean

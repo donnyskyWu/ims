@@ -76,7 +76,11 @@ const router = createRouter({
         { path: 'report/stat', component: () => import('../views/report/stat.vue') },
         { path: 'train/material', component: () => import('../views/train/material.vue') },
         { path: 'train/task', component: () => import('../views/train/task.vue') },
-        { path: 'train/study/:taskId', component: () => import('../views/train/study.vue') },
+        {
+          path: 'train/study/:taskId',
+          component: () => import('../views/train/study.vue'),
+          meta: { secondary: true, hidden: true, title: '学习中心' },
+        },
         { path: 'air/kb', component: () => import('../views/air/kb.vue') },
         { path: 'air/skill', component: () => import('../views/air/skill.vue') },
         { path: 'air/expert', component: () => import('../views/air/expert.vue') },
@@ -132,6 +136,10 @@ router.beforeEach((to) => {
   const user = useUserStore()
   if (to.path !== '/login' && !user.accessToken) {
     return '/login'
+  }
+  // 学习中心是二级页，不挂菜单。已登录即可打开，是否被指派由后端返回 403。
+  if (to.matched.some((record) => record.meta.secondary === true || record.meta.hidden === true)) {
+    return true
   }
   return true
 })

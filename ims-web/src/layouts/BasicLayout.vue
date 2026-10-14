@@ -89,7 +89,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Ico from '../components/Ico.vue'
 import MessageBell from '../components/MessageBell.vue'
-import { codeLabel, crumbOf, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
+import { codeLabel, crumbForPath, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
 import { useUserStore } from '../stores/user'
 
 type Leaf = { kind: 'leaf'; key: string; id: string; label: string; icon: string; code: string }
@@ -109,7 +109,7 @@ const closedGroups = ref<Record<string, boolean>>({})
 const closedSubs = ref<Record<string, boolean>>({})
 
 const currentId = computed(() => modIdFromPath(route.path))
-const crumb = computed(() => crumbOf(currentId.value))
+const crumb = computed(() => crumbForPath(route.path))
 const filtering = computed(() => query.value.trim().length > 0)
 const displayName = computed(() => user.profile?.nickname || user.profile?.username || '已登录')
 const initial = computed(() => (displayName.value || 'I').slice(0, 1).toUpperCase())

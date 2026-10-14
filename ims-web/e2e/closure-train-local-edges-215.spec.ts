@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
-import { attachClosurePageHooks, createTrainMaterialViaUi, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, createTrainMaterialViaUi, hashId, loginAdmin } from './closure-helpers'
 
 const SHOT = '/opt/cursor/artifacts'
 
@@ -52,17 +52,17 @@ test.describe('train local edges 215', () => {
     await page.getByRole('button', { name: '下达学习任务' }).click()
     const taskForm = page.locator('.modal-mask .card').filter({ hasText: '下达学习任务' })
     await fieldAfter(taskForm, '任务名称').fill('任'.repeat(129))
-    await taskForm.locator('label.mat-opt').filter({ hasText: `#${materialId}` }).locator('input').check()
-    await taskForm.locator('input[placeholder="如 1"]').fill('1')
-    await taskForm.getByRole('button', { name: '保存' }).click()
+    await taskForm.getByTestId('train-form-materials').locator('label.mat-opt').filter({ hasText: hashId(materialId) }).locator('input').check()
+    await taskForm.getByTestId('train-form-users').locator('label').filter({ hasText: hashId(1) }).locator('input').check()
+    await taskForm.getByRole('button', { name: '提交任务' }).click()
     await expect(taskForm.getByTestId('train-task-form-error')).toHaveText('任务名称不超过 128 字')
     await page.screenshot({ path: `${SHOT}/train-215-task-name-too-long.png`, fullPage: true })
     await fieldAfter(taskForm, '任务名称').fill(taskName)
-    await fieldAfter(taskForm, '截止时间').fill(deadlineInHours(6))
+    await taskForm.getByTestId('train-form-deadline').fill(deadlineInHours(6).slice(0, 16))
     const created = page.waitForResponse(
       (r) => r.url().includes('/train/task') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await taskForm.getByRole('button', { name: '保存' }).click()
+    await taskForm.getByRole('button', { name: '提交任务' }).click()
     const createdBody = (await (await created).json()) as { code: number; data?: { id?: number } }
     expect(createdBody.code).toBe(0)
     const taskId = createdBody.data?.id
@@ -72,19 +72,17 @@ test.describe('train local edges 215', () => {
     await expect(taskRow.getByTestId('train-task-due-soon')).toHaveText('即将到期', { timeout: 15_000 })
     await page.screenshot({ path: `${SHOT}/train-215-due-soon.png`, fullPage: true })
 
+    await page.clock.install()
     await page.goto(`/ims/train/study/${taskId}`)
     await expect(page.locator('h1')).toHaveText('学习中心', { timeout: 15_000 })
-    await expect(page.getByTestId('train-study-gap')).toHaveText('还差 1 份资料未学完，学完后才能完成确认')
-    await expect(page.getByRole('button', { name: '完成确认' })).toBeDisabled()
+    await expect(page.getByTestId('train-study-gap')).toHaveText('还差 1 分钟学时，学时达标后才能完成确认')
+    await expect(page.getByTestId('train-study-confirm')).toBeDisabled()
     await page.screenshot({ path: `${SHOT}/train-215-study-gap.png`, fullPage: true })
+    await page.getByTestId('train-study-start').click()
 
-    const progress = page.waitForResponse(
-      (r) => r.url().includes(`/train/task/${taskId}/progress`) && r.request().method() === 'PUT' && r.status() === 200,
-    )
-    await page.getByRole('button', { name: '标记当前资料已学完' }).click()
-    expect(((await (await progress).json()) as { code: number }).code).toBe(0)
+    await page.clock.runFor(70_000)
     await expect(page.getByTestId('train-study-gap')).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '完成确认' })).toBeEnabled()
+    await expect(page.getByTestId('train-study-confirm')).toBeEnabled()
 
     await page.goto('/ims/train/material')
     await expect(page.locator('h1')).toHaveText('培训资料库', { timeout: 15_000 })

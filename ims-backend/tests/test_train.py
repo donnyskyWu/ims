@@ -1,6 +1,7 @@
+import json
 import os
 import uuid
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 os.environ.pop("IMS_DATABASE_URL", None)
 os.environ["IMS_MYSQL_HOST"] = "127.0.0.1"
@@ -12,7 +13,25 @@ from sqlalchemy import select
 
 from app.core import SessionLocal, utcnow
 from app.main import app
-from app.models import TrainMaterial, TrainMaterialCate, TrainTask, TrainTaskRecord, User, UserRole
+from app.models import (
+    MeetDailyReport,
+    Menu,
+    OrgEvent,
+    PerfRank,
+    Role,
+    RoleMenu,
+    RolePerm,
+    Todo,
+    TrainMaterial,
+    TrainMaterialCate,
+    TrainTask,
+    TrainTaskRecord,
+    User,
+    UserDept,
+    UserMapping,
+    UserRole,
+)
+from app.security import hash_password
 
 client = TestClient(app)
 
@@ -179,6 +198,92 @@ def test_train_material_list_filters_type_status_position_and_empty():
     assert bad_pos.json()["code"] == 1001
 
 
+def test_train_material_file_whitelist_and_position_catalog():
+    auth = headers()
+    rejected = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "非法扩展名",
+            "materialType": "DOC",
+            "fileKey": "TB-bad.exe",
+            "positionCodes": ["全员通用"],
+            "publish": False,
+        },
+    )
+    rejected_body = rejected.json()
+    assert rejected_body["code"] == 1001, rejected_body
+    assert rejected_body["msg"] == "类型不支持"
+
+    catalog = client.get("/admin-api/ims/train/material/positions", headers=auth)
+    catalog_body = catalog.json()
+    assert catalog_body["code"] == 0, catalog_body
+    codes = [row["code"] for row in catalog_body["data"]]
+    assert "全员通用" in codes
+    assert any(row["name"] == "直播运营" and row["code"] == "R5" for row in catalog_body["data"])
+    assert any(row["code"] == "编导" for row in catalog_body["data"])
+
+    uploaded = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "DOC"},
+        files={"file": ("note.pdf", b"%PDF-1.4 demo", "application/pdf")},
+    )
+    uploaded_body = uploaded.json()
+    assert uploaded_body["code"] == 0, uploaded_body
+    assert uploaded_body["data"]["fileKey"]
+    assert uploaded_body["data"]["fileName"] == "note.pdf"
+
+    exe = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "DOC"},
+        files={"file": ("TB-bad.exe", b"MZ", "application/octet-stream")},
+    )
+    assert exe.json()["code"] == 1001
+    assert exe.json()["msg"] == "类型不支持"
+
+    video = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "VIDEO"},
+        files={"file": ("clip.pdf", b"%PDF-1.4", "application/pdf")},
+    )
+    assert video.json()["code"] == 1001
+    assert video.json()["msg"] == "类型不支持"
+
+    oversized = client.post(
+        "/admin-api/ims/train/material/file",
+        headers=auth,
+        data={"materialType": "DOC"},
+        files={"file": ("big.pdf", b"x" * (20 * 1024 * 1024 + 1), "application/pdf")},
+    )
+    assert oversized.json()["code"] == 5005
+
+    saved = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "岗位多选资料",
+            "materialType": "DOC",
+            "fileKey": uploaded_body["data"]["fileKey"],
+            "positionCodes": ["主播组", "全员通用"],
+            "publish": True,
+        },
+    )
+    saved_body = saved.json()
+    assert saved_body["code"] == 0, saved_body
+    assert saved_body["data"]["positionCodes"] == ["主播组", "全员通用"]
+
+    listed = client.get(
+        "/admin-api/ims/train/material/list",
+        headers=auth,
+        params={"positionCode": "全员通用", "title": "岗位多选资料", "pageNo": 1, "pageSize": 10},
+    )
+    assert listed.json()["code"] == 0
+    assert any(row["id"] == saved_body["data"]["id"] for row in listed.json()["data"]["list"])
+
+
 def test_train_task_create_and_list():
     auth = headers()
     cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
@@ -224,6 +329,64 @@ def test_train_task_create_and_list():
     row = next(r for r in list_body["data"]["list"] if r["taskName"] == "新人 onboarding")
     assert row["finishRate"] == 0.0
     assert row["materialCount"] == 1
+
+
+def test_train_task_pushes_study_todo():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    material = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": f"待办资料 {uuid.uuid4().hex[:6]}",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/todo.pdf",
+            "publish": True,
+        },
+    )
+    material_id = material.json()["data"]["id"]
+    name = f"学习待办任务 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [1],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    todos = client.get(
+        "/admin-api/ims/auth/workbench/todos",
+        headers=auth,
+        params={"pageNo": 1, "pageSize": 50, "status": "PENDING"},
+    )
+    assert todos.json()["code"] == 0, todos.json()
+    hit = next(
+        (
+            item
+            for item in todos.json()["data"]["list"]
+            if item.get("taskType") == "train_study" and item.get("refId") == task_id
+        ),
+        None,
+    )
+    assert hit is not None, todos.json()["data"]["list"]
+    assert name in hit["title"]
+
+    db = SessionLocal()
+    try:
+        row = db.scalar(select(Todo).where(Todo.id == hit["id"]))
+        assert row is not None
+        assert row.status == "PENDING"
+    finally:
+        db.close()
 
 
 def test_train_task_1102_deadline_past():
@@ -341,14 +504,28 @@ def test_train_task_progress_confirm_and_records():
     )
     task_id = created.json()["data"]["id"]
 
+    short = client.put(
+        f"/admin-api/ims/train/task/{task_id}/progress",
+        headers=auth,
+        json={
+            "materialId": material_id,
+            "watchedSeconds": 10,
+            "heartbeatAt": "2026-10-08T12:00:00+08:00",
+        },
+    )
+    assert short.json()["code"] == 0
+    assert short.json()["data"]["progress"] < 100
+    blocked = client.post(f"/admin-api/ims/train/task/{task_id}/confirm", headers=auth, json={})
+    assert blocked.json()["code"] == 1104
+    assert "还差" in blocked.json()["msg"]
+
     prog = client.put(
         f"/admin-api/ims/train/task/{task_id}/progress",
         headers=auth,
         json={
             "materialId": material_id,
-            "currentPage": 1,
-            "totalPages": 1,
-            "heartbeatAt": "2026-10-08T12:00:00+08:00",
+            "watchedSeconds": 60,
+            "heartbeatAt": "2026-10-08T12:00:15+08:00",
         },
     )
     assert prog.json()["code"] == 0
@@ -411,8 +588,7 @@ def test_train_stat_finish_rate_after_confirm():
         headers=auth,
         json={
             "materialId": material_id,
-            "currentPage": 1,
-            "totalPages": 1,
+            "watchedSeconds": 60,
             "heartbeatAt": "2026-10-08T12:00:00+08:00",
         },
     )
@@ -488,6 +664,400 @@ def _peer_headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _dept_learner(nickname: str) -> tuple[dict, int]:
+    """部门数据范围、只有工作台菜单，没有培训菜单。对应 tc_r6 这类被指派人。"""
+    username = f"r6_{uuid.uuid4().hex[:8]}"
+    db = SessionLocal()
+    try:
+        user = User(
+            username=username,
+            nickname=nickname,
+            mobile=f"136{uuid.uuid4().int % 10**8:08d}",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+        role = Role(
+            role_name=nickname,
+            role_key=f"r6_{uuid.uuid4().hex[:10]}",
+            data_scope="DEPT",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        menu = db.scalar(select(Menu).where(Menu.deleted == 0, Menu.route == "/ims/workbench"))
+        assert menu is not None
+        db.add(
+            RoleMenu(
+                role_id=role.id,
+                menu_id=menu.id,
+                perm_code=menu.perm_code or "auth:workbench:query",
+                tenant_id=0,
+            )
+        )
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+        user_id = int(user.id)
+    finally:
+        db.close()
+    logged = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"})
+    token = logged.json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}, user_id
+
+
+def _scope_blocked_learner(nickname: str) -> tuple[dict, int]:
+    """有部门角色，但没有任何菜单和功能权限。非白名单接口会被数据范围拒绝。"""
+    username = f"bare_{uuid.uuid4().hex[:8]}"
+    db = SessionLocal()
+    try:
+        user = User(
+            username=username,
+            nickname=nickname,
+            mobile=f"135{uuid.uuid4().int % 10**8:08d}",
+            password_hash=hash_password("Admin@123"),
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(user)
+        db.flush()
+        role = Role(
+            role_name=nickname,
+            role_key=f"bare_{uuid.uuid4().hex[:10]}",
+            data_scope="DEPT",
+            source="MANUAL",
+            status="ENABLED",
+            tenant_id=0,
+        )
+        db.add(role)
+        db.flush()
+        db.add(UserRole(user_id=user.id, role_id=role.id, tenant_id=0))
+        db.commit()
+        user_id = int(user.id)
+    finally:
+        db.close()
+    logged = client.post("/admin-api/ims/auth/login", json={"username": username, "password": "Admin@123"})
+    token = logged.json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}, user_id
+
+
+def test_train_study_assignee_reads_own_task_stranger_forbidden():
+    auth = headers()
+    assignee_auth, assignee_id = _dept_learner("内容运营")
+    stranger_auth, _stranger_id = _dept_learner("旁听")
+    material_id = _published_material(auth, f"学习中心资料 {uuid.uuid4().hex[:6]}")
+    name = f"指派学习 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [assignee_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "QUIZ",
+            "quiz": SAMPLE_QUIZ,
+            "passScore": 60,
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=assignee_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    task = opened_body["data"]["task"]
+    assert task["id"] == task_id
+    assert task["confirmType"] == "QUIZ"
+    assert task["quiz"][0]["question"] == "开播前要确认什么"
+    assert "answerIndex" not in task["quiz"][0]
+    assert any(item["id"] == material_id for item in opened_body["data"]["materials"])
+    assert opened_body["data"]["progress"]["userId"] == assignee_id
+    assert opened_body["data"]["progress"]["confirmStatus"] == "NOT_CONFIRMED"
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+
+    admin_denied = client.get(f"/admin-api/ims/train/study/{task_id}", headers=auth)
+    admin_body = admin_denied.json()
+    assert admin_denied.status_code == 403, admin_body
+    assert admin_body["code"] == 403
+    assert admin_body["msg"] == "仅被指派人可学习本任务"
+
+
+def test_train_study_assignee_without_record_can_open_stranger_forbidden():
+    """按岗位指派后记录漏建、或记录被软删，被指派人仍可学习并幂等补记录。"""
+    auth = headers()
+    assignee_auth, assignee_id = _dept_learner("TC-短视频")
+    stranger_auth, _stranger_id = _dept_learner("旁听")
+    db = SessionLocal()
+    try:
+        role_id = db.scalar(select(UserRole.role_id).where(UserRole.user_id == assignee_id))
+        role = db.get(Role, role_id)
+        role.role_key = f"R6{uuid.uuid4().hex[:6]}"
+        role.role_name = "内容运营"
+        role.dingtalk_position = None
+        code = role.role_key
+        db.commit()
+    finally:
+        db.close()
+    material_id = _published_material(auth, f"岗位学习 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": f"岗位任务 {uuid.uuid4().hex[:6]}",
+            "materialIds": [material_id],
+            "assignScope": "BY_POSITION",
+            "assignTargetPositionCodes": [code],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    db = SessionLocal()
+    try:
+        rows = list(
+            db.scalars(select(TrainTaskRecord).where(TrainTaskRecord.task_id == task_id)).all()
+        )
+        assert any(row.user_id == assignee_id for row in rows)
+        for row in rows:
+            if row.user_id == assignee_id:
+                row.deleted = 1
+                row.tenant_id = 7
+        db.commit()
+    finally:
+        db.close()
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=assignee_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    assert opened_body["data"]["task"]["id"] == task_id
+    again = client.get(f"/admin-api/ims/train/study/{task_id}", headers=assignee_auth)
+    assert again.status_code == 200
+    assert again.json()["code"] == 0
+    db = SessionLocal()
+    try:
+        live = list(
+            db.scalars(
+                select(TrainTaskRecord).where(
+                    TrainTaskRecord.task_id == task_id,
+                    TrainTaskRecord.user_id == assignee_id,
+                    TrainTaskRecord.deleted == 0,
+                )
+            ).all()
+        )
+        assert len(live) == 1
+    finally:
+        db.close()
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+
+
+def test_train_study_todo_without_record_opens_and_backfills():
+    """工作台已有学习待办、但岗位码对不上且没有学习记录时，仍可学习并补建记录。"""
+    auth = headers()
+    target_auth, target_id = _dept_learner("岗位目标")
+    learner_auth, learner_id = _dept_learner("TC-短视频")
+    stranger_auth, _stranger_id = _dept_learner("旁听")
+    material_id = _published_material(auth, f"待办学习 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "TB学时任务3",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [target_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    assert learner_id not in body["data"]["assignTargetUserIds"]
+    db = SessionLocal()
+    try:
+        existing = db.scalar(
+            select(TrainTaskRecord).where(
+                TrainTaskRecord.task_id == task_id,
+                TrainTaskRecord.user_id == learner_id,
+            )
+        )
+        assert existing is None
+        task = db.get(TrainTask, task_id)
+        db.add(
+            Todo(
+                assignee_user_id=learner_id,
+                task_type="train_study",
+                ref_type="train_task",
+                ref_id=task_id,
+                title="学习待办：TB学时任务3",
+                content="进入学习中心完成本任务",
+                status="PENDING",
+                tenant_id=9,
+            )
+        )
+        db.commit()
+        task_tenant = int(task.tenant_id or 0)
+    finally:
+        db.close()
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    assert opened_body["data"]["progress"]["userId"] == learner_id
+    again = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    assert again.status_code == 200
+    assert again.json()["code"] == 0
+    db = SessionLocal()
+    try:
+        live = list(
+            db.scalars(
+                select(TrainTaskRecord).where(
+                    TrainTaskRecord.task_id == task_id,
+                    TrainTaskRecord.user_id == learner_id,
+                    TrainTaskRecord.deleted == 0,
+                )
+            ).all()
+        )
+        assert len(live) == 1
+        assert int(live[0].tenant_id or 0) == task_tenant
+        live[0].deleted = 1
+        todo = db.scalar(
+            select(Todo).where(
+                Todo.assignee_user_id == learner_id,
+                Todo.task_type == "train_study",
+                Todo.ref_id == task_id,
+            )
+        )
+        todo.status = "DONE"
+        db.commit()
+    finally:
+        db.close()
+
+    restored = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    restored_body = restored.json()
+    assert restored.status_code == 200, restored_body
+    assert restored_body["code"] == 0, restored_body
+    db = SessionLocal()
+    try:
+        live = list(
+            db.scalars(
+                select(TrainTaskRecord).where(
+                    TrainTaskRecord.task_id == task_id,
+                    TrainTaskRecord.user_id == learner_id,
+                    TrainTaskRecord.deleted == 0,
+                )
+            ).all()
+        )
+        assert len(live) == 1
+    finally:
+        db.close()
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+    denied = client.get(f"/admin-api/ims/train/study/{task_id}", headers=target_auth)
+    assert denied.status_code == 200
+    assert denied.json()["code"] == 0
+
+
+def test_train_study_without_train_menu_opens_from_todo():
+    """没有 menu:trainTask:query 的用户，只要有学习待办就能学习。任务列表仍无操作权限。"""
+    auth = headers()
+    learner_auth, learner_id = _scope_blocked_learner("TC-短视频")
+    stranger_auth, _stranger_id = _scope_blocked_learner("旁听")
+    target_auth, target_id = _dept_learner("目标")
+    db = SessionLocal()
+    try:
+        role_ids = list(db.scalars(select(UserRole.role_id).where(UserRole.user_id == learner_id)).all())
+        menu_codes = list(
+            db.scalars(select(RoleMenu.perm_code).where(RoleMenu.role_id.in_(role_ids))).all()
+        )
+        perm_codes = list(
+            db.scalars(select(RolePerm.perm_code).where(RolePerm.role_id.in_(role_ids))).all()
+        )
+        assert "menu:trainTask:query" not in set(menu_codes) | set(perm_codes)
+    finally:
+        db.close()
+    blocked = client.get("/admin-api/ims/train/task/list", headers=learner_auth)
+    blocked_body = blocked.json()
+    assert blocked.status_code == 403, blocked_body
+    assert blocked_body["code"] == 403
+    assert blocked_body["msg"] == "无操作权限"
+
+    material_id = _published_material(auth, f"范围外学习 {uuid.uuid4().hex[:6]}")
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "TB学时任务3",
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [target_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    db = SessionLocal()
+    try:
+        db.add(
+            Todo(
+                assignee_user_id=learner_id,
+                task_type="train_study",
+                ref_type="train_task",
+                ref_id=task_id,
+                title="学习待办：TB学时任务3",
+                content="进入学习中心完成本任务",
+                status="PENDING",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    opened = client.get(f"/admin-api/ims/train/study/{task_id}", headers=learner_auth)
+    opened_body = opened.json()
+    assert opened.status_code == 200, opened_body
+    assert opened_body["code"] == 0, opened_body
+    assert opened_body["data"]["progress"]["userId"] == learner_id
+
+    stranger = client.get(f"/admin-api/ims/train/study/{task_id}", headers=stranger_auth)
+    stranger_body = stranger.json()
+    assert stranger.status_code == 403, stranger_body
+    assert stranger_body["code"] == 403
+    assert stranger_body["msg"] == "仅被指派人可学习本任务"
+
+    target = client.get(f"/admin-api/ims/train/study/{task_id}", headers=target_auth)
+    assert target.status_code == 200
+    assert target.json()["code"] == 0
+
+
 SAMPLE_QUIZ = [
     {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"], "answerIndex": 0},
     {"question": "话术可以照着念吗", "options": ["可以", "不行"], "answerIndex": 1},
@@ -500,7 +1070,7 @@ def test_train_quiz_compose_rejects_bad_paper():
     cases = [
         ({"quiz": [], "passScore": 1}, "quiz 必填"),
         ({"quiz": SAMPLE_QUIZ}, "passScore 必填"),
-        ({"quiz": SAMPLE_QUIZ, "passScore": 3}, "及格分须在 1 到题目数之间"),
+        ({"quiz": SAMPLE_QUIZ, "passScore": 101}, "及格分须在 0 到 100 之间"),
         (
             {"quiz": [{"question": "只有一项", "options": ["甲"], "answerIndex": 0}], "passScore": 1},
             "每题选项至少 2 项",
@@ -538,13 +1108,13 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     auth = headers()
     material_id = _published_material(auth, "问卷判分资料")
     name = f"问卷判分 {uuid.uuid4().hex[:6]}"
-    created = _quiz_task(auth, material_id, name, SAMPLE_QUIZ, 2)
+    created = _quiz_task(auth, material_id, name, SAMPLE_QUIZ, 100)
     body = created.json()
     assert body["code"] == 0, body
     data = body["data"]
     task_id = data["id"]
     assert data["questionCount"] == 2
-    assert data["passScore"] == 2
+    assert data["passScore"] == 100
     assert data["quiz"][0] == {"question": "开播前要确认什么", "options": ["设备与网络", "随便开"]}
     assert "answerIndex" not in data["quiz"][0]
 
@@ -569,7 +1139,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
         json={"answers": [{"questionIndex": 0, "answerIndex": 0}]},
     )
     assert incomplete.json()["code"] == 1001
-    assert incomplete.json()["msg"] == "问卷未答完"
+    assert incomplete.json()["msg"] == "还有 1 题未作答"
 
     failed = client.post(
         f"/admin-api/ims/train/task/{task_id}/confirm",
@@ -581,7 +1151,17 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     assert failed_body["data"]["isPassed"] is False
     assert failed_body["data"]["confirmStatus"] == "NOT_CONFIRMED"
     assert failed_body["data"]["confirmScore"] == 0
-    assert failed_body["data"]["passScore"] == 2
+    assert failed_body["data"]["passScore"] == 100
+
+    half = client.post(
+        f"/admin-api/ims/train/task/{task_id}/confirm",
+        headers=auth,
+        json={"answers": [{"questionIndex": 0, "answerIndex": 0}, {"questionIndex": 1, "answerIndex": 0}]},
+    )
+    half_body = half.json()
+    assert half_body["code"] == 0, half_body
+    assert half_body["data"]["isPassed"] is False
+    assert half_body["data"]["confirmScore"] == 50
 
     records = client.get(
         "/admin-api/ims/train/task/records",
@@ -590,7 +1170,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     )
     rec = records.json()["data"]["list"][0]
     assert rec["confirmStatus"] == "NOT_CONFIRMED"
-    assert rec["confirmScore"] == 0
+    assert rec["confirmScore"] == 50
 
     passed = client.post(
         f"/admin-api/ims/train/task/{task_id}/confirm",
@@ -601,7 +1181,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     assert passed_body["code"] == 0, passed_body
     assert passed_body["data"]["isPassed"] is True
     assert passed_body["data"]["confirmStatus"] == "CONFIRMED"
-    assert passed_body["data"]["confirmScore"] == 2
+    assert passed_body["data"]["confirmScore"] == 100
 
     again = client.post(
         f"/admin-api/ims/train/task/{task_id}/confirm",
@@ -611,7 +1191,7 @@ def test_train_quiz_grade_retake_hides_answer_and_blocks_stranger():
     again_body = again.json()
     assert again_body["code"] == 0, again_body
     assert again_body["data"]["confirmStatus"] == "CONFIRMED"
-    assert again_body["data"]["confirmScore"] == 2
+    assert again_body["data"]["confirmScore"] == 100
 
     listed_after = client.get(
         "/admin-api/ims/train/task/list",
@@ -767,8 +1347,7 @@ def test_train_task_edit_before_deadline_keeps_progress():
         headers=auth,
         json={
             "materialId": material["id"],
-            "currentPage": 1,
-            "totalPages": 1,
+            "watchedSeconds": 60,
             "heartbeatAt": "2026-10-09T12:00:00+08:00",
         },
     )
@@ -1146,6 +1725,37 @@ def test_train_title_and_task_name_length():
     assert edited.json()["msg"] == "任务名称不超过 128 字"
 
 
+def test_train_draft_material_cannot_offline():
+    auth = headers()
+    cates = client.get("/admin-api/ims/train/material/cates", headers=auth)
+    cate_id = cates.json()["data"][0]["children"][0]["id"]
+    created = client.post(
+        "/admin-api/ims/train/material",
+        headers=auth,
+        json={
+            "title": "TB资料草稿",
+            "cateId": cate_id,
+            "materialType": "DOC",
+            "fileKey": "train/draft.pdf",
+            "publish": False,
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    assert body["data"]["status"] == "DRAFT"
+    material_id = body["data"]["id"]
+    offline = client.delete(f"/admin-api/ims/train/material/{material_id}", headers=auth)
+    assert offline.json()["code"] == 1001
+    assert offline.json()["msg"] == "仅已发布资料可下架"
+    db = SessionLocal()
+    try:
+        row = db.get(TrainMaterial, material_id)
+        assert row is not None
+        assert row.status == "DRAFT"
+    finally:
+        db.close()
+
+
 def test_train_offline_keeps_referenced_material():
     auth = headers()
     material_id = _published_material(auth, f"引用下架 {uuid.uuid4().hex[:6]}")
@@ -1180,3 +1790,360 @@ def test_train_offline_keeps_referenced_material():
         assert material_id in list(task.material_ids or [])
     finally:
         db.close()
+
+
+def test_train_assign_by_position_preview_and_filter():
+    auth = headers()
+    material_id = _published_material(auth, f"岗位指派 {uuid.uuid4().hex[:6]}")
+    username = f"pos_{uuid.uuid4().hex[:8]}"
+    created_user = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": "岗位学员", "mobile": f"136{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    assert created_user.json()["code"] == 0, created_user.json()
+    user_id = int(created_user.json()["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(
+            UserMapping(
+                user_id=user_id,
+                dingtalk_user_id=f"dt-{username}",
+                dingtalk_position="编导",
+                tenant_id=0,
+                deleted=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    preview = client.get(
+        "/admin-api/ims/train/task/assign-preview",
+        headers=auth,
+        params={"positionCodes": "编导"},
+    )
+    assert preview.json()["code"] == 0, preview.json()
+    assert preview.json()["data"]["count"] >= 1
+    everyone = client.get(
+        "/admin-api/ims/train/task/assign-preview",
+        headers=auth,
+        params={"positionCodes": "全员通用"},
+    )
+    assert everyone.json()["data"]["count"] >= preview.json()["data"]["count"]
+
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": f"按岗位 {uuid.uuid4().hex[:6]}",
+            "materialIds": [material_id],
+            "assignScope": "BY_POSITION",
+            "assignTargetPositionCodes": ["编导"],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    assert body["data"]["assignedCount"] == preview.json()["data"]["count"]
+    assert body["data"]["assignScope"] == "BY_POSITION"
+
+    missing = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": "空岗位",
+            "materialIds": [material_id],
+            "assignScope": "BY_POSITION",
+            "assignTargetPositionCodes": ["没有这个岗位"],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert missing.json()["code"] == 1001
+    assert missing.json()["msg"] == "岗位下无可用用户"
+
+
+def test_train_quiz_ai_generate_stub_and_adopt():
+    auth = headers()
+    material_id = _published_material(auth, f"AI样题 {uuid.uuid4().hex[:6]}")
+    empty = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [], "questionCount": 10},
+    )
+    assert empty.json()["code"] == 1001
+    assert empty.json()["msg"] == "请至少选择 1 份已发布资料"
+    missing = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [99999999], "questionCount": 5},
+    )
+    assert missing.json()["code"] == 1111
+    zero = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [material_id], "questionCount": 0},
+    )
+    assert zero.json()["code"] == 1114
+    generated = client.post(
+        "/admin-api/ims/train/quiz/ai-generate",
+        headers=auth,
+        json={"materialIds": [material_id], "questionCount": 5, "difficulty": "EASY"},
+    )
+    body = generated.json()
+    assert body["code"] == 0, body
+    assert len(body["data"]["questions"]) == 5
+    assert body["data"]["meta"]["modelCode"] == "stub-train-quiz"
+    adopted = client.post(
+        "/admin-api/ims/train/quiz/ai-adopt",
+        headers=auth,
+        json={"draftId": body["data"]["draftId"]},
+    )
+    adopted_body = adopted.json()
+    assert adopted_body["code"] == 0, adopted_body
+    quiz = adopted_body["data"]["quiz"]
+    assert len(quiz) == 5
+    assert "answerIndex" in quiz[0]
+    created = _quiz_task(auth, material_id, f"AI卷 {uuid.uuid4().hex[:6]}", quiz, len(quiz))
+    assert created.json()["code"] == 0, created.json()
+
+
+def test_train_task_list_beijing_time_finished_count_and_dept_name():
+    auth = headers()
+    material_id = _published_material(auth, "列与部门资料")
+    username = f"dept_{uuid.uuid4().hex[:8]}"
+    created_user = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": "内容部学员", "mobile": f"136{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    user_body = created_user.json()
+    assert user_body["code"] == 0, user_body
+    user_id = int(user_body["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(UserDept(user_id=user_id, dept_id=7301, tenant_id=0))
+        db.add(
+            UserMapping(
+                user_id=user_id,
+                dingtalk_user_id=f"dt-{username}",
+                dept_ids=[7301],
+                tenant_id=0,
+            )
+        )
+        db.add(
+            OrgEvent(
+                dingtalk_event_id=f"evt-{username}",
+                event_type="hire",
+                idempotency_key=f"idem-{username}",
+                user_id=user_id,
+                after_dept="内容部",
+                payload_json=json.dumps({"deptIds": [7301], "deptNames": ["内容部"]}, ensure_ascii=False),
+                sync_status="SUCCESS",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    name = f"列展示 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [user_id],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    listed = client.get(
+        "/admin-api/ims/train/task/list",
+        headers=auth,
+        params={"taskName": name, "pageNo": 1, "pageSize": 10},
+    )
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == task_id)
+    assert row["assignScope"] == "BY_USER"
+    assert row["finishedCount"] == 0
+    assert row["deadline"] == "2026-12-31T18:00:00+08:00"
+    created_at = datetime_from_iso(row["createdAt"])
+    assert abs((created_at - utcnow().replace(tzinfo=timezone.utc)).total_seconds()) < 180
+
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    rec = records.json()["data"]["list"][0]
+    assert rec["deptName"] == "内容部"
+    assert rec["confirmStatus"] == "NOT_CONFIRMED"
+    assert rec["startedAt"]
+    assert rec["finishedAt"] in (None, "")
+
+
+def test_train_record_dept_name_comes_from_org_catalog_not_id():
+    """本人事件没有部门名时，仍用同一部门编号在其他组织事件里的名称。"""
+    auth = headers()
+    material_id = _published_material(auth, "部门目录资料")
+    username = f"deptcat_{uuid.uuid4().hex[:8]}"
+    created_user = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": username, "nickname": "只挂编号", "mobile": f"135{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    user_body = created_user.json()
+    assert user_body["code"] == 0, user_body
+    user_id = int(user_body["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(UserDept(user_id=user_id, dept_id=7301, tenant_id=0))
+        db.add(
+            UserMapping(
+                user_id=user_id,
+                dingtalk_user_id=f"dt-{username}",
+                dept_ids=[7301],
+                tenant_id=0,
+            )
+        )
+        db.add(
+            OrgEvent(
+                dingtalk_event_id=f"evt-cat-{username}",
+                event_type="hire",
+                idempotency_key=f"idem-cat-{username}",
+                user_id=None,
+                after_dept="内容部",
+                payload_json=json.dumps({"deptIds": [7301], "deptNames": ["内容部"]}, ensure_ascii=False),
+                sync_status="SUCCESS",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    name = f"部门名 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [user_id],
+            "deadline": "2026-10-18T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0, body
+    task_id = body["data"]["id"]
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    rec = records.json()["data"]["list"][0]
+    assert rec["deptName"] == "内容部"
+    assert "7301" not in rec["deptName"]
+
+    db = SessionLocal()
+    try:
+        task = db.get(TrainTask, task_id)
+        from app.train import deadline_text
+
+        assert deadline_text(task.deadline) == "2026-10-18 18:00"
+    finally:
+        db.close()
+
+
+def test_train_dept_name_from_daily_and_perf_not_id():
+    """组织事件没有部门名时，用日报、绩效里的部门名称。"""
+    auth = headers()
+    material_id = _published_material(auth, f"部门主数据 {uuid.uuid4().hex[:6]}")
+    created_a = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": f"d9501_{uuid.uuid4().hex[:6]}", "nickname": "直播学员", "mobile": f"131{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    created_b = client.post(
+        "/admin-api/ims/system/user",
+        headers=auth,
+        json={"username": f"d7301_{uuid.uuid4().hex[:6]}", "nickname": "内容学员", "mobile": f"132{uuid.uuid4().int % 10**8:08d}", "password": "Admin@123"},
+    )
+    assert created_a.json()["code"] == 0, created_a.json()
+    assert created_b.json()["code"] == 0, created_b.json()
+    user_a = int(created_a.json()["data"]["id"])
+    user_b = int(created_b.json()["data"]["id"])
+    db = SessionLocal()
+    try:
+        db.add(UserDept(user_id=user_a, dept_id=9501, tenant_id=0))
+        db.add(UserDept(user_id=user_b, dept_id=7301, tenant_id=0))
+        db.add(
+            MeetDailyReport(
+                user_id=user_a,
+                dept_id=9501,
+                user_name="直播学员",
+                dept_name="直播部",
+                report_date="2026-10-01",
+                content_done="底账",
+                content_plan="—",
+                submit_status="SUBMITTED",
+                tenant_id=0,
+            )
+        )
+        db.add(
+            PerfRank(
+                period_month="2026-09",
+                dept_id=7301,
+                dept_name="内容部",
+                user_id=user_b,
+                user_name="内容学员",
+                tenant_id=0,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    name = f"双部门 {uuid.uuid4().hex[:6]}"
+    created = client.post(
+        "/admin-api/ims/train/task",
+        headers=auth,
+        json={
+            "taskName": name,
+            "materialIds": [material_id],
+            "assignScope": "BY_USER",
+            "assignTargetUserIds": [user_a, user_b],
+            "deadline": "2026-12-31T18:00:00+08:00",
+            "confirmType": "DURATION",
+        },
+    )
+    assert created.json()["code"] == 0, created.json()
+    task_id = created.json()["data"]["id"]
+    records = client.get(
+        "/admin-api/ims/train/task/records",
+        headers=auth,
+        params={"taskId": task_id, "pageNo": 1, "pageSize": 10},
+    )
+    by_user = {row["userId"]: row["deptName"] for row in records.json()["data"]["list"]}
+    assert by_user[user_a] == "直播部"
+    assert by_user[user_b] == "内容部"
+    assert "9501" not in by_user[user_a]
+    assert "7301" not in by_user[user_b]
+    rate = client.get("/admin-api/ims/train/stat/finish-rate", headers=auth)
+    dept_names = {row["deptId"]: row["deptName"] for row in rate.json()["data"]["byDept"]}
+    assert dept_names[9501] == "直播部"
+    assert dept_names[7301] == "内容部"
+
+
+def datetime_from_iso(text: str):
+    from datetime import datetime
+
+    return datetime.fromisoformat(text)

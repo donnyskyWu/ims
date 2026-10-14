@@ -6,64 +6,70 @@
         <div class="sub">TRAIN-001 · DOC/VIDEO/LINK · 02 TRAIN</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-material-export" @click="exportMaterials">导出</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；更新资料生成新版本并留档（TRN-M-R2）。列表可按标题、类型、状态、岗位和分类筛选。</p>
-    <div
-      class="card weekly-card"
-      :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
-      data-testid="train-weekly-rate"
-    >
-      <div>
-        <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
-        <div v-if="weeklyStatus === 'loading'" class="hint">加载中</div>
-        <div v-else-if="weeklyStatus === 'error'" class="hint" data-testid="train-weekly-error">
-          周更新率加载失败
-          <button class="btn btn-sec btn-sm" type="button" @click="loadWeekly">重试</button>
-        </div>
-        <template v-else>
-          <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
-          <div v-if="weekly.shouldUpdateCount === 0" class="hint" data-testid="train-weekly-empty">
-            本周暂无已发布资料
-          </div>
-          <div v-else class="hint">
-            已更新 {{ weekly.updatedCount }} / 应更新 {{ weekly.shouldUpdateCount }}
-            <span v-if="weekly.weeklyUpdateRate < 100"> · 未达 100%，请督办</span>
-          </div>
-        </template>
+    <p v-if="exportHint" class="hint" data-testid="train-material-export-msg">{{ exportHint }}</p>
+    <p class="hint" style="margin-bottom: 8px">左侧按岗位查看资料；更新资料生成新版本并留档。列表可按标题、类型、状态和岗位筛选。</p>
+    <div class="weekly-row">
+      <div class="card weekly-card" data-testid="train-weekly-should">
+        <div class="weekly-label">本周应更新</div>
+        <div class="weekly-num">{{ weeklyStatus === 'ready' ? weekly.shouldUpdateCount : '—' }}</div>
       </div>
-      <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="openUnupdated">
-        未更新清单
-      </button>
+      <div class="card weekly-card" data-testid="train-weekly-updated">
+        <div class="weekly-label">已更新</div>
+        <div class="weekly-num">{{ weeklyStatus === 'ready' ? weekly.updatedCount : '—' }}</div>
+      </div>
+      <div
+        class="card weekly-card"
+        :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
+        data-testid="train-weekly-rate"
+      >
+        <div>
+          <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
+          <div v-if="weeklyStatus === 'loading'" class="hint">加载中</div>
+          <div v-else-if="weeklyStatus === 'error'" class="hint" data-testid="train-weekly-error">
+            周更新率加载失败
+            <button class="btn btn-sec btn-sm" type="button" @click="loadWeekly">重试</button>
+          </div>
+          <template v-else>
+            <div class="weekly-num">{{ weekly.weeklyUpdateRate }}%</div>
+            <div v-if="weekly.shouldUpdateCount === 0" class="hint" data-testid="train-weekly-empty">
+              本周暂无已发布资料
+            </div>
+            <div v-else class="hint">
+              <span v-if="weekly.weeklyUpdateRate < 100">未达 100%，请督办</span>
+            </div>
+          </template>
+        </div>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-open" @click="openUnupdated">
+          未更新清单
+        </button>
+      </div>
     </div>
     <div class="g2" style="margin-bottom: 12px; align-items: flex-start">
       <div class="card" style="padding: 12px; max-height: 280px; overflow: auto">
-        <div style="font-weight: 600; margin-bottom: 8px">分类树</div>
-        <div v-if="cateStatus === 'loading'" class="empty"><div class="et">加载分类…</div></div>
-        <div v-else-if="cateStatus === 'error'" class="empty" data-testid="train-cate-empty">
-          <div class="et">分类加载失败</div>
-          <button class="btn btn-sec btn-sm" type="button" @click="loadCates">重试</button>
+        <div style="font-weight: 600; margin-bottom: 8px">岗位</div>
+        <div v-if="positionStatus === 'loading'" class="empty"><div class="et">加载岗位…</div></div>
+        <div v-else-if="positionStatus === 'error'" class="empty" data-testid="train-cate-empty">
+          <div class="et">岗位加载失败</div>
+          <button class="btn btn-sec btn-sm" type="button" @click="loadPositions">重试</button>
         </div>
-        <div v-else-if="!cates.length" class="empty" data-testid="train-cate-empty">
-          <div class="et">暂无分类</div>
+        <div v-else-if="!positions.length" class="empty" data-testid="train-cate-empty">
+          <div class="et">暂无岗位</div>
         </div>
         <ul v-else class="tree">
-          <li v-for="root in cates" :key="root.id">
-            <span>{{ root.cateName }} <small>({{ root.positionCode }})</small></span>
-            <ul>
-              <li v-for="child in root.children" :key="child.id">
-                <button
-                  type="button"
-                  class="linkish"
-                  :class="{ on: filters.cateId === child.id }"
-                  data-testid="train-cate-node"
-                  @click="pickCate(child)"
-                >
-                  {{ child.cateName }} · {{ child.materialCount }}
-                </button>
-              </li>
-            </ul>
+          <li v-for="item in positions" :key="item.code">
+            <button
+              type="button"
+              class="linkish"
+              :class="{ on: filters.positionCode === item.code }"
+              data-testid="train-position-node"
+              @click="pickPosition(item)"
+            >
+              {{ item.name }} · {{ item.materialCount }}
+            </button>
           </li>
         </ul>
       </div>
@@ -101,22 +107,23 @@
             <table>
               <thead>
                 <tr>
-                  <th>编号</th>
+                  <th>资料编号</th>
                   <th>标题</th>
                   <th>类型</th>
                   <th>版本</th>
-                  <th>岗位</th>
+                  <th>关联岗位</th>
                   <th>状态</th>
                   <th>更新人</th>
+                  <th>更新时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-if="loading">
-                  <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
-                </tr>
-                <tr v-else-if="!rows.length">
-                  <td colspan="8">
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
+            </tr>
+            <tr v-else-if="!rows.length">
+              <td colspan="9">
                     <div class="empty" data-testid="train-material-empty">
                       <div data-testid="train-list-empty">
                         <div class="et">{{ error || listEmptyText }}</div>
@@ -147,7 +154,7 @@
                         class="tag pos-tag"
                         data-testid="train-material-position"
                       >
-                        {{ code }}
+                        {{ positionName(code) }}
                       </span>
                       <span v-if="(row.positionCodes || []).length > 3" class="hint">+{{ (row.positionCodes || []).length - 3 }}</span>
                     </template>
@@ -159,6 +166,7 @@
                     </span>
                   </td>
                   <td>{{ row.uploaderName }}</td>
+                  <td class="mono">{{ fmtBj(row.updatedAt) }}</td>
                   <td>
                     <button class="btn btn-sec btn-sm" type="button" data-testid="train-material-detail" @click="openDetail(row)">
                       详情
@@ -167,7 +175,7 @@
                       编辑
                     </button>
                     <button
-                      v-if="row.status !== 'OFFLINE'"
+                      v-if="row.status === 'PUBLISHED'"
                       class="btn btn-sec btn-sm"
                       type="button"
                       data-testid="train-material-offline"
@@ -188,36 +196,60 @@
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 400px; padding: 20px">
+      <div class="card" style="width: 640px; padding: 20px; max-height: 90vh; overflow: auto">
         <h3 style="margin: 0 0 12px">{{ editingId ? '更新资料' : '上传资料' }}</h3>
-        <label class="fld">分类 ID</label>
-        <input v-model.number="form.cateId" type="number" class="fld-in" />
-        <p v-if="formPositionCode" class="hint" data-testid="train-material-position-hint">
-          关联岗位 {{ formPositionCode }}，发布后该岗位学员可见；存草稿则学员不可见
-        </p>
-        <p v-else-if="Number(form.cateId) > 0" class="hint" data-testid="train-material-position-missing">该分类未关联岗位</p>
-        <label class="fld">标题</label>
-        <input v-model="form.title" class="fld-in" />
+        <label class="fld">标题<span class="req">*</span></label>
+        <input v-model="form.title" class="fld-in" data-testid="train-form-title" />
+        <p v-if="fieldErrors.title" class="hint err" data-testid="train-form-title-error">{{ fieldErrors.title }}</p>
         <label class="fld">类型</label>
-        <select v-model="form.materialType" class="fld-in" data-testid="train-form-type">
+        <select v-model="form.materialType" class="fld-in" data-testid="train-form-type" @change="onTypeChange">
           <option value="DOC">文档</option>
           <option value="VIDEO">视频</option>
           <option value="LINK">外链</option>
         </select>
-        <label v-if="form.materialType === 'LINK'" class="fld">外链</label>
+        <label class="fld">关联岗位<span class="req">*</span></label>
+        <div class="mat-pick" data-testid="train-form-positions">
+          <label v-for="item in positions" :key="item.code" class="mat-opt">
+            <input v-model="form.positionCodes" type="checkbox" :value="item.code" />
+            {{ item.name }}
+          </label>
+        </div>
+        <p v-if="!positions.length" class="hint">岗位字典为空时仍可选「全员通用」</p>
+        <p v-if="fieldErrors.position" class="hint err" data-testid="train-form-position-error">{{ fieldErrors.position }}</p>
+        <label class="fld">要求学时（分钟）<span class="req">*</span></label>
         <input
-          v-if="form.materialType === 'LINK'"
-          v-model="form.linkUrl"
+          v-model.number="form.requiredMinutes"
           class="fld-in"
-          data-testid="train-form-link"
-          placeholder="https://"
+          type="number"
+          min="1"
+          max="1440"
+          data-testid="train-form-minutes"
         />
+        <p v-if="fieldErrors.minutes" class="hint err" data-testid="train-form-minutes-error">{{ fieldErrors.minutes }}</p>
+        <template v-if="form.materialType === 'LINK'">
+          <label class="fld">链接<span class="req">*</span></label>
+          <input
+            v-model="form.linkUrl"
+            class="fld-in"
+            data-testid="train-form-link"
+            placeholder="https://"
+          />
+          <p v-if="fieldErrors.link" class="hint err">{{ fieldErrors.link }}</p>
+        </template>
         <template v-else>
-          <label class="fld">fileKey</label>
-          <input v-model="form.fileKey" class="fld-in" placeholder="直传回执 key" />
+          <label class="fld">文件<span class="req">*</span></label>
+          <input
+            type="file"
+            data-testid="train-material-file"
+            :accept="fileAccept"
+            @change="onPickFile"
+          />
+          <p v-if="pickedName" class="hint">已选择 {{ pickedName }}</p>
+          <p class="hint">文档：pdf、doc、docx、ppt、pptx、xls、xlsx；视频：mp4、mov。其他类型（含 exe）不支持。</p>
+          <p v-if="fieldErrors.file" class="hint err" data-testid="train-form-file-error">{{ fieldErrors.file }}</p>
         </template>
         <p v-if="editingId" class="hint">将生成新版本 V{{ editingVersion + 1 }}，旧版本留档</p>
-        <p v-if="formError" class="hint" style="color: var(--red)" data-testid="train-material-form-error">{{ formError }}</p>
+        <p v-if="formError" class="hint err" data-testid="train-material-form-error">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <template v-if="editingId">
@@ -236,7 +268,8 @@
         <h3 style="margin: 0 0 12px">资料详情</h3>
         <p class="mono">{{ detail.materialNo }} · V{{ detail.version || 1 }}</p>
         <p>{{ detail.title }}</p>
-        <p class="hint">{{ detail.materialType }} · {{ detail.status }} · {{ detail.uploaderName }}</p>
+        <p class="hint">{{ typeLabel(detail.materialType) }} · {{ statusLabel(detail.status) }} · {{ detail.uploaderName }}</p>
+        <p data-testid="train-detail-positions">关联岗位：{{ detailPositionText }}</p>
         <div data-testid="train-material-preview">
           <h4 style="margin: 12px 0 8px">预览</h4>
           <p class="hint">只读预览，历史版本不可修改</p>
@@ -274,12 +307,30 @@
               data-testid="train-version-archive"
               @click="previewVersion = item.version"
             >
-              V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ item.updatedAt }}
+              V{{ item.version }} {{ item.title }} · {{ item.editorName || '—' }} · {{ fmtBj(item.updatedAt) }}
             </button>
           </li>
         </ul>
         <p v-if="!detail.versions?.length" class="hint">尚无历史版本</p>
-        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; gap: 8px">
+          <button
+            v-if="detail.status !== 'OFFLINE'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            data-testid="train-detail-edit"
+            @click="editFromDetail"
+          >
+            编辑（新版本）
+          </button>
+          <button
+            v-if="detail.status === 'PUBLISHED'"
+            class="btn btn-sec btn-sm"
+            type="button"
+            data-testid="train-detail-offline"
+            @click="offlineFromDetail"
+          >
+            下架
+          </button>
           <button class="btn btn-pri btn-sm" type="button" @click="detail = null">关闭</button>
         </div>
       </div>
@@ -311,13 +362,14 @@
               <td class="mono">{{ item.materialNo }}</td>
               <td>{{ item.title }}</td>
               <td>{{ item.ownerName || '—' }}</td>
-              <td class="mono">{{ item.lastUpdatedAt }}</td>
+              <td class="mono">{{ fmtBj(item.lastUpdatedAt) }}</td>
             </tr>
           </tbody>
         </table>
         <p v-if="copyHint" class="hint" data-testid="train-unupdated-copy-hint">{{ copyHint }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="copyUnupdated">复制清单</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="train-unupdated-export" @click="exportUnupdated">导出清单</button>
           <button class="btn btn-pri btn-sm" type="button" @click="showUnupdated = false">关闭</button>
         </div>
       </div>
@@ -382,8 +434,10 @@ type Row = {
   version?: number
   versions?: VersionItem[]
   positionCodes?: string[]
+  requiredMinutes?: number
   status: string
   uploaderName: string
+  updatedAt?: string
 }
 
 type Weekly = {
@@ -394,9 +448,16 @@ type Weekly = {
   unupdatedList: Array<{ materialNo: string; title: string; lastUpdatedAt: string; ownerName: string }>
 }
 
+const DOC_EXTS = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx']
+const VIDEO_EXTS = ['mp4', 'mov']
+
+type PositionOpt = { code: string; name: string; materialCount: number }
+
 const route = useRoute()
 const cates = ref<Cate[]>([])
 const cateStatus = ref<'loading' | 'ready' | 'error'>('loading')
+const positions = ref<PositionOpt[]>([])
+const positionStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const rows = ref<Row[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -408,6 +469,7 @@ const detail = ref<Row | null>(null)
 const previewVersion = ref<number | null>(null)
 const showUnupdated = ref(false)
 const copyHint = ref('')
+const exportHint = ref('')
 const formError = ref('')
 const weeklyStatus = ref<'loading' | 'ready' | 'error'>('loading')
 const offlineTarget = ref<Row | null>(null)
@@ -432,19 +494,20 @@ const form = reactive({
   cateId: 0,
   title: '',
   materialType: 'DOC',
-  fileKey: 'demo/file.pdf',
+  fileKey: '',
   linkUrl: '',
+  positionCodes: [] as string[],
+  requiredMinutes: 1,
 })
+const fieldErrors = reactive({ title: '', position: '', file: '', link: '', minutes: '' })
+const pickedName = ref('')
+const fileAccept = computed(() =>
+  (form.materialType === 'VIDEO' ? VIDEO_EXTS : DOC_EXTS).map((ext) => `.${ext}`).join(','),
+)
 
-const positionOptions = computed(() => {
-  const seen = new Map<string, string>()
-  for (const root of cates.value) {
-    const code = (root.positionCode || '').trim()
-    if (!code || seen.has(code)) continue
-    seen.set(code, root.cateName ? `${root.cateName} · ${code}` : code)
-  }
-  return [...seen.entries()].map(([code, label]) => ({ code, label }))
-})
+const positionOptions = computed(() =>
+  positions.value.map((item) => ({ code: item.code, label: item.name })),
+)
 
 const selectedCateName = computed(() => {
   if (!filters.cateId) return ''
@@ -473,7 +536,7 @@ const filterSummary = computed(() => {
   if (filters.title.trim()) parts.push(`标题「${filters.title.trim()}」`)
   if (filters.materialType) parts.push(typeLabel(filters.materialType))
   if (filters.status) parts.push(statusLabel(filters.status))
-  if (filters.positionCode) parts.push(`岗位 ${filters.positionCode}`)
+  if (filters.positionCode) parts.push(`岗位 ${positionName(filters.positionCode)}`)
   if (selectedCateName.value) parts.push(`分类 ${selectedCateName.value}`)
   return parts.join(' · ')
 })
@@ -485,11 +548,32 @@ function typeLabel(value: string) {
   return value || '—'
 }
 
+function positionName(code: string) {
+  return positions.value.find((item) => item.code === code)?.name || code
+}
+
 function statusLabel(value: string) {
   if (value === 'DRAFT') return '草稿'
   if (value === 'PUBLISHED') return '已发布'
   if (value === 'OFFLINE') return '已下架'
   return value || '—'
+}
+
+function fmtBj(raw?: string) {
+  if (!raw) return '—'
+  const stamp = Date.parse(raw)
+  if (Number.isNaN(stamp)) return raw.slice(0, 16).replace('T', ' ')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(stamp))
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
 }
 
 function statusStyle(value: string) {
@@ -499,13 +583,12 @@ function statusStyle(value: string) {
 }
 
 const listEmptyText = computed(() => {
-  const cateOnly =
-    Boolean(filters.cateId) &&
+  const positionOnly =
+    Boolean(filters.positionCode) &&
     !filters.title.trim() &&
     !filters.materialType &&
-    !filters.status &&
-    !filters.positionCode
-  if (cateOnly) return '该分类暂无资料'
+    !filters.status
+  if (positionOnly) return '该岗位暂无资料'
   if (hasActiveFilters.value) return '没有符合筛选的资料'
   return '暂无资料'
 })
@@ -579,10 +662,27 @@ async function loadCates() {
   }
 }
 
-function pickCate(child: Cate) {
-  filters.cateId = child.id
-  form.cateId = child.id
+function pickPosition(item: PositionOpt) {
+  filters.positionCode = filters.positionCode === item.code ? '' : item.code
+  filters.cateId = 0
   loadList()
+}
+
+async function loadPositions() {
+  positionStatus.value = 'loading'
+  try {
+    const res = await http.get('/train/material/positions')
+    if (res.data.code !== 0) {
+      positions.value = []
+      positionStatus.value = 'error'
+      return
+    }
+    positions.value = res.data.data || []
+    positionStatus.value = 'ready'
+  } catch {
+    positions.value = []
+    positionStatus.value = 'error'
+  }
 }
 
 async function loadList() {
@@ -625,16 +725,26 @@ function resetFilters() {
   loadList()
 }
 
+function clearFieldErrors() {
+  fieldErrors.title = ''
+  fieldErrors.position = ''
+  fieldErrors.file = ''
+  fieldErrors.link = ''
+  fieldErrors.minutes = ''
+}
+
 function openCreate() {
   editingId.value = 0
   editingVersion.value = 1
   form.title = ''
   form.materialType = 'DOC'
-  form.fileKey = 'demo/file.pdf'
+  form.fileKey = ''
   form.linkUrl = ''
-  if (!form.cateId && cates.value[0]?.children?.[0]) {
-    form.cateId = cates.value[0].children[0].id
-  }
+  form.positionCodes = []
+  form.requiredMinutes = 1
+  form.cateId = 0
+  pickedName.value = ''
+  clearFieldErrors()
   formError.value = ''
   showForm.value = true
 }
@@ -642,18 +752,140 @@ function openCreate() {
 function openEdit(row: Row) {
   editingId.value = row.id
   editingVersion.value = row.version || 1
-  form.cateId = row.cateId || form.cateId
+  form.cateId = row.cateId || 0
   form.title = row.title
   form.materialType = row.materialType || 'DOC'
-  form.fileKey = row.fileKey || 'demo/file.pdf'
+  form.fileKey = row.fileKey || ''
   form.linkUrl = row.linkUrl || ''
+  form.positionCodes = [...(row.positionCodes || [])]
+  form.requiredMinutes = row.requiredMinutes || 1
+  pickedName.value = row.fileKey ? '已有文件' : ''
+  clearFieldErrors()
   formError.value = ''
   showForm.value = true
+}
+
+function onTypeChange() {
+  form.fileKey = ''
+  pickedName.value = ''
+  fieldErrors.file = ''
+  fieldErrors.link = ''
+}
+
+function extOf(name: string) {
+  const base = name.split(/[/\\]/).pop() || ''
+  const dot = base.lastIndexOf('.')
+  return dot >= 0 ? base.slice(dot + 1).toLowerCase() : ''
+}
+
+async function onPickFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  fieldErrors.file = ''
+  form.fileKey = ''
+  pickedName.value = ''
+  if (!file) return
+  const ext = extOf(file.name)
+  const allowed = form.materialType === 'VIDEO' ? VIDEO_EXTS : DOC_EXTS
+  if (!allowed.includes(ext)) {
+    fieldErrors.file = '类型不支持'
+    input.value = ''
+    return
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    fieldErrors.file = '文件超过大小限制'
+    input.value = ''
+    return
+  }
+  const body = new FormData()
+  body.append('file', file)
+  body.append('materialType', form.materialType)
+  try {
+    const res = await http.post('/train/material/file', body)
+    form.fileKey = res.data.data.fileKey || ''
+    pickedName.value = res.data.data.fileName || file.name
+  } catch (err) {
+    fieldErrors.file = errorMessage(err)
+    input.value = ''
+  }
 }
 
 function openDetail(row: Row) {
   previewVersion.value = null
   detail.value = row
+}
+
+const detailPositionText = computed(() => {
+  const codes = detail.value?.positionCodes || []
+  if (!codes.length) return '—'
+  return codes.map((code) => positionName(code)).join('、')
+})
+
+function editFromDetail() {
+  const row = detail.value
+  if (!row) return
+  detail.value = null
+  openEdit(row)
+}
+
+function offlineFromDetail() {
+  const row = detail.value
+  if (!row) return
+  detail.value = null
+  void openOffline(row)
+}
+
+function csvCell(value: string) {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+function downloadCsv(filename: string, lines: string[]) {
+  const blob = new Blob([`\uFEFF${lines.join('\n')}`], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportMaterials() {
+  if (!rows.value.length) {
+    exportHint.value = '没有可导出的资料'
+    return
+  }
+  const header = ['资料编号', '标题', '类型', '版本', '关联岗位', '状态', '更新人', '更新时间']
+  const body = rows.value.map((row) =>
+    [
+      row.materialNo,
+      row.title,
+      typeLabel(row.materialType),
+      `V${row.version || 1}`,
+      (row.positionCodes || []).map((code) => positionName(code)).join('、'),
+      statusLabel(row.status),
+      row.uploaderName || '',
+      fmtBj(row.updatedAt),
+    ]
+      .map((cell) => csvCell(String(cell ?? '')))
+      .join(','),
+  )
+  downloadCsv('培训资料.csv', [header.map(csvCell).join(','), ...body])
+  exportHint.value = '已导出当前列表'
+}
+
+function exportUnupdated() {
+  if (weeklyStatus.value !== 'ready' || !weekly.unupdatedList.length) {
+    copyHint.value = weekly.shouldUpdateCount === 0 ? '本周暂无已发布资料' : '没有可导出的未更新资料'
+    return
+  }
+  const header = ['资料编号', '标题', '负责人', '最后更新']
+  const body = weekly.unupdatedList.map((item) =>
+    [item.materialNo, item.title, item.ownerName || '', fmtBj(item.lastUpdatedAt)]
+      .map((cell) => csvCell(String(cell ?? '')))
+      .join(','),
+  )
+  downloadCsv('未更新清单.csv', [header.map(csvCell).join(','), ...body])
+  copyHint.value = '已导出清单'
 }
 
 function openUnupdated() {
@@ -702,7 +934,8 @@ function materialPayload(publish: boolean) {
     title: form.title.trim(),
     cateId: form.cateId,
     materialType: form.materialType,
-    positionCodes: formPositionCode.value ? [formPositionCode.value] : [],
+    positionCodes: [...form.positionCodes],
+    requiredMinutes: Number(form.requiredMinutes) || 0,
     publish,
   }
   if (form.materialType === 'LINK') body.linkUrl = form.linkUrl.trim()
@@ -711,14 +944,45 @@ function materialPayload(publish: boolean) {
 }
 
 function formInvalid() {
+  clearFieldErrors()
+  let bad = false
   const title = form.title.trim()
-  if (!title || !form.cateId) return '标题与分类必填'
-  if (title.length > 128) return '标题不超过 128 字'
-  const cate = findCate(form.cateId)
-  if (cate && !formPositionCode.value) return '请选择已关联岗位的分类'
-  if (form.materialType === 'LINK' && !isHttpUrl(form.linkUrl)) return '外链须为 http(s) 地址'
-  if (form.materialType !== 'LINK' && !form.fileKey.trim()) return 'fileKey 必填'
-  return ''
+  if (!title) {
+    fieldErrors.title = '必填项，请填写'
+    bad = true
+  } else if (title.length > 128) {
+    fieldErrors.title = '标题不超过 128 字'
+    bad = true
+  }
+  if (!form.positionCodes.length) {
+    fieldErrors.position = '必填项，请填写'
+    bad = true
+  }
+  const minutes = Number(form.requiredMinutes)
+  if (!minutes || minutes < 1) {
+    fieldErrors.minutes = '必填项，请填写'
+    bad = true
+  } else if (minutes > 1440) {
+    fieldErrors.minutes = '要求学时须在 1 到 1440 分钟'
+    bad = true
+  }
+  if (form.materialType === 'LINK') {
+    if (!form.linkUrl.trim()) {
+      fieldErrors.link = '必填项，请填写'
+      bad = true
+    } else if (!isHttpUrl(form.linkUrl)) {
+      fieldErrors.link = '外链须为 http(s) 地址'
+      bad = true
+    }
+  } else if (!form.fileKey.trim()) {
+    fieldErrors.file = fieldErrors.file || '必填项，请填写'
+    bad = true
+  }
+  if (fieldErrors.title && fieldErrors.title !== '必填项，请填写') return fieldErrors.title
+  if (fieldErrors.link && fieldErrors.link !== '必填项，请填写') return fieldErrors.link
+  if (fieldErrors.minutes && fieldErrors.minutes !== '必填项，请填写') return fieldErrors.minutes
+  if (fieldErrors.file && fieldErrors.file !== '必填项，请填写') return fieldErrors.file
+  return bad ? '请完善必填项' : ''
 }
 
 async function submit(publish: boolean) {
@@ -738,12 +1002,13 @@ async function submit(publish: boolean) {
   }
   showForm.value = false
   await loadCates()
+  await loadPositions()
   await loadList()
   await loadWeekly()
 }
 
 async function submitUpdate() {
-  formError.value = !editingId.value ? '标题与分类必填' : formInvalid()
+  formError.value = formInvalid()
   if (formError.value) return
   const body = materialPayload(true)
   let res
@@ -760,6 +1025,7 @@ async function submitUpdate() {
   showForm.value = false
   editingId.value = 0
   await loadCates()
+  await loadPositions()
   await loadList()
   await loadWeekly()
 }
@@ -827,6 +1093,7 @@ onMounted(async () => {
   const title = typeof rawTitle === 'string' ? rawTitle : ''
   if (title) filters.title = title
   await loadCates()
+  await loadPositions()
   await loadList()
   await loadWeekly()
   const rawId = route.query.materialId
@@ -880,6 +1147,29 @@ onMounted(async () => {
   background: rgba(0, 113, 227, 0.1);
   color: var(--blue);
 }
+.req {
+  color: var(--red);
+  margin-left: 2px;
+}
+.hint.err {
+  color: var(--red);
+}
+.mat-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--line, #e5e5ea);
+  border-radius: 8px;
+  padding: 8px;
+}
+.mat-opt {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
 .detail-card {
   width: min(720px, 92vw);
   padding: 20px;
@@ -896,12 +1186,18 @@ onMounted(async () => {
   width: 100%;
   box-sizing: border-box;
 }
+.weekly-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
 .weekly-card {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 .weekly-card.warn {
   border: 1px solid #e6a700;
