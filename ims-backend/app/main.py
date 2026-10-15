@@ -63,6 +63,20 @@ def _ensure_e2e_douyin_account(db, ops) -> None:
     )
 
 
+def _ensure_tc_r9_user(db) -> None:
+    """TC-18 数据分析师。密码与 admin 种子相同，克隆菜单以便指标页纯 UI 登录。"""
+    from app.acct_seed import _ensure_cloned_user
+
+    _ensure_cloned_user(
+        db,
+        username="tc_r9",
+        nickname="TC-数据分析",
+        mobile="13900001040",
+        role_key="bi:tc_r9",
+        role_name="数据分析师",
+    )
+
+
 def _ensure_fin_r9_user(db) -> None:
     """数据分析师（fin:r9）。看板与利润列表金额脱敏，菜单克隆自管理员以便纯 UI 登录。"""
     from app.acct_seed import _ensure_cloned_user
@@ -157,6 +171,7 @@ def seed() -> None:
             ensure_acct_e2e_pool_account(db, admin)
             refresh_acct_e2e_pool(db, admin)
             _ensure_fin_r9_user(db)
+            _ensure_tc_r9_user(db)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
             refresh_cert_e2e_seed(db, admin)
@@ -177,6 +192,9 @@ def seed() -> None:
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
         refresh_wechat_channels_collect_seed()
+        from app.bi_metric_formula import quarantine_illegal_metric_formulas
+
+        quarantine_illegal_metric_formulas(db)
         db.commit()
     finally:
         db.close()

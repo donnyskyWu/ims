@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
+from app.bi_metric_formula import formula_error
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.models import BiMetric, User
@@ -123,6 +124,10 @@ def metric_create(body: MetricBody, db: Session = Depends(db_session), actor: Us
     mtype = body.metricType.strip().upper() or "BASIC"
     if mtype not in {"BASIC", "COMPOSITE"}:
         return fail(1001, "指标类型无效")
+    formula = body.formula.strip()
+    blocked = formula_error(formula)
+    if blocked:
+        return fail(1192, blocked)
     now = utcnow()
     row = BiMetric(
         metric_code=next_metric_code(db, tenant_id),
@@ -131,7 +136,7 @@ def metric_create(body: MetricBody, db: Session = Depends(db_session), actor: Us
         category=body.category.strip() or "内容表现",
         calc_freq=body.calcFreq.strip().upper() or "DAY",
         status="ENABLED",
-        formula=body.formula.strip(),
+        formula=formula,
         ref_count=0,
         creator_id=actor.id,
         tenant_id=tenant_id,
@@ -155,6 +160,10 @@ def metric_update(
     row = db.get(BiMetric, metric_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1504, "资源不可用")
+    candidate = body.formula.strip() if body.formula is not None else (row.formula or "")
+    blocked = formula_error(candidate)
+    if blocked:
+        return fail(1192, blocked)
     if body.metricName is not None:
         name = body.metricName.strip()
         if not name:
@@ -175,7 +184,7 @@ def metric_update(
             return fail(1001, "状态无效")
         row.status = st
     if body.formula is not None:
-        row.formula = body.formula.strip()
+        row.formula = candidate
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
     return ok(metric_vo(row, names))
@@ -257,6 +266,9 @@ def metric_analyze(
     row = db.get(BiMetric, metric_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1504, "资源不可用")
+    blocked = formula_error(row.formula or "")
+    if blocked:
+        return fail(1192, blocked)
     if row.status != "ENABLED":
         return fail(1001, "指标未启用")
     detail = analyze_metric_row(row, dateStart, dateEnd, ipGroupId)
@@ -284,6 +296,9 @@ def metric_analysis_run(
         row = db.get(BiMetric, mid)
         if row is None or row.deleted or row.tenant_id != tenant_id:
             return fail(1504, "资源不可用")
+        blocked = formula_error(row.formula or "")
+        if blocked:
+            return fail(1192, blocked)
         if row.status != "ENABLED":
             return fail(1001, f"指标 {row.metric_name} 未启用")
         found.append(row)
@@ -326,6 +341,9 @@ def metric_preview(
     row = db.get(BiMetric, metric_id)
     if row is None or row.deleted or row.tenant_id != tenant_id:
         return fail(1504, "资源不可用")
+    blocked = formula_error(row.formula or "")
+    if blocked:
+        return fail(1192, blocked)
     value = 128.6 if row.metric_type == "BASIC" else 256.3
     return ok(
         {
