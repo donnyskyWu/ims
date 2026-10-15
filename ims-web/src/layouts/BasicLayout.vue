@@ -17,6 +17,8 @@
               v-if="item.kind === 'leaf'"
               class="nav-item"
               :class="{ active: item.id === currentId }"
+              data-testid="nav-leaf"
+              :data-nav="item.id"
               @click="go(item.id)"
             >
               <Ico :name="item.icon" />
@@ -35,6 +37,8 @@
                 :key="child.id"
                 class="nav-item sub"
                 :class="{ active: child.id === currentId }"
+                data-testid="nav-leaf"
+                :data-nav="child.id"
                 @click="go(child.id)"
               >
                 <Ico :name="child.icon" :size="14" />
@@ -117,11 +121,13 @@ const initial = computed(() => (displayName.value || 'I').slice(0, 1).toUpperCas
 const visibleGroups = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   const hit = (text: string) => !keyword || text.toLowerCase().includes(keyword)
+  const allowed = (id: string) => user.canSeeMenu(id, pathOf(id))
   return groups
     .map(([name, items]) => {
       const visible: (Leaf | Folder)[] = []
       for (const item of items) {
         if (!isSub(item)) {
+          if (!allowed(item)) continue
           const mod = mods[item]
           const label = mod?.name || item
           if (hit(label) || hit(name)) {
@@ -131,6 +137,7 @@ const visibleGroups = computed(() => {
         }
         const folder = mods[item.id]
         const children = item.children
+          .filter((id) => allowed(id))
           .filter((id) => hit(mods[id]?.name || id) || hit(item.label) || hit(name))
           .map((id) => ({ id, label: mods[id]?.name || id, icon: mods[id]?.icon || 'doc' }))
         if (children.length) {

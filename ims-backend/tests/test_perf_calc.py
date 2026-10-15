@@ -214,13 +214,32 @@ def test_perf_month_close_grades_lock_and_self_view():
         headers=auth,
         params={"pageNo": 1, "pageSize": 100},
     ).json()["data"]["list"]
-    task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"绩效锁后更正 {PERIOD}")
-    handled = client.put(
-        f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
-        json={"action": "APPROVE", "comment": "R4 绩效更正"},
-    )
-    assert handled.json()["code"] == 0, handled.json()
+    handled_body = None
+    actors = [auth, headers("tc_r4"), headers("tc_r3")]
+    for _ in range(6):
+        task = None
+        actor = None
+        for candidate in actors:
+            todos = client.get(
+                "/admin-api/ims/flow/task/my-todo",
+                headers=candidate,
+                params={"pageNo": 1, "pageSize": 100},
+            ).json()["data"]["list"]
+            task = next((row for row in todos if (row.get("formData") or {}).get("title") == f"绩效锁后更正 {PERIOD}"), None)
+            if task is not None:
+                actor = candidate
+                break
+        assert task is not None and actor is not None
+        handled = client.put(
+            f"/admin-api/ims/flow/task/{task['id']}/handle",
+            headers=actor,
+            json={"action": "APPROVE", "comment": "R4 绩效更正"},
+        )
+        handled_body = handled.json()
+        assert handled_body["code"] == 0, handled_body
+        if handled_body["data"]["newStatus"] == "APPROVED":
+            break
+    assert handled_body["data"]["newStatus"] == "APPROVED"
 
     db = SessionLocal()
     try:

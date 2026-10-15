@@ -12,6 +12,14 @@ from tests.test_live import headers, register_payload, seed_live_deps
 client = TestClient(app)
 
 
+def auth_of(username: str) -> dict:
+    token = client.post(
+        "/admin-api/ims/auth/login",
+        json={"username": username, "password": "Admin@123"},
+    ).json()["data"]["accessToken"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 def approved_session(auth: dict) -> str:
     account_id, person_id, phone_id, room_id = seed_live_deps()
     reg = client.post(
@@ -580,14 +588,32 @@ def test_fin_period_close_locks_writes_then_r4_red_correction():
         headers=auth,
         params={"pageNo": 1, "pageSize": 50},
     ).json()["data"]["list"]
-    task = next(row for row in todos if (row.get("formData") or {}).get("title") == f"锁后更正 {code}")
-    handled = client.put(
-        f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
-        json={"action": "APPROVE", "comment": "R4 锁后更正"},
-    )
-    assert handled.json()["code"] == 0, handled.json()
-    assert handled.json()["data"]["newStatus"] == "APPROVED"
+    handled_body = None
+    actors = [auth, auth_of("tc_r4"), auth_of("tc_r3")]
+    for _ in range(6):
+        task = None
+        actor = None
+        for candidate in actors:
+            todos = client.get(
+                "/admin-api/ims/flow/task/my-todo",
+                headers=candidate,
+                params={"pageNo": 1, "pageSize": 50},
+            ).json()["data"]["list"]
+            task = next((row for row in todos if (row.get("formData") or {}).get("title") == f"锁后更正 {code}"), None)
+            if task is not None:
+                actor = candidate
+                break
+        assert task is not None and actor is not None
+        handled = client.put(
+            f"/admin-api/ims/flow/task/{task['id']}/handle",
+            headers=actor,
+            json={"action": "APPROVE", "comment": "R4 锁后更正"},
+        )
+        handled_body = handled.json()
+        assert handled_body["code"] == 0, handled_body
+        if handled_body["data"]["newStatus"] == "APPROVED":
+            break
+    assert handled_body["data"]["newStatus"] == "APPROVED"
 
     fixed = client.post(
         f"/admin-api/ims/fin/cost/{code}/correction",

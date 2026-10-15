@@ -131,9 +131,10 @@ def seed() -> None:
         finally:
             ops.close()
         _ensure_e2e_author(db)
-        from app.air_skill_seed import ensure_air_skill_dept_fixture
+        from app.air_skill_seed import ensure_air_skill_dept_fixture, ensure_r4_skill_grant
 
         ensure_air_skill_dept_fixture(db)
+        ensure_r4_skill_grant(db)
         author = db.query(User).filter(User.username == "e2e_author", User.deleted == 0).first()
         if author is not None:
             refresh_user_scope(db, author.id)
@@ -479,6 +480,20 @@ def ensure_live_alarm_merge_column() -> None:
             conn.execute(text(f"ALTER TABLE ims_live_alarm_record {clause}"))
 
 
+def ensure_role_remark_column() -> None:
+    """已有库补角色备注。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_sys_role" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_sys_role")}
+    if "remark" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_sys_role ADD COLUMN remark VARCHAR(200) NOT NULL DEFAULT ''"))
+
+
 def ensure_user_mapping_position_column() -> None:
     """已有库补钉钉岗位（通讯录 title）。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -495,9 +510,100 @@ def ensure_user_mapping_position_column() -> None:
         )
 
 
+def ensure_flow_columns() -> None:
+    """已有库补流程节点图、转交标记和版本号。create_all 不会改旧表。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    alters: list[str] = []
+    if "ims_flow_template" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_flow_template")}
+        if "nodes" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN nodes JSON NULL")
+        if "sla_hours" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN sla_hours INT NOT NULL DEFAULT 24")
+        if "version_no" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN version_no INT NOT NULL DEFAULT 1")
+        if "start_count" not in cols:
+            alters.append("ALTER TABLE ims_flow_template ADD COLUMN start_count INT NOT NULL DEFAULT 0")
+    if "ims_flow_task" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_flow_task")}
+        if "sla_hours" not in cols:
+            alters.append("ALTER TABLE ims_flow_task ADD COLUMN sla_hours INT NOT NULL DEFAULT 24")
+        if "allow_transfer" not in cols:
+            alters.append("ALTER TABLE ims_flow_task ADD COLUMN allow_transfer INT NOT NULL DEFAULT 1")
+    if "ims_flow_instance" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_flow_instance")}
+        if "current_node_order" not in cols:
+            alters.append("ALTER TABLE ims_flow_instance ADD COLUMN current_node_order INT NOT NULL DEFAULT 1")
+        if "template_version" not in cols:
+            alters.append("ALTER TABLE ims_flow_instance ADD COLUMN template_version INT NOT NULL DEFAULT 1")
+    if alters:
+        with engine.begin() as conn:
+            for stmt in alters:
+                conn.execute(text(stmt))
+    _ensure_flow_indexes()
+
+
+def _ensure_flow_indexes() -> None:
+    """待办、缺待办补齐、种子标题查询。create_all 已建的索引这里跳过。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    wanted: list[tuple[str, str, str]] = []
+    if "ims_flow_task" in tables:
+        wanted.append(
+            (
+                "ims_flow_task",
+                "idx_flow_task_todo",
+                "CREATE INDEX idx_flow_task_todo ON ims_flow_task (tenant_id, task_status, assignee_user_id)",
+            )
+        )
+        wanted.append(
+            (
+                "ims_flow_task",
+                "idx_flow_task_pending",
+                "CREATE INDEX idx_flow_task_pending ON ims_flow_task (tenant_id, instance_id, task_status)",
+            )
+        )
+    if "ims_flow_instance" in tables:
+        wanted.append(
+            (
+                "ims_flow_instance",
+                "idx_flow_inst_status",
+                "CREATE INDEX idx_flow_inst_status ON ims_flow_instance (tenant_id, instance_status)",
+            )
+        )
+        wanted.append(
+            (
+                "ims_flow_instance",
+                "idx_flow_inst_title",
+                "CREATE INDEX idx_flow_inst_title ON ims_flow_instance (tenant_id, title)",
+            )
+        )
+    if not wanted:
+        return
+    with engine.begin() as conn:
+        for table, name, ddl in wanted:
+            found = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.statistics "
+                    "WHERE table_schema = DATABASE() AND table_name = :table AND index_name = :name LIMIT 1"
+                ),
+                {"table": table, "name": name},
+            ).first()
+            if found:
+                continue
+            conn.execute(text(ddl))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_role_remark_column()
+    ensure_flow_columns()
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()

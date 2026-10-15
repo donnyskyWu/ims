@@ -7,11 +7,16 @@
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openStart">发起流程</button>
-        <button class="btn btn-sec btn-sm" type="button" disabled>模板设计</button>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="flow-template-create" @click="openCreateTemplate">
+          新建模板
+        </button>
       </div>
     </div>
     <div class="cattabs">
       <button type="button" class="cattab" :class="{ on: tab === 'instance' }" @click="tab = 'instance'">流程实例</button>
+      <button type="button" class="cattab" :class="{ on: tab === 'board' }" data-testid="flow-tab-board" @click="tab = 'board'">
+        看板视图
+      </button>
       <button type="button" class="cattab" :class="{ on: tab === 'todo' }" @click="tab = 'todo'">
         我的待办<span v-if="todoBadge">({{ todoBadge }})</span>
       </button>
@@ -149,7 +154,52 @@
 
     <p v-if="tab === 'todo' && rejectDone" class="hint" data-testid="flow-reject-done">{{ rejectDone }}</p>
 
-    <div class="tbl-block">
+    <div v-if="tab === 'board'" class="tbl-block" data-testid="flow-board">
+      <p v-if="boardHint" class="hint" data-testid="flow-board-hint">{{ boardHint }}</p>
+      <div v-if="loading" class="empty"><div class="et">加载中</div></div>
+      <div v-else-if="!boardColumns.length" class="empty" data-testid="flow-board-empty">
+        <div class="et">暂无进行中流程</div>
+      </div>
+      <div v-else style="display: flex; gap: 12px; overflow: auto; align-items: flex-start">
+        <section
+          v-for="col in boardColumns"
+          :key="col.nodeName"
+          data-testid="flow-board-col"
+          style="min-width: 220px; border: 1px solid var(--line); border-radius: 8px; padding: 8px"
+        >
+          <strong>{{ col.nodeName }}</strong>
+          <article
+            v-for="card in col.cards"
+            :key="String(card.instanceNo)"
+            data-testid="flow-board-card"
+            style="margin-top: 8px; padding: 8px; background: #fafafa; border-radius: 6px"
+          >
+            <div class="mono">{{ card.instanceNo }}</div>
+            <div>{{ card.title }}</div>
+            <div class="csub" data-testid="flow-board-handler">{{ card.currentAssigneeName || '未分派' }}</div>
+            <button
+              v-if="canAct(card) && card.canAdvance && card.pendingTaskId"
+              class="btn btn-sec btn-sm"
+              type="button"
+              data-testid="flow-kb-next"
+              @click="advanceCard(card)"
+            >
+              流转至下一节点
+            </button>
+            <button
+              v-else-if="canAct(card) && card.pendingTaskId"
+              class="btn btn-pri btn-sm"
+              type="button"
+              data-testid="flow-kb-finish"
+              @click="finishCard(card)"
+            >
+              完成
+            </button>
+          </article>
+        </section>
+      </div>
+    </div>
+    <div v-else class="tbl-block">
       <div class="tbl-wrap">
         <table v-if="tab === 'timeout'">
           <thead>
@@ -234,9 +284,17 @@
                 >
                   去处理
                 </button>
-                <template v-else>
+                <template v-else-if="canAct(row)">
                   <span class="btn-txt btn" @click="handleTask(row, 'APPROVE')">通过</span>
                   <span class="btn-txt btn" style="color: var(--red)" data-testid="flow-reject" @click="openReject(row)">驳回</span>
+                  <span
+                    v-if="row.allowTransfer !== false"
+                    class="btn-txt btn"
+                    data-testid="flow-transfer"
+                    @click="openTransfer(row)"
+                  >
+                    转交
+                  </span>
                 </template>
               </td>
             </tr>
@@ -272,7 +330,10 @@
               <td style="font-weight: 500">{{ row.title }}</td>
               <td>{{ row.templateName }}</td>
               <td><span class="tag tag-info">{{ row.instanceStatusLabel }}</span></td>
-              <td>{{ row.currentNodeName || '—' }}</td>
+              <td>
+                {{ row.currentNodeName || '—' }}
+                <span v-if="row.currentAssigneeName">（{{ row.currentAssigneeName }}）</span>
+              </td>
               <td>{{ row.initiatorName || '—' }}</td>
               <td class="csub">{{ row.startedAt }}</td>
               <td>
@@ -283,6 +344,15 @@
                   @click="openDetail(row)"
                 >
                   详情
+                </button>
+                <button
+                  v-if="row.instanceStatus === 'RUNNING' && row.pendingTaskId"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="flow-instance-urge"
+                  @click="openRowUrge(row)"
+                >
+                  催办
                 </button>
               </td>
             </tr>
@@ -296,6 +366,8 @@
               <th>业务域</th>
               <th>版本</th>
               <th>节点数</th>
+              <th>超时规则</th>
+              <th>累计发起</th>
               <th>状态</th>
               <th>更新</th>
               <th>操作</th>
@@ -303,10 +375,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="10"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!tplRows.length">
-              <td colspan="8">
+              <td colspan="10">
                 <div class="empty" data-testid="flow-template-empty">
                   <div class="et">{{ templateEmptyText }}</div>
                   <div v-if="!error && templateEmptyHint" class="es">{{ templateEmptyHint }}</div>
@@ -319,10 +391,22 @@
               <td>{{ row.businessDomainLabel }}</td>
               <td>{{ row.versionLabel }}</td>
               <td class="num">{{ row.nodeCount }}</td>
+              <td>{{ row.slaHours }} 小时</td>
+              <td class="num">{{ row.startCount ?? 0 }}</td>
               <td><span class="tag tag-info">{{ row.statusLabel }}</span></td>
               <td class="csub">{{ row.updatedAt }}</td>
               <td>
                 <span class="btn-txt btn" @click="previewTemplate(row)">预览</span>
+                <span class="btn-txt btn" data-testid="flow-designer-open" @click="openDesigner(row)">设计</span>
+                <span
+                  v-if="row.status === 'PUBLISHED' || row.status === 'DISABLED'"
+                  class="btn-txt btn"
+                  data-testid="flow-template-toggle"
+                  @click="toggleTemplate(row)"
+                >
+                  {{ row.status === 'DISABLED' ? '启用' : '停用' }}
+                </span>
+                <span class="btn-txt btn" data-testid="flow-version-open" @click="openVersions(row)">版本</span>
                 <span v-if="row.status === 'DRAFT'" class="btn-txt btn" data-testid="flow-draft-try" @click="tryStartDraft(row)">
                   试发起
                 </span>
@@ -459,6 +543,7 @@
         <p class="csub" style="margin: 8px 0">
           {{ detail.templateName }} · {{ detail.instanceStatusLabel }} · {{ detail.currentNodeName || '—' }}
         </p>
+        <p v-if="detailHandler" class="hint" data-testid="flow-detail-handler">当前处理人：{{ detailHandler }}</p>
         <div class="fld">
           <label>表单</label>
           <div v-if="detail.formEmpty" class="empty" data-testid="flow-detail-form-empty" style="padding: 16px">
@@ -475,7 +560,7 @@
           </div>
           <ul v-else style="margin: 4px 0 0; padding-left: 18px">
             <li v-for="(item, i) in detail.traceLog" :key="`${item.nodeOrder}-${i}`">
-              {{ item.nodeName }} · {{ actionLabel(item.action) }}
+              {{ item.nodeName }} · {{ item.assigneeName || '—' }} · {{ actionLabel(item.action) }}
               <span v-if="item.comment"> · {{ item.comment }}</span>
             </li>
           </ul>
@@ -517,11 +602,11 @@
     </div>
 
     <ProtoDrawer :open="rejectOpen" title="驳回待办" width="480px" @close="closeReject">
-      <p class="hint" data-testid="flow-reject-copy">建议填写退回意见，可不填。驳回后实例进入已驳回，已完成节点留痕。</p>
+      <p class="hint" data-testid="flow-reject-copy">退回意见必填。提交后单据退回发起人，实例仍为进行中。</p>
       <p v-if="rejectTarget" class="csub">{{ rejectTarget.instanceNo }} · {{ rejectTarget.nodeName }}</p>
       <div class="fld" style="margin-top: 10px">
         <label>退回意见</label>
-        <textarea v-model="rejectComment" data-testid="flow-reject-comment" rows="3" placeholder="可不填" />
+        <textarea v-model="rejectComment" data-testid="flow-reject-comment" rows="3" placeholder="必填" />
       </div>
       <p v-if="rejectMsg" class="hint err" data-testid="flow-reject-msg">{{ rejectMsg }}</p>
       <template #foot>
@@ -531,6 +616,119 @@
         </button>
       </template>
     </ProtoDrawer>
+
+    <ProtoDrawer :open="createOpen" title="新建模板" width="560px" @close="createOpen = false">
+      <div class="fld">
+        <label>模板名称 *</label>
+        <input v-model="createForm.templateName" data-testid="flow-template-name" />
+      </div>
+      <div class="fld">
+        <label>节点超时 *</label>
+        <select v-model.number="createForm.slaHours" data-testid="flow-template-sla">
+          <option :value="2">2 小时</option>
+          <option :value="12">12 小时</option>
+          <option :value="24">24 小时</option>
+          <option :value="48">48 小时</option>
+          <option :value="72">72 小时</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>节点链 *（顿号分隔，首尾不可移动）</label>
+        <input v-model="createForm.nodeChain" data-testid="flow-template-chain" placeholder="发起申请、部门负责人审批、归档" />
+      </div>
+      <p v-if="createMsg" class="hint" :class="{ err: createErr }" data-testid="flow-template-create-msg">{{ createMsg }}</p>
+      <template #foot>
+        <button class="btn btn-sec btn-sm" type="button" @click="createOpen = false">取消</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="flow-template-save" :disabled="createSaving" @click="submitCreateTemplate">
+          {{ createSaving ? '保存中…' : '保存草稿' }}
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="designerOpen" title="模板设计" width="640px" @close="designerOpen = false">
+      <p class="csub">{{ designerName }} · {{ designerStatus }}</p>
+      <div class="fld">
+        <label>节点链</label>
+        <input v-model="designerChain" data-testid="flow-node-chain" />
+      </div>
+      <div v-for="(node, index) in designerNodes" :key="`${node.name}-${index}`" class="fld">
+        <label>{{ node.name }}</label>
+        <span v-if="index === 0" class="csub">发起人</span>
+        <select v-else v-model="node.assign" data-testid="flow-node-approver">
+          <option value="DEPT_LEADER">部门负责人</option>
+          <option value="FINANCE">财务</option>
+          <option value="INITIATOR_SUPERIOR">发起人上级</option>
+          <option value="">不指定</option>
+        </select>
+      </div>
+      <p class="hint">首节点和尾节点不可移动。中间节点用顿号调整顺序或插入。审批节点未指定处理人时不能发布。</p>
+      <p v-if="designerMsg" class="hint" :class="{ err: designerErr }" data-testid="flow-designer-msg">{{ designerMsg }}</p>
+      <template #foot>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="flow-template-save" @click="saveDesigner">保存</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="flow-template-publish" @click="publishDesigner">发布</button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="versionOpen" title="版本" width="560px" @close="versionOpen = false">
+      <ul style="margin: 0; padding-left: 18px">
+        <li v-for="ver in versions" :key="ver.version" data-testid="flow-version-row">
+          v{{ ver.version }} · {{ ver.status }} · {{ ver.changeDesc || '—' }}
+        </li>
+      </ul>
+      <div class="fld" style="margin-top: 8px">
+        <label>对比 / 回滚目标版本</label>
+        <input v-model.number="versionTarget" data-testid="flow-version-target" type="number" min="1" />
+      </div>
+      <p v-if="versionMsg" class="hint" :class="{ err: versionErr }" data-testid="flow-version-msg">{{ versionMsg }}</p>
+      <ul v-if="versionDiffs.length" data-testid="flow-version-diff-list" style="margin: 8px 0 0; padding-left: 18px">
+        <li v-for="(line, index) in versionDiffs" :key="index">{{ line }}</li>
+      </ul>
+      <template #foot>
+        <button class="btn btn-sec btn-sm" type="button" data-testid="flow-version-diff" @click="diffVersion">对比</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="flow-version-rollback" @click="rollbackVersion">回滚</button>
+      </template>
+    </ProtoDrawer>
+
+    <ProtoDrawer :open="transferOpen" title="转交" width="480px" @close="closeTransfer">
+      <p class="hint" data-testid="flow-transfer-copy">选择目标人并填写原因。不能转给自己，每个节点只能转交一次。</p>
+      <div class="fld">
+        <label>目标人</label>
+        <select v-model="transferTo" data-testid="flow-transfer-user">
+          <option value="">请选择</option>
+          <option v-for="person in transferUsers" :key="person.id" :value="String(person.id)">
+            {{ person.nickname || person.username }}
+          </option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>转交原因 *</label>
+        <textarea v-model="transferReason" data-testid="flow-transfer-reason" rows="3" />
+      </div>
+      <p v-if="transferMsg" class="hint err" data-testid="flow-transfer-msg">{{ transferMsg }}</p>
+      <template #foot>
+        <button class="btn btn-sec btn-sm" type="button" @click="closeTransfer">取消</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="flow-transfer-confirm" :disabled="transferSaving" @click="submitTransfer">
+          {{ transferSaving ? '提交中…' : '确认转交' }}
+        </button>
+      </template>
+    </ProtoDrawer>
+
+    <div v-if="rowUrgeOpen" class="flow-modal-mask" @click.self="rowUrgeOpen = false">
+      <div class="flow-modal-card" data-testid="flow-row-urge-modal" role="dialog">
+        <h3>催办</h3>
+        <p class="hint">向当前审批人发送催办（站内 + 钉钉）</p>
+        <p class="csub">{{ rowUrgeTarget?.instanceNo }}</p>
+        <div class="fld">
+          <label>催办说明</label>
+          <textarea v-model="rowUrgeMessage" data-testid="flow-row-urge-message" rows="3" />
+        </div>
+        <p v-if="rowUrgeMsg" class="hint" :class="{ err: rowUrgeErr }" data-testid="flow-row-urge-msg">{{ rowUrgeMsg }}</p>
+        <div class="flow-modal-acts">
+          <button class="btn btn-sec btn-sm" type="button" @click="rowUrgeOpen = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="flow-row-urge-confirm" @click="confirmRowUrge">确认催办</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -539,10 +737,19 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { http } from '../../api/http'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
+import { useUserStore } from '../../stores/user'
 
 const URGE_DEFAULT = '请尽快处理该审批待办'
 
 const router = useRouter()
+const user = useUserStore()
+
+function canAct(row: { assigneeUserId?: number; currentAssigneeUserId?: number }) {
+  const mine = Number(user.profile?.userId || 0)
+  if (!mine) return true
+  const owner = Number(row.assigneeUserId || row.currentAssigneeUserId || 0)
+  return owner === mine
+}
 
 function platformSlug(platform: string) {
   const map: Record<string, string> = {
@@ -561,7 +768,7 @@ function transferFlowPath(row: { formData?: { transferId?: number; platform?: st
   return `/ims/corp/account/${platformSlug(String(row.formData?.platform || 'DOUYIN'))}?transferId=${id}`
 }
 
-const tab = ref<'instance' | 'template' | 'todo' | 'timeout'>('instance')
+const tab = ref<'instance' | 'template' | 'todo' | 'timeout' | 'board'>('instance')
 const loading = ref(false)
 const error = ref('')
 const total = ref(0)
@@ -573,6 +780,8 @@ const todoRows = ref<
     templateName: string
     nodeName: string
     initiatorName: string
+    assigneeUserId?: number
+    allowTransfer?: boolean
     slaDeadline?: string
     slaTone?: string
     formData?: { transferId?: number; platform?: string; accountNo?: string; title?: string; [key: string]: string | number | null | undefined }
@@ -704,12 +913,14 @@ type FlowDetail = {
   instanceStatus: string
   instanceStatusLabel: string
   currentNodeName: string
+  currentAssigneeName?: string
   initiatorName: string
   formData: Record<string, string | number | null>
   formEmpty: boolean
   canRevoke: boolean
   edgeCopy: string
-  traceLog: { nodeOrder: number; nodeName: string; action: string; comment?: string }[]
+  currentNodes?: { assigneeName?: string; nodeName?: string }[]
+  traceLog: { nodeOrder: number; nodeName: string; assigneeName?: string; action: string; comment?: string }[]
   ccRecords: unknown[]
 }
 
@@ -731,6 +942,370 @@ const formPairs = computed(() => {
   const data = detail.value?.formData || {}
   return Object.entries(data).filter(([, value]) => value !== null && String(value).trim() !== '')
 })
+const detailHandler = computed(() => {
+  const node = detail.value?.currentNodes?.[0]
+  return node?.assigneeName || detail.value?.currentAssigneeName || ''
+})
+
+type BoardCard = {
+  instanceNo: string
+  title?: string
+  pendingTaskId?: number
+  currentAssigneeUserId?: number
+  currentAssigneeName?: string
+  canAdvance?: boolean
+}
+type BoardColumn = { nodeName: string; cards: BoardCard[] }
+const boardColumns = ref<BoardColumn[]>([])
+const boardHint = ref('')
+
+const createOpen = ref(false)
+const createSaving = ref(false)
+const createMsg = ref('')
+const createErr = ref(false)
+const createForm = ref({ templateName: '', slaHours: 24, nodeChain: '' })
+const designerOpen = ref(false)
+const designerId = ref(0)
+const designerName = ref('')
+const designerStatus = ref('')
+const designerChain = ref('')
+const designerNodes = ref<{ name: string; assign: string }[]>([])
+const designerMsg = ref('')
+const designerErr = ref(false)
+const versionOpen = ref(false)
+const versionTemplateId = ref(0)
+const versions = ref<{ version: number; status: string; changeDesc?: string }[]>([])
+const versionTarget = ref(1)
+const versionMsg = ref('')
+const versionErr = ref(false)
+const versionDiffs = ref<string[]>([])
+const transferOpen = ref(false)
+const transferSaving = ref(false)
+const transferTo = ref('')
+const transferReason = ref('')
+const transferMsg = ref('')
+const transferTarget = ref<{ id: number; instanceNo: string } | null>(null)
+const transferUsers = ref<{ id: number; username?: string; nickname?: string }[]>([])
+const rowUrgeOpen = ref(false)
+const rowUrgeMessage = ref('请尽快处理')
+const rowUrgeMsg = ref('')
+const rowUrgeErr = ref(false)
+const rowUrgeTarget = ref<{ instanceNo?: string; pendingTaskId?: number } | null>(null)
+
+async function loadBoard() {
+  loading.value = true
+  error.value = ''
+  boardHint.value = ''
+  try {
+    const res = await http.get('/flow/instance/board')
+    if (res.data.code !== 0) {
+      error.value = res.data.msg || '看板加载失败'
+      boardColumns.value = []
+      return
+    }
+    boardColumns.value = (res.data.data.columns || []) as BoardColumn[]
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : '网络错误'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function advanceCard(card: BoardCard) {
+  boardHint.value = ''
+  try {
+    const res = await http.put(`/flow/task/${card.pendingTaskId}/handle`, { action: 'APPROVE', advance: true, comment: '' })
+    boardHint.value = res.data.data?.isInstanceFinished ? '流程已归档' : '已流转至下一节点'
+    await loadBoard()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    boardHint.value = body?.msg || '流转失败'
+  }
+}
+
+async function finishCard(card: BoardCard) {
+  boardHint.value = ''
+  try {
+    await http.put(`/flow/task/${card.pendingTaskId}/handle`, { action: 'APPROVE', comment: '' })
+    boardHint.value = '流程已归档'
+    await loadBoard()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    boardHint.value = body?.msg || '完成失败'
+  }
+}
+
+function openCreateTemplate() {
+  createForm.value = { templateName: '', slaHours: 24, nodeChain: '' }
+  createMsg.value = ''
+  createErr.value = false
+  createOpen.value = true
+}
+
+async function submitCreateTemplate() {
+  if (!createForm.value.templateName.trim() || !createForm.value.nodeChain.trim()) {
+    createErr.value = true
+    createMsg.value = '名称和节点链必填'
+    return
+  }
+  createSaving.value = true
+  createErr.value = false
+  try {
+    const res = await http.post('/flow/template', {
+      templateName: createForm.value.templateName.trim(),
+      businessDomain: 'COMMON',
+      slaHours: createForm.value.slaHours,
+      nodeChain: createForm.value.nodeChain.trim(),
+    })
+    if (res.data.code !== 0) {
+      createErr.value = true
+      createMsg.value = res.data.msg || '保存失败'
+      return
+    }
+    createOpen.value = false
+    tab.value = 'template'
+    await loadTemplates()
+    openDesigner(res.data.data)
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    createErr.value = true
+    createMsg.value = body?.msg || '保存失败'
+  } finally {
+    createSaving.value = false
+  }
+}
+
+function splitChain(text: string) {
+  return text.replace(/，/g, '、').split('、').map((part) => part.trim()).filter(Boolean)
+}
+
+watch(designerChain, (text) => {
+  const names = splitChain(text)
+  const prev = new Map(designerNodes.value.map((node) => [node.name, node.assign]))
+  designerNodes.value = names.map((name, index) => ({
+    name,
+    assign: index === 0 ? 'INITIATOR' : (prev.get(name) ?? (name.includes('无审批人') ? '' : 'DEPT_LEADER')),
+  }))
+})
+
+function designerNodesPayload() {
+  return designerNodes.value.map((node, index) => ({
+    nodeOrder: index + 1,
+    nodeName: node.name,
+    nodeType: index === 0 ? 'TASK' : 'APPROVE',
+    assigneeRule:
+      index === 0
+        ? { assignType: 'USER', targetIds: [] }
+        : node.assign === 'INITIATOR_SUPERIOR'
+          ? { assignType: 'INITIATOR_SUPERIOR' }
+          : node.assign
+            ? { assignType: 'POSITION', targetPositionCodes: [node.assign] }
+            : { assignType: '' },
+  }))
+}
+
+function openDesigner(row: Record<string, unknown>) {
+  designerId.value = Number(row.id)
+  designerName.value = String(row.templateName || '')
+  designerStatus.value = String(row.statusLabel || row.status || '')
+  designerChain.value = String(row.nodeChain || '')
+  designerMsg.value = ''
+  designerErr.value = false
+  designerOpen.value = true
+}
+
+async function saveDesigner() {
+  designerErr.value = false
+  try {
+    const res = await http.put(`/flow/template/${designerId.value}`, {
+      templateName: designerName.value,
+      nodes: designerNodesPayload(),
+    })
+    if (res.data.code !== 0) {
+      designerErr.value = true
+      designerMsg.value = res.data.msg || '保存失败'
+      return
+    }
+    designerMsg.value = `已保存 v${res.data.data?.version || ''}`
+    await loadTemplates()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    designerErr.value = true
+    designerMsg.value = body?.code === 1133 ? '已发布模板修改须升版本' : body?.msg || '保存失败'
+  }
+}
+
+async function publishDesigner() {
+  designerErr.value = false
+  try {
+    const res = await http.post(`/flow/template/${designerId.value}/publish`, {
+      nodes: designerNodesPayload(),
+      changeDesc: '发布',
+    })
+    if (res.data.code !== 0) {
+      designerErr.value = true
+      designerMsg.value = res.data.msg || '发布失败'
+      return
+    }
+    designerStatus.value = '已发布'
+    designerMsg.value = `已发布 v${res.data.data?.version || ''}`
+    await loadTemplates()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    designerErr.value = true
+    designerMsg.value = body?.msg || '发布失败'
+  }
+}
+
+async function toggleTemplate(row: Record<string, unknown>) {
+  const next = row.status === 'DISABLED' ? 'PUBLISHED' : 'DISABLED'
+  draftHintErr.value = false
+  try {
+    const res = await http.put(`/flow/template/${Number(row.id)}`, { status: next })
+    if (res.data.code !== 0) {
+      draftHintErr.value = true
+      draftHint.value = res.data.msg || '启停失败'
+      return
+    }
+    draftHint.value = next === 'DISABLED' ? '已停用，发起时不可选' : '已启用'
+    await loadTemplates()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    draftHintErr.value = true
+    draftHint.value = body?.msg || '启停失败'
+  }
+}
+
+const DIFF_KIND: Record<string, string> = { ADDED: '新增', REMOVED: '删除', MODIFIED: '修改' }
+const DIFF_FIELD: Record<string, string> = { nodeName: '名称', nodeType: '类型', assigneeRule: '处理人', slaHours: '超时' }
+
+function diffLine(change: { changeType?: string; nodeOrder?: number; nodeName?: string; detail?: Record<string, { oldValue?: unknown; newValue?: unknown }> }) {
+  const head = `${DIFF_KIND[change.changeType || ''] || change.changeType || '变更'} 节点${change.nodeOrder ?? ''} ${change.nodeName || ''}`.trim()
+  const parts = Object.entries(change.detail || {}).map(([key, value]) => {
+    const label = DIFF_FIELD[key] || key
+    return `${label} ${JSON.stringify(value?.oldValue ?? '')} → ${JSON.stringify(value?.newValue ?? '')}`
+  })
+  return parts.length ? `${head}：${parts.join('；')}` : head
+}
+
+async function openVersions(row: Record<string, unknown>) {
+  versionTemplateId.value = Number(row.id)
+  versionMsg.value = ''
+  versionErr.value = false
+  versionDiffs.value = []
+  versionOpen.value = true
+  const res = await http.get('/flow/version/list', { params: { templateId: versionTemplateId.value } })
+  versions.value = res.data.code === 0 ? res.data.data || [] : []
+  versionTarget.value = versions.value.length ? Number(versions.value[versions.value.length - 1].version) : 1
+}
+
+async function diffVersion() {
+  const current = versions.value[0]?.version
+  const res = await http.get('/flow/version/diff', {
+    params: { templateId: versionTemplateId.value, fromVersion: versionTarget.value, toVersion: current },
+  })
+  const changes = res.data.data?.nodeChanges || []
+  versionDiffs.value = changes.map((change: { changeType?: string; nodeOrder?: number; nodeName?: string; detail?: Record<string, { oldValue?: unknown; newValue?: unknown }> }) => diffLine(change))
+  versionErr.value = false
+  versionMsg.value = `差异 ${changes.length} 处`
+}
+
+async function rollbackVersion() {
+  try {
+    const res = await http.post(`/flow/version/${versionTemplateId.value}/rollback`, {
+      targetVersion: versionTarget.value,
+      changeDesc: '回滚',
+    })
+    const newVersion = res.data.data?.newVersion
+    await openVersions({ id: versionTemplateId.value })
+    versionErr.value = false
+    versionMsg.value = `已生成 v${newVersion}`
+    await loadTemplates()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    versionErr.value = true
+    versionMsg.value = body?.msg || '回滚失败'
+  }
+}
+
+async function openTransfer(row: { id: number; instanceNo: string }) {
+  transferTarget.value = row
+  transferTo.value = ''
+  transferReason.value = ''
+  transferMsg.value = ''
+  transferOpen.value = true
+  try {
+    const res = await http.get('/flow/task/transfer-candidates')
+    transferUsers.value = res.data.data?.list || []
+  } catch {
+    transferUsers.value = []
+  }
+}
+
+function closeTransfer() {
+  if (transferSaving.value) return
+  transferOpen.value = false
+}
+
+async function submitTransfer() {
+  const row = transferTarget.value
+  if (!row) return
+  const mine = Number(user.profile?.userId || 0)
+  if (!transferTo.value || Number(transferTo.value) === mine) {
+    transferMsg.value = '请选择其他处理人'
+    return
+  }
+  if (!transferReason.value.trim()) {
+    transferMsg.value = '转交原因必填'
+    return
+  }
+  transferSaving.value = true
+  try {
+    await http.put(`/flow/task/${row.id}/transfer`, {
+      toUserId: Number(transferTo.value),
+      transferReason: transferReason.value.trim(),
+    })
+    transferOpen.value = false
+    handleHint.value = `已转交 ${row.instanceNo}`
+    handleHintErr.value = false
+    await loadTodos()
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    transferMsg.value = body?.code === 1138 ? body.msg || '转交目标无效' : body?.msg || '转交失败'
+  } finally {
+    transferSaving.value = false
+  }
+}
+
+function openRowUrge(row: Record<string, unknown>) {
+  rowUrgeTarget.value = { instanceNo: String(row.instanceNo || ''), pendingTaskId: Number(row.pendingTaskId || 0) }
+  rowUrgeMessage.value = '请尽快处理'
+  rowUrgeMsg.value = ''
+  rowUrgeErr.value = false
+  rowUrgeOpen.value = true
+}
+
+async function confirmRowUrge() {
+  const row = rowUrgeTarget.value
+  if (!row?.pendingTaskId) return
+  try {
+    const res = await http.put(`/flow/timeout/${row.pendingTaskId}/urge`, {
+      urgeMessage: rowUrgeMessage.value.trim(),
+      fromInstance: true,
+    })
+    if (res.data.code !== 0 && res.data.code !== 5003) {
+      rowUrgeErr.value = true
+      rowUrgeMsg.value = res.data.msg || '催办失败'
+      return
+    }
+    rowUrgeOpen.value = false
+    error.value = ''
+  } catch (e: unknown) {
+    const body = rejectedBody(e)
+    rowUrgeErr.value = true
+    rowUrgeMsg.value = body?.msg || '催办失败'
+  }
+}
 
 function actionLabel(action: string) {
   const map: Record<string, string> = {
@@ -1210,6 +1785,10 @@ function closeReject() {
 async function submitReject() {
   const row = rejectTarget.value
   if (!row) return
+  if (!rejectComment.value.trim()) {
+    rejectMsg.value = '退回意见必填'
+    return
+  }
   rejectSaving.value = true
   rejectMsg.value = ''
   try {
@@ -1218,11 +1797,9 @@ async function submitReject() {
       comment: rejectComment.value.trim(),
     })
     const hint = String(res.data.data?.commentHint || '')
-    handleHint.value = hint
+    handleHint.value = hint || `已退回 ${row.instanceNo}，单据回到发起人`
     handleHintErr.value = false
-    rejectDone.value = hint
-      ? `已驳回 ${row.instanceNo}。${hint}`
-      : `已驳回 ${row.instanceNo}。实例进入已驳回，已完成节点留痕。`
+    rejectDone.value = `已退回 ${row.instanceNo}，单据回到发起人`
     rejectOpen.value = false
     await loadTodos()
   } catch (e: unknown) {
@@ -1323,6 +1900,7 @@ watch(tab, (t) => {
   if (t === 'instance') loadInstances()
   else if (t === 'todo') loadTodos()
   else if (t === 'timeout') loadTimeouts()
+  else if (t === 'board') loadBoard()
   else loadTemplates()
 })
 

@@ -11,8 +11,8 @@ from app.main import app
 client = TestClient(app)
 
 
-def headers() -> dict:
-    token = client.post("/admin-api/ims/auth/login", json={"username": "admin", "password": "Admin@123"}).json()["data"][
+def headers(username: str = "admin", password: str = "Admin@123") -> dict:
+    token = client.post("/admin-api/ims/auth/login", json={"username": username, "password": password}).json()["data"][
         "accessToken"
     ]
     return {"Authorization": f"Bearer {token}"}
@@ -85,7 +85,9 @@ def test_flow_instance_start_and_idempotent():
 
 
 def test_flow_task_handle_approve_and_reject():
-    auth = headers()
+    admin = headers()
+    client.get("/admin-api/ims/flow/template/list", headers=admin, params={"pageNo": 1, "pageSize": 1})
+    auth = headers("tc_r4")
     todo = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 5})
     tb = todo.json()
     assert tb["code"] == 0
@@ -101,18 +103,19 @@ def test_flow_task_handle_approve_and_reject():
     ab = approved.json()
     assert ab["code"] == 0
     assert ab["data"]["instanceNo"] == instance_no
-    assert ab["data"]["newStatus"] == "APPROVED"
-    assert ab["data"]["isInstanceFinished"] is True
+    assert ab["data"]["newStatus"] == "RUNNING"
+    assert ab["data"]["isInstanceFinished"] is False
+    assert ab["data"]["nextNodes"]
 
     published = client.get(
         "/admin-api/ims/flow/template/list",
-        headers=auth,
+        headers=admin,
         params={"pageNo": 1, "pageSize": 20, "status": "PUBLISHED"},
     ).json()
     leave = next(r for r in published["data"]["list"] if r["templateCode"] == "FL-LEAVE")
     start = client.post(
         "/admin-api/ims/flow/instance",
-        headers=auth,
+        headers=admin,
         json={
             "templateId": leave["id"],
             "formData": {"title": "pytest · 驳回用例"},
@@ -121,7 +124,7 @@ def test_flow_task_handle_approve_and_reject():
     )
     assert start.json()["code"] == 0
 
-    todo2 = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 20})
+    todo2 = client.get("/admin-api/ims/flow/task/my-todo", headers=headers("tc_r4"), params={"pageNo": 1, "pageSize": 20})
     reject_task = next(
         r for r in todo2.json()["data"]["list"] if r["instanceNo"] == start.json()["data"]["instanceNo"]
     )
@@ -199,9 +202,10 @@ def test_flow_timeout_urge_edges():
     )
     assert started.json()["code"] == 0
     instance_no = started.json()["data"]["instanceNo"]
+    leader = headers("tc_r4")
     todos = client.get(
         "/admin-api/ims/flow/task/my-todo",
-        headers=auth,
+        headers=leader,
         params={"pageNo": 1, "pageSize": 50},
     ).json()
     early_task = next(r for r in todos["data"]["list"] if r["instanceNo"] == instance_no)
@@ -215,7 +219,7 @@ def test_flow_timeout_urge_edges():
 
     handled = client.put(
         f"/admin-api/ims/flow/task/{early_task['id']}/handle",
-        headers=auth,
+        headers=leader,
         json={"action": "APPROVE", "comment": "pytest"},
     )
     assert handled.json()["code"] == 0
@@ -408,15 +412,22 @@ def test_flow_sla_tone_thresholds():
 
 def test_flow_todo_sla_and_empty_domain():
     auth = headers()
-    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 20})
-    body = todo.json()
-    assert body["code"] == 0
-    assert body["data"]["total"] >= 1
-    tones = {row["slaTone"] for row in body["data"]["list"]}
+    client.get("/admin-api/ims/flow/template/list", headers=auth, params={"pageNo": 1, "pageSize": 1})
+    rows = []
+    for username in ("tc_r4", "tc_r3"):
+        todo = client.get(
+            "/admin-api/ims/flow/task/my-todo",
+            headers=headers(username),
+            params={"pageNo": 1, "pageSize": 20},
+        ).json()
+        assert todo["code"] == 0
+        rows.extend(todo["data"]["list"])
+    assert rows
+    tones = {row["slaTone"] for row in rows}
     assert tones <= {"normal", "warn", "timeout"}
-    assert any(row["isTimeout"] for row in body["data"]["list"])
-    assert any(row["slaTone"] == "warn" for row in body["data"]["list"])
-    assert all(row["slaDeadline"] for row in body["data"]["list"])
+    assert any(row["isTimeout"] for row in rows)
+    assert any(row["slaTone"] == "warn" for row in rows)
+    assert all(row["slaDeadline"] for row in rows)
 
     empty = client.get(
         "/admin-api/ims/flow/task/my-todo",
@@ -479,31 +490,40 @@ def test_flow_reject_edges_and_repeat_handle():
     ).json()
     assert start["code"] == 0
     instance_no = start["data"]["instanceNo"]
-    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=auth, params={"pageNo": 1, "pageSize": 50}).json()
+    leader = headers("tc_r4")
+    todo = client.get("/admin-api/ims/flow/task/my-todo", headers=leader, params={"pageNo": 1, "pageSize": 50}).json()
     task = next(r for r in todo["data"]["list"] if r["instanceNo"] == instance_no)
     assert task["slaTone"] == "normal"
 
     bad_node = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
+        headers=leader,
         json={"action": "REJECT", "comment": "退回", "rejectToNodeOrder": 0},
     ).json()
     assert bad_node["code"] == 1001
     assert "退回目标节点" in bad_node["msg"]
 
+    empty = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=leader,
+        json={"action": "REJECT", "comment": "   "},
+    ).json()
+    assert empty["code"] == 1001
+    assert "退回意见必填" in empty["msg"]
+
     rejected = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
-        json={"action": "REJECT", "comment": "   "},
+        headers=leader,
+        json={"action": "REJECT", "comment": "请补充材料"},
     ).json()
     assert rejected["code"] == 0
     assert rejected["data"]["newStatus"] == "REJECTED"
+    assert rejected["data"]["isInstanceFinished"] is False
     assert rejected["data"]["rejectToNodeOrder"] == 1
-    assert rejected["data"]["commentHint"] == "退回建议填写意见"
 
     again = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
+        headers=leader,
         json={"action": "APPROVE", "comment": "再次处理"},
     ).json()
     assert again["code"] == 1001
@@ -670,25 +690,32 @@ def test_flow_detail_revoke_and_timeout_filter():
     reject_no = rejected_start["data"]["instanceNo"]
     todo = client.get(
         "/admin-api/ims/flow/task/my-todo",
-        headers=auth,
+        headers=headers("tc_r4"),
         params={"pageNo": 1, "pageSize": 50},
     ).json()
     task = next(row for row in todo["data"]["list"] if row["instanceNo"] == reject_no)
+    empty = client.put(
+        f"/admin-api/ims/flow/task/{task['id']}/handle",
+        headers=headers("tc_r4"),
+        json={"action": "REJECT", "comment": ""},
+    ).json()
+    assert empty["code"] == 1001
+    assert "退回意见必填" in empty["msg"]
+
     rejected = client.put(
         f"/admin-api/ims/flow/task/{task['id']}/handle",
-        headers=auth,
-        json={"action": "REJECT", "comment": ""},
+        headers=headers("tc_r4"),
+        json={"action": "REJECT", "comment": "请补充材料"},
     ).json()
     assert rejected["code"] == 0
     assert rejected["data"]["newStatus"] == "REJECTED"
+    assert rejected["data"]["isInstanceFinished"] is False
     assert rejected["data"]["rejectToNodeOrder"] == 1
-    assert rejected["data"]["commentHint"] == "退回建议填写意见"
 
     rejected_detail = client.get(f"/admin-api/ims/flow/instance/{reject_no}", headers=auth).json()["data"]
-    assert rejected_detail["edgeCopy"] == "实例已驳回结束，不可撤销。"
-    assert rejected_detail["canRevoke"] is False
-    blocked = client.put(f"/admin-api/ims/flow/instance/{reject_no}/revoke", headers=auth).json()
-    assert blocked["code"] == 1140
+    assert rejected_detail["instanceStatus"] == "RUNNING"
+    assert rejected_detail["canRevoke"] is True
+    assert "进行中" in rejected_detail["edgeCopy"]
 
 
 def headers_for(username: str) -> dict:
