@@ -7,12 +7,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
-from app.core import utcnow
+from app.core import SessionLocal, utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
-from app.models import CompAsset, User
+from app.models import CompAnalysis, CompAsset, CompAssetSeq, User
 from app.ops_models import ExternalAccount, ExternalWork
 
 router = APIRouter(prefix="/comp/asset", tags=["comp-asset"])
@@ -31,20 +32,151 @@ class AssetBody(BaseModel):
     engagementRate: float = Field(ge=0, default=0.0)
 
 
+def _used_seq(db: Session, tenant_id: int, prefix: str) -> int:
+    numbers = {
+        no
+        for no in db.scalars(
+            select(CompAsset.asset_no).where(
+                CompAsset.tenant_id == tenant_id,
+                CompAsset.asset_no.like(f"{prefix}%"),
+            )
+        ).all()
+        if no
+    }
+    for obj in list(db.new) + list(db.dirty):
+        if isinstance(obj, CompAsset) and int(obj.tenant_id or 0) == int(tenant_id) and obj.asset_no:
+            numbers.add(obj.asset_no)
+    best = 0
+    for no in numbers:
+        if not str(no).startswith(prefix):
+            continue
+        tail = str(no)[len(prefix) :]
+        if tail.isdigit():
+            best = max(best, int(tail))
+    return best
+
+
+def _ensure_seq_row(tenant_id: int, day: str) -> None:
+    """用短事务建序号行。并发插入冲突或死锁时重试，不碰调用方事务。"""
+    last: Exception | None = None
+    for _ in range(5):
+        db = SessionLocal()
+        try:
+            found = db.scalar(
+                select(CompAssetSeq.id).where(
+                    CompAssetSeq.tenant_id == tenant_id,
+                    CompAssetSeq.biz_date == day,
+                )
+            )
+            if found is not None:
+                return
+            db.add(CompAssetSeq(biz_date=day, tenant_id=tenant_id, seq_val=0))
+            db.commit()
+            return
+        except IntegrityError:
+            db.rollback()
+            return
+        except OperationalError as exc:
+            db.rollback()
+            last = exc
+            if "1213" not in str(exc):
+                raise
+        finally:
+            db.close()
+    raise RuntimeError("竞品单号序号行不存在") from last
+
+
+def _lock_fresh_seq(tenant_id: int, day: str) -> tuple[Session, CompAssetSeq]:
+    """在尚未读过库的新事务里锁序号行。
+
+    审核请求往往已经做过一致性读。若把序号行插在另一连接再在原事务里
+    SELECT FOR UPDATE，MariaDB（innodb_snapshot_isolation）会报 1020，
+    整单回滚；序号行却已提交，于是第二次点击才成功。
+    """
+    stmt = (
+        select(CompAssetSeq)
+        .where(CompAssetSeq.tenant_id == tenant_id, CompAssetSeq.biz_date == day)
+        .with_for_update()
+    )
+    last: Exception | None = None
+    for _ in range(5):
+        _ensure_seq_row(tenant_id, day)
+        db = SessionLocal()
+        try:
+            row = db.scalar(stmt)
+            if row is not None:
+                return db, row
+            db.rollback()
+        except OperationalError as exc:
+            db.rollback()
+            last = exc
+            message = str(exc)
+            if "1020" not in message and "1213" not in message:
+                db.close()
+                raise
+        db.close()
+    raise RuntimeError("竞品单号序号行不存在") from last
+
+
+def _session_seq(db: Session, tenant_id: int, prefix: str) -> int:
+    """本事务里已经看见的档案号。不再对调用方连接发查询，避免和序号锁互相等待。"""
+    best = 0
+    seen = list(db.new) + list(db.dirty)
+    seen.extend(db.identity_map.values())
+    for obj in seen:
+        if not isinstance(obj, CompAsset) or int(obj.tenant_id or 0) != int(tenant_id):
+            continue
+        number = str(obj.asset_no or "")
+        if not number.startswith(prefix):
+            continue
+        tail = number[len(prefix) :]
+        if tail.isdigit():
+            best = max(best, int(tail))
+    return best
+
+
 def next_asset_no(db: Session, tenant_id: int) -> str:
+    """锁当日序号行后取下一个空号。已有单号（含软删）只参与占号，不会被改写。
+
+    序号在独立事务里递增并提交，避免调用方已打开的快照看不到新建序号行。
+    """
     day = datetime.now(BJ).strftime("%Y%m%d")
     prefix = f"CP{day}"
-    count = db.scalar(
-        select(func.count())
-        .select_from(CompAsset)
-        .where(
-            CompAsset.deleted == 0,
-            CompAsset.tenant_id == tenant_id,
-            CompAsset.asset_no.like(f"{prefix}%"),
-        )
-    )
-    seq = int(count or 0) + 1
-    return f"{prefix}{seq:03d}"
+    alloc, row = _lock_fresh_seq(tenant_id, day)
+    try:
+        floor = max(_used_seq(alloc, tenant_id, prefix), _session_seq(db, tenant_id, prefix))
+        if int(row.seq_val or 0) < floor:
+            row.seq_val = floor
+        row.seq_val = int(row.seq_val or 0) + 1
+        number = f"{prefix}{int(row.seq_val):03d}"
+        alloc.commit()
+        return number
+    except Exception:
+        alloc.rollback()
+        raise
+    finally:
+        alloc.close()
+
+
+def assign_and_flush(db: Session, row: CompAsset) -> str:
+    """写入新档案。单号唯一冲突时重新取号，名称冲突原样抛出。"""
+    last: Exception | None = None
+    for _ in range(5):
+        if row in db:
+            db.expunge(row)
+        row.asset_no = next_asset_no(db, int(row.tenant_id or 0))
+        try:
+            with db.begin_nested():
+                db.add(row)
+            return row.asset_no
+        except IntegrityError as exc:
+            last = exc
+            message = str(getattr(exc, "orig", exc))
+            if "uk_comp_asset_no" not in message:
+                raise
+    if last is not None:
+        raise last
+    raise RuntimeError("竞品单号分配失败")
 
 
 def normalize_name(name: str) -> str:
@@ -118,8 +250,23 @@ def enrich_metrics(ops: Session, tenant_id: int, asset: CompAsset) -> dict:
     }
 
 
+AUDIT_LABELS = {
+    "APPROVED": "已入库",
+    "STORED": "已入库",
+    "TRACKING": "已入库",
+    "PENDING": "待初审",
+    "SUBMITTED": "待初审",
+    "REJECTED": "已退回",
+    "PAUSED": "暂停",
+    "ARCHIVED": "归档",
+}
+
+
 def asset_vo(asset: CompAsset, metrics: dict) -> dict:
     initial = (asset.comp_name_std or "?")[:1]
+    info = dict(asset.base_info or {})
+    status = asset.status or "APPROVED"
+    stored = status in {"APPROVED", "STORED", "TRACKING"}
     return {
         "id": str(asset.id),
         "assetNo": asset.asset_no,
@@ -133,7 +280,12 @@ def asset_vo(asset: CompAsset, metrics: dict) -> dict:
         "featuredWorksIncluded": metrics["featuredWorksIncluded"],
         "latestVersion": asset.latest_version,
         "referenceCount": asset.reference_count,
-        "status": asset.status,
+        "status": status,
+        "auditStatus": "STORED" if stored else status,
+        "auditStatusLabel": AUDIT_LABELS.get(status, status),
+        "monitorSubscribed": bool(info.get("monitorSubscribed", stored)),
+        "homepageUrl": info.get("homepageUrl") or "",
+        "cardKind": "asset",
     }
 
 
@@ -152,9 +304,9 @@ def ensure_seed_assets(db: Session, tenant_id: int, actor_id: int) -> None:
         ("悦跑圈", "XIAOHONGSHU", "", 860_000, 55, 5.4),
     ]
     for name, platform, acc_id, fans, works, rate in seeds:
-        db.add(
+        assign_and_flush(
+            db,
             CompAsset(
-                asset_no=next_asset_no(db, tenant_id),
                 comp_name_std=name,
                 comp_account_id=acc_id,
                 platform=platform,
@@ -169,9 +321,8 @@ def ensure_seed_assets(db: Session, tenant_id: int, actor_id: int) -> None:
                 status="APPROVED",
                 created_by=actor_id,
                 tenant_id=tenant_id,
-            )
+            ),
         )
-    db.flush()
 
 
 @router.get("/list")
@@ -227,7 +378,6 @@ def create_asset(
     if exists:
         return fail(1203, "竞品名称已存在")
     row = CompAsset(
-        asset_no=next_asset_no(db, tenant_id),
         comp_name_std=name,
         comp_account_id=(body.compAccountId or "").strip(),
         platform=body.platform.strip(),
@@ -243,6 +393,199 @@ def create_asset(
         created_by=actor.id,
         tenant_id=tenant_id,
     )
-    db.add(row)
-    db.flush()
+    assign_and_flush(db, row)
     return ok(asset_vo(row, enrich_metrics(ops, tenant_id, row)))
+
+
+COMPARE_KEYS = (
+    ("sales", "销售"),
+    ("gmv", "GMV"),
+    ("priceBand", "价格带"),
+    ("contentStrategy", "内容策略"),
+    ("adStrategy", "投放策略"),
+    ("followerCount", "粉丝数"),
+    ("works30d", "近30天作品"),
+    ("engagementRate", "互动率"),
+)
+
+
+def _load_asset(db: Session, tenant_id: int, asset_no: str) -> CompAsset | None:
+    return db.scalar(
+        select(CompAsset).where(
+            CompAsset.deleted == 0,
+            CompAsset.tenant_id == tenant_id,
+            CompAsset.asset_no == asset_no,
+        )
+    )
+
+
+def top_works(ops: Session, tenant_id: int, account_identifier: str) -> list[dict]:
+    if not account_identifier:
+        return []
+    rows = ops.scalars(
+        select(ExternalWork)
+        .where(
+            ExternalWork.deleted == 0,
+            ExternalWork.tenant_id == tenant_id,
+            ExternalWork.account_identifier == account_identifier,
+        )
+        .order_by(ExternalWork.play_count.desc())
+        .limit(3)
+    ).all()
+    return [
+        {
+            "title": row.title,
+            "platformType": row.platform_type,
+            "playCount": row.play_count,
+            "likeCount": row.like_count,
+        }
+        for row in rows
+    ]
+
+
+def interaction_trend(rate: float) -> list[dict]:
+    """没有日快照时给出 7 日示意，避免抽屉空白。"""
+    today = datetime.now(BJ).date()
+    base = float(rate or 0)
+    return [
+        {"date": (today - timedelta(days=6 - index)).isoformat(), "value": round(base, 1)}
+        for index in range(7)
+    ]
+
+
+def linked_reviews(db: Session, tenant_id: int, asset: CompAsset) -> dict:
+    """归并进该档案的全部送审单，以及各单的审核轮次。"""
+    info = dict(asset.base_info or {})
+    ordered_nos: list[str] = []
+    for item in list(info.get("versionTimeline") or []):
+        number = str((item or {}).get("sourceAnalysisNo") or "").strip()
+        if number and number not in ordered_nos:
+            ordered_nos.append(number)
+    rows = list(
+        db.scalars(
+            select(CompAnalysis)
+            .where(
+                CompAnalysis.deleted == 0,
+                CompAnalysis.tenant_id == tenant_id,
+                CompAnalysis.asset_no == asset.asset_no,
+            )
+            .order_by(CompAnalysis.id.asc())
+        ).all()
+    )
+    by_no = {row.analysis_no: row for row in rows}
+    missing = [number for number in ordered_nos if number not in by_no]
+    if missing:
+        extras = db.scalars(
+            select(CompAnalysis).where(
+                CompAnalysis.deleted == 0,
+                CompAnalysis.tenant_id == tenant_id,
+                CompAnalysis.analysis_no.in_(missing),
+            )
+        ).all()
+        for row in extras:
+            by_no[row.analysis_no] = row
+    ordered: list[CompAnalysis] = []
+    seen: set[str] = set()
+    for number in ordered_nos:
+        row = by_no.get(number)
+        if row is not None and row.analysis_no not in seen:
+            ordered.append(row)
+            seen.add(row.analysis_no)
+    for row in rows:
+        if row.analysis_no not in seen:
+            ordered.append(row)
+            seen.add(row.analysis_no)
+    rounds: list[dict] = []
+    for row in ordered:
+        for item in list(row.audit_rounds or []):
+            entry = dict(item)
+            entry["analysisNo"] = row.analysis_no
+            entry["comment"] = entry.get("rejectReason") or entry.get("comment") or ""
+            rounds.append(entry)
+    return {
+        "sourceAnalysisNos": [row.analysis_no for row in ordered],
+        "auditRounds": rounds,
+    }
+
+
+def asset_detail(ops: Session, tenant_id: int, asset: CompAsset) -> dict:
+    metrics = enrich_metrics(ops, tenant_id, asset)
+    vo = asset_vo(asset, metrics)
+    info = dict(asset.base_info or {})
+    works = int(metrics["works30d"] or 0)
+    vo.update(
+        {
+            "versionTimeline": list(info.get("versionTimeline") or []),
+            "aliasList": list(info.get("aliasList") or []),
+            "conclusion": info.get("conclusion") or "",
+            "dataSource": info.get("dataSource") or "",
+            "dimensionData": dict(info.get("dimensionData") or {}),
+            "updateFrequency": round(works / 30, 2),
+            "trendNote": "示意（暂无日快照）",
+            "interactionTrend": interaction_trend(float(metrics["engagementRate"] or 0)),
+            "topWorks": top_works(ops, tenant_id, asset.comp_account_id),
+            "monitorEffectiveDate": info.get("monitorEffectiveDate") or "",
+        }
+    )
+    return vo
+
+
+@router.get("/compare")
+def compare_assets(
+    assetNos: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    numbers = [item.strip() for item in (assetNos or "").split(",") if item.strip()]
+    if not numbers or len(numbers) > 5:
+        return fail(1001, "请选择 1 到 5 个已入库竞品")
+    assets: list[tuple[CompAsset, dict]] = []
+    for number in numbers:
+        row = _load_asset(db, tenant_id, number)
+        if row is None:
+            return fail(1504, f"竞品档案不存在：{number}")
+        if row.status not in {"APPROVED", "STORED", "TRACKING"}:
+            return fail(1001, "未入库的竞品不能加入对比")
+        assets.append((row, asset_detail(ops, tenant_id, row)))
+    matrix = []
+    for key, _label in COMPARE_KEYS:
+        values = []
+        for _row, detail in assets:
+            if key in {"followerCount", "works30d", "engagementRate"}:
+                values.append(detail.get(key))
+            else:
+                values.append((detail.get("dimensionData") or {}).get(key))
+        matrix.append({"dimensionKey": key, "values": values})
+    return ok(
+        {
+            "assetNos": numbers,
+            "dimensionMatrix": matrix,
+            "conclusions": [
+                {
+                    "assetNo": detail["assetNo"],
+                    "compNameStd": detail["compName"],
+                    "conclusion": detail.get("conclusion") or "",
+                }
+                for _row, detail in assets
+            ],
+            "generatedAt": datetime.now(BJ).strftime("%Y-%m-%d %H:%M"),
+        }
+    )
+
+
+@router.get("/{asset_no}")
+def get_asset(
+    asset_no: str,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = _load_asset(db, tenant_id, asset_no)
+    if row is None:
+        return fail(1504, "竞品档案不存在")
+    detail = asset_detail(ops, tenant_id, row)
+    detail.update(linked_reviews(db, tenant_id, row))
+    return ok(detail)

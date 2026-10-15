@@ -13,7 +13,7 @@ from app.account import COLLECT_PLATFORMS
 from app.api import current_user, db_session, fail, ok
 from app.core import IMS_DB, utcnow
 from app.corp import check_enum, count_of, ops_db, page_args, paged, tenant_of, visible
-from app.models import MetadataEntity, MetadataField, User
+from app.models import DictData, MetadataEntity, MetadataField, User
 from app.ops_models import CollectConfig, CollectKeyword, PlatformAccount, ThresholdConfig
 
 router = APIRouter()
@@ -185,18 +185,83 @@ def threshold_payload(body: ThresholdBody) -> dict[str, Any]:
     return data
 
 
-def threshold_vo(row: ThresholdConfig) -> dict:
+METRIC_LABELS = {
+    "play_count": "播放量",
+    "like_count": "点赞量",
+    "comment_count": "评论数",
+    "share_count": "分享量",
+    "follower_count": "粉丝数",
+    "completion_rate": "完播率",
+    "collect_fail_rate": "采集失败率",
+    "engagement_rate": "互动率",
+}
+OPERATOR_LABELS = {
+    "GT": ">",
+    "GTE": "≥",
+    "GE": "≥",
+    "LT": "<",
+    "LTE": "≤",
+    "LE": "≤",
+    "EQ": "=",
+    "NEQ": "≠",
+}
+STATUS_FALLBACK = {"ENABLED": "启用", "DISABLED": "停用", "RUNNING": "运行中"}
+_OP_PREFIXES = ("GTE", "LTE", "NEQ", "GT", "LT", "EQ", "GE", "LE")
+
+
+def collect_status_labels(db: Session) -> dict[str, str]:
+    """采集状态中文名。优先 dict_collect_status，缺字典时用内置对照。"""
+    labels = dict(STATUS_FALLBACK)
+    rows = db.scalars(
+        select(DictData).where(
+            DictData.dict_type == "dict_collect_status",
+            DictData.deleted == 0,
+            DictData.status == "ENABLED",
+        )
+    ).all()
+    for row in rows:
+        if row.dict_label:
+            labels[row.dict_value] = row.dict_label
+    return labels
+
+
+def alert_summary(metric: object, operator: object, value: object) -> str:
+    """预警阈值摘要。指标、比较符映射为中文和符号，例如 播放量 > 100。"""
+    metric_code = str(metric or "").strip()
+    op = str(operator or "").strip().upper()
+    raw = "" if value is None else str(value).strip()
+    if not op and raw:
+        upper = raw.upper()
+        for word in _OP_PREFIXES:
+            if upper == word or upper.startswith(word + " "):
+                op = word
+                raw = raw[len(word) :].strip()
+                break
+    metric_label = METRIC_LABELS.get(metric_code, metric_code)
+    op_label = OPERATOR_LABELS.get(op, op)
+    return " ".join(part for part in (metric_label, op_label, raw) if part)
+
+
+def threshold_vo(row: ThresholdConfig, status_labels: dict[str, str] | None = None) -> dict:
     try:
         payload = json.loads(row.payload_json or "{}")
     except json.JSONDecodeError:
         payload = {}
+    labels = status_labels or STATUS_FALLBACK
     base = {
         "id": str(row.id),
         "thresholdCategory": row.threshold_category,
         "platformType": row.platform_type,
         "status": row.status,
+        "statusLabel": labels.get(row.status) or row.status,
     }
     base.update(payload)
+    if row.threshold_category == "ALERT":
+        base["summary"] = alert_summary(
+            payload.get("metricName"),
+            payload.get("compareOperator"),
+            payload.get("thresholdValue"),
+        )
     return base
 
 
@@ -470,6 +535,7 @@ def threshold_list(
     thresholdCategory: str = "",
     platformType: str = "",
     ops: Session = Depends(ops_db),
+    ims: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
     if not thresholdCategory.strip():
@@ -483,7 +549,8 @@ def threshold_list(
     if platformType:
         stmt = stmt.where(ThresholdConfig.platform_type == platformType)
     rows = ops.scalars(stmt.order_by(ThresholdConfig.id.desc())).all()
-    return ok({"list": [threshold_vo(row) for row in rows]})
+    labels = collect_status_labels(ims)
+    return ok({"list": [threshold_vo(row, labels) for row in rows]})
 
 
 @router.post("/threshold")
@@ -510,7 +577,7 @@ def threshold_create(
     )
     ops.add(row)
     ops.flush()
-    return ok(threshold_vo(row))
+    return ok(threshold_vo(row, collect_status_labels(ims)))
 
 
 @router.put("/threshold/{threshold_id}")
@@ -535,7 +602,7 @@ def threshold_update(
     row.payload_json = json.dumps(threshold_payload(body), ensure_ascii=False)
     row.status = body.status
     row.updated_at = utcnow()
-    return ok(threshold_vo(row))
+    return ok(threshold_vo(row, collect_status_labels(ims)))
 
 
 @router.delete("/threshold/{threshold_id}")

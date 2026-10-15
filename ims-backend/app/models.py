@@ -1866,9 +1866,23 @@ class AirExpertGrant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CompAssetSeq(Base):
+    """竞品库按日序号。分配单号时锁这一行再递增。"""
+
+    __tablename__ = "ims_comp_asset_seq"
+    __table_args__ = (UniqueConstraint("tenant_id", "biz_date", name="uk_comp_asset_seq_day"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    biz_date: Mapped[str] = mapped_column(String(8))
+    seq_val: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
 class CompAsset(Base):
     __tablename__ = "ims_comp_asset"
-    __table_args__ = (UniqueConstraint("tenant_id", "comp_name_std", name="uk_comp_asset_name"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "comp_name_std", name="uk_comp_asset_name"),
+        UniqueConstraint("tenant_id", "asset_no", name="uk_comp_asset_no"),
+    )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     asset_no: Mapped[str] = mapped_column(String(32), default="", index=True)
     comp_name_std: Mapped[str] = mapped_column(String(128), default="")
@@ -1878,6 +1892,39 @@ class CompAsset(Base):
     latest_version: Mapped[int] = mapped_column(Integer, default=1)
     reference_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(16), default="APPROVED")
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CompAnalysis(Base):
+    """竞品分析提交（COMP-001/002）。审核轮次留在 audit_rounds。"""
+
+    __tablename__ = "ims_comp_analysis"
+    __table_args__ = (Index("idx_comp_analysis_month", "tenant_id", "period_month", "comp_name_std"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_no: Mapped[str] = mapped_column(String(32), default="", index=True)
+    submitter_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    period_month: Mapped[str] = mapped_column(String(7), default="")
+    comp_name: Mapped[str] = mapped_column(String(128), default="")
+    comp_name_std: Mapped[str] = mapped_column(String(128), default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    homepage_url: Mapped[str] = mapped_column(String(512), default="")
+    comp_account_id: Mapped[str] = mapped_column(String(64), default="")
+    data_source: Mapped[str] = mapped_column(String(512), default="")
+    dimension_data: Mapped[dict] = mapped_column(JSON, default=dict)
+    conclusion: Mapped[str] = mapped_column(Text, default="")
+    attachments: Mapped[list] = mapped_column(JSON, default=list)
+    submit_status: Mapped[str] = mapped_column(String(16), default="SUBMITTED", index=True)
+    audit_stage: Mapped[str] = mapped_column(String(16), default="FIRST")
+    reject_reason: Mapped[str] = mapped_column(String(512), default="")
+    reject_rounds: Mapped[int] = mapped_column(Integer, default=0)
+    asset_no: Mapped[str] = mapped_column(String(32), default="")
+    is_on_time: Mapped[int] = mapped_column(Integer, default=1)
+    audit_rounds: Mapped[list] = mapped_column(JSON, default=list)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)

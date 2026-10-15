@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.account import load_scope_ip_groups, scope_ip_groups
-from app.api import current_user, db_session
+from app.api import current_user, db_session, fail
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
 from app.int_analysis import classify, work_thresholds
 from app.models import User
-from app.ops_models import ExternalAccount, ExternalWork
+from app.ops_models import ExternalAccount, ExternalWork, InternalAccount, InternalContent, IpGroup
 
 router = APIRouter(prefix="/monitor", tags=["monitor"])
 
@@ -80,11 +80,15 @@ def _aggregate_rows(
     dimension: str,
 ) -> list[dict]:
     account_keys: dict[str, set[int]] = defaultdict(set)
+    account_names: dict[str, list[str]] = defaultdict(list)
     for row in accounts:
         key = (row.ip_theme if dimension == "IP_THEME" else row.industry) or "未分类"
         account_keys[key].add(row.id)
+        if len(account_names[key]) < 5 and row.account_name:
+            account_names[key].append(row.account_name)
 
     work_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"workCount": 0, "hitCount": 0})
+    work_titles: dict[str, list[dict]] = defaultdict(list)
     for row in works:
         key = (row.ip_theme if dimension == "IP_THEME" else row.industry) or "未分类"
         work_stats[key]["workCount"] += 1
@@ -92,6 +96,8 @@ def _aggregate_rows(
         is_hit, _ = classify(row, hit_play, low_completion)
         if is_hit:
             work_stats[key]["hitCount"] += 1
+        if len(work_titles[key]) < 5:
+            work_titles[key].append({"title": row.title, "isHit": is_hit})
 
     keys = sorted(set(account_keys) | set(work_stats))
     rows: list[dict] = []
@@ -103,6 +109,8 @@ def _aggregate_rows(
                 "externalAccountCount": len(account_keys.get(key, set())),
                 "workCount": work_stats.get(key, {}).get("workCount", 0),
                 "hitCount": work_stats.get(key, {}).get("hitCount", 0),
+                "relatedAccounts": account_names.get(key, []),
+                "relatedWorks": work_titles.get(key, []),
             }
         )
     rows.sort(key=lambda item: (-item["hitCount"], -item["workCount"], item["dimensionKey"]))
@@ -123,11 +131,28 @@ def _page_aggregate(
     keyword: str,
     start_date: str,
     end_date: str,
+    source: str,
 ):
     if err := check_enum(db, "dict_platform_type", platform_type or None, False):
         return err
+    origin = (source or "EXTERNAL").strip().upper()
+    if origin not in {"EXTERNAL", "INTERNAL"}:
+        return fail(1001, "source 须为 INTERNAL 或 EXTERNAL")
 
     tenant_id = tenant_of(actor)
+    if origin == "INTERNAL":
+        return _page_internal(
+            request,
+            db,
+            ops,
+            actor,
+            dimension=dimension,
+            page_no=page_no,
+            page_size=page_size,
+            platform_type=platform_type,
+            ip_group_id=ip_group_id,
+            keyword=keyword,
+        )
     load_scope_ip_groups(db, request, actor)
     scoped_groups = scope_ip_groups(request)
 
@@ -163,6 +188,97 @@ def _page_aggregate(
     return paged(page_rows, len(aggregated), page_no, size)
 
 
+def _group_names(ops: Session, tenant_id: int) -> dict[int, str]:
+    rows = ops.scalars(select(IpGroup).where(IpGroup.deleted == 0, IpGroup.tenant_id == tenant_id)).all()
+    return {int(row.id): row.group_name for row in rows}
+
+
+def _page_internal(
+    request: Request,
+    db: Session,
+    ops: Session,
+    actor: User,
+    *,
+    dimension: str,
+    page_no: int,
+    page_size: int,
+    platform_type: str,
+    ip_group_id: int | None,
+    keyword: str,
+):
+    tenant_id = tenant_of(actor)
+    load_scope_ip_groups(db, request, actor)
+    scoped_groups = scope_ip_groups(request)
+    names = _group_names(ops, tenant_id)
+
+    stmt = select(InternalAccount).where(InternalAccount.deleted == 0, InternalAccount.tenant_id == tenant_id)
+    if platform_type:
+        stmt = stmt.where(InternalAccount.platform_type == platform_type)
+    if ip_group_id:
+        stmt = stmt.where(InternalAccount.ip_group_id == ip_group_id)
+    if scoped_groups is not None:
+        stmt = stmt.where(InternalAccount.ip_group_id.in_(scoped_groups))
+    accounts = list(ops.scalars(stmt).all())
+
+    work_stmt = select(InternalContent).where(InternalContent.deleted == 0, InternalContent.tenant_id == tenant_id)
+    if platform_type:
+        work_stmt = work_stmt.where(InternalContent.platform_type == platform_type)
+    if ip_group_id:
+        work_stmt = work_stmt.where(InternalContent.ip_group_id == ip_group_id)
+    if scoped_groups is not None:
+        work_stmt = work_stmt.where(InternalContent.ip_group_id.in_(scoped_groups))
+    works = list(ops.scalars(work_stmt).all())
+
+    def theme_key(group_id: int | None) -> str:
+        if dimension == "INDUSTRY":
+            return "未分类"
+        if group_id and group_id in names:
+            return names[group_id]
+        return "未分组"
+
+    account_keys: dict[str, set[int]] = defaultdict(set)
+    account_names: dict[str, list[str]] = defaultdict(list)
+    for row in accounts:
+        key = theme_key(row.ip_group_id)
+        if keyword.strip() and keyword.strip() not in key and keyword.strip() not in (row.account_name or ""):
+            continue
+        account_keys[key].add(row.id)
+        if len(account_names[key]) < 5 and row.account_name:
+            account_names[key].append(row.account_name)
+
+    work_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"workCount": 0, "hitCount": 0})
+    work_titles: dict[str, list[dict]] = defaultdict(list)
+    for row in works:
+        key = theme_key(row.ip_group_id)
+        if keyword.strip() and keyword.strip() not in key and keyword.strip() not in (row.title or ""):
+            continue
+        work_stats[key]["workCount"] += 1
+        hit_play, low_completion, _ = work_thresholds(ops, tenant_id, row.platform_type or "")
+        is_hit, _ = classify(row, hit_play, low_completion)
+        if is_hit:
+            work_stats[key]["hitCount"] += 1
+        if len(work_titles[key]) < 5:
+            work_titles[key].append({"title": row.title, "isHit": is_hit})
+
+    aggregated = []
+    for key in sorted(set(account_keys) | set(work_stats)):
+        aggregated.append(
+            {
+                "dimensionKey": key,
+                "dimensionLabel": key,
+                "externalAccountCount": len(account_keys.get(key, set())),
+                "workCount": work_stats.get(key, {}).get("workCount", 0),
+                "hitCount": work_stats.get(key, {}).get("hitCount", 0),
+                "relatedAccounts": account_names.get(key, []),
+                "relatedWorks": work_titles.get(key, []),
+            }
+        )
+    aggregated.sort(key=lambda item: (-item["hitCount"], -item["workCount"], item["dimensionKey"]))
+    page_no, size = page_args(page_no, page_size)
+    start = (page_no - 1) * size
+    return paged(aggregated[start : start + size], len(aggregated), page_no, size)
+
+
 @router.get("/ip-theme/page")
 def ip_theme_page(
     request: Request,
@@ -173,6 +289,7 @@ def ip_theme_page(
     keyword: str = "",
     startDate: str = "",
     endDate: str = "",
+    source: str = "EXTERNAL",
     db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
@@ -190,6 +307,7 @@ def ip_theme_page(
         keyword=keyword,
         start_date=startDate,
         end_date=endDate,
+        source=source,
     )
 
 
@@ -203,6 +321,7 @@ def industry_page(
     keyword: str = "",
     startDate: str = "",
     endDate: str = "",
+    source: str = "EXTERNAL",
     db: Session = Depends(db_session),
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
@@ -220,4 +339,5 @@ def industry_page(
         keyword=keyword,
         start_date=startDate,
         end_date=endDate,
+        source=source,
     )

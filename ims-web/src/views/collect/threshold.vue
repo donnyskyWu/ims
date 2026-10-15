@@ -41,7 +41,7 @@
               <td class="mono">{{ row.id }}</td>
               <td>{{ row.platformType || '—' }}</td>
               <td style="font-size: 12px">{{ summaryOf(row) }}</td>
-              <td>{{ row.status }}</td>
+              <td>{{ statusText(row) }}</td>
               <td>
                 <button class="btn-txt btn" type="button" @click="remove(row)">删除</button>
               </td>
@@ -108,8 +108,57 @@ const form = reactive<Record<string, unknown>>({
   status: 'ENABLED',
 })
 
+const STATUS_LABEL: Record<string, string> = {
+  ENABLED: '启用',
+  DISABLED: '停用',
+  RUNNING: '运行中',
+}
+const METRIC_LABEL: Record<string, string> = {
+  play_count: '播放量',
+  like_count: '点赞量',
+  comment_count: '评论数',
+  share_count: '分享量',
+  follower_count: '粉丝数',
+  completion_rate: '完播率',
+  collect_fail_rate: '采集失败率',
+  engagement_rate: '互动率',
+}
+const OPERATOR_LABEL: Record<string, string> = {
+  GT: '>',
+  GTE: '≥',
+  GE: '≥',
+  LT: '<',
+  LTE: '≤',
+  LE: '≤',
+  EQ: '=',
+  NEQ: '≠',
+}
+const OPERATOR_WORDS = ['GTE', 'LTE', 'NEQ', 'GT', 'LT', 'EQ', 'GE', 'LE']
+
+function statusText(row: Record<string, unknown>) {
+  const code = String(row.status || '')
+  return String(row.statusLabel || STATUS_LABEL[code] || code)
+}
+
+function alertSummary(row: Record<string, unknown>) {
+  if (row.summary) return String(row.summary)
+  let metric = String(row.metricName || '')
+  let operator = String(row.compareOperator || '').toUpperCase()
+  let value = String(row.thresholdValue || '').trim()
+  if (!operator && value) {
+    const upper = value.toUpperCase()
+    const word = OPERATOR_WORDS.find((item) => upper === item || upper.startsWith(`${item} `))
+    if (word) {
+      operator = word
+      value = value.slice(word.length).trim()
+    }
+  }
+  const parts = [METRIC_LABEL[metric] || metric, OPERATOR_LABEL[operator] || operator, value].filter(Boolean)
+  return parts.join(' ')
+}
+
 function summaryOf(row: Record<string, unknown>) {
-  if (activeCategory.value === 'ALERT') return `${row.metricName || ''} ${row.thresholdValue || ''}`.trim()
+  if (activeCategory.value === 'ALERT') return alertSummary(row)
   if (activeCategory.value === 'FANS') return `低${row.lowFans} / 高${row.highFans}`
   if (activeCategory.value === 'WORK') return `爆${row.hotValue} / 低${row.lowValue}`
   return String(row.overrideValue || '—')
