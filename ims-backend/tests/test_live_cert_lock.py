@@ -158,9 +158,11 @@ def test_locked_cert_blocks_live_until_renewed():
     still = client.get(f"/admin-api/ims/live/register/{session_code}", headers=auth)
     assert still.json()["data"]["sessionStatus"] == "APPROVED"
     risk = client.post(f"/admin-api/ims/live/register/{session_code}/risk-check", headers=auth, json={})
-    assert risk.json()["code"] == 1045
-    blocked_register = register(auth, payload(locked_account, locked_person, phone_id, "锁定拦截"))
-    assert blocked_register.json()["code"] == 1045
+    assert risk.json()["code"] == 1043
+    assert risk.json()["data"]["riskLevel"] == "RED"
+    blocked_register = register(auth, payload(locked_account, locked_person, phone_id, "锁定仍可登记"))
+    assert blocked_register.json()["code"] == 0, blocked_register.json()
+    assert blocked_register.json()["data"]["riskLevel"] == "RED"
 
     free_ok = register(auth, payload(free_account, free_person, phone_id, "他人不受影响"))
     assert free_ok.json()["code"] == 0, free_ok.json()
@@ -188,6 +190,10 @@ def test_locked_cert_blocks_live_until_renewed():
         json={"newCertId": new_id, "remark": "换证"},
     )
     assert done.json()["code"] == 0, done.json()
+
+    cleared = client.post(f"/admin-api/ims/live/register/{session_code}/risk-check", headers=auth, json={})
+    assert cleared.json()["code"] == 0, cleared.json()
+    assert cleared.json()["data"]["riskLevel"] == "GREEN"
 
     started = client.put(f"/admin-api/ims/live/register/{session_code}/start", headers=auth)
     assert started.json()["code"] == 0, started.json()

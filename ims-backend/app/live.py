@@ -18,6 +18,8 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
 from app.models import (
+    AssetLedger,
+    AssetLifecycleEvent,
     CertArchive,
     LiveAlarmRecord,
     LiveCost,
@@ -164,17 +166,158 @@ def load_realname(ops: Session, actor: User, person_id: int) -> Realname | None:
     return row
 
 
-def validate_devices(ops: Session, actor: User, device_ids: list[int]) -> bool:
-    if not device_ids:
+LIVE_ASSET_TYPES = frozenset({"LIVE", "SHOOT"})
+
+
+def load_asset(db: Session, actor: User, asset_id: int) -> AssetLedger | None:
+    row = db.get(AssetLedger, asset_id)
+    if row is None or row.deleted or (row.tenant_id or 0) != tenant_of(actor):
+        return None
+    return row
+
+
+def device_kind(db: Session, ops: Session, actor: User, device_id: int) -> str | None:
+    """手机或在用直播/拍摄资产都算场次设备。两者 id 空间不同库，先认手机再认资产。"""
+    phone = ops.get(Phone, device_id)
+    if visible(phone, actor):
+        return "PHONE"
+    asset = load_asset(db, actor, device_id)
+    if asset is None:
+        return None
+    if asset.asset_type not in LIVE_ASSET_TYPES:
+        return None
+    if asset.status != "IN_USE":
+        return None
+    return "ASSET"
+
+
+def device_refs_from(raw) -> list[dict]:
+    """场次设备。带 kind 时按登记时的手机/资产区分，避免两个库的编号撞车。"""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    refs: list[dict] = []
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            refs.append({"kind": "", "id": item})
+            continue
+        if isinstance(item, str) and item.isdigit():
+            refs.append({"kind": "", "id": int(item)})
+            continue
+        if isinstance(item, dict):
+            kind = str(item.get("kind") or "").upper()
+            if kind not in {"PHONE", "ASSET"}:
+                kind = ""
+            try:
+                device_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            refs.append({"kind": kind, "id": device_id})
+    return refs
+
+
+def dump_device_refs(raw) -> str:
+    refs = device_refs_from(raw)
+    if refs and all(ref["kind"] for ref in refs):
+        return json.dumps(refs, ensure_ascii=False)
+    return json.dumps([ref["id"] for ref in refs])
+
+
+def ref_is_asset(db: Session, ops: Session, actor: User, ref: dict) -> bool:
+    if ref.get("kind") == "ASSET":
+        return load_asset(db, actor, int(ref["id"])) is not None
+    if ref.get("kind") == "PHONE":
         return False
-    for device_id in device_ids:
+    return device_kind(db, ops, actor, int(ref["id"])) == "ASSET"
+
+
+def ref_accepts(db: Session, ops: Session, actor: User, ref: dict) -> bool:
+    device_id = int(ref["id"])
+    kind = ref.get("kind") or ""
+    if kind == "PHONE":
         phone = ops.get(Phone, device_id)
-        if not visible(phone, actor):
-            return False
-    return True
+        return bool(visible(phone, actor) and phone.status == "IN_USE")
+    if kind == "ASSET":
+        asset = load_asset(db, actor, device_id)
+        return asset is not None and asset.asset_type in LIVE_ASSET_TYPES and asset.status == "IN_USE"
+    return device_kind(db, ops, actor, device_id) is not None
+
+
+def bind_session_assets(db: Session, ops: Session, actor: User, session: LiveSession, device_ids) -> None:
+    """在用直播/拍摄资产写入流转时间线。手机不进资产台账。"""
+    remark = f"绑定场次 {session.session_code}"[:256]
+    for ref in device_refs_from(device_ids):
+        if not ref_is_asset(db, ops, actor, ref):
+            continue
+        asset = load_asset(db, actor, int(ref["id"]))
+        if asset is None:
+            continue
+        db.add(
+            AssetLifecycleEvent(
+                asset_id=asset.id,
+                event_type="BIND_SESSION",
+                from_status=asset.status or "",
+                to_status=asset.status or "",
+                actor_user_id=actor.id,
+                owner_user_id=asset.owner_user_id,
+                remark=remark,
+                tenant_id=tenant_of(actor),
+            )
+        )
+
+
+def bound_devices(db: Session, ops: Session, actor: User, device_ids) -> list[dict]:
+    rows: list[dict] = []
+    for ref in device_refs_from(device_ids):
+        device_id = int(ref["id"])
+        kind = ref.get("kind") or device_kind(db, ops, actor, device_id)
+        if kind == "ASSET":
+            asset = load_asset(db, actor, device_id)
+            if asset is None:
+                continue
+            if not ref.get("kind") and (asset.asset_type not in LIVE_ASSET_TYPES or asset.status != "IN_USE"):
+                continue
+            rows.append(
+                {
+                    "id": asset.id,
+                    "kind": "ASSET",
+                    "assetCode": asset.asset_code,
+                    "assetName": asset.asset_name or asset.asset_code,
+                    "assetType": asset.asset_type,
+                }
+            )
+        elif kind == "PHONE":
+            phone = ops.get(Phone, device_id)
+            if not visible(phone, actor):
+                continue
+            label = phone.phone_model or phone.phone_code or phone.device_number or f"手机#{phone.id}"
+            rows.append(
+                {
+                    "id": phone.id,
+                    "kind": "PHONE",
+                    "assetCode": phone.phone_code or phone.device_number or "",
+                    "assetName": label,
+                    "assetType": "PHONE",
+                }
+            )
+    return rows
+
+
+def validate_devices(db: Session, ops: Session, actor: User, device_ids) -> bool:
+    refs = device_refs_from(device_ids)
+    if not refs:
+        return False
+    return all(ref_accepts(db, ops, actor, ref) for ref in refs)
 
 
 USABLE_CERT_STATUS = frozenset({"EFFECTIVE", "EXPIRING"})
+HARD_RED_CERT = frozenset({"EXPIRED", "LOCKED"})
 
 
 def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
@@ -182,6 +325,7 @@ def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
 
     没有证件不拦截，避免无档实名人的既有场次被误伤。
     仍有 EXPIRED 档时，旁边即使已有新的 EFFECTIVE 档也不放行，须走换证把旧档改为 RECYCLED。
+    登记本身不拦过期和锁定，由风控直接判红；开播仍走这里。
     """
     name = (person.real_name or "").strip()[:64]
     if not name:
@@ -195,7 +339,7 @@ def cert_blocks_live(db: Session, actor: User, person: Realname) -> str | None:
     ).all()
     if not rows:
         return None
-    if any(row.status == "EXPIRED" for row in rows):
+    if any(row.status in HARD_RED_CERT for row in rows):
         return "实名人证件过期或锁定，禁止开播"
     if any(row.status in USABLE_CERT_STATUS for row in rows):
         return None
@@ -209,6 +353,17 @@ def locked_cert_fail(db: Session, actor: User, person: Realname):
     if reason is None:
         return None
     return fail(1045, reason)
+
+
+def expired_or_locked(db: Session, actor: User, person: Realname) -> bool:
+    return any(row.status in HARD_RED_CERT for row in person_certs(db, actor, person))
+
+
+def reject_unready_cert(db: Session, actor: User, person: Realname):
+    """未生效证件仍拒绝登记。过期和锁定允许提交，风控判红。"""
+    if expired_or_locked(db, actor, person):
+        return None
+    return locked_cert_fail(db, actor, person)
 
 
 def risk_level_of(score: int) -> str:
@@ -235,12 +390,27 @@ def airtime_blocked(ops: Session, actor: User, account: PlatformAccount) -> bool
     return (sim.status or "") != "IN_USE"
 
 
-def device_outcome(ops: Session, actor: User, device_ids: list[int]) -> str:
-    if not validate_devices(ops, actor, device_ids):
+def device_outcome(db: Session, ops: Session, actor: User, device_ids) -> str:
+    refs = device_refs_from(device_ids)
+    if not refs:
         return "WARN"
-    for device_id in device_ids:
-        phone = ops.get(Phone, device_id)
-        if phone is None or phone.deleted or phone.status != "IN_USE":
+    resolved: list[tuple[dict, str | None]] = []
+    for ref in refs:
+        kind = ref.get("kind") or device_kind(db, ops, actor, int(ref["id"]))
+        if not kind:
+            return "WARN"
+        resolved.append((ref, kind))
+    for ref, kind in resolved:
+        device_id = int(ref["id"])
+        if kind == "PHONE":
+            phone = ops.get(Phone, device_id)
+            if phone is None or phone.deleted or phone.status != "IN_USE":
+                return "FAIL"
+        elif kind == "ASSET":
+            asset = load_asset(db, actor, device_id)
+            if asset is None or asset.asset_type not in LIVE_ASSET_TYPES or asset.status != "IN_USE":
+                return "FAIL"
+        else:
             return "FAIL"
     return "PASS"
 
@@ -268,20 +438,28 @@ def run_risk_checks(
     score = 0
     for item in RISK_ITEMS:
         result = "PASS"
+        detail = ""
         if item == "CERT_VALID":
-            if person.status != "ENABLED":
-                result = "FAIL"
+            result, detail = cert_signal(db, actor, person)
         elif item == "ACCOUNT_STATUS":
             if account.status != "IN_USE":
                 result = "FAIL"
+            detail = "账号使用中" if result == "PASS" else "账号不在使用中"
         elif item == "BALANCE":
             if airtime_blocked(ops, actor, account):
                 result = "FAIL"
+            detail = "话费余额正常" if result == "PASS" else "话费余额不足或 SIM 未在用"
         elif item == "BLACKLIST":
             if topic_hits_blacklist(session.topic):
                 result = "FAIL"
+            detail = "未命中违禁词" if result == "PASS" else "主题命中违禁词"
         elif item == "DEVICE_OWNER":
-            result = device_outcome(ops, actor, device_ids)
+            result = device_outcome(db, ops, actor, device_ids)
+            detail = {
+                "PASS": "设备归属正常",
+                "WARN": "设备未完整登记",
+                "FAIL": "设备不在用或不归属本场",
+            }.get(result, "")
         added = points_for(item, result)
         score += added
         row = LiveRiskCheck(
@@ -289,11 +467,17 @@ def run_risk_checks(
             check_item=item,
             check_result=result,
             score_weight=added,
+            detail=(detail or "")[:512],
             checked_at=now,
             tenant_id=session.tenant_id,
         )
         results.append(row)
     level = risk_level_of(score)
+    if any(
+        item.check_item == "CERT_VALID" and item.check_result == "FAIL" and "过期或锁定" in (item.detail or "")
+        for item in results
+    ):
+        level = "RED"
     return score, level, results
 
 
@@ -473,6 +657,7 @@ def check_results_vo(checks: list[LiveRiskCheck]) -> list[dict]:
             "checkItem": item.check_item,
             "checkResult": item.check_result,
             "scoreWeight": item.score_weight,
+            "detail": item.detail or "",
             "checkedAt": item.checked_at,
         }
         for item in checks
@@ -486,6 +671,24 @@ def risk_payload(score: int, level: str, checks: list[LiveRiskCheck]) -> dict:
         "checkResults": check_results_vo(checks),
         "conclusion": CONCLUSIONS[level],
     }
+
+
+def as_bj(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=BJ)
+    return value.astimezone(BJ)
+
+
+def normalize_plan_time(value: str) -> str | None:
+    text = (value or "").strip()
+    if len(text) == 16:
+        text = f"{text}:00+08:00"
+    elif len(text) == 10:
+        text = f"{text}T00:00:00+08:00"
+    parsed = parse_iso(text)
+    if parsed is None:
+        return None
+    return as_bj(parsed).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
 def biz_date_of(plan_start: str) -> str | None:
@@ -544,11 +747,20 @@ def report_summary(report: LiveReport | None) -> dict | None:
     }
 
 
+def duration_minutes_of(start: str | None, end: str | None) -> int | None:
+    begin = parse_iso(start)
+    finish = parse_iso(end)
+    if begin is None or finish is None or finish < begin:
+        return None
+    return int((finish - begin).total_seconds() // 60)
+
+
 def session_vo(
     db: Session,
     row: LiveSession,
     report: LiveReport | None = None,
     risk_checks: list[LiveRiskCheck] | None = None,
+    actor: User | None = None,
 ) -> dict:
     names = user_names(db, [row.responsible_user_id, row.approver_user_id or 0, row.creator or 0])
     base = {
@@ -581,8 +793,13 @@ def session_vo(
         "supplementOperatorName": names.get(row.creator or 0) if row.is_supplement else None,
         "actualStart": row.actual_start,
         "actualEnd": row.actual_end,
+        "durationMinutes": duration_minutes_of(row.actual_start, row.actual_end),
         "createdAt": iso(row.created_at),
     }
+    allowed = actor is not None and can_operate_session(db, actor, row)
+    base["startAllowed"] = allowed
+    base["endAllowed"] = allowed and row.session_status == "LIVE"
+    base["supplementApproveAllowed"] = actor is not None and bool(role_tags(db, actor) & {"r1", "r4", "sys:admin"})
     if report is not None:
         base["reportSummary"] = report_summary(report)
         base["reportEntryStatus"] = report.entry_status if report and not report.deleted else None
@@ -596,6 +813,7 @@ def session_vo(
                 "checkItem": item.check_item,
                 "checkResult": item.check_result,
                 "scoreWeight": item.score_weight,
+                "detail": item.detail or "",
                 "checkedAt": item.checked_at,
             }
             for item in risk_checks
@@ -603,23 +821,32 @@ def session_vo(
     return base
 
 
-def ledger_vo(db: Session, row: LiveSession, report: LiveReport | None) -> dict:
-    item = session_vo(db, row, report)
+def ledger_vo(db: Session, row: LiveSession, report: LiveReport | None, actor: User | None = None) -> dict:
+    item = session_vo(db, row, report, actor=actor)
     item["reportSummary"] = report_summary(report)
     return item
 
 
 def read_live_room(ops: Session, actor: User, room_id: str) -> LiveRoom | None:
-    try:
-        rid = int(room_id)
-    except ValueError:
+    text = (room_id or "").strip()
+    if not text:
         return None
-    row = ops.get(LiveRoom, rid)
-    if row is None or row.deleted:
-        return None
-    if (row.tenant_id or 0) != tenant_of(actor):
-        return None
-    return row
+
+    def usable(row: LiveRoom | None) -> bool:
+        return row is not None and not row.deleted and (row.tenant_id or 0) == tenant_of(actor)
+
+    if text.isdigit():
+        found = ops.get(LiveRoom, int(text))
+        if usable(found):
+            return found
+    found = ops.scalar(
+        select(LiveRoom).where(
+            LiveRoom.deleted == 0,
+            LiveRoom.tenant_id == tenant_of(actor),
+            LiveRoom.live_id == text,
+        )
+    )
+    return found if usable(found) else None
 
 
 def room_basic_vo(room: LiveRoom) -> dict:
@@ -702,7 +929,7 @@ class LiveCreateBody(BaseModel):
     accountId: int
     realnamePersonId: int
     responsibleUserId: int
-    deviceAssetIds: list[int] = Field(default_factory=list)
+    deviceAssetIds: list = Field(default_factory=list)
     platform: str
     topic: str
     planStartTime: str
@@ -798,7 +1025,7 @@ _LEDGER_EXPORTS: dict[str, tuple[float, bytes, int, str]] = {}
 
 
 def role_tags(db: Session, actor: User) -> set[str]:
-    """把角色收成 R1/R2/R3/R4/R9。财务看 acct:r3 或角色名含「财务」。"""
+    """把角色收成 R1/R2/R3/R4/R5/R7/R9。财务看 acct:r3 或角色名含「财务」。"""
     from app.scope import enabled_roles
 
     tags: set[str] = set()
@@ -815,9 +1042,23 @@ def role_tags(db: Session, actor: User) -> set[str]:
             tags.add("r3")
         if key == "r4" or key.endswith(":r4") or "运营总监" in name:
             tags.add("r4")
+        if key == "r5" or key.endswith(":r5") or "直播运营" in name:
+            tags.add("r5")
+        if key == "r7" or key.endswith(":r7") or "主播" in name:
+            tags.add("r7")
         if key == "r9" or key.endswith(":r9") or "数据分析" in name:
             tags.add("r9")
     return tags
+
+
+def can_operate_session(db: Session, actor: User, row: LiveSession) -> bool:
+    """开播/下播：R1、R4 可操作全部场次；R5、R7 只能操作本人负责的场次。"""
+    tags = role_tags(db, actor)
+    if tags & {"r1", "r4", "sys:admin"}:
+        return True
+    if tags & {"r5", "r7"}:
+        return row.responsible_user_id == actor.id
+    return False
 
 
 def report_view(tags: set[str]) -> str:
@@ -875,7 +1116,7 @@ def reject_report_body(body: ReportBody):
     end = parse_iso(body.actualEnd)
     if start is None or end is None:
         return fail(1001, "时间格式无效")
-    if end <= start:
+    if as_bj(end) <= as_bj(start):
         return fail(1001, "实际结束须晚于实际开始")
     rejected = reject_cost_details(body.costDetails)
     if rejected is not None:
@@ -1082,6 +1323,69 @@ def correction_rows(db: Session, session_code: str) -> list[LiveReportCorrection
     )
 
 
+CHANGE_FIELDS = (
+    ("actualStart", "实际开始"),
+    ("actualEnd", "实际结束"),
+    ("durationMinutes", "时长"),
+    ("gmv", "GMV"),
+    ("refundAmount", "退款"),
+    ("orderCount", "订单数"),
+    ("viewerCount", "观看人数"),
+    ("peakOnline", "峰值在线"),
+    ("newFans", "涨粉"),
+    ("adCost", "投放成本"),
+)
+
+
+def _same_value(left, right) -> bool:
+    def norm(value):
+        if value is None or value == "":
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                return round(float(text), 2)
+            except ValueError:
+                return text
+        if isinstance(value, (int, float)):
+            return round(float(value), 2)
+        return value
+
+    return norm(left) == norm(right)
+
+
+def _show_value(value) -> str:
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            number = float(text)
+        except ValueError:
+            return text or "—"
+    else:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.2f}"
+
+
+def correction_changes(before: dict, after: dict) -> list[str]:
+    lines = []
+    for key, label in CHANGE_FIELDS:
+        left = before.get(key)
+        right = after.get(key)
+        if _same_value(left, right):
+            continue
+        lines.append(f"{label} {_show_value(left)} → {_show_value(right)}")
+    return lines
+
+
 def correction_vo(row: LiveReportCorrection) -> dict:
     try:
         before = json.loads(row.before_json or "{}")
@@ -1096,6 +1400,7 @@ def correction_vo(row: LiveReportCorrection) -> dict:
         "correctionReason": row.correction_reason,
         "before": before,
         "after": after,
+        "changes": correction_changes(before, after),
         "operatorUserId": row.operator_user_id,
         "createdAt": iso(row.created_at),
     }
@@ -1145,9 +1450,9 @@ def urge_stubs(session_code: str, hours: int) -> list[tuple[str, str, str]]:
     code = session_code
     base = f"下播已超过 {hours} 小时未录入"
     return [
-        ("IN_APP", f"下播超时督办 1048：{code}"[:128], f"1048 {base}"[:512]),
-        ("DINGTALK", f"钉钉桩 1048：{code}"[:128], f"1048 钉钉本地桩，未外发。{base}"[:512]),
-        ("SMS", f"短信桩 1048：{code}"[:128], f"1048 短信本地桩，未外发。{base}"[:512]),
+        ("IN_APP", f"下播超时督办：{code}"[:128], f"下播超时督办：已超过 {hours} 小时未录入"[:512]),
+        ("DINGTALK", f"钉钉提醒：{code}"[:128], f"钉钉本地桩，未外发。{base}"[:512]),
+        ("SMS", f"短信提醒：{code}"[:128], f"短信本地桩，未外发。{base}"[:512]),
     ]
 
 
@@ -1232,6 +1537,7 @@ def ensure_overdue_supervision(db: Session, actor: User, row: LiveSession, hours
 
 class SyncBody(BaseModel):
     force: bool | None = False
+    footballRoomId: str | None = None
 
 
 class SupplementBody(BaseModel):
@@ -1293,6 +1599,41 @@ def filter_sessions(
     return stmt.order_by(LiveSession.id.desc())
 
 
+def session_board(db: Session, actor: User, scope) -> dict:
+    """列表上方四张卡：今日待开播、直播中、24 小时内待录入、本月已核准 GMV。"""
+    now = datetime.now(BJ)
+    today = now.strftime("%Y-%m-%d")
+    month = now.strftime("%Y-%m")
+    rows = db.scalars(restrict_sessions(select(LiveSession), actor, scope)).all()
+    today_pending = 0
+    live_count = 0
+    entry_due = 0
+    month_gmv = 0.0
+    for row in rows:
+        if row.session_status == "LIVE":
+            live_count += 1
+        planned = parse_iso(row.plan_start_time)
+        if row.session_status == "APPROVED" and planned is not None:
+            if planned.astimezone(BJ).strftime("%Y-%m-%d") == today:
+                today_pending += 1
+        report = load_report(db, row.session_code)
+        if row.session_status == "ENDED" and (
+            report is None or report.entry_status not in ("SUBMITTED", "CONFIRMED")
+        ):
+            if hours_since(ended_moment(row), now) < OVERDUE_HOURS:
+                entry_due += 1
+        if report is not None and report.entry_status == "CONFIRMED":
+            anchor = parse_iso(row.actual_start or report.actual_start or row.plan_start_time)
+            if anchor is not None and anchor.astimezone(BJ).strftime("%Y-%m") == month:
+                month_gmv += float(report.gmv or 0)
+    return {
+        "todayPendingStart": today_pending,
+        "liveCount": live_count,
+        "entryDue24h": entry_due,
+        "monthConfirmedGmv": round(month_gmv, 2),
+    }
+
+
 @router.get("/sessions/list")
 def sessions_list(
     request: Request,
@@ -1331,11 +1672,19 @@ def sessions_list(
         report = db.scalar(
             select(LiveReport).where(LiveReport.session_code == row.session_code, LiveReport.deleted == 0)
         )
-        item = ledger_vo(db, row, report)
+        item = ledger_vo(db, row, report, actor)
         if report is not None:
             item["reportSummary"] = shape_summary(summary_of(report_payload(db, report)), view)
         out.append(item)
-    return paged(out, total, page_no, size)
+    return ok(
+        {
+            "list": out,
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+            "stats": session_board(db, actor, request.state.scope),
+        }
+    )
 
 
 @router.get("/sessions/{session_code}")
@@ -1353,7 +1702,7 @@ def sessions_detail(
     checks = db.scalars(
         select(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id, LiveRiskCheck.deleted == 0)
     ).all()
-    data = session_vo(db, row, report, list(checks))
+    data = session_vo(db, row, report, list(checks), actor)
     data["metricsSnapshot"] = metrics_payload(db, ops, actor, row)
     data["footballEnrichment"] = data["metricsSnapshot"].get("footballRoomBasic")
     view = report_view(role_tags(db, actor))
@@ -1368,6 +1717,7 @@ def sessions_detail(
     data["corrections"] = [
         shape_correction(correction_vo(item), view) for item in correction_rows(db, session_code)
     ]
+    data["boundDevices"] = bound_devices(db, ops, actor, row.device_asset_ids or "[]")
     return ok(data)
 
 
@@ -1397,11 +1747,15 @@ def football_sync(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
-    if not row.football_room_id:
+    room_id = (body.footballRoomId or "").strip() if body is not None else ""
+    target = room_id or (row.football_room_id or "")
+    if not target:
         return fail(1041, "未绑定 Football 直播间")
-    room = read_live_room(ops, actor, row.football_room_id)
+    room = read_live_room(ops, actor, target)
     if room is None:
         return fail(1051, "Football 直播间不存在")
+    if room_id:
+        row.football_room_id = room_id
     now = iso(utcnow())
     row.football_sync_status = "SYNCED"
     row.last_football_sync_at = now
@@ -1418,6 +1772,175 @@ def football_sync(
     snap.duration_minutes = room_basic_vo(room).get("durationMinutes")
     snap.captured_at = now or ""
     return ok(metrics_payload(db, ops, actor, row))
+
+
+def person_certs(db: Session, actor: User, person: Realname) -> list[CertArchive]:
+    name = (person.real_name or "").strip()[:64]
+    if not name:
+        return []
+    return list(
+        db.scalars(
+            select(CertArchive).where(
+                CertArchive.deleted == 0,
+                CertArchive.tenant_id == tenant_of(actor),
+                CertArchive.holder_name == name,
+            )
+        ).all()
+    )
+
+
+def days_until_expire(expire: str) -> int | None:
+    text = (expire or "").strip()[:10]
+    if len(text) != 10:
+        return None
+    try:
+        day = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return (day - datetime.now(BJ).date()).days
+
+
+def cert_signal(db: Session, actor: User, person: Realname) -> tuple[str, str]:
+    """实名人证件预检。过期/锁定为 FAIL，临期为 WARN，无档不拦截。"""
+    if (person.status or "") != "ENABLED":
+        return "FAIL", "实名人未在职，证件不可用于开播"
+    rows = person_certs(db, actor, person)
+    if not rows:
+        return "PASS", "未建档，不拦截"
+    expired = next((row for row in rows if row.status in HARD_RED_CERT), None)
+    if expired is not None:
+        when = expired.expire_date or "—"
+        return "FAIL", f"证件 {when} 已到期，实名人证件过期或锁定"
+    soon: tuple[int, CertArchive] | None = None
+    for row in rows:
+        left = days_until_expire(row.expire_date)
+        expiring = row.status == "EXPIRING" or (
+            left is not None and 0 <= left <= 30 and row.status in USABLE_CERT_STATUS
+        )
+        if not expiring or left is None:
+            if row.status == "EXPIRING" and (soon is None or left is None):
+                soon = (left if left is not None else 0, row)
+            continue
+        if soon is None or left < soon[0]:
+            soon = (left, row)
+    if soon is not None:
+        left, row = soon
+        when = row.expire_date or "—"
+        return "WARN", f"证件 {when} 到期，剩余 {left} 天"
+    blocked = cert_blocks_live(db, actor, person)
+    if blocked:
+        return "FAIL", blocked
+    return "PASS", "证件在有效期内"
+
+
+@router.get("/register/options")
+def register_options(
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    """开播登记下拉。账号只列使用中，设备只列在用直播/拍摄资产。"""
+    tenant_id = tenant_of(actor)
+    accounts = ops.scalars(
+        select(PlatformAccount)
+        .where(
+            PlatformAccount.deleted == 0,
+            PlatformAccount.tenant_id == tenant_id,
+            PlatformAccount.status == "IN_USE",
+        )
+        .order_by(PlatformAccount.id.desc())
+        .limit(500)
+    ).all()
+    persons = ops.scalars(
+        select(Realname)
+        .where(
+            Realname.deleted == 0,
+            Realname.tenant_id == tenant_id,
+            Realname.status != "DISABLED",
+        )
+        .order_by(Realname.id.desc())
+        .limit(500)
+    ).all()
+    phones = ops.scalars(
+        select(Phone)
+        .where(Phone.deleted == 0, Phone.tenant_id == tenant_id, Phone.status == "IN_USE")
+        .order_by(Phone.id.desc())
+        .limit(500)
+    ).all()
+    assets = db.scalars(
+        select(AssetLedger)
+        .where(
+            AssetLedger.deleted == 0,
+            AssetLedger.tenant_id == tenant_id,
+            AssetLedger.status == "IN_USE",
+            AssetLedger.asset_type.in_(tuple(LIVE_ASSET_TYPES)),
+        )
+        .order_by(AssetLedger.id.desc())
+        .limit(500)
+    ).all()
+    users = db.scalars(
+        select(User)
+        .where(User.deleted == 0, User.tenant_id == tenant_id, User.status == "ENABLED")
+        .order_by(User.id)
+        .limit(200)
+    ).all()
+    return ok(
+        {
+            "currentUserId": actor.id,
+            "accounts": [
+                {
+                    "id": row.id,
+                    "accountNo": row.account_no,
+                    "accountName": row.account_name or row.account_no,
+                    "platform": row.platform_type,
+                    "realnamePersonId": row.realname_id or 0,
+                    "holderUserId": row.holder_user_id or 0,
+                    "status": row.status,
+                }
+                for row in accounts
+            ],
+            "realnames": [
+                {"id": row.id, "realName": row.real_name, "status": row.status}
+                for row in persons
+            ],
+            "phones": [
+                {
+                    "id": row.id,
+                    "label": row.phone_code or row.device_number or row.phone_model or f"手机#{row.id}",
+                    "status": row.status,
+                }
+                for row in phones
+            ],
+            "devices": [
+                {
+                    "id": row.id,
+                    "assetCode": row.asset_code,
+                    "assetName": row.asset_name or row.asset_code,
+                    "assetType": row.asset_type,
+                    "status": row.status,
+                }
+                for row in assets
+            ],
+            "users": [
+                {"id": row.id, "nickname": row.nickname or row.username, "username": row.username}
+                for row in users
+            ],
+        }
+    )
+
+
+@router.get("/register/cert-preview")
+def register_cert_preview(
+    realnamePersonId: int,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    person = load_realname(ops, actor, realnamePersonId)
+    if person is None:
+        return fail(1041, "实名人不存在")
+    level, detail = cert_signal(db, actor, person)
+    return ok({"level": level, "detail": detail, "blocked": cert_blocks_live(db, actor, person) is not None})
 
 
 @router.post("/register")
@@ -1441,17 +1964,17 @@ def register_create(
         row = db.scalar(select(LiveSession).where(LiveSession.session_code == existing.session_code))
         if row:
             checks = db.scalars(select(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id)).all()
-            return ok(session_vo(db, row, risk_checks=list(checks)))
+            return ok(session_vo(db, row, risk_checks=list(checks), actor=actor))
     account = load_account(ops, actor, body.accountId)
     if account is None:
         return fail(1041, "账号不存在")
     person = load_realname(ops, actor, body.realnamePersonId)
     if person is None:
         return fail(1041, "实名人不存在")
-    blocked = locked_cert_fail(db, actor, person)
+    blocked = reject_unready_cert(db, actor, person)
     if blocked is not None:
         return blocked
-    if not validate_devices(ops, actor, body.deviceAssetIds):
+    if not validate_devices(db, ops, actor, body.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     user = db.get(User, body.responsibleUserId)
     if user is None or user.deleted or (user.tenant_id or 0) != tenant_id:
@@ -1466,7 +1989,7 @@ def register_create(
         realname_person_id=body.realnamePersonId,
         realname_name=person.real_name,
         responsible_user_id=body.responsibleUserId,
-        device_asset_ids=json.dumps(body.deviceAssetIds),
+        device_asset_ids=dump_device_refs(body.deviceAssetIds),
         platform=body.platform,
         topic=body.topic,
         plan_start_time=body.planStartTime,
@@ -1481,10 +2004,11 @@ def register_create(
     db.add(LiveSessionToken(client_token=clientToken, session_code=session_code, tenant_id=tenant_id))
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, body.deviceAssetIds)
     apply_risk(db, row, score, level, checks)
+    bind_session_assets(db, ops, actor, row, body.deviceAssetIds)
     db.flush()
     for item in checks:
         db.refresh(item)
-    return ok(session_vo(db, row, risk_checks=checks))
+    return ok(session_vo(db, row, risk_checks=checks, actor=actor))
 
 
 @router.get("/register/list")
@@ -1515,7 +2039,7 @@ def register_list(
     )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all()
-    records = [session_vo(db, row) for row in rows]
+    records = [session_vo(db, row, actor=actor) for row in rows]
     return ok({"total": total, "records": records})
 
 
@@ -1532,7 +2056,7 @@ def register_detail(
     checks = db.scalars(
         select(LiveRiskCheck).where(LiveRiskCheck.session_id == row.id, LiveRiskCheck.deleted == 0)
     ).all()
-    return ok(session_vo(db, row, risk_checks=list(checks)))
+    return ok(session_vo(db, row, risk_checks=list(checks), actor=actor))
 
 
 @router.put("/register/{session_code}")
@@ -1553,17 +2077,17 @@ def register_update(
     person = load_realname(ops, actor, body.realnamePersonId)
     if account is None or person is None:
         return fail(1041, "账号或实名人不存在")
-    blocked = locked_cert_fail(db, actor, person)
+    blocked = reject_unready_cert(db, actor, person)
     if blocked is not None:
         return blocked
-    if not validate_devices(ops, actor, body.deviceAssetIds):
+    if not validate_devices(db, ops, actor, body.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     row.account_id = body.accountId
     row.account_no = account.account_no
     row.realname_person_id = body.realnamePersonId
     row.realname_name = person.real_name
     row.responsible_user_id = body.responsibleUserId
-    row.device_asset_ids = json.dumps(body.deviceAssetIds)
+    row.device_asset_ids = dump_device_refs(body.deviceAssetIds)
     row.platform = body.platform
     row.topic = body.topic
     row.plan_start_time = body.planStartTime
@@ -1573,6 +2097,7 @@ def register_update(
         row.football_sync_status = "UNLINKED" if not body.footballRoomId else "PENDING"
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, body.deviceAssetIds)
     apply_risk(db, row, score, level, checks, release=risk_release_allowed(row))
+    bind_session_assets(db, ops, actor, row, body.deviceAssetIds)
     return ok(None)
 
 
@@ -1591,10 +2116,10 @@ def risk_check(
     person = load_realname(ops, actor, row.realname_person_id)
     if account is None or person is None:
         return fail(1041, "账号或实名人不存在")
-    blocked = locked_cert_fail(db, actor, person)
+    blocked = reject_unready_cert(db, actor, person)
     if blocked is not None:
         return blocked
-    device_ids = json.loads(row.device_asset_ids or "[]")
+    device_ids = device_refs_from(row.device_asset_ids or "[]")
     score, level, checks = run_risk_checks(db, ops, actor, row, account, person, device_ids)
     apply_risk(db, row, score, level, checks, release=risk_release_allowed(row))
     db.flush()
@@ -1671,6 +2196,8 @@ def register_start(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
+    if not can_operate_session(db, actor, row):
+        return fail(1008, "无数据权限")
     if supplement_pending(row):
         return fail(1049, "补录未审批")
     if row.risk_level == "RED":
@@ -1686,8 +2213,105 @@ def register_start(
     if blocked is not None:
         return blocked
     row.session_status = "LIVE"
+    if not (row.actual_start or "").strip():
+        row.actual_start = iso(utcnow()) or ""
     close_yellow_todos(db, row)
     return ok(None)
+
+
+ENTRY_TASK = "live_report_entry"
+
+
+def ensure_entry_todo(db: Session, session: LiveSession) -> None:
+    """下播后给责任人一条录入待办，时限从实际结束起 24 小时。"""
+    user_id = session.responsible_user_id
+    if not user_id:
+        return
+    ended = parse_iso(session.actual_end) or datetime.now(BJ)
+    deadline = (ended + timedelta(hours=24)).astimezone(timezone.utc).replace(tzinfo=None)
+    title = f"下播录入 {session.session_code}"[:128]
+    content = "确认下播后 24 小时内完成九项录入"[:512]
+    tenant_id = session.tenant_id or 0
+    existing = db.scalar(
+        select(Todo).where(
+            Todo.assignee_user_id == user_id,
+            Todo.task_type == ENTRY_TASK,
+            Todo.ref_type == "live_session",
+            Todo.ref_id == session.id,
+            Todo.status == "PENDING",
+        )
+    )
+    if existing is None:
+        db.add(
+            Todo(
+                assignee_user_id=user_id,
+                task_type=ENTRY_TASK,
+                ref_type="live_session",
+                ref_id=session.id,
+                title=title,
+                content=content,
+                status="PENDING",
+                deadline=deadline,
+                tenant_id=tenant_id,
+            )
+        )
+    sent = db.scalar(
+        select(WorkMessage).where(
+            WorkMessage.user_id == user_id,
+            WorkMessage.source_module == "LIVE",
+            WorkMessage.ref_type == ENTRY_TASK,
+            WorkMessage.ref_id == session.id,
+            WorkMessage.channel == "IN_APP",
+        )
+    )
+    if sent is None:
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="LIVE",
+                ref_type=ENTRY_TASK,
+                ref_id=session.id,
+                tenant_id=tenant_id,
+            )
+        )
+
+
+def close_entry_todos(db: Session, session: LiveSession) -> None:
+    rows = db.scalars(
+        select(Todo).where(
+            Todo.task_type == ENTRY_TASK,
+            Todo.ref_type == "live_session",
+            Todo.ref_id == session.id,
+            Todo.status == "PENDING",
+        )
+    ).all()
+    for item in rows:
+        item.status = "DONE"
+
+
+@router.put("/register/{session_code}/end")
+def register_end(
+    request: Request,
+    session_code: str,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = get_session(db, actor, request.state.scope, session_code)
+    if row is None:
+        return fail(1504, "资源不可用")
+    if not can_operate_session(db, actor, row):
+        return fail(1008, "无数据权限")
+    if row.session_status != "LIVE":
+        return fail(1042, "当前状态不可下播")
+    row.session_status = "ENDED"
+    row.actual_end = iso(utcnow()) or ""
+    ensure_entry_todo(db, row)
+    db.flush()
+    return ok(session_vo(db, row, actor=actor))
 
 
 def upsert_report(
@@ -1729,9 +2353,10 @@ def upsert_report(
         report.entry_status = "SUBMITTED"
         report.submitted_at = iso(utcnow())
         if end_session:
-            session.session_status = "ENDED"
-            session.actual_start = body.actualStart
-            session.actual_end = body.actualEnd
+            if (body.actualStart or "").strip():
+                session.actual_start = body.actualStart
+            if (body.actualEnd or "").strip():
+                session.actual_end = body.actualEnd
     else:
         report.entry_status = "DRAFT"
     return report
@@ -1750,7 +2375,7 @@ def report_pending(
     page_no, size = page_args(pageNo, pageSize)
     now = datetime.now(BJ)
     stmt = restrict_sessions(select(LiveSession), actor, request.state.scope)
-    stmt = stmt.where(LiveSession.session_status.in_(("LIVE", "ENDED")))
+    stmt = stmt.where(LiveSession.session_status == "ENDED")
     if responsibleUserId:
         stmt = stmt.where(LiveSession.responsible_user_id == responsibleUserId)
     rows = db.scalars(stmt).all()
@@ -1814,8 +2439,8 @@ def report_submit(
         return fail(1504, "资源不可用")
     if supplement_pending(row):
         return fail(1049, "补录未审批")
-    if row.session_status not in ("LIVE", "ENDED") and row.session_status != "APPROVED":
-        return fail(1042, "场次状态不允许录入")
+    if row.session_status != "ENDED":
+        return fail(1042, "场次未下播，下播录入在状态为已下播后开放")
     existing = load_report(db, session_code)
     if existing and existing.entry_status in ("SUBMITTED", "CONFIRMED"):
         return fail(1047, "提交后只读")
@@ -1824,6 +2449,7 @@ def report_submit(
         return rejected
     report = upsert_report(db, row, body, actor, submit=True)
     close_overdue_todos(db, row)
+    close_entry_todos(db, row)
     db.flush()
     view = report_view(role_tags(db, actor))
     return ok(shape_report(report_payload(db, report), view))
@@ -1862,6 +2488,8 @@ def report_update(
     row = get_session(db, actor, request.state.scope, session_code)
     if row is None:
         return fail(1504, "资源不可用")
+    if row.session_status != "ENDED":
+        return fail(1042, "场次未下播，下播录入在状态为已下播后开放")
     report = load_report(db, session_code)
     if report and report.entry_status != "DRAFT":
         return fail(1047, "提交后只读")
@@ -1916,7 +2544,14 @@ def report_correction(
     )
     db.add(saved)
     db.flush()
-    return ok({"correctionId": saved.id, "before": before, "after": after})
+    return ok(
+        {
+            "correctionId": saved.id,
+            "before": before,
+            "after": after,
+            "changes": correction_changes(before, after),
+        }
+    )
 
 
 @router.put("/report/{session_code}/confirm")
@@ -1954,6 +2589,15 @@ def ledger_supplement(
         return fail(1001, "补录说明过长")
     create = body.sessionCreate
     report_body = body.sessionReport
+    planned = normalize_plan_time(create.planStartTime)
+    if planned is None:
+        return fail(1001, "计划开播时间无效")
+    create.planStartTime = planned
+    report_body.actualStart = planned
+    start = parse_iso(planned)
+    end = parse_iso(report_body.actualEnd)
+    if start is not None and (end is None or as_bj(end) <= as_bj(start)):
+        report_body.actualEnd = (as_bj(start) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     rejected = reject_report_body(report_body)
     if rejected is not None:
         return rejected
@@ -1966,7 +2610,7 @@ def ledger_supplement(
     blocked = locked_cert_fail(db, actor, person)
     if blocked is not None:
         return blocked
-    if not validate_devices(ops, actor, create.deviceAssetIds):
+    if not validate_devices(db, ops, actor, create.deviceAssetIds):
         return fail(1041, "设备资产不存在")
     user = db.get(User, create.responsibleUserId)
     tenant_id = tenant_of(actor)
@@ -1985,7 +2629,7 @@ def ledger_supplement(
         realname_person_id=create.realnamePersonId,
         realname_name=person.real_name,
         responsible_user_id=create.responsibleUserId,
-        device_asset_ids=json.dumps(create.deviceAssetIds),
+        device_asset_ids=dump_device_refs(create.deviceAssetIds),
         platform=create.platform,
         topic=create.topic,
         plan_start_time=create.planStartTime,
@@ -1999,6 +2643,7 @@ def ledger_supplement(
     )
     db.add(row)
     db.flush()
+    bind_session_assets(db, ops, actor, row, create.deviceAssetIds)
     upsert_report(db, row, report_body, actor, submit=True, end_session=False)
     db.flush()
     return ok({"supplementId": row.id, "sessionCode": session_code, "message": "补录已提交，待审批"})
@@ -2017,6 +2662,8 @@ def ledger_supplement_approve(
         return fail(1504, "资源不可用")
     if not row.is_supplement:
         return fail(1042, "不是补录场次")
+    if not (role_tags(db, actor) & {"r1", "r4", "sys:admin"}):
+        return fail(1008, "无数据权限")
     if not (row.supplement_reason or "").strip():
         return fail(1049, "补录缺少说明或未审批")
     comment, comment_error = trimmed_comment(body.comment)
@@ -2121,6 +2768,23 @@ def _money_cell(value: object, masked: bool) -> str:
         return COST_MASK
 
 
+STATUS_TEXT = {
+    "PENDING_RISK_CHECK": "待风控",
+    "APPROVED": "已放行",
+    "LIVE": "直播中",
+    "ENDED": "已下播",
+    "CANCELLED": "已取消",
+}
+RISK_TEXT = {"GREEN": "绿", "YELLOW": "黄", "RED": "红"}
+ENTRY_TEXT = {"DRAFT": "草稿", "SUBMITTED": "已提交", "CONFIRMED": "已核准"}
+PLATFORM_TEXT = {"DOUYIN": "抖音", "KUAISHOU": "快手", "WECHAT_CHANNELS": "视频号", "OTHER": "其他"}
+
+
+def zh_label(mapping: dict[str, str], value: str | None) -> str:
+    text = value or ""
+    return mapping.get(text, text)
+
+
 def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[str]]:
     header = [
         "场次ID",
@@ -2153,12 +2817,12 @@ def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[
         matrix.append(
             [
                 row.session_code,
-                row.platform or "",
+                zh_label(PLATFORM_TEXT, row.platform),
                 row.topic or "",
                 row.account_no or "",
                 names.get(row.responsible_user_id, ""),
-                row.session_status or "",
-                row.risk_level or "",
+                "待审批" if row.is_supplement and not row.approver_user_id else zh_label(STATUS_TEXT, row.session_status),
+                zh_label(RISK_TEXT, row.risk_level),
                 "是" if row.is_supplement else "否",
                 _money_cell(payload.get("gmv"), False) if present else "",
                 _money_cell(payload.get("refundAmount"), False) if present else "",
@@ -2169,7 +2833,7 @@ def ledger_matrix(db: Session, rows: list[LiveSession], view: str) -> list[list[
                 _cell(payload.get("newFans")) if present else "",
                 _cell(payload.get("durationMinutes")) if present else "",
                 (COST_MASK if masked else _money_cell(payload.get("roas"), False)) if present else "",
-                _cell(payload.get("entryStatus")) if present else "",
+                zh_label(ENTRY_TEXT, payload.get("entryStatus")) if present else "",
             ]
         )
     return matrix

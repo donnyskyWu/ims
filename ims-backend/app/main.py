@@ -142,7 +142,7 @@ def seed() -> None:
         ensure_bi_br212_seed(db)
         from app.workbench_seed import refresh_workbench_e2e_seed
         from app.acct_seed import ensure_acct_e2e_pool_account, ensure_acct_schema, refresh_acct_e2e_pool
-        from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, refresh_live_fin_e2e_deps
+        from app.live_fin_e2e_seed import ensure_live_fin_e2e_deps, ensure_stub_live_room, refresh_live_fin_e2e_deps
         from app.cert_e2e_seed import refresh_cert_e2e_seed
         from app.train_stat_e2e_seed import refresh_train_stat_e2e_seed
         from app.perf_e2e_seed import refresh_perf_e2e_seed
@@ -159,6 +159,7 @@ def seed() -> None:
             _ensure_fin_r9_user(db)
             ensure_live_fin_e2e_deps(db, admin)
             refresh_live_fin_e2e_deps(db, admin)
+            ensure_stub_live_room()
             refresh_cert_e2e_seed(db, admin)
             refresh_train_stat_e2e_seed(db, admin)
             refresh_perf_e2e_seed(db, admin)
@@ -315,6 +316,19 @@ def ensure_cert_file_key_column() -> None:
         return
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE ims_cert_archive ADD COLUMN file_key VARCHAR(512) NOT NULL DEFAULT ''"))
+
+
+def ensure_live_risk_detail_column() -> None:
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_live_risk_check" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_live_risk_check")}
+    if "detail" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_live_risk_check ADD COLUMN detail VARCHAR(512) NOT NULL DEFAULT ''"))
 
 
 def ensure_live_approve_comment_column() -> None:
@@ -509,6 +523,7 @@ def init_db() -> None:
     ensure_exam_question_answer_columns()
     ensure_content_review_remark_column()
     ensure_live_approve_comment_column()
+    ensure_live_risk_detail_column()
     ensure_cert_file_key_column()
     ensure_air_key_columns()
     ensure_air_slice92_columns()

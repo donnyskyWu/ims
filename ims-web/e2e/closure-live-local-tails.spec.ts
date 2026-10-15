@@ -1,6 +1,13 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * #197 · 纯 UI
@@ -50,7 +57,7 @@ test.describe('live local risk report tails', () => {
     await detail.getByTestId('live-sync-btn').click()
     const syncBody = (await (await syncResp).json()) as { code: number; msg?: string }
     expect(syncBody.code).toBe(1041)
-    await expect(detail.getByTestId('live-sync-error')).toContainText('1041')
+    await expect(detail.getByTestId('live-sync-error')).toContainText('未绑定')
     await page.screenshot({ path: `${shotDir}/02-metrics-unlinked.png`, fullPage: true })
 
     await page.goto('/ims/live/sessions')
@@ -82,10 +89,7 @@ test.describe('live local risk report tails', () => {
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
     await expect(drawer).toBeVisible()
-    await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
+    await fillLiveRegisterDrawer(drawer, ids, topic)
     const regResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
     )
@@ -94,16 +98,18 @@ test.describe('live local risk report tails', () => {
     expect(regBody.code).toBe(0)
     const detail = page.locator('.drawer.on')
     await expect(detail).toBeVisible({ timeout: 15_000 })
-    const openReport = page.waitForResponse(
-      (r) => /\/live\/report\/IMS/.test(r.url()) && r.request().method() === 'GET' && r.status() === 200,
-    )
+    await confirmLiveSessionEnd(page, detail)
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
-    await openReport
     await expect(detail.getByTestId('live-report-draft')).toBeVisible()
+    await expect(detail.getByTestId('live-report-duration')).toHaveText('—')
+    await fillLiveReportFields(detail, {
+      'live-report-orders': '0',
+      'live-report-ad': '0',
+      'live-report-gmv': '80',
+    })
     await expect(detail.getByTestId('live-report-duration')).toContainText('120 分钟')
-    await detail.getByTestId('live-report-orders').fill('0')
-    await detail.getByTestId('live-report-ad').fill('0')
-    await detail.getByTestId('live-report-gmv').fill('80')
+    await expect(detail.getByTestId('live-report-live-aov')).toHaveText('—')
+    await expect(detail.getByTestId('live-report-live-roas')).toHaveText('—')
     const draftResp = page.waitForResponse(
       (r) => /\/live\/report\/IMS/.test(r.url()) && !r.url().includes('/correction') && r.request().method() === 'PUT',
     )
@@ -116,12 +122,12 @@ test.describe('live local risk report tails', () => {
     expect(loaded.code).toBe(0)
     expect(loaded.data?.entryStatus).toBe('DRAFT')
     expect(loaded.data?.roas ?? null).toBeNull()
-    await expect(detail.getByTestId('live-report-headline')).toContainText('DRAFT')
+    await expect(detail.getByTestId('live-report-headline')).toContainText('草稿')
     await expect(detail.getByTestId('live-report-aov')).toHaveText('—')
     await expect(detail.getByTestId('live-report-roas')).toHaveText('—')
     await expect(detail.getByTestId('live-cost-empty')).toContainText('暂无成本明细')
     await detail.locator('.tab', { hasText: '风控登记' }).click()
-    await expect(detail.getByTestId('live-session-status')).toContainText('APPROVED')
+    await expect(detail.getByTestId('live-session-status')).toContainText('已下播')
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
     await page.screenshot({ path: `${shotDir}/04-draft-zero.png`, fullPage: true })
 
@@ -134,7 +140,7 @@ test.describe('live local risk report tails', () => {
     const blocked = (await (await blockedResp).json()) as { code: number }
     expect(blocked.code).toBe(1001)
     await expect(detail.getByTestId('live-report-error')).toContainText('1001')
-    await expect(detail.getByTestId('live-report-headline')).toContainText('DRAFT')
+    await expect(detail.getByTestId('live-report-headline')).toContainText('草稿')
     await page.screenshot({ path: `${shotDir}/05-draft-time.png`, fullPage: true })
 
     await page.goto('/ims/live/alarm')

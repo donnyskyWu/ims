@@ -347,7 +347,13 @@
           <tr v-for="event in timeline" :key="String(event.id)">
             <td>{{ eventLabel(String(event.eventType || '')) }}</td>
             <td>{{ statusLabel(String(event.toStatus || '')) }}</td>
-            <td>{{ event.remark || '—' }}</td>
+            <td>
+              <router-link
+                v-if="sessionCodeOf(String(event.remark || ''))"
+                :to="{ path: '/ims/live/sessions', query: { sessionCode: sessionCodeOf(String(event.remark || '')) } }"
+              >{{ event.remark }}</router-link>
+              <template v-else>{{ event.remark || '—' }}</template>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -726,6 +732,7 @@ const eventLabels: Record<string, string> = {
   USE: '使用',
   RETURN: '归还',
   SCRAP: '报废',
+  BIND_SESSION: '绑定场次',
 }
 
 const specs: Record<string, {
@@ -754,7 +761,7 @@ const specs: Record<string, {
     placeholder: '资产编号 / 名称',
     empty: '没有直播设备',
     emptyHint: '登记时类型选直播设备或拍摄设备。流转与办公设备相同。',
-    hint: 'GET /corp/device/live/page 合并 assetType=LIVE 与 SHOOT。类型、责任人和待补关联可筛选，导出台账沿用当前条件。',
+    hint: '直播设备和拍摄设备在同一张台账。可按类型、责任人和待补关联筛选，并按当前条件导出。',
     columns: ['编号', '名称', '类型', '规格', '采购日期', '状态', '责任人', '绑定账号数'],
     keys: ['assetCode', 'assetName', 'assetType', 'spec', 'purchaseDate', 'status', 'ownerName', 'bindCount'],
   },
@@ -868,6 +875,11 @@ function typeLabel(value: string) {
 
 function eventLabel(value: string) {
   return eventLabels[value] || value
+}
+
+function sessionCodeOf(remark: string) {
+  const hit = remark.match(/IMS\d{8}[A-Z]{3}\d{4,5}/)
+  return hit ? hit[0] : ''
 }
 
 function bindLabel(value: string) {
@@ -1824,6 +1836,8 @@ watch(kind, async () => {
 })
 
 onMounted(async () => {
+  const preset = String(route.query.keyword || '').trim()
+  if (preset) keyword.value = preset
   if (kind.value === 'phone') {
     try {
       await preparePhone()

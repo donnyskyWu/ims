@@ -25,7 +25,10 @@ from app.models import (
     WorkMessage,
 )
 from app.ops_db import ops_session
-from app.ops_models import Company, IpGroup, Phone, PlatformAccount, Realname
+from app.ops_models import Company, IpGroup, LiveRoom, Phone, PlatformAccount, Realname
+
+STUB_ROOM_ID = 900000351
+STUB_ROOM_CODE = "STUB-ROOM-001"
 
 E2E_FIN_ACCOUNT_NO = "AC-E2E-FIN"
 E2E_FIN_ACCOUNT_NICK = "E2E财务场次号"
@@ -46,6 +49,42 @@ E2E_LIVE1048_SESSION = "IMS20261006DYS1048"
 E2E_LIVE1048_TOPIC = "E2E超时督办"
 E2E_LEDGER_SESSION = "IMS20261008DYS0082"
 E2E_LEDGER_TOPIC = "E2E台账导出"
+
+
+def ensure_stub_live_room() -> None:
+    """Football 桩直播间。同步可用房间号 STUB-ROOM-001，库内主键 900000351。"""
+    ops = ops_session()
+    try:
+        row = ops.get(LiveRoom, STUB_ROOM_ID)
+        if row is None:
+            row = ops.scalar(select(LiveRoom).where(LiveRoom.live_id == STUB_ROOM_CODE, LiveRoom.deleted == 0))
+        if row is None:
+            row = LiveRoom(
+                id=STUB_ROOM_ID,
+                tenant_id=0,
+                author_id="stub-author",
+                nickname="桩主播",
+                live_id=STUB_ROOM_CODE,
+                live_name="桩直播间",
+                status=2,
+                viewer_count=120,
+                like_count=30,
+                reservation_count=8,
+                deleted=0,
+            )
+            ops.add(row)
+        else:
+            row.deleted = 0
+            row.tenant_id = 0
+            row.live_id = STUB_ROOM_CODE
+            row.status = 2
+            if not row.live_name:
+                row.live_name = "桩直播间"
+            if not row.nickname:
+                row.nickname = "桩主播"
+        ops.commit()
+    finally:
+        ops.close()
 
 
 def ensure_live_fin_e2e_deps(db: Session, admin: User) -> None:

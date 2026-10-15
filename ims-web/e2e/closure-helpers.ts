@@ -658,6 +658,64 @@ async function fillAfterReportReset(field: Locator, value: string) {
   throw new Error(`下播字段未保持为 ${value}，当前 ${last}`)
 }
 
+/** 已放行场次：确认开播后再确认下播，等到状态变成已下播。 */
+export async function confirmLiveSessionEnd(page: Page, detail: Locator) {
+  await detail.locator('.tab', { hasText: '风控登记' }).click()
+  const startResp = page.waitForResponse(
+    (r) => r.url().includes('/start') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await detail.getByTestId('live-start-btn').click()
+  expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
+  await detail.getByTestId('live-end-btn').click()
+  const endResp = page.waitForResponse(
+    (r) => r.url().includes('/end') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await page.getByTestId('live-end-confirm').click()
+  expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
+  await expect(detail.getByTestId('live-session-status')).toContainText('已下播')
+}
+
+export async function fillLiveReportFields(detail: Locator, patch: Record<string, string> = {}) {
+  const values: Record<string, string> = {
+    'live-report-start': '2026-10-20T20:00:00+08:00',
+    'live-report-end': '2026-10-20T22:00:00+08:00',
+    'live-report-gmv': '1000',
+    'live-report-orders': '10',
+    'live-report-viewers': '500',
+    'live-report-peak': '80',
+    'live-report-fans': '20',
+    'live-report-refund': '0',
+    'live-report-ad': '100',
+    ...patch,
+  }
+  for (const [id, value] of Object.entries(values)) {
+    await detail.getByTestId(id).fill(value)
+  }
+}
+
+export async function fillLiveRegisterDrawer(
+  drawer: Locator,
+  ids: { accountId: number; realnamePersonId: number; deviceId: number },
+  topic: string,
+  planStartTime?: string,
+) {
+  const account = drawer.getByTestId('live-reg-account')
+  await expect(account.locator(`option[value="${ids.accountId}"]`)).toHaveCount(1, { timeout: 15_000 })
+  await account.selectOption(String(ids.accountId))
+  const person = drawer.getByTestId('live-reg-person')
+  await expect(person.locator(`option[value="${ids.realnamePersonId}"]`)).toHaveCount(1, { timeout: 15_000 })
+  await person.selectOption(String(ids.realnamePersonId))
+  const phone = drawer.getByTestId('live-reg-phone')
+  await expect(phone.locator(`option[value="${ids.deviceId}"]`)).toHaveCount(1, { timeout: 15_000 })
+  await phone.selectOption(String(ids.deviceId))
+  const boxes = drawer.getByTestId('live-reg-devices').locator('input[type="checkbox"]')
+  if (await boxes.count()) await boxes.first().check()
+  await drawer.getByTestId('live-reg-topic').fill(topic)
+  if (planStartTime) {
+    await drawer.getByTestId('live-reg-plan').fill(planStartTime.slice(0, 16))
+  }
+}
+
 export async function registerLiveSessionConfirmedReportViaUi(
   page: Page,
   ids: { accountId: number; realnamePersonId: number; deviceId: number },
@@ -684,17 +742,7 @@ export async function registerLiveSessionConfirmedReportViaUi(
   await page.getByRole('button', { name: '新建场次登记' }).click()
   const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
   await expect(drawer).toBeVisible()
-  await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-  await drawer
-    .locator('label', { hasText: '实名人 id' })
-    .locator('..')
-    .locator('input')
-    .fill(String(ids.realnamePersonId))
-  await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-  await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
-  if (opts?.planStartTime) {
-    await drawer.locator('label', { hasText: '计划开播' }).locator('..').locator('input').fill(opts.planStartTime)
-  }
+  await fillLiveRegisterDrawer(drawer, ids, topic, opts?.planStartTime)
 
   const regResp = page.waitForResponse(
     (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
@@ -716,6 +764,7 @@ export async function registerLiveSessionConfirmedReportViaUi(
 
   const detailDrawer = page.locator('.drawer').filter({ hasText: '场次' })
   await expect(detailDrawer).toBeVisible({ timeout: 15_000 })
+  await detailDrawer.locator('.tab', { hasText: '风控登记' }).click()
 
   if (regBody.data?.sessionStatus === 'PENDING_RISK_CHECK') {
     await detailDrawer.locator('.tab', { hasText: '风控登记' }).click()
@@ -726,6 +775,19 @@ export async function registerLiveSessionConfirmedReportViaUi(
     await riskResp
   }
 
+  const startResp = page.waitForResponse(
+    (r) => r.url().includes('/start') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await detailDrawer.getByTestId('live-start-btn').click()
+  expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
+  await detailDrawer.getByTestId('live-end-btn').click()
+  const endResp = page.waitForResponse(
+    (r) => r.url().includes('/end') && r.request().method() === 'PUT' && r.status() === 200,
+  )
+  await page.getByTestId('live-end-confirm').click()
+  expect(((await (await endResp).json()) as { code: number }).code).toBe(0)
+  await expect(detailDrawer.getByTestId('live-session-status')).toContainText('已下播')
+
   const reportLoad = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
     { timeout: 15_000 },
@@ -735,12 +797,13 @@ export async function registerLiveSessionConfirmedReportViaUi(
   const gmvInput = detailDrawer.getByTestId('live-report-gmv')
   const refundInput = detailDrawer.getByTestId('live-report-refund')
   await expect(gmvInput).toBeVisible()
-  if (opts?.actualStart) {
-    await detailDrawer.getByTestId('live-report-start').fill(opts.actualStart)
-  }
-  if (opts?.actualEnd) {
-    await detailDrawer.getByTestId('live-report-end').fill(opts.actualEnd)
-  }
+  await detailDrawer.getByTestId('live-report-start').fill(opts?.actualStart || '2026-10-20T20:00:00+08:00')
+  await detailDrawer.getByTestId('live-report-end').fill(opts?.actualEnd || '2026-10-20T22:00:00+08:00')
+  await detailDrawer.getByTestId('live-report-orders').fill('10')
+  await detailDrawer.getByTestId('live-report-viewers').fill('500')
+  await detailDrawer.getByTestId('live-report-peak').fill('80')
+  await detailDrawer.getByTestId('live-report-fans').fill('20')
+  await detailDrawer.getByTestId('live-report-ad').fill('100')
   await fillAfterReportReset(gmvInput, String(gmv))
   await fillAfterReportReset(refundInput, String(refundAmount))
 

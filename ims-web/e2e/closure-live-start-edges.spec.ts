@@ -1,54 +1,28 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
 
 const shotDir = '/opt/cursor/artifacts/e2e-168-screenshots'
-
-const RED_ACCOUNT = 'AC-E2E-LIVE1043'
-const RED_PHONE = 'E2E-LIVE1043-PHONE'
+const DISABLED_PERSON = 'E2E-Live-1043'
 
 fs.mkdirSync(shotDir, { recursive: true })
 
-async function resolveAccount(page: Page, accountNo: string, phoneCode: string) {
-  await page.goto('/ims/corp/account/douyin')
-  await page.locator('input[placeholder="账号编号/昵称"]').fill(accountNo)
-  const accListResp = page.waitForResponse(
-    (r) => r.url().includes('/corp/account/page') && r.request().method() === 'GET' && r.status() === 200,
+async function yellowIds(page: Page) {
+  const fin = await resolveLiveFinRegisterIdsViaUi(page)
+  await page.goto('/ims/live/sessions')
+  await expect(page.locator('h1')).toHaveText('直播管理', { timeout: 15_000 })
+  const optionsResp = page.waitForResponse(
+    (r) => r.url().includes('/live/register/options') && r.request().method() === 'GET' && r.status() === 200,
   )
-  await page.getByRole('button', { name: '查询' }).click()
-  await accListResp
-  const accRow = page.locator('tbody tr', { hasText: accountNo }).first()
-  await expect(accRow).toBeVisible({ timeout: 15_000 })
-  const accDetailResp = page.waitForResponse(
-    (r) => /\/corp\/account\/\d+/.test(r.url()) && r.request().method() === 'GET' && r.status() === 200,
-  )
-  await accRow.getByRole('button', { name: '详情' }).click()
-  const accDetailBody = (await (await accDetailResp).json()) as {
-    code: number
-    data?: { id?: number; realnameId?: number }
-  }
-  expect(accDetailBody.code).toBe(0)
-  const accountId = accDetailBody.data?.id
-  const realnamePersonId = accDetailBody.data?.realnameId
-  expect(accountId).toBeTruthy()
-  expect(realnamePersonId).toBeTruthy()
-
-  await page.goto('/ims/corp/device/phone')
-  await page.locator('input[placeholder="设备编号 / 型号"]').fill(phoneCode)
-  const phoneListResp = page.waitForResponse(
-    (r) => r.url().includes('/corp/device/phone/page') && r.request().method() === 'GET' && r.status() === 200,
-  )
-  await page.getByRole('button', { name: '查询' }).click()
-  const phoneListBody = (await (await phoneListResp).json()) as {
-    code: number
-    data?: { list?: Array<{ id?: number; phoneCode?: string; deviceNumber?: string }> }
-  }
-  expect(phoneListBody.code).toBe(0)
-  const phoneHit = phoneListBody.data?.list?.find(
-    (row) => row.phoneCode === phoneCode || row.deviceNumber === phoneCode,
-  )
-  expect(phoneHit?.id).toBeTruthy()
-  return { accountId: accountId!, realnamePersonId: realnamePersonId!, deviceId: phoneHit!.id! }
+  await page.getByRole('button', { name: '新建场次登记' }).click()
+  await optionsResp
+  const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
+  await expect(drawer).toBeVisible()
+  const option = drawer.getByTestId('live-reg-person').locator('option', { hasText: DISABLED_PERSON })
+  await expect(option).toHaveCount(1)
+  const value = await option.getAttribute('value')
+  expect(value).toBeTruthy()
+  return { drawer, ids: { ...fin, realnamePersonId: Number(value) } }
 }
 
 async function openLiveRegister(
@@ -61,10 +35,7 @@ async function openLiveRegister(
   await page.getByRole('button', { name: '新建场次登记' }).click()
   const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
   await expect(drawer).toBeVisible()
-  await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-  await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-  await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-  await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
+  await fillLiveRegisterDrawer(drawer, ids, topic)
   const regResp = page.waitForResponse(
     (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
   )
@@ -93,7 +64,7 @@ test.describe('live start yellow red edges', () => {
     await detail.getByTestId('live-cancel-open').click()
     await detail.getByTestId('live-cancel-confirm').click()
     await expect(detail.getByTestId('live-action-error')).toContainText('取消原因必填')
-    await expect(detail.getByTestId('live-session-status')).toContainText('APPROVED')
+    await expect(detail.getByTestId('live-session-status')).toContainText('已放行')
     await page.screenshot({ path: `${shotDir}/01-cancel-reason-required.png`, fullPage: true })
 
     await detail.getByTestId('live-cancel-reason').fill('计划有变')
@@ -102,7 +73,7 @@ test.describe('live start yellow red edges', () => {
     )
     await detail.getByTestId('live-cancel-confirm').click()
     expect(((await (await cancelResp).json()) as { code: number }).code).toBe(0)
-    await expect(detail.getByTestId('live-session-status')).toContainText('CANCELLED')
+    await expect(detail.getByTestId('live-session-status')).toContainText('已取消')
     await expect(detail.getByTestId('live-cancel-reason-text')).toContainText('计划有变')
     await expect(detail.getByTestId('live-start-blocked')).toContainText('已取消不可开播')
 
@@ -116,54 +87,44 @@ test.describe('live start yellow red edges', () => {
     expect(pageErrors).toEqual([])
   })
 
-  test('red risk reuses the same session and yellow notice stays local', async ({ page }) => {
+  test('yellow reject stays local and the same session turns green after the word is removed', async ({ page }) => {
     test.setTimeout(180_000)
     const pageErrors = attachClosurePageHooks(page)
     await loginAdmin(page)
-    const ids = await resolveAccount(page, RED_ACCOUNT, RED_PHONE)
-    const { detail, sessionCode } = await openLiveRegister(page, ids, `E2E 红级整改违禁 ${Date.now()}`)
-    expect(sessionCode).toMatch(/^IMS\d{8}DYS\d{4}$/)
-    await expect(detail.getByTestId('live-risk-conclusion')).toContainText('红色禁止开播')
-    await expect(detail.getByTestId('live-risk-conclusion')).toContainText('请整改后重新登记')
-    await expect(detail.getByTestId('live-start-blocked')).toContainText('未放行不可开播')
-    await expect(detail.locator('[data-testid="live-risk-check"][data-result="FAIL"]').first()).toBeVisible()
-    await page.screenshot({ path: `${shotDir}/03-red-reregister-prompt.png`, fullPage: true })
-
-    await detail.getByTestId('live-reregister-open').click()
-    const edit = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-code-lock') })
-    await expect(edit).toBeVisible()
-    await expect(edit.getByTestId('live-session-code-lock')).toHaveValue(sessionCode)
-    await edit.locator('label', { hasText: '主题' }).locator('..').locator('input').fill('整改后专场')
-    const saveResp = page.waitForResponse(
-      (r) => r.url().includes(`/live/register/${sessionCode}`) && r.request().method() === 'PUT' && r.status() === 200,
+    const { drawer, ids } = await yellowIds(page)
+    await fillLiveRegisterDrawer(drawer, ids, `E2E 黄级整改违禁 ${Date.now()}`)
+    const regResp = page.waitForResponse(
+      (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
     )
-    await edit.getByTestId('live-reregister-save').click()
-    expect(((await (await saveResp).json()) as { code: number }).code).toBe(0)
-
-    const next = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-status') })
-    await expect(next).toBeVisible({ timeout: 15_000 })
-    await expect(next).toContainText(sessionCode)
-    await expect(next.getByTestId('live-session-status')).toContainText('50', { timeout: 15_000 })
-    await expect(next.getByTestId('live-session-status')).toContainText('YELLOW')
-    await expect(next.getByTestId('live-risk-conclusion')).toContainText('黄色待审批')
-    await expect(next.getByTestId('live-yellow-notice')).toContainText('钉钉未外发', { timeout: 15_000 })
-    await expect(next.getByTestId('live-yellow-notice')).toContainText('短信未外发')
-    await page.screenshot({ path: `${shotDir}/04-same-session-yellow.png`, fullPage: true })
+    await drawer.getByRole('button', { name: '提交登记' }).click()
+    const created = (await (await regResp).json()) as { code: number; data?: { sessionCode?: string } }
+    expect(created.code).toBe(0)
+    const sessionCode = created.data?.sessionCode || ''
+    expect(sessionCode).toMatch(/^IMS\d{8}DYS\d{4}$/)
+    const detail = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-status') })
+    await expect(detail).toBeVisible({ timeout: 15_000 })
+    await detail.locator('.tab', { hasText: '风控登记' }).click()
+    await expect(detail.getByTestId('live-session-status')).toContainText('55')
+    await expect(detail.getByTestId('live-session-status')).toContainText('黄')
+    await expect(detail.getByTestId('live-risk-conclusion')).toContainText('黄色待审批')
+    await expect(detail.getByTestId('live-start-blocked')).toContainText('未放行不可开播')
+    await expect(detail.getByTestId('live-yellow-notice')).toContainText('钉钉未外发', { timeout: 15_000 })
+    await page.screenshot({ path: `${shotDir}/03-yellow-before-reject.png`, fullPage: true })
 
     const startResp = page.waitForResponse(
       (r) => r.url().includes('/start') && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await next.getByTestId('live-start-btn').click()
+    await detail.getByTestId('live-start-btn').click()
     expect(((await (await startResp).json()) as { code: number }).code).toBe(1044)
 
-    await next.getByTestId('live-approve-comment').fill('请去掉违禁词')
+    await detail.getByTestId('live-approve-comment').fill('请去掉违禁词')
     const rejectResp = page.waitForResponse(
       (r) => r.url().includes('/approve') && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await next.getByTestId('live-approve-reject').click()
+    await detail.getByTestId('live-approve-reject').click()
     expect(((await (await rejectResp).json()) as { code: number }).code).toBe(0)
-    await expect(next.getByTestId('live-approve-comment-text')).toContainText('请去掉违禁词')
-    await expect(next.getByTestId('live-session-status')).toContainText('PENDING_RISK_CHECK')
+    await expect(detail.getByTestId('live-approve-comment-text')).toContainText('请去掉违禁词')
+    await expect(detail.getByTestId('live-session-status')).toContainText('待风控')
     await page.screenshot({ path: `${shotDir}/05-yellow-reject.png`, fullPage: true })
 
     await page.goto('/ims/workbench/messages')
@@ -172,6 +133,34 @@ test.describe('live start yellow red edges', () => {
     await expect(msgRow.first()).toBeVisible({ timeout: 15_000 })
     await expect(msgRow.first()).toContainText('钉钉未外发')
     await page.screenshot({ path: `${shotDir}/06-local-rectify-message.png`, fullPage: true })
+
+    await page.goto('/ims/live/sessions')
+    await page.locator('input[placeholder="场次 ID"]').fill(sessionCode)
+    const listResp = page.waitForResponse(
+      (r) => r.url().includes('/live/sessions/list') && r.request().method() === 'GET' && r.status() === 200,
+    )
+    await page.getByRole('button', { name: '查询' }).click()
+    await listResp
+    await page.locator('tbody tr', { hasText: sessionCode }).first().getByRole('button', { name: '详情' }).click()
+    const again = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-status') })
+    await expect(again).toBeVisible({ timeout: 15_000 })
+    await again.locator('.tab', { hasText: '风控登记' }).click()
+    await again.getByTestId('live-edit-open').click()
+    const edit = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-code-lock') })
+    await expect(edit.getByTestId('live-session-code-lock')).toHaveValue(sessionCode)
+    await edit.getByTestId('live-reg-topic').fill('整改后专场')
+    const saveResp = page.waitForResponse(
+      (r) => r.url().includes(`/live/register/${sessionCode}`) && r.request().method() === 'PUT' && r.status() === 200,
+    )
+    await edit.getByTestId('live-reregister-save').click()
+    expect(((await (await saveResp).json()) as { code: number }).code).toBe(0)
+    const next = page.locator('.drawer.on').filter({ has: page.getByTestId('live-session-status') })
+    await expect(next).toBeVisible({ timeout: 15_000 })
+    await expect(next).toContainText(sessionCode)
+    await expect(next.getByTestId('live-session-status')).toContainText('30', { timeout: 15_000 })
+    await expect(next.getByTestId('live-session-status')).toContainText('绿')
+    await expect(next.getByTestId('live-risk-conclusion')).toContainText('可直接确认开播')
+    await page.screenshot({ path: `${shotDir}/04-same-session-green.png`, fullPage: true })
     expect(pageErrors).toEqual([])
   })
 })

@@ -8,7 +8,7 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 from fastapi.testclient import TestClient
 
 from app.main import app
-from test_live_report_pack import _insert_ended, full_report, headers, register, seed_account
+from test_live_report_pack import _insert_ended, full_report, headers, register, release_entry, seed_account
 
 client = TestClient(app)
 
@@ -32,16 +32,22 @@ def test_pending_keeps_recorded_range_and_blank_live_range():
     assert recorded["actualEnd"]
     assert recorded["actualEnd"] > recorded["actualStart"]
 
-    live = rows[code]
+    assert code not in rows
+    ended = client.put(f"/admin-api/ims/live/register/{code}/end", headers=auth)
+    assert ended.json()["code"] == 0, ended.json()
+    after = client.get("/admin-api/ims/live/report/pending", headers=auth, params={"pageNo": 1, "pageSize": 100})
+    opened = {item["sessionCode"]: item for item in after.json()["data"]["list"]}
+    live = opened[code]
     assert live["entryStatus"] == ""
-    assert live["actualStart"] == ""
-    assert live["actualEnd"] == ""
+    assert live["actualStart"]
+    assert live["actualEnd"]
 
 
 def test_second_confirm_asks_to_refresh():
     auth = headers()
     account_id, person_id, phone_id = seed_account()
     code = register(auth, account_id, person_id, phone_id)
+    release_entry(auth, code)
     filed = client.post(f"/admin-api/ims/live/report/{code}", headers=auth, json=full_report())
     assert filed.json()["code"] == 0, filed.json()
     first = client.put(f"/admin-api/ims/live/report/{code}/confirm", headers=auth)

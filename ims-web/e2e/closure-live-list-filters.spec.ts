@@ -33,8 +33,12 @@ test.describe('live session and alarm list filter tails', () => {
     expect(row?.accountId).toBeTruthy()
     expect(row?.responsibleUserId).toBeTruthy()
 
-    await page.getByTestId('live-filter-account').fill(String(row?.accountId))
-    await page.getByTestId('live-filter-owner').fill(String(row?.responsibleUserId))
+    const account = page.getByTestId('live-filter-account')
+    const owner = page.getByTestId('live-filter-owner')
+    await expect(account.locator(`option[value="${row?.accountId}"]`)).toHaveCount(1, { timeout: 15_000 })
+    await account.selectOption(String(row?.accountId))
+    await expect(owner.locator(`option[value="${row?.responsibleUserId}"]`)).toHaveCount(1, { timeout: 15_000 })
+    await owner.selectOption(String(row?.responsibleUserId))
     const hit = page.waitForResponse((r) => {
       const url = r.url()
       return (
@@ -49,9 +53,9 @@ test.describe('live session and alarm list filter tails', () => {
     await expect(page.locator('tbody tr', { hasText: SESSION })).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: `${shotDir}/01-account-owner-hit.png`, fullPage: true })
 
-    await page.getByTestId('live-filter-account').fill('999999991')
+    await page.locator('input[placeholder="场次 ID"]').fill('IMS19990101DYS0000')
     const miss = page.waitForResponse(
-      (r) => r.url().includes('/live/sessions/list') && r.url().includes('accountId=999999991') && r.status() === 200,
+      (r) => r.url().includes('/live/sessions/list') && r.url().includes('sessionCode=IMS19990101DYS0000') && r.status() === 200,
     )
     await page.locator('form.qbar').getByRole('button', { name: '查询' }).click()
     await miss

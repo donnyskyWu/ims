@@ -2,7 +2,7 @@
   <div class="page">
     <div class="pg-h">
       <div>
-        <h1>直播管理</h1>
+        <h1>{{ ledgerMode ? '直播台账' : '直播管理' }}</h1>
         <div class="sub">场次中心：列表→详情 Tab（数据/风控/下播） · 10 LIVE</div>
       </div>
       <div class="acts">
@@ -20,6 +20,12 @@
     <p v-if="exportError" class="hint bad" data-testid="live-export-error">{{ exportError }}</p>
     <p v-if="slowQueryHint" class="hint" data-testid="live-slow-query">{{ slowQueryHint }}</p>
     <p v-if="hint" class="hint" style="margin-bottom: 8px">{{ hint }}</p>
+    <div v-if="view === 'sessions'" class="g4" data-testid="live-stat-cards">
+      <div class="card stat"><span class="l">今日待开播</span><div class="n" data-testid="live-stat-today">{{ stats.todayPendingStart }}</div></div>
+      <div class="card stat"><span class="l">直播中</span><div class="n" data-testid="live-stat-live">{{ stats.liveCount }}</div></div>
+      <div class="card stat"><span class="l">待录入(24h)</span><div class="n" data-testid="live-stat-entry">{{ stats.entryDue24h }}</div></div>
+      <div class="card stat"><span class="l">本月 GMV(已核准)</span><div class="n" data-testid="live-stat-gmv">{{ stats.monthConfirmedGmv }}</div></div>
+    </div>
     <div class="tabs">
       <div class="tab" :class="{ on: view === 'sessions' }" data-testid="live-view-sessions" @click="view = 'sessions'">场次列表</div>
       <div class="tab" :class="{ on: view === 'pending' }" data-testid="live-view-pending" @click="openPending">
@@ -27,25 +33,17 @@
         <span v-if="overdueCount" data-testid="live-pending-count" style="color: var(--red)">({{ overdueCount }})</span>
       </div>
     </div>
-    <form v-if="view === 'sessions'" class="qbar" @submit.prevent="loadList">
+    <form v-if="view === 'sessions'" class="qbar" @submit.prevent="searchList">
       <input v-model="query.sessionCode" placeholder="场次 ID" style="width: 160px" />
-      <input
-        v-model="query.accountId"
-        inputmode="numeric"
-        data-testid="live-filter-account"
-        placeholder="账号 id"
-        aria-label="账号 id"
-        style="width: 110px"
-      />
-      <input
-        v-model="query.responsibleUserId"
-        inputmode="numeric"
-        data-testid="live-filter-owner"
-        placeholder="责任人 id"
-        aria-label="责任人 id"
-        style="width: 120px"
-      />
-      <select v-model="query.sessionStatus" style="width: 100px">
+      <select v-model="query.accountId" data-testid="live-filter-account" aria-label="直播账号" style="width: 160px">
+        <option value="">全部账号</option>
+        <option v-for="item in regOptions.accounts" :key="item.id" :value="String(item.id)">{{ item.accountName }}</option>
+      </select>
+      <select v-model="query.responsibleUserId" data-testid="live-filter-owner" aria-label="责任人" style="width: 140px">
+        <option value="">全部责任人</option>
+        <option v-for="item in regOptions.users" :key="item.id" :value="String(item.id)">{{ item.nickname || item.username }}</option>
+      </select>
+      <select v-model="query.sessionStatus" data-testid="live-filter-status" style="width: 100px">
         <option value="">全部状态</option>
         <option v-for="s in statusOptions" :key="s.value" :value="s.value">{{ s.label }}</option>
       </select>
@@ -86,7 +84,7 @@
               <th>计划开播</th>
               <th>风险级别</th>
               <th>场次状态</th>
-              <th>Football</th>
+              <th>同步状态</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -113,21 +111,31 @@
             <tr v-for="row in rows" v-else :key="row.sessionCode">
               <td class="mono num" style="color: var(--blue); cursor: pointer" @click="openDetail(row)">
                 {{ row.sessionCode }}
-                <span v-if="row.isSupplement" data-testid="live-supplement-tag">补录</span>
+                <span v-if="row.isSupplement" data-testid="live-supplement-tag" style="margin-left: 6px; color: #8e8e93">补录</span>
+                <span v-if="row.isSupplement && !row.approverUserId" data-testid="live-supplement-pending" style="margin-left: 4px; color: #8e8e93">待审批</span>
               </td>
               <td class="mono" style="font-size: 12px">{{ row.accountNo }}</td>
               <td>{{ row.topic }}</td>
-              <td>{{ row.platform }}</td>
-              <td class="num" style="font-size: 12px">{{ row.planStartTime }}</td>
+              <td>{{ platformText(row.platform) }}</td>
+              <td class="num" style="font-size: 12px">{{ minuteText(row.planStartTime) }}</td>
               <td>
-                <span data-testid="live-risk-level" :data-level="row.riskLevel || ''" :style="{ color: riskColor(row.riskLevel), fontWeight: 600 }">{{ row.riskLevel || '—' }}</span>
+                <span data-testid="live-risk-level" :data-level="row.riskLevel || ''" :style="{ color: riskColor(row.riskLevel), fontWeight: 600 }">{{ riskText(row.riskLevel) }}</span>
               </td>
-              <td>{{ row.sessionStatus }}</td>
+              <td>{{ sessionStatusText(row) }}</td>
               <td>{{ syncLabel(row.footballSyncStatus) }}</td>
               <td>
                 <button class="btn btn-sec btn-sm" type="button" @click="openDetail(row)">详情</button>
                 <button
-                  v-if="row.sessionStatus === 'APPROVED'"
+                  v-if="ledgerMode"
+                  class="btn btn-sec btn-sm"
+                  type="button"
+                  data-testid="live-ledger-penetrate"
+                  @click="openDetail(row)"
+                >
+                  穿透详情
+                </button>
+                <button
+                  v-if="row.sessionStatus === 'APPROVED' && row.startAllowed"
                   class="btn btn-pri btn-sm"
                   type="button"
                   data-testid="live-row-start"
@@ -135,13 +143,27 @@
                 >
                   确认开播
                 </button>
+                <button
+                  v-if="row.sessionStatus === 'LIVE' && row.endAllowed"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="live-row-end"
+                  @click="askEnd(row)"
+                >
+                  确认下播
+                </button>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-      <div class="pager">
+      <div class="pager" data-testid="live-session-pager">
         <span class="pg-total">共 {{ total }} 条</span>
+        <span class="pg-size">20 条/页</span>
+        <span class="pg-sp"></span>
+        <span class="pg-n" :class="{ dis: pageNo <= 1 }" data-testid="live-page-prev" @click="gotoPage(pageNo - 1)">‹</span>
+        <span class="pg-n on">{{ pageNo }}</span>
+        <span class="pg-n" :class="{ dis: pageNo >= pageCount }" data-testid="live-page-next" @click="gotoPage(pageNo + 1)">›</span>
       </div>
     </div>
     <div v-else class="tbl-block" data-testid="live-pending-panel">
@@ -238,34 +260,76 @@
     </div>
 
     <ProtoDrawer :open="registerOpen" :title="registerTitle" width="720px" :z-index="130" @close="closeRegister">
+      <p class="hint">提交后执行风控。证件过期或锁定仍可提交，选择后会出现红字，风控判为红色。</p>
       <div class="formrow one">
         <div v-if="editingCode" class="fld">
           <label>场次 ID（不可变更）</label>
           <input :value="editingCode" readonly data-testid="live-session-code-lock" />
         </div>
         <div class="fld">
-          <label>平台账号 id *</label>
-          <input v-model.number="reg.accountId" type="number" />
+          <label>直播账号 *</label>
+          <select v-model="reg.accountId" data-testid="live-reg-account" :style="regGap('account') ? 'border-color: var(--red)' : ''" @change="onAccountPicked">
+            <option value="">请选择使用中的账号</option>
+            <option v-for="item in regOptions.accounts" :key="item.id" :value="String(item.id)">{{ item.accountName }}（{{ item.accountNo }}）</option>
+          </select>
+          <p v-if="regGap('account')" class="hint bad" data-testid="live-reg-gap-account">必填项，请填写</p>
         </div>
         <div class="fld">
-          <label>实名人 id *</label>
-          <input v-model.number="reg.realnamePersonId" type="number" />
+          <label>实名人 *</label>
+          <select v-model="reg.realnamePersonId" data-testid="live-reg-person" :style="regGap('person') ? 'border-color: var(--red)' : ''" @change="loadCertPreview">
+            <option value="">请选择实名人</option>
+            <option v-for="item in regOptions.realnames" :key="item.id" :value="String(item.id)">{{ item.realName }}{{ item.status === 'ENABLED' ? '' : '（停用）' }}</option>
+          </select>
+          <p v-if="regGap('person')" class="hint bad" data-testid="live-reg-gap-person">必填项，请填写</p>
+          <p v-if="certPreview" class="hint" data-testid="live-reg-cert" :class="{ bad: certPreview.level !== 'PASS' }" :style="certPreview.level === 'FAIL' ? 'color: var(--red)' : certPreview.level === 'WARN' ? 'color: #b8860b' : ''">{{ certPreview.detail }}</p>
         </div>
         <div class="fld">
-          <label>手机设备 id *</label>
-          <input v-model.number="reg.deviceId" type="number" />
+          <label>责任人 *</label>
+          <select v-model="reg.responsibleUserId" data-testid="live-reg-owner" :style="regGap('owner') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择责任人</option>
+            <option v-for="item in regOptions.users" :key="item.id" :value="String(item.id)">{{ item.nickname }}</option>
+          </select>
+          <p v-if="regGap('owner')" class="hint bad" data-testid="live-reg-gap-owner">必填项，请填写</p>
         </div>
         <div class="fld">
-          <label>Football room id（可选）</label>
-          <input v-model="reg.footballRoomId" placeholder="live_room.id" />
+          <label>手机设备 *</label>
+          <select v-model="reg.phoneId" data-testid="live-reg-phone" :style="regGap('phone') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择使用中的手机</option>
+            <option v-for="item in regOptions.phones" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
+          <p v-if="regGap('phone')" class="hint bad" data-testid="live-reg-gap-phone">必填项，请填写</p>
+        </div>
+        <div class="fld">
+          <label>直播设备 *</label>
+          <div data-testid="live-reg-devices" :style="regGap('devices') ? 'border: 1px solid var(--red); padding: 6px' : ''">
+            <p v-if="!regOptions.devices.length" class="hint">暂无使用中的直播/拍摄设备</p>
+            <label v-for="item in regOptions.devices" :key="item.id" style="display: block">
+              <input type="checkbox" :checked="reg.deviceIds.includes(item.id)" @change="toggleDevice(item.id)" />
+              {{ item.assetName }}（{{ item.assetCode }}）
+            </label>
+          </div>
+          <p v-if="regGap('devices')" class="hint bad" data-testid="live-reg-gap-devices">必填项，请填写</p>
+        </div>
+        <div class="fld">
+          <label>直播平台 *</label>
+          <select v-model="reg.platform" data-testid="live-reg-platform" :style="regGap('platform') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择平台</option>
+            <option value="DOUYIN">抖音</option>
+            <option value="KUAISHOU">快手</option>
+            <option value="WECHAT_CHANNELS">视频号</option>
+            <option value="OTHER">其他</option>
+          </select>
+          <p v-if="regGap('platform')" class="hint bad" data-testid="live-reg-gap-platform">必填项，请填写</p>
         </div>
         <div class="fld">
           <label>主题 *</label>
-          <input v-model="reg.topic" />
+          <input v-model="reg.topic" data-testid="live-reg-topic" maxlength="256" :style="regGap('topic') ? 'border-color: var(--red)' : ''" />
+          <p v-if="regGap('topic')" class="hint bad" data-testid="live-reg-gap-topic">必填项，请填写</p>
         </div>
         <div class="fld">
           <label>计划开播 *</label>
-          <input v-model="reg.planStartTime" placeholder="2026-10-06T20:00:00+08:00" />
+          <input v-model="reg.planStartTime" type="datetime-local" data-testid="live-reg-plan" :style="regGap('plan') ? 'border-color: var(--red)' : ''" />
+          <p v-if="regGap('plan')" class="hint bad" data-testid="live-reg-gap-plan">{{ planGapText }}</p>
         </div>
       </div>
       <div v-if="registerError" class="hint bad" data-testid="live-register-error">{{ registerError }}</div>
@@ -279,20 +343,29 @@
     <ProtoDrawer :open="supplementOpen" title="历史补录" width="720px" @close="supplementOpen = false">
       <div v-if="supplementGaps.length" class="empty" data-testid="live-supplement-empty" style="padding: 12px 0 4px">
         <div class="et">历史补录还缺 {{ supplementGaps.length }} 项</div>
-        <div class="es">账号、实名人、设备和补录说明都要填。说明为空返回 1049，审批通过后才入库。</div>
+        <div class="es">账号、实名人、设备和补录说明都要填。说明为空不能提交，审批通过后才入库。</div>
       </div>
       <div class="formrow one">
         <div class="fld">
-          <label>平台账号 id *</label>
-          <input v-model.number="sup.accountId" type="number" data-testid="live-supplement-account" :data-missing="supplementGap('account') ? '1' : '0'" :style="supplementGap('account') ? 'border-color: var(--red)' : ''" />
+          <label>直播账号 *</label>
+          <select v-model="sup.accountId" data-testid="live-supplement-account" :data-missing="supplementGap('account') ? '1' : '0'" :style="supplementGap('account') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择</option>
+            <option v-for="item in regOptions.accounts" :key="item.id" :value="String(item.id)">{{ item.accountName }}</option>
+          </select>
         </div>
         <div class="fld">
-          <label>实名人 id *</label>
-          <input v-model.number="sup.realnamePersonId" type="number" data-testid="live-supplement-person" :data-missing="supplementGap('person') ? '1' : '0'" :style="supplementGap('person') ? 'border-color: var(--red)' : ''" />
+          <label>实名人 *</label>
+          <select v-model="sup.realnamePersonId" data-testid="live-supplement-person" :data-missing="supplementGap('person') ? '1' : '0'" :style="supplementGap('person') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择</option>
+            <option v-for="item in regOptions.realnames" :key="item.id" :value="String(item.id)">{{ item.realName }}</option>
+          </select>
         </div>
         <div class="fld">
-          <label>手机设备 id *</label>
-          <input v-model.number="sup.deviceId" type="number" data-testid="live-supplement-device" :data-missing="supplementGap('device') ? '1' : '0'" :style="supplementGap('device') ? 'border-color: var(--red)' : ''" />
+          <label>手机设备 *</label>
+          <select v-model="sup.deviceId" data-testid="live-supplement-device" :data-missing="supplementGap('device') ? '1' : '0'" :style="supplementGap('device') ? 'border-color: var(--red)' : ''">
+            <option value="">请选择</option>
+            <option v-for="item in regOptions.phones" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+          </select>
         </div>
         <div class="fld">
           <label>主题 *</label>
@@ -300,7 +373,7 @@
         </div>
         <div class="fld">
           <label>计划开播 *</label>
-          <input v-model="sup.planStartTime" data-testid="live-supplement-plan" :data-missing="supplementGap('plan') ? '1' : '0'" :style="supplementGap('plan') ? 'border-color: var(--red)' : ''" />
+          <input v-model="sup.planStartTime" type="datetime-local" data-testid="live-supplement-plan" :data-missing="supplementGap('plan') ? '1' : '0'" :style="supplementGap('plan') ? 'border-color: var(--red)' : ''" />
         </div>
         <div class="fld">
           <label>补录说明 *</label>
@@ -319,6 +392,9 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="detailOpen" :title="detailTitle" width="90%" @close="detailOpen = false">
+      <div v-if="showEnd" class="acts" data-testid="live-detail-head" style="margin-bottom: 8px">
+        <button class="btn btn-pri btn-sm" type="button" data-testid="live-end-btn" @click="askEnd()">确认下播</button>
+      </div>
       <div v-if="detail" class="tabs" data-testid="live-ledger-detail">
         <div v-for="t in tabs" :key="t" class="tab" :class="{ on: tab === t }" @click="switchTab(t)">{{ t }}</div>
       </div>
@@ -330,33 +406,40 @@
         </table>
       </div>
       <div v-else-if="detail && tab === '直播数据'" class="tbl-block" style="margin-top: 12px">
-        <p class="hint">GMV / 峰值 / 涨粉等由下播录入承载；此处只读 live_room。</p>
+        <p class="hint">GMV、峰值、涨粉由下播录入承载。此处只读 Football 直播间，结束时间仅作参考，不改变本场状态。</p>
         <div class="acts" style="margin: 8px 0">
+          <input v-model="roomIdDraft" data-testid="live-room-id" placeholder="直播间 ID" style="width: 140px" />
+          <button class="btn btn-sec btn-sm" type="button" data-testid="live-room-bind" @click="bindRoom">绑定</button>
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-sync-btn" @click="doSync">从 Football 同步</button>
         </div>
         <p v-if="syncError" class="hint bad" data-testid="live-sync-error">{{ syncError }}</p>
         <div v-if="metrics && !metrics.footballRoomBasic" class="empty" data-testid="live-metrics-empty">
-          <div class="et">未绑定 Football 房间</div>
-          <div class="es">观看、点赞、预约留在 live_room；GMV 仍走下播录入。</div>
+          <div class="et">未绑定 Football 直播间</div>
+          <div class="es">绑定直播间后可看到观看、点赞和预约。GMV 仍走下播录入。</div>
         </div>
-        <table v-if="metrics" class="ipg-info-grid">
+        <table v-if="metrics" class="ipg-info-grid" data-testid="live-room-basic">
           <tbody>
             <tr><td class="lbl">同步态</td><td>{{ syncLabel(metrics.syncStatus) }}</td></tr>
-            <tr><td class="lbl">roomId</td><td>{{ metrics.footballRoomId || '—' }}</td></tr>
+            <tr><td class="lbl">上次同步</td><td data-testid="live-room-synced-at">{{ minuteText(metrics.lastSyncAt) }}</td></tr>
+            <tr><td class="lbl">直播间</td><td>{{ metrics.footballRoomId || '—' }}</td></tr>
             <template v-if="metrics.footballRoomBasic">
-              <tr><td class="lbl">直播名称</td><td>{{ metrics.footballRoomBasic.liveName }}</td></tr>
-              <tr><td class="lbl">作者</td><td>{{ metrics.footballRoomBasic.authorNickname }}</td></tr>
-              <tr><td class="lbl">观看人数</td><td>{{ metrics.footballRoomBasic.viewerCount }}</td></tr>
-              <tr><td class="lbl">点赞</td><td>{{ metrics.footballRoomBasic.likeCount }}</td></tr>
-              <tr><td class="lbl">预约</td><td>{{ metrics.footballRoomBasic.reservationCount }}</td></tr>
+              <tr><td class="lbl">直播名称</td><td>{{ metrics.footballRoomBasic.liveName || '—' }}</td></tr>
+              <tr><td class="lbl">作者</td><td>{{ metrics.footballRoomBasic.authorNickname || '—' }}</td></tr>
+              <tr><td class="lbl">直播间状态</td><td data-testid="live-room-status">{{ roomStatusLabel(metrics.footballRoomBasic.status) }}</td></tr>
+              <tr><td class="lbl">开始时间</td><td>{{ minuteText(metrics.footballRoomBasic.startTime) }}</td></tr>
+              <tr><td class="lbl">结束时间</td><td data-testid="live-room-end">{{ minuteText(metrics.footballRoomBasic.endTime) }}</td></tr>
+              <tr><td class="lbl">观看人数</td><td>{{ metrics.footballRoomBasic.viewerCount ?? '—' }}</td></tr>
+              <tr><td class="lbl">点赞</td><td>{{ metrics.footballRoomBasic.likeCount ?? '—' }}</td></tr>
+              <tr><td class="lbl">预约</td><td>{{ metrics.footballRoomBasic.reservationCount ?? '—' }}</td></tr>
             </template>
           </tbody>
         </table>
+        <p v-if="metrics?.footballRoomBasic?.endTime" class="hint" data-testid="live-room-end-ref">直播间结束时间只作参考，不会因此改变本场状态。</p>
       </div>
       <div v-else-if="detail && tab === '风控登记'" class="tbl-block" style="margin-top: 12px">
         <div class="acts" style="margin-bottom: 8px">
-          <button class="btn btn-pri btn-sm" type="button" @click="doRisk">执行风控</button>
-          <button class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
+          <button v-if="showRiskRun" class="btn btn-pri btn-sm" type="button" data-testid="live-risk-run" @click="doRisk">执行风控</button>
+          <button v-if="showStart" class="btn btn-sec btn-sm" type="button" data-testid="live-start-btn" @click="doStart">确认开播</button>
           <button v-if="showReregister" class="btn btn-sec btn-sm" type="button" data-testid="live-reregister-open" @click="openEdit">重新登记整改</button>
           <button v-if="showEdit" class="btn btn-sec btn-sm" type="button" data-testid="live-edit-open" @click="openEdit">编辑</button>
           <button v-if="showCancel" class="btn btn-sec btn-sm" type="button" data-testid="live-cancel-open" @click="cancelForm = true">取消场次</button>
@@ -371,7 +454,7 @@
           </div>
         </div>
         <p v-if="actionError" class="hint bad" data-testid="live-action-error">{{ actionError }}</p>
-        <p data-testid="live-session-status">风险分 {{ detail.riskScore ?? '—' }} · {{ detail.riskLevel || '—' }} · 状态 {{ detail.sessionStatus }}</p>
+        <p data-testid="live-session-status" :data-status="detail.sessionStatus" :data-level="detail.riskLevel || ''">风险分 {{ detail.riskScore ?? '—' }} · {{ riskText(detail.riskLevel) }} · 状态 {{ sessionStatusText(detail) }}</p>
         <p v-if="riskConclusion" data-testid="live-risk-conclusion" :style="{ color: riskColor(detail.riskLevel), fontWeight: 600 }">{{ riskConclusion }}</p>
         <p v-if="startBlockedHint" class="hint bad" data-testid="live-start-blocked">{{ startBlockedHint }}</p>
         <p v-if="detail.yellowNotice" data-testid="live-yellow-notice">{{ detail.yellowNotice }}</p>
@@ -404,11 +487,12 @@
           <div class="es">五项检查待落库：证件、账号、话费、违禁词、设备</div>
         </div>
         <table v-else>
-          <thead><tr><th>检查项</th><th>结果</th><th>权重分</th></tr></thead>
+          <thead><tr><th>检查项</th><th>结果</th><th>说明</th><th>权重分</th></tr></thead>
           <tbody>
             <tr v-for="c in detail.riskCheckResults" :key="c.checkItem" data-testid="live-risk-check" :data-result="c.checkResult">
               <td>{{ checkItemLabel(c.checkItem) }}</td>
               <td :style="{ color: checkColor(c.checkResult), fontWeight: 600 }">{{ checkResultLabel(c.checkResult) }}</td>
+              <td data-testid="live-risk-detail">{{ c.detail || '—' }}</td>
               <td>{{ c.scoreWeight }}</td>
             </tr>
           </tbody>
@@ -419,14 +503,16 @@
           <div class="et">加载中</div>
         </div>
         <template v-else>
+        <p v-if="!entryOpen" class="hint bad" data-testid="live-report-locked">场次未下播，下播录入在状态为已下播后开放</p>
+        <template v-if="entryOpen">
         <div v-if="!report" class="empty" data-testid="live-report-empty" style="padding: 12px 0">
           <div class="et">待录入</div>
-          <div class="es">下播九项还没提交。缺字段返回 1046，提交后只能走更正单。</div>
+          <div class="es">下播九项还没提交。缺字段不能提交，提交后只能走更正单。</div>
         </div>
         <p v-if="financeView" class="hint" data-testid="live-report-finance-scope">财务字段：仅 GMV 与成本</p>
         <p v-if="report?.fieldScope === 'MASKED'" class="hint" data-testid="live-report-cost-masked">成本已脱敏</p>
         <div v-if="report" class="hint" data-testid="live-report-headline">
-          录入状态 {{ report.entryStatus || '—' }} · GMV ¥{{ displayMoney(report.gmv) }}
+          录入状态 {{ entryText(report.entryStatus) }} · GMV ¥{{ displayMoney(report.gmv) }}
           · 客单价 <span data-testid="live-report-aov">{{ displayMoney(report.avgOrderValue) }}</span>
           · ROAS <span data-testid="live-report-roas">{{ displayMoney(report.roas) }}</span>
           · 时长 {{ reportDurationText }}
@@ -435,19 +521,39 @@
           UV价值 <span data-testid="live-report-uv">{{ reportUvText }}</span>
           · 时长 <span data-testid="live-report-duration">{{ reportDurationText }}</span>
         </p>
+        <div :style="correcting ? 'display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start' : ''" data-testid="live-correction-compare">
+          <div v-if="correcting" data-testid="live-correction-original">
+            <b>原值</b>
+            <div class="fld"><label>实际开始</label><div>{{ originalReport.actualStart || '—' }}</div></div>
+            <div class="fld"><label>实际结束</label><div>{{ originalReport.actualEnd || '—' }}</div></div>
+            <div class="fld"><label>GMV</label><div>{{ originalReport.gmv || '—' }}</div></div>
+            <div class="fld"><label>订单数</label><div>{{ originalReport.orderCount || '—' }}</div></div>
+            <div class="fld"><label>观看人数</label><div>{{ originalReport.viewerCount || '—' }}</div></div>
+            <div class="fld"><label>峰值在线</label><div>{{ originalReport.peakOnline || '—' }}</div></div>
+            <div class="fld"><label>涨粉</label><div>{{ originalReport.newFans || '—' }}</div></div>
+            <div class="fld"><label>退款</label><div>{{ originalReport.refundAmount || '—' }}</div></div>
+            <div class="fld"><label>投放成本</label><div>{{ originalReport.adCost || '—' }}</div></div>
+          </div>
+          <div>
+            <b v-if="correcting">更正后</b>
         <div class="formrow one">
-          <div v-if="showOpsFields" class="fld"><label>实际开始</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>实际结束</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
-          <div class="fld"><label>GMV</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>订单数</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" :style="fieldMissing('orderCount') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>观看人数</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" :style="fieldMissing('viewerCount') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>峰值在线</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" :style="fieldMissing('peakOnline') ? 'border-color: var(--red)' : ''" /></div>
-          <div v-if="showOpsFields" class="fld"><label>涨粉</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" :style="fieldMissing('newFans') ? 'border-color: var(--red)' : ''" /></div>
-          <div class="fld"><label>退款</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('refundAmount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际开始 *</label><input v-model="reportForm.actualStart" data-testid="live-report-start" :readonly="reportLocked && !correcting" :style="fieldMissing('actualStart') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>实际结束 *</label><input v-model="reportForm.actualEnd" data-testid="live-report-end" :readonly="reportLocked && !correcting" :style="fieldMissing('actualEnd') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>GMV *</label><input v-model="reportForm.gmv" type="number" step="0.01" data-testid="live-report-gmv" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('gmv') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>订单数 *</label><input v-model="reportForm.orderCount" type="number" data-testid="live-report-orders" :readonly="reportLocked && !correcting" :style="fieldMissing('orderCount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld">
+            <label>客单价</label>
+            <div data-testid="live-report-live-aov">{{ liveAov }}</div>
+          </div>
+          <div v-if="showOpsFields" class="fld"><label>观看人数 *</label><input v-model="reportForm.viewerCount" type="number" data-testid="live-report-viewers" :readonly="reportLocked && !correcting" :style="fieldMissing('viewerCount') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>峰值在线 *</label><input v-model="reportForm.peakOnline" type="number" data-testid="live-report-peak" :readonly="reportLocked && !correcting" :style="fieldMissing('peakOnline') ? 'border-color: var(--red)' : ''" /></div>
+          <div v-if="showOpsFields" class="fld"><label>涨粉 *</label><input v-model="reportForm.newFans" type="number" data-testid="live-report-fans" :readonly="reportLocked && !correcting" :style="fieldMissing('newFans') ? 'border-color: var(--red)' : ''" /></div>
+          <div class="fld"><label>退款 *</label><input v-model="reportForm.refundAmount" type="number" step="0.01" data-testid="live-report-refund" :readonly="financeView || (reportLocked && !correcting)" :style="fieldMissing('refundAmount') ? 'border-color: var(--red)' : ''" /></div>
           <div class="fld">
-            <label>投放成本</label>
+            <label>投放成本 *</label>
             <input v-model="reportForm.adCost" data-testid="live-report-ad" :readonly="financeView || report?.fieldScope === 'MASKED' || (reportLocked && !correcting)" :style="fieldMissing('adCost') ? 'border-color: var(--red)' : ''" />
             <p class="hint" data-testid="live-ad-cost-hint">投放成本将关联冲话费记录核对。</p>
+            <p class="hint">ROAS <span data-testid="live-report-live-roas">{{ liveRoas }}</span></p>
           </div>
           <div v-if="showCostEditor" class="fld">
             <label>成本明细</label>
@@ -471,13 +577,16 @@
             <p class="hint" data-testid="live-correction-reason-hint">更正原因必填。留空不会生成更正单。</p>
           </div>
         </div>
+          </div>
+        </div>
         <ul v-if="costLines.length" data-testid="live-cost-details">
           <li v-for="(item, index) in costLines" :key="index">{{ costLabel(item.costType) }} {{ displayMoney(item.amount) }}</li>
         </ul>
         <p v-else-if="report" class="hint" data-testid="live-cost-empty">暂无成本明细</p>
         <p v-if="reportError" class="hint bad" data-testid="live-report-error">{{ reportError }}</p>
         <p v-if="correctionTrace" class="hint" data-testid="live-correction-trace">
-          更正单 {{ correctionTrace.correctionId }} · GMV {{ correctionTrace.before?.gmv }} → {{ correctionTrace.after?.gmv }}
+          更正单 {{ correctionTrace.correctionId }}
+          <span v-for="line in correctionTrace.changes || []" :key="line" data-testid="live-correction-change">{{ line }}</span>
         </p>
         <div data-testid="live-correction-slips" style="margin-top: 8px">
           <div v-if="!correctionSlips.length" class="empty" data-testid="live-correction-empty">
@@ -487,6 +596,7 @@
           <ul v-else>
             <li v-for="slip in correctionSlips" :key="slip.id" data-testid="live-correction-slip">
               更正单 {{ slip.id }} · {{ slip.correctionReason || '—' }}
+              <div v-for="line in slip.changes || []" :key="line" data-testid="live-correction-change">{{ line }}</div>
             </li>
           </ul>
         </div>
@@ -502,14 +612,26 @@
           >
             核准下播
           </button>
-          <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-direct-save" @click="directSave">保存修改</button>
-          <button v-if="reportLocked && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
+          <button v-if="canCorrect && !correcting" class="btn btn-sec btn-sm" type="button" data-testid="live-report-correction-open" @click="openCorrection">更正</button>
           <button v-if="correcting" class="btn btn-pri btn-sm" type="button" data-testid="live-report-correction-submit" @click="submitCorrection">提交更正单</button>
         </div>
         </template>
+        </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
-        <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
+        <h3 style="margin: 0 0 8px">绑定设备</h3>
+        <ul v-if="detail.boundDevices?.length" data-testid="live-bound-devices">
+          <li v-for="item in detail.boundDevices" :key="`${item.kind}-${item.id}`">
+            <router-link :to="deviceLink(item)">{{ item.assetName }}<template v-if="item.assetCode && item.assetCode !== item.assetName">（{{ item.assetCode }}）</template></router-link>
+          </li>
+        </ul>
+        <p v-else class="hint" data-testid="live-bound-empty">暂无绑定设备</p>
+        <p class="hint" data-testid="live-related-alarm-title">告警摘要</p>
+        <router-link
+          class="btn btn-sec btn-sm"
+          data-testid="live-view-alarms"
+          :to="{ path: '/ims/live/alarm', query: { sessionCode: detail.sessionCode } }"
+        >查看告警</router-link>
         <table v-if="alarms.length">
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
           <tbody>
@@ -524,6 +646,20 @@
         </div>
       </div>
     </ProtoDrawer>
+    <div
+      v-if="endAsk"
+      data-testid="live-end-dialog"
+      style="position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center"
+    >
+      <div class="card" style="padding: 16px; max-width: 440px">
+        <p data-testid="live-end-copy">确认下播后开始 24 小时数据录入计时，确定下播？</p>
+        <p v-if="actionError" class="hint bad">{{ actionError }}</p>
+        <div class="acts" style="margin-top: 12px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="live-end-confirm" @click="doEnd">确定下播</button>
+          <button class="btn btn-sec btn-sm" type="button" data-testid="live-end-dismiss" @click="endAsk = false">取消</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -549,6 +685,7 @@ async function apiPut(url: string, body?: unknown) {
 }
 
 const route = useRoute()
+const ledgerMode = computed(() => route.path.includes('/live/ledger'))
 const loading = ref(false)
 const error = ref('')
 const hint = ref('')
@@ -567,11 +704,23 @@ const overdueCount = ref(0)
 const overdueOnly = ref(false)
 const reportError = ref('')
 const syncError = ref('')
+const roomIdDraft = ref('')
 const reportMissing = ref<string[]>([])
 const reportBadField = ref('')
 const slowQueryHint = ref('')
 const correcting = ref(false)
 const correctionReason = ref('')
+const originalReport = reactive({
+  actualStart: '',
+  actualEnd: '',
+  gmv: '',
+  orderCount: '',
+  viewerCount: '',
+  peakOnline: '',
+  newFans: '',
+  refundAmount: '',
+  adCost: '',
+})
 const correctionTrace = ref<any>(null)
 const correctionSlips = ref<any[]>([])
 const query = reactive({
@@ -586,6 +735,15 @@ const query = reactive({
   timeTo: '',
 })
 const pendingOwner = ref('')
+const pageNo = ref(1)
+const pageSize = 20
+const stats = reactive({
+  todayPendingStart: 0,
+  liveCount: 0,
+  entryDue24h: 0,
+  monthConfirmedGmv: 0,
+})
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const statusOptions = [
   { value: 'PENDING_RISK_CHECK', label: '待风控' },
   { value: 'APPROVED', label: '已放行' },
@@ -601,25 +759,52 @@ const actionError = ref('')
 const approveComment = ref('')
 const cancelForm = ref(false)
 const cancelReason = ref('')
+const endAsk = ref(false)
+const endCode = ref('')
 const supplementOpen = ref(false)
 const supplementError = ref('')
 const supplementComment = ref('')
 const sup = reactive({
-  accountId: 0,
-  realnamePersonId: 0,
-  deviceId: 0,
+  accountId: '',
+  realnamePersonId: '',
+  deviceId: '',
   topic: '历史场次补录',
-  planStartTime: '2020-01-15T20:00:00+08:00',
+  planStartTime: '2020-01-15T20:00',
   supplementReason: '',
   gmv: 100,
 })
+type RegOptionAccount = {
+  id: number
+  accountNo: string
+  accountName: string
+  platform: string
+  realnamePersonId: number
+  holderUserId: number
+}
+type RegOptionPerson = { id: number; realName: string; status: string }
+type RegOptionPhone = { id: number; label: string }
+type RegOptionDevice = { id: number; assetCode: string; assetName: string; assetType: string }
+type RegOptionUser = { id: number; nickname: string; username: string }
+
+const regOptions = reactive({
+  currentUserId: 0,
+  accounts: [] as RegOptionAccount[],
+  realnames: [] as RegOptionPerson[],
+  phones: [] as RegOptionPhone[],
+  devices: [] as RegOptionDevice[],
+  users: [] as RegOptionUser[],
+})
+const regGaps = ref<string[]>([])
+const certPreview = ref<{ level: string; detail: string; blocked?: boolean } | null>(null)
 const reg = reactive({
-  accountId: 0,
-  realnamePersonId: 0,
-  deviceId: 0,
-  footballRoomId: '',
-  topic: 'IMS 直播专场',
-  planStartTime: '2026-10-06T20:00:00+08:00',
+  accountId: '',
+  realnamePersonId: '',
+  responsibleUserId: '',
+  phoneId: '',
+  deviceIds: [] as number[],
+  platform: '',
+  topic: '',
+  planStartTime: '',
 })
 let clientToken = ''
 
@@ -633,15 +818,15 @@ const alarms = ref<any[]>([])
 const tab = ref('基本信息')
 const tabs = ['基本信息', '直播数据', '风控登记', '下播与 GMV', '关联']
 const reportForm = reactive({
-  actualStart: '2026-10-06T20:00:00+08:00',
-  actualEnd: '2026-10-06T22:00:00+08:00',
-  gmv: '1000',
-  orderCount: '10',
-  viewerCount: '500',
-  peakOnline: '80',
-  newFans: '20',
-  refundAmount: '0',
-  adCost: '100',
+  actualStart: '',
+  actualEnd: '',
+  gmv: '',
+  orderCount: '',
+  viewerCount: '',
+  peakOnline: '',
+  newFans: '',
+  refundAmount: '',
+  adCost: '',
 })
 const costLines = ref<{ costType: string; amount: unknown; remark?: string }[]>([])
 const costDraft = reactive({ costType: 'GIFT', amount: '' })
@@ -698,7 +883,16 @@ function supplementGap(key: string) {
   return supplementGaps.value.includes(key)
 }
 
-const reportLocked = computed(() => !!report.value && report.value.entryStatus !== 'DRAFT')
+const entryOpen = computed(() => detail.value?.sessionStatus === 'ENDED')
+const reportLocked = computed(() => !entryOpen.value || (!!report.value && report.value.entryStatus !== 'DRAFT'))
+const canCorrect = computed(
+  () => entryOpen.value && !!report.value && (report.value.entryStatus === 'SUBMITTED' || report.value.entryStatus === 'CONFIRMED'),
+)
+const showRiskRun = computed(() => {
+  const status = detail.value?.sessionStatus
+  return status === 'PENDING_RISK_CHECK' || status === 'APPROVED'
+})
+const showStart = computed(() => detail.value?.sessionStatus === 'APPROVED' && !!detail.value?.startAllowed)
 const financeView = computed(() => report.value?.fieldScope === 'FINANCE')
 const showOpsFields = computed(() => !financeView.value)
 const showCostEditor = computed(() => !financeView.value && (!reportLocked.value || correcting.value))
@@ -726,16 +920,30 @@ function costLabel(kind: string) {
 }
 
 function resetReportForm() {
-  reportForm.actualStart = '2026-10-06T20:00:00+08:00'
-  reportForm.actualEnd = '2026-10-06T22:00:00+08:00'
-  reportForm.gmv = '1000'
-  reportForm.orderCount = '10'
-  reportForm.viewerCount = '500'
-  reportForm.peakOnline = '80'
-  reportForm.newFans = '20'
-  reportForm.refundAmount = '0'
-  reportForm.adCost = '100'
+  reportForm.actualStart = ''
+  reportForm.actualEnd = ''
+  reportForm.gmv = ''
+  reportForm.orderCount = ''
+  reportForm.viewerCount = ''
+  reportForm.peakOnline = ''
+  reportForm.newFans = ''
+  reportForm.refundAmount = ''
+  reportForm.adCost = ''
 }
+
+const liveAov = computed(() => {
+  const gmv = Number(reportForm.gmv)
+  const orders = Number(reportForm.orderCount)
+  if (reportForm.gmv === '' || reportForm.orderCount === '' || !Number.isFinite(gmv) || !Number.isFinite(orders) || orders <= 0) return '—'
+  return (gmv / orders).toFixed(2)
+})
+
+const liveRoas = computed(() => {
+  const gmv = Number(reportForm.gmv)
+  const ad = Number(reportForm.adCost)
+  if (reportForm.gmv === '' || reportForm.adCost === '' || reportForm.adCost === '***' || !Number.isFinite(gmv) || !Number.isFinite(ad) || ad <= 0) return '—'
+  return (gmv / ad).toFixed(2)
+})
 
 function applyReport(data: Record<string, unknown> | null) {
   if (!data) {
@@ -842,14 +1050,14 @@ const sessionsEmptyHint = computed(() => {
     query.timeTo
   return narrowed
     ? '没有符合当前账号、责任人或筛选条件的场次。'
-    : '登记后生成 19 位场次 ID；直播数据 Tab 只读 live_room。'
+    : '登记后生成 19 位场次 ID。直播数据页只读 Football 直播间。'
 })
 
 function ledgerQueryParams(withPage: boolean) {
   const params = new URLSearchParams()
   if (withPage) {
-    params.set('pageNo', '1')
-    params.set('pageSize', '20')
+    params.set('pageNo', String(pageNo.value))
+    params.set('pageSize', String(pageSize))
   }
   const sessionCode = query.sessionCode.trim()
   if (sessionCode) params.set('sessionCode', sessionCode)
@@ -872,6 +1080,65 @@ function bindCorrections(source: any) {
   correctionSlips.value = Array.isArray(source?.corrections) ? source.corrections : []
 }
 
+function minuteText(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return '—'
+  return text.replace('T', ' ').slice(0, 16)
+}
+
+const SESSION_STATUS_TEXT: Record<string, string> = {
+  PENDING_RISK_CHECK: '待风控',
+  APPROVED: '已放行',
+  LIVE: '直播中',
+  ENDED: '已下播',
+  CANCELLED: '已取消',
+}
+const RISK_TEXT: Record<string, string> = { GREEN: '绿', YELLOW: '黄', RED: '红' }
+const ENTRY_TEXT: Record<string, string> = {
+  DRAFT: '草稿',
+  SUBMITTED: '已提交',
+  CONFIRMED: '已核准',
+  PENDING_RISK_CHECK: '待风控',
+  LIVE: '直播中',
+}
+const PLATFORM_TEXT: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  OTHER: '其他',
+}
+
+function sessionStatusText(row?: { sessionStatus?: string; isSupplement?: boolean; approverUserId?: number | null }) {
+  if (row?.isSupplement && !row?.approverUserId) return '待审批'
+  return SESSION_STATUS_TEXT[row?.sessionStatus || ''] || row?.sessionStatus || '—'
+}
+
+function riskText(level?: string) {
+  if (!level) return '—'
+  return RISK_TEXT[level] || level
+}
+
+function entryText(status?: string) {
+  if (!status) return '—'
+  return ENTRY_TEXT[status] || status
+}
+
+function platformText(code?: string) {
+  if (!code) return '—'
+  return PLATFORM_TEXT[code] || code
+}
+
+function roomStatusLabel(status: unknown) {
+  const map: Record<string, string> = { '1': '未开始', '2': '直播中', '3': '已结束', '4': '过期', '5': '暂停' }
+  return map[String(status ?? '')] || '—'
+}
+
+function deviceLink(item: { kind?: string; assetCode?: string; assetName?: string }) {
+  const keyword = item.assetCode || item.assetName || ''
+  if (item.kind === 'PHONE') return { path: '/ims/corp/device/phone', query: keyword ? { keyword } : {} }
+  return { path: '/ims/corp/device/live', query: keyword ? { keyword } : {} }
+}
+
 function syncLabel(v: string | undefined) {
   const map: Record<string, string> = {
     UNLINKED: '未关联',
@@ -891,6 +1158,11 @@ async function loadList() {
     const res = await apiGet(`/live/sessions/list?${ledgerQueryParams(true).toString()}`)
     rows.value = res.list || []
     total.value = res.total || 0
+    const board = res.stats || {}
+    stats.todayPendingStart = Number(board.todayPendingStart || 0)
+    stats.liveCount = Number(board.liveCount || 0)
+    stats.entryDue24h = Number(board.entryDue24h || 0)
+    stats.monthConfirmedGmv = Number(board.monthConfirmedGmv || 0)
   } catch (e: unknown) {
     error.value = errorMessage(e)
     rows.value = []
@@ -903,7 +1175,19 @@ async function loadList() {
   }
 }
 
+function searchList() {
+  pageNo.value = 1
+  loadList()
+}
+
+function gotoPage(page: number) {
+  if (page < 1 || page > pageCount.value || page === pageNo.value) return
+  pageNo.value = page
+  loadList()
+}
+
 function resetQuery() {
+  pageNo.value = 1
   query.sessionCode = ''
   query.accountId = ''
   query.responsibleUserId = ''
@@ -951,7 +1235,7 @@ function unwrapError(error: unknown) {
 function bizError(error: unknown) {
   const body = unwrapError(error) as { code?: number; msg?: string }
   if (body && typeof body === 'object' && typeof body.code === 'number' && body.code !== 0) {
-    return `${body.code} ${body.msg || ''}`.trim()
+    return (body.msg || '操作失败').trim()
   }
   return errorMessage(error)
 }
@@ -1028,11 +1312,144 @@ function checkResultLabel(result: string) {
   return result
 }
 
-function openRegister() {
+function shanghaiLocalInput(date: Date) {
+  const text = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(date)
+  return text.replace(' ', 'T')
+}
+
+function planIso(local: string) {
+  if (!local) return ''
+  return local.length === 16 ? `${local}:00+08:00` : local
+}
+
+function supplementEndIso(local: string) {
+  const start = new Date(planIso(local))
+  if (Number.isNaN(start.getTime())) return ''
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000)
+  const text = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(end)
+  return `${text.replace(' ', 'T')}+08:00`
+}
+
+function planIsFuture(local: string) {
+  if (!local) return false
+  const parsed = new Date(planIso(local))
+  return !Number.isNaN(parsed.getTime()) && parsed.getTime() > Date.now()
+}
+
+function defaultPlanLocal() {
+  return shanghaiLocalInput(new Date(Date.now() + 2 * 60 * 60 * 1000))
+}
+
+function isoToLocal(value: string) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value.slice(0, 16)
+  return shanghaiLocalInput(parsed)
+}
+
+function regGap(key: string) {
+  return regGaps.value.includes(key)
+}
+
+const planGapText = computed(() => {
+  if (!reg.planStartTime) return '必填项，请填写'
+  return '计划开播须晚于当前时间'
+})
+
+function resetReg() {
+  reg.accountId = ''
+  reg.realnamePersonId = ''
+  reg.responsibleUserId = regOptions.currentUserId ? String(regOptions.currentUserId) : ''
+  reg.phoneId = ''
+  reg.deviceIds = []
+  reg.platform = ''
+  reg.topic = ''
+  reg.planStartTime = defaultPlanLocal()
+  regGaps.value = []
+  certPreview.value = null
+}
+
+async function loadRegOptions() {
+  const data = await apiGet('/live/register/options')
+  regOptions.currentUserId = Number(data.currentUserId || 0)
+  regOptions.accounts = data.accounts || []
+  regOptions.realnames = data.realnames || []
+  regOptions.phones = data.phones || []
+  regOptions.devices = data.devices || []
+  regOptions.users = data.users || []
+  if (!reg.responsibleUserId && regOptions.currentUserId) {
+    reg.responsibleUserId = String(regOptions.currentUserId)
+  }
+}
+
+function onAccountPicked() {
+  const hit = regOptions.accounts.find((item) => String(item.id) === reg.accountId)
+  if (!hit) return
+  if (hit.platform) reg.platform = hit.platform
+  if (hit.realnamePersonId) {
+    reg.realnamePersonId = String(hit.realnamePersonId)
+    loadCertPreview()
+  }
+  if (hit.holderUserId) reg.responsibleUserId = String(hit.holderUserId)
+}
+
+function toggleDevice(id: number) {
+  if (reg.deviceIds.includes(id)) reg.deviceIds = reg.deviceIds.filter((item) => item !== id)
+  else reg.deviceIds = [...reg.deviceIds, id]
+}
+
+async function loadCertPreview() {
+  certPreview.value = null
+  const id = Number(reg.realnamePersonId)
+  if (!id) return
+  try {
+    certPreview.value = await apiGet('/live/register/cert-preview', { realnamePersonId: id })
+  } catch (e: unknown) {
+    certPreview.value = { level: 'FAIL', detail: bizError(e) }
+  }
+}
+
+function collectRegGaps() {
+  const gaps: string[] = []
+  if (!reg.accountId) gaps.push('account')
+  if (!reg.realnamePersonId) gaps.push('person')
+  if (!reg.responsibleUserId) gaps.push('owner')
+  if (!reg.phoneId) gaps.push('phone')
+  if (regOptions.devices.length && !reg.deviceIds.length) gaps.push('devices')
+  if (!reg.platform) gaps.push('platform')
+  if (!String(reg.topic || '').trim()) gaps.push('topic')
+  if (!reg.planStartTime || !planIsFuture(reg.planStartTime)) gaps.push('plan')
+  return gaps
+}
+
+async function openRegister() {
   editingCode.value = ''
   clientToken = crypto.randomUUID()
   registerError.value = ''
+  resetReg()
   registerOpen.value = true
+  try {
+    await loadRegOptions()
+  } catch (e: unknown) {
+    registerError.value = bizError(e)
+  }
 }
 
 function closeRegister() {
@@ -1045,34 +1462,69 @@ function closeRegister() {
   }
 }
 
-function openEdit() {
+async function openEdit() {
   if (!detail.value) return
   const current = detail.value
   editingCode.value = current.sessionCode
-  reg.accountId = current.accountId
-  reg.realnamePersonId = current.realnamePersonId
-  reg.deviceId = current.deviceAssetIds?.[0] || 0
-  reg.footballRoomId = current.footballRoomId || ''
-  reg.topic = current.topic || ''
-  reg.planStartTime = current.planStartTime || ''
   registerError.value = ''
+  regGaps.value = []
   registerOpen.value = true
+  try {
+    await loadRegOptions()
+  } catch (e: unknown) {
+    registerError.value = bizError(e)
+  }
+  reg.accountId = current.accountId ? String(current.accountId) : ''
+  reg.realnamePersonId = current.realnamePersonId ? String(current.realnamePersonId) : ''
+  reg.responsibleUserId = current.responsibleUserId ? String(current.responsibleUserId) : ''
+  const raw = (current.deviceAssetIds || []) as Array<number | { kind?: string; id?: number }>
+  const phones: number[] = []
+  const assets: number[] = []
+  for (const item of raw) {
+    if (item && typeof item === 'object') {
+      const id = Number(item.id)
+      if (!id) continue
+      if (String(item.kind || '').toUpperCase() === 'ASSET') assets.push(id)
+      else phones.push(id)
+    } else if (Number(item)) {
+      const id = Number(item)
+      if (regOptions.devices.some((row) => row.id === id)) assets.push(id)
+      else phones.push(id)
+    }
+  }
+  reg.phoneId = phones.length ? String(phones[0]) : ''
+  reg.deviceIds = assets
+  reg.platform = current.platform || ''
+  reg.topic = current.topic || ''
+  reg.planStartTime = isoToLocal(current.planStartTime || '') || defaultPlanLocal()
+  if (reg.realnamePersonId) await loadCertPreview()
 }
 
 async function submitRegister() {
   hint.value = ''
   registerError.value = ''
+  regGaps.value = collectRegGaps()
+  if (regGaps.value.length) return
+  if (String(reg.topic).trim().length > 256) {
+    registerError.value = '主题不能超过 256 字'
+    return
+  }
   try {
+    const deviceAssetIds = [
+      { kind: 'PHONE', id: Number(reg.phoneId) },
+      ...reg.deviceIds
+        .filter((id) => id !== Number(reg.phoneId))
+        .map((id) => ({ kind: 'ASSET', id })),
+    ]
     const body = {
-      accountId: reg.accountId,
-      realnamePersonId: reg.realnamePersonId,
-      responsibleUserId: editingCode.value ? detail.value?.responsibleUserId || 1 : 1,
-      deviceAssetIds: [reg.deviceId],
-      platform: editingCode.value ? detail.value?.platform || 'DOUYIN' : 'DOUYIN',
-      topic: reg.topic,
-      planStartTime: reg.planStartTime,
+      accountId: Number(reg.accountId),
+      realnamePersonId: Number(reg.realnamePersonId),
+      responsibleUserId: Number(reg.responsibleUserId),
+      deviceAssetIds,
+      platform: reg.platform,
+      topic: reg.topic.trim(),
+      planStartTime: planIso(reg.planStartTime),
       planEndTime: '',
-      footballRoomId: reg.footballRoomId || undefined,
     }
     if (editingCode.value) {
       const code = editingCode.value
@@ -1106,10 +1558,15 @@ const basicLines = computed(() => {
     { k: '实名人', v: d.realnameName },
     { k: '责任人', v: d.responsibleUserName },
     { k: '主题', v: d.topic },
-    { k: '状态', v: d.sessionStatus },
+    { k: '状态', v: sessionStatusText(d) },
+    { k: '平台', v: platformText(d.platform) },
+    { k: '计划开播', v: minuteText(d.planStartTime) },
+    { k: '实际开播', v: minuteText(d.actualStart) },
+    { k: '实际下播', v: minuteText(d.actualEnd) },
+    { k: '实际时长', v: d.durationMinutes == null ? '—' : `${d.durationMinutes} 分钟` },
     { k: '取消原因', v: d.cancelReason || '—' },
     { k: '补录', v: d.isSupplement ? d.supplementReason || '待审批' : '否' },
-    { k: 'Football room', v: d.footballRoomId || '—' },
+    { k: 'Football 直播间', v: d.footballRoomId || '—' },
   ]
 })
 
@@ -1131,6 +1588,7 @@ const beforeLive = computed(() => {
 const showReregister = computed(() => beforeLive.value && detail.value?.riskLevel === 'RED')
 const showEdit = computed(() => beforeLive.value && detail.value?.riskLevel !== 'RED')
 const showCancel = computed(() => beforeLive.value)
+const showEnd = computed(() => detail.value?.sessionStatus === 'LIVE' && !!detail.value?.endAllowed)
 
 const startBlockedHint = computed(() => {
   const status = detail.value?.sessionStatus as string | undefined
@@ -1144,7 +1602,7 @@ const showYellowApprove = computed(
 )
 
 const showSupplementApprove = computed(
-  () => !!detail.value?.isSupplement && !detail.value?.approverUserId,
+  () => !!detail.value?.isSupplement && !detail.value?.approverUserId && !!detail.value?.supplementApproveAllowed,
 )
 
 async function openDetail(row: any) {
@@ -1209,7 +1667,7 @@ async function loadPending() {
     if (body?.code === 1048) {
       pendingRows.value = body.data?.list || []
       overdueCount.value = Number(body.data?.overdueCount || pendingRows.value.filter((row) => row.overdue).length)
-      pendingHint.value = `1048 ${body.msg || '24小时录入超时督办'}`
+      pendingHint.value = body.msg || '24小时录入超时督办'
       return
     }
     pendingRows.value = []
@@ -1233,12 +1691,31 @@ async function switchTab(name: string) {
   }
 }
 
+async function bindRoom() {
+  if (!detail.value) return
+  syncError.value = ''
+  const roomId = roomIdDraft.value.trim()
+  if (!roomId) {
+    syncError.value = '请填写直播间 ID'
+    return
+  }
+  try {
+    metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, { footballRoomId: roomId })
+    hint.value = '已绑定并同步 Football 直播间'
+    await refreshDetail()
+  } catch (e: unknown) {
+    syncError.value = bizError(e)
+    hint.value = syncError.value
+  }
+}
+
 async function doSync() {
   if (!detail.value) return
   syncError.value = ''
   try {
     metrics.value = await apiPost(`/live/sessions/${detail.value.sessionCode}/football-sync`, {})
-    hint.value = '已同步 live_room'
+    hint.value = '已同步 Football 直播间'
+    await refreshDetail()
   } catch (e: unknown) {
     syncError.value = bizError(e)
     hint.value = syncError.value
@@ -1299,6 +1776,28 @@ async function doStart() {
     hint.value = actionError.value
   }
   await refreshDetail()
+  await loadList()
+}
+
+function askEnd(row?: { sessionCode?: string }) {
+  endCode.value = row?.sessionCode || detail.value?.sessionCode || ''
+  endAsk.value = !!endCode.value
+}
+
+async function doEnd() {
+  if (!endCode.value) return
+  actionError.value = ''
+  try {
+    await apiPut(`/live/register/${endCode.value}/end`, {})
+    hint.value = '已确认下播'
+    endAsk.value = false
+  } catch (e: unknown) {
+    actionError.value = bizError(e)
+    hint.value = actionError.value
+    return
+  }
+  if (detail.value?.sessionCode === endCode.value) await refreshDetail()
+  await loadList()
 }
 
 async function doApprove(pass: boolean) {
@@ -1322,9 +1821,13 @@ async function doApprove(pass: boolean) {
   await refreshDetail()
 }
 
-function openSupplement() {
+async function openSupplement() {
   supplementError.value = ''
   sup.supplementReason = ''
+  sup.accountId = ''
+  sup.realnamePersonId = ''
+  sup.deviceId = ''
+  await loadRegOptions().catch(() => null)
   supplementOpen.value = true
 }
 
@@ -1333,18 +1836,18 @@ async function submitSupplement() {
   try {
     const data = await apiPost('/live/ledger/supplement', {
       sessionCreate: {
-        accountId: sup.accountId,
-        realnamePersonId: sup.realnamePersonId,
-        responsibleUserId: 1,
-        deviceAssetIds: [sup.deviceId],
-        platform: 'DOUYIN',
+        accountId: Number(sup.accountId),
+        realnamePersonId: Number(sup.realnamePersonId),
+        responsibleUserId: regOptions.currentUserId || 1,
+        deviceAssetIds: [Number(sup.deviceId)],
+        platform: regOptions.accounts.find((item) => String(item.id) === sup.accountId)?.platform || 'DOUYIN',
         topic: sup.topic,
-        planStartTime: sup.planStartTime,
+        planStartTime: planIso(sup.planStartTime),
         planEndTime: '',
       },
       sessionReport: {
-        actualStart: sup.planStartTime,
-        actualEnd: '2020-01-15T22:00:00+08:00',
+        actualStart: planIso(sup.planStartTime),
+        actualEnd: supplementEndIso(sup.planStartTime),
         durationMinutes: 120,
         gmv: sup.gmv,
         refundAmount: 0,
@@ -1391,6 +1894,10 @@ async function doSupplementApprove(pass: boolean) {
 
 async function saveDraft() {
   if (!detail.value) return
+  if (detail.value.sessionStatus !== 'ENDED') {
+    reportError.value = '场次未下播，下播录入在状态为已下播后开放'
+    return
+  }
   reportError.value = ''
   reportMissing.value = []
   try {
@@ -1406,6 +1913,10 @@ async function saveDraft() {
 
 async function submitReport() {
   if (!detail.value) return
+  if (detail.value.sessionStatus !== 'ENDED') {
+    reportError.value = '场次未下播，下播录入在状态为已下播后开放'
+    return
+  }
   reportError.value = ''
   reportMissing.value = []
   reportBadField.value = ''
@@ -1426,19 +1937,16 @@ async function submitReport() {
   }
 }
 
-async function directSave() {
-  if (!detail.value) return
-  reportError.value = ''
-  try {
-    await apiPut(`/live/report/${detail.value.sessionCode}`, reportPayload())
-    hint.value = '草稿已保存'
-  } catch (e: unknown) {
-    reportError.value = bizError(e)
-    hint.value = reportError.value
-  }
-}
-
 function openCorrection() {
+  originalReport.actualStart = reportForm.actualStart
+  originalReport.actualEnd = reportForm.actualEnd
+  originalReport.gmv = reportForm.gmv
+  originalReport.orderCount = reportForm.orderCount
+  originalReport.viewerCount = reportForm.viewerCount
+  originalReport.peakOnline = reportForm.peakOnline
+  originalReport.newFans = reportForm.newFans
+  originalReport.refundAmount = reportForm.refundAmount
+  originalReport.adCost = reportForm.adCost
   correcting.value = true
   correctionReason.value = ''
   reportError.value = ''
@@ -1490,6 +1998,7 @@ async function confirmReport() {
 onMounted(async () => {
   const code = typeof route.query.sessionCode === 'string' ? route.query.sessionCode.trim() : ''
   if (code) query.sessionCode = code
+  await loadRegOptions().catch(() => null)
   await loadList()
   if (code) await openDetail({ sessionCode: code })
 })

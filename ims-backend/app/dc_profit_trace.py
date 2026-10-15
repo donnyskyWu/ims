@@ -21,7 +21,7 @@ from app.fin import (
     operating_profit,
     parse_day_range,
 )
-from app.live import get_session, iso
+from app.live import bound_devices, device_refs_from, get_session, iso
 from app.models import FinCost, FinProfit, LiveSession, User, UserDept
 
 router = APIRouter(prefix="/dc/profit-trace", tags=["dc-profit-trace"])
@@ -96,6 +96,20 @@ def aggregate_dimension(
     return dimension_of(session, aggregate_by, accounts, groups, names)
 
 
+def chain_bound_assets(db: Session, ops: Session, actor: User, raw_ids: str) -> list[dict]:
+    """反查链路只展示场次实际绑定的手机和直播/拍摄设备。"""
+    rows: list[dict] = []
+    for item in bound_devices(db, ops, actor, device_refs_from(raw_ids)):
+        rows.append(
+            {
+                "assetId": item["id"],
+                "assetCode": item.get("assetCode") or "",
+                "assetName": item.get("assetName") or "",
+            }
+        )
+    return rows
+
+
 def parse_asset_ids(raw: str) -> list[int]:
     if not raw or raw == "[]":
         return []
@@ -111,6 +125,11 @@ def parse_asset_ids(raw: str) -> list[int]:
             ids.append(item)
         elif isinstance(item, str) and item.isdigit():
             ids.append(int(item))
+        elif isinstance(item, dict):
+            try:
+                ids.append(int(item.get("id")))
+            except (TypeError, ValueError):
+                continue
     return ids
 
 
@@ -363,6 +382,7 @@ def profit_trace_chain(
     request: Request,
     session_code: str,
     db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
     started = time.perf_counter()
@@ -376,8 +396,7 @@ def profit_trace_chain(
         return fail(1145, "该场次成本未核准，利润未计算")
     masked = request.state.scope is not None and request.state.scope.kind == "SELF"
     names = user_names(db, [session.responsible_user_id])
-    asset_ids = parse_asset_ids(session.device_asset_ids or "[]")
-    assets = [{"assetId": aid, "assetCode": f"AST-{aid}"} for aid in asset_ids]
+    assets = chain_bound_assets(db, ops, actor, session.device_asset_ids or "[]")
     live_date = (session.actual_start or session.plan_start_time or "")[:10]
     elapsed = round((time.perf_counter() - started) * 1000, 1)
     return ok(

@@ -1,6 +1,13 @@
 import fs from 'fs'
-import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import { test, expect } from '@playwright/test'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * #239 · 空表导出、慢查询提示、下播负数红框、更正原因空态、规则名与告警处置刷新。
@@ -9,19 +16,6 @@ import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } fr
 const shotDir = '/opt/cursor/artifacts/live-239'
 
 fs.mkdirSync(shotDir, { recursive: true })
-
-async function fillStable(page: Page, testId: string, value: string) {
-  const field = page.getByTestId(testId)
-  const deadline = Date.now() + 4_000
-  let last = ''
-  while (Date.now() < deadline) {
-    await field.fill(value)
-    await page.waitForTimeout(200)
-    last = await field.inputValue()
-    if (last === value) return
-  }
-  throw new Error(`${testId} 未保持为 ${value}，当前 ${last}`)
-}
 
 test.describe('live local empty and edge copy', () => {
   test.skip(!!process.env.SKIP_E2E, 'SKIP_E2E set — 跳过 Playwright')
@@ -81,10 +75,7 @@ test.describe('live local empty and edge copy', () => {
     await page.goto('/ims/live/sessions')
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
-    await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(`E2E 239 ${Date.now()}`)
+    await fillLiveRegisterDrawer(drawer, ids, `E2E 239 ${Date.now()}`)
     const regResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
     )
@@ -96,9 +87,10 @@ test.describe('live local empty and edge copy', () => {
 
     const detail = page.locator('.drawer').filter({ hasText: sessionCode })
     await expect(detail).toBeVisible({ timeout: 15_000 })
+    await confirmLiveSessionEnd(page, detail)
     await detail.locator('.tab', { hasText: '下播与 GMV' }).click()
     await expect(detail.getByTestId('live-report-refund')).toBeVisible({ timeout: 15_000 })
-    await fillStable(page, 'live-report-refund', '-1')
+    await fillLiveReportFields(detail, { 'live-report-refund': '-1' })
     const negativeResp = page.waitForResponse(
       (r) => r.url().includes(`/live/report/${sessionCode}`) && r.request().method() === 'POST' && r.status() === 200,
     )
@@ -110,14 +102,14 @@ test.describe('live local empty and edge copy', () => {
     await expect(detail.getByTestId('live-report-refund')).toHaveCSS('border-color', 'rgb(255, 59, 48)')
     await page.screenshot({ path: `${shotDir}/03-negative-refund.png`, fullPage: true })
 
-    await fillStable(page, 'live-report-refund', '0')
+    await detail.getByTestId('live-report-refund').fill('0')
     const submitResp = page.waitForResponse(
       (r) => r.url().includes(`/live/report/${sessionCode}`) && r.request().method() === 'POST' && r.status() === 200,
     )
     await detail.getByTestId('live-report-submit').click()
     expect(((await (await submitResp).json()) as { code: number }).code).toBe(0)
     await detail.getByTestId('live-report-confirm').click()
-    await expect(detail.getByTestId('live-report-headline')).toContainText('CONFIRMED')
+    await expect(detail.getByTestId('live-report-headline')).toContainText('已核准')
     await detail.getByTestId('live-report-correction-open').click()
     await expect(detail.getByTestId('live-correction-reason-hint')).toContainText('更正原因必填')
     await detail.getByTestId('live-report-correction-submit').click()

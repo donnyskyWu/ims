@@ -1,6 +1,13 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin, resolveLiveFinRegisterIdsViaUi } from './closure-helpers'
+import {
+  attachClosurePageHooks,
+  confirmLiveSessionEnd,
+  fillLiveRegisterDrawer,
+  fillLiveReportFields,
+  loginAdmin,
+  resolveLiveFinRegisterIdsViaUi,
+} from './closure-helpers'
 
 /**
  * Checklist E2E-S2-06/07/08（#80 · 纯 UI）
@@ -21,10 +28,7 @@ async function openReportTab(
   await page.getByRole('button', { name: '新建场次登记' }).click()
   const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
   await expect(drawer).toBeVisible()
-  await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-  await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-  await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-  await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(topic)
+  await fillLiveRegisterDrawer(drawer, ids, topic)
 
   const regResp = page.waitForResponse(
     (r) => r.url().includes('/live/register') && r.request().method() === 'POST' && r.status() === 200,
@@ -37,6 +41,7 @@ async function openReportTab(
 
   const detail = page.locator('.drawer').filter({ hasText: '场次' })
   await expect(detail).toBeVisible({ timeout: 15_000 })
+  await confirmLiveSessionEnd(page, detail)
   const reportLoad = page.waitForResponse(
     (r) => r.url().includes('/live/report/') && r.request().method() === 'GET' && r.status() === 200,
     { timeout: 15_000 },
@@ -45,7 +50,11 @@ async function openReportTab(
   await reportLoad.catch(() => null)
   const gmv = detail.getByTestId('live-report-gmv')
   await expect(gmv).toBeVisible()
-  await expect(gmv).toHaveValue('1000', { timeout: 5_000 })
+  await expect(gmv).toHaveValue('')
+  await expect(detail.getByText('GMV *', { exact: true })).toBeVisible()
+  await expect(detail.getByTestId('live-report-live-aov')).toHaveText('—')
+  await expect(detail.getByTestId('live-report-live-roas')).toHaveText('—')
+  await fillLiveReportFields(detail, { 'live-report-gmv': '' })
   return { detail, sessionCode: sessionCode! }
 }
 
@@ -69,10 +78,12 @@ test.describe('live report end ledger closure', () => {
     const missingBody = (await (await missingResp).json()) as { code: number; data?: { missing?: string[] } }
     expect(missingBody.code).toBe(1046)
     expect(missingBody.data?.missing).toContain('gmv')
-    await expect(detail.getByTestId('live-report-error')).toContainText('1046')
+    await expect(detail.getByTestId('live-report-error')).toContainText('必填项缺失')
     await page.screenshot({ path: `${shotDir}/01-missing-1046.png`, fullPage: true })
 
     await detail.getByTestId('live-report-gmv').fill('88000')
+    await expect(detail.getByTestId('live-report-live-aov')).toHaveText('8800.00')
+    await expect(detail.getByTestId('live-report-live-roas')).toHaveText('880.00')
     const submitResp = page.waitForResponse(
       (r) =>
         /\/live\/report\/IMS/.test(r.url()) &&
@@ -117,7 +128,7 @@ test.describe('live report end ledger closure', () => {
     expect(corrBody.data?.before?.gmv).toBe(88000)
     expect(corrBody.data?.after?.gmv).toBe(86000)
     await expect(detail.getByTestId('live-correction-trace')).toContainText(String(corrBody.data?.correctionId))
-    await expect(detail).toContainText('SUBMITTED')
+    await expect(detail).toContainText('已提交')
     await page.screenshot({ path: `${shotDir}/04-correction-trace.png`, fullPage: true })
     expect(pageErrors).toEqual([])
   })
@@ -141,7 +152,7 @@ test.describe('live report end ledger closure', () => {
     const hit = pendingBody.data?.list?.find((row) => row.sessionCode === OVERDUE_SESSION)
     expect(hit?.overdue).toBe(true)
     expect(hit?.overdueHours).toBeGreaterThanOrEqual(24)
-    await expect(page.getByTestId('live-overdue-hint')).toContainText('1048')
+    await expect(page.getByTestId('live-overdue-hint')).toContainText('24小时录入超时督办')
     const row = page.getByTestId('live-pending-row').filter({ hasText: OVERDUE_SESSION })
     await expect(row).toBeVisible()
     await expect(row.getByTestId('live-pending-overdue')).toHaveText('超 24h')
@@ -156,19 +167,18 @@ test.describe('live report end ledger closure', () => {
     await detail.locator('.tab', { hasText: '关联' }).click()
     await alarmResp
     await expect(detail).toContainText('下播超时督办')
-    await expect(detail).toContainText('1048')
     await page.screenshot({ path: `${shotDir}/06-overdue-alarm.png`, fullPage: true })
 
     await page.goto('/ims/workbench/todos')
     await expect(page.locator('h1')).toHaveText('待办中心', { timeout: 15_000 })
-    const todoRow = page.locator('tbody tr').filter({ hasText: `下播超时督办 1048：${OVERDUE_SESSION}` })
+    const todoRow = page.locator('tbody tr').filter({ hasText: `下播超时督办：${OVERDUE_SESSION}` })
     await expect(todoRow).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: `${shotDir}/07-workbench-todo.png`, fullPage: true })
     await todoRow.getByRole('button', { name: '完成' }).click()
 
     await page.goto('/ims/workbench/messages')
     await expect(page.locator('h1')).toHaveText('消息中心', { timeout: 15_000 })
-    const msgRow = page.locator('tbody tr').filter({ hasText: `下播超时督办 1048：${OVERDUE_SESSION}` })
+    const msgRow = page.locator('tbody tr').filter({ hasText: `下播超时督办：${OVERDUE_SESSION}` })
     await expect(msgRow).toBeVisible({ timeout: 15_000 })
     await page.screenshot({ path: `${shotDir}/08-workbench-message.png`, fullPage: true })
     const readBtn = msgRow.getByRole('button', { name: '标已读' })

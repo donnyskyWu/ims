@@ -57,7 +57,7 @@ test.describe('fin r9 amount mask and ledger jump', () => {
     await expect(ledger).toBeVisible({ timeout: 15_000 })
     await expect(ledger).toContainText(sessionCode)
     await expect(ledger).toContainText('AC-E2E-FIN')
-    await expect(ledger).toContainText('ENDED')
+    await expect(ledger).toContainText('已下播')
     await page.screenshot({ path: `${shotDir}/02-live-ledger-from-dashboard.png`, fullPage: true })
 
     await loginAs(page, 'e2e_fin_r9')

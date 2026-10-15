@@ -44,11 +44,13 @@ METRIC_LABELS = {
     "viewer_drop": "场观",
     "gmv": "GMV",
     "peak_online": "峰值在线",
-    "blacklist": "违禁词",
+    "balance": "话费余额",
+    "account_abnormal": "账号异常状态",
+    "blacklist": "违禁词命中",
 }
 THRESHOLD_METRICS = {"viewer_count", "viewer_drop", "gmv", "peak_online"}
 THRESHOLD_OPS = {"GT", "LT", "PCT_DROP"}
-EVENT_METRICS = {"blacklist"}
+EVENT_METRICS = {"blacklist", "balance", "account_abnormal"}
 HANDLE_NEXT = {
     "UNHANDLED": {"CONFIRMED", "HANDLED", "FALSE_ALARM"},
     "CONFIRMED": {"HANDLED", "FALSE_ALARM"},
@@ -108,7 +110,7 @@ def expr_error(rule_type: str, expr: RuleExprBody) -> str | None:
     operator = (expr.operator or "").strip().upper()
     if rule_type == "EVENT":
         if metric not in EVENT_METRICS:
-            return "事件规则指标仅支持 blacklist"
+            return "事件规则指标仅支持 blacklist / balance / account_abnormal"
         if operator != "HIT":
             return "事件规则操作符须为 HIT"
     elif rule_type == "THRESHOLD":
@@ -148,8 +150,8 @@ def expr_summary(rule_type: str, expr: dict) -> str:
     if operator == "HIT":
         text = f"{metric}命中"
     elif operator == "PCT_DROP":
-        pct = round(float(threshold or 0) * 100, 2)
-        text = f"{metric}降幅 ≥ {pct}%"
+        pct = round(float(threshold or 0), 2)
+        text = f"{metric}降幅 ≥ {pct:g}%"
     elif operator == "LT":
         text = f"{metric}低于 {threshold}"
     else:
@@ -459,6 +461,25 @@ def drop_ratio(metric: str, report: LiveReport | None, snap: LiveDataSnapshot | 
     return (float(base) - float(current)) / float(base)
 
 
+def event_hit(metric: str, session: LiveSession, label: str) -> str | None:
+    from app.live import airtime_blocked
+    from app.ops_db import ops_session
+    from app.ops_models import PlatformAccount
+
+    ops = ops_session()
+    try:
+        account = ops.get(PlatformAccount, session.account_id)
+        if account is None or account.deleted or (account.tenant_id or 0) != (session.tenant_id or 0):
+            return None
+        if metric == "account_abnormal" and (account.status or "") != "IN_USE":
+            return f"{label}：{account.status}"[:512]
+        if metric == "balance" and airtime_blocked(ops, type("Actor", (), {"tenant_id": session.tenant_id})(), account):
+            return f"{label}异常"[:512]
+        return None
+    finally:
+        ops.close()
+
+
 def hit_text(rule: LiveAlarmRule, session: LiveSession, report: LiveReport | None, snap: LiveDataSnapshot | None) -> str | None:
     expr = rule.rule_expr if isinstance(rule.rule_expr, dict) else {}
     metric = str(expr.get("metric") or "")
@@ -468,17 +489,24 @@ def hit_text(rule: LiveAlarmRule, session: LiveSession, report: LiveReport | Non
     except (TypeError, ValueError):
         return None
     label = METRIC_LABELS.get(metric, metric)
-    if operator == "HIT" and metric == "blacklist":
-        from app.live import topic_hits_blacklist
+    if operator == "HIT":
+        if metric == "blacklist":
+            from app.live import topic_hits_blacklist
 
-        if topic_hits_blacklist(session.topic or ""):
-            return f"{label}命中：{session.topic}"[:512]
+            if topic_hits_blacklist(session.topic or ""):
+                return f"{label}：{session.topic}"[:512]
+            return None
+        if metric in {"balance", "account_abnormal"}:
+            return event_hit(metric, session, label)
         return None
     if operator == "PCT_DROP":
         ratio = drop_ratio(metric, report, snap)
-        if ratio is None or ratio < threshold:
+        if ratio is None:
             return None
-        return f"{label}降幅 {round(ratio * 100, 1)}% ≥ {round(threshold * 100, 1)}%"[:512]
+        pct = ratio * 100
+        if pct < threshold:
+            return None
+        return f"{label}降幅 {round(pct, 1)}% ≥ {threshold:g}%"[:512]
     value = metric_number(metric, report, snap)
     if value is None:
         return None
@@ -575,6 +603,35 @@ def load_rule(db: Session, actor: User, rule_id: int) -> LiveAlarmRule | None:
     return row
 
 
+def notify_candidates(db: Session, actor: User) -> dict:
+    """告警通知人只从本租户启用用户和角色里选，不走系统用户管理权限。"""
+    tenant_id = tenant_of(actor)
+    users = db.scalars(
+        select(User)
+        .where(User.deleted == 0, User.tenant_id == tenant_id, User.status == "ENABLED")
+        .order_by(User.id)
+        .limit(200)
+    ).all()
+    roles = db.scalars(
+        select(Role).where(Role.deleted == 0, Role.tenant_id == tenant_id).order_by(Role.id).limit(80)
+    ).all()
+    members: dict[int, list[int]] = {row.id: [] for row in roles}
+    role_ids = list(members)
+    if role_ids:
+        links = db.scalars(
+            select(UserRole).where(UserRole.role_id.in_(role_ids), UserRole.tenant_id == tenant_id)
+        ).all()
+        for link in links:
+            members.setdefault(int(link.role_id), []).append(int(link.user_id))
+    return {
+        "users": [{"id": row.id, "name": row.nickname or row.username} for row in users],
+        "roles": [
+            {"id": row.id, "name": row.role_name or row.role_key, "userIds": members.get(row.id, [])}
+            for row in roles
+        ],
+    }
+
+
 @router.get("/rules")
 def alarm_rules(
     pageNo: int = 1,
@@ -599,7 +656,15 @@ def alarm_rules(
     for row in rows:
         ids.update(int(item) for item in (row.notify_users or []))
     names = user_names(db, ids)
-    return ok({"list": [rule_vo(row, names) for row in rows], "total": total, "pageNo": page_no, "pageSize": size})
+    return ok(
+        {
+            "list": [rule_vo(row, names) for row in rows],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+            "candidates": notify_candidates(db, actor),
+        }
+    )
 
 
 @router.post("/rule")

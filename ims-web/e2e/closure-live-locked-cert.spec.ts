@@ -1,6 +1,6 @@
 import fs from 'fs'
 import { test, expect, type Page } from '@playwright/test'
-import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
+import { attachClosurePageHooks, fillLiveRegisterDrawer, loginAdmin } from './closure-helpers'
 
 const shotDir = '/opt/cursor/artifacts/e2e-71-screenshots'
 const ACCOUNT_NO = 'AC-E2E-LIVE1045'
@@ -130,18 +130,15 @@ test.describe('live locked certificate closure', () => {
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const drawer = page.locator('.drawer').filter({ hasText: '开播登记' })
     await expect(drawer).toBeVisible()
-    await drawer.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await drawer.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await drawer.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await drawer.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(`E2E 1045 ${Date.now()}`)
+    await fillLiveRegisterDrawer(drawer, ids, `E2E 1045 ${Date.now()}`)
+    await expect(drawer.getByTestId('live-reg-cert')).toContainText('过期或锁定')
     const blockedResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
     )
     await drawer.getByRole('button', { name: '提交登记' }).click()
-    const blocked = (await (await blockedResp).json()) as { code: number; msg?: string }
-    expect(blocked.code).toBe(1045)
-    await expect(drawer.getByTestId('live-register-error')).toContainText('1045')
-    await expect(drawer).toBeVisible()
+    const blocked = (await (await blockedResp).json()) as { code: number; data?: { riskLevel?: string } }
+    expect(blocked.code).toBe(0)
+    expect(blocked.data?.riskLevel).toBe('RED')
     await page.screenshot({ path: `${shotDir}/02-register-blocked-1045.png`, fullPage: true })
 
     await page.goto('/ims/corp/resource/certificate')
@@ -196,10 +193,7 @@ test.describe('live locked certificate closure', () => {
     await expect(page.locator('h1')).toHaveText('直播管理', { timeout: 15_000 })
     await page.getByRole('button', { name: '新建场次登记' }).click()
     const again = page.locator('.drawer').filter({ hasText: '开播登记' })
-    await again.locator('label', { hasText: '平台账号 id' }).locator('..').locator('input').fill(String(ids.accountId))
-    await again.locator('label', { hasText: '实名人 id' }).locator('..').locator('input').fill(String(ids.realnamePersonId))
-    await again.locator('label', { hasText: '手机设备 id' }).locator('..').locator('input').fill(String(ids.deviceId))
-    await again.locator('label', { hasText: '主题' }).locator('..').locator('input').fill(`E2E 1045 renewed ${Date.now()}`)
+    await fillLiveRegisterDrawer(again, ids, `E2E 1045 renewed ${Date.now()}`)
     const okResp = page.waitForResponse(
       (r) => r.url().includes('/live/register') && !r.url().includes('/risk-check') && r.request().method() === 'POST',
     )
@@ -225,7 +219,7 @@ test.describe('live locked certificate closure', () => {
     )
     await detail.getByTestId('live-start-btn').click()
     expect(((await (await startResp).json()) as { code: number }).code).toBe(0)
-    await expect(detail.getByTestId('live-session-status')).toContainText('LIVE')
+    await expect(detail.getByTestId('live-session-status')).toContainText('直播中')
     await page.screenshot({ path: `${shotDir}/05-live-started.png`, fullPage: true })
     expect(pageErrors).toEqual([])
   })

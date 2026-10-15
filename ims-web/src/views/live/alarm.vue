@@ -56,16 +56,19 @@
               <tr>
                 <th>告警</th>
                 <th>场次</th>
+                <th>发生时间</th>
                 <th>规则</th>
                 <th>级别</th>
                 <th>内容</th>
+                <th>处置人</th>
                 <th>处置</th>
+                <th>升级标记</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="error && !records.length">
-                <td colspan="7">
+                <td colspan="10">
                   <div class="empty" data-testid="live-alarm-error-empty">
                     <div class="et">告警列表没有加载出来</div>
                     <button class="btn btn-sec btn-sm" type="button" data-testid="live-alarm-retry-row" @click="loadRecords">重试</button>
@@ -73,7 +76,7 @@
                 </td>
               </tr>
               <tr v-else-if="!records.length">
-                <td colspan="7">
+                <td colspan="10">
                   <div class="empty" data-testid="live-alarm-empty">
                     <div class="et">{{ alarmEmptyTitle }}</div>
                     <div class="es">{{ alarmEmptyHint }}</div>
@@ -82,16 +85,23 @@
               </tr>
               <tr v-for="row in records" v-else :key="row.id" data-testid="live-alarm-row">
                 <td class="mono">{{ row.id }}</td>
-                <td class="mono">{{ row.sessionCode }}</td>
+                <td class="mono">
+                  <router-link :to="{ path: '/ims/live/sessions', query: { sessionCode: row.sessionCode } }">{{ row.sessionCode }}</router-link>
+                </td>
+                <td data-testid="live-alarm-occur">{{ minuteText(row.occurAt) }}</td>
                 <td>{{ row.ruleName }}</td>
                 <td>L{{ row.alarmLevel }}</td>
                 <td>
                   {{ row.alarmContent }}
                   <span v-if="row.mergeCount > 1" data-testid="live-alarm-merge">×{{ row.mergeCount }}</span>
-                  <span v-if="row.escalated" data-testid="live-alarm-escalated">已升级</span>
                   <span data-testid="live-alarm-stub">{{ stubText(row) }}</span>
                 </td>
+                <td data-testid="live-alarm-handler">{{ row.handlerName || '—' }}</td>
                 <td data-testid="live-alarm-handle-state">{{ statusLabel(row.handleStatus) }}</td>
+                <td>
+                  <span v-if="row.escalated" data-testid="live-alarm-escalated">已升级</span>
+                  <span v-else>—</span>
+                </td>
                 <td>
                   <button
                     v-if="row.handleStatus === 'UNHANDLED' || row.handleStatus === 'CONFIRMED'"
@@ -174,7 +184,7 @@
           </table>
         </div>
       </div>
-      <p class="hint" data-testid="live-alarm-rule-hint">ALM-R4 规则保存后下一次读取即新表达式</p>
+      <p class="hint" data-testid="live-alarm-rule-hint">规则保存后，下一次读取即按新表达式生效</p>
     </template>
 
     <template v-else>
@@ -236,7 +246,7 @@
           <b>{{ editingId ? '编辑规则' : '新建规则' }}</b>
           <button type="button" class="btn btn-sec btn-sm" @click="ruleOpen = false">关闭</button>
         </div>
-        <p class="hint">保存后立即参与下一次命中扫描（ALM-R4）。通知只记站内。</p>
+        <p class="hint">保存后立即参与下一次命中扫描。通知只记站内。</p>
         <label class="fld">
           <span>规则名</span>
           <input v-model="ruleForm.ruleName" data-testid="live-alarm-rule-name" maxlength="64" :style="ruleNameBad ? 'border-color: var(--red)' : ''" />
@@ -254,7 +264,9 @@
             <option v-if="ruleForm.ruleType === 'THRESHOLD'" value="viewer_count">场观</option>
             <option v-if="ruleForm.ruleType === 'THRESHOLD'" value="gmv">GMV</option>
             <option v-if="ruleForm.ruleType === 'THRESHOLD'" value="peak_online">峰值在线</option>
-            <option v-if="ruleForm.ruleType === 'EVENT'" value="blacklist">违禁词</option>
+            <option v-if="ruleForm.ruleType === 'EVENT'" value="blacklist">违禁词命中</option>
+            <option v-if="ruleForm.ruleType === 'EVENT'" value="balance">话费余额</option>
+            <option v-if="ruleForm.ruleType === 'EVENT'" value="account_abnormal">账号异常状态</option>
           </select>
         </label>
         <label class="fld">
@@ -282,6 +294,18 @@
             <option value="3">L3 严重</option>
           </select>
         </label>
+        <div class="fld" data-testid="live-alarm-rule-notify">
+          <span>通知人 *</span>
+          <p v-if="!candidates.users.length && !candidates.roles.length" class="hint">暂无可选的人或角色</p>
+          <label v-for="item in candidates.users" :key="'user-' + item.id" style="display: block">
+            <input type="checkbox" :checked="ruleForm.notifyUsers.includes(item.id)" @change="toggleNotifyUser(item.id)" />
+            {{ item.name }}
+          </label>
+          <label v-for="item in candidates.roles" :key="'role-' + item.id" style="display: block">
+            <input type="checkbox" :checked="roleSelected(item)" @change="toggleNotifyRole(item)" />
+            {{ item.name }}
+          </label>
+        </div>
         <p v-if="ruleError" class="hint bad" data-testid="live-alarm-rule-error">{{ ruleError }}</p>
         <div class="drawer-f">
           <button class="btn btn-pri btn-sm" type="button" data-testid="live-alarm-rule-save" @click="saveRule">保存</button>
@@ -335,7 +359,7 @@
           <p>场次 {{ active.sessionCode }}</p>
           <p>规则 {{ active.ruleName }} · L{{ active.alarmLevel }}</p>
           <p>内容 {{ active.alarmContent }}<template v-if="active.mergeCount > 1"> ×{{ active.mergeCount }}</template></p>
-          <p>发生 {{ active.occurAt || '—' }}</p>
+          <p>发生 {{ minuteText(active.occurAt) }}</p>
           <p>处置 {{ statusLabel(active.handleStatus) }} · {{ active.handlerName || '—' }}</p>
           <p>说明 {{ active.handleRemark || '—' }}</p>
           <p class="hint">通知方式：站内记录。不外发钉钉或短信，也不升级推送。</p>
@@ -360,6 +384,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
 import { useUserStore } from '../../stores/user'
 
@@ -408,10 +433,21 @@ const statsEmpty = computed(() => {
   if (!levels) return false
   return Number(levels['1'] || 0) + Number(levels['2'] || 0) + Number(levels['3'] || 0) === 0
 })
+const route = useRoute()
 const filters = reactive({ sessionCode: '', alarmLevel: '', handleStatus: '', timeFrom: '', timeTo: '' })
+const candidates = reactive({
+  users: [] as { id: number; name: string }[],
+  roles: [] as { id: number; name: string; userIds: number[] }[],
+})
 const ruleFilters = reactive({ keyword: '', ruleType: '', status: '' })
 const unhandledCount = computed(() => Number(stats.value?.byHandleStatus?.UNHANDLED || 0))
 const severeOpen = ref(false)
+
+function minuteText(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return '—'
+  return text.replace('T', ' ').slice(0, 16)
+}
 
 function pageHasSevere(list: AlarmRow[]) {
   return list.some((row) => row.alarmLevel === 3 && row.handleStatus === 'UNHANDLED')
@@ -561,6 +597,11 @@ async function loadRules() {
   try {
     const res = await http.get('/live/alarm/rules', { params })
     rules.value = res.data.data.list || []
+    const found = res.data.data.candidates
+    if (found) {
+      candidates.users = found.users || []
+      candidates.roles = found.roles || []
+    }
   } catch (err) {
     error.value = errorMessage(err)
   }
@@ -592,7 +633,7 @@ function openRule(row?: RuleRow) {
     ruleForm.window = ''
     ruleForm.level = '2'
     ruleForm.status = 'ENABLED'
-    ruleForm.notifyUsers = notifyIds()
+    ruleForm.notifyUsers = []
   } else {
     editingId.value = row.id
     ruleForm.ruleName = row.ruleName
@@ -603,9 +644,31 @@ function openRule(row?: RuleRow) {
     ruleForm.window = row.ruleExpr.window ? String(row.ruleExpr.window) : ''
     ruleForm.level = String(row.level)
     ruleForm.status = row.status
-    ruleForm.notifyUsers = row.notifyUsers?.length ? [...row.notifyUsers] : notifyIds()
+    ruleForm.notifyUsers = row.notifyUsers?.length ? [...row.notifyUsers] : []
   }
   ruleOpen.value = true
+}
+
+function toggleNotifyUser(id: number) {
+  const picked = new Set(ruleForm.notifyUsers)
+  if (picked.has(id)) picked.delete(id)
+  else picked.add(id)
+  ruleForm.notifyUsers = [...picked]
+}
+
+function roleSelected(role: { userIds: number[] }) {
+  return role.userIds.length > 0 && role.userIds.every((id) => ruleForm.notifyUsers.includes(id))
+}
+
+function toggleNotifyRole(role: { userIds: number[] }) {
+  const picked = new Set(ruleForm.notifyUsers)
+  if (roleSelected(role)) role.userIds.forEach((id) => picked.delete(id))
+  else role.userIds.forEach((id) => picked.add(id))
+  ruleForm.notifyUsers = [...picked]
+}
+
+function notifyFromText() {
+  return ruleForm.notifyUsers.filter((item) => Number.isInteger(item) && item > 0)
 }
 
 function rulePayload() {
@@ -620,7 +683,7 @@ function rulePayload() {
     ruleType: ruleForm.ruleType,
     ruleExpr: expr,
     level: Number(ruleForm.level),
-    notifyUsers: ruleForm.notifyUsers.length ? ruleForm.notifyUsers : notifyIds(),
+    notifyUsers: notifyFromText(),
     status: ruleForm.status,
   }
 }
@@ -629,6 +692,10 @@ async function saveRule() {
   ruleError.value = ''
   if (!ruleForm.ruleName.trim()) {
     ruleError.value = '规则名必填'
+    return
+  }
+  if (!notifyFromText().length) {
+    ruleError.value = '通知人必填'
     return
   }
   try {
@@ -711,6 +778,8 @@ async function submitHandle() {
 }
 
 onMounted(async () => {
+  const sessionCode = String(route.query.sessionCode || '').trim()
+  if (sessionCode) filters.sessionCode = sessionCode
   await loadRules()
   await loadRecords()
   await loadStats()

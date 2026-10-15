@@ -8,7 +8,7 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 from tests.test_live_alarm import client as alarm_client
 from tests.test_live_alarm import headers as alarm_headers
 from tests.test_live_alarm import register_and_report, rule_body
-from tests.test_live_report_pack import client, full_report, headers, register, seed_account
+from tests.test_live_report_pack import client, full_report, headers, register, release_entry, seed_account
 
 
 def test_empty_filter_exports_header_only_message():
@@ -30,6 +30,7 @@ def test_negative_number_names_the_field():
     auth = headers()
     account_id, person_id, phone_id = seed_account()
     code = register(auth, account_id, person_id, phone_id)
+    release_entry(auth, code)
     negative = client.post(
         f"/admin-api/ims/live/report/{code}",
         headers=auth,
