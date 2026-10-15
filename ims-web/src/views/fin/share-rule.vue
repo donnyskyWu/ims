@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>分成规则</h1>
-        <div class="sub">FIN-003 · 规则维护 · 比例合计 1.0000（1146）· 同范围冲突须确认（1147）· 阶梯试算</div>
+        <div class="sub">规则维护 · 比例合计须为 1 · 同范围冲突须确认 · 阶梯试算</div>
       </div>
       <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-create" @click="openCreate">
         创建规则
@@ -272,7 +272,7 @@
     <div v-if="disableOpen" class="mask on" style="z-index: 140" data-testid="fin-share-rule-disable-dialog">
       <div class="card" style="position: fixed; z-index: 150; left: 50%; top: 28%; transform: translateX(-50%); width: 400px; padding: 16px">
         <b>停用规则</b>
-        <p>历史分成单引用不受影响（FIN-S-R5）</p>
+        <p>历史分成单不受影响</p>
         <div class="acts" style="gap: 8px">
           <button class="btn btn-pri btn-sm" type="button" data-testid="fin-share-rule-disable-confirm" @click="confirmDisable">
             确认停用

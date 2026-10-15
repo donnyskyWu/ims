@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>运营仪表盘</h1>
-        <div class="sub">IP 组筛选、核心指标、待办与快捷入口（HOME-001）</div>
+        <div class="sub">IP 组筛选、核心指标、待办与快捷入口</div>
       </div>
       <div class="acts">
         <select v-model="ipGroupId" data-testid="home-ip-filter" style="width: 160px" @change="loadDashboard">

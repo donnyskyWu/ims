@@ -3,17 +3,14 @@
     <div class="pg-h">
       <div>
         <h1>Football 补偿队列</h1>
-        <div class="sub">CONTENT-109/110 · BR-303 写失败进 outbox，IMS 保存不回滚</div>
+        <div class="sub">同步失败进入待发送队列，保存不回滚</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec" to="/ims/content/list">返回内容管理</router-link>
         <button class="btn btn-pri" type="button" @click="loadList">刷新</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 10px">
-      GET <code>/admin-api/ims/content/fb-sync/outbox/page</code> · POST
-      <code>…/fb-sync/outbox/{id}/retry</code>
-    </p>
+    <p class="hint" style="margin-bottom: 10px">同步失败的记录可以在这里重试，保存内容时不会回滚。</p>
     <form class="qbar" data-testid="fb-sync-filters" @submit.prevent="loadList">
       <select v-model="statusFilter" data-testid="fb-sync-filter-status" style="width: 140px">
         <option value="">全部状态</option>

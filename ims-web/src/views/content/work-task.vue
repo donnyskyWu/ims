@@ -3,16 +3,14 @@
     <div class="pg-h">
       <div>
         <h1>工作任务登记</h1>
-        <div class="sub">作者×赛事矩阵 · 确认出任务/撤回（CONTENT-104/105）</div>
+        <div class="sub">作者与赛事矩阵 · 确认出任务或撤回</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="loadSheet">刷新登记表</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      运行时 SSOT：登记 <code>/content/work-task/sheet</code>（#8～#10）· 确认
-      <code>/content/work-task/{id}/confirm</code> · 撤回 <code>/content/work-task/{id}/withdraw</code>。
-      同一营销计划有多条启用 SOP 时，须在行上指定模板，避免出任务绑错。
+      可登记工作任务，确认后生成任务，也可以撤回。同一营销计划有多条启用 SOP 时，须在行上指定模板，避免出任务绑错。
     </p>
     <p v-if="error" class="hint" data-testid="wt-error" style="margin-bottom: 10px">{{ error }}</p>
 

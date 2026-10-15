@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>用户管理</h1>
-        <div class="sub">SYS-001 · 手机号由接口脱敏 · GET /system/user/page</div>
+        <div class="sub">手机号脱敏展示</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" data-testid="sys-user-create-open" @click="openCreate">新建用户</button>

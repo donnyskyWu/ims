@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>自定义查询</h1>
-        <div class="sub">FR-M6-005 · 只读消费 COLLECT 元数据 · /ims/bi/query</div>
+        <div class="sub">只读使用采集元数据</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goMetadata">元数据维护</button>
@@ -514,7 +514,7 @@ async function loadFields() {
     syncResultFieldMap()
   } catch (error: unknown) {
     if (rejectedCode(error) === 1261) {
-      fieldHint.value = '实体未映射（1261）· 请点击右上角「元数据维护」完成 COLLECT P4m 映射'
+      fieldHint.value = '实体尚未映射，请点击右上角「元数据维护」完成映射'
       return
     }
     fieldHint.value = errorMessage(error)
@@ -531,7 +531,7 @@ async function ensureSaved(name: string) {
     })
     return res.data.data.id as string
   } catch (error: unknown) {
-    const msg = rejectedCode(error) === 1261 ? '实体未映射（1261）' : errorMessage(error)
+    const msg = rejectedCode(error) === 1261 ? '实体尚未映射' : errorMessage(error)
     formError.value = msg
     toast.value = msg
     return null

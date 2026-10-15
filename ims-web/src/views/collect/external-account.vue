@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>竞品账号配置</h1>
-        <div class="sub">UX-M8 §3.2 · 行内不嵌 Cookie（ADR-052） · 16 COLLECT</div>
+        <div class="sub">列表中不展示登录凭证</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="acct-create" @click="openCreate">新增外部账号</button>

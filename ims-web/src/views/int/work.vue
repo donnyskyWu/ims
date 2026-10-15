@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>内部作品</h1>
-        <div class="sub">Tab：全部/爆款/低分 · internal-content · 18b INT</div>
+        <div class="sub">全部、爆款、低分</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/collect/threshold')">阈值规则</button>
@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      爆款默认播放 ≥100w · 低分完播 &lt;20% · 阈值只读引用 COLLECT WORK 规则。
+      爆款默认播放达到 100 万，低完播低于 20%。阈值只读引用采集规则。
     </p>
     <div class="cattabs">
       <button

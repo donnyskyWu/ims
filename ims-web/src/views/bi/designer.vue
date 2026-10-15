@@ -4,7 +4,7 @@
       <div>
         <h1>报表设计器</h1>
         <div class="sub">
-          {{ report?.reportName || '加载中…' }} · 隐藏路由 /ims/bi/report/designer · BI-001 P0
+          {{ report?.reportName || '加载中…' }}
         </div>
       </div>
       <div class="acts">

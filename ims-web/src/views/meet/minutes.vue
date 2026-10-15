@@ -3,56 +3,69 @@
     <div class="pg-h">
       <div>
         <h1>会议管理</h1>
-        <div class="sub">MEET-004 · 纪要登记 · 03 MEET</div>
+        <div class="sub">纪要登记</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri btn-sm" type="button" @click="openCreate">登记会议</button>
+        <button class="btn btn-pri btn-sm" type="button" data-testid="meet-book" @click="openCreate">预约会议</button>
       </div>
     </div>
     <div class="g3" style="margin-bottom: 12px">
       <div class="card stat"><span class="l">会议总数</span><div class="n">{{ archiveStat.totalMeetings }}</div></div>
       <div class="card stat"><span class="l">已归档</span><div class="n">{{ archiveStat.archivedCount }}</div></div>
-      <div class="card stat"><span class="l">留痕率 BR-116</span><div class="n">{{ archiveStat.traceRate }}%</div></div>
+      <div class="card stat"><span class="l">留痕率</span><div class="n">{{ archiveStat.traceRate }}%</div></div>
     </div>
-    <form class="qbar" @submit.prevent="loadList">
+    <form class="qbar" @submit.prevent="search">
       <input v-model="filters.meetingTitle" placeholder="主题" style="width: 140px" />
-      <select v-model="filters.minutesStatus" style="width: 120px">
+      <select v-model="filters.minutesStatus" style="width: 140px">
         <option value="">全部纪要状态</option>
-        <option value="REGISTERED">已登记</option>
+        <option value="REGISTERED">会议已登记</option>
         <option value="MINUTES_RECORDED">纪要已录</option>
         <option value="ARCHIVED">已归档</option>
       </select>
+      <button class="btn btn-sec btn-sm" :class="{ 'btn-pri': filters.bucket === 'today' }" type="button" @click="setBucket('today')">今天</button>
+      <button class="btn btn-sec btn-sm" :class="{ 'btn-pri': filters.bucket === 'week' }" type="button" @click="setBucket('week')">本周</button>
+      <button class="btn btn-sec btn-sm" :class="{ 'btn-pri': filters.bucket === 'ended' }" type="button" @click="setBucket('ended')">已结束</button>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <button class="btn btn-sec btn-sm" type="button" @click="resetFilters">重置</button>
     </form>
+    <div class="card" style="padding: 12px; margin-bottom: 12px" data-testid="meet-timeline">
+      <b>今日时间轴</b>
+      <p v-if="!timeline.length" class="hint">今天没有会议</p>
+      <div v-for="item in timeline" :key="item.id" class="hint">
+        {{ timeLabel(item.meetingDate) }} · {{ item.meetingTitle }} · {{ item.durationMinutes }} 分钟 · {{ item.meetingRoom || '未指定会议室' }}
+      </div>
+    </div>
 
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
             <tr>
-              <th>纪要编号</th>
+              <th>会议编号</th>
               <th>主题</th>
               <th>组织者</th>
               <th>时间</th>
+              <th>时长</th>
               <th>会议室</th>
-              <th>参会</th>
+              <th>参会人数</th>
               <th>纪要状态</th>
               <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="8"><div class="empty"><div class="et">{{ error || '暂无会议' }}</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">{{ error || '暂无会议' }}</div></div></td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
               <td class="mono" style="color: var(--blue)">{{ row.minutesNo }}</td>
               <td style="font-weight: 500">{{ row.meetingTitle }}</td>
               <td>{{ row.organizerName || row.recorderName }}</td>
-              <td class="mono">{{ row.meetingDate || '—' }}</td>
+              <td class="mono">{{ formatShanghaiMinute(row.meetingDate) }}</td>
+              <td class="num">{{ row.durationMinutes || '—' }} 分钟</td>
               <td>{{ row.meetingRoom || '—' }}</td>
               <td class="num">{{ row.attendeeCount }} 人</td>
               <td>{{ statusLabel(row.minutesStatus) }}</td>
@@ -63,62 +76,136 @@
           </tbody>
         </table>
       </div>
+      <div class="pager">
+        <span class="pg-total">共 {{ total }} 条</span>
+        <span class="pg-sp"></span>
+        <button class="pg-n" :class="{ dis: pageNo <= 1 }" type="button" @click="prevPage">上一页</button>
+        <button class="pg-n" :class="{ dis: pageNo * pageSize >= total }" type="button" @click="nextPage">下一页</button>
+      </div>
     </div>
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
-      <div class="card" style="width: 440px; padding: 20px; max-height: 90vh; overflow: auto">
-        <h3 style="margin: 0 0 12px">登记会议 / 录入纪要</h3>
-        <label class="fld">主题</label>
-        <input v-model="form.meetingTitle" class="fld-in" />
-        <label class="fld">会议时间（ISO）</label>
-        <input v-model="form.meetingDate" class="fld-in" placeholder="2026-10-07T16:00:00+08:00" />
+      <div class="card meet-dialog" data-testid="meet-book-form">
+        <h3 style="margin: 0 0 12px">预约会议</h3>
+        <label class="fld">会议主题 *</label>
+        <input v-model="form.meetingTitle" class="fld-in" data-testid="meet-title" />
+        <p v-if="fieldErrors.meetingTitle" class="err">{{ fieldErrors.meetingTitle }}</p>
+        <label class="fld">会议时间 *</label>
+        <input v-model="form.meetingDate" class="fld-in" type="datetime-local" data-testid="meet-time" />
+        <p v-if="fieldErrors.meetingDate" class="err">{{ fieldErrors.meetingDate }}</p>
+        <label class="fld">参会人 *</label>
+        <select v-model="form.attendeeIds" class="fld-in" multiple data-testid="meet-attendees" size="5">
+          <option v-for="person in people" :key="person.userId" :value="person.userId">
+            {{ person.userName }}（{{ person.username }}）
+          </option>
+        </select>
+        <p v-if="fieldErrors.attendees" class="err">{{ fieldErrors.attendees }}</p>
+        <label class="fld">记录人</label>
+        <select v-model="form.recorderUserId" class="fld-in" data-testid="meet-recorder">
+          <option :value="0">默认本人</option>
+          <option v-for="person in people" :key="'r' + person.userId" :value="person.userId">{{ person.userName }}</option>
+        </select>
+        <label class="fld">时长（分钟）</label>
+        <input v-model.number="form.durationMinutes" class="fld-in" type="number" min="15" max="480" data-testid="meet-duration" />
         <label class="fld">会议室</label>
-        <input v-model="form.meetingRoom" class="fld-in" placeholder="3F-大会议室 / 线上" />
-        <label class="fld">纪要正文（留空则仅登记）</label>
-        <textarea v-model="form.summary" class="fld-in" rows="4" />
-        <label class="fld">参会人（逗号分隔姓名）</label>
-        <input v-model="form.attendeesText" class="fld-in" placeholder="张三,李四" />
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <select v-model="form.meetingRoom" class="fld-in" data-testid="meet-room">
+          <option value="">不指定</option>
+          <option v-for="room in rooms" :key="room" :value="room">{{ room }}</option>
+        </select>
+        <label class="fld">议程</label>
+        <textarea v-model="form.agenda" class="fld-in" rows="3" data-testid="meet-agenda" />
+        <p v-if="formError" class="err">{{ formError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
-          <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="meet-submit" @click="submit">提交预约</button>
         </div>
       </div>
     </div>
 
     <div v-if="detail" class="modal-mask" @click.self="detail = null">
-      <div class="card" style="width: 520px; padding: 20px; max-height: 90vh; overflow: auto">
+      <div class="card meet-dialog" data-testid="meet-detail">
         <h3 style="margin: 0 0 8px">{{ detail.meetingTitle }}</h3>
         <p class="hint">{{ detail.minutesNo }} · {{ statusLabel(detail.minutesStatus) }}</p>
-        <p><b>时间</b> {{ detail.meetingDate }}</p>
-        <p><b>会议室</b> {{ detail.meetingRoom || '—' }}</p>
-        <p><b>纪要</b></p>
-        <pre style="white-space: pre-wrap; font-size: 13px">{{ detail.summary || '（待录入）' }}</pre>
-        <div v-if="detail.actionItems?.length">
-          <p><b>行动项</b></p>
-          <ul>
-            <li v-for="it in detail.actionItems" :key="it.itemId">{{ it.description }} → {{ it.responsibleName }}</li>
-          </ul>
-        </div>
-        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
-          <button
-            v-if="detail.minutesStatus !== 'ARCHIVED' && detail.minutesStatus !== 'REGISTERED'"
-            class="btn btn-pri btn-sm"
-            type="button"
-            @click="archiveDetail"
-          >
-            归档
+        <p><b>组织者</b> {{ detail.organizerName || '—' }} · <b>记录人</b> {{ detail.recorderName || '—' }}</p>
+        <p><b>时间</b> {{ formatShanghaiMinute(detail.meetingDate) }} · <b>时长</b> {{ detail.durationMinutes || '—' }} 分钟</p>
+        <p><b>会议室</b> {{ detail.meetingRoom || '—' }} · <b>参会</b> {{ detail.attendeeCount || 0 }} 人</p>
+        <p v-if="detail.agenda"><b>议程</b> {{ detail.agenda }}</p>
+        <p v-if="aiPhase" class="hint" data-testid="meet-ai-phase">{{ aiPhase }}</p>
+        <template v-if="!editing">
+          <p><b>纪要正文</b></p>
+          <pre style="white-space: pre-wrap; font-size: 13px">{{ detail.summary || '（待录入）' }}</pre>
+          <div v-if="detail.decisions?.length">
+            <p><b>决议事项</b></p>
+            <ul>
+              <li v-for="(item, index) in detail.decisions" :key="index">{{ item.description }}</li>
+            </ul>
+          </div>
+          <div v-if="detail.actionItems?.length">
+            <p><b>行动项</b></p>
+            <ul>
+              <li v-for="item in detail.actionItems" :key="item.itemId">
+                {{ item.description }} → {{ item.responsibleName || '未指定' }} · {{ item.dueDate || '无期限' }} · {{ actionStatusLabel(item.status) }}
+              </li>
+            </ul>
+          </div>
+          <p v-if="detail.appendix"><b>附录说明</b><br />{{ detail.appendix }}</p>
+        </template>
+        <template v-else>
+          <label class="fld">纪要正文 *</label>
+          <textarea v-model="editor.summary" class="fld-in" rows="4" data-testid="meet-summary" />
+          <p v-if="editorError" class="err">{{ editorError }}</p>
+          <label class="fld">决议事项</label>
+          <div v-for="(item, index) in editor.decisions" :key="'d' + index" class="line">
+            <input v-model="item.description" class="fld-in" placeholder="决议描述" />
+            <button class="btn btn-sec btn-sm" type="button" @click="editor.decisions.splice(index, 1)">删除</button>
+          </div>
+          <button class="btn btn-sec btn-sm" type="button" @click="editor.decisions.push({ description: '' })">添加决议</button>
+          <label class="fld">行动项</label>
+          <div v-for="(item, index) in editor.actions" :key="'a' + index" class="line">
+            <input v-model="item.description" class="fld-in" placeholder="描述" />
+            <select v-model="item.responsibleUserId" class="fld-in">
+              <option :value="0">责任人</option>
+              <option v-for="person in people" :key="'a' + person.userId" :value="person.userId">{{ person.userName }}</option>
+            </select>
+            <input v-model="item.dueDate" class="fld-in" type="date" />
+            <button class="btn btn-sec btn-sm" type="button" @click="editor.actions.splice(index, 1)">删除</button>
+          </div>
+          <button class="btn btn-sec btn-sm" type="button" @click="editor.actions.push({ itemId: 0, description: '', responsibleUserId: 0, dueDate: '' })">添加行动项</button>
+        </template>
+        <label v-if="detail.minutesStatus === 'ARCHIVED'" class="fld">附录说明</label>
+        <textarea v-if="detail.minutesStatus === 'ARCHIVED'" v-model="appendix" class="fld-in" rows="2" data-testid="meet-appendix" />
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end; flex-wrap: wrap; gap: 8px">
+          <button v-if="detail.minutesStatus !== 'ARCHIVED'" class="btn btn-sec btn-sm" type="button" data-testid="meet-ai" @click="triggerAi">触发 AI 生成</button>
+          <button v-if="detail.minutesStatus !== 'ARCHIVED' && !editing" class="btn btn-sec btn-sm" type="button" data-testid="meet-edit" @click="startEdit">
+            {{ detail.minutesStatus === 'REGISTERED' ? '手动录入纪要' : '编辑纪要' }}
           </button>
+          <button v-if="editing" class="btn btn-pri btn-sm" type="button" data-testid="meet-save" @click="saveMinutes">保存纪要</button>
+          <button v-if="editing" class="btn btn-sec btn-sm" type="button" @click="editing = false">取消编辑</button>
+          <button v-if="detail.minutesStatus === 'MINUTES_RECORDED'" class="btn btn-pri btn-sm" type="button" data-testid="meet-archive" @click="confirmArchive = true">归档纪要</button>
+          <button v-if="detail.minutesStatus === 'ARCHIVED'" class="btn btn-pri btn-sm" type="button" data-testid="meet-appendix-save" @click="saveAppendix">保存附录</button>
           <button class="btn btn-sec btn-sm" type="button" @click="detail = null">关闭</button>
         </div>
       </div>
+    </div>
+    <div v-if="confirmArchive" class="modal-mask">
+      <div class="card meet-dialog" data-testid="meet-archive-confirm">
+        <h3 style="margin: 0 0 8px">归档纪要</h3>
+        <p>归档后正文只读，更正请走附录说明。确认归档「{{ detail?.meetingTitle }}」？</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="confirmArchive = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="meet-archive-ok" @click="archiveDetail">确认归档</button>
+        </div>
+      </div>
+    </div>
+    <div v-if="toast" class="toasts">
+      <div class="toast t-success" :class="{ out: toastOut }" data-testid="meet-toast">{{ toast }}</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -126,6 +213,7 @@ type Row = {
   meetingTitle: string
   meetingDate: string
   meetingRoom?: string
+  durationMinutes?: number
   organizerName?: string
   recorderName: string
   attendeeCount: number
@@ -133,29 +221,79 @@ type Row = {
 }
 
 const rows = ref<Row[]>([])
+const timeline = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
+const total = ref(0)
+const pageNo = ref(1)
+const pageSize = 10
 const showForm = ref(false)
 const formError = ref('')
 const detail = ref<Record<string, any> | null>(null)
 const archiveStat = ref({ totalMeetings: 0, archivedCount: 0, traceRate: 0 })
 
-const filters = reactive({ meetingTitle: '', minutesStatus: '' })
+const filters = reactive({ meetingTitle: '', minutesStatus: '', bucket: '' })
+const rooms = ['2F-会议室 A', '3F-大会议室', '1F-会议室 B', '线上']
+const people = ref<{ userId: number; userName: string; username: string }[]>([])
 const form = reactive({
   meetingTitle: '',
   meetingDate: '',
   meetingRoom: '',
-  summary: '',
-  attendeesText: '',
+  durationMinutes: 60,
+  agenda: '',
+  attendeeIds: [] as number[],
+  recorderUserId: 0,
 })
+const fieldErrors = reactive({ meetingTitle: '', meetingDate: '', attendees: '' })
+const toast = ref('')
+const toastOut = ref(false)
+let toastTimer = 0
+let toastHideTimer = 0
+const editing = ref(false)
+const editorError = ref('')
+const aiPhase = ref('')
+const confirmArchive = ref(false)
+const appendix = ref('')
+const editor = reactive({
+  summary: '',
+  decisions: [] as { description: string }[],
+  actions: [] as { itemId: number; description: string; responsibleUserId: number; dueDate: string }[],
+})
+
+function clearToast() {
+  window.clearTimeout(toastTimer)
+  window.clearTimeout(toastHideTimer)
+  toast.value = ''
+  toastOut.value = false
+}
+
+function showToast(text: string) {
+  window.clearTimeout(toastTimer)
+  window.clearTimeout(toastHideTimer)
+  toastOut.value = false
+  toast.value = text
+  toastTimer = window.setTimeout(() => {
+    toastOut.value = true
+    toastHideTimer = window.setTimeout(() => {
+      toast.value = ''
+      toastOut.value = false
+    }, 320)
+  }, 3000)
+}
 
 function statusLabel(s: string) {
   const map: Record<string, string> = {
-    REGISTERED: '已登记',
+    REGISTERED: '会议已登记',
     MINUTES_RECORDED: '纪要已录',
     ARCHIVED: '已归档',
   }
   return map[s] || s
+}
+
+function actionStatusLabel(status: string) {
+  if (status === 'CLOSED') return '已完成'
+  if (status === 'OVERDUE') return '已逾期'
+  return '进行中'
 }
 
 async function loadList() {
@@ -164,74 +302,251 @@ async function loadList() {
   try {
     const res = await http.get('/meet/minutes/list', {
       params: {
-        pageNo: 1,
-        pageSize: 20,
+        pageNo: pageNo.value,
+        pageSize,
         meetingTitle: filters.meetingTitle || undefined,
         minutesStatus: filters.minutesStatus || undefined,
+        bucket: filters.bucket || undefined,
       },
     })
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
+      total.value = 0
       return
     }
     rows.value = res.data.data?.list || []
-  } catch {
-    error.value = '网络错误'
+    total.value = Number(res.data.data?.total || 0)
+  } catch (e: unknown) {
+    error.value = errorMessage(e)
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
 }
 
+function timeLabel(value?: string) {
+  if (!value) return '—'
+  const match = value.match(/T(\d{2}:\d{2})/)
+  return match ? match[1] : value
+}
+
+function formatShanghaiMinute(value?: string) {
+  if (!value) return '—'
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/)
+  return match ? `${match[1]} ${match[2]}` : value
+}
+
+async function loadTimeline() {
+  try {
+    const res = await http.get('/meet/minutes/list', { params: { pageNo: 1, pageSize: 20, bucket: 'today' } })
+    timeline.value = res.data.data?.list || []
+  } catch {
+    timeline.value = []
+  }
+}
+
+function search() {
+  pageNo.value = 1
+  loadList()
+}
+
+function setBucket(bucket: string) {
+  filters.bucket = filters.bucket === bucket ? '' : bucket
+  search()
+}
+
+function resetFilters() {
+  filters.meetingTitle = ''
+  filters.minutesStatus = ''
+  filters.bucket = ''
+  search()
+}
+
+function prevPage() {
+  if (pageNo.value <= 1) return
+  pageNo.value -= 1
+  loadList()
+}
+
+function nextPage() {
+  if (pageNo.value * pageSize >= total.value) return
+  pageNo.value += 1
+  loadList()
+}
+
+function bizDateTime(value: string) {
+  if (!value) return ''
+  const text = value.length === 16 ? `${value}:00` : value
+  return `${text}+08:00`
+}
+
+async function loadPeople() {
+  try {
+    const res = await http.get('/meet/minutes/participants')
+    people.value = res.data.data?.list || []
+  } catch (e: unknown) {
+    formError.value = errorMessage(e)
+  }
+}
+
 function openCreate() {
   formError.value = ''
-  const now = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const off = -now.getTimezoneOffset()
-  const sign = off >= 0 ? '+' : '-'
-  const oh = pad(Math.floor(Math.abs(off) / 60))
-  const om = pad(Math.abs(off) % 60)
-  form.meetingDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:00${sign}${oh}:${om}`
+  clearToast()
+  fieldErrors.meetingTitle = ''
+  fieldErrors.meetingDate = ''
+  fieldErrors.attendees = ''
   form.meetingTitle = ''
+  form.meetingDate = ''
   form.meetingRoom = ''
-  form.summary = ''
-  form.attendeesText = ''
+  form.durationMinutes = 60
+  form.agenda = ''
+  form.attendeeIds = []
+  form.recorderUserId = 0
   showForm.value = true
+  loadPeople()
+}
+
+function validateForm() {
+  fieldErrors.meetingTitle = form.meetingTitle.trim() ? '' : '必填项，请填写'
+  fieldErrors.meetingDate = form.meetingDate ? '' : '必填项，请填写'
+  fieldErrors.attendees = form.attendeeIds.length ? '' : '必填项，请填写'
+  return !fieldErrors.meetingTitle && !fieldErrors.meetingDate && !fieldErrors.attendees
 }
 
 async function submit() {
   formError.value = ''
-  const attendees = form.attendeesText
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((userName) => ({ userName }))
+  clearToast()
+  if (!validateForm()) return
+  const attendees = form.attendeeIds.map((userId) => {
+    const person = people.value.find((item) => item.userId === userId)
+    return { userId, userName: person?.userName || '' }
+  })
   try {
     const res = await http.post('/meet/minutes', {
-      meetingTitle: form.meetingTitle,
-      meetingDate: form.meetingDate,
+      meetingTitle: form.meetingTitle.trim(),
+      meetingDate: bizDateTime(form.meetingDate),
       meetingRoom: form.meetingRoom,
+      durationMinutes: form.durationMinutes || 60,
+      agenda: form.agenda,
+      recorderUserId: form.recorderUserId || undefined,
       attendees,
-      summary: form.summary,
     })
-    if (res.data.code !== 0) {
-      formError.value = res.data.msg || '保存失败'
-      return
-    }
+    const no = res.data.data?.minutesNo || ''
+    showToast(no ? `会议已登记 · ${no}` : '会议已登记')
     showForm.value = false
     await loadList()
-  } catch {
-    formError.value = '网络错误'
+    await loadTimeline()
+    await loadArchiveRate()
+  } catch (e: unknown) {
+    formError.value = errorMessage(e)
   }
 }
 
 async function openDetail(id: number) {
+  editing.value = false
+  editorError.value = ''
+  aiPhase.value = ''
+  confirmArchive.value = false
   try {
     const res = await http.get(`/meet/minutes/${id}`)
-    if (res.data.code === 0) detail.value = res.data.data
-  } catch {
-    /* ignore */
+    detail.value = res.data.data
+    appendix.value = ''
+    if (!people.value.length) loadPeople()
+  } catch (e: unknown) {
+    clearToast()
+    error.value = errorMessage(e)
+  }
+}
+
+function startEdit() {
+  if (!detail.value) return
+  editor.summary = String(detail.value.summary || '')
+  editor.decisions = (detail.value.decisions || []).map((item: { description?: string }) => ({
+    description: item.description || '',
+  }))
+  editor.actions = (detail.value.actionItems || []).map(
+    (item: { itemId?: number; description?: string; responsibleUserId?: number; dueDate?: string }) => ({
+      itemId: Number(item.itemId || 0),
+      description: item.description || '',
+      responsibleUserId: Number(item.responsibleUserId || 0),
+      dueDate: String(item.dueDate || '').slice(0, 10),
+    }),
+  )
+  editorError.value = ''
+  editing.value = true
+}
+
+async function saveMinutes() {
+  if (!detail.value) return
+  editorError.value = ''
+  if (!editor.summary.trim()) {
+    editorError.value = '必填项，请填写'
+    return
+  }
+  const wasRecorded = detail.value.minutesStatus === 'MINUTES_RECORDED'
+  try {
+    const res = await http.put(`/meet/minutes/${detail.value.id}`, {
+      meetingTitle: detail.value.meetingTitle,
+      meetingDate: detail.value.meetingDate,
+      summary: editor.summary.trim(),
+      decisions: editor.decisions.filter((item) => item.description.trim()),
+      actionItems: editor.actions
+        .filter((item) => item.description.trim())
+        .map((item) => ({
+          itemId: item.itemId || undefined,
+          description: item.description.trim(),
+          responsibleUserId: item.responsibleUserId || undefined,
+          dueDate: item.dueDate,
+        })),
+    })
+    detail.value = res.data.data
+    editing.value = false
+    showToast(wasRecorded ? '已更新' : '纪要已录')
+    await loadList()
+  } catch (e: unknown) {
+    editorError.value = errorMessage(e)
+  }
+}
+
+async function triggerAi() {
+  if (!detail.value) return
+  aiPhase.value = 'AI 转写中'
+  editorError.value = ''
+  try {
+    const res = await http.post(`/meet/minutes/${detail.value.id}/ai-draft`)
+    const draft = res.data.data || {}
+    editor.summary = String(draft.summary || '')
+    editor.decisions = (draft.decisions || []).map((item: { description?: string }) => ({
+      description: item.description || '',
+    }))
+    if (!editor.actions.length) {
+      editor.actions = []
+    }
+    editing.value = true
+    aiPhase.value = ''
+    showToast('已导入初稿')
+  } catch (e: unknown) {
+    aiPhase.value = ''
+    editorError.value = errorMessage(e)
+  }
+}
+
+async function saveAppendix() {
+  if (!detail.value) return
+  const note = appendix.value.trim()
+  if (!note) {
+    editorError.value = '必填项，请填写'
+    return
+  }
+  try {
+    const res = await http.put(`/meet/minutes/${detail.value.id}`, { appendix: note })
+    detail.value = res.data.data
+    appendix.value = ''
+    showToast('附录说明已保存')
+  } catch (e: unknown) {
+    editorError.value = errorMessage(e)
   }
 }
 
@@ -252,16 +567,64 @@ async function loadArchiveRate() {
 
 async function archiveDetail() {
   if (!detail.value?.id) return
-  const res = await http.put(`/meet/minutes/${detail.value.id}/archive`)
-  if (res.data.code === 0) {
+  confirmArchive.value = false
+  try {
+    const res = await http.put(`/meet/minutes/${detail.value.id}/archive`)
     detail.value = res.data.data
+    editing.value = false
+    showToast('已归档')
     await loadList()
     await loadArchiveRate()
+  } catch (e: unknown) {
+    editorError.value = errorMessage(e)
   }
 }
 
 onMounted(() => {
   loadList()
+  loadTimeline()
   loadArchiveRate()
 })
+
+onBeforeUnmount(clearToast)
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px 16px;
+}
+.meet-dialog {
+  width: min(560px, 100%);
+  max-height: min(90vh, 820px);
+  overflow: auto;
+  padding: 20px;
+}
+.fld {
+  display: block;
+  font-size: 12px;
+  color: var(--text2, #6e6e73);
+  margin: 10px 0 4px;
+}
+.fld-in {
+  width: 100%;
+  box-sizing: border-box;
+}
+.err {
+  color: var(--red, #d70015);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+.line {
+  display: grid;
+  grid-template-columns: 1fr 140px 140px auto;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+</style>

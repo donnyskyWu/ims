@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>发布管理</h1>
-        <div class="sub">CONTENT-006 · 发布单 / 回填 / 督办（PUB-R2）</div>
+        <div class="sub">发布单、回填与督办</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建发布单</button>
@@ -141,7 +141,7 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="receiptOpen" title="回填发布链接" width="480px" @close="receiptOpen = false">
-      <p class="hint">回填后自动归档打包（PUB-R3）</p>
+      <p class="hint">回填后会自动归档打包</p>
       <label class="rowline" style="flex-direction: column; align-items: stretch; gap: 4px">
         发布链接
         <input v-model="receiptForm.publishUrl" data-testid="publish-receipt-url" placeholder="https://..." />

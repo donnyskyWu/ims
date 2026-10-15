@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>我的绩效</h1>
-        <div class="sub">只显示本人已发布结果。发布前不可见（1157）。</div>
+        <div class="sub">只显示本人已发布结果。发布前不可见。</div>
       </div>
       <label>
         周期
@@ -133,14 +133,14 @@ async function load() {
   try {
     const res = await http.get(`/perf/calc/${period.value}/mine`)
     if (!res.data.data) {
-      empty.value = '本期无绩效记录（入职/离职当月按在职天数折算，PER-C-R2）'
+      empty.value = '本期无绩效记录。入职或离职当月按在职天数折算。'
       return
     }
     mine.value = res.data.data
   } catch (err) {
     const body = err as { code?: number; msg?: string }
     if (body.code === 1157) {
-      empty.value = '本期绩效尚未发布，发布后可见（1157 · PER-C-R3）'
+      empty.value = '本期绩效尚未发布，发布后可见'
       return
     }
     empty.value = body.msg || '加载失败'

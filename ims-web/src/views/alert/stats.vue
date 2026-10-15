@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>预警统计</h1>
-        <div class="sub">ALERT-004 · 健康度 · 规则排行 · 合并记录 · 通道本地桩</div>
+        <div class="sub">健康度、规则排行、合并记录与通道留痕</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/alert/escalate">升级中心</router-link>
@@ -53,7 +53,7 @@
         >
           {{ overview.responseRate }}%
         </div>
-        <div class="d">已响应 {{ overview.respondedCount }} / {{ overview.totalAlertCount }} · BR-112 &gt;90%</div>
+        <div class="d">已响应 {{ overview.respondedCount }} / {{ overview.totalAlertCount }} · 目标 &gt;90%</div>
       </div>
       <div class="card stat">
         <span class="l">解决率</span>
@@ -155,7 +155,7 @@
       <div class="pg-h" style="margin-bottom: 8px">
         <div>
           <h2 style="margin: 0; font-size: 16px">预警周报</h2>
-          <div class="sub">GET /alert/stats/weekly-report · 在线查看，周一汇总口径</div>
+          <div class="sub">在线查看，周一汇总口径</div>
         </div>
         <select v-model="weekStart" data-testid="alert-weekly-week" @change="loadWeekly">
           <option v-for="week in weeks" :key="week" :value="week">{{ week }} 起</option>
@@ -178,7 +178,7 @@
             <div class="n" data-testid="alert-weekly-response" :style="{ color: rateColor(weekly.responseRate, 90) }">
               {{ weekly.responseRate }}%
             </div>
-            <div class="d">BR-112 &gt;90%</div>
+            <div class="d">目标 &gt;90%</div>
           </div>
           <div class="card stat">
             <span class="l">送达率</span>
@@ -422,7 +422,7 @@ const ruleCode = ref('')
 
 const falseHint = computed(() => {
   if (!overview.value || overview.value.totalAlertCount === 0) return '当前范围内没有误报样本'
-  if (overview.value.falseAlarmRate > 5) return '超过 5%，建议复核阈值（ALR-S-R3）'
+  if (overview.value.falseAlarmRate > 5) return '超过 5%，建议复核阈值'
   return '未超过 5% 复核线'
 })
 

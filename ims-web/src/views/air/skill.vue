@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>技能库</h1>
-        <div class="sub">AI 技能登记、审核、授权 · /ims/air/skill</div>
+        <div class="sub">AI 技能登记、审核与授权</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="air-skill-create" @click="openCreate">新增技能</button>
@@ -104,7 +104,7 @@
     <div v-if="grantSkill" class="modal-mask" @click.self="grantSkill = null">
       <div class="card" style="width: 520px; padding: 20px" data-testid="air-skill-grant-form">
         <h3 style="margin: 0 0 8px">技能授权</h3>
-        <p class="hint">{{ grantSkill.skillName }} · 授权事件驱动同步，生效延迟 &lt;5 分钟（BR-024）</p>
+        <p class="hint">{{ grantSkill.skillName }} · 授权后同步生效，延迟不超过 5 分钟</p>
         <label class="fld">授权类型</label>
         <select v-model="grantForm.grantType" class="fld-in" data-testid="air-grant-type" @change="onGrantType">
           <option value="DEPT">部门</option>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>穿透查询</h1>
-        <div class="sub">DC-001 · /ims/dc/trace · GET/POST /dc/trace/* · 12 DC</div>
+        <div class="sub">链路追踪</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" data-testid="dc-trace-dashboard" to="/ims/dc/dashboard">全链路看板</router-link>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>台账对账</h1>
-        <div class="sub">E2E-S3-08 · 场次 × 成本 × 利润 × 分成 · 缺账显示空态，不打断其余账</div>
+        <div class="sub">场次、成本、利润与分成 · 缺账显示空态，不打断其余账</div>
       </div>
     </div>
 

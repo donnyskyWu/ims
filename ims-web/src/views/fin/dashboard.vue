@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>利润看板</h1>
-        <div class="sub">FIN-004 · 按月汇总 · 平台 / 账号 / IP 组 / 达人 / 责任人 · #90</div>
+        <div class="sub">按月汇总 · 平台、账号、IP 组、达人、责任人</div>
       </div>
     </div>
 

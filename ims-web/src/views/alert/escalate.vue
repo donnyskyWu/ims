@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>升级中心</h1>
-        <div class="sub">ALERT-003 · 一级 30 分钟 / 二级 60 分钟 · L3 从二级起跳 · 待升级清单 30 秒轮询</div>
+        <div class="sub">一级 30 分钟，二级 60 分钟 · 三级从二级起算 · 待升级清单每 30 秒刷新</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="alert-escalate-refresh" @click="refreshAll">
@@ -178,7 +178,7 @@
         </div>
         <span class="num">{{ point.responseRate }}% · {{ point.alertCount }} 条</span>
       </div>
-      <p class="hint">虚线为目标 90%（BR-112）</p>
+      <p class="hint">虚线为目标 90%</p>
     </div>
 
     <ProtoDrawer :open="timelineOpen" title="升级时间轴" width="640px" @close="closeTimeline">
@@ -189,7 +189,7 @@
         </p>
         <p class="hint">{{ timeline.channelStub || '钉钉/短信外发保持本地桩，未实际发送' }}</p>
         <p v-if="timeline.responseStatus !== 'OPEN'" data-testid="alert-escalate-stopped">
-          已响应 · 升级链停止（ALR-E-R3）· {{ timeline.responseStatus }}
+          已响应 · 升级已停止 · {{ timeline.responseStatus }}
         </p>
         <div v-if="!timeline.timeline.length" class="empty"><div class="et">尚未进入下一级</div></div>
         <ul v-else style="list-style: none; padding: 0; margin: 0">
@@ -287,7 +287,7 @@ const rateHint = computed(() => {
   if (!stats.value) return ''
   if (stats.value.totalAlerts === 0) return '当前没有预警样本，不记未达标'
   const mark = stats.value.responseRate >= stats.value.target ? '达标' : '未达标'
-  return `${mark}（BR-112 >${stats.value.target}%）`
+  return `${mark}（目标 >${stats.value.target}%）`
 })
 
 function levelName(level: number) {

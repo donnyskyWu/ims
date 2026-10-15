@@ -156,7 +156,8 @@ export function modIdFromPath(path: string) {
   return found?.[0] || ''
 }
 
-export function crumbOf(id: string) {
+export function crumbOf(id: string, path = '') {
+  if (path === '/ims/meet/daily/submit') return { parent: '日报中心', page: '填写日报' }
   const mod = mods[id]
   if (!mod) return { parent: 'IMS', page: '建设中' }
   return { parent: mod.parent || mod.name, page: mod.page || mod.name }

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>预览与下钻</h1>
-        <div class="sub">BI-002 · /ims/bi/report/preview · DrillDimension 六维</div>
+        <div class="sub">报表预览 · 六个下钻维度</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" data-testid="bi-drill-reset" @click="resetDrill">重置路径</button>

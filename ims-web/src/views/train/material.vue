@@ -3,20 +3,20 @@
     <div class="pg-h">
       <div>
         <h1>培训资料库</h1>
-        <div class="sub">TRAIN-001 · DOC/VIDEO/LINK · 02 TRAIN</div>
+        <div class="sub">文档、视频或链接</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">上传资料</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 8px">岗位分类树只读展示；更新资料生成新版本并留档（TRN-M-R2）。列表可按标题、类型、状态、岗位和分类筛选。</p>
+    <p class="hint" style="margin-bottom: 8px">岗位分类只读展示。更新资料会生成新版本并留档。列表可按标题、类型、状态、岗位和分类筛选。</p>
     <div
       class="card weekly-card"
       :class="{ warn: weeklyStatus === 'ready' && weekly.shouldUpdateCount > 0 && weekly.weeklyUpdateRate < 100 }"
       data-testid="train-weekly-rate"
     >
       <div>
-        <div class="weekly-label">周更新率 BR-101 · {{ weekly.weekStart || '本周' }}</div>
+        <div class="weekly-label">周更新率 · {{ weekly.weekStart || '本周' }}</div>
         <div v-if="weeklyStatus === 'loading'" class="hint">加载中</div>
         <div v-else-if="weeklyStatus === 'error'" class="hint" data-testid="train-weekly-error">
           周更新率加载失败

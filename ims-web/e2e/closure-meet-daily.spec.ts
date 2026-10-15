@@ -1,0 +1,46 @@
+import { expect, test } from '@playwright/test'
+import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
+
+test('会议预约空表单提示必填，日报填写页有类型且正文可直接提交', async ({ page }) => {
+  const pageErrors = attachClosurePageHooks(page)
+  await loginAdmin(page)
+  await expect(page.locator('.nc', { hasText: '03 MEET' })).toHaveCount(0)
+  await expect(page.locator('.nc', { hasText: '09 REPORT' })).toHaveCount(0)
+  await expect(page.locator('.nc', { hasText: '02 TRAIN' })).toHaveCount(0)
+
+  await page.goto('/ims/meet/minutes')
+  await expect(page.getByTestId('meet-book')).toBeVisible()
+  await expect(page.getByTestId('meet-timeline')).toBeVisible()
+  await page.getByTestId('meet-book').click()
+  await expect(page.getByTestId('meet-book-form').getByText('议程 *')).toHaveCount(0)
+  await expect(page.getByTestId('meet-book-form').getByText('会议主题 *')).toBeVisible()
+  await page.getByTestId('meet-submit').click()
+  await expect(page.getByTestId('meet-book-form')).toContainText('必填项，请填写')
+
+  await page.goto('/ims/meet/daily')
+  await expect(page.getByRole('option', { name: '已退回' })).toHaveCount(0)
+  const mineStatus = page.getByTestId('daily-status-filter')
+  await expect(mineStatus.getByRole('option', { name: '草稿' })).toHaveCount(1)
+  await expect(mineStatus.getByRole('option', { name: '已提交' })).toHaveCount(1)
+  await expect(mineStatus.getByRole('option', { name: '已审阅' })).toHaveCount(1)
+  await expect(mineStatus.getByRole('option', { name: '已补交' })).toHaveCount(0)
+  await expect(mineStatus.getByRole('option', { name: '迟交' })).toHaveCount(0)
+  await page.goto('/ims/meet/daily/team')
+  await expect(page.getByRole('option', { name: '已退回' })).toHaveCount(0)
+  const teamStatus = page.getByTestId('daily-team-status-filter')
+  await expect(teamStatus.getByRole('option', { name: '已补交' })).toHaveCount(0)
+  await expect(teamStatus.getByRole('option', { name: '迟交' })).toHaveCount(0)
+  await expect(teamStatus.getByRole('option', { name: '已审阅' })).toHaveCount(1)
+
+  await page.goto('/ims/meet/daily/submit')
+  await expect(page.locator('.crumb')).toContainText('日报中心 / 填写日报')
+  await expect(page.locator('.crumb')).not.toContainText('建设中')
+  await expect(page.locator('.pg-h .sub')).not.toContainText('MEET-')
+  await expect(page.getByTestId('daily-type')).toBeVisible()
+  await expect(page.getByText('今日完成 *')).toBeVisible()
+  await expect(page.getByText('明日计划 *')).toHaveCount(0)
+  await page.getByTestId('daily-submit').click()
+  await expect(page.getByTestId('daily-msg')).toContainText('必填项，请填写')
+
+  expect(pageErrors).toEqual([])
+})

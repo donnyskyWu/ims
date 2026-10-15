@@ -10,8 +10,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      UX-M4 P-M4-008 · <code>platformType={{ meta.platform }}</code> · 采集 Tab 见 ADR-047 ·
-      <b>≠</b> 数据采集·竞品账号配置。
+      当前为{{ meta.title }}。采集配置在账号详情的采集页，与数据采集里的竞品账号配置不是同一处。
     </p>
     <form class="qbar" data-testid="acct-list-filters" @submit.prevent="search">
       <input v-model="keyword" placeholder="账号编号/昵称" style="width: 130px" data-testid="acct-filter-keyword" />
@@ -204,7 +203,7 @@
       </div>
     </div>
     <p class="hint">
-      GET /corp/account/page?platformType={{ meta.platform }} · 池状态 GET /corp/account/status/summary · 「领用」→ POST /account/apply（在用再领用 1021 · 冻结 1022）· 流转 → POST /account/transfer · 收回 → POST /account/transfer（RECALL · 直接 FROZEN）· 账号已绑定资产时提交或确认后提示同步办理资产转移（不阻断）· 解冻 → POST /account/{id}/unfreeze（FROZEN → IN_POOL）· 归还 → POST /account/return/submit · 回收回池 → POST /account/{id}/recycle（RETURNED → IN_POOL）· 冲话费 → POST /account/recharge · 未核对可 PUT /account/recharge/{id} · 已核对由管理员 POST /account/recharge/{id}/unlock 后再编辑 · 账实核对 → POST /account/recharge/verify（差异率 ≥ 2% 为 1026）· 成本汇总 → GET /account/recharge/summary · 导出 → GET /account/recharge/summary/export · 交接凭证 → GET /account/timeline/{id}/export
+      在用账号不能再次领用，冻结账号不能领用。收回后账号冻结。已绑定资产时，提交或确认后会提示同步办理资产转移，不阻断操作。解冻后回到可领用，归还后再回收可回到账号池。冲话费未核对可以修改，已核对须管理员解锁后再编辑。账实核对差异率达到 2% 会提示。可查看成本汇总、导出和交接凭证。
     </p>
 
     <p
@@ -218,7 +217,7 @@
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">冲话费记录</h2>
-          <div class="sub">GET /account/recharge/list · 账号填本平台完整编号或昵称 · 核对状态 / 充值月份 / 渠道 · 月份留空则不过滤 · 金额 &gt; 5000 须凭证（1025）· 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
+          <div class="sub">账号填本平台完整编号或昵称 · 可按核对状态、充值月份、渠道筛选 · 月份留空则不过滤 · 金额超过 5000 须凭证 · 凭证仅财务角色可见 · 未核对可编辑 · 已核对须管理员解锁后再编辑 · 差异记录须先有财务核查工单</div>
         </div>
       </div>
       <p v-if="rcR1Due" class="hint" data-testid="acct-rc-r1">请于 5 日前完成上月核对</p>
@@ -363,7 +362,7 @@
       <div class="pg-h" style="margin-top: 8px">
         <div>
           <h2 style="font-size: 16px; margin: 0">成本汇总报表</h2>
-          <div class="sub">GET /account/recharge/summary · 期间按月过滤 · 维度：账号 / 部门 / 平台 · 关键字只筛当前表 · 合计与导出仍为整月 · 可导出 xlsx / csv</div>
+          <div class="sub">期间按月过滤 · 维度：账号、部门、平台 · 关键字只筛当前表 · 合计与导出仍为整月 · 可导出表格</div>
         </div>
       </div>
       <form class="qbar" data-testid="acct-summary-filters" @submit.prevent="loadSummary">
@@ -459,13 +458,13 @@
         </div>
       </div>
       <div v-if="detail && activeTab === 'collect'" class="formrow one">
-        <p class="hint">凭证保存后须「导入 Collector」完成 bind，否则采集任务会报未绑定。</p>
+        <p class="hint">凭证保存后须点「导入 Collector」完成绑定，否则采集任务会提示未绑定。</p>
         <div class="fld">
           <label>绑定状态</label>
           <div>{{ collectSummary }}</div>
         </div>
         <div v-if="bindInfo" class="fld">
-          <label>Collector account_id</label>
+          <label>采集账号编号</label>
           <div class="mono">{{ bindInfo.collectorAccountId || '—' }}</div>
         </div>
         <div v-if="bindInfo && meta.platform !== 'DOUYIN'" class="fld">
@@ -744,7 +743,7 @@
             </tbody>
           </table>
         </template>
-        <p class="hint">本 Tab 为 ADR-047 平台账号采集配置，不是 COLLECT 竞品账号配置。</p>
+        <p class="hint">本页是平台账号的采集配置，不是竞品账号配置。</p>
         <div class="acts" style="margin-top: 12px">
           <button class="btn btn-sec btn-sm" type="button" :disabled="!detail.hasCookie" @click="importCollector">导入 Collector</button>
           <button class="btn btn-sec btn-sm" type="button" @click="testConnection">测试连接</button>
@@ -960,9 +959,9 @@
           <label>交接说明<i class="req">*</i></label>
           <input v-model="recallForm.remark" data-testid="acct-recall-remark" placeholder="收回说明" />
         </div>
-        <p class="hint">收回后直接生效，账号进入冻结态（FROZEN）。领用与流转将被 1022 拦截。</p>
+        <p class="hint">收回后立即生效，账号进入冻结。冻结期间不能领用，也不能流转。</p>
         <p v-if="recallResult" class="hint" data-testid="acct-recall-status">
-          收回单 {{ recallResult.transferNo }} · 已生效 · 状态 FROZEN
+          收回单 {{ recallResult.transferNo }} · 已生效 · 已冻结
         </p>
         <p v-if="recallMsg" class="hint" data-testid="acct-recall-msg">{{ recallMsg }}</p>
       </div>
@@ -989,15 +988,15 @@
         </div>
         <div class="fld">
           <label>当前状态</label>
-          <div>冻结（FROZEN）</div>
+          <div>冻结</div>
         </div>
         <div class="fld">
           <label>解冻说明<i class="req">*</i></label>
           <input v-model="unfreezeRemark" data-testid="acct-unfreeze-remark" placeholder="解冻原因" />
         </div>
-        <p class="hint">仅管理员可操作。解冻后账号回到账号池（IN_POOL），清空责任人，可再次领用。</p>
+        <p class="hint">仅管理员可操作。解冻后账号回到账号池，清空责任人，可以再次领用。</p>
         <p v-if="unfreezeResult" class="hint" data-testid="acct-unfreeze-status">
-          已解冻 · 状态 {{ unfreezeResult.status }}
+          已解冻，账号回到可领用
         </p>
         <p v-if="unfreezeMsg" class="hint" data-testid="acct-unfreeze-msg">{{ unfreezeMsg }}</p>
       </div>
@@ -1299,7 +1298,7 @@
       <div class="formrow one"><div class="fld"><label>实名人 ID</label><input v-model.number="form.realnameId" placeholder="可选" /></div></div>
       <div class="formrow one"><div class="fld"><label>责任人 ID<i class="req">*</i></label><input v-model.number="form.holderUserId" placeholder="ims_sys_user.id" /></div></div>
       <div class="formrow one"><div class="fld"><label>状态</label><select v-model="form.status"><option v-for="item in statusOptions" :key="item.value" :value="item.value">{{ item.label }}</option></select></div></div>
-      <p class="hint">强关联须通过选择器；手输非法 id 时后端返回 1500/1501/1504。</p>
+      <p class="hint">强关联须从选择器中选择，不能手填无效对象。</p>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="formOpen = false">取消</button>
         <button class="btn btn-pri" type="button" @click="submitCreate">保存</button>
@@ -1342,11 +1341,11 @@ const userStore = useUserStore()
 const currentUserId = computed(() => Number(userStore.profile?.userId || 0))
 
 const PLATFORM_MAP: Record<string, { title: string; platform: string; sub: string }> = {
-  'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: 'P-M4-008 · WECHAT_OFFICIAL · 08 CORP-A' },
-  'wechat-channels': { title: '视频号', platform: 'WECHAT_CHANNELS', sub: 'P-M4-008 · WECHAT_CHANNELS + 采集 Tab · 08 CORP-A' },
-  douyin: { title: '抖音', platform: 'DOUYIN', sub: 'P-M4-008 · DOUYIN + 内部账号采集 · 08 CORP-A' },
-  kuaishou: { title: '快手', platform: 'KUAISHOU', sub: 'P-M4-008 · KUAISHOU + 内部账号采集 · 08 CORP-A' },
-  xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: 'P-M4-008 · XIAOHONGSHU · 08 CORP-A' },
+  'wechat-official': { title: '公众号', platform: 'WECHAT_OFFICIAL', sub: '公众号账号台账' },
+  'wechat-channels': { title: '视频号', platform: 'WECHAT_CHANNELS', sub: '视频号账号台账与采集' },
+  douyin: { title: '抖音', platform: 'DOUYIN', sub: '抖音账号台账与采集' },
+  kuaishou: { title: '快手', platform: 'KUAISHOU', sub: '快手账号台账与采集' },
+  xiaohongshu: { title: '小红书', platform: 'XIAOHONGSHU', sub: '小红书账号台账' },
 }
 
 const meta = computed(() => {
@@ -2577,7 +2576,7 @@ async function submitRecall() {
     })
     const vo = res.data?.data as { transferNo: string; status: string } & AssetHintPayload
     recallResult.value = vo
-    recallMsg.value = `收回单 ${vo.transferNo} · 已生效 · 状态 FROZEN`
+    recallMsg.value = `收回单 ${vo.transferNo} · 已生效 · 已冻结`
     showAssetHint(vo)
     await load()
   } catch (e: unknown) {
@@ -2619,7 +2618,7 @@ async function submitRecycle() {
     })
     const vo = res.data?.data as { status: string }
     recycleResult.value = vo
-    recycleMsg.value = '已回收回池 · 状态 IN_POOL'
+    recycleMsg.value = '已回收回池，可以再次领用'
     await load()
   } catch (e: unknown) {
     recycleMsg.value = bizMessage(e)
@@ -2664,7 +2663,7 @@ async function exportTimeline() {
     timelineExportNote.value = `${data.message || '交接凭证已生成'} · ${fileName}`
   } catch (e: unknown) {
     const message = bizMessage(e)
-    timelineExportNote.value = message.includes('5005') ? '交接凭证生成失败，请稍后重试（5005）' : message
+    timelineExportNote.value = message.includes('5005') ? '交接凭证生成失败，请稍后重试' : message
   } finally {
     timelineExportBusy.value = false
   }
@@ -2702,7 +2701,7 @@ async function submitUnfreeze() {
     })
     const vo = res.data?.data as { status: string }
     unfreezeResult.value = vo
-    unfreezeMsg.value = '已解冻 · 状态 IN_POOL'
+    unfreezeMsg.value = '已解冻，账号回到可领用'
     await load()
   } catch (e: unknown) {
     unfreezeMsg.value = bizMessage(e)
@@ -2887,7 +2886,7 @@ async function importCollector() {
     const bindRes = await http.post(`/corp/account/${detail.value.id}/collector-bind`, {})
     bindInfo.value = bindRes.data?.data as Record<string, unknown>
     collectSummary.value = '已绑定'
-    collectMsg.value = '已导入 Collector，请用测试连接确认探活。'
+    collectMsg.value = '已导入，请用测试连接确认是否可用。'
     await load()
   } catch (e: unknown) {
     collectMsg.value = e instanceof Error ? e.message : '导入失败'

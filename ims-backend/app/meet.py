@@ -2,20 +2,52 @@
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timedelta, timezone
+from urllib import request as urlrequest
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
-from app.api import current_user, db_session, fail, ok
+from app.api import current_user, db_session, fail, ok, user_dept_snapshot
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, User
+from app.models import MeetDailyReport, MeetDailyReview, MeetMinutes, Todo, User, WorkMessage
 from app.scope import DataScope, dept_ids_of
 
 router = APIRouter(prefix="/meet", tags=["meet"])
+
+
+def ensure_meet_columns() -> None:
+    """已有库补会议/日报列。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    from app.core import engine
+
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    alters: list[tuple[str, str, str]] = []
+    if "ims_meet_daily_report" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_meet_daily_report")}
+        if "report_type" not in cols:
+            alters.append(("ims_meet_daily_report", "report_type", "VARCHAR(32) NOT NULL DEFAULT ''"))
+    if "ims_meet_minutes" in tables:
+        cols = {c["name"] for c in insp.get_columns("ims_meet_minutes")}
+        if "organizer_user_id" not in cols:
+            alters.append(("ims_meet_minutes", "organizer_user_id", "BIGINT NOT NULL DEFAULT 0"))
+        if "agenda" not in cols:
+            alters.append(("ims_meet_minutes", "agenda", "TEXT NULL"))
+        if "appendix" not in cols:
+            alters.append(("ims_meet_minutes", "appendix", "TEXT NULL"))
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for table, column, ddl in alters:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 BJ = timezone(timedelta(hours=8))
 DATE_RE = __import__("re").compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -29,9 +61,24 @@ class DailyReviewBody(BaseModel):
     followUpItems: list[dict] | None = None
 
 
+class ActionCloseBody(BaseModel):
+    closeRemark: str = ""
+    evidenceUrl: str = ""
+
+
+REPORT_TYPES = {
+    "LIVE": "直播",
+    "SHORT_VIDEO": "短视频",
+    "OPS": "运营",
+    "ADMIN": "行政",
+}
+REPORT_TYPE_BY_LABEL = {label: key for key, label in REPORT_TYPES.items()}
+
+
 class DailySubmitBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     reportDate: str
+    reportType: str = ""
     contentDone: str = ""
     contentPlan: str = ""
     contentIssue: str = ""
@@ -50,10 +97,28 @@ def iso(dt: datetime | None) -> str | None:
 
 
 def primary_dept(db: Session, user: User) -> tuple[int, str]:
-    dept_ids = dept_ids_of(db, user)
+    dept_ids, names = user_dept_snapshot(db, user.id, tenant_of(user))
+    if not dept_ids:
+        dept_ids = dept_ids_of(db, user)
+        names = [f"部门 {dept_id}" for dept_id in dept_ids]
     if not dept_ids:
         return 0, ""
-    return dept_ids[0], f"部门#{dept_ids[0]}"
+    return dept_ids[0], names[0] if names else f"部门 {dept_ids[0]}"
+
+
+def display_dept_name(db: Session, tenant_id: int, dept_id: int, stored: str, sample_user_id: int) -> str:
+    text = (stored or "").strip()
+    placeholder = text.startswith("部门#") or text.startswith("部门 ")
+    if text and not placeholder:
+        return text
+    if sample_user_id:
+        dept_ids, names = user_dept_snapshot(db, sample_user_id, tenant_id)
+        for dept, name in zip(dept_ids, names):
+            if int(dept) == int(dept_id) and name:
+                return name
+    if dept_id:
+        return f"部门 {dept_id}"
+    return text or "未分配部门"
 
 
 def calc_on_time(report_date: str, submitted_at: datetime) -> bool:
@@ -66,10 +131,29 @@ def calc_on_time(report_date: str, submitted_at: datetime) -> bool:
     return at.astimezone(BJ) <= deadline
 
 
+def normalize_report_type(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    if text in REPORT_TYPES:
+        return text
+    return REPORT_TYPE_BY_LABEL.get(text, "")
+
+
+def is_friday(report_date: str) -> bool:
+    try:
+        return datetime.strptime(report_date, "%Y-%m-%d").weekday() == 4
+    except ValueError:
+        return False
+
+
 def daily_vo(row: MeetDailyReport) -> dict:
+    report_type = row.report_type or ""
     return {
         "id": row.id,
         "reportDate": row.report_date,
+        "reportType": report_type,
+        "reportTypeLabel": REPORT_TYPES.get(report_type, report_type),
         "userId": row.user_id,
         "userName": row.user_name,
         "deptName": row.dept_name,
@@ -82,26 +166,58 @@ def daily_vo(row: MeetDailyReport) -> dict:
         "supplement": row.supplement or None,
         "submittedAt": iso(row.submitted_at),
         "isOnTime": bool(row.is_on_time),
+        "fieldCompleteness": field_completeness(row),
+        "reviewStatus": review_state_of(row),
         "createdAt": iso(row.created_at),
     }
+
+
+def field_completeness(row: MeetDailyReport) -> float:
+    fields = [row.content_done, row.content_plan, row.content_issue]
+    if is_friday(row.report_date):
+        fields.append(row.week_summary or "")
+    filled = sum(1 for item in fields if (item or "").strip())
+    return round(100.0 * filled / len(fields), 1) if fields else 0.0
+
+
+def review_state_of(row: MeetDailyReport) -> str:
+    if row.submit_status == "READ":
+        return "REVIEWED"
+    if row.submit_status == "SUBMITTED":
+        return "PENDING"
+    return ""
+
+
+def body_changes_submitted(row: MeetDailyReport, body: DailySubmitBody) -> bool:
+    report_type = normalize_report_type(body.reportType)
+    return any(
+        [
+            (body.contentDone or "") != (row.content_done or ""),
+            (body.contentPlan or "") != (row.content_plan or ""),
+            (body.contentIssue or "") != (row.content_issue or ""),
+            (body.weekSummary or "") != (row.week_summary or ""),
+            bool(report_type) and report_type != (row.report_type or ""),
+        ]
+    )
 
 
 def validate_submit_body(body: DailySubmitBody, *, require_content: bool) -> str | None:
     if not DATE_RE.match(body.reportDate or ""):
         return "reportDate 格式须为 yyyy-MM-dd"
+    if (body.reportType or "").strip() and not normalize_report_type(body.reportType):
+        return "日报类型无效"
+    body.reportType = normalize_report_type(body.reportType)
     if require_content:
-        for field, label in (
-            (body.contentDone, "今日完成"),
-            (body.contentPlan, "明日计划"),
-            (body.contentIssue, "问题与风险"),
-        ):
-            if not (field or "").strip():
-                return f"{label} 必填"
+        if not (body.contentDone or "").strip():
+            return "必填项，请填写"
+        if is_friday(body.reportDate) and not (body.weekSummary or "").strip():
+            return "必填项，请填写"
     return None
 
 
 def apply_body(row: MeetDailyReport, body: DailySubmitBody, *, allow_main: bool) -> None:
     if allow_main:
+        row.report_type = normalize_report_type(body.reportType)
         row.content_done = body.contentDone or ""
         row.content_plan = body.contentPlan or ""
         row.content_issue = body.contentIssue or ""
@@ -142,6 +258,87 @@ def queue_vo(row: MeetDailyReport, *, review_level: int) -> dict:
     data["waitingHours"] = round(hours, 1)
     data["isTimeout"] = review_level == 1 and hours > 24
     return data
+
+
+def parse_follow_items(db: Session, raw_items: list) -> tuple[str | None, list[dict]]:
+    if not raw_items:
+        return "必填项，请填写", []
+    ids = {
+        int(item.get("responsibleUserId") or 0)
+        for item in raw_items
+        if isinstance(item, dict) and item.get("responsibleUserId")
+    }
+    names = user_names(db, ids)
+    out: list[dict] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            return "必填项，请填写", []
+        description = str(item.get("description") or "").strip()
+        user_id = int(item.get("responsibleUserId") or 0)
+        due = str(item.get("dueDate") or "").strip()[:10]
+        if not description or not user_id or not DATE_RE.match(due):
+            return "必填项，请填写", []
+        out.append(
+            {
+                "description": description,
+                "responsibleUserId": user_id,
+                "responsibleName": names.get(user_id, ""),
+                "dueDate": due,
+                "status": "OPEN",
+            }
+        )
+    return None, out
+
+
+def sync_follow_todos(db: Session, review: MeetDailyReview, report: MeetDailyReport) -> None:
+    now = utcnow()
+    for item in review.follow_up_items or []:
+        if not isinstance(item, dict):
+            continue
+        user_id = int(item.get("responsibleUserId") or 0)
+        item_id = int(item.get("itemId") or 0)
+        if not user_id or not item_id:
+            continue
+        found = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_follow",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == user_id,
+            )
+        )
+        if found is not None:
+            continue
+        due = datetime.strptime(str(item["dueDate"])[:10], "%Y-%m-%d")
+        db.add(
+            Todo(
+                assignee_user_id=user_id,
+                task_type="MEET_FOLLOW",
+                ref_type="meet_follow",
+                ref_id=item_id,
+                title=str(item.get("description") or "日报跟进")[:128],
+                content=f"{report.report_date} {report.user_name}"[:512],
+                status="PENDING",
+                deadline=due,
+                tenant_id=review.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def find_follow_item(db: Session, tenant_id: int, item_id: int) -> tuple[MeetDailyReview | None, dict | None]:
+    rows = list(
+        db.scalars(
+            select(MeetDailyReview).where(
+                MeetDailyReview.deleted == 0,
+                MeetDailyReview.tenant_id == tenant_id,
+            )
+        ).all()
+    )
+    for review in rows:
+        for item in review.follow_up_items or []:
+            if isinstance(item, dict) and int(item.get("itemId") or 0) == item_id:
+                return review, item
+    return None, None
 
 
 def has_review(db: Session, report_id: int, level: int, tenant_id: int) -> bool:
@@ -212,22 +409,15 @@ def upsert_daily(db: Session, actor: User, body: DailySubmitBody):
         db.flush()
         return ok(daily_vo(row))
 
-    if existing.submit_status == "SUBMITTED" and not body.asDraft:
-        if body.supplement is None and (
-            body.contentDone != existing.content_done
-            or body.contentPlan != existing.content_plan
-            or body.contentIssue != existing.content_issue
-        ):
+    if existing.submit_status != "DRAFT":
+        if body_changes_submitted(existing, body):
             return fail(1112, "已提交不可再编辑正文，须走补充说明")
         if body.supplement is not None:
             existing.supplement = body.supplement
             existing.updated_at = now
             db.flush()
             return ok(daily_vo(existing))
-        return fail(1111, "该日日报已提交")
-
-    if existing.submit_status != "DRAFT":
-        return fail(1112, "已提交不可再编辑正文，须走补充说明")
+        return fail(1111, "今日日报已存在", daily_vo(existing))
 
     apply_body(existing, body, allow_main=True)
     existing.updated_at = now
@@ -242,20 +432,22 @@ def upsert_daily(db: Session, actor: User, body: DailySubmitBody):
 @router.get("/daily/template")
 def daily_template(_: User = Depends(current_user)):
     weekday = datetime.now(BJ).weekday()
+    friday = weekday == 4
     return ok(
         {
             "sections": [
                 {"key": "done", "label": "今日完成", "required": True},
-                {"key": "plan", "label": "明日计划", "required": True},
-                {"key": "issue", "label": "问题与风险", "required": True},
+                {"key": "plan", "label": "明日计划", "required": False},
+                {"key": "issue", "label": "问题与风险", "required": False},
                 *(
                     [{"key": "weekly", "label": "周小结", "required": True}]
-                    if weekday == 4
+                    if friday
                     else []
                 ),
             ],
+            "reportTypes": [{"value": key, "label": label} for key, label in REPORT_TYPES.items()],
             "extraFields": [],
-            "weekSummaryEnabled": weekday == 4,
+            "weekSummaryEnabled": friday,
             "deadlineTime": "22:00",
         }
     )
@@ -279,6 +471,8 @@ def _daily_list_query(
     userId: int | None,
     deptId: int | None,
     submitStatus: str,
+    reportType: str,
+    reviewState: str,
     dateFrom: str,
     dateTo: str,
     only_mine: bool,
@@ -294,8 +488,19 @@ def _daily_list_query(
         stmt = stmt.where(MeetDailyReport.user_id == userId)
     if deptId:
         stmt = stmt.where(MeetDailyReport.dept_id == deptId)
-    if submitStatus:
+    if submitStatus == "LATE":
+        stmt = stmt.where(MeetDailyReport.submit_status != "DRAFT", MeetDailyReport.is_on_time == 0)
+    elif submitStatus == "SUPPLEMENT":
+        stmt = stmt.where(MeetDailyReport.supplement != "")
+    elif submitStatus:
         stmt = stmt.where(MeetDailyReport.submit_status == submitStatus)
+    report_type = normalize_report_type(reportType)
+    if report_type:
+        stmt = stmt.where(MeetDailyReport.report_type == report_type)
+    if reviewState == "PENDING":
+        stmt = stmt.where(MeetDailyReport.submit_status == "SUBMITTED")
+    elif reviewState == "REVIEWED":
+        stmt = stmt.where(MeetDailyReport.submit_status == "READ")
     if dateFrom:
         stmt = stmt.where(MeetDailyReport.report_date >= dateFrom[:10])
     if dateTo:
@@ -320,6 +525,8 @@ def daily_team_list(
     userId: int | None = None,
     deptId: int | None = None,
     submitStatus: str = "",
+    reportType: str = "",
+    reviewState: str = "",
     dateFrom: str = "",
     dateTo: str = "",
     db: Session = Depends(db_session),
@@ -332,6 +539,8 @@ def daily_team_list(
         userId=userId,
         deptId=deptId,
         submitStatus=submitStatus,
+        reportType=reportType,
+        reviewState=reviewState,
         dateFrom=dateFrom,
         dateTo=dateTo,
         only_mine=False,
@@ -350,6 +559,8 @@ def daily_list(
     userId: int | None = None,
     deptId: int | None = None,
     submitStatus: str = "",
+    reportType: str = "",
+    reviewState: str = "",
     dateFrom: str = "",
     dateTo: str = "",
     onlyMine: bool = False,
@@ -363,6 +574,8 @@ def daily_list(
         userId=userId,
         deptId=deptId,
         submitStatus=submitStatus,
+        reportType=reportType,
+        reviewState=reviewState,
         dateFrom=dateFrom,
         dateTo=dateTo,
         only_mine=onlyMine,
@@ -418,7 +631,8 @@ def stat_on_time_rate(
             row.dept_id,
             {
                 "deptId": row.dept_id,
-                "deptName": row.dept_name or f"部门#{row.dept_id}",
+                "deptName": display_dept_name(db, row.tenant_id, row.dept_id, row.dept_name, row.user_id),
+                "sampleUserId": row.user_id,
                 "onTime": 0,
                 "submitted": 0,
             },
@@ -444,7 +658,7 @@ def stat_on_time_rate(
             {
                 "userId": row.user_id,
                 "userName": row.user_name,
-                "deptName": row.dept_name,
+                "deptName": display_dept_name(db, row.tenant_id, row.dept_id, row.dept_name, row.user_id),
                 "onTimeDays": 0,
                 "submittedDays": 0,
                 "shouldDays": 0,
@@ -463,17 +677,75 @@ def stat_on_time_rate(
         if row.is_on_time:
             bucket["onTime"] += 1
     trend = [
-        {"date": item["date"], "onTimeRate": rate_pct(item["onTime"], item["total"])}
+        {"date": item["date"], "onTimeRate": rate_pct(item["onTime"], item["total"]), "submitCount": item["total"]}
         for item in sorted(trend_map.values(), key=lambda x: x["date"])
     ]
+    end_day = datetime.strptime(end, "%Y-%m-%d").date()
+    trend_by_date = {item["date"]: item for item in trend}
+    trend7 = []
+    for offset in range(6, -1, -1):
+        day = (end_day - timedelta(days=offset)).isoformat()
+        found = trend_by_date.get(day)
+        trend7.append(
+            {
+                "date": day,
+                "onTimeRate": found["onTimeRate"] if found else 0.0,
+                "submitCount": found["submitCount"] if found else 0,
+            }
+        )
+
+    span_days = (datetime.strptime(end, "%Y-%m-%d") - datetime.strptime(start, "%Y-%m-%d")).days + 1
+    prev_end = datetime.strptime(start, "%Y-%m-%d").date() - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=max(span_days - 1, 0))
+    prev_rows = [
+        row
+        for row in db.scalars(
+            restrict_daily(select(MeetDailyReport), actor, request.state.scope, only_mine=False).where(
+                MeetDailyReport.report_date >= prev_start.isoformat(),
+                MeetDailyReport.report_date <= prev_end.isoformat(),
+                MeetDailyReport.submit_status != "DRAFT",
+            )
+        ).all()
+    ]
+    prev_on_time = sum(1 for row in prev_rows if row.is_on_time)
+    prev_rate = rate_pct(prev_on_time, len(prev_rows)) if prev_rows else 0.0
+    completeness_values = [field_completeness(row) for row in rows]
+    completeness_avg = round(sum(completeness_values) / len(completeness_values), 1) if completeness_values else 0.0
+    pending_review = sum(1 for row in rows if row.submit_status == "SUBMITTED")
+    reviewed = sum(1 for row in rows if row.submit_status == "READ")
+    today = datetime.now(BJ).date()
+    week_start = today - timedelta(days=today.weekday())
+    elapsed = min(7, (today - week_start).days + 1)
+    week_rows = list(
+        db.scalars(
+            restrict_daily(select(MeetDailyReport), actor, request.state.scope, only_mine=False).where(
+                MeetDailyReport.report_date >= week_start.isoformat(),
+                MeetDailyReport.report_date <= today.isoformat(),
+                MeetDailyReport.submit_status != "DRAFT",
+            )
+        ).all()
+    )
+    week_people = {row.user_id for row in week_rows}
+    weekdays = sum(1 for index in range(elapsed) if (week_start + timedelta(days=index)).weekday() < 5)
+    week_should = max(len(week_people) * max(weekdays, 1), len(week_rows))
+    for item in by_dept:
+        item.pop("sampleUserId", None)
 
     return ok(
         {
             "totalOnTimeRate": total_on_time_rate,
             "totalSubmitRate": rate_pct(submitted, submitted) if submitted else 0.0,
+            "onTimeRateDelta": round(total_on_time_rate - prev_rate, 1),
+            "weekSubmitCount": len(week_rows),
+            "weekShouldCount": week_should,
+            "weekSubmitRate": rate_pct(len(week_rows), week_should),
+            "fieldCompletenessAvg": completeness_avg,
+            "reviewDoneRate": rate_pct(reviewed, pending_review + reviewed),
+            "pendingReviewCount": pending_review,
             "byDept": by_dept,
             "byPerson": by_person,
             "trend": trend,
+            "trend7": trend7,
             "dateFrom": start,
             "dateTo": end,
         }
@@ -554,6 +826,40 @@ def review_queue(
     return paged([queue_vo(row, review_level=level) for row in page_rows], total, page_no, size)
 
 
+@router.put("/review/follow-up/{item_id}")
+def review_follow_close(
+    item_id: int,
+    body: ActionCloseBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    review, item = find_follow_item(db, tenant_of(actor), item_id)
+    if review is None or item is None:
+        return fail(1004, "跟进项不存在")
+    if int(item.get("responsibleUserId") or 0) != actor.id:
+        return fail(1115, "非跟进项责任人，无权限回填")
+    remark = (body.closeRemark or "").strip()
+    if not remark:
+        return fail(1001, "必填项，请填写")
+    if item.get("status") != "CLOSED":
+        item["status"] = "CLOSED"
+        item["closeRemark"] = remark
+        review.follow_up_items = list(review.follow_up_items or [])
+        flag_modified(review, "follow_up_items")
+        review.updated_at = utcnow()
+        todo = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_follow",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == actor.id,
+            )
+        )
+        if todo is not None and todo.status == "PENDING":
+            todo.status = "DONE"
+        db.flush()
+    return ok(None)
+
+
 @router.put("/review/{report_id}")
 def review_action(
     report_id: int,
@@ -580,8 +886,11 @@ def review_action(
 
     now = utcnow()
     follow_items = body.followUpItems or []
-    if body.action == "MARK_FOLLOW_UP" and not follow_items:
-        return fail(1001, "标记跟进须填写 followUpItems")
+    parsed_follow: list[dict] = []
+    if body.action == "MARK_FOLLOW_UP":
+        err, parsed_follow = parse_follow_items(db, follow_items)
+        if err:
+            return fail(1001, err)
 
     review = MeetDailyReview(
         report_id=report_id,
@@ -590,13 +899,20 @@ def review_action(
         review_level=body.reviewLevel,
         action=body.action,
         comment=body.comment or "",
-        follow_up_items=follow_items,
+        follow_up_items=[],
         reviewed_at=now,
         tenant_id=tenant_id,
         created_at=now,
         updated_at=now,
     )
     db.add(review)
+    db.flush()
+    if parsed_follow:
+        for index, item in enumerate(parsed_follow, start=1):
+            item["itemId"] = int(review.id) * 100 + index
+        review.follow_up_items = parsed_follow
+        flag_modified(review, "follow_up_items")
+        sync_follow_todos(db, review, row)
     next_level: int | None = None
     if body.reviewLevel == 1 and body.action in ("READ", "COMMENT", "MARK_FOLLOW_UP"):
         next_level = 2
@@ -668,6 +984,7 @@ class DecisionItem(BaseModel):
 
 
 class ActionItemIn(BaseModel):
+    itemId: int = 0
     description: str = ""
     responsibleUserId: int = 0
     dueDate: str = ""
@@ -675,15 +992,18 @@ class ActionItemIn(BaseModel):
 
 class MinutesCreateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    meetingTitle: str
-    meetingDate: str
+    meetingTitle: str = ""
+    meetingDate: str = ""
     meetingRoom: str = ""
     durationMinutes: int = Field(default=60, ge=15, le=480)
     attendees: list[AttendeeItem] = Field(default_factory=list)
+    recorderUserId: int = 0
+    agenda: str = ""
     summary: str = ""
     decisions: list[DecisionItem] | None = None
     actionItems: list[ActionItemIn] | None = None
     importFromAiMinutes: str | None = None
+    appendix: str = ""
 
 
 def parse_meeting_date(raw: str) -> datetime | None:
@@ -717,25 +1037,238 @@ def next_minutes_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
-def normalize_action_items(db: Session, items: list[ActionItemIn] | None) -> list[dict]:
-    if not items:
-        return []
-    ids = {int(it.responsibleUserId) for it in items if it.responsibleUserId}
+def build_action_items(
+    db: Session,
+    items: list[ActionItemIn] | None,
+    *,
+    minutes_id: int,
+    existing: list | None = None,
+) -> list[dict]:
+    old = {
+        int(it.get("itemId") or 0): it
+        for it in (existing or [])
+        if isinstance(it, dict) and int(it.get("itemId") or 0)
+    }
+    ids = {int(it.responsibleUserId) for it in (items or []) if it.responsibleUserId}
     names = user_names(db, ids)
+    used = set(old)
+    seq = 0
     out: list[dict] = []
-    for idx, it in enumerate(items, start=1):
+    for it in items or []:
+        desc = (it.description or "").strip()
         uid = int(it.responsibleUserId or 0)
+        if not desc and not uid:
+            continue
+        iid = int(it.itemId or 0)
+        prev = old.get(iid)
+        if prev is None:
+            seq += 1
+            iid = minutes_id * 100 + seq
+            while iid in used:
+                seq += 1
+                iid = minutes_id * 100 + seq
+            used.add(iid)
+            status = "OPEN"
+            close_remark = ""
+        else:
+            status = "OPEN" if prev.get("status") == "OVERDUE" else (prev.get("status") or "OPEN")
+            close_remark = prev.get("closeRemark") or ""
         out.append(
             {
-                "itemId": idx,
-                "description": it.description or "",
+                "itemId": iid,
+                "description": desc,
                 "responsibleUserId": uid,
-                "responsibleName": names.get(uid, ""),
+                "responsibleName": names.get(uid) or (prev.get("responsibleName") if prev else "") or "",
                 "dueDate": it.dueDate or "",
-                "status": "OPEN",
+                "status": status,
+                "closeRemark": close_remark,
             }
         )
     return out
+
+
+def action_item_vo(item: dict) -> dict:
+    status = item.get("status") or "OPEN"
+    due = str(item.get("dueDate") or "")[:10]
+    today = datetime.now(BJ).strftime("%Y-%m-%d")
+    if status == "OPEN" and DATE_RE.match(due) and due < today:
+        status = "OVERDUE"
+    return {
+        "itemId": item.get("itemId"),
+        "description": item.get("description") or "",
+        "responsibleUserId": item.get("responsibleUserId") or 0,
+        "responsibleName": item.get("responsibleName") or "",
+        "dueDate": item.get("dueDate") or "",
+        "status": status,
+        "closeRemark": item.get("closeRemark") or "",
+    }
+
+
+def as_bj(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=BJ)
+    return value.astimezone(BJ)
+
+
+def room_taken(
+    db: Session,
+    tenant_id: int,
+    room: str,
+    start: datetime,
+    duration: int,
+    *,
+    exclude_id: int | None = None,
+) -> bool:
+    name = (room or "").strip()
+    if not name or name == "线上":
+        return False
+    rows = list(
+        db.scalars(
+            select(MeetMinutes).where(
+                MeetMinutes.deleted == 0,
+                MeetMinutes.tenant_id == tenant_id,
+                MeetMinutes.meeting_room == name,
+            )
+        ).all()
+    )
+    start_at = as_bj(start)
+    end_at = start_at + timedelta(minutes=int(duration or 60))
+    for other in rows:
+        if exclude_id and other.id == exclude_id:
+            continue
+        if other.meeting_date is None:
+            continue
+        other_start = as_bj(other.meeting_date)
+        other_end = other_start + timedelta(minutes=int(other.duration_minutes or 60))
+        if start_at < other_end and other_start < end_at:
+            return True
+    return False
+
+
+def invite_attendees(db: Session, row: MeetMinutes, actor: User) -> None:
+    now = utcnow()
+    when = iso(row.meeting_date) or ""
+    for item in row.attendees or []:
+        if not isinstance(item, dict):
+            continue
+        user_id = int(item.get("userId") or 0)
+        if not user_id or user_id == actor.id:
+            continue
+        db.add(
+            WorkMessage(
+                user_id=user_id,
+                title="会议邀请",
+                content=f"{row.meeting_title} · {when} · {row.meeting_room or '会议室待定'}"[:512],
+                channel="IN_APP",
+                source_module="MEET",
+                ref_type="meet_minutes",
+                ref_id=row.id,
+                tenant_id=row.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def sync_action_todos(db: Session, row: MeetMinutes) -> None:
+    now = utcnow()
+    for item in row.action_items or []:
+        if not isinstance(item, dict):
+            continue
+        uid = int(item.get("responsibleUserId") or 0)
+        item_id = int(item.get("itemId") or 0)
+        if not uid or not item_id or (item.get("status") or "OPEN") != "OPEN":
+            continue
+        found = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_action",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == uid,
+            )
+        )
+        if found is not None:
+            continue
+        due = None
+        due_text = str(item.get("dueDate") or "")[:10]
+        if DATE_RE.match(due_text):
+            due = datetime.strptime(due_text, "%Y-%m-%d")
+        db.add(
+            Todo(
+                assignee_user_id=uid,
+                task_type="MEET_ACTION",
+                ref_type="meet_action",
+                ref_id=item_id,
+                title=(item.get("description") or "会议行动项")[:128],
+                content=f"{row.minutes_no} {row.meeting_title}"[:512],
+                status="PENDING",
+                deadline=due,
+                tenant_id=row.tenant_id,
+                created_at=now,
+            )
+        )
+
+
+def find_action_item(db: Session, tenant_id: int, item_id: int) -> tuple[MeetMinutes | None, dict | None]:
+    rows = list(
+        db.scalars(
+            select(MeetMinutes).where(MeetMinutes.deleted == 0, MeetMinutes.tenant_id == tenant_id)
+        ).all()
+    )
+    for row in rows:
+        for item in row.action_items or []:
+            if isinstance(item, dict) and int(item.get("itemId") or 0) == item_id:
+                return row, item
+    return None, None
+
+
+def meet_ai_draft(row: MeetMinutes) -> dict:
+    """听记初稿。默认 stub；配置 MEET_AI_ENDPOINT 后走第三方 HTTP，不接本地模型。"""
+    endpoint = os.environ.get("MEET_AI_ENDPOINT", "").strip()
+    if endpoint:
+        remote = _meet_ai_remote(endpoint, row)
+        if remote is not None:
+            remote["provider"] = "remote"
+            remote["phase"] = "READY"
+            return remote
+    names = "、".join(
+        str(item.get("userName") or "")
+        for item in (row.attendees or [])
+        if isinstance(item, dict) and item.get("userName")
+    )
+    return {
+        "summary": (
+            f"（AI 初稿·待校对）会议「{row.meeting_title}」。"
+            f"议程：{row.agenda or '未提供'}。参会：{names or '未列'}。"
+            "请记录人核对决议与行动项后保存。"
+        ),
+        "decisions": [{"description": "待记录人确认决议"}],
+        "provider": "stub",
+        "phase": "READY",
+    }
+
+
+def _meet_ai_remote(endpoint: str, row: MeetMinutes) -> dict | None:
+    payload = {
+        "meetingTitle": row.meeting_title,
+        "agenda": row.agenda or "",
+        "meetingDate": iso(row.meeting_date),
+        "attendees": row.attendees or [],
+    }
+    req = urlrequest.Request(
+        endpoint,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+    except Exception:
+        return None
+    summary = str(data.get("summary") or "").strip()
+    if not summary:
+        return None
+    decisions = data.get("decisions") if isinstance(data.get("decisions"), list) else []
+    return {"summary": summary, "decisions": decisions}
 
 
 def minutes_vo(row: MeetMinutes) -> dict:
@@ -747,12 +1280,15 @@ def minutes_vo(row: MeetMinutes) -> dict:
         "meetingDate": iso(row.meeting_date),
         "meetingRoom": row.meeting_room or None,
         "durationMinutes": row.duration_minutes,
+        "agenda": row.agenda or "",
+        "organizerUserId": row.organizer_user_id or row.recorder_user_id,
         "organizerName": row.organizer_name or row.recorder_name,
         "attendeeCount": len(attendees),
         "attendees": attendees,
         "summary": row.summary or "",
+        "appendix": row.appendix or "",
         "decisions": row.decisions or [],
-        "actionItems": row.action_items or [],
+        "actionItems": [action_item_vo(item) for item in (row.action_items or []) if isinstance(item, dict)],
         "minutesStatus": row.minutes_status,
         "recorderUserId": row.recorder_user_id,
         "recorderName": row.recorder_name,
@@ -761,17 +1297,63 @@ def minutes_vo(row: MeetMinutes) -> dict:
     }
 
 
-def restrict_minutes(stmt, actor: User, scope: DataScope | None):
-    stmt = stmt.where(MeetMinutes.deleted == 0, MeetMinutes.tenant_id == tenant_of(actor))
+def minutes_base(actor: User):
+    return select(MeetMinutes).where(MeetMinutes.deleted == 0, MeetMinutes.tenant_id == tenant_of(actor))
+
+
+def attendee_of(row: MeetMinutes, actor: User) -> bool:
+    names = {(actor.nickname or "").strip(), (actor.username or "").strip()}
+    names.discard("")
+    for item in row.attendees or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            uid = int(item.get("userId") or 0)
+        except (TypeError, ValueError):
+            uid = 0
+        if uid and uid == actor.id:
+            return True
+        user_name = str(item.get("userName") or "").strip()
+        if user_name and user_name in names:
+            return True
+    return False
+
+
+def minutes_visible(row: MeetMinutes, actor: User, scope: DataScope | None) -> bool:
+    """发起人、记录人、参会人可见；部门数据范围另外可见本部门会议。"""
     if scope is None or scope.kind == "ALL":
-        return stmt
-    if scope.kind == "SELF":
-        return stmt.where(MeetMinutes.recorder_user_id == actor.id)
-    if scope.kind == "DEPT":
-        if not scope.dept_ids:
-            return stmt.where(MeetMinutes.id < 0)
-        return stmt.where(MeetMinutes.dept_id.in_(scope.dept_ids))
-    return stmt.where(MeetMinutes.id < 0)
+        return True
+    if row.recorder_user_id == actor.id or int(row.organizer_user_id or 0) == actor.id:
+        return True
+    if attendee_of(row, actor):
+        return True
+    if scope.kind == "DEPT" and scope.dept_ids and int(row.dept_id or 0) in set(scope.dept_ids):
+        return True
+    return False
+
+
+def in_meeting_bucket(row: MeetMinutes, bucket: str) -> bool:
+    if row.meeting_date is None:
+        return False
+    start = as_bj(row.meeting_date)
+    end = start + timedelta(minutes=int(row.duration_minutes or 60))
+    now = datetime.now(BJ)
+    today = now.date()
+    if bucket == "today":
+        return start.date() == today
+    if bucket == "week":
+        monday = today - timedelta(days=today.weekday())
+        return monday <= start.date() <= monday + timedelta(days=6)
+    if bucket == "ended":
+        return end < now
+    return True
+
+
+def load_visible_minutes(db: Session, actor: User, scope: DataScope | None, stmt):
+    rows = list(
+        db.scalars(stmt.order_by(MeetMinutes.meeting_date.desc(), MeetMinutes.id.desc())).all()
+    )
+    return [row for row in rows if minutes_visible(row, actor, scope)]
 
 
 @router.get("/minutes/list")
@@ -783,11 +1365,11 @@ def minutes_list(
     minutesStatus: str = "",
     dateFrom: str = "",
     dateTo: str = "",
+    bucket: str = "",
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = select(MeetMinutes)
-    stmt = restrict_minutes(stmt, actor, request.state.scope)
+    stmt = minutes_base(actor)
     if meetingTitle:
         stmt = stmt.where(MeetMinutes.meeting_title.like(f"%{meetingTitle.strip()}%"))
     if minutesStatus:
@@ -797,15 +1379,12 @@ def minutes_list(
     if dateTo:
         stmt = stmt.where(MeetMinutes.meeting_date <= parse_meeting_date(dateTo[:10] + "T23:59:59+08:00"))
     page_no, size = page_args(pageNo, pageSize)
-    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-    rows = list(
-        db.scalars(
-            stmt.order_by(MeetMinutes.meeting_date.desc(), MeetMinutes.id.desc())
-            .offset((page_no - 1) * size)
-            .limit(size)
-        ).all()
-    )
-    return paged([minutes_vo(row) for row in rows], total, page_no, size)
+    rows = load_visible_minutes(db, actor, request.state.scope, stmt)
+    if bucket in ("today", "week", "ended"):
+        rows = [row for row in rows if in_meeting_bucket(row, bucket)]
+    total = len(rows)
+    page = rows[(page_no - 1) * size : page_no * size]
+    return paged([minutes_vo(row) for row in page], total, page_no, size)
 
 
 @router.post("/minutes")
@@ -815,39 +1394,51 @@ def minutes_create(
     actor: User = Depends(current_user),
 ):
     title = (body.meetingTitle or "").strip()
-    if not title:
-        return fail(1001, "meetingTitle 必填")
     when = parse_meeting_date(body.meetingDate)
-    if when is None:
-        return fail(1001, "meetingDate 格式无效")
+    agenda = (body.agenda or "").strip()
+    attendees = [a.model_dump(exclude_none=True) for a in body.attendees if (a.userName or "").strip() or a.userId]
+    if not title or when is None or not attendees:
+        return fail(1001, "必填项，请填写")
     tenant_id = tenant_of(actor)
+    if room_taken(db, tenant_id, body.meetingRoom, when, body.durationMinutes):
+        return fail(1001, "会议室已被占用，不能提交")
     dept_id, _ = primary_dept(db, actor)
     now = utcnow()
     summary = (body.summary or "").strip()
     status = "MINUTES_RECORDED" if summary else "REGISTERED"
-    attendees = [a.model_dump(exclude_none=True) for a in body.attendees]
+    recorder_id = int(body.recorderUserId or 0) or actor.id
+    recorder = db.get(User, recorder_id) if recorder_id != actor.id else actor
+    if recorder is None or recorder.deleted:
+        recorder = actor
+        recorder_id = actor.id
     decisions = [{"description": d.description} for d in (body.decisions or []) if d.description]
-    actions = normalize_action_items(db, body.actionItems)
     row = MeetMinutes(
         minutes_no=next_minutes_no(db, tenant_id),
         meeting_title=title,
         meeting_date=when,
         meeting_room=(body.meetingRoom or "").strip(),
         duration_minutes=body.durationMinutes,
+        agenda=agenda,
+        organizer_user_id=actor.id,
         organizer_name=actor.nickname or actor.username,
         attendees=attendees,
         summary=summary,
         decisions=decisions,
-        action_items=actions,
+        action_items=[],
         minutes_status=status,
-        recorder_user_id=actor.id,
-        recorder_name=actor.nickname or actor.username,
+        recorder_user_id=recorder.id,
+        recorder_name=recorder.nickname or recorder.username,
         dept_id=dept_id,
         tenant_id=tenant_id,
         created_at=now,
         updated_at=now,
     )
     db.add(row)
+    db.flush()
+    if body.actionItems:
+        row.action_items = build_action_items(db, body.actionItems, minutes_id=row.id)
+        sync_action_todos(db, row)
+    invite_attendees(db, row, actor)
     db.flush()
     return ok(minutes_vo(row))
 
@@ -860,13 +1451,12 @@ def minutes_archive_rate(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = select(MeetMinutes)
-    stmt = restrict_minutes(stmt, actor, request.state.scope)
+    stmt = minutes_base(actor)
     if dateFrom:
         stmt = stmt.where(MeetMinutes.meeting_date >= parse_meeting_date(dateFrom[:10] + "T00:00:00+08:00"))
     if dateTo:
         stmt = stmt.where(MeetMinutes.meeting_date <= parse_meeting_date(dateTo[:10] + "T23:59:59+08:00"))
-    rows = list(db.scalars(stmt).all())
+    rows = load_visible_minutes(db, actor, request.state.scope, stmt)
     total = len(rows)
     archived = sum(1 for r in rows if r.minutes_status == "ARCHIVED")
     recorded = sum(1 for r in rows if r.minutes_status in ("MINUTES_RECORDED", "ARCHIVED"))
@@ -883,6 +1473,63 @@ def minutes_archive_rate(
     )
 
 
+@router.get("/minutes/participants")
+def minutes_participants(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    rows = list(
+        db.scalars(
+            select(User)
+            .where(User.deleted == 0, User.status == "ENABLED", User.tenant_id == tenant_of(actor))
+            .order_by(User.id)
+            .limit(300)
+        ).all()
+    )
+    return ok(
+        {
+            "list": [
+                {"userId": row.id, "userName": row.nickname or row.username, "username": row.username}
+                for row in rows
+            ]
+        }
+    )
+
+
+@router.put("/minutes/action-item/{item_id}")
+def minutes_action_close(
+    item_id: int,
+    body: ActionCloseBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row, item = find_action_item(db, tenant_of(actor), item_id)
+    if row is None or item is None:
+        return fail(1004, "行动项不存在")
+    owner = int(item.get("responsibleUserId") or 0)
+    if owner != actor.id:
+        return fail(1118, "非行动项责任人")
+    remark = (body.closeRemark or "").strip()
+    if not remark:
+        return fail(1118, "请填写回填说明")
+    if item.get("status") != "CLOSED":
+        item["status"] = "CLOSED"
+        item["closeRemark"] = remark
+        if (body.evidenceUrl or "").strip():
+            item["evidenceUrl"] = body.evidenceUrl.strip()
+        row.action_items = list(row.action_items or [])
+        flag_modified(row, "action_items")
+        row.updated_at = utcnow()
+        todo = db.scalar(
+            select(Todo).where(
+                Todo.ref_type == "meet_action",
+                Todo.ref_id == item_id,
+                Todo.assignee_user_id == actor.id,
+            )
+        )
+        if todo is not None and todo.status == "PENDING":
+            todo.status = "DONE"
+        db.flush()
+    return ok(minutes_vo(row))
+
+
 @router.get("/minutes/{minutes_id}")
 def minutes_detail(
     minutes_id: int,
@@ -890,11 +1537,93 @@ def minutes_detail(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = restrict_minutes(select(MeetMinutes).where(MeetMinutes.id == minutes_id), actor, request.state.scope)
-    row = db.scalar(stmt)
-    if row is None:
+    row = db.scalar(minutes_base(actor).where(MeetMinutes.id == minutes_id))
+    if row is None or not minutes_visible(row, actor, request.state.scope):
         return fail(1004, "会议纪要不存在")
     return ok(minutes_vo(row))
+
+
+def _visible_minutes(db: Session, actor: User, scope: DataScope | None, minutes_id: int) -> MeetMinutes | None:
+    row = db.scalar(minutes_base(actor).where(MeetMinutes.id == minutes_id))
+    if row is None or not minutes_visible(row, actor, scope):
+        return None
+    return row
+
+
+@router.put("/minutes/{minutes_id}")
+def minutes_update(
+    minutes_id: int,
+    body: MinutesCreateBody,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = _visible_minutes(db, actor, request.state.scope, minutes_id)
+    if row is None:
+        return fail(1004, "会议纪要不存在")
+    now = utcnow()
+    if row.minutes_status == "ARCHIVED":
+        note = (body.appendix or "").strip()
+        if not note:
+            return fail(1117, "已归档纪要不可修改")
+        row.appendix = f"{row.appendix}\n{note}".strip() if row.appendix else note
+        row.updated_at = now
+        db.flush()
+        return ok(minutes_vo(row))
+    summary = (body.summary or "").strip()
+    if not summary:
+        return fail(1001, "必填项，请填写")
+    next_room = (body.meetingRoom or "").strip() or row.meeting_room
+    next_when = parse_meeting_date(body.meetingDate) if (body.meetingDate or "").strip() else row.meeting_date
+    next_duration = body.durationMinutes or row.duration_minutes
+    if next_when is not None and room_taken(
+        db,
+        row.tenant_id,
+        next_room,
+        next_when,
+        next_duration,
+        exclude_id=row.id,
+    ):
+        return fail(1001, "会议室已被占用，不能提交")
+    title = (body.meetingTitle or "").strip() or row.meeting_title
+    when = parse_meeting_date(body.meetingDate) if (body.meetingDate or "").strip() else row.meeting_date
+    attendees = [a.model_dump(exclude_none=True) for a in body.attendees if (a.userName or "").strip() or a.userId]
+    row.meeting_title = title
+    if when is not None:
+        row.meeting_date = when
+    if (body.meetingRoom or "").strip():
+        row.meeting_room = body.meetingRoom.strip()
+    if body.durationMinutes:
+        row.duration_minutes = body.durationMinutes
+    if (body.agenda or "").strip():
+        row.agenda = body.agenda.strip()
+    if attendees:
+        row.attendees = attendees
+    row.summary = summary
+    row.decisions = [{"description": d.description} for d in (body.decisions or []) if (d.description or "").strip()]
+    row.action_items = build_action_items(
+        db, body.actionItems, minutes_id=row.id, existing=list(row.action_items or [])
+    )
+    row.minutes_status = "MINUTES_RECORDED"
+    row.updated_at = now
+    sync_action_todos(db, row)
+    db.flush()
+    return ok(minutes_vo(row))
+
+
+@router.post("/minutes/{minutes_id}/ai-draft")
+def minutes_ai_draft(
+    minutes_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    row = _visible_minutes(db, actor, request.state.scope, minutes_id)
+    if row is None:
+        return fail(1004, "会议纪要不存在")
+    if row.minutes_status == "ARCHIVED":
+        return fail(1117, "已归档纪要不可修改")
+    return ok(meet_ai_draft(row))
 
 
 @router.put("/minutes/{minutes_id}/archive")
@@ -904,9 +1633,8 @@ def minutes_archive(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    stmt = restrict_minutes(select(MeetMinutes).where(MeetMinutes.id == minutes_id), actor, request.state.scope)
-    row = db.scalar(stmt)
-    if row is None:
+    row = db.scalar(minutes_base(actor).where(MeetMinutes.id == minutes_id))
+    if row is None or not minutes_visible(row, actor, request.state.scope):
         return fail(1004, "会议纪要不存在")
     if row.minutes_status == "REGISTERED":
         return fail(1001, "请先录入纪要再归档")

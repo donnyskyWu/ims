@@ -3,14 +3,14 @@
     <div class="pg-h">
       <div>
         <h1>完成率统计</h1>
-        <div class="sub">REPORT-004 · BR-106 质量口径 · 09 REPORT</div>
+        <div class="sub">完成率与质量口径</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="go('/ims/report/submission')">填报单管理</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      分子 = 审核通过（APPROVED）填报单；分母 = 非草稿应报单数。目标 &gt;95%（BR-106）。
+      分子是审核通过的填报单，分母是非草稿的应报单数。目标 &gt;95%。
     </p>
     <form class="qbar" @submit.prevent="loadAll">
       <input v-model="statPeriod" placeholder="统计周期 YYYY-MM-DD" style="width: 160px" />
@@ -25,7 +25,7 @@
         <div class="n" :style="{ color: rateColor(summary.totalCompleteRate) }">
           {{ summary.totalCompleteRate }}%
         </div>
-        <div class="d">BR-106 目标 &gt;95%</div>
+        <div class="d">目标 &gt;95%</div>
       </div>
     </div>
 

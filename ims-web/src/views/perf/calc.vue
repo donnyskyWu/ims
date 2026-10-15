@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>绩效计算与核准</h1>
-        <div class="sub">PERF-002 · 月度计算 → 人工补充 → 核准发布。分档为优秀 / 合格 / 待改进。</div>
+        <div class="sub">月度计算、人工补充，然后核准发布。分档为优秀、合格、待改进。</div>
       </div>
       <div class="acts">
         <label>
@@ -79,9 +79,9 @@
                   v-if="row.resultStatus === 'PENDING_MANUAL' && row.missingCount"
                   class="hint"
                   :data-testid="`perf-missing-hint-${row.userName}`"
-                  :title="`含 ${row.missingCount} 项缺项按 0 分计入（PER-C-R1）`"
+                  :title="`含 ${row.missingCount} 项缺项，按 0 分计入`"
                 >
-                  <span data-testid="perf-calc-missing">含 {{ row.missingCount }} 项缺项按 0 分计入（PER-C-R1）</span>
+                  <span data-testid="perf-calc-missing">含 {{ row.missingCount }} 项缺项，按 0 分计入</span>
                 </div>
               </td>
               <td>
@@ -128,7 +128,7 @@
     </ProtoDrawer>
 
     <ProtoDrawer :open="manualOpen" title="人工补充指标值" width="560px" @close="manualOpen = false">
-      <p class="hint">{{ active?.userName }} · {{ active?.periodMonth }}。补充原因必填（1158）。</p>
+      <p class="hint">{{ active?.userName }} · {{ active?.periodMonth }}。补充原因必填。</p>
       <div v-for="item in missingDetails" :key="item.metricId" class="fld">
         <label>{{ item.metricName }}</label>
         <input
@@ -144,7 +144,7 @@
           style="margin-top: 8px"
         />
         <p v-if="!manualReason.trim()" data-testid="perf-manual-hint" class="hint" style="color: var(--red)">
-          补充原因必填（1158）
+          补充原因必填
         </p>
       </div>
       <p v-if="manualError" data-testid="perf-manual-error" class="hint" style="color: var(--red)">{{ manualError }}</p>
@@ -345,7 +345,7 @@ const emptyText = computed(() => {
 const tenureNote = computed(() => {
   const ratio = active.value?.calcSnapshot?.tenureRatio
   if (ratio === undefined || ratio === null || Number(ratio) >= 1) return ''
-  return `入职/离职当月按在职天数折算（PER-C-R2），折算比例 ${Number(ratio).toFixed(2)}`
+  return `入职或离职当月按在职天数折算，折算比例 ${Number(ratio).toFixed(2)}`
 })
 
 function previousMonth() {
@@ -387,7 +387,7 @@ function rejectText(err: unknown) {
   if (err && typeof err === 'object' && 'code' in err) {
     const body = err as { code?: number; msg?: string }
     if (body.code === 1156) return '1156 观察期不足：第 23 周前无基线数据'
-    if (body.code === 1155) return '1155 绩效月数据已锁定，更正须运营总监审批并留痕（PER-C-R4）'
+    if (body.code === 1155) return '绩效月数据已锁定，更正须运营总监审批并留痕'
     if (body.code === 1001 && (body.msg || '').includes('审批意见')) return '1001 驳回须填写审批意见'
     return `${body.code ?? ''} ${body.msg || ''}`.trim()
   }

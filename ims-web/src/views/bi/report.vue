@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>报表中心</h1>
-        <div class="sub">M6 八张标准报表 · 统一筛选条 · /ims/bi/report</div>
+        <div class="sub">八张标准报表 · 统一筛选条</div>
       </div>
     </div>
 

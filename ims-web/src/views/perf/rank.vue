@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>排名与预警</h1>
-        <div class="sub">PERF-004 · 综合得分低于 60 预警本人、直属上级与 HR。连续两月待改进进入辅导名单。</div>
+        <div class="sub">综合得分低于 60 预警本人、直属上级与 HR。连续两月待改进进入辅导名单。</div>
       </div>
       <label>
         周期

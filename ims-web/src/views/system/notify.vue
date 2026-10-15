@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>消息通知</h1>
-        <div class="sub">SYS-007 · 站内信 + 钉钉 · 同一租户、事件、业务键只送一次</div>
+        <div class="sub">站内信与钉钉 · 同一事件只发送一次</div>
       </div>
     </div>
     <form class="qbar" @submit.prevent="search">
@@ -44,7 +44,7 @@
               <td colspan="6" style="white-space: normal">
                 <div class="empty">
                   <div class="et">{{ error || '没有通知' }}</div>
-                  <div class="es">契约只有分页查询。重复事件不会再插一行。</div>
+                  <div class="es">重复事件不会再插一行。</div>
                 </div>
               </td>
             </tr>
@@ -77,7 +77,7 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
-    <p class="hint">GET /system/notify/page。契约没有补发接口，相同 tenant、eventType、bizKey 再次发布会跳过。</p>
+    <p class="hint">相同租户、事件和业务键再次发布会跳过，这里不能补发。</p>
   </div>
 </template>
 

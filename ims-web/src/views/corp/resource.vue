@@ -20,10 +20,10 @@
       data-testid="corp-cert-digital-banner"
     >
       <template v-if="digitalEmpty">
-        数字化率暂无应数字化档案（目标&gt;95%，BR-005） · 应数字化 0 · 已数字化 0
+        数字化率暂无应数字化档案（目标 &gt;95%） · 应数字化 0 · 已数字化 0
       </template>
       <template v-else>
-        数字化率 {{ digitalPercent }}（目标&gt;95%，BR-005）
+        数字化率 {{ digitalPercent }}（目标 &gt;95%）
         · 应数字化 {{ digital.totalExpected }} · 已数字化 {{ digital.digitalizedCount }}
         · {{ digitalShort ? '未达标' : '达标' }}
       </template>
@@ -478,7 +478,7 @@
       <div v-if="kind === 'realname' && detailReady" data-testid="master-realname-relations">
         <div v-if="!intermediaryItems.length" class="empty" data-testid="master-realname-intermediary-empty">
           <div class="et">暂无中介人</div>
-          <div class="es">契约没有实名人写入接口，中介关系不会在这里新增。</div>
+          <div class="es">这里不能新增实名人，中介关系也不会在这里新增。</div>
         </div>
         <ul v-else data-testid="master-realname-intermediaries">
           <li v-for="(item, index) in intermediaryItems" :key="index">{{ relationText(item) }}</li>
@@ -962,11 +962,11 @@ const specs: Record<string, {
 }> = {
   company: {
     title: '公司管理',
-    sub: 'CORP-R · 只查询 · GET /corp/resource/company/page',
+    sub: '只查询公司信息',
     placeholder: '公司名称',
     empty: '没有公司',
-    emptyHint: '契约只有分页和详情，这里不能新建。',
-    hint: '公司、实名人按契约只做查询。信用代码和法人来自详情，不提供写入。',
+    emptyHint: '这里只能查询，不能新建。',
+    hint: '公司和实名人只做查询。信用代码和法人来自详情，不能在这里修改。',
     detailTitle: '公司详情',
     columns: ['公司', '信用代码', '行业', '法人', '容量', '已注册', '剩余', '状态'],
     keys: ['companyName', 'creditCode', 'industry', 'legalName', 'mpCapacityStandard', 'mpRegisteredCount', 'mpRemaining', 'status'],
@@ -977,10 +977,10 @@ const specs: Record<string, {
   },
   realname: {
     title: '实名人管理',
-    sub: 'CORP-R · 姓名、证件号、手机由接口脱敏',
+    sub: '姓名、证件号、手机脱敏展示',
     placeholder: '姓名',
     empty: '没有实名人',
-    emptyHint: '契约只有分页和详情。',
+    emptyHint: '这里只能查询详情。',
     hint: '列表不返回证件号和手机明文。没有新建接口。',
     detailTitle: '实名人详情',
     columns: ['姓名', '证件类型', '证件号', '手机', '状态'],
@@ -992,11 +992,11 @@ const specs: Record<string, {
   },
   'sim-card': {
     title: '手机卡管理',
-    sub: 'CORP-R · 号码脱敏 · 归属人只选本地用户',
+    sub: '号码脱敏 · 归属人只选本地用户',
     placeholder: '完整手机号',
     empty: '没有手机卡',
     emptyHint: '可以新建。号码和 ICCID 只以脱敏值返回。',
-    hint: 'POST/PUT /corp/resource/sim-card。关联账号等平台账号片接入。',
+    hint: '可新建和修改手机卡。关联账号在平台账号里办理。',
     detailTitle: '手机卡详情',
     columns: ['号码', '实名人', '运营商', '归属人', '月租', '状态'],
     keys: ['phoneNumber', 'realNameMasked', 'operator', 'assignedUserName', 'monthlyRent', 'status'],
@@ -1004,11 +1004,11 @@ const specs: Record<string, {
   },
   certificate: {
     title: '证件管理',
-    sub: 'CORP-R · 索引分页 · 数字化率 · 到期预警 · 分级原图',
+    sub: '分页检索 · 数字化率 · 到期预警 · 分级原图',
     placeholder: '持有人',
     empty: '没有证件档案',
     emptyHint: '可以录入。审核生效后参与到期扫描。',
-    hint: '录入 POST /cert/archive/upload，审核 PUT /cert/archive/{id}/review，扫描 POST /cert/expire/scan，催办 PUT /cert/expire/{id}/remind。查看审计 GET /cert/security/view-logs。证件号只显示脱敏值。同一证件 1 小时内第 11 次查看返回 1035。',
+    hint: '可录入、审核、扫描到期和催办。证件号只显示脱敏值。同一证件短时间内查看次数过多会被拒绝。',
     detailTitle: '证件查看',
     columns: ['持有人', '类型', '证件号', '有效期', '状态'],
     keys: ['holderName', 'certType', 'certNoMasked', 'expireDate', 'status'],

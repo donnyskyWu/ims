@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>全链路数据看板</h1>
-        <div class="sub">DC-003 · /ims/dc/dashboard · 经营总览 / 链路健康度 / 维度下钻</div>
+        <div class="sub">经营总览、链路健康度与维度下钻</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="dc-dash-manage" @click="openManage">看板管理</button>
@@ -46,8 +46,8 @@
       data-testid="dc-dash-fresh-alert"
       style="color: var(--red); font-weight: 600"
     >
-      <template v-if="syncFailed">同步失败，断点续传中（V3-A2）；当前展示最后成功快照 {{ freshness?.dataAsOf }}</template>
-      <template v-else>数据新鲜度超过 1 小时（BR-210），延迟 {{ freshness?.businessToDwsDelayMinutes }} 分钟</template>
+      <template v-if="syncFailed">同步失败，正在断点续传；当前展示最后成功快照 {{ freshness?.dataAsOf }}</template>
+      <template v-else>数据新鲜度超过 1 小时，延迟 {{ freshness?.businessToDwsDelayMinutes }} 分钟</template>
     </p>
     <p
       v-if="health?.isAlarm"
@@ -55,7 +55,7 @@
       data-testid="dc-dash-health-alert"
       style="color: var(--red); font-weight: 600"
     >
-      资产关联完整率 {{ health.assetRelationCompleteRate }}%，低于目标 98%（BR-208/DC-D-R3），请核查资产-账号-场次关联
+      资产关联完整率 {{ health.assetRelationCompleteRate }}%，低于目标 98%，请核查资产、账号和场次的关联
     </p>
 
     <div v-if="overview" class="dash-grid" data-testid="dc-dash-overview">

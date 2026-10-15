@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>直播管理</h1>
-        <div class="sub">场次中心：列表→详情 Tab（数据/风控/下播） · 10 LIVE</div>
+        <div class="sub">场次中心：从列表进入详情（数据、风控、下播）</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec" to="/ims/live/alarm" data-testid="live-alarm-link">风险告警</router-link>
@@ -509,7 +509,7 @@
         </template>
       </div>
       <div v-else-if="detail && tab === '关联'" class="tbl-block" style="margin-top: 12px">
-        <p class="hint">告警摘要（契约 GET /live/alarm/records）</p>
+        <p class="hint">告警摘要</p>
         <table v-if="alarms.length">
           <thead><tr><th>规则</th><th>级别</th><th>内容</th><th>状态</th></tr></thead>
           <tbody>

@@ -3,15 +3,13 @@
     <div class="pg-h">
       <div>
         <h1>SOP 管理</h1>
-        <div class="sub">SOP 模板列表与节点编排（CONTENT-100 · SOP 免审）</div>
+        <div class="sub">SOP 模板列表与节点编排（免审）</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新增模板</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 10px">
-      运行时 SSOT：<code>/admin-api/ims/content/**</code> · 保存即启用新版本，无 SOP 审核页。
-    </p>
+    <p class="hint" style="margin-bottom: 10px">保存即启用新版本，没有单独的 SOP 审核页。</p>
     <form class="qbar" data-testid="sop-filters" @submit.prevent="loadList">
       <input v-model="keyword" data-testid="sop-filter-name" placeholder="模板名称" style="width: 160px" />
       <select v-model="contentType" data-testid="sop-filter-type" style="width: 140px">

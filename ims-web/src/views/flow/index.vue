@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>流程管理</h1>
-        <div class="sub">FLOW-002/004 · 发起 · 超时督办/BR-115 · 14 FLOW</div>
+        <div class="sub">发起与超时督办</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openStart">发起流程</button>
@@ -108,7 +108,7 @@
             <strong :style="{ color: timeoutStats.monthlyTimeoutRate <= timeoutStats.targetRate ? '#1e8e3e' : '#c93400' }">
               {{ (timeoutStats.monthlyTimeoutRate * 100).toFixed(1) }}%
             </strong>
-            （BR-115 目标 &lt;{{ (timeoutStats.targetRate * 100).toFixed(0) }}%）
+            （目标 &lt;{{ (timeoutStats.targetRate * 100).toFixed(0) }}%）
           </span>
           <span>超时节点 <strong>{{ timeoutStats.timeoutCount }}</strong> / {{ timeoutStats.totalExecuted }}</span>
           <span>督办累计 <strong>{{ timeoutStats.urgeCount }}</strong></span>
@@ -1111,7 +1111,7 @@ async function tryStartDraft(row: Record<string, unknown>) {
     const body = rejectedBody(e)
     draftHintErr.value = true
     if (body?.code === 1134) {
-      draftHint.value = `草稿不可发起（1134）：${body.msg || '仅已发布模板可发起新实例'}`
+      draftHint.value = `草稿不可发起：${body.msg || '仅已发布模板可发起新实例'}`
       return
     }
     draftHint.value = body?.msg || (e instanceof Error ? e.message : '网络错误')

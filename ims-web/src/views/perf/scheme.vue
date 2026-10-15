@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>考核方案</h1>
-        <div class="sub">FR-M3-001 · /admin-api/ims/perf/scheme · 05 PERF</div>
+        <div class="sub">考核方案</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建方案</button>

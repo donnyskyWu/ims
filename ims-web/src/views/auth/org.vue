@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>组织架构同步</h1>
-        <div class="sub">AUTH-002 · 事件验签入队后写入本地用户 · 不写 Football</div>
+        <div class="sub">事件验签入队后写入本地用户</div>
       </div>
       <div class="acts">
         <button
@@ -40,7 +40,7 @@
     </div>
     <div v-if="confirming" class="card" style="margin-bottom: 12px">
       <div style="font-weight: 600; margin-bottom: 6px">确认从钉钉全量同步</div>
-      <div class="sub">将拉取钉钉全量部门与人员并写入本地映射，预计 1～3 分钟。需已配置 dingtalk 凭证与通讯录授权范围。</div>
+      <div class="sub">将拉取钉钉全量部门与人员并写入本地映射，预计 1～3 分钟。需已配置钉钉凭证与通讯录授权范围。</div>
       <div class="acts" style="margin-top: 12px">
         <button
           class="btn btn-pri btn-sm"
@@ -85,12 +85,12 @@
       <div class="card stat">
         <span class="l">成功率</span>
         <div class="n">{{ metricReady && !metricError && metrics.successRate != null ? percent(metrics.successRate) : '—' }}</div>
-        <div class="d">GET /auth/org/sync-metrics</div>
+        <div class="d">同步成功占比</div>
       </div>
       <div class="card stat">
         <span class="l">事件数</span>
         <div class="n">{{ eventReady && !eventError ? total : '—' }}</div>
-        <div class="d">{{ eventError || 'GET /auth/org/events' }}</div>
+        <div class="d">{{ eventError || '同步事件' }}</div>
       </div>
     </div>
     <div class="card" data-testid="org-report" style="margin: 12px 0">
@@ -531,10 +531,10 @@ const eventEmptyHint = computed(() => {
 })
 
 const levelText = computed(() => {
-  if (!metricReady.value || metricError.value) return 'GET /auth/org/sync-metrics'
+  if (!metricReady.value || metricError.value) return '同步水位'
   if (metrics.level === 'red') return '超过 5 分钟，红色'
   if (metrics.level === 'green') return '5 分钟内，绿色'
-  return metrics.level || 'GET /auth/org/sync-metrics'
+  return metrics.level || '同步水位'
 })
 
 function statusText(value: unknown) {

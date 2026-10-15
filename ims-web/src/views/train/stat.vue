@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>培训统计看板</h1>
-        <div class="sub">TRAIN-003 · BR-102 完成率 / 逾期督办 · 02 TRAIN</div>
+        <div class="sub">完成率与逾期督办</div>
       </div>
       <router-link class="btn btn-sec btn-sm" to="/ims/train/task">学习任务</router-link>
     </div>
@@ -69,7 +69,7 @@
               <div class="n" data-testid="train-stat-total-rate" :style="{ color: rateColor(finish.totalFinishRate) }">
                 {{ finish.totalFinishRate }}%
               </div>
-              <div class="d">BR-102 目标 &gt;90%</div>
+              <div class="d">目标 &gt;90%</div>
             </div>
             <div class="card stat">
               <span class="l">按任务条目</span>

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>直播风险告警</h1>
-        <div class="sub">LIVE-003 · 规则命中、处置与 30 分钟升级桩 · 钉钉/短信只记本地桩</div>
+        <div class="sub">规则命中、处置与 30 分钟升级 · 钉钉和短信只在本系统留痕</div>
       </div>
       <div class="acts">
         <router-link class="btn btn-sec btn-sm" to="/ims/live/sessions">返回场次</router-link>
@@ -174,7 +174,7 @@
           </table>
         </div>
       </div>
-      <p class="hint" data-testid="live-alarm-rule-hint">ALM-R4 规则保存后下一次读取即新表达式</p>
+      <p class="hint" data-testid="live-alarm-rule-hint">规则保存后，下一次读取即使用新表达式</p>
     </template>
 
     <template v-else>
@@ -236,7 +236,7 @@
           <b>{{ editingId ? '编辑规则' : '新建规则' }}</b>
           <button type="button" class="btn btn-sec btn-sm" @click="ruleOpen = false">关闭</button>
         </div>
-        <p class="hint">保存后立即参与下一次命中扫描（ALM-R4）。通知只记站内。</p>
+        <p class="hint">保存后立即参与下一次命中扫描。通知只记在站内。</p>
         <label class="fld">
           <span>规则名</span>
           <input v-model="ruleForm.ruleName" data-testid="live-alarm-rule-name" maxlength="64" :style="ruleNameBad ? 'border-color: var(--red)' : ''" />

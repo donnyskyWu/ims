@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>组织人效</h1>
-        <div class="sub">EFF · 页内 Tab 归属/盘点/看板 · /ims/eff</div>
+        <div class="sub">归属、盘点与看板</div>
       </div>
       <div v-if="tab === 'relation'" class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">建立归属</button>

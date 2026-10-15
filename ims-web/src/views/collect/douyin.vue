@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>抖音内部账号采集</h1>
-        <div class="sub">C2/C3/C4 · 同一 IMS 定时器采集作品、作品日快照与粉丝日统计</div>
+        <div class="sub">同一套定时任务采集作品、作品日快照与粉丝日统计</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goTasks">采集任务</button>
@@ -11,10 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
-      凭证加密入库，页面只显示掩码和凭证引用。作品写入 <code>oa_douyin_video</code>，作品日快照写入
-      <code>oa_douyin_video_snapshot</code>，粉丝列表写入 <code>oa_douyin_follower</code>，粉丝日统计写入
-      <code>oa_douyin_follower_daily</code>。同一天重复采集按日更新。播放、点赞、评论、转发来自作品列表；Collector
-      作品统计与列表重复，日快照已覆盖。Cookie 已失效、浏览器引擎不可用与粉丝统计失败分开显示。
+      凭证加密保存，页面只显示掩码和凭证引用。同一天重复采集会按日更新作品、作品日快照、粉丝列表和粉丝日统计。播放、点赞、评论、转发来自作品列表。登录凭证失效、浏览器引擎不可用和粉丝统计失败会分开显示。
     </p>
 
     <form class="qbar" style="align-items: flex-end" @submit.prevent="saveAccount">

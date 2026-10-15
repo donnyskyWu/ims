@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>指标配置</h1>
-        <div class="sub">PERF-001 · /admin-api/ims/perf/metric · 岗位指标集权重合计须为 100%</div>
+        <div class="sub">岗位指标集权重合计须为 100%</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" data-testid="metric-create-open" @click="openCreate">
@@ -12,7 +12,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 12px">
-      竞品分析提交率（COMPETE_SUBMIT_RATE）在 V2 锁定禁用。岗位指标集保存时服务端校验权重合计。
+      竞品分析提交率当前停用。岗位指标集保存时会校验权重合计。
     </p>
     <div
       data-testid="metric-coverage"
@@ -419,7 +419,7 @@ const coverageStyle = computed(() => {
 const coverageRateText = computed(() => `${Number(coverage.autoCoverageRate || 0).toFixed(2)}%`)
 const coverageFlag = computed(() => {
   if (!coverage.enabledMetricCount) return '暂无启用指标'
-  if (coverage.autoCoverageRate > 80) return '达标（BR-105 >80%）'
+  if (coverage.autoCoverageRate > 80) return '达标（>80%）'
   return '未达标'
 })
 
@@ -585,7 +585,7 @@ async function submitCreate() {
 }
 
 async function disableRow(row: MetricRow) {
-  if (!window.confirm('禁用后该指标不参与后续月度计算（PER-M-R1），确认？')) return
+  if (!window.confirm('禁用后该指标不参与后续月度计算，确认？')) return
   try {
     await http.delete(`/perf/metric/${row.id}`)
     await loadList()

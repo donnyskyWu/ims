@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>角色权限</h1>
-        <div class="sub">SYS-002 · 角色=权限唯一载体 · 菜单 + 功能点 R/W/D + 数据范围 + 钉钉岗位</div>
+        <div class="sub">角色是权限的唯一载体 · 菜单、功能点、数据范围与钉钉岗位</div>
       </div>
       <div class="acts">
         <input v-model="positionName" data-testid="role-position-input" placeholder="钉钉岗位" style="height: 34px; border: 1px solid var(--line2); border-radius: 8px; padding: 0 10px" />
@@ -24,10 +24,10 @@
     <p v-if="edgeNote" class="hint" data-testid="role-edge-note">{{ edgeNote }}</p>
     <p v-if="error" class="hint bad" data-testid="role-form-error">{{ error }}</p>
     <div class="g4">
-      <div class="card stat"><span class="l">角色总数</span><div class="n">{{ ready && !error ? rows.length : '—' }}</div><div class="d">{{ error || 'GET /system/role/list' }}</div></div>
-      <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">PENDING_CONFIG</div></div>
-      <div class="card stat"><span class="l">自动创建</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">DINGTALK_AUTO</div></div>
-      <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">ENABLED</div></div>
+      <div class="card stat"><span class="l">角色总数</span><div class="n">{{ ready && !error ? rows.length : '—' }}</div><div class="d">{{ error || '全部角色' }}</div></div>
+      <div class="card stat"><span class="l">待配置</span><div class="n">{{ ready && !error ? pending : '—' }}</div><div class="d">尚未配置权限</div></div>
+      <div class="card stat"><span class="l">自动创建</span><div class="n">{{ ready && !error ? autoCount : '—' }}</div><div class="d">由钉钉同步生成</div></div>
+      <div class="card stat"><span class="l">已启用</span><div class="n">{{ ready && !error ? enabled : '—' }}</div><div class="d">当前可用</div></div>
     </div>
     <div class="cattabs" data-testid="role-status-tabs">
       <button class="cattab" :class="{ on: statusFilter === '' }" type="button" @click="statusFilter = ''">全部</button>

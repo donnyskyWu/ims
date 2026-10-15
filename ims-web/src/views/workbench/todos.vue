@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>待办中心</h1>
-        <div class="sub">AUTH-004 · 按类型、状态和标题筛选</div>
+        <div class="sub">按类型、状态和标题筛选</div>
       </div>
       <router-link class="btn btn-sec btn-sm" to="/ims/workbench">工作台首页</router-link>
     </div>
@@ -85,6 +85,15 @@
                   去处理
                 </button>
                 <button
+                  v-else-if="row.status === 'PENDING' && (row.refType === 'meet_action' || row.refType === 'meet_follow')"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="todo-meet-action"
+                  @click="openMeetClose(row)"
+                >
+                  回填
+                </button>
+                <button
                   v-else-if="row.status === 'PENDING'"
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -104,18 +113,31 @@
         <button class="pg-n" :class="{ dis: pageNo * pageSize >= total }" type="button" @click="next">下一页</button>
       </div>
     </div>
+    <div v-if="meetClose" class="modal-mask" data-testid="todo-meet-close">
+      <div class="card" style="width: min(420px, 92vw); padding: 16px">
+        <h3 style="margin: 0 0 8px">回填说明</h3>
+        <p class="hint">{{ meetClose.title }}</p>
+        <textarea v-model="meetRemark" rows="3" data-testid="todo-meet-remark" placeholder="回填说明 *" style="width: 100%" />
+        <p v-if="meetError" class="hint" style="color: #d70015">{{ meetError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="meetClose = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="todo-meet-submit" @click="submitMeetClose">提交</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
   title: string
   taskType: string
+  refType?: string
   refId?: number
   content?: string
   deadline?: string
@@ -174,6 +196,8 @@ const typeNames: Record<string, string> = {
   recharge_verify: '充值核对',
   exam: '考试',
   acct_transfer: '账号流转',
+  MEET_ACTION: '会议行动项',
+  MEET_FOLLOW: '日报跟进',
 }
 
 const rows = ref<Row[]>([])
@@ -183,6 +207,9 @@ const total = ref(0)
 const pageNo = ref(1)
 const pageSize = 20
 const filters = reactive({ status: 'PENDING', taskType: '', keyword: '' })
+const meetClose = ref<Row | null>(null)
+const meetRemark = ref('')
+const meetError = ref('')
 
 const emptyTitle = computed(() => {
   if (filters.taskType) return '该类型下暂无待办'
@@ -273,5 +300,42 @@ async function done(id: number) {
   await load()
 }
 
+function openMeetClose(row: Row) {
+  meetClose.value = row
+  meetRemark.value = ''
+  meetError.value = ''
+}
+
+async function submitMeetClose() {
+  if (!meetClose.value?.refId) return
+  if (!meetRemark.value.trim()) {
+    meetError.value = '请填写回填说明'
+    return
+  }
+  try {
+    const path =
+      meetClose.value.refType === 'meet_follow'
+        ? `/meet/review/follow-up/${meetClose.value.refId}`
+        : `/meet/minutes/action-item/${meetClose.value.refId}`
+    await http.put(path, { closeRemark: meetRemark.value.trim() })
+    meetClose.value = null
+    await load()
+  } catch (error: unknown) {
+    meetError.value = errorMessage(error)
+  }
+}
+
 onMounted(load)
 </script>
+
+<style scoped>
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+</style>

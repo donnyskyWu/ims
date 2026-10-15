@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>操作/登录日志</h1>
-        <div class="sub">SYS-006 · 仅 IMS 新操作 · 登录成败写入登录日志</div>
+        <div class="sub">只记录本系统的新操作 · 登录成败写入登录日志</div>
       </div>
     </div>
     <div class="tabs">
@@ -69,7 +69,7 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
-    <p class="hint">GET /system/operate-log/page · GET /system/login-log/page。契约没有导出接口。</p>
+    <p class="hint">操作日志和登录日志只支持查询，不能导出。</p>
   </div>
 </template>
 

@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>字典管理</h1>
-        <div class="sub">SYS-004 · 左类型右数据 · 停用值不可删</div>
+        <div class="sub">左侧类型、右侧数据 · 停用值不可删除</div>
       </div>
     </div>
     <p v-if="error" class="hint bad">{{ error }}</p>

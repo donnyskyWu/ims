@@ -3,16 +3,13 @@
     <div class="pg-h">
       <div>
         <h1>我的任务</h1>
-        <div class="sub">任务分页 · 执行 / 提审 / 完成（CONTENT-103 · ADR-079）</div>
+        <div class="sub">任务列表 · 执行、提审、完成</div>
       </div>
       <div class="acts">
         <button class="btn btn-pri btn-sm" type="button" @click="loadList">刷新</button>
       </div>
     </div>
-    <p class="hint" style="margin-bottom: 10px">
-      契约：<code>/admin-api/ims/content/task/page</code> · 执行页隐藏路由
-      <code>/ims/content/task/:id/execute</code>
-    </p>
+    <p class="hint" style="margin-bottom: 10px">从任务行进入执行页办理。</p>
     <div class="tabs">
       <div class="tab" :class="{ on: onlyMine }" @click="onlyMine = true; loadList()">我的任务</div>
       <div class="tab" :class="{ on: !onlyMine }" @click="onlyMine = false; loadList()">全部任务</div>
