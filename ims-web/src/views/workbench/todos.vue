@@ -59,7 +59,14 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id" :data-testid="'todo-row'" :style="row.overdue ? 'background:#fff4f2' : ''">
-              <td>{{ row.title }}</td>
+              <td>
+                <router-link
+                  v-if="reportFillPath(row)"
+                  :to="reportFillPath(row)"
+                  data-testid="todo-report-fill-title"
+                >{{ row.title }}</router-link>
+                <template v-else>{{ row.title }}</template>
+              </td>
               <td><span class="tag" :data-testid="'todo-type-' + row.taskType">{{ typeLabel(row.taskType) }}</span></td>
               <td class="mono">
                 {{ row.deadline?.slice(0, 16) || '—' }}
@@ -83,6 +90,15 @@
                   @click="router.push(transferTodoPath(row))"
                 >
                   去处理
+                </button>
+                <button
+                  v-else-if="row.status === 'PENDING' && reportFillPath(row)"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="todo-report-fill-go"
+                  @click="router.push(reportFillPath(row))"
+                >
+                  去填报
                 </button>
                 <button
                   v-else-if="row.status === 'PENDING'"
@@ -142,6 +158,11 @@ function transferTodoPath(row: Row) {
   return `/ims/corp/account/${platformSlug(platform)}?transferId=${row.refId}`
 }
 
+function reportFillPath(row: Row) {
+  if (row.taskType !== 'report_fill' || !row.refId) return ''
+  return `/ims/report/submission?templateId=${row.refId}`
+}
+
 const typeTabs = [
   { value: '', label: '全部', testId: 'todo-tab-all' },
   { value: 'approval', label: '审批', testId: 'todo-tab-approval' },
@@ -156,6 +177,7 @@ const extraTypeOptions = [
   { value: 'supplement', label: '补录' },
   { value: 'recharge_verify', label: '充值核对' },
   { value: 'acct_transfer', label: '账号流转' },
+  { value: 'report_fill', label: '填报' },
 ]
 
 const typeOptions = [
@@ -174,6 +196,7 @@ const typeNames: Record<string, string> = {
   recharge_verify: '充值核对',
   exam: '考试',
   acct_transfer: '账号流转',
+  report_fill: '填报',
 }
 
 const rows = ref<Row[]>([])
