@@ -181,7 +181,9 @@ def rate_pct(part: int, whole: int) -> float:
 
 
 def parse_day_range(raw: str | None) -> tuple[datetime | None, datetime | None, str | None]:
-    """逗号分隔的 yyyy-MM-dd。空值不限；起大于止或格式不对返回错误文案。"""
+    """逗号分隔的北京日历日。空值不限；返回 naive UTC 闭区间，用来筛 occurred_at。"""
+    from app.clock import civil_day_bounds
+
     if raw is None or not str(raw).strip():
         return None, None, None
     parts = [part.strip() for part in str(raw).split(",") if part.strip()]
@@ -194,8 +196,10 @@ def parse_day_range(raw: str | None) -> tuple[datetime | None, datetime | None, 
         return None, None, "日期范围无效"
     if start > end_day:
         return None, None, "日期范围起大于止"
-    end = end_day.replace(hour=23, minute=59, second=59)
-    return start, end, None
+    bounds = civil_day_bounds(parts[0], parts[1])
+    if bounds is None:
+        return None, None, "日期范围无效"
+    return bounds[0], bounds[1], None
 
 
 def _ident(value: Any) -> bool:
@@ -275,12 +279,10 @@ def fail_dsl(reason: str):
     return fail(1009, f"预警规则 DSL 非法（1009）：{reason}")
 
 
-def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str:
+    from app.clock import format_iso
+
+    return format_iso(dt, civil=civil)
 
 
 def next_rule_code(db: Session, tenant_id: int) -> str:

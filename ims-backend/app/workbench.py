@@ -29,9 +29,9 @@ def clamp_page(page_no: int, page_size: int) -> tuple[int, int]:
 
 
 def iso(value: datetime | None) -> str | None:
-    if value is None:
-        return None
-    return value.strftime("%Y-%m-%dT%H:%M:%S")
+    from app.clock import format_iso_or_none
+
+    return format_iso_or_none(value)
 
 
 def overdue(todo: Todo, now: datetime) -> bool:

@@ -49,6 +49,28 @@ def approved_session(auth: dict) -> str:
     return code
 
 
+def test_cost_approved_at_is_shanghai():
+    from datetime import timedelta
+
+    from app.clock import format_iso, parse_to_utc_naive
+    from app.core import utcnow
+    from app.fin import hours_since
+
+    past = utcnow() - timedelta(hours=3)
+    assert 2.5 <= hours_since(format_iso(past)) <= 3.5
+
+    auth = headers()
+    code = approved_session(auth)
+    pending = client.get("/admin-api/ims/fin/cost/pending-sessions", headers=auth).json()
+    row = next(item for item in pending["data"]["list"] if item["sessionCode"] == code)
+    stamp = row["approvedAt"]
+    assert stamp.endswith("+08:00")
+    parsed = parse_to_utc_naive(stamp)
+    assert parsed is not None
+    assert abs((utcnow() - parsed).total_seconds()) < 180
+    assert row["hoursSinceApprove"] < 1
+
+
 def test_fin_cost_pending_submit_confirm():
     auth = headers()
     code = approved_session(auth)
@@ -167,6 +189,29 @@ def test_fin_profit_list_and_detail():
     assert "netProfit = revenue - refund - totalCost" in formula
     assert "grossProfit = revenue - refund - commission" in formula
     assert "operatingProfit = grossProfit - adCost - rechargeCost" in formula
+
+
+def test_profit_trace_data_as_of_is_shanghai():
+    """TC-01 BUG-26：利润反查「数据截至」是北京时间，不是把 UTC 墙钟标成 +08。"""
+    from app.clock import parse_to_utc_naive
+    from app.core import utcnow
+
+    auth = headers()
+    listed = client.get("/admin-api/ims/dc/profit-trace/list", headers=auth)
+    assert listed.json()["code"] == 0
+    stamp = listed.json()["data"]["dataAsOf"]
+    assert stamp.endswith("+08:00")
+    parsed = parse_to_utc_naive(stamp)
+    assert parsed is not None
+    assert abs((utcnow() - parsed).total_seconds()) < 180
+
+    abnormal = client.get("/admin-api/ims/dc/profit-trace/abnormal", headers=auth)
+    assert abnormal.json()["code"] == 0
+    abnormal_stamp = abnormal.json()["data"]["dataAsOf"]
+    assert abnormal_stamp.endswith("+08:00")
+    abnormal_parsed = parse_to_utc_naive(abnormal_stamp)
+    assert abnormal_parsed is not None
+    assert abs((utcnow() - abnormal_parsed).total_seconds()) < 180
 
 
 def test_dc_profit_trace_list_and_chain():

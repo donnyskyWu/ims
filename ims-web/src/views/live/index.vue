@@ -118,7 +118,7 @@
               <td class="mono" style="font-size: 12px">{{ row.accountNo }}</td>
               <td>{{ row.topic }}</td>
               <td>{{ row.platform }}</td>
-              <td class="num" style="font-size: 12px">{{ row.planStartTime }}</td>
+              <td class="num" style="font-size: 12px">{{ formatDateTime(row.planStartTime) || row.planStartTime }}</td>
               <td>
                 <span data-testid="live-risk-level" :data-level="row.riskLevel || ''" :style="{ color: riskColor(row.riskLevel), fontWeight: 600 }">{{ row.riskLevel || '—' }}</span>
               </td>
@@ -223,7 +223,7 @@
                 <span v-if="pendingRangeText(row)">{{ pendingRangeText(row) }}</span>
                 <span v-else class="es" data-testid="live-pending-unrecorded">待录入</span>
               </td>
-              <td class="num" style="font-size: 12px">{{ row.endedAt || '—' }}</td>
+              <td class="num" style="font-size: 12px">{{ formatDateTime(row.endedAt) || '—' }}</td>
               <td>{{ row.responsibleUserName || '—' }}</td>
               <td class="num" data-testid="live-pending-hours">{{ row.overdueHours }}</td>
               <td>
@@ -532,6 +532,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { errorMessage, http } from '../../api/http'
+import { formatDateTime } from '../../utils/time'
 
 async function apiGet(url: string, params?: Record<string, unknown>) {
   const res = await http.get(url, { params })
@@ -674,14 +675,9 @@ const reportUvText = computed(() => {
 })
 
 function clockText(iso: string) {
-  const ms = Date.parse(iso)
-  if (!Number.isFinite(ms)) return ''
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).format(ms)
+  const full = formatDateTime(iso)
+  const hm = full.match(/(\d{2}:\d{2})$/)
+  return hm ? hm[1] : ''
 }
 
 function pendingRangeText(row: { actualStart?: string; actualEnd?: string }) {

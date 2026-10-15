@@ -163,3 +163,46 @@ def test_metadata_entity_fields_and_bi0_read():
 
     missing = client.get("/admin-api/ims/collect/metadata/entity/UNKNOWN/fields", headers=auth)
     assert missing.json()["code"] == 1261
+
+
+def test_external_account_updated_at_is_shanghai():
+    """B069：竞品账号配置的更新时间是北京时间，不是把 UTC 墙钟直接印出来。"""
+    import uuid
+
+    from app.clock import parse_to_utc_naive
+    from app.core import utcnow
+
+    auth = headers()
+    ident = f"tz_{uuid.uuid4().hex[:10]}"
+    payload = {
+        "configName": "时区竞品",
+        "platformType": "DOUYIN",
+        "accountIdentifier": ident,
+        "collectEnabled": True,
+        "status": "ENABLED",
+    }
+    created = client.post("/admin-api/ims/collect/external/account", headers=auth, json=payload)
+    assert created.json()["code"] == 0
+    body = created.json()["data"]
+
+    def assert_shanghai(stamp: str) -> None:
+        assert stamp.endswith("+08:00")
+        parsed = parse_to_utc_naive(stamp)
+        assert parsed is not None
+        assert abs((utcnow() - parsed).total_seconds()) < 180
+
+    assert_shanghai(body["updatedAt"])
+
+    listed = client.get(
+        "/admin-api/ims/collect/external/account/page",
+        headers=auth,
+        params={"configName": "时区竞品"},
+    )
+    assert listed.json()["code"] == 0
+    row = next(item for item in listed.json()["data"]["list"] if item["id"] == body["id"])
+    assert_shanghai(row["updatedAt"])
+
+    payload["collectEnabled"] = False
+    updated = client.put(f"/admin-api/ims/collect/external/account/{body['id']}", headers=auth, json=payload)
+    assert updated.json()["code"] == 0
+    assert_shanghai(updated.json()["data"]["updatedAt"])

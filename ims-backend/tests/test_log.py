@@ -64,6 +64,16 @@ def test_protected_write_creates_operate_log_and_pages():
     assert data["list"][0]["action"] == "更新参数"
     assert data["list"][0]["path"].startswith("PUT /system/param")
     assert data["list"][0]["module"] == "系统"
+    import re
+    from datetime import datetime
+
+    from app.clock import BJ, as_shanghai
+    from app.core import utcnow
+
+    logged = data["list"][0]["time"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", logged)
+    shown = datetime.strptime(logged, "%Y-%m-%d %H:%M").replace(tzinfo=BJ)
+    assert abs((as_shanghai(utcnow()) - shown).total_seconds()) < 180
     assert data["pageNo"] == 1
     assert data["pageSize"] == 10
     filtered = client.get(

@@ -8,7 +8,7 @@
     </div>
 
     <div v-if="dataAsOf" class="hint" style="margin-bottom: 10px">
-      DC-002 · perm <code>ims:fin:profit-trace:query</code> · 数据截至 {{ dataAsOf }}
+      DC-002 · perm <code>ims:fin:profit-trace:query</code> · 数据截至 {{ formatDateTime(dataAsOf) }}
     </div>
 
     <div class="tabs" style="margin-bottom: 8px">
@@ -295,6 +295,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
+import { formatDateTime } from '../../utils/time'
 
 const route = useRoute()
 

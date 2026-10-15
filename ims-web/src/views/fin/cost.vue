@@ -146,7 +146,7 @@
               <td>{{ row.platform }}</td>
               <td class="num">¥{{ fmt(row.gmv) }}</td>
               <td class="num">¥{{ fmt(row.refund) }}</td>
-              <td>{{ row.approvedAt || '—' }}</td>
+              <td>{{ formatDateTime(row.approvedAt) || '—' }}</td>
               <td>
                 <span v-if="row.isOver48h" class="tag" style="background: rgba(255, 59, 48, 0.12); color: #c0392b">是</span>
                 <span v-else>否</span>
@@ -335,6 +335,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http } from '../../api/http'
+import { formatDateTime } from '../../utils/time'
 
 const router = useRouter()
 

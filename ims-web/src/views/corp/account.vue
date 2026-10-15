@@ -1900,7 +1900,7 @@ function moneyText(value: unknown) {
 }
 
 function todayUtc() {
-  return new Date().toISOString().slice(0, 10)
+  return shanghaiToday()
 }
 
 function shanghaiToday() {

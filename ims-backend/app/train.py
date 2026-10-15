@@ -45,12 +45,10 @@ class MaterialBody(BaseModel):
     publish: bool = False
 
 
-def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str:
+    from app.clock import format_iso
+
+    return format_iso(dt, civil=civil)
 
 
 def ensure_default_cates(db: Session, tenant_id: int) -> None:
@@ -545,7 +543,9 @@ def rate_pct(finished: int, assigned: int) -> float:
 
 
 def parse_bounded_range(raw: str | None) -> tuple[datetime | None, datetime | None, str | None]:
-    """逗号分隔的 yyyy-MM-dd。空值表示不限；起大于止或格式不对返回错误文案。"""
+    """逗号分隔的北京日历日。空值不限；返回 naive UTC 闭区间，用来筛 created_at。"""
+    from app.clock import civil_day_bounds
+
     if raw is None or not str(raw).strip():
         return None, None, None
     parts = [part.strip() for part in str(raw).split(",") if part.strip()]
@@ -558,8 +558,10 @@ def parse_bounded_range(raw: str | None) -> tuple[datetime | None, datetime | No
         return None, None, "日期范围无效"
     if start > end_day:
         return None, None, "日期范围起大于止"
-    end = end_day.replace(hour=23, minute=59, second=59)
-    return start, end, None
+    bounds = civil_day_bounds(parts[0], parts[1])
+    if bounds is None:
+        return None, None, "日期范围无效"
+    return bounds[0], bounds[1], None
 
 
 def as_date(value) -> date:
@@ -617,7 +619,9 @@ def aggregate_dept_daily(
     buckets: dict[tuple[str, int], dict] = {}
     for record, task in pairs:
         created = task.created_at or utcnow()
-        stat_date = created.date().isoformat()
+        from app.clock import as_shanghai
+
+        stat_date = as_shanghai(created).date().isoformat()
         dept_id = dept_of(db, cache, record.user_id, tenant_id)
         bucket = buckets.setdefault(
             (stat_date, dept_id),
@@ -1004,7 +1008,7 @@ def task_vo(db: Session, row: TrainTask) -> dict:
         "assignScope": row.assign_scope,
         "assignTargetUserIds": user_ids if row.assign_scope == "BY_USER" else [],
         "assignedCount": row.assigned_count,
-        "deadline": iso(row.deadline),
+        "deadline": iso(row.deadline, civil=True),
         "confirmType": row.confirm_type,
         "passScore": int(row.pass_score or 0),
         "questionCount": len(quiz),

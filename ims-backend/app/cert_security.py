@@ -24,9 +24,9 @@ TYPE_LABEL = {"IDCARD": "身份证", "PASSPORT": "护照", "OTHER": "其他"}
 
 
 def iso(value: datetime | None) -> str:
-    if value is None:
-        return ""
-    return value.isoformat(sep=" ", timespec="seconds")
+    from app.clock import format_iso
+
+    return format_iso(value)
 
 
 def parse_dt(value: str) -> datetime | None:

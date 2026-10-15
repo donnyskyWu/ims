@@ -54,12 +54,10 @@ GRANT_TYPES = frozenset({"DEPT", "ROLE", "PERSON"})
 ASSEMBLE_GUIDELINES = "experts.assemble 仅下发组装包（system_prompt + 技能契约）；网关不执行模型（D2/BR-034）。"
 
 
-def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str:
+    from app.clock import format_iso
+
+    return format_iso(dt, civil=civil)
 
 
 def next_expert_code(db: Session, tenant_id: int) -> str:

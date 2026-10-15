@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.acct_seed import FINANCE_ROLE_KEY
 from app.api import current_user, db_session, fail, ok
+from app.clock import format_iso
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.flow import ensure_pending_task, next_instance_no, seed_flow
@@ -410,7 +411,7 @@ def timeline(
                     "operatorName": names.get(int(r.operator_user_id or 0), ""),
                     "snapshotSummary": r.snapshot_summary,
                     "remark": r.remark,
-                    "eventTime": r.event_time.strftime("%Y-%m-%dT%H:%M:%S") if r.event_time else "",
+                    "eventTime": format_iso(r.event_time) if r.event_time else "",
                 }
                 for r in rows
             ],

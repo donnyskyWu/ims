@@ -132,6 +132,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { errorMessage, http } from '../../api/http'
+import { addShanghaiDays, shanghaiToday } from '../../utils/time'
 
 const router = useRouter()
 const kpis = ref<{ key: string; label: string; value: string; wow?: string }[]>([])
@@ -223,11 +224,9 @@ function dateParams() {
   if (dateFrom.value && dateTo.value) {
     return { dateFrom: dateFrom.value, dateTo: dateTo.value }
   }
-  const end = new Date()
-  const start = new Date()
-  start.setDate(end.getDate() - Number(rangeDays.value))
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
-  return { dateFrom: fmt(start), dateTo: fmt(end) }
+  const end = shanghaiToday()
+  const start = addShanghaiDays(end, -Number(rangeDays.value))
+  return { dateFrom: start, dateTo: end }
 }
 
 async function loadDashboard() {

@@ -155,12 +155,10 @@ def sync_publish_overdue(db: Session, actor: User, row: ContentPublish, hours: f
                 tenant_id=tenant(actor),
             )
         )
-def iso(dt: datetime | None) -> str:
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=BJ)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+def iso(dt: datetime | None, *, civil: bool = False) -> str:
+    from app.clock import format_iso
+
+    return format_iso(dt, civil=civil)
 
 
 def tenant(actor: User) -> int:
@@ -1069,8 +1067,10 @@ def review_queue(
     now = datetime.now(BJ)
     for row in rows_all:
         if overdueOnly:
-            created = row.created_at.replace(tzinfo=BJ) if row.created_at.tzinfo is None else row.created_at
-            if (now - created.astimezone(BJ)).total_seconds() < 12 * 3600:
+            from app.clock import as_shanghai
+
+            created = as_shanghai(row.created_at)
+            if (now - created).total_seconds() < 12 * 3600:
                 continue
         filtered.append(row)
     total = len(filtered)

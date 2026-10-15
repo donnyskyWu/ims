@@ -70,7 +70,7 @@
                 <router-link
                   v-if="row.taskType === 'exam'"
                   class="btn btn-sec btn-sm"
-                  to="/ims/perf/exam"
+                  :to="row.refId ? `/ims/perf/exam?paperId=${row.refId}&take=1` : '/ims/perf/exam'"
                   data-testid="todo-exam-entry"
                 >
                   去考试

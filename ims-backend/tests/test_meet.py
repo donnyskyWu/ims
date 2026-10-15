@@ -23,6 +23,39 @@ def headers() -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_daily_deadline_and_wait_use_shanghai():
+    from app.meet import calc_on_time, waiting_hours
+
+    assert calc_on_time("2026-10-11", datetime(2026, 10, 11, 13, 0, 0)) is True
+    assert calc_on_time("2026-10-11", datetime(2026, 10, 11, 14, 0, 0)) is True
+    assert calc_on_time("2026-10-11", datetime(2026, 10, 11, 15, 0, 0)) is False
+    assert calc_on_time("2026-10-11", datetime(2026, 10, 11, 22, 30, 0)) is False
+    hours = waiting_hours(utcnow() - timedelta(hours=2))
+    assert 1.5 <= hours <= 2.5
+
+    auth = headers()
+    day = "2026-03-18"
+    submit = client.post(
+        "/admin-api/ims/meet/daily",
+        headers=auth,
+        json={
+            "reportDate": day,
+            "contentDone": "按时",
+            "contentPlan": "计划",
+            "contentIssue": "无",
+            "asDraft": False,
+        },
+    )
+    assert submit.json()["code"] == 0
+    stamp = submit.json()["data"]["submittedAt"]
+    assert stamp.endswith("+08:00")
+    from app.clock import parse_to_utc_naive
+
+    parsed = parse_to_utc_naive(stamp)
+    assert parsed is not None
+    assert abs((utcnow() - parsed).total_seconds()) < 180
+
+
 def test_meet_daily_template_and_submit():
     auth = headers()
     tpl = client.get("/admin-api/ims/meet/daily/template", headers=auth)

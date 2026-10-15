@@ -74,11 +74,9 @@ class Step:
 
 def iso(dt: datetime | None) -> str:
     """库内 naive UTC 转成带 +08:00 的东八区时刻，供前端倒计时解析。"""
-    if dt is None:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    from app.clock import format_iso
+
+    return format_iso(dt)
 
 
 def level_code(value: int) -> str:

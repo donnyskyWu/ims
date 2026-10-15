@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
+from app.clock import format_iso
 from app.core import mask_name, utcnow
 from app.corp import ops_db, page_args, tenant_of, user_names
 from app.fin import (
@@ -21,12 +22,17 @@ from app.fin import (
     operating_profit,
     parse_day_range,
 )
-from app.live import get_session, iso
+from app.live import get_session
 from app.models import FinCost, FinProfit, LiveSession, User, UserDept
 
 router = APIRouter(prefix="/dc/profit-trace", tags=["dc-profit-trace"])
 
 AGGREGATE_BY = frozenset({"PERSON", "ACCOUNT", "TEAM", "IP_GROUP", "MONTH"})
+
+
+def data_as_of() -> str:
+    """利润反查「数据截至」。naive UTC 折成北京时间 ISO，不改利润计算。"""
+    return format_iso(utcnow())
 
 
 def stat_period(session: LiveSession) -> str:
@@ -222,7 +228,7 @@ def profit_trace_list(
             "total": total,
             "pageNo": page_no,
             "pageSize": size,
-            "dataAsOf": iso(utcnow()),
+            "dataAsOf": data_as_of(),
         }
     )
 
@@ -353,7 +359,7 @@ def profit_trace_abnormal(
             "total": total,
             "pageNo": page_no,
             "pageSize": size,
-            "dataAsOf": iso(utcnow()),
+            "dataAsOf": data_as_of(),
         }
     )
 
@@ -414,6 +420,6 @@ def profit_trace_chain(
                 "shareDetail": share_detail_rows(cost, session, masked=masked),
             },
             "queryCostMs": elapsed,
-            "dataAsOf": iso(utcnow()),
+            "dataAsOf": data_as_of(),
         }
     )
