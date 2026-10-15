@@ -57,13 +57,13 @@ test.describe('bi drill pack closure S12', () => {
     const reportModal = page.locator('.modal-mask .card').filter({ hasText: '新建报表' })
     await expect(reportModal).toBeVisible()
     await reportModal.locator('input.fld-in').first().fill(reportName)
-    await reportModal.getByRole('button', { name: '保存草稿' }).click()
+    await reportModal.getByRole('button', { name: '创建并进入设计器' }).click()
     await expect(page.locator('h1')).toContainText('报表设计器', { timeout: 15_000 })
     await expect(page.getByTestId('bi-palette-TABLE')).toBeVisible()
 
     await page.getByTestId('bi-palette-TABLE').dragTo(page.getByTestId('bi-canvas'))
     await expect(page.getByTestId('bi-canvas-comp')).toHaveCount(1)
-    await expect(page.getByTestId('bi-canvas-comp')).toContainText('表格')
+    await expect(page.getByTestId('bi-canvas-comp')).toContainText('数据表')
     await page.screenshot({ path: `${shotDir}/01-designer-drag.png` })
 
     await page.getByTestId('bi-save').click()

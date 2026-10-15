@@ -228,6 +228,28 @@ def ensure_bi_share_note_column() -> None:
         )
 
 
+def ensure_bi_report_catalog_columns() -> None:
+    """已有库补可见范围、口径说明和版本号。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_bi_report_def" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_bi_report_def")}
+    alters: list[str] = []
+    if "share_scope" not in cols:
+        alters.append("ADD COLUMN share_scope VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'")
+    if "metric_note" not in cols:
+        alters.append("ADD COLUMN metric_note VARCHAR(512) NOT NULL DEFAULT ''")
+    if "version_no" not in cols:
+        alters.append("ADD COLUMN version_no INT NOT NULL DEFAULT 1")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_bi_report_def {clause}"))
+
+
 def ensure_bi_br212_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -503,6 +525,7 @@ def init_db() -> None:
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()
     ensure_bi_br212_columns()
+    ensure_bi_report_catalog_columns()
     ensure_bi_share_note_column()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()

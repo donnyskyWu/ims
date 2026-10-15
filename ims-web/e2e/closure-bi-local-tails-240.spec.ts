@@ -79,7 +79,7 @@ test.describe('bi local tails 240', () => {
     const createReportResp = page.waitForResponse(
       (r) => r.url().includes('/bi/report') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await reportModal.getByRole('button', { name: '保存草稿' }).click()
+    await reportModal.getByRole('button', { name: '创建并进入设计器' }).click()
     const reportBody = (await (await createReportResp).json()) as { code: number; data?: { id: number } }
     expect(reportBody.code).toBe(0)
     const reportId = reportBody.data!.id
