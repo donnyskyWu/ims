@@ -29,6 +29,8 @@ PARAM_ENV_DEFAULT: dict[str, tuple[str | None, str]] = {
     "football.webapiBaseUrl": ("IMS_FOOTBALL_WEBAPI_BASE_URL", ""),
     "bi.dingtalk.webhook.url": ("IMS_BI_DINGTALK_WEBHOOK_URL", ""),
     "content.ai.baseUrl": ("IMS_CONTENT_AI_BASE_URL", ""),
+    "perf.grade.excellent": (None, "85"),
+    "perf.grade.qualified": (None, "60"),
     "content.ai.tokenSecret": ("IMS_CONTENT_AI_TOKEN", ""),
     "comfyui.baseUrl": ("IMS_COMFYUI_BASE_URL", ""),
     "comfyui.tokenSecret": ("IMS_COMFYUI_TOKEN", ""),

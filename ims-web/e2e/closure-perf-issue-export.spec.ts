@@ -61,14 +61,17 @@ test.describe('perf issue export csv closure', () => {
     await execRow.getByText('算分').click()
     await expect(execRow.locator('.tag')).toContainText('已计算', { timeout: 15_000 })
 
-    await execRow.getByText('确认').click()
+    await execRow.getByTestId('perf-exec-confirm').click()
+    await page.getByTestId('perf-confirm-submit').click()
     await expect(execRow.locator('.tag')).toContainText('已确认', { timeout: 15_000 })
 
+    await execRow.getByText('下发').click()
+    await expect(page.getByTestId('perf-issue-score')).toContainText('综合得分')
     const issueResp = page.waitForResponse(
       (r) =>
         r.url().includes(`/perf/execution/${recordId}/issue`) && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await execRow.getByText('下发').click()
+    await page.getByTestId('perf-issue-submit').click()
     const issueJson = (await (await issueResp).json()) as { code: number }
     expect(issueJson.code).toBe(0)
     await expect(execRow).toContainText('已下发', { timeout: 15_000 })

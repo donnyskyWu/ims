@@ -75,6 +75,8 @@ PARAM_SEED = [
     ),
     ("comfyui.baseUrl", "", "ComfyUI 根地址（IMS_COMFYUI_BASE_URL；空且未开桩则不可生成）"),
     ("comfyui.tokenSecret", "", "ComfyUI Token（敏感，仅系统参数或 IMS_COMFYUI_TOKEN，界面掩码）"),
+    ("perf.grade.excellent", "85", "绩效分档优秀线（PerfGradeLevel，默认 85。本模块不用 S～D）"),
+    ("perf.grade.qualified", "60", "绩效分档合格线（默认 60。低于此线为待改进并触发预警）"),
 ]
 
 

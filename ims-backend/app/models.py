@@ -1401,6 +1401,28 @@ class PerfMetric(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class PerfMetricRevision(Base):
+    """指标口径版本。编辑生成新版本，历史周期按生效时间追溯旧口径（PER-M-R4）。"""
+
+    __tablename__ = "ims_perf_metric_revision"
+    __table_args__ = (UniqueConstraint("tenant_id", "metric_id", "version", name="uk_perf_metric_rev"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    metric_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    metric_name: Mapped[str] = mapped_column(String(128), default="")
+    data_source: Mapped[str] = mapped_column(String(16), default="MANUAL")
+    source_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    weight: Mapped[float] = mapped_column(Float, default=0.0)
+    score_rule: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED")
+    effective_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class PerfPositionBind(Base):
     """岗位指标集绑定。同一岗位再次保存时旧行软删后重写。"""
 
@@ -1604,6 +1626,7 @@ class PerfRecord(Base):
     calc_base_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     manual_adjustment: Mapped[float] = mapped_column(Float, default=0.0)
     adjust_remark: Mapped[str] = mapped_column(String(256), default="")
+    score_lines: Mapped[list | None] = mapped_column(JSON, nullable=True)
     evaluator_user_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     deleted: Mapped[int] = mapped_column(Integer, default=0)

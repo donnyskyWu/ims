@@ -17,7 +17,7 @@
       <div class="pg-h" style="margin-bottom: 8px">
         <div>
           <div class="sub">PERF-004 排名区 · {{ gradeLine }}</div>
-          <p class="hint">V2 排名不含竞品分析维度（BR-110）。</p>
+          <p class="hint">V2 排名不含竞品分析维度。</p>
         </div>
         <div class="acts">
           <label>
@@ -118,13 +118,15 @@
         <option value="MONTHLY">月度</option>
         <option value="QUARTERLY">季度</option>
       </select>
-      <select v-model="filters.grade" data-testid="perf-result-grade-filter" style="width: 130px">
-        <option value="">全部等级</option>
-        <option value="S">S ≥90</option>
-        <option value="A">A 80-89</option>
-        <option value="B">B 70-79</option>
-        <option value="C">C 60-69</option>
-        <option value="D">D &lt;60</option>
+      <select v-model="filters.grade" data-testid="perf-result-grade-filter" style="width: 150px">
+        <option value="">全部分档</option>
+        <option value="EXCELLENT">优秀 ≥85</option>
+        <option value="QUALIFIED">合格 60~84</option>
+        <option value="IMPROVE">待改进 &lt;60</option>
+      </select>
+      <select v-model="filters.deptId" data-testid="perf-result-dept" style="width: 140px">
+        <option value="">全部部门</option>
+        <option v-for="dept in resultDepts" :key="dept.deptId" :value="String(dept.deptId)">{{ dept.deptName }}</option>
       </select>
       <input v-model="filters.evaluateeName" data-testid="perf-result-name" placeholder="被考核人" style="width: 120px" />
       <input v-model="filters.recordNo" data-testid="perf-result-no" placeholder="单号" style="width: 140px" />
@@ -133,40 +135,128 @@
       <button class="btn btn-sec btn-sm" type="button" data-testid="perf-result-reset" @click="resetFilters">重置</button>
     </form>
     <p class="hint" data-testid="perf-result-dist">{{ distText }}</p>
+    <div class="g3" style="margin-bottom: 12px">
+      <div class="card stat" data-testid="perf-result-top3" style="border-left: 3px solid var(--green)">
+        <span class="l">红榜 TOP3</span>
+        <div style="margin-top: 8px">
+          <span v-if="!topRecords.length">—</span>
+          <span v-for="row in topRecords" :key="row.id" class="tag" style="margin-right: 6px">
+            🏆{{ row.rank }} {{ row.evaluateeName }} {{ scoreText(row.totalScore) }}
+          </span>
+        </div>
+      </div>
+      <div class="card stat" data-testid="perf-result-tail" style="border-left: 3px solid var(--red)">
+        <span class="l">末位预警</span>
+        <div style="margin-top: 8px">
+          <span v-if="!tailRecords.length">本期没有待改进</span>
+          <span v-for="row in tailRecords" :key="row.id" class="tag" style="margin-right: 6px; color: var(--red)">
+            {{ row.evaluateeName }} {{ scoreText(row.totalScore) }}
+          </span>
+        </div>
+      </div>
+      <div class="card stat" data-testid="perf-result-avg">
+        <span class="l">部门均分</span>
+        <div class="n" data-testid="perf-result-avg-value">{{ resultAverage == null ? '—' : scoreText(resultAverage) }}</div>
+      </div>
+    </div>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
             <tr>
-              <th>编号</th>
+              <th>排名</th>
               <th>被考核人</th>
-              <th>岗位</th>
+              <th>部门</th>
               <th>周期</th>
-              <th>得分</th>
-              <th>等级</th>
-              <th>状态</th>
+              <th>KPI 得分</th>
+              <th>加减分项</th>
+              <th>综合得分</th>
+              <th>评级</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="7">
+              <td colspan="9">
                 <div class="empty" data-testid="perf-result-empty"><div class="et">{{ emptyText }}</div></div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id" data-testid="perf-result-row">
-              <td class="mono">{{ row.recordNo }}</td>
-              <td>{{ row.evaluateeName }}</td>
-              <td>{{ row.position }}</td>
+              <td class="num">{{ row.rank && row.rank <= 3 ? `🏆${row.rank}` : row.rank || '—' }}</td>
+              <td>
+                {{ row.evaluateeName }}
+                <div class="csub mono">{{ row.recordNo }}</div>
+              </td>
+              <td>{{ row.deptName || '—' }}</td>
               <td>{{ row.cycleDisplay }}</td>
+              <td class="num">{{ row.calcBaseScore ?? '—' }}</td>
+              <td class="num">{{ row.manualAdjustment ?? 0 }}</td>
               <td class="num">{{ row.totalScore ?? '—' }}</td>
               <td><span class="tag" data-testid="perf-result-grade">{{ row.gradeEdge || row.grade }}</span></td>
-              <td>{{ row.status }}</td>
+              <td>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="perf-result-view" @click="openDetail(row)">
+                  查看
+                </button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="perf-result-alert" @click="openAlert(row)">
+                  改进预警
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="detail" class="modal-mask" data-testid="perf-result-detail" @click.self="detail = null">
+      <div class="modal card" style="max-width: 760px; padding: 20px">
+        <h3 style="margin: 0 0 8px">{{ detail.evaluateeName }} · {{ detail.recordNo }}</h3>
+        <p class="hint">{{ detail.deptName }} · {{ detail.cycleDisplay }} · 综合 {{ detail.totalScore ?? '—' }} · {{ detail.gradeEdge }}</p>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>指标</th>
+                <th>权重</th>
+                <th>原始值</th>
+                <th>自动得分</th>
+                <th>人工调整</th>
+                <th>最终得分</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!detail.lines?.length">
+                <td colspan="6">暂无指标明细</td>
+              </tr>
+              <tr v-for="line in detail.lines || []" :key="line.metricName">
+                <td>{{ line.metricName }}</td>
+                <td>{{ line.weight }}%</td>
+                <td>{{ line.rawValue }}</td>
+                <td>{{ line.autoScore }}</td>
+                <td>{{ line.manualAdjustment }}</td>
+                <td>{{ line.finalScore }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="detail = null">关闭</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="perf-result-detail-export" @click="exportOne(detail)">
+            导出考核单
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="alertRow" class="modal-mask" data-testid="perf-result-alert-dialog" @click.self="alertRow = null">
+      <div class="modal card" style="max-width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 8px">改进预警</h3>
+        <p>{{ alertText }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-pri btn-sm" type="button" @click="alertRow = null">知道了</button>
+        </div>
       </div>
     </div>
   </div>
@@ -176,19 +266,34 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http } from '../../api/http'
 
+type ScoreLine = {
+  metricName: string
+  weight: number
+  rawValue: number
+  autoScore: number
+  manualAdjustment: number
+  finalScore: number
+}
 type Row = {
   id: number
   recordNo: string
   evaluateeName: string
+  deptId?: number
+  deptName?: string
   position: string
   cycleDisplay: string
   totalScore?: number
+  calcBaseScore?: number | null
+  manualAdjustment?: number
   grade: string
   gradeEdge?: string
+  alerted?: boolean
   status: string
+  rank?: number
+  lines?: ScoreLine[]
 }
 
-type GradeCounts = { S: number; A: number; B: number; C: number; D: number }
+type GradeCounts = { EXCELLENT: number; QUALIFIED: number; IMPROVE: number }
 type RankRow = {
   id?: number
   userId: number
@@ -208,8 +313,15 @@ const rows = ref<Row[]>([])
 const loading = ref(false)
 const error = ref('')
 const exportNote = ref('')
-const counts = ref<GradeCounts>({ S: 0, A: 0, B: 0, C: 0, D: 0 })
-const filters = reactive({ status: '', periodType: '', grade: '', evaluateeName: '', recordNo: '' })
+const counts = ref<GradeCounts>({ EXCELLENT: 0, QUALIFIED: 0, IMPROVE: 0 })
+const recordGradeLine = ref('优秀 ≥85 · 合格 60~84 · 待改进 <60')
+const filters = reactive({ status: '', periodType: '', grade: '', deptId: '', evaluateeName: '', recordNo: '' })
+const resultDepts = ref<DeptOpt[]>([])
+const topRecords = ref<Row[]>([])
+const tailRecords = ref<Row[]>([])
+const resultAverage = ref<number | null>(null)
+const detail = ref<Row | null>(null)
+const alertRow = ref<Row | null>(null)
 const rankPeriod = ref(previousMonth())
 const rankDept = ref('')
 const rankRows = ref<RankRow[]>([])
@@ -291,8 +403,24 @@ async function loadRank() {
 }
 
 const filtered = computed(
-  () => !!(filters.status || filters.periodType || filters.grade || filters.evaluateeName.trim() || filters.recordNo.trim()),
+  () =>
+    !!(
+      filters.status ||
+      filters.periodType ||
+      filters.grade ||
+      filters.deptId ||
+      filters.evaluateeName.trim() ||
+      filters.recordNo.trim()
+    ),
 )
+const alertText = computed(() => {
+  const row = alertRow.value
+  if (!row) return ''
+  if (row.grade === 'IMPROVE' || row.alerted) {
+    return `${row.evaluateeName} 综合得分 ${scoreText(row.totalScore)}，低于合格线，已触发改进预警`
+  }
+  return `${row.evaluateeName} 本期未低于合格线，不触发改进预警`
+})
 
 const emptyText = computed(() => {
   if (error.value) return error.value
@@ -302,7 +430,7 @@ const emptyText = computed(() => {
 
 const distText = computed(() => {
   const item = counts.value
-  return `等级分布 S ${item.S} · A ${item.A} · B ${item.B} · C ${item.C} · D ${item.D}（边界 90 / 80 / 70 / 60）`
+  return `分档分布 优秀 ${item.EXCELLENT || 0} · 合格 ${item.QUALIFIED || 0} · 待改进 ${item.IMPROVE || 0}（${recordGradeLine.value}）`
 })
 
 function listParams() {
@@ -312,6 +440,7 @@ function listParams() {
     status: filters.status || undefined,
     periodType: filters.periodType || undefined,
     grade: filters.grade || undefined,
+    deptId: filters.deptId || undefined,
     evaluateeName: filters.evaluateeName.trim() || undefined,
     recordNo: filters.recordNo.trim() || undefined,
   }
@@ -325,11 +454,20 @@ async function loadList() {
     if (res.data.code !== 0) {
       error.value = res.data.msg || '加载失败'
       rows.value = []
-      counts.value = { S: 0, A: 0, B: 0, C: 0, D: 0 }
+      counts.value = { EXCELLENT: 0, QUALIFIED: 0, IMPROVE: 0 }
+      topRecords.value = []
+      tailRecords.value = []
+      resultAverage.value = null
       return
     }
     rows.value = res.data.data?.list || []
-    counts.value = res.data.data?.gradeCounts || { S: 0, A: 0, B: 0, C: 0, D: 0 }
+    counts.value = res.data.data?.gradeCounts || { EXCELLENT: 0, QUALIFIED: 0, IMPROVE: 0 }
+    if (res.data.data?.gradeLine) recordGradeLine.value = res.data.data.gradeLine
+    resultDepts.value = res.data.data?.depts || []
+    const board = res.data.data?.resultBoard || {}
+    topRecords.value = board.top3 || []
+    tailRecords.value = board.tail || []
+    resultAverage.value = board.deptAverage ?? null
   } catch {
     error.value = '网络错误'
     rows.value = []
@@ -342,6 +480,7 @@ function resetFilters() {
   filters.status = ''
   filters.periodType = ''
   filters.grade = ''
+  filters.deptId = ''
   filters.evaluateeName = ''
   filters.recordNo = ''
   exportNote.value = ''
@@ -354,6 +493,7 @@ async function exportCsv() {
   if (filters.status) params.set('status', filters.status)
   if (filters.periodType) params.set('periodType', filters.periodType)
   if (filters.grade) params.set('grade', filters.grade)
+  if (filters.deptId) params.set('deptId', filters.deptId)
   const name = filters.evaluateeName.trim()
   if (name) params.set('evaluateeName', name)
   const recordNo = filters.recordNo.trim()
@@ -389,6 +529,42 @@ async function exportCsv() {
   } catch {
     exportNote.value = '导出网络错误'
   }
+}
+
+function openDetail(row: Row) {
+  detail.value = row
+}
+
+function openAlert(row: Row) {
+  alertRow.value = row
+}
+
+function exportOne(row: Row) {
+  const header = ['recordNo', 'evaluateeName', 'deptName', 'cycle', 'metric', 'weight', 'raw', 'auto', 'adjust', 'final', 'total']
+  const lines = row.lines?.length ? row.lines : [null]
+  const body = lines
+    .map((line) =>
+      [
+        row.recordNo,
+        row.evaluateeName,
+        row.deptName || '',
+        row.cycleDisplay,
+        line?.metricName || '',
+        line?.weight ?? '',
+        line?.rawValue ?? '',
+        line?.autoScore ?? '',
+        line?.manualAdjustment ?? '',
+        line?.finalScore ?? '',
+        row.totalScore ?? '',
+      ].join(','),
+    )
+    .join('\n')
+  const blob = new Blob([`\ufeff${header.join(',')}\n${body}\n`], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `${row.recordNo}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
 }
 
 onMounted(() => {

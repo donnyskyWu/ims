@@ -64,18 +64,14 @@ def _record(auth: dict, scheme_id: int, start: str, score: float | None, status:
     return body["data"]
 
 
-def test_grade_edges_at_90_80_70_60():
+def test_grade_edges_excellent_qualified_improve():
     auth = headers()
     scheme_id = _scheme(auth, "等级边界方案")
     samples = [
-        (90.0, "S", "S ≥90", "2024-01-01"),
-        (89.9, "A", "A 80-89", "2024-02-01"),
-        (80.0, "A", "A 80-89", "2024-03-01"),
-        (79.9, "B", "B 70-79", "2024-04-01"),
-        (70.0, "B", "B 70-79", "2024-05-01"),
-        (69.9, "C", "C 60-69", "2024-06-01"),
-        (60.0, "C", "C 60-69", "2024-07-01"),
-        (59.9, "D", "D <60", "2024-08-01"),
+        (85.0, "EXCELLENT", "优秀 ≥85", "2024-01-01"),
+        (84.99, "QUALIFIED", "合格 60~84", "2024-02-01"),
+        (60.0, "QUALIFIED", "合格 60~84", "2024-03-01"),
+        (59.99, "IMPROVE", "待改进 <60", "2024-04-01"),
     ]
     for score, letter, edge, start in samples:
         made = _record(auth, scheme_id, start, score)
@@ -96,15 +92,16 @@ def test_result_filters_by_grade_and_unknown_name():
     graded = client.get(
         "/admin-api/ims/perf/result/list",
         headers=auth,
-        params={"grade": "D", "evaluateeName": low["evaluateeName"], "pageNo": 1, "pageSize": 50},
+        params={"grade": "IMPROVE", "evaluateeName": low["evaluateeName"], "pageNo": 1, "pageSize": 50},
     )
     assert graded.json()["code"] == 0
     ids = [row["id"] for row in graded.json()["data"]["list"]]
     assert low["id"] in ids
     assert high["id"] not in ids
     counts = graded.json()["data"]["gradeCounts"]
-    assert counts["S"] >= 1
-    assert counts["D"] >= 1
+    assert counts["EXCELLENT"] >= 1
+    assert counts["IMPROVE"] >= 1
+    assert "S" not in counts
 
     by_no = client.get(
         "/admin-api/ims/perf/result/list",
@@ -121,9 +118,9 @@ def test_result_filters_by_grade_and_unknown_name():
     )
     assert empty.json()["code"] == 0
     assert empty.json()["data"]["list"] == []
-    assert empty.json()["data"]["gradeCounts"] == {"S": 0, "A": 0, "B": 0, "C": 0, "D": 0}
+    assert empty.json()["data"]["gradeCounts"] == {"EXCELLENT": 0, "QUALIFIED": 0, "IMPROVE": 0}
 
-    bad = client.get("/admin-api/ims/perf/result/list", headers=auth, params={"grade": "EXCELLENT"})
+    bad = client.get("/admin-api/ims/perf/result/list", headers=auth, params={"grade": "S"})
     assert bad.json()["code"] == 1001
 
 

@@ -10,16 +10,14 @@ import { attachClosurePageHooks, loginAdmin } from './closure-helpers'
 const SHOTS = '/opt/cursor/artifacts/e2e-170-screenshots'
 
 function letterOf(score: number) {
-  if (score >= 90) return 'S ≥90'
-  if (score >= 80) return 'A 80-89'
-  if (score >= 70) return 'B 70-79'
-  if (score >= 60) return 'C 60-69'
-  return 'D <60'
+  if (score >= 85) return '优秀 ≥85'
+  if (score >= 60) return '合格 60~84'
+  return '待改进 <60'
 }
 
 function pickTarget(base: number) {
   const limit = Math.round(base * 0.2 * 10000) / 10000
-  const edges = [90, 80, 70, 60, 59.9]
+  const edges = [85, 84.9, 60, 59.9]
   const current = letterOf(base)
   const fits = edges.filter((score) => Math.abs(Math.round((score - base) * 10) / 10) <= limit + 1e-6)
   const score = fits.find((item) => letterOf(item) !== current) ?? fits[0] ?? base
@@ -93,7 +91,12 @@ test.describe('perf result tails closure', () => {
     if (target.delta !== 0) {
       await located.row.getByText('调整').click()
       const adjustModal = page.locator('.modal.card').filter({ hasText: '人工调整' })
-      await adjustModal.locator('input[type="number"]').fill(String(target.delta))
+      const lineInputs = adjustModal.getByTestId('perf-adjust-line')
+      const lineCount = await lineInputs.count()
+      expect(lineCount).toBeGreaterThan(0)
+      for (let index = 0; index < lineCount; index += 1) {
+        await lineInputs.nth(index).fill(String(target.delta))
+      }
       const adjustResp = page.waitForResponse(
         (r) => r.url().includes(`/perf/execution/${recordId}/adjust`) && r.request().method() === 'PUT',
       )
@@ -103,9 +106,14 @@ test.describe('perf result tails closure', () => {
       located = await readScore(page, recordNo)
     }
 
-    await located.row.getByText('确认').click()
+    await located.row.getByTestId('perf-exec-confirm').click()
+    await expect(page.getByTestId('perf-confirm-score')).toContainText('综合得分')
+    await expect(page.getByTestId('perf-confirm-grade')).toContainText('分档')
+    await page.getByTestId('perf-confirm-submit').click()
     await expect(located.row.locator('.tag')).toContainText('已确认', { timeout: 15_000 })
     await located.row.getByText('下发').click()
+    await expect(page.getByTestId('perf-issue-dialog')).toContainText('综合得分')
+    await page.getByTestId('perf-issue-submit').click()
     await expect(located.row).toContainText('已下发', { timeout: 15_000 })
 
     await page.goto('/ims/perf/result')
@@ -120,7 +128,7 @@ test.describe('perf result tails closure', () => {
     const resultRow = page.getByTestId('perf-result-row').filter({ hasText: recordNo })
     await expect(resultRow).toBeVisible({ timeout: 15_000 })
     await expect(resultRow.getByTestId('perf-result-grade')).toHaveText(target.label)
-    await expect(page.getByTestId('perf-result-dist')).toContainText('边界 90 / 80 / 70 / 60')
+    await expect(page.getByTestId('perf-result-dist')).toContainText('优秀 ≥85')
     await page.screenshot({ path: `${SHOTS}/01-grade-edge.png`, fullPage: true })
 
     await page.getByTestId('perf-result-name').fill('NO-SUCH-PERF-170')

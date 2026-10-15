@@ -11,7 +11,7 @@
       </div>
     </div>
     <p class="hint" style="margin-bottom: 8px">
-      状态 ADR-IMS-005 · canonical 七态 · P2 列表 Tag 四别名（草稿/计算中/已计算/已确认）
+      列表状态：草稿、计算中、已计算、已确认
     </p>
     <form class="qbar" @submit.prevent="loadList">
       <input v-model="filters.evaluateeName" placeholder="被考核人" style="width: 110px" />
@@ -81,12 +81,14 @@
                 <span
                   v-if="row.status === 'CALCULATED' || row.status === 'REVIEWED'"
                   class="btn-txt btn"
-                  @click="confirmRow(row)"
+                  data-testid="perf-exec-confirm"
+                  @click="openConfirm(row)"
                 >确认</span>
                 <span
                   v-if="row.status === 'REVIEWED' || row.status === 'CONFIRMED'"
                   class="btn-txt btn"
-                  @click="issueRow(row)"
+                  data-testid="perf-exec-issue"
+                  @click="openIssue(row)"
                 >下发</span>
               </td>
             </tr>
@@ -95,19 +97,85 @@
       </div>
     </div>
 
-    <div v-if="showAdjust" class="modal-mask" @click.self="showAdjust = false">
-      <div class="modal card" style="max-width: 400px; padding: 20px">
-        <h3 style="margin: 0 0 12px">人工调整 · {{ adjustTarget?.recordNo }}</h3>
-        <p class="hint">基础分 {{ adjustTarget?.calcBaseScore ?? adjustTarget?.totalScore }} · ±20% 上限</p>
-        <div class="fld">
-          <label>调整分值（±）</label>
-          <input v-model.number="adjustForm.manualAdjustment" type="number" step="0.1" />
+    <div v-if="confirmTarget" class="modal-mask" data-testid="perf-confirm-dialog" @click.self="confirmTarget = null">
+      <div class="modal card" style="max-width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">确认结果</h3>
+        <p data-testid="perf-confirm-score">综合得分 {{ confirmTarget.totalScore ?? '—' }}</p>
+        <p data-testid="perf-confirm-grade">分档 {{ confirmTarget.gradeEdge || '—' }}</p>
+        <p v-if="confirmTarget.grade === 'IMPROVE'" class="hint" data-testid="perf-confirm-alert" style="color: var(--red)">
+          低于合格线，将触发预警
+        </p>
+        <p v-if="confirmError" class="hint" style="color: var(--red)">{{ confirmError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="confirmTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="perf-confirm-submit" @click="submitConfirm">
+            确认结果
+          </button>
         </div>
+      </div>
+    </div>
+
+    <div v-if="issueTarget" class="modal-mask" data-testid="perf-issue-dialog" @click.self="issueTarget = null">
+      <div class="modal card" style="max-width: 420px; padding: 20px">
+        <h3 style="margin: 0 0 12px">确认下发</h3>
+        <p class="hint">下发后，被考核人可在「我的绩效」查看本期结果。未下发前不可见。</p>
+        <p data-testid="perf-issue-score">综合得分 {{ issueTarget.totalScore ?? '—' }}</p>
+        <p data-testid="perf-issue-grade">分档 {{ issueTarget.gradeEdge || '—' }}</p>
+        <p v-if="issueError" class="hint" style="color: var(--red)">{{ issueError }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="issueTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="perf-issue-submit" @click="submitIssue">
+            确认下发
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showAdjust" class="modal-mask" @click.self="showAdjust = false">
+      <div class="modal card" style="max-width: 760px; padding: 20px">
+        <h3 style="margin: 0 0 12px">人工调整 · {{ adjustTarget?.recordNo }}</h3>
+        <p class="hint">
+          基础分 {{ adjustTarget?.calcBaseScore ?? adjustTarget?.totalScore }} · 综合分变动不能超过 ±20%。综合分 =
+          Σ(自动得分 + 人工调整) × 权重。
+        </p>
+        <div class="tbl-wrap">
+          <table data-testid="perf-adjust-table">
+            <thead>
+              <tr>
+                <th>指标</th>
+                <th>权重</th>
+                <th>原始值</th>
+                <th>自动得分</th>
+                <th>人工调整</th>
+                <th>最终得分</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="line in adjustLines" :key="line.metricName">
+                <td>{{ line.metricName }}</td>
+                <td class="num">{{ line.weight }}%</td>
+                <td class="num">{{ line.rawValue }}</td>
+                <td class="num">{{ line.autoScore }}</td>
+                <td>
+                  <input
+                    v-model="line.manualAdjustment"
+                    data-testid="perf-adjust-line"
+                    type="number"
+                    step="0.1"
+                    style="width: 88px"
+                  />
+                </td>
+                <td class="num">{{ lineFinal(line) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="hint" data-testid="perf-adjust-total">综合分 {{ adjustPreview }}</p>
         <div class="fld">
           <label>说明</label>
           <input v-model="adjustForm.remark" placeholder="场次补录等" />
         </div>
-        <p v-if="adjustError" class="hint" style="color: var(--red)">{{ adjustError }}</p>
+        <p v-if="adjustError" class="hint" data-testid="perf-adjust-error" style="color: var(--red)">{{ adjustError }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showAdjust = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submitAdjust">保存</button>
@@ -129,7 +197,7 @@
         </div>
         <div class="fld"><label>周期开始</label><input v-model="form.periodStart" placeholder="2026-07-01" /></div>
         <div class="fld"><label>周期结束</label><input v-model="form.periodEnd" placeholder="2026-09-30" /></div>
-        <p v-if="formError" class="hint" style="color: var(--red)">{{ formError }}</p>
+        <p v-if="formError" class="hint" data-testid="perf-exec-error" style="color: var(--red)">{{ stripReqCodes(formError) }}</p>
         <div class="acts" style="margin-top: 12px; justify-content: flex-end">
           <button class="btn btn-sec btn-sm" type="button" @click="showForm = false">取消</button>
           <button class="btn btn-pri btn-sm" type="button" @click="submit">保存</button>
@@ -144,6 +212,18 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { http } from '../../api/http'
 
+function stripReqCodes(text: string) {
+  return text.replace(/[（(][^）)]*(?:BR|ADR)-[^）)]*[）)]/g, '').replace(/[ \t]{2,}/g, ' ').trim()
+}
+
+type ScoreLine = {
+  metricName: string
+  weight: number
+  rawValue: number
+  autoScore: number
+  manualAdjustment: number | string
+  finalScore: number
+}
 type Row = {
   id: number
   recordNo: string
@@ -156,6 +236,9 @@ type Row = {
   manualAdjustment?: number
   status: string
   evaluatorName: string
+  grade?: string
+  gradeEdge?: string
+  lines?: ScoreLine[]
 }
 
 const route = useRoute()
@@ -164,9 +247,14 @@ const loading = ref(false)
 const error = ref('')
 const showForm = ref(false)
 const showAdjust = ref(false)
+const confirmTarget = ref<Row | null>(null)
+const confirmError = ref('')
+const issueTarget = ref<Row | null>(null)
+const issueError = ref('')
 const adjustTarget = ref<Row | null>(null)
 const adjustError = ref('')
-const adjustForm = reactive({ manualAdjustment: 0, remark: '' })
+const adjustLines = ref<ScoreLine[]>([])
+const adjustForm = reactive({ remark: '' })
 const formError = ref('')
 const filters = reactive({ evaluateeName: '', status: '', periodType: '' })
 const form = reactive({
@@ -266,8 +354,9 @@ async function submit() {
     }
     showForm.value = false
     await loadList()
-  } catch {
-    formError.value = '网络错误'
+  } catch (err) {
+    const body = err as { msg?: string }
+    formError.value = body.msg || '创建失败'
   }
 }
 
@@ -280,29 +369,77 @@ async function calculate(row: Row) {
   await loadList()
 }
 
-async function confirmRow(row: Row) {
-  const res = await http.post(`/perf/execution/${row.id}/confirm`)
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '确认失败')
-    return
-  }
-  await loadList()
+function openConfirm(row: Row) {
+  confirmError.value = ''
+  confirmTarget.value = row
 }
 
-async function issueRow(row: Row) {
-  const res = await http.put(`/perf/execution/${row.id}/issue`)
-  if (res.data.code !== 0) {
-    alert(res.data.msg || '下发失败')
-    return
+async function submitConfirm() {
+  if (!confirmTarget.value) return
+  confirmError.value = ''
+  try {
+    const res = await http.post(`/perf/execution/${confirmTarget.value.id}/confirm`)
+    if (res.data.code !== 0) {
+      confirmError.value = res.data.msg || '确认失败'
+      return
+    }
+    confirmTarget.value = null
+    await loadList()
+  } catch (err) {
+    const body = err as { msg?: string }
+    confirmError.value = body.msg || '确认失败'
   }
-  await loadList()
 }
+
+function openIssue(row: Row) {
+  issueError.value = ''
+  issueTarget.value = row
+}
+
+async function submitIssue() {
+  if (!issueTarget.value) return
+  issueError.value = ''
+  try {
+    const res = await http.put(`/perf/execution/${issueTarget.value.id}/issue`)
+    if (res.data.code !== 0) {
+      issueError.value = res.data.msg || '下发失败'
+      return
+    }
+    issueTarget.value = null
+    await loadList()
+  } catch (err) {
+    const body = err as { msg?: string }
+    issueError.value = body.msg || '下发失败'
+  }
+}
+
+function lineFinal(line: ScoreLine) {
+  const delta = Number(line.manualAdjustment)
+  const auto = Number(line.autoScore)
+  if (!Number.isFinite(delta) || !Number.isFinite(auto)) return '—'
+  return Math.round((auto + delta) * 100) / 100
+}
+
+const adjustPreview = computed(() => {
+  let total = 0
+  for (const line of adjustLines.value) {
+    const finalScore = Number(lineFinal(line))
+    const weight = Number(line.weight)
+    if (!Number.isFinite(finalScore) || !Number.isFinite(weight)) continue
+    total += (finalScore * weight) / 100
+  }
+  if (!adjustLines.value.length) return adjustTarget.value?.totalScore ?? '—'
+  return Math.round(total * 10) / 10
+})
 
 function openAdjust(row: Row) {
   adjustTarget.value = row
-  adjustForm.manualAdjustment = row.manualAdjustment ?? 0
   adjustForm.remark = ''
   adjustError.value = ''
+  adjustLines.value = (row.lines || []).map((line) => ({
+    ...line,
+    manualAdjustment: line.manualAdjustment ?? 0,
+  }))
   showAdjust.value = true
 }
 
@@ -311,7 +448,10 @@ async function submitAdjust() {
   adjustError.value = ''
   try {
     const res = await http.put(`/perf/execution/${adjustTarget.value.id}/adjust`, {
-      manualAdjustment: adjustForm.manualAdjustment,
+      lines: adjustLines.value.map((line) => ({
+        metricName: line.metricName,
+        manualAdjustment: Number(line.manualAdjustment),
+      })),
       remark: adjustForm.remark,
     })
     if (res.data.code !== 0) {
@@ -320,8 +460,9 @@ async function submitAdjust() {
     }
     showAdjust.value = false
     await loadList()
-  } catch {
-    adjustError.value = '网络错误'
+  } catch (err) {
+    const body = err as { msg?: string }
+    adjustError.value = body.msg || '调整失败'
   }
 }
 

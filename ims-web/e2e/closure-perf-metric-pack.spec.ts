@@ -92,7 +92,7 @@ test.describe('perf metric pack closure S9', () => {
 
     await page.getByTestId('compete-view').click()
     const competeDrawer = page.locator('.drawer.on')
-    await expect(competeDrawer.getByTestId('compete-note')).toContainText('BR-110')
+    await expect(competeDrawer.getByTestId('compete-note')).toContainText('上线后启用')
     await competeDrawer.getByTestId('compete-enable').click()
     await expect(page.getByTestId('compete-lock-error')).toContainText('1153')
     await expect(page.getByTestId('compete-lock-error')).toContainText('锁定禁用')

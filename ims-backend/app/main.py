@@ -495,9 +495,24 @@ def ensure_user_mapping_position_column() -> None:
         )
 
 
+def ensure_perf_record_score_lines() -> None:
+    """已有库补考核指标明细。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_perf_record" not in set(insp.get_table_names()):
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_perf_record")}
+    if "score_lines" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_perf_record ADD COLUMN score_lines JSON NULL"))
+
+
 def init_db() -> None:
     ensure_databases()
     Base.metadata.create_all(engine)
+    ensure_perf_record_score_lines()
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
     ensure_content_sop_dag_columns()
