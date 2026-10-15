@@ -79,7 +79,7 @@ test.describe('alert local tails #205', () => {
     await expect(liveRow).toBeVisible({ timeout: 15_000 })
     await liveRow.getByTestId('alert-detail-btn').click()
     const drawer = page.getByTestId('alert-receipt-drawer')
-    await expect(drawer.getByTestId('alert-receipt-status')).toContainText('未响应（OPEN）')
+    await expect(drawer.getByTestId('alert-receipt-status')).toContainText('未处理')
     await expect(drawer.getByTestId('alert-receipt-source')).toContainText('查看来源')
     await page.screenshot({ path: `${shotDir}/03-receipt-status.png` })
     await drawer.getByTestId('alert-receipt-close').click()

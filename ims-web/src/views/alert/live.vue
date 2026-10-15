@@ -18,6 +18,29 @@
       <div class="tab" :class="{ on: tab === 'dedup' }" @click="switchTab('dedup')">去重合并</div>
     </div>
 
+    <div v-if="tab === 'live'" class="g3" style="margin: 12px 0" data-testid="alert-level-cards">
+      <div class="card stat" data-testid="alert-level-card-L3" style="border-left: 3px solid var(--red)">
+        <span class="l">严重 · 红</span>
+        <div class="n" style="color: var(--red)">{{ levelCounts.L3 }}</div>
+        <div class="d">需立即处理</div>
+      </div>
+      <div class="card stat" data-testid="alert-level-card-L2" style="border-left: 3px solid var(--orange, #d97706)">
+        <span class="l">警告 · 橙</span>
+        <div class="n" style="color: var(--orange, #d97706)">{{ levelCounts.L2 }}</div>
+        <div class="d">24h 内处理</div>
+      </div>
+      <div class="card stat" data-testid="alert-level-card-L1" style="border-left: 3px solid #e6b800">
+        <span class="l">提示 · 黄</span>
+        <div class="n" style="color: #a07d00">{{ levelCounts.L1 }}</div>
+        <div class="d">纳入周报跟踪</div>
+      </div>
+    </div>
+    <p v-if="tab === 'live'" class="hint" data-testid="alert-threshold-hint">
+      阈值配置在
+      <router-link to="/ims/collect/threshold">数据采集 → 阈值规则</router-link>
+      ；本页按级别（严重/警告/提示）展示实例与处置。
+    </p>
+
     <div v-if="tab === 'live'" class="g2" style="margin: 12px 0">
       <div class="card stat" data-testid="alert-delivery-card">
         <span class="l">送达率</span>
@@ -70,9 +93,9 @@
       <div class="card" data-testid="alert-my-card">
         <div class="hd-row">
           <h3>我的预警</h3>
-          <span class="csub">{{ myAlerts.length }} 条未响应</span>
+          <span class="csub">{{ myAlerts.length }} 条未处理</span>
         </div>
-        <div v-if="!myAlerts.length" class="empty"><div class="et">暂无待响应预警</div></div>
+        <div v-if="!myAlerts.length" class="empty"><div class="et">暂无未处理预警</div></div>
         <div
           v-for="item in myAlerts"
           :key="item.alertNo"
@@ -82,7 +105,7 @@
           @click="openDetail(item.alertNo)"
         >
           <div>
-            <div class="mt">L{{ item.level }} {{ item.content }}</div>
+            <div class="mt">{{ levelName(item.level) }} {{ item.content }}</div>
             <div class="md">{{ item.alertNo }} · 未读</div>
           </div>
         </div>
@@ -104,18 +127,18 @@
 
     <form v-if="tab !== 'dedup'" class="qbar" data-testid="alert-filter-bar" @submit.prevent="loadList">
       <input v-model="filters.ruleCode" data-testid="alert-filter-rule" placeholder="规则编码" style="width: 160px" />
-      <select v-model="filters.level" data-testid="alert-filter-level" style="width: 110px">
+      <select v-model="filters.level" data-testid="alert-filter-level" style="width: 120px">
         <option value="">全部级别</option>
-        <option value="L1">L1</option>
-        <option value="L2">L2</option>
-        <option value="L3">L3</option>
+        <option value="L3">高(红)</option>
+        <option value="L2">中(橙)</option>
+        <option value="L1">低(黄)</option>
       </select>
       <select v-model="filters.responseStatus" data-testid="alert-history-status" style="width: 120px">
-        <option value="">全部处置</option>
-        <option v-if="tab === 'live'" value="OPEN">待响应</option>
-        <option value="CONFIRMED">已确认</option>
-        <option value="RESOLVED">已解决</option>
-        <option value="FALSE_ALARM">误报</option>
+        <option value="">全部状态</option>
+        <option value="OPEN">未处理</option>
+        <option value="CONFIRMED">处理中</option>
+        <option value="RESOLVED">已恢复</option>
+        <option value="FALSE_ALARM">已忽略</option>
       </select>
       <select v-model="filters.pushStatus" data-testid="alert-filter-push" style="width: 120px">
         <option value="">全部推送</option>
@@ -132,6 +155,80 @@
     </form>
     <p v-if="filterError" class="hint" style="color: var(--red)">{{ filterError }}</p>
 
+    <div v-if="tab === 'dedup'" class="g4" style="margin: 12px 0" data-testid="alert-dedup-summary">
+      <div class="card stat">
+        <span class="l">同源告警组</span>
+        <div class="n" style="color: var(--orange, #d97706)">{{ dedupSummary.groupCount }}</div>
+        <div class="d">同规则 + 同对象 ≥2</div>
+      </div>
+      <div class="card stat">
+        <span class="l">涉及告警</span>
+        <div class="n">{{ dedupSummary.involvedCount }}</div>
+        <div class="d">合并前总条数</div>
+      </div>
+      <div class="card stat">
+        <span class="l">合并后可减</span>
+        <div class="n">{{ dedupSummary.savedCount }}</div>
+        <div class="d">去重收益</div>
+      </div>
+      <div class="card stat">
+        <span class="l">去重规则</span>
+        <div class="n" style="font-size: 16px">30 分钟</div>
+        <div class="d">{{ dedupSummary.ruleText }}</div>
+      </div>
+    </div>
+    <form v-if="tab === 'dedup'" class="qbar" data-testid="alert-dedup-group-filter" @submit.prevent>
+      <select v-model="dedupMin" data-testid="alert-dedup-min" style="width: 120px">
+        <option :value="2">去重阈值 ≥2</option>
+        <option :value="3">去重阈值 ≥3</option>
+      </select>
+      <span class="sp"></span>
+    </form>
+    <div v-if="tab === 'dedup'" class="tbl-block" data-testid="alert-dedup-groups">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>规则（同源）</th>
+              <th>条数</th>
+              <th>级别</th>
+              <th>对象清单</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="!dedupGroupsVisible.length">
+              <td colspan="5">
+                <div class="empty" data-testid="alert-dedup-group-empty"><div class="et">当前阈值下暂无同源告警组</div></div>
+              </td>
+            </tr>
+            <tr v-for="group in dedupGroupsVisible" v-else :key="group.masterAlertNo" data-testid="alert-dedup-group-row">
+              <td>
+                <div style="font-weight: 500">{{ group.ruleName || group.ruleCode }}</div>
+                <div class="mono hint">{{ group.ruleCode }} · {{ group.windowMinutes }} 分钟</div>
+              </td>
+              <td class="num">×{{ group.count }}</td>
+              <td>{{ levelName(group.level) }}</td>
+              <td>{{ group.objectLabels.join('、') || '—' }}</td>
+              <td>
+                <button
+                  v-if="group.openAlertNos.length"
+                  class="btn btn-pri btn-sm"
+                  type="button"
+                  data-testid="alert-dedup-merge"
+                  @click="mergeGroup(group)"
+                >
+                  合并处置（{{ group.openAlertNos.length }}）
+                </button>
+                <button class="btn btn-sec btn-sm" type="button" data-testid="alert-dedup-detail" @click="openDedupDetail(group)">
+                  明细
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
     <form v-if="tab === 'dedup'" class="qbar" data-testid="alert-dedup-filter" @submit.prevent>
       <input v-model="dedupKeyword" data-testid="alert-dedup-keyword" placeholder="策略编码或名称" style="width: 180px" />
       <span class="sp"></span>
@@ -178,7 +275,9 @@
               <th>预警编号</th>
               <th>规则</th>
               <th>级别</th>
+              <th>对象</th>
               <th>内容</th>
+              <th>持续</th>
               <th>推送回执</th>
               <th>状态</th>
               <th>时间</th>
@@ -187,23 +286,36 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td :colspan="tab === 'live' ? 8 : 7"><div class="empty"><div class="et">加载中</div></div></td>
+              <td :colspan="tab === 'live' ? 10 : 9"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td :colspan="tab === 'live' ? 8 : 7">
+              <td :colspan="tab === 'live' ? 10 : 9">
                 <div class="empty" data-testid="alert-list-empty">
                   <div class="et" data-testid="alert-tab-empty">{{ listEmptyText }}</div>
                 </div>
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
-              <td class="mono" style="color: var(--blue)">{{ row.alertNo }}</td>
+              <td class="mono" style="color: var(--blue)">
+                <button
+                  v-if="tab === 'history'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-record-no"
+                  @click="openRecordTimeline(row.alertNo)"
+                >
+                  {{ row.alertNo }}
+                </button>
+                <span v-else>{{ row.alertNo }}</span>
+              </td>
               <td>
                 <div class="mono">{{ row.ruleCode || '—' }}</div>
                 <div>{{ row.ruleName }}</div>
               </td>
-              <td class="num">L{{ row.level }}</td>
+              <td>{{ levelName(row.level) }}</td>
+              <td data-testid="alert-object">{{ row.objectLabel || '—' }}</td>
               <td>{{ row.content }}</td>
+              <td class="num">{{ row.durationText || '—' }}</td>
               <td :data-testid="`alert-push-${row.alertNo}`" :title="channelTitle(row)">
                 <div>{{ pushLabel(row.pushStatus) }}</div>
                 <div class="d">{{ channelBrief(row) }}</div>
@@ -232,13 +344,22 @@
                   确认
                 </button>
                 <button
-                  v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'CONFIRMED'"
+                  v-if="row.responseStatus === 'OPEN'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  data-testid="alert-handle-btn"
+                  @click="openHandle(row)"
+                >
+                  处理
+                </button>
+                <button
+                  v-if="row.responseStatus === 'CONFIRMED'"
                   class="btn btn-txt btn-sm"
                   type="button"
                   data-testid="alert-resolve-btn"
-                  @click="respond(row.alertNo, row.responseStatus === 'OPEN' ? 'HANDLE' : 'RESOLVE')"
+                  @click="respond(row.alertNo, 'RESOLVE')"
                 >
-                  处理
+                  标记恢复
                 </button>
                 <button
                   v-if="row.responseStatus === 'OPEN' || row.responseStatus === 'CONFIRMED' || row.responseStatus === 'FALSE_ALARM'"
@@ -260,8 +381,9 @@
     <ProtoDrawer :open="detailOpen" :title="detail ? `预警回执 · ${detail.alertNo}` : '预警回执'" width="640px" @close="closeDetail">
       <div v-if="detail" data-testid="alert-receipt-drawer">
         <p>{{ detail.content }}</p>
+        <p v-if="detail.objectLabel" class="hint" data-testid="alert-receipt-object">对象：{{ detail.objectLabel }}</p>
         <p class="hint" data-testid="alert-receipt-status">
-          {{ detail.ruleCode }} {{ detail.ruleName }} · L{{ detail.level }} · {{ statusText(detail.responseStatus) }}
+          {{ detail.ruleCode }} {{ detail.ruleName }} · {{ levelName(detail.level) }} · {{ statusText(detail.responseStatus) }}
         </p>
         <p class="hint">钉钉、短信为本地回执桩，未实际外发。</p>
         <p v-if="detail.priorityNote || detail.level === 3" class="hint" data-testid="alert-receipt-priority">
@@ -301,6 +423,51 @@
         <button class="btn btn-sec btn-sm" type="button" data-testid="alert-receipt-close" @click="closeDetail">关闭</button>
       </div>
     </ProtoDrawer>
+    <ProtoDrawer
+      :open="!!dedupDetail"
+      :title="dedupDetail ? `同源告警 · ${dedupDetail.ruleName || dedupDetail.ruleCode}` : '同源告警'"
+      width="640px"
+      @close="dedupDetail = null"
+    >
+      <div v-if="dedupDetail" data-testid="alert-dedup-drawer">
+        <p>条数 ×{{ dedupDetail.count }} · 窗口 {{ dedupDetail.windowMinutes }} 分钟</p>
+        <p class="hint">对象：{{ dedupDetail.objectLabels.join('、') || '—' }}</p>
+        <p class="hint">预警编号：{{ dedupDetail.alertNos.join('、') }}</p>
+        <button class="btn btn-sec btn-sm" type="button" @click="dedupDetail = null">关闭</button>
+      </div>
+    </ProtoDrawer>
+    <ProtoDrawer :open="handleOpen" title="处置预警" width="640px" @close="handleOpen = false">
+      <div v-if="handleRow" data-testid="alert-handle-drawer">
+        <p>规则：{{ handleRow.ruleCode || '—' }} {{ handleRow.ruleName }}</p>
+        <p data-testid="alert-handle-object">对象：{{ handleRow.objectLabel || '—' }}</p>
+        <p>级别 · 持续：{{ levelName(handleRow.level) }} · {{ handleRow.durationText || '—' }}</p>
+        <p data-testid="alert-handle-level">当前升级层级：{{ handleCurrentLevel ? `${handleCurrentLevel} 级` : '尚未升级' }}</p>
+        <ol data-testid="alert-handle-chain">
+          <li v-for="step in handleChainView" :key="step.level">{{ step.title }} · {{ step.state }}</li>
+        </ol>
+        <label class="fld">处置说明</label>
+        <textarea v-model="handleNote" class="fld-in" rows="3" data-testid="alert-handle-remark" />
+        <div style="margin-top: 12px; display: flex; gap: 8px">
+          <button class="btn btn-pri btn-sm" type="button" data-testid="alert-handle-submit" @click="submitHandle">
+            提交处置
+          </button>
+          <button class="btn btn-sec btn-sm" type="button" @click="handleOpen = false">取消</button>
+        </div>
+      </div>
+    </ProtoDrawer>
+    <ProtoDrawer :open="recordOpen" :title="recordAlertNo ? `处置记录 · ${recordAlertNo}` : '处置记录'" width="640px" @close="recordOpen = false">
+      <div data-testid="alert-record-timeline">
+        <ol>
+          <li v-for="node in recordTimeline" :key="`${node.key}-${node.at}`" data-testid="alert-record-node">
+            {{ node.label }} · {{ node.at || '—' }}
+            <span v-if="node.note"> · {{ node.note }}</span>
+            <span v-if="node.actorName"> · {{ node.actorName }}</span>
+          </li>
+        </ol>
+        <p v-if="!recordTimeline.length" class="hint">暂无处置时间线</p>
+        <button class="btn btn-sec btn-sm" type="button" @click="recordOpen = false">关闭</button>
+      </div>
+    </ProtoDrawer>
     <div v-if="falseTarget" class="modal-mask" @click.self="falseTarget = ''">
       <div class="card" style="width: 480px; padding: 20px" data-testid="alert-false-modal">
         <h3 style="margin: 0 0 8px">标记误报</h3>
@@ -334,6 +501,20 @@ type Channel = {
   statusNote?: string
 }
 
+type EscNode = {
+  escalationLevel: number
+  skipped?: boolean
+  note?: string
+}
+
+type DispNode = {
+  key: string
+  label: string
+  at?: string
+  note?: string
+  actorName?: string
+}
+
 type Row = {
   id: number
   alertNo: string
@@ -341,10 +522,24 @@ type Row = {
   ruleName: string
   level: number
   content: string
+  objectLabel?: string
+  durationText?: string
   pushStatus: string
   pushChannels?: Channel[]
   responseStatus: string
   occurredAt: string
+}
+
+type DedupGroup = {
+  ruleCode: string
+  ruleName: string
+  level: number
+  count: number
+  objectLabels: string[]
+  alertNos: string[]
+  openAlertNos: string[]
+  windowMinutes: number
+  masterAlertNo: string
 }
 
 type Detail = Row & {
@@ -378,6 +573,11 @@ const router = useRouter()
 const tab = ref<'live' | 'history' | 'dedup'>('live')
 const rows = ref<Row[]>([])
 const dedupRows = ref<DedupRow[]>([])
+const dedupGroups = ref<DedupGroup[]>([])
+const dedupSummary = ref({ groupCount: 0, involvedCount: 0, savedCount: 0, windowMinutes: 30, ruleText: '同规则 + 同对象 · 30 分钟' })
+const dedupMin = ref(2)
+const dedupDetail = ref<DedupGroup | null>(null)
+const levelCounts = ref({ L1: 0, L2: 0, L3: 0 })
 const myAlerts = ref<Row[]>([])
 const delivery = ref<Delivery | null>(null)
 const detail = ref<Detail | null>(null)
@@ -401,6 +601,25 @@ const dedupKeyword = ref('')
 const falseTarget = ref('')
 const falseReason = ref('')
 const handleRemark = ref('')
+const handleOpen = ref(false)
+const handleRow = ref<Row | null>(null)
+const handleNote = ref('')
+const handleChain = ref<EscNode[]>([])
+const handleCurrentLevel = ref<number | null>(null)
+const recordOpen = ref(false)
+const recordAlertNo = ref('')
+const recordTimeline = ref<DispNode[]>([])
+
+const handleChainView = computed(() =>
+  HANDLE_CHAIN.map((step) => {
+    const node = handleChain.value.find((item) => item.escalationLevel === step.level)
+    let state = '未到达'
+    if (node?.skipped) state = node.note || '跳过（严重级从二级起跳）'
+    else if (node && handleCurrentLevel.value === step.level) state = '当前'
+    else if (node) state = '已到达'
+    return { level: step.level, title: step.title, state }
+  }),
+)
 
 const deliveryFrom = ref('')
 const deliveryTo = ref('')
@@ -413,11 +632,20 @@ const PUSH_LABELS: Record<string, string> = {
   FAILED: '失败',
 }
 const STATUS_TEXT: Record<string, string> = {
-  OPEN: '未响应',
-  CONFIRMED: '已确认',
-  RESOLVED: '已处理',
-  FALSE_ALARM: '误报',
+  OPEN: '未处理',
+  ACK: '处理中',
+  CONFIRMED: '处理中',
+  HANDLED: '已恢复',
+  RESOLVED: '已恢复',
+  FALSE_POSITIVE: '已忽略',
+  MISREPORT: '已忽略',
+  FALSE_ALARM: '已忽略',
 }
+const HANDLE_CHAIN = [
+  { level: 1, title: '一级 · 责任人 · 30 分钟' },
+  { level: 2, title: '二级 · 部门负责人 · 再 60 分钟' },
+  { level: 3, title: '三级 · 运营总监 + 系统管理员' },
+]
 const CHANNEL_NAMES: Record<string, string> = {
   WORKBENCH: '工作台',
   DINGTALK: '钉钉',
@@ -429,6 +657,8 @@ const deliveryColor = computed(() => {
   const target = delivery.value.target || 99
   return delivery.value.deliveryRate >= target ? 'var(--green, #15803d)' : 'var(--red)'
 })
+
+const dedupGroupsVisible = computed(() => dedupGroups.value.filter((group) => group.count >= dedupMin.value))
 
 const dedupVisible = computed(() => {
   const keyword = dedupKeyword.value.trim().toLowerCase()
@@ -456,13 +686,17 @@ const listEmptyText = computed(() => {
   return filtered ? '当前筛选下暂无预警' : '暂无预警'
 })
 
+function levelName(level: number) {
+  const names: Record<number, string> = { 1: '低(黄)', 2: '中(橙)', 3: '高(红)' }
+  return names[level] || `L${level}`
+}
+
 function pushLabel(status: string) {
   return PUSH_LABELS[status] || status || '—'
 }
 
 function statusText(status: string) {
-  const label = STATUS_TEXT[status]
-  return label ? `${label}（${status}）` : status || '—'
+  return STATUS_TEXT[status] || '—'
 }
 
 function channelName(channel: string) {
@@ -571,7 +805,11 @@ async function loadDedup() {
   loading.value = true
   try {
     const res = await http.get('/alert/dedup/list', { params: { pageNo: 1, pageSize: 20 } })
-    if (res.data.code === 0) dedupRows.value = res.data.data.list || []
+    if (res.data.code === 0) {
+      dedupRows.value = res.data.data.list || []
+      dedupGroups.value = res.data.data.groups || []
+      if (res.data.data.summary) dedupSummary.value = res.data.data.summary
+    }
   } finally {
     loading.value = false
   }
@@ -608,6 +846,7 @@ async function loadList() {
       rows.value = []
       return
     }
+    if (res.data.data?.levelCounts) levelCounts.value = res.data.data.levelCounts
     let list: Row[] = res.data.data?.list || []
     if (tab.value === 'history' && !filters.responseStatus) {
       list = list.filter((r) => r.responseStatus !== 'OPEN')
@@ -658,6 +897,62 @@ async function openReceipt(alertNo: string) {
   await openDetail(alertNo)
 }
 
+async function openHandle(row: Row) {
+  handleRow.value = row
+  handleNote.value = ''
+  handleChain.value = []
+  handleCurrentLevel.value = null
+  handleOpen.value = true
+  try {
+    const res = await http.get(`/alert/escalate/timeline/${row.alertNo}`)
+    if (res.data.code === 0) {
+      handleChain.value = res.data.data?.timeline || []
+      handleCurrentLevel.value = res.data.data?.currentLevel ?? null
+    }
+  } catch {
+    /* 升级时间线失败时仍可填写处置 */
+  }
+}
+
+async function submitHandle() {
+  const alertNo = handleRow.value?.alertNo
+  if (!alertNo) return
+  toast.value = ''
+  try {
+    const res = await http.put(`/alert/check/${alertNo}/respond`, {
+      action: 'CONFIRM',
+      handleRemark: handleNote.value.trim(),
+    })
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '处置失败'
+      return
+    }
+    handleOpen.value = false
+    toast.value = `处置成功：处理中（${alertNo}）`
+    if (res.data.data?.escalationStopped) toast.value += ' · 响应成功，后续升级已停止'
+    await loadList()
+  } catch (error) {
+    const body = error as { msg?: string }
+    toast.value = body?.msg || errorMessage(error)
+  }
+}
+
+async function openRecordTimeline(alertNo: string) {
+  recordAlertNo.value = alertNo
+  recordTimeline.value = []
+  recordOpen.value = true
+  try {
+    const res = await http.get(`/alert/check/${alertNo}`)
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '时间线加载失败'
+      return
+    }
+    recordTimeline.value = res.data.data?.dispositionTimeline || []
+  } catch (error) {
+    toast.value = errorMessage(error)
+  }
+}
+
 function openFalse(alertNo: string) {
   falseTarget.value = alertNo
   falseReason.value = ''
@@ -672,6 +967,26 @@ async function submitFalse() {
     falseAlarmReason: falseReason.value.trim(),
     handleRemark: handleRemark.value.trim(),
   })
+}
+
+function openDedupDetail(group: DedupGroup) {
+  dedupDetail.value = group
+}
+
+async function mergeGroup(group: DedupGroup) {
+  toast.value = ''
+  let done = 0
+  for (const alertNo of group.openAlertNos) {
+    const res = await http.put(`/alert/check/${alertNo}/respond`, { action: 'CONFIRM', handleRemark: '合并处置' })
+    if (res.data.code !== 0) {
+      toast.value = res.data.msg || '合并处置失败'
+      await loadDedup()
+      return
+    }
+    done += 1
+  }
+  toast.value = `已合并处置：${group.ruleName || group.ruleCode} · ${done} 条进入处理中，后续升级已停止`
+  await loadDedup()
 }
 
 async function respond(
@@ -690,12 +1005,7 @@ async function respond(
       return
     }
     const status = res.data.data?.responseStatus || ''
-    const labels: Record<string, string> = {
-      CONFIRMED: '已确认',
-      RESOLVED: '已解决',
-      FALSE_ALARM: '已标记误报',
-    }
-    toast.value = `处置成功：${labels[status] || status}（${alertNo}）`
+    toast.value = `处置成功：${statusText(status)}（${alertNo}）`
     if (res.data.data?.escalationStopped) {
       toast.value += ' · 响应成功，后续升级已停止'
     }

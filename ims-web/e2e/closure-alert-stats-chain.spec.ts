@@ -73,7 +73,7 @@ test.describe('alert stats and status chain closure S11', () => {
     await expect(page.locator('h1')).toContainText('实时预警')
     const liveRow = page.locator('tbody tr').filter({ hasText: alertNo! })
     await expect(liveRow).toBeVisible({ timeout: 15_000 })
-    await expect(liveRow).toContainText('OPEN')
+    await expect(liveRow).toContainText('未处理')
 
     const confirmResp = page.waitForResponse(
       (r) => r.url().includes('/alert/check/') && r.url().includes('/respond') && r.request().method() === 'PUT',
@@ -82,8 +82,8 @@ test.describe('alert stats and status chain closure S11', () => {
     const confirmBody = (await (await confirmResp).json()) as { code: number; data?: { responseStatus?: string } }
     expect(confirmBody.code).toBe(0)
     expect(confirmBody.data?.responseStatus).toBe('CONFIRMED')
-    await expect(liveRow).toContainText('CONFIRMED')
-    await expect(page.locator('p.hint').filter({ hasText: /已确认/ })).toBeVisible()
+    await expect(liveRow).toContainText('处理中')
+    await expect(page.locator('p.hint').filter({ hasText: /处理中/ })).toBeVisible()
     await page.screenshot({ path: `${shotDir}/02-status-confirmed.png`, fullPage: true })
 
     const resolveResp = page.waitForResponse(
@@ -93,7 +93,7 @@ test.describe('alert stats and status chain closure S11', () => {
     const resolveBody = (await (await resolveResp).json()) as { code: number; data?: { responseStatus?: string } }
     expect(resolveBody.code).toBe(0)
     expect(resolveBody.data?.responseStatus).toBe('RESOLVED')
-    await expect(liveRow).toContainText('RESOLVED')
+    await expect(liveRow).toContainText('已恢复')
     await page.screenshot({ path: `${shotDir}/03-status-resolved.png`, fullPage: true })
 
     const afterResp = page.waitForResponse(

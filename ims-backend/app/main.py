@@ -177,6 +177,9 @@ def seed() -> None:
         refresh_douyin_collect_seed()
         refresh_kuaishou_collect_seed()
         refresh_wechat_channels_collect_seed()
+        from app.alert import backfill_rule_modules
+
+        backfill_rule_modules(db)
         db.commit()
     finally:
         db.close()
@@ -455,6 +458,50 @@ def ensure_asset_verify_schedule_columns() -> None:
             conn.execute(text(f"ALTER TABLE ims_asset_verify_batch {clause}"))
 
 
+def ensure_alert_rule_columns() -> None:
+    """已有库补规则监控对象、通知方式与说明。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_alert_rule" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_alert_rule")}
+    alters = []
+    if "source_module" not in cols:
+        alters.append("ADD COLUMN source_module VARCHAR(32) NOT NULL DEFAULT ''")
+    if "notify_mode" not in cols:
+        alters.append("ADD COLUMN notify_mode VARCHAR(16) NOT NULL DEFAULT 'IN_APP'")
+    if "rule_desc" not in cols:
+        alters.append("ADD COLUMN rule_desc VARCHAR(512) NOT NULL DEFAULT ''")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_alert_rule {clause}"))
+
+
+def ensure_alert_record_columns() -> None:
+    """已有库补预警对象与合并次数。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_alert_record" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_alert_record")}
+    alters = []
+    if "object_label" not in cols:
+        alters.append("ADD COLUMN object_label VARCHAR(128) NOT NULL DEFAULT ''")
+    if "merged_count" not in cols:
+        alters.append("ADD COLUMN merged_count INT NOT NULL DEFAULT 1")
+    if "handle_log" not in cols:
+        alters.append("ADD COLUMN handle_log TEXT NULL")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_alert_record {clause}"))
+
+
 def ensure_live_alarm_merge_column() -> None:
     """已有库补告警合并计数与升级桩。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -513,6 +560,8 @@ def init_db() -> None:
     ensure_air_key_columns()
     ensure_air_slice92_columns()
     ensure_live_alarm_merge_column()
+    ensure_alert_record_columns()
+    ensure_alert_rule_columns()
     from app.ops_db import ensure_ops
 
     ensure_ops()

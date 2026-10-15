@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -18,10 +20,11 @@ from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of
 from app.alert_escalate import router as escalate_router
-from app.models import AlertDedupPolicy, AlertRecord, AlertRule, User
+from app.models import AlertDedupPolicy, AlertRecord, AlertRule, CertArchive, LiveSession, User, WorkMessage
 
 router = APIRouter(prefix="/alert", tags=["alert"])
 router.include_router(escalate_router)
+logger = logging.getLogger(__name__)
 
 BJ = timezone(timedelta(hours=8))
 # 契约 AlertEventStatus。1=CONFIRMED（旧称 ACK），2=RESOLVED（旧称 HANDLED）。
@@ -62,6 +65,21 @@ CHANNEL_STUBS = [
 ]
 
 
+MONITOR_MODULES = (
+    "账号管理",
+    "证件档案",
+    "工作流",
+    "日报",
+    "会议",
+    "财务核算",
+    "组织人效",
+    "直播管理",
+)
+NOTIFY_MODES = {"IN_APP": "站内", "DINGTALK": "钉钉", "BOTH": "站内+钉钉"}
+ESCALATION_CHAIN = "30/60 分钟 · 严重从二级起跳"
+FINANCE_MODULE = "财务核算"
+
+
 class RuleBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     ruleCode: str
@@ -72,6 +90,9 @@ class RuleBody(BaseModel):
     cronExpr: str = "0 */15 * * *"
     enabled: bool = False
     triggerConfig: Any = None
+    sourceModule: str = ""
+    notifyMode: str = "IN_APP"
+    ruleDesc: str = ""
 
 
 class RuleUpdateBody(BaseModel):
@@ -85,6 +106,9 @@ class RuleUpdateBody(BaseModel):
     cronExpr: str | None = None
     enabled: bool | None = None
     triggerConfig: Any = None
+    sourceModule: str | None = None
+    notifyMode: str | None = None
+    ruleDesc: str | None = None
 
 
 class RespondBody(BaseModel):
@@ -315,7 +339,106 @@ def next_alert_no(db: Session, tenant_id: int) -> str:
     return f"{prefix}{seq:03d}"
 
 
+def finance_only(db: Session, actor: User) -> bool:
+    """纯财务角色只能配财务核算。管理员与运营总监不受限。不新增权限码。"""
+    from app.live import role_tags
+
+    tags = role_tags(db, actor)
+    if tags & {"r1", "r4", "sys:admin"}:
+        return False
+    return "r3" in tags
+
+
+def normalize_monitor(db: Session, actor: User, raw: str, *, default_when_empty: bool) -> tuple[str, str | None]:
+    module = (raw or "").strip()
+    if not module and default_when_empty:
+        module = FINANCE_MODULE if finance_only(db, actor) else ""
+    if module and module not in MONITOR_MODULES:
+        return "", "监控对象无效"
+    if finance_only(db, actor) and module and module != FINANCE_MODULE:
+        return "", "财务角色只能配置财务核算监控对象"
+    return module, None
+
+
+def name_taken(db: Session, tenant_id: int, name: str, exclude_id: int | None = None) -> bool:
+    if not name:
+        return False
+    stmt = select(AlertRule.id).where(
+        AlertRule.deleted == 0,
+        AlertRule.tenant_id == tenant_id,
+        AlertRule.rule_name == name,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(AlertRule.id != exclude_id)
+    return db.scalar(stmt) is not None
+
+
+def normalize_notify(raw: str | None) -> tuple[str, str | None]:
+    mode = (raw or "IN_APP").strip().upper() or "IN_APP"
+    if mode not in NOTIFY_MODES:
+        return "", "通知方式无效"
+    return mode, None
+
+
+def derive_source_module(rule: AlertRule) -> str:
+    """旧规则没有监控对象时，按编码、名称和表达式归到现有模块。对不上就留空。"""
+    blob = f"{rule.rule_code or ''} {rule.rule_name or ''} {rule.threshold_expr or ''}"
+    upper = blob.upper()
+    if "CERT" in upper or "证件" in blob or "DAYS_LEFT" in upper:
+        return "证件档案"
+    if "ACCT" in upper or "账号" in blob or "UNRETURN" in upper:
+        return "账号管理"
+    if "FIN" in upper or "财务" in blob or "成本" in blob or "COST" in upper:
+        return "财务核算"
+    if "EFF" in upper or "人效" in blob or "组织" in blob:
+        return "组织人效"
+    if "MEET" in upper or "会议" in blob:
+        return "会议"
+    if "REPORT" in upper or "日报" in blob:
+        return "日报"
+    if "FLOW" in upper or "工作流" in blob or "节点" in blob:
+        return "工作流"
+    if "LIVE" in upper or "直播" in blob:
+        return "直播管理"
+    return ""
+
+
+def backfill_rule_modules(db: Session) -> int:
+    """启动时补空的所属模块。只改能识别且 source_module 为空的行，重复执行不再改。"""
+    rows = db.scalars(
+        select(AlertRule).where(
+            AlertRule.deleted == 0,
+            AlertRule.source_module == "",
+        )
+    ).all()
+    changed = 0
+    for row in rows:
+        module = derive_source_module(row)
+        if not module:
+            continue
+        old = row.source_module or ""
+        row.source_module = module
+        row.updated_at = utcnow()
+        changed += 1
+        message = f"source_module backfill rule_code={row.rule_code} old={old!r} new={module!r}"
+        logger.info(message)
+        print(message, flush=True)
+    if changed:
+        db.flush()
+    return changed
+
+
+def list_rule_vo(row: AlertRule) -> dict:
+    """列表展示用。库存为空时带上推导结果，不写库。"""
+    data = rule_vo(row)
+    if not (data.get("sourceModule") or "").strip():
+        data["sourceModule"] = derive_source_module(row)
+    return data
+
+
 def rule_vo(row: AlertRule) -> dict:
+    module = getattr(row, "source_module", None) or ""
+    mode = getattr(row, "notify_mode", None) or "IN_APP"
     return {
         "id": row.id,
         "ruleCode": row.rule_code,
@@ -326,13 +449,110 @@ def rule_vo(row: AlertRule) -> dict:
         "cronExpr": row.cron_expr,
         "enabled": bool(row.enabled),
         "hitCount": row.hit_count,
+        "sourceModule": module,
+        "notifyMode": mode,
+        "notifyModeLabel": NOTIFY_MODES.get(mode, mode),
+        "ruleDesc": getattr(row, "rule_desc", None) or "",
+        "escalationChain": ESCALATION_CHAIN,
         "createdAt": iso(row.created_at),
     }
+
+
+def object_label(row: AlertRecord) -> str:
+    stored = (getattr(row, "object_label", None) or "").strip()
+    if stored:
+        return stored
+    ref_type = (row.source_ref_type or "").strip()
+    ref_id = int(row.source_ref_id or 0)
+    if ref_type and ref_id:
+        return f"{ref_type}:{ref_id}"
+    return ""
+
+
+def duration_text(row: AlertRecord) -> str:
+    if row.occurred_at is None:
+        return ""
+    minutes = max(int((utcnow() - row.occurred_at).total_seconds() // 60), 0)
+    if row.response_status in TERMINAL_STATUS:
+        return "已处置"
+    if minutes < 60:
+        return f"{minutes} 分钟"
+    hours, rest = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours} 小时 {rest} 分钟" if rest else f"{hours} 小时"
+    days, hours = divmod(hours, 24)
+    return f"{days} 天 {hours} 小时" if hours else f"{days} 天"
+
+
+def _handle_entries(row: AlertRecord) -> list[dict]:
+    raw = getattr(row, "handle_log", None) or "[]"
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def append_handle_log(row: AlertRecord, action: str, remark: str, actor: User) -> None:
+    items = _handle_entries(row)
+    items.append(
+        {
+            "action": action,
+            "at": iso(utcnow()),
+            "remark": (remark or "")[:200],
+            "actorName": ((actor.nickname or actor.username or "")[:64]),
+        }
+    )
+    row.handle_log = json.dumps(items, ensure_ascii=False)
+
+
+def disposition_timeline(row: AlertRecord) -> list[dict]:
+    """处置记录时间线：触发 → 处置 → 恢复。与升级链时间轴分开。"""
+    nodes = [
+        {
+            "key": "TRIGGER",
+            "label": "触发",
+            "at": iso(row.occurred_at),
+            "note": object_label(row) or "",
+            "actorName": "",
+        }
+    ]
+    labels = {
+        "ACK": ("HANDLE", "处置"),
+        "CONFIRM": ("HANDLE", "处置"),
+        "HANDLE": ("RECOVER", "恢复"),
+        "HANDLED": ("RECOVER", "恢复"),
+        "RESOLVE": ("RECOVER", "恢复"),
+        "FALSE_ALARM": ("FALSE", "误报"),
+        "FALSE_POSITIVE": ("FALSE", "误报"),
+        "MISREPORT": ("FALSE", "误报"),
+    }
+    for item in _handle_entries(row):
+        action = str(item.get("action") or "").upper()
+        mapped = labels.get(action)
+        if mapped is None:
+            continue
+        key, label = mapped
+        nodes.append(
+            {
+                "key": key,
+                "label": label,
+                "at": item.get("at") or "",
+                "note": item.get("remark") or "",
+                "actorName": item.get("actorName") or "",
+            }
+        )
+    return nodes
 
 
 def record_vo(row: AlertRecord, rule: AlertRule | None = None) -> dict:
     rule_code = rule.rule_code if rule else ""
     ref = f"{row.source_ref_type or ''}:{row.source_ref_id or 0}"
+    merged = int(getattr(row, "merged_count", None) or 1)
     return {
         "id": row.id,
         "alertNo": row.alert_no,
@@ -341,10 +561,12 @@ def record_vo(row: AlertRecord, rule: AlertRule | None = None) -> dict:
         "ruleName": rule.rule_name if rule else "",
         "level": row.level,
         "content": row.content,
+        "objectLabel": object_label(row),
+        "durationText": duration_text(row),
         "sourceRefType": row.source_ref_type or None,
         "sourceRefId": row.source_ref_id or None,
         "dedupKey": f"{rule_code}+{ref}" if rule_code else ref,
-        "mergedCount": 1,
+        "mergedCount": merged,
         "notifyTargetUserIds": [],
         "pushStatus": PUSH_LABELS.get(row.push_status, "PENDING"),
         "pushChannels": push_channels(row),
@@ -423,7 +645,10 @@ def rule_list(
             .limit(size)
         ).all()
     )
-    return paged([rule_vo(row) for row in rows], total, page_no, size)
+    data = paged([list_rule_vo(row) for row in rows], total, page_no, size)
+    data["data"]["financeOnly"] = finance_only(db, actor)
+    data["data"]["monitorModules"] = [FINANCE_MODULE] if data["data"]["financeOnly"] else list(MONITOR_MODULES)
+    return data
 
 
 @router.post("/rule")
@@ -447,6 +672,8 @@ def create_rule(
         )
         if dup:
             return fail(1165, "规则编码已存在（1165）")
+    if name and name_taken(db, tenant_id, name):
+        return fail(1165, "规则名称已存在（1165）")
     if not code:
         code = next_rule_code(db, tenant_id)
     stored_expr = body.thresholdExpr.strip()
@@ -459,6 +686,12 @@ def create_rule(
         reason = legacy_expr_error(stored_expr)
         if reason:
             return fail_dsl(reason)
+    module, module_error = normalize_monitor(db, actor, body.sourceModule, default_when_empty=True)
+    if module_error:
+        return fail(1001, module_error)
+    notify, notify_error = normalize_notify(body.notifyMode)
+    if notify_error:
+        return fail(1001, notify_error)
     row = AlertRule(
         rule_code=code,
         rule_name=name or code,
@@ -466,6 +699,9 @@ def create_rule(
         level=body.level,
         threshold_expr=stored_expr,
         cron_expr=body.cronExpr.strip() or "0 */15 * * *",
+        source_module=module,
+        notify_mode=notify,
+        rule_desc=(body.ruleDesc or "").strip()[:512],
         enabled=1 if body.enabled else 0,
         created_by=actor.id,
         tenant_id=tenant_id,
@@ -491,6 +727,8 @@ def update_rule(
         name = body.ruleName.strip()
         if not name:
             return fail(1001, "ruleName 不能为空")
+        if name_taken(db, tenant_id, name, exclude_id=row.id):
+            return fail(1165, "规则名称已存在（1165）")
         row.rule_name = name
     if body.metricType is not None and body.metricType.strip():
         row.metric_type = body.metricType.strip()
@@ -513,6 +751,20 @@ def update_rule(
                 if reason:
                     return fail_dsl(reason)
             row.threshold_expr = expr
+    if body.sourceModule is not None:
+        module, module_error = normalize_monitor(db, actor, body.sourceModule, default_when_empty=False)
+        if module_error:
+            return fail(1001, module_error)
+        row.source_module = module
+    elif finance_only(db, actor) and (row.source_module or "") not in ("", FINANCE_MODULE):
+        return fail(1001, "财务角色只能配置财务核算监控对象")
+    if body.notifyMode is not None:
+        notify, notify_error = normalize_notify(body.notifyMode)
+        if notify_error:
+            return fail(1001, notify_error)
+        row.notify_mode = notify
+    if body.ruleDesc is not None:
+        row.rule_desc = body.ruleDesc.strip()[:512]
     row.updated_at = utcnow()
     db.flush()
     return ok(rule_vo(row))
@@ -598,7 +850,9 @@ def check_records(
         ).all()
     )
     rules = _rules_for(db, rows)
-    return paged([record_vo(r, rules.get(r.rule_id)) for r in rows], total, page_no, size)
+    payload = paged([record_vo(r, rules.get(r.rule_id)) for r in rows], total, page_no, size)
+    payload["data"]["levelCounts"] = level_counts(db, tenant_id)
+    return payload
 
 
 def _find_record(db: Session, tenant_id: int, alert_no: str) -> AlertRecord | None:
@@ -693,6 +947,7 @@ def check_detail(
         data["retryNote"] = ""
     data["sourceJumpUrl"] = source_jump(row)
     data["escalationTimeline"] = []
+    data["dispositionTimeline"] = disposition_timeline(row)
     data["retryCount"] = 1 if row.push_status in (2, 3) else 0
     return ok(data)
 
@@ -739,6 +994,8 @@ def respond_alert(
         notes.append(f"处理说明：{body.handleRemark.strip()}")
     if notes:
         row.content = f"{row.content}；{'；'.join(notes)}"[:512]
+    remark = (body.handleRemark or body.falseAlarmReason or "").strip()
+    append_handle_log(row, action, remark, actor)
     row.updated_at = utcnow()
     db.flush()
     data = record_vo(row, rule)
@@ -752,27 +1009,37 @@ def seed_dedup_policies(db: Session, tenant_id: int) -> None:
             AlertDedupPolicy.deleted == 0, AlertDedupPolicy.tenant_id == tenant_id
         )
     )
-    if has:
-        return
     now = utcnow()
-    for code, name, window, expr in (
-        ("DEDUP-LIVE", "直播指标窗口去重", 15, "ruleId+sourceRefId"),
-        ("DEDUP-COLLECT", "采集异常合并", 30, "ruleId+metricType"),
-    ):
-        db.add(
-            AlertDedupPolicy(
-                policy_code=code,
-                policy_name=name,
-                window_minutes=window,
-                merge_key_expr=expr,
-                enabled=1,
-                merged_count=0,
-                tenant_id=tenant_id,
-                created_at=now,
-                updated_at=now,
+    if not has:
+        for code, name, window, expr in (
+            ("DEDUP-LIVE", "直播指标窗口去重", MERGE_WINDOW_MINUTES, "ruleId+sourceRefId"),
+            ("DEDUP-COLLECT", "采集异常合并", MERGE_WINDOW_MINUTES, "ruleId+metricType"),
+        ):
+            db.add(
+                AlertDedupPolicy(
+                    policy_code=code,
+                    policy_name=name,
+                    window_minutes=window,
+                    merge_key_expr=expr,
+                    enabled=1,
+                    merged_count=0,
+                    tenant_id=tenant_id,
+                    created_at=now,
+                    updated_at=now,
+                )
             )
+        db.flush()
+    live = db.scalar(
+        select(AlertDedupPolicy).where(
+            AlertDedupPolicy.deleted == 0,
+            AlertDedupPolicy.tenant_id == tenant_id,
+            AlertDedupPolicy.policy_code == "DEDUP-LIVE",
         )
-    db.flush()
+    )
+    if live is not None and live.window_minutes != MERGE_WINDOW_MINUTES:
+        live.window_minutes = MERGE_WINDOW_MINUTES
+        live.updated_at = now
+        db.flush()
 
 
 def dedup_vo(row: AlertDedupPolicy) -> dict:
@@ -803,7 +1070,76 @@ def dedup_list(
     rows = list(
         db.scalars(stmt.order_by(AlertDedupPolicy.enabled.desc(), AlertDedupPolicy.id).offset((page_no - 1) * size).limit(size)).all()
     )
-    return paged([dedup_vo(r) for r in rows], total, page_no, size)
+    payload = paged([dedup_vo(r) for r in rows], total, page_no, size)
+    groups, summary = dedup_groups(db, tenant_id)
+    payload["data"]["groups"] = groups
+    payload["data"]["summary"] = summary
+    return payload
+
+
+LEVEL_CARD = {1: "提示", 2: "警告", 3: "严重"}
+
+
+def level_counts(db: Session, tenant_id: int) -> dict[str, int]:
+    counts = {"L1": 0, "L2": 0, "L3": 0}
+    grouped = db.execute(
+        select(AlertRecord.level, func.count())
+        .where(AlertRecord.deleted == 0, AlertRecord.tenant_id == tenant_id)
+        .group_by(AlertRecord.level)
+    ).all()
+    for level, count in grouped:
+        key = {1: "L1", 2: "L2", 3: "L3"}.get(int(level or 0))
+        if key:
+            counts[key] = int(count)
+    return counts
+
+
+def dedup_groups(db: Session, tenant_id: int) -> tuple[list[dict], dict]:
+    """同规则+同对象、30 分钟窗口内的同源组。单条不进组。"""
+    rows = list(
+        db.scalars(
+            select(AlertRecord).where(AlertRecord.deleted == 0, AlertRecord.tenant_id == tenant_id)
+        ).all()
+    )
+    rules = _rules_for(db, rows)
+    groups: list[dict] = []
+    for cluster in _cluster_records(rows):
+        master = cluster[0]
+        extra = max(0, int(getattr(master, "merged_count", None) or 1) - 1)
+        size = len(cluster) + extra
+        if size < 2:
+            continue
+        rule = rules.get(master.rule_id)
+        labels: list[str] = []
+        for item in cluster:
+            label = object_label(item) or (rule.rule_name if rule else item.alert_no)
+            if label not in labels:
+                labels.append(label)
+        groups.append(
+            {
+                "ruleCode": rule.rule_code if rule else "",
+                "ruleName": rule.rule_name if rule else "",
+                "level": master.level,
+                "levelLabel": LEVEL_CARD.get(master.level, ""),
+                "count": size,
+                "objectLabels": labels,
+                "alertNos": [item.alert_no for item in cluster],
+                "openAlertNos": [item.alert_no for item in cluster if item.response_status == 0],
+                "windowMinutes": MERGE_WINDOW_MINUTES,
+                "masterAlertNo": master.alert_no,
+            }
+        )
+    groups.sort(key=lambda item: (-item["count"], item["ruleCode"], item["masterAlertNo"]))
+    involved = sum(item["count"] for item in groups)
+    saved = sum(item["count"] - 1 for item in groups)
+    summary = {
+        "groupCount": len(groups),
+        "involvedCount": involved,
+        "savedCount": saved,
+        "windowMinutes": MERGE_WINDOW_MINUTES,
+        "ruleText": "同规则 + 同对象 · 30 分钟",
+    }
+    return groups, summary
 
 
 @router.get("/history/summary")
@@ -1328,6 +1664,141 @@ def stats_merge_logs(
     return paged(logs[offset : offset + size], len(logs), page_no, size)
 
 
+def _rule_text(rule: AlertRule) -> str:
+    module = getattr(rule, "source_module", None) or ""
+    return f"{rule.rule_code or ''} {rule.rule_name or ''} {rule.threshold_expr or ''} {module}"
+
+
+def _is_cert_rule(rule: AlertRule) -> bool:
+    text = _rule_text(rule)
+    upper = text.upper()
+    return "CERT" in upper or "DAYS_LEFT" in upper or "证件" in text
+
+
+def _is_live_session_rule(rule: AlertRule) -> bool:
+    """只把直播风险规则绑到场次。监控对象选「直播管理」仍是模块，不拿最近一场去合并。"""
+    text = _rule_text(rule)
+    upper = text.upper()
+    return "LIVE_RISK" in upper or "直播风险" in text
+
+
+def _days_limit(expr: str) -> int:
+    matched = re.search(r"days_left\s*(?:<=|<)\s*(\d+)", expr or "", re.IGNORECASE)
+    if matched:
+        return int(matched.group(1))
+    return 30
+
+
+def _parse_ymd(value: str) -> datetime | None:
+    text = (value or "").strip()
+    if len(text) < 10:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def resolve_trial_object(db: Session, rule: AlertRule, tenant_id: int) -> tuple[str, int, str, int]:
+    """试跑命中对象。无匹配时保持手工来源，避免把无对象的重复试跑写成同一条。"""
+    if _is_cert_rule(rule):
+        limit = _days_limit(rule.threshold_expr)
+        today = datetime.now(BJ).date()
+        rows = db.scalars(
+            select(CertArchive).where(
+                CertArchive.deleted == 0,
+                CertArchive.tenant_id == tenant_id,
+                CertArchive.status.in_(("EFFECTIVE", "EXPIRING", "EXPIRED")),
+            )
+        ).all()
+        best: CertArchive | None = None
+        best_days: int | None = None
+        for cert in rows:
+            parsed = _parse_ymd(cert.expire_date)
+            if parsed is None:
+                continue
+            days = (parsed.date() - today).days
+            if days > limit:
+                continue
+            if best is None or best_days is None or days < best_days:
+                best = cert
+                best_days = days
+        if best is not None:
+            holder = (best.holder_name or "").strip() or f"证件#{best.id}"
+            kind = (best.cert_type or "").strip() or "证件"
+            holder_id = int(best.holder_user_id or 0)
+            return "CERT", int(best.id), f"{holder} · {kind}"[:128], holder_id
+    if _is_live_session_rule(rule):
+        session = db.scalar(
+            select(LiveSession)
+            .where(LiveSession.deleted == 0, LiveSession.tenant_id == tenant_id)
+            .order_by(LiveSession.id.desc())
+        )
+        if session is not None:
+            topic = (session.topic or session.session_code or f"场次#{session.id}").strip()
+            who = (session.realname_name or "").strip()
+            label = f"{who} · {topic}" if who else topic
+            return "SESSION", int(session.id), label[:128], int(session.responsible_user_id or 0)
+    return "MANUAL", 0, "", 0
+
+
+def absorb_open_duplicate(
+    db: Session,
+    rule: AlertRule,
+    tenant_id: int,
+    ref_type: str,
+    ref_id: int,
+    now: datetime,
+) -> AlertRecord | None:
+    """BR-114：同规则 + 同对象、30 分钟内未终态的预警合并为一条，不二次推送。source_ref_id=0 不合并。"""
+    if not ref_id:
+        return None
+    window_start = now - timedelta(minutes=MERGE_WINDOW_MINUTES)
+    return db.scalar(
+        select(AlertRecord)
+        .where(
+            AlertRecord.deleted == 0,
+            AlertRecord.tenant_id == tenant_id,
+            AlertRecord.rule_id == rule.id,
+            AlertRecord.source_ref_type == ref_type,
+            AlertRecord.source_ref_id == ref_id,
+            AlertRecord.response_status.notin_(tuple(TERMINAL_STATUS)),
+            AlertRecord.occurred_at.is_not(None),
+            AlertRecord.occurred_at >= window_start,
+        )
+        .order_by(AlertRecord.id.asc())
+    )
+
+
+def notify_alert_inbox(db: Session, actor: User, rule: AlertRule, row: AlertRecord, extra_user_id: int = 0) -> None:
+    """站内通知写入消息中心。钉钉/短信保持回执桩，不写第三方消息。"""
+    tenant_id = tenant_of(actor)
+    user_ids = {int(actor.id)}
+    if rule.created_by:
+        user_ids.add(int(rule.created_by))
+    if extra_user_id:
+        user_ids.add(int(extra_user_id))
+    title = f"预警 {row.alert_no}：{rule.rule_name}"[:128]
+    content = (row.object_label or row.content or "")[:512]
+    for user_id in sorted(user_ids):
+        user = db.get(User, user_id)
+        if user is None or user.deleted or (user.tenant_id or 0) != tenant_id or user.status != "ENABLED":
+            continue
+        db.add(
+            WorkMessage(
+                user_id=user.id,
+                title=title,
+                content=content,
+                channel="IN_APP",
+                read_flag=0,
+                source_module="ALERT",
+                ref_type="alert",
+                ref_id=row.id,
+                tenant_id=tenant_id,
+            )
+        )
+
+
 def run_check_impl(rule_id: int, db: Session, actor: User):
     tenant_id = tenant_of(actor)
     rule = db.get(AlertRule, rule_id)
@@ -1336,13 +1807,30 @@ def run_check_impl(rule_id: int, db: Session, actor: User):
     if not rule.enabled:
         return fail(1001, "规则未启用")
     now = utcnow()
+    ref_type, ref_id, label, extra_user = resolve_trial_object(db, rule, tenant_id)
+    existing = absorb_open_duplicate(db, rule, tenant_id, ref_type, ref_id, now)
+    if existing is not None:
+        count = int(existing.merged_count or 1) + 1
+        existing.merged_count = count
+        base = re.sub(r" · 命中 ×\d+$", "", existing.content or "")
+        existing.content = f"{base} · 命中 ×{count}"[:512]
+        existing.updated_at = now
+        rule.hit_count = (rule.hit_count or 0) + 1
+        rule.updated_at = now
+        return ok(record_vo(existing, rule))
+    expr = rule.threshold_expr or "条件扫描"
+    content = f"手动触发：{rule.rule_name}（{expr}）"
+    if label:
+        content = f"{content} · 对象：{label}"
     row = AlertRecord(
         alert_no=next_alert_no(db, tenant_id),
         rule_id=rule.id,
-        source_ref_type="MANUAL",
-        source_ref_id=0,
+        source_ref_type=ref_type,
+        source_ref_id=ref_id,
+        object_label=label,
+        merged_count=1,
         level=rule.level,
-        content=f"手动触发：{rule.rule_name}（{rule.threshold_expr or '条件扫描'}）",
+        content=content[:512],
         push_status=1,
         response_status=0,
         occurred_at=now,
@@ -1352,6 +1840,8 @@ def run_check_impl(rule_id: int, db: Session, actor: User):
     rule.hit_count = (rule.hit_count or 0) + 1
     rule.updated_at = now
     db.flush()
+    if row.push_status == 1:
+        notify_alert_inbox(db, actor, rule, row, extra_user)
     return ok(record_vo(row, rule))
 
 
