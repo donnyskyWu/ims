@@ -54,7 +54,7 @@ test.describe('content typeset layout closure', () => {
     expect(templateBody.data?.layoutHtml).toContain(sentence)
     await expect(editDrawer.getByTestId('content-layout-before')).toContainText(sentence)
     await expect(editDrawer.getByTestId('content-layout-after')).toContainText(sentence)
-    await expect(editDrawer.getByTestId('content-layout-format')).toContainText('LAYOUT')
+    await expect(editDrawer.getByTestId('content-layout-format')).toContainText('已排版')
 
     await editDrawer.getByTestId('content-layout-preset').selectOption('marketing')
     const previewResp = page.waitForResponse(

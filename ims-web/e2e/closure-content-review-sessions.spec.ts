@@ -23,7 +23,7 @@ test.describe('content review readonly sessions', () => {
     await contentDrawer.locator('.fld').filter({ hasText: '标题' }).locator('input').fill(title)
     await contentDrawer.locator('.tab', { hasText: '传足' }).click()
     async function addMatch(matchId: string, homeName: string, awayName: string) {
-      await contentDrawer.getByPlaceholder('matchId').fill(matchId)
+      await contentDrawer.getByTestId('match-scheme-id').fill(matchId)
       await contentDrawer.getByPlaceholder('主队').fill(homeName)
       await contentDrawer.getByPlaceholder('客队').fill(awayName)
       await contentDrawer.getByRole('button', { name: '添加场次' }).click()

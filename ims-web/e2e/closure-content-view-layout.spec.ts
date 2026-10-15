@@ -31,7 +31,7 @@ test.describe('content list view layout preview closure', () => {
     const createDrawer = page.locator('.drawer.on').filter({ hasText: '新增内容' })
     await createDrawer.locator('.fld').filter({ hasText: '标题' }).locator('input').fill(title)
     await createDrawer.locator('.fld').filter({ hasText: '正文' }).locator('textarea').fill(bodyText)
-    await createDrawer.getByTestId('content-layout-html-input').fill(
+    await createDrawer.getByTestId('content-layout-html').fill(
       `<p>${layoutText}</p><script>window.__imsLayoutXss=1</script><img src="javascript:alert(1)" alt="bad">`,
     )
     const createResp = page.waitForResponse(

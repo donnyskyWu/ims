@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import csv
+import io
+
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
@@ -11,7 +15,7 @@ from app.layout_html import sanitize_layout_html
 from app.content_fb_sync import after_content_deleted, after_content_saved, fb_sync_vo
 from app.content_task import APPROVED_CONTENT_STATUSES
 from app.corp import ops_db, page_args, paged
-from app.models import ContentProject, ContentReview, ContentReviewSeq, ContentTask, User
+from app.models import AirKbDoc, ContentProject, ContentReview, ContentReviewSeq, ContentTask, User
 
 router = APIRouter(prefix="/content", tags=["content-production"])
 
@@ -35,6 +39,11 @@ class ContentSaveBody(BaseModel):
     matchScheme: list[dict] | None = None
     competitionId: str | None = None
     competitionName: str | None = None
+
+
+class ContentIdListBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    ids: list[int] = Field(default_factory=list)
 
 
 def match_summary(scheme: list) -> str:
@@ -82,6 +91,27 @@ def normalize_body_format(value: str | None) -> str | None:
     return fmt
 
 
+CONTENT_STATUS_LABELS = {
+    "DRAFT": "草稿",
+    "COMPLETED": "已完成",
+    "PENDING_FIRST_REVIEW": "待一级审核",
+    "PENDING_SECOND_REVIEW": "待二级审核",
+    "PENDING_FINAL_REVIEW": "待终审",
+    "PENDING_REVIEW": "待审核",
+    "PENDING_PUBLISH": "待发布",
+    "REJECTED": "已驳回",
+    "PUBLISHED": "已发布",
+    "PUBLISHED_DRAFT": "预发布",
+    "FORMALLY_PUBLISHED": "已发布",
+    "UNPUBLISHED": "已下架",
+}
+
+
+def content_status_label(code: str | None) -> str:
+    value = code or ""
+    return CONTENT_STATUS_LABELS.get(value, value)
+
+
 def project_vo(row: ContentProject) -> dict:
     data = {
         "id": row.id,
@@ -90,8 +120,13 @@ def project_vo(row: ContentProject) -> dict:
         "platformType": row.platform_type,
         "documentType": row.document_type,
         "contentStatus": row.content_status,
+        "contentStatusLabel": content_status_label(row.content_status),
         "taskId": row.task_id,
         "ipGroupId": row.ip_group_id,
+        "accountId": int(row.account_id or 0),
+        "creatorName": "",
+        "ipGroupName": "",
+        "accountName": "",
         "body": row.body,
         "layoutHtml": sanitize_layout_html(row.layout_html),
         "layoutJson": row.layout_json or "",
@@ -117,6 +152,34 @@ def project_vo(row: ContentProject) -> dict:
     return data
 
 
+def project_vos(db: Session, ops: Session, rows: list[ContentProject]) -> list[dict]:
+    from app.ops_models import IpGroup, PlatformAccount
+
+    creator_ids = {row.creator for row in rows if row.creator}
+    creators: dict[int, str] = {}
+    if creator_ids:
+        for user in db.scalars(select(User).where(User.id.in_(creator_ids))).all():
+            creators[user.id] = (user.nickname or user.username or "").strip()
+    ip_ids = {row.ip_group_id for row in rows if row.ip_group_id}
+    groups: dict[int, str] = {}
+    if ip_ids:
+        for group in ops.scalars(select(IpGroup).where(IpGroup.id.in_(ip_ids))).all():
+            groups[group.id] = group.group_name or ""
+    account_ids = {row.account_id for row in rows if row.account_id}
+    accounts: dict[int, str] = {}
+    if account_ids:
+        for account in ops.scalars(select(PlatformAccount).where(PlatformAccount.id.in_(account_ids))).all():
+            accounts[account.id] = account.account_name or ""
+    items = []
+    for row in rows:
+        data = project_vo(row)
+        data["creatorName"] = creators.get(row.creator or 0, "")
+        data["ipGroupName"] = groups.get(row.ip_group_id or 0, "")
+        data["accountName"] = accounts.get(row.account_id or 0, "")
+        items.append(data)
+    return items
+
+
 def load_project(db: Session, content_id: int, actor: User) -> ContentProject | None:
     row = db.get(ContentProject, content_id)
     if row is None or row.deleted or (row.tenant_id or 0) != tenant(actor):
@@ -124,19 +187,18 @@ def load_project(db: Session, content_id: int, actor: User) -> ContentProject | 
     return row
 
 
-@router.get("")
-def content_list(
-    pageNo: int = 1,
-    pageSize: int = 10,
+def content_filtered(
+    db: Session,
+    actor: User,
+    *,
     title: str | None = None,
     status: str | None = None,
     contentType: str | None = None,
     platformType: str | None = None,
     documentType: str | None = None,
-    db: Session = Depends(db_session),
-    actor: User = Depends(current_user),
+    accountId: int | None = None,
+    aiGenerated: str | None = None,
 ):
-    page_no, size = page_args(pageNo, pageSize)
     stmt = select(ContentProject).where(ContentProject.deleted == 0, ContentProject.tenant_id == tenant(actor))
     if title:
         stmt = stmt.where(ContentProject.title.contains(title.strip()))
@@ -148,11 +210,223 @@ def content_list(
         stmt = stmt.where(ContentProject.platform_type == platformType.strip())
     if documentType and documentType.strip():
         stmt = stmt.where(ContentProject.document_type == documentType.strip())
-    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    if accountId:
+        stmt = stmt.where(ContentProject.account_id == int(accountId))
+    flag = (aiGenerated or "").strip().upper()
+    if flag == "YES":
+        stmt = stmt.where(
+            ContentProject.ai_generate_status.isnot(None),
+            ContentProject.ai_generate_status != "",
+        )
+    elif flag == "NO":
+        stmt = stmt.where(
+            or_(ContentProject.ai_generate_status.is_(None), ContentProject.ai_generate_status == "")
+        )
+    return stmt
+
+
+def submit_one(db: Session, row: ContentProject, actor: User) -> str | None:
+    if row.content_status not in ("DRAFT", "REJECTED"):
+        return "状态不可提交"
+    pending = db.scalar(
+        select(ContentReview.id).where(
+            ContentReview.content_project_id == row.id,
+            ContentReview.deleted == 0,
+            ContentReview.conclusion.is_(None),
+        )
+    )
+    if pending is not None:
+        return "已有未结审核"
+    review_no = next_seq(db, ContentReviewSeq, tenant(actor), "RV")
+    db.add(
+        ContentReview(
+            review_no=review_no,
+            content_project_id=row.id,
+            content_title=row.title,
+            submitter_user_id=row.submitter_user_id,
+            review_round=1,
+            creator=actor.id,
+            tenant_id=tenant(actor),
+        )
+    )
+    db.flush()
+    row.content_status = "PENDING_FIRST_REVIEW"
+    row.review_passed = 0
+    return None
+
+
+def load_owned(db: Session, actor: User, ids: list[int]) -> list[ContentProject]:
+    wanted = [int(item) for item in ids if int(item) > 0]
+    if not wanted:
+        return []
     rows = db.scalars(
-        stmt.order_by(ContentProject.id.desc()).offset((page_no - 1) * size).limit(size)
+        select(ContentProject).where(
+            ContentProject.id.in_(wanted),
+            ContentProject.deleted == 0,
+            ContentProject.tenant_id == tenant(actor),
+        )
     ).all()
-    return paged([project_vo(row) for row in rows], total, page_no, size)
+    return list(rows)
+
+
+@router.get("")
+def content_list(
+    pageNo: int = 1,
+    pageSize: int = 10,
+    title: str | None = None,
+    status: str | None = None,
+    contentType: str | None = None,
+    platformType: str | None = None,
+    documentType: str | None = None,
+    accountId: int | None = None,
+    aiGenerated: str | None = None,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    page_no, size = page_args(pageNo, pageSize)
+    stmt = content_filtered(
+        db,
+        actor,
+        title=title,
+        status=status,
+        contentType=contentType,
+        platformType=platformType,
+        documentType=documentType,
+        accountId=accountId,
+        aiGenerated=aiGenerated,
+    )
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    rows = list(
+        db.scalars(stmt.order_by(ContentProject.id.desc()).offset((page_no - 1) * size).limit(size)).all()
+    )
+    return paged(project_vos(db, ops, rows), total, page_no, size)
+
+
+@router.get("/export")
+def content_export(
+    title: str | None = None,
+    status: str | None = None,
+    contentType: str | None = None,
+    platformType: str | None = None,
+    documentType: str | None = None,
+    accountId: int | None = None,
+    aiGenerated: str | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    stmt = content_filtered(
+        db,
+        actor,
+        title=title,
+        status=status,
+        contentType=contentType,
+        platformType=platformType,
+        documentType=documentType,
+        accountId=accountId,
+        aiGenerated=aiGenerated,
+    )
+    rows = list(db.scalars(stmt.order_by(ContentProject.id.desc()).limit(5000)).all())
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["id", "title", "contentStatus", "contentType", "platformType", "documentType", "matchSummary"])
+    for row in rows:
+        writer.writerow(
+            [
+                row.id,
+                row.title,
+                row.content_status,
+                row.content_type,
+                row.platform_type,
+                row.document_type,
+                row.match_summary or row.competition_name or "",
+            ]
+        )
+    payload = "\ufeff" + buf.getvalue()
+    return Response(
+        content=payload.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="content.csv"',
+            "X-Export-Rows": str(len(rows)),
+        },
+    )
+
+
+@router.post("/batch-delete")
+def content_batch_delete(
+    body: ContentIdListBody,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    if not body.ids:
+        return fail(1001, "请先勾选要删除的内容")
+    deleted = 0
+    skipped = 0
+    for row in load_owned(db, actor, body.ids):
+        if row.content_status not in ("DRAFT", "REJECTED"):
+            skipped += 1
+            continue
+        after_content_deleted(db, ops, row, actor.id)
+        row.deleted = 1
+        deleted += 1
+    if deleted == 0:
+        return fail(1502, "没有可删除的草稿或已驳回内容")
+    return ok({"deleted": deleted, "skipped": skipped})
+
+
+@router.post("/batch-submit")
+def content_batch_submit(
+    body: ContentIdListBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not body.ids:
+        return fail(1001, "请先勾选要提交的内容")
+    submitted = 0
+    skipped = 0
+    for row in load_owned(db, actor, body.ids):
+        if submit_one(db, row, actor):
+            skipped += 1
+        else:
+            submitted += 1
+    if submitted == 0:
+        return fail(1502, "没有可提交的草稿或已驳回内容")
+    return ok({"submitted": submitted, "skipped": skipped})
+
+
+@router.post("/batch-transfer-kb")
+def content_batch_transfer_kb(
+    body: ContentIdListBody,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    if not body.ids:
+        return fail(1001, "请先勾选要转入知识库的内容")
+    rows = load_owned(db, actor, body.ids)
+    if not rows:
+        return fail(1504, "资源不可用")
+    from app.air import ensure_default_kb
+
+    kb = ensure_default_kb(db, tenant(actor), actor.id)
+    transferred = 0
+    for row in rows:
+        db.add(
+            AirKbDoc(
+                kb_id=kb.id,
+                title=(row.title or "未命名内容")[:256],
+                file_key=f"content:{row.id}:{transferred}",
+                content_type="text/plain",
+                file_size=len((row.body or "").encode("utf-8")),
+                audit_status="PUBLISHED",
+                uploader_user_id=actor.id,
+                tenant_id=tenant(actor),
+            )
+        )
+        transferred += 1
+    db.flush()
+    return ok({"transferred": transferred, "kbId": kb.id})
 
 
 @router.get("/{content_id}")
@@ -283,32 +557,15 @@ def content_submit_review(content_id: int, db: Session = Depends(db_session), ac
     row = load_project(db, content_id, actor)
     if row is None:
         return fail(1504, "资源不可用")
-    if row.content_status not in ("DRAFT", "REJECTED"):
+    err = submit_one(db, row, actor)
+    if err:
         return fail(1502, "业务规则冲突")
-    pending = db.scalar(
-        select(ContentReview.id).where(
-            ContentReview.content_project_id == row.id,
-            ContentReview.deleted == 0,
-            ContentReview.conclusion.is_(None),
-        )
+    review = db.scalar(
+        select(ContentReview)
+        .where(ContentReview.content_project_id == row.id, ContentReview.deleted == 0)
+        .order_by(ContentReview.id.desc())
     )
-    if pending is not None:
-        return fail(1502, "业务规则冲突")
-    review_no = next_seq(db, ContentReviewSeq, tenant(actor), "RV")
-    db.add(
-        ContentReview(
-            review_no=review_no,
-            content_project_id=row.id,
-            content_title=row.title,
-            submitter_user_id=row.submitter_user_id,
-            review_round=1,
-            creator=actor.id,
-            tenant_id=tenant(actor),
-        )
-    )
-    row.content_status = "PENDING_REVIEW"
-    row.review_passed = 0
-    return ok({"reviewNo": review_no, "contentStatus": row.content_status})
+    return ok({"reviewNo": review.review_no if review else "", "contentStatus": row.content_status})
 
 
 @router.post("/{content_id}/retry-ai-generate")

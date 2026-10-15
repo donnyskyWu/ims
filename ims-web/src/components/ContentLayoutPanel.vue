@@ -3,7 +3,7 @@
     <div class="dsec">排版</div>
     <p v-if="!contentId" class="hint">请先保存内容，再套用模板或一键排版。</p>
     <template v-else>
-      <p class="hint" data-testid="content-layout-format">当前版式：{{ bodyFormat || 'PLAIN' }}</p>
+      <p class="hint" data-testid="content-layout-format">当前版式：{{ bodyFormatLabel(bodyFormat) }}</p>
       <div class="fld">
         <label>版式模板</label>
         <select v-model="templateId" data-testid="content-layout-template">
@@ -105,6 +105,12 @@ const error = ref('')
 const fidelityNote = ref('')
 
 const shownHtml = computed(() => previewHtml.value || props.layoutHtml || '')
+
+function bodyFormatLabel(value?: string) {
+  if (!value || value === 'PLAIN') return '纯文本'
+  if (value === 'LAYOUT') return '已排版'
+  return value
+}
 
 watch(
   () => [props.body, preset.value, props.contentId],

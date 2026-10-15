@@ -9,18 +9,18 @@
         <textarea v-model="requirementText" rows="4" data-testid="video-requirement" :disabled="busy" />
       </div>
       <p v-if="editable && !requirementText.trim()" class="hint" data-testid="video-requirement-empty">
-        成片要求为空时不能提交。本地桩不会出片，也不占用本机 GPU。
+        成片要求为空时不能提交。
       </p>
       <p data-testid="video-poll-status">
         任务状态：{{ statusLabel }}
         <span v-if="progress != null && polling"> · {{ progress }}%</span>
         <span v-if="jobId"> · 任务 {{ jobId }}</span>
       </p>
-      <p v-if="pollStale" class="hint" data-testid="video-poll-wait">桩任务仍在排队。关闭后再打开可继续看状态。</p>
+      <p v-if="pollStale" class="hint" data-testid="video-poll-wait">任务仍在排队。关闭后再打开可继续看状态。</p>
       <p v-if="errorText" class="hint bad" data-testid="video-gen-error">{{ errorText }}</p>
       <div v-if="!showPreview && !errorText" class="empty" data-testid="video-preview-empty">
         <div class="et">尚未绑定成片</div>
-        <div class="es">提交后由本地桩轮询，成功才出现预览。</div>
+        <div class="es">提交后轮询任务状态，成功才出现预览。</div>
       </div>
       <div v-if="showPreview" class="video-preview" data-testid="video-preview">
         <div class="video-frame" data-testid="video-preview-frame">成片预览</div>
@@ -64,7 +64,7 @@ const pollStale = ref(false)
 let pollToken = 0
 
 const providerLabels: Record<string, string> = {
-  stub: '桩（不占用本机 GPU）',
+  stub: '本地生成（不占用本机 GPU）',
   remote: '第三方 ComfyUI',
   unconfigured: '未配置',
 }

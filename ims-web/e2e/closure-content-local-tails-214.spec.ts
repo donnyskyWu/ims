@@ -57,7 +57,7 @@ test.describe('content local tails 214', () => {
     await page.getByRole('button', { name: '新建模板' }).click()
     const createModal = page.locator('.modal-mask').filter({ hasText: '新建公推模板' })
     await createModal.getByRole('button', { name: '保存' }).click()
-    await expect(createModal.getByTestId('layout-name-error')).toHaveText('请填写模板名称')
+    await expect(createModal.getByTestId('layout-name-error')).toHaveText('必填项，请填写')
     await page.screenshot({ path: `${SHOTS}/04-layout-name-empty.png`, fullPage: true })
     await createModal.getByRole('button', { name: '取消' }).click()
 

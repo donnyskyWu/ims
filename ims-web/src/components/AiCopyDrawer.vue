@@ -1,7 +1,7 @@
 <template>
   <ProtoDrawer :open="open" title="AI 文案" width="560px" :z-index="140" @close="emit('close')">
     <p class="hint">选择模型并输入提示。生成结果仅预览，采纳后写入正文，不会自动排版。</p>
-    <p class="hint" data-testid="ai-copy-stub-hint">无本机 GPU。未生成时预览为空；本地桩只写预览，不排版。</p>
+    <p class="hint" data-testid="ai-copy-stub-hint">无本机 GPU。未生成时预览为空；生成结果只写预览，不排版。</p>
     <div class="formrow one">
       <div class="fld">
         <label>模型</label>
@@ -15,13 +15,13 @@
       </div>
       <p v-if="modelsState === 'empty'" class="hint" data-testid="ai-copy-models-empty">没有可选用的文案模型。</p>
       <p v-if="modelsState === 'error'" class="hint bad" data-testid="ai-copy-models-error">
-        文案模型没有加载出来。关闭后再打开可重试。本地桩不占用本机 GPU。
+        文案模型没有加载出来。关闭后再打开可重试。
       </p>
       <div class="fld">
         <label>{{ roundCount >= 2 ? '本次修改要求' : '提示' }}</label>
         <textarea v-model="prompt" rows="4" data-testid="ai-copy-prompt" placeholder="写一段赛后复盘，或描述要续写的修改" />
       </div>
-      <p v-if="!prompt.trim()" class="hint" data-testid="ai-copy-prompt-empty">提示为空时不能生成。本地桩也不会写预览。</p>
+      <p v-if="!prompt.trim()" class="hint" data-testid="ai-copy-prompt-empty">提示为空时不能生成。</p>
     </div>
     <p v-if="error" class="hint" style="color: var(--red)">{{ error }}</p>
     <div v-if="!preview && !error && !emptyResult" class="empty" data-testid="ai-copy-empty">
@@ -29,7 +29,7 @@
       <div class="es">预览留空，采纳不可用。</div>
     </div>
     <p v-if="emptyResult" class="hint" data-testid="ai-copy-result-empty">生成结果为空，可重试。</p>
-    <p v-if="stubPreview && preview" class="hint" data-testid="ai-copy-stub">桩预览 · 不占用本机 GPU</p>
+    <p v-if="stubPreview && preview" class="hint" data-testid="ai-copy-stub">预览 · 不占用本机 GPU</p>
     <div v-if="preview" class="fld">
       <label>预览 · 第 {{ roundCount }} 轮</label>
       <pre class="ai-copy-preview">{{ preview }}</pre>

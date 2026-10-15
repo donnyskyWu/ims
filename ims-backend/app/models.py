@@ -579,6 +579,7 @@ class ContentSop(Base):
     sop_code: Mapped[str] = mapped_column(String(32), index=True)
     sop_name: Mapped[str] = mapped_column(String(128))
     content_type: Mapped[str] = mapped_column(String(32), default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
     sop_level: Mapped[str] = mapped_column(String(16), default="STANDARD")
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(16), default="ENABLED")
@@ -643,6 +644,7 @@ class ContentProject(Base):
     body: Mapped[str] = mapped_column(Text, default="")
     content_type: Mapped[str] = mapped_column(String(32), default="SHORT_VIDEO")
     platform_type: Mapped[str] = mapped_column(String(32), default="")
+    account_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     ip_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     competition_id: Mapped[str] = mapped_column(String(64), default="")
     competition_name: Mapped[str] = mapped_column(String(256), default="")
@@ -1581,8 +1583,28 @@ class ContentLayoutTemplate(Base):
     preview_html: Mapped[str] = mapped_column(Text, default="")
     layout_json: Mapped[str] = mapped_column(Text, default="")
     preset_code: Mapped[str] = mapped_column(String(32), default="")
+    document_type: Mapped[str] = mapped_column(String(32), default="")
+    tags: Mapped[str] = mapped_column(String(256), default="")
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ContentLayoutImportJob(Base):
+    """公推模板导入任务。关掉向导后仍可在列表查看。"""
+
+    __tablename__ = "ims_content_layout_import_job"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    job_no: Mapped[str] = mapped_column(String(32), default="", index=True)
+    channel: Mapped[str] = mapped_column(String(16), default="")
+    status: Mapped[str] = mapped_column(String(16), default="SUCCESS")
+    template_id: Mapped[int] = mapped_column(BigInteger, default=0)
+    template_name: Mapped[str] = mapped_column(String(128), default="")
+    message: Mapped[str] = mapped_column(String(256), default="")
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0)
     deleted: Mapped[int] = mapped_column(Integer, default=0)
     tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

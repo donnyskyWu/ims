@@ -49,7 +49,7 @@ test.describe('content S3 task and list closure', () => {
     const row = page.locator('tr', { hasText: title })
     await expect(row).toBeVisible({ timeout: 15_000 })
     await expect(row).toContainText('主队 VS 客队')
-    await expect(row).toContainText('DRAFT')
+    await expect(row).toContainText('草稿')
     await page.screenshot({ path: `${shotDir}/01-content-list-created.png`, fullPage: true })
 
     await row.getByRole('button', { name: '编辑' }).click()
@@ -69,7 +69,7 @@ test.describe('content S3 task and list closure', () => {
     )
     await editedRow.getByRole('button', { name: '提审' }).click()
     expect(((await (await submitResp).json()) as { code: number }).code).toBe(0)
-    await expect(editedRow).toContainText('PENDING_REVIEW', { timeout: 15_000 })
+    await expect(editedRow).toContainText('待一级审核', { timeout: 15_000 })
     await expect(editedRow.getByRole('button', { name: '删除' })).toHaveCount(0)
     await page.screenshot({ path: `${shotDir}/03-content-submitted.png`, fullPage: true })
 
@@ -192,7 +192,7 @@ test.describe('content S3 task and list closure', () => {
     await expect(page.locator('h1')).toHaveText('公推模板库', { timeout: 15_000 })
     await page.getByRole('button', { name: '新建模板' }).click()
     const createModal = page.locator('.modal-mask').filter({ hasText: '新建公推模板' })
-    await createModal.locator('input').fill(name)
+    await createModal.getByTestId('layout-create-name').fill(name)
     await createModal.locator('textarea').fill(`<p>${label}</p>`)
     await createModal.getByRole('button', { name: '保存' }).click()
 

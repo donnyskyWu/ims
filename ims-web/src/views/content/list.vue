@@ -6,7 +6,8 @@
         <div class="sub">内容 CRUD · 玩法 matchScheme（CONTENT-106）</div>
       </div>
       <div class="acts">
-        <button class="btn btn-pri" type="button" @click="openCreate">新增内容</button>
+        <button class="btn btn-sec" type="button" data-testid="content-export" @click="exportCsv">导出 CSV</button>
+        <button class="btn btn-pri" type="button" data-testid="content-create" @click="openCreate">新增内容</button>
       </div>
     </div>
     <p class="hint" style="margin-bottom: 10px">
@@ -17,18 +18,24 @@
     </p>
     <form class="qbar" data-testid="content-filters" @submit.prevent="loadList">
       <input v-model="titleKw" data-testid="content-filter-title" placeholder="标题" style="width: 160px" />
-      <select v-model="statusKw" style="width: 160px">
+      <select v-model="statusKw" data-testid="content-filter-status" style="width: 160px">
         <option value="">全部状态</option>
-        <option value="DRAFT">DRAFT</option>
-        <option value="REJECTED">REJECTED</option>
-        <option value="PENDING_REVIEW">PENDING_REVIEW</option>
-        <option value="PENDING_PUBLISH">PENDING_PUBLISH</option>
-        <option value="PUBLISHED">PUBLISHED</option>
+        <option value="DRAFT">草稿</option>
+        <option value="PENDING_FIRST_REVIEW">待一级审核</option>
+        <option value="PENDING_SECOND_REVIEW">待二级审核</option>
+        <option value="PENDING_FINAL_REVIEW">待终审</option>
+        <option value="PENDING_PUBLISH">待发布</option>
+        <option value="REJECTED">已驳回</option>
+        <option value="PUBLISHED">已发布</option>
+        <option value="UNPUBLISHED">已下架</option>
+        <option value="COMPLETED">已完成</option>
+        <option value="PENDING_REVIEW">待审核</option>
       </select>
       <select v-model="typeKw" data-testid="filter-content-type" style="width: 140px">
         <option value="">全部类型</option>
+        <option value="ARTICLE">文章</option>
         <option value="SHORT_VIDEO">短视频</option>
-        <option value="ARTICLE">图文</option>
+        <option value="VIDEO">视频</option>
       </select>
       <select v-model="platformKw" data-testid="filter-platform" style="width: 120px">
         <option value="">全部平台</option>
@@ -41,21 +48,41 @@
         <option value="COPY">文案</option>
         <option value="SCRIPT">脚本</option>
       </select>
+      <select v-model="accountKw" data-testid="content-filter-account" style="width: 160px">
+        <option value="">全部账号</option>
+        <option v-for="item in accounts" :key="item.id" :value="String(item.id)">{{ item.label }}</option>
+      </select>
+      <select v-model="aiKw" data-testid="content-filter-ai" style="width: 120px">
+        <option value="">是否AI生成</option>
+        <option value="YES">是</option>
+        <option value="NO">否</option>
+      </select>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" data-testid="content-filter-reset" @click="resetFilters">重置</button>
     </form>
+    <div class="rowline" data-testid="content-batch-bar" style="gap: 8px; margin-bottom: 10px; flex-wrap: wrap">
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-delete" @click="batchDelete">批量删除</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-submit" @click="batchSubmit">批量提交审核</button>
+      <button class="btn btn-sec btn-sm" type="button" data-testid="content-batch-kb" @click="batchTransfer">批量转知识库</button>
+    </div>
+    <p v-if="batchMsg" class="hint" :class="{ bad: batchWarn }" data-testid="content-batch-msg">{{ batchMsg }}</p>
+    <p v-if="exportNote" class="hint" data-testid="content-export-note">{{ exportNote }}</p>
+    <p v-if="actionNote" class="hint" data-testid="content-action-note">{{ actionNote }}</p>
     <div class="tbl-block">
       <div class="tbl-wrap">
         <table>
           <thead>
             <tr>
+              <th style="width: 36px"></th>
               <th>ID</th>
               <th>标题</th>
-              <th>状态</th>
-              <th>类型</th>
-              <th>平台</th>
-              <th>赛事摘要</th>
               <th>文档类型</th>
+              <th>平台</th>
+              <th>创作者</th>
+              <th>IP组</th>
+              <th>状态</th>
+              <th>赛事摘要</th>
+              <th>类型</th>
               <th>AI 文案</th>
               <th>视频</th>
               <th>Football 同步</th>
@@ -64,10 +91,10 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="11"><div class="empty"><div class="et">加载中</div></div></td>
+              <td colspan="14"><div class="empty"><div class="et">加载中</div></div></td>
             </tr>
             <tr v-else-if="!rows.length">
-              <td colspan="11">
+              <td colspan="14">
                 <div class="empty" data-testid="content-list-empty">
                   <div class="et">{{ error || contentEmptyTitle }}</div>
                   <div v-if="!error" class="es">{{ contentEmptyHint }}</div>
@@ -75,13 +102,23 @@
               </td>
             </tr>
             <tr v-for="row in rows" v-else :key="row.id">
+              <td>
+                <input
+                  type="checkbox"
+                  data-testid="content-row-check"
+                  :checked="selectedIds.includes(row.id)"
+                  @change="toggleSelect(row.id)"
+                />
+              </td>
               <td class="mono">{{ row.id }}</td>
               <td><b>{{ row.title }}</b></td>
-              <td>{{ row.contentStatus }}</td>
-              <td data-testid="row-content-type">{{ typeLabel(row.contentType) }}</td>
+              <td>{{ docLabel(row.documentType) }}</td>
               <td data-testid="row-platform">{{ platformLabel(row.platformType) }}</td>
+              <td data-testid="row-creator">{{ row.creatorName || '—' }}</td>
+              <td data-testid="row-ip-group">{{ row.ipGroupName || '—' }}</td>
+              <td data-testid="row-content-status">{{ statusLabel(row) }}</td>
               <td>{{ row.matchSummary || row.competitionName || '—' }}</td>
-              <td>{{ row.documentType || '—' }}</td>
+              <td data-testid="row-content-type">{{ typeLabel(row.contentType) }}</td>
               <td data-testid="row-ai-status">{{ copyLabel(row.aiGenerateStatus) }}</td>
               <td data-testid="row-video-status">{{ videoLabel(row.videoJobStatus) }}</td>
               <td>{{ row.fbSyncStatusLabel || row.fbSyncStatus || '—' }}</td>
@@ -148,9 +185,8 @@
         </div>
         <div class="fld">
           <label>文档类型</label>
-          <select v-model="editDocType">
-            <option value="COPY">COPY</option>
-            <option value="SCRIPT">SCRIPT</option>
+          <select v-model="editDocType" data-testid="content-edit-doc-type">
+            <option v-for="item in docTypeChoices" :key="item.value" :value="item.value">{{ item.label }}</option>
           </select>
         </div>
         <MatchSchemeEditor v-model:match-type="editMatchType" v-model:scheme="editScheme" :seed-key="editorSeed" />
@@ -163,7 +199,6 @@
         </div>
         <div class="fld">
           <label>版式图片</label>
-          <p class="hint">POST /content/file/upload · scene=content_image，写入 layout_html</p>
           <input
             data-testid="content-image-file"
             type="file"
@@ -172,10 +207,6 @@
             @change="onPickImage"
           />
           <p v-if="uploadError" class="hint" style="color: var(--red)">{{ uploadError }}</p>
-        </div>
-        <div class="fld">
-          <label>layout_html</label>
-          <textarea v-model="editLayoutHtml" data-testid="content-layout-html" rows="4" readonly />
         </div>
         <div class="fld">
           <label>版式预览</label>
@@ -192,8 +223,8 @@
           <textarea
             v-model="editLayoutHtml"
             rows="4"
-            data-testid="content-layout-html-input"
-            placeholder="查看与审核按此 HTML 只读渲染；留空则显示正文"
+            data-testid="content-layout-html"
+            placeholder="查看与审核按此版式渲染；留空则显示正文"
           />
         </div>
         <ContentLayoutPanel
@@ -228,19 +259,21 @@
           </div>
         </div>
       </div>
+      <p v-if="submitHint" class="hint bad" data-testid="content-submit-hint">{{ submitHint }}</p>
       <p v-if="!editingId" class="hint">保存草稿后可 AI 生成文案与视频。</p>
       <ContentAiPanel v-else-if="editingRow" :content="editingRow" @refresh="reloadEditing" />
       <AiCopyDrawer :open="aiOpen" :content-id="editingId" @close="aiOpen = false" @adopt="adoptAi" />
       <template #footer>
         <button class="btn btn-sec" type="button" @click="drawerOpen = false">取消</button>
         <button class="btn btn-pri" type="button" :disabled="saving" @click="saveContent">保存</button>
+        <button class="btn btn-sec" type="button" data-testid="content-submit-review" :disabled="saving" @click="submitFromDrawer">提交审核</button>
       </template>
     </ProtoDrawer>
 
     <ProtoDrawer :open="viewOpen" title="查看内容" width="720px" @close="viewOpen = false">
       <p><b data-testid="content-view-title">{{ viewRow?.title }}</b></p>
       <p class="hint">
-        状态 {{ viewRow?.contentStatus || '—' }} · 文档类型 {{ viewRow?.documentType || '—' }} · 内容类型
+        状态 {{ viewRow ? statusLabel(viewRow) : '—' }} · 文档类型 {{ docLabel(viewRow?.documentType) }} · 内容类型
         {{ viewRow?.contentType || '—' }}
       </p>
       <p v-if="viewRow?.matchSummary" class="hint">赛事摘要 {{ viewRow.matchSummary }}</p>
@@ -278,8 +311,20 @@ const statusKw = ref('')
 const typeKw = ref('')
 const platformKw = ref('')
 const docKw = ref('')
+const accountKw = ref('')
+const aiKw = ref('')
+const accounts = ref<{ id: number; label: string }[]>([])
 const filtering = computed(
-  () => !!(titleKw.value.trim() || statusKw.value || typeKw.value || platformKw.value || docKw.value),
+  () =>
+    !!(
+      titleKw.value.trim() ||
+      statusKw.value ||
+      typeKw.value ||
+      platformKw.value ||
+      docKw.value ||
+      accountKw.value ||
+      aiKw.value
+    ),
 )
 const contentEmptyTitle = computed(() => (filtering.value ? '没有符合筛选的内容' : '暂无内容'))
 const contentEmptyHint = computed(() =>
@@ -303,9 +348,29 @@ const editingRow = ref<any>(null)
 const editorSeed = ref(0)
 const editTitle = ref('')
 const titleError = ref('')
+const submitHint = ref('')
+const selectedIds = ref<number[]>([])
+const batchMsg = ref('')
+const batchWarn = ref(false)
+let batchTimer = 0
+
+function showBatch(message: string, warn: boolean) {
+  batchWarn.value = warn
+  batchMsg.value = message
+  window.clearTimeout(batchTimer)
+  batchTimer = window.setTimeout(() => {
+    batchMsg.value = ''
+  }, 3000)
+}
+const exportNote = ref('')
+const actionNote = ref('')
 const editContentType = ref('SHORT_VIDEO')
 const editPlatform = ref('')
 const editDocType = ref('COPY')
+const docTypeOptions = ref<{ value: string; label: string }[]>([
+  { value: 'COPY', label: '文案' },
+  { value: 'SCRIPT', label: '脚本' },
+])
 const editMatchType = ref(1)
 const editScheme = ref<MatchSchemeItem[]>([])
 const editBody = ref('')
@@ -337,7 +402,61 @@ function videoLabel(status: string | null | undefined) {
   if (!status) return '未生成'
   return videoLabels[status] || status
 }
-const typeLabels: Record<string, string> = { SHORT_VIDEO: '短视频', ARTICLE: '图文' }
+const typeLabels: Record<string, string> = { SHORT_VIDEO: '短视频', ARTICLE: '图文', VIDEO: '视频' }
+const docLabels: Record<string, string> = { COPY: '文案', SCRIPT: '脚本' }
+const statusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  COMPLETED: '已完成',
+  PENDING_FIRST_REVIEW: '待一级审核',
+  PENDING_SECOND_REVIEW: '待二级审核',
+  PENDING_FINAL_REVIEW: '待终审',
+  PENDING_REVIEW: '待审核',
+  PENDING_PUBLISH: '待发布',
+  REJECTED: '已驳回',
+  PUBLISHED: '已发布',
+  PUBLISHED_DRAFT: '预发布',
+  FORMALLY_PUBLISHED: '已发布',
+  UNPUBLISHED: '已下架',
+}
+const accountPlatforms = ['DOUYIN', 'KUAISHOU', 'WECHAT_CHANNELS', 'WECHAT_OFFICIAL', 'XIAOHONGSHU']
+const accountPlatformLabels: Record<string, string> = {
+  DOUYIN: '抖音',
+  KUAISHOU: '快手',
+  WECHAT_CHANNELS: '视频号',
+  WECHAT_OFFICIAL: '公众号',
+  XIAOHONGSHU: '小红书',
+}
+
+function docLabel(value: string | null | undefined) {
+  if (!value) return '—'
+  return docLabels[value] || value
+}
+
+const docTypeChoices = computed(() => {
+  const options = docTypeOptions.value.map((item) => ({ ...item }))
+  const current = editDocType.value
+  if (current && !options.some((item) => item.value === current)) {
+    options.push({ value: current, label: docLabel(current) })
+  }
+  return options
+})
+
+async function loadDocTypes() {
+  try {
+    const { data } = await http.get('/system/dict-data/list', { params: { dictType: 'dict_document_type' } })
+    const rows = (data.data || []) as { dictLabel?: string; dictValue?: string; status?: string }[]
+    const options = rows
+      .filter((row) => row.status === 'ENABLED' && row.dictValue)
+      .map((row) => ({ value: String(row.dictValue), label: String(row.dictLabel || row.dictValue) }))
+    if (options.length) docTypeOptions.value = options
+  } catch {
+    /* 字典不可用时保留文案 / 脚本 */
+  }
+}
+
+function statusLabel(row: { contentStatus?: string; contentStatusLabel?: string }) {
+  return row.contentStatusLabel || statusLabels[row.contentStatus || ''] || row.contentStatus || '—'
+}
 const platformLabels: Record<string, string> = { DOUYIN: '抖音', KUAISHOU: '快手', WECHAT_CHANNELS: '视频号' }
 function typeLabel(value: string | null | undefined) {
   if (!value) return '—'
@@ -415,7 +534,7 @@ async function onPickImage(ev: Event) {
     const fileUrl = String(data.data?.fileUrl || '')
     const fileName = String(data.data?.fileName || file.name)
     if (!fileKey || !fileUrl) {
-      uploadError.value = '上传回执缺少 fileKey'
+      uploadError.value = '上传没有返回文件，请重试'
       return
     }
     const tag = `<img src="${escapeAttr(fileUrl)}" alt="${escapeAttr(fileName)}" data-file-key="${escapeAttr(fileKey)}" />`
@@ -438,6 +557,8 @@ async function loadList() {
     if (typeKw.value) params.contentType = typeKw.value
     if (platformKw.value) params.platformType = platformKw.value
     if (docKw.value) params.documentType = docKw.value
+    if (accountKw.value) params.accountId = accountKw.value
+    if (aiKw.value) params.aiGenerated = aiKw.value
     const { data } = await http.get('/content', { params })
     rows.value = data.data?.list || []
     total.value = data.data?.total || 0
@@ -455,7 +576,27 @@ function resetFilters() {
   typeKw.value = ''
   platformKw.value = ''
   docKw.value = ''
+  accountKw.value = ''
+  aiKw.value = ''
   loadList()
+}
+
+async function loadAccounts() {
+  const items: { id: number; label: string }[] = []
+  for (const platform of accountPlatforms) {
+    try {
+      const { data } = await http.get('/corp/account/page', {
+        params: { platformType: platform, pageNo: 1, pageSize: 100 },
+      })
+      for (const row of data.data?.list || []) {
+        const name = row.nickname || row.accountNo || row.id
+        items.push({ id: row.id, label: `${name} · ${accountPlatformLabels[platform] || platform}` })
+      }
+    } catch {
+      /* 单个平台无账号时其余筛选仍可用 */
+    }
+  }
+  accounts.value = items
 }
 
 function resetForm() {
@@ -476,6 +617,7 @@ function openCreate() {
   editingId.value = null
   editingRow.value = null
   titleError.value = ''
+  submitHint.value = ''
   resetForm()
   editorSeed.value += 1
   uploadError.value = ''
@@ -497,6 +639,7 @@ function openEdit(row: any) {
   editingId.value = row.id
   editingRow.value = row
   titleError.value = ''
+  submitHint.value = ''
   editTitle.value = row.title || ''
   editContentType.value = row.contentType || 'SHORT_VIDEO'
   editPlatform.value = row.platformType || ''
@@ -591,33 +734,159 @@ function onLayoutApplied(payload: {
   editBody.value = payload.body
 }
 
-async function saveContent() {
+function toggleSelect(id: number) {
+  if (selectedIds.value.includes(id)) selectedIds.value = selectedIds.value.filter((item) => item !== id)
+  else selectedIds.value = [...selectedIds.value, id]
+  window.clearTimeout(batchTimer)
+  batchMsg.value = ''
+}
+
+function requireSelection(message: string) {
+  if (selectedIds.value.length) return true
+  showBatch(message, true)
+  return false
+}
+
+async function exportCsv() {
+  exportNote.value = ''
+  const params = new URLSearchParams()
+  if (titleKw.value.trim()) params.set('title', titleKw.value.trim())
+  if (statusKw.value) params.set('status', statusKw.value)
+  if (typeKw.value) params.set('contentType', typeKw.value)
+  if (platformKw.value) params.set('platformType', platformKw.value)
+  if (docKw.value) params.set('documentType', docKw.value)
+  if (accountKw.value) params.set('accountId', accountKw.value)
+  if (aiKw.value) params.set('aiGenerated', aiKw.value)
+  const qs = params.toString()
+  const token = localStorage.getItem('ims_access')
+  try {
+    const res = await fetch(`/admin-api/ims/content/export${qs ? `?${qs}` : ''}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      exportNote.value = `导出失败（${res.status}）`
+      return
+    }
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = (await res.json()) as { msg?: string }
+      exportNote.value = body.msg || '导出失败'
+      return
+    }
+    const count = Number(res.headers.get('X-Export-Rows') || '0')
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'content.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+    exportNote.value = `已导出 ${count} 条`
+  } catch {
+    exportNote.value = '导出失败'
+  }
+}
+
+async function batchDelete() {
+  if (!requireSelection('请先勾选要删除的内容')) return
+  if (!window.confirm(`批量删除选中的 ${selectedIds.value.length} 条内容？`)) return
+  try {
+    const { data } = await http.post('/content/batch-delete', { ids: selectedIds.value })
+    showBatch(`已删除 ${data.data?.deleted ?? 0} 条`, false)
+    selectedIds.value = []
+    await loadList()
+  } catch (e) {
+    showBatch(errorMessage(e), true)
+  }
+}
+
+async function batchSubmit() {
+  if (!requireSelection('请先勾选要提交的内容')) return
+  try {
+    const { data } = await http.post('/content/batch-submit', { ids: selectedIds.value })
+    showBatch(`已提交 ${data.data?.submitted ?? 0} 条`, false)
+    selectedIds.value = []
+    await loadList()
+  } catch (e) {
+    showBatch(errorMessage(e), true)
+  }
+}
+
+async function batchTransfer() {
+  if (!requireSelection('请先勾选要转入知识库的内容')) return
+  try {
+    const { data } = await http.post('/content/batch-transfer-kb', { ids: selectedIds.value })
+    showBatch(`已转入知识库 ${data.data?.transferred ?? 0} 条`, false)
+    selectedIds.value = []
+  } catch (e) {
+    showBatch(errorMessage(e), true)
+  }
+}
+
+function contentPayload() {
+  return {
+    title: editTitle.value.trim(),
+    contentType: editContentType.value,
+    platformType: editPlatform.value,
+    documentType: editDocType.value,
+    matchType: editMatchType.value,
+    matchScheme: editScheme.value,
+    body: editBody.value,
+    layoutHtml: editLayoutHtml.value,
+    layoutJson: editLayoutJson.value,
+    bodyFormat: editBodyFormat.value,
+    layoutTemplateId: editLayoutTemplateId.value,
+  }
+}
+
+async function persistContent() {
+  const payload = contentPayload()
+  if (editingId.value) {
+    await http.put(`/content/${editingId.value}`, payload)
+    return editingId.value
+  }
+  const { data } = await http.post('/content', payload)
+  const id = Number(data.data?.id || 0)
+  if (id) editingId.value = id
+  return id
+}
+
+async function submitFromDrawer() {
   titleError.value = ''
+  submitHint.value = ''
   if (!editTitle.value.trim()) {
-    titleError.value = '请填写标题'
-    window.alert('请填写标题')
+    titleError.value = '必填项，请填写'
     return
   }
   saving.value = true
   try {
-    const payload = {
-      title: editTitle.value.trim(),
-      contentType: editContentType.value,
-      platformType: editPlatform.value,
-      documentType: editDocType.value,
-      matchType: editMatchType.value,
-      matchScheme: editScheme.value,
-      body: editBody.value,
-      layoutHtml: editLayoutHtml.value,
-      layoutJson: editLayoutJson.value,
-      bodyFormat: editBodyFormat.value,
-      layoutTemplateId: editLayoutTemplateId.value,
+    const id = await persistContent()
+    if (!id) {
+      submitHint.value = '保存失败'
+      return
     }
-    if (editingId.value) {
-      await http.put(`/content/${editingId.value}`, payload)
-    } else {
-      await http.post('/content', payload)
-    }
+    const { data } = await http.post(`/content/${id}/submit-review`)
+    const reviewNo = data.data?.reviewNo
+    actionNote.value = reviewNo ? `已提交审核 ${reviewNo}` : '已提交审核'
+    drawerOpen.value = false
+    editingRow.value = null
+    await loadList()
+  } catch (e) {
+    submitHint.value = errorMessage(e)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function saveContent() {
+  titleError.value = ''
+  submitHint.value = ''
+  if (!editTitle.value.trim()) {
+    titleError.value = '必填项，请填写'
+    return
+  }
+  saving.value = true
+  try {
+    await persistContent()
     drawerOpen.value = false
     editingRow.value = null
     await loadList()
@@ -669,6 +938,8 @@ async function retrySync(id: number) {
 }
 
 loadList()
+loadAccounts()
+loadDocTypes()
 </script>
 
 <style scoped>

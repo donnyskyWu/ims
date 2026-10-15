@@ -390,6 +390,54 @@ def ensure_air_slice92_columns() -> None:
                 )
 
 
+def ensure_content_project_account_column() -> None:
+    """已有库补内容账号。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_project" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_project")}
+    if "account_id" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_content_project ADD COLUMN account_id BIGINT NOT NULL DEFAULT 0"))
+
+
+def ensure_content_layout_meta_columns() -> None:
+    """已有库补公推模板文档类型与标签。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_layout_template" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_layout_template")}
+    alters: list[str] = []
+    if "document_type" not in cols:
+        alters.append("ADD COLUMN document_type VARCHAR(32) NOT NULL DEFAULT ''")
+    if "tags" not in cols:
+        alters.append("ADD COLUMN tags VARCHAR(256) NOT NULL DEFAULT ''")
+    if not alters:
+        return
+    with engine.begin() as conn:
+        for clause in alters:
+            conn.execute(text(f"ALTER TABLE ims_content_layout_template {clause}"))
+
+
+def ensure_content_sop_platform_column() -> None:
+    """已有库补 SOP 适用平台。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_content_sop" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_content_sop")}
+    if "platform" in cols:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ims_content_sop ADD COLUMN platform VARCHAR(32) NOT NULL DEFAULT ''"))
+
+
 def ensure_content_sop_dag_columns() -> None:
     """已有库补 SOP 节点 DAG 列。create_all 不会给旧表加列。"""
     from sqlalchemy import inspect, text
@@ -500,6 +548,9 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
     ensure_user_mapping_position_column()
     ensure_asset_verify_schedule_columns()
+    ensure_content_project_account_column()
+    ensure_content_layout_meta_columns()
+    ensure_content_sop_platform_column()
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()
     ensure_bi_br212_columns()

@@ -23,7 +23,7 @@ test.describe('content review paid/free readonly columns', () => {
     await page.getByRole('button', { name: '新增内容' }).click()
     const contentDrawer = page.locator('.drawer.on').filter({ hasText: '新增内容' })
     await contentDrawer.locator('.fld').filter({ hasText: '标题' }).locator('input').fill(title)
-    await contentDrawer.getByPlaceholder('matchId').fill('m119')
+    await contentDrawer.getByTestId('match-scheme-id').fill('m119')
     await contentDrawer.getByPlaceholder('主队').fill('曼联')
     await contentDrawer.getByPlaceholder('客队').fill('切尔西')
     await contentDrawer.getByRole('button', { name: '添加场次' }).click()

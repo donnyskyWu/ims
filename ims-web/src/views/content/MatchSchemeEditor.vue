@@ -13,7 +13,7 @@
       </div>
     </div>
     <div class="rowline" style="gap: 8px; flex-wrap: wrap; margin-bottom: 8px">
-      <input v-model="draft.matchId" placeholder="matchId" style="width: 120px" />
+      <input v-model="draft.matchId" data-testid="match-scheme-id" placeholder="请选择关联场次" style="width: 160px" />
       <input v-model="draft.homeName" placeholder="主队" style="width: 120px" />
       <input v-model="draft.awayName" placeholder="客队" style="width: 120px" />
       <button class="btn btn-sec btn-sm" type="button" @click="addMatch">添加场次</button>
@@ -21,7 +21,7 @@
     <p v-if="fieldError" class="hint bad" data-testid="match-scheme-error">{{ fieldError }}</p>
     <div v-if="!scheme.length" class="empty" data-testid="match-scheme-empty">
       <div class="et">尚未添加场次</div>
-      <div class="es">文案和视频都要至少一场。本地桩也不会在没有场次时出稿。</div>
+      <div class="es">文案和视频都要至少一场。</div>
     </div>
     <div v-for="(item, index) in scheme" :key="index" class="card" style="padding: 8px 10px; margin-bottom: 6px">
       <span>{{ item.homeName || '主' }} VS {{ item.awayName || '客' }}</span>
@@ -86,7 +86,7 @@ function addMatch() {
   const homeName = draft.homeName.trim()
   const awayName = draft.awayName.trim()
   if (!matchId || !homeName || !awayName) {
-    fieldError.value = '请填写 matchId、主队、客队'
+    fieldError.value = '请填写关联场次、主队、客队'
     return
   }
   fieldError.value = ''
