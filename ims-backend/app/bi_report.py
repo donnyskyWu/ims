@@ -3,28 +3,35 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import time
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
-from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def
+from app.bi_br212 import primary_dept_id, report_row_visible, report_share_granted, restrict_report_def, share_grant_clause
+from app.security import hash_password
 from app.bi_drill import guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
-from app.models import BiReportDef, User
+from app.models import BiReportCategory, BiReportDef, BiReportPublish, User
 
 router = APIRouter(prefix="/bi/report", tags=["bi-report"])
+logger = logging.getLogger(__name__)
 
 BJ = timezone(timedelta(hours=8))
 
-REPORT_CATEGORIES = [
-    {"code": "content", "name": "内容分析", "children": ["作品表现", "账号经营"]},
-    {"code": "finance", "name": "经营财务", "children": ["成本效率", "ROI"]},
+CATEGORY_TREE = [
+    ("运营", 0, ["日报", "周报", "大屏"]),
+    ("内容", 0, []),
+    ("财务", 0, []),
+    ("未分类", 1, []),
 ]
 
 
@@ -34,12 +41,43 @@ class ReportCreateBody(BaseModel):
     reportType: str = "REPORT"
     category: str = "内容分析"
     subCategory: str = ""
+    shareScope: str = "PRIVATE"
+    metricNote: str = ""
+
+
+class CategoryBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    action: str = "add"
+    name: str = ""
+    parentId: int = 0
+    categoryId: int = 0
+
+
+class ImportBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    template: dict | None = None
 
 
 class ReportUpdateBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     reportName: str = ""
     layoutJson: dict | None = None
+    keepVersion: bool = False
+
+
+class PublishBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    dest: str = "CENTER"
+    dests: list[str] = Field(default_factory=list)
+    shareScope: str = ""
+    opPerm: str = "READONLY"
+    rowPerm: str = "INHERIT"
+    viewerIds: list[int] = Field(default_factory=list)
+    menuName: str = ""
+    accessType: str = "SHARE_LINK"
+    expireDays: int = 7
+    passwordEnabled: bool = False
+    password: str = ""
 
 
 class ReportQueryBody(BaseModel):
@@ -67,31 +105,281 @@ class PreviewDrillBody(BaseModel):
     cellMetric: str = "gmv"
 
 
+def _field(key: str, label: str, ftype: str, dtype: str, metric_code: str = "") -> dict:
+    item = {
+        "fieldKey": key,
+        "fieldLabel": label,
+        "fieldType": ftype,
+        "dataType": dtype,
+        "name": key,
+        "label": label,
+        "type": "number" if dtype == "NUMBER" else "string",
+    }
+    if metric_code:
+        item["metricCode"] = metric_code
+    return item
+
+
+# 开发 / E2E 用的指标事实样本（METRIC_LIB）。绑定 GMV、统计日期等字段后按这里取数。
+METRIC_FACT = [
+    {"statDate": "2026-10-01", "platform": "抖音", "gmv": 186400, "orders": 621, "liveSessions": 4, "interactRate": 4.7},
+    {"statDate": "2026-10-02", "platform": "视频号", "gmv": 412800, "orders": 1376, "liveSessions": 6, "interactRate": 5.1},
+    {"statDate": "2026-10-03", "platform": "快手", "gmv": 96800, "orders": 310, "liveSessions": 3, "interactRate": 3.9},
+]
+CUSTOM_FACT = [
+    {"dim": "内容", "value": 128},
+    {"dim": "投放", "value": 96},
+]
+
 DATASETS = [
     {
         "code": "METRIC_LIB",
         "name": "指标库",
+        "datasetSource": "METRIC_LIB",
+        "enabled": True,
+        "freshnessMinutes": 15,
+        "rowCountEstimate": len(METRIC_FACT),
         "fields": [
-            {"name": "metricName", "label": "指标名", "type": "string"},
-            {"name": "metricValue", "label": "指标值", "type": "number"},
+            _field("statDate", "统计日期", "DIMENSION", "DATE"),
+            _field("platform", "平台", "DIMENSION", "STRING"),
+            _field("gmv", "GMV", "METRIC", "NUMBER", "GMV_DAILY"),
+            _field("orders", "订单数", "METRIC", "NUMBER", "ORDER_CNT"),
+            _field("liveSessions", "直播场次", "METRIC", "NUMBER", "LIVE_SESSIONS"),
+            _field("interactRate", "互动率", "METRIC", "NUMBER", "INTERACT_RATE"),
         ],
     },
     {
         "code": "CUSTOM_QUERY",
         "name": "已发布自定义查询",
+        "datasetSource": "CUSTOM_QUERY",
+        "enabled": True,
+        "freshnessMinutes": 15,
+        "rowCountEstimate": len(CUSTOM_FACT),
         "fields": [
-            {"name": "dim", "label": "维度", "type": "string"},
-            {"name": "value", "label": "数值", "type": "number"},
+            _field("dim", "维度", "DIMENSION", "STRING"),
+            _field("value", "数值", "METRIC", "NUMBER", "CQ_VALUE"),
         ],
+    },
+    {
+        "code": "DWS_AGGREGATION",
+        "name": "宽表聚合",
+        "datasetSource": "DWS_AGGREGATION",
+        "enabled": False,
+        "freshnessMinutes": 15,
+        "rowCountEstimate": 0,
+        "note": "P2+",
+        "fields": [],
     },
 ]
 
-COMP_LIB = [
-    {"type": "KPI", "name": "KPI 卡片", "defaultSize": {"w": 240, "h": 120}},
-    {"type": "BAR", "name": "柱状图", "defaultSize": {"w": 480, "h": 280}},
-    {"type": "LINE", "name": "折线图", "defaultSize": {"w": 480, "h": 280}},
-    {"type": "TABLE", "name": "表格", "defaultSize": {"w": 640, "h": 320}},
-]
+
+class BiCompType(str, Enum):
+    """页面规格 BiCompType。验收 22 格，顺序与第 80～83 行一致。"""
+
+    KPI = "KPI"
+    BAR = "BAR"
+    LINE = "LINE"
+    PIE = "PIE"
+    DONUT = "DONUT"
+    RADAR = "RADAR"
+    FUNNEL = "FUNNEL"
+    SCATTER = "SCATTER"
+    TABLE = "TABLE"
+    DETAIL_TABLE = "DETAIL_TABLE"
+    RICH_TEXT = "RICH_TEXT"
+    DATE_RANGE = "DATE_RANGE"
+    SELECT_SINGLE = "SELECT_SINGLE"
+    SELECT_MULTI = "SELECT_MULTI"
+    TEXT_INPUT = "TEXT_INPUT"
+    NUMBER_RANGE = "NUMBER_RANGE"
+    GROUP = "GROUP"
+    CARD = "CARD"
+    TAB = "TAB"
+    BUTTON = "BUTTON"
+    LINK = "LINK"
+    TRIGGER = "TRIGGER"
+
+
+def _comp(type_: str, name: str, group: str, w: int, h: int) -> dict:
+    return {"type": type_, "name": name, "group": group, "defaultSize": {"w": w, "h": h}}
+
+
+# 图表 11 · 查询条件 5 · 容器 3 · 交互 3
+_COMP_SPEC: tuple[tuple[BiCompType, str, str, int, int], ...] = (
+    (BiCompType.KPI, "KPI 指标卡", "CHART", 240, 120),
+    (BiCompType.BAR, "柱状图", "CHART", 480, 280),
+    (BiCompType.LINE, "折线图", "CHART", 480, 280),
+    (BiCompType.PIE, "饼图", "CHART", 360, 280),
+    (BiCompType.DONUT, "环形图", "CHART", 360, 280),
+    (BiCompType.RADAR, "雷达图", "CHART", 360, 280),
+    (BiCompType.FUNNEL, "漏斗图", "CHART", 360, 280),
+    (BiCompType.SCATTER, "散点图", "CHART", 480, 280),
+    (BiCompType.TABLE, "数据表", "CHART", 640, 320),
+    (BiCompType.DETAIL_TABLE, "明细表", "CHART", 640, 320),
+    (BiCompType.RICH_TEXT, "富文本", "CHART", 320, 120),
+    (BiCompType.DATE_RANGE, "日期范围", "FILTER", 280, 80),
+    (BiCompType.SELECT_SINGLE, "下拉单选", "FILTER", 240, 80),
+    (BiCompType.SELECT_MULTI, "下拉多选", "FILTER", 240, 80),
+    (BiCompType.TEXT_INPUT, "文本输入", "FILTER", 240, 80),
+    (BiCompType.NUMBER_RANGE, "数值区间", "FILTER", 280, 80),
+    (BiCompType.GROUP, "分组容器", "CONTAINER", 480, 320),
+    (BiCompType.CARD, "卡片容器", "CONTAINER", 320, 200),
+    (BiCompType.TAB, "Tab 容器", "CONTAINER", 640, 320),
+    (BiCompType.BUTTON, "按钮", "ACTION", 160, 80),
+    (BiCompType.LINK, "跳转链接", "ACTION", 200, 80),
+    (BiCompType.TRIGGER, "联动触发件", "ACTION", 200, 80),
+)
+if [item[0] for item in _COMP_SPEC] != list(BiCompType) or len(BiCompType) != 22:
+    raise RuntimeError("BiCompType 必须与规格组件清单同序且恰好 22 个")
+
+COMP_LIB = [_comp(code.value, name, group, w, h) for code, name, group, w, h in _COMP_SPEC]
+
+_AGG = {"SUM", "AVG", "COUNT", "MAX", "MIN"}
+_CALL = re.compile(r"(SUM|AVG|COUNT|MAX|MIN)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)", re.I)
+_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def dataset_fields(code: str) -> dict[str, dict]:
+    for item in DATASETS:
+        if item["code"] == code:
+            return {field["fieldKey"]: field for field in item.get("fields") or []}
+    return {}
+
+
+def fact_rows(code: str) -> list[dict]:
+    if code == "CUSTOM_QUERY":
+        return [dict(row) for row in CUSTOM_FACT]
+    if code == "DWS_AGGREGATION":
+        return []
+    return [dict(row) for row in METRIC_FACT]
+
+
+def aggregate_values(rows: list[dict], key: str, agg: str) -> float:
+    vals: list[float] = []
+    for row in rows:
+        if key not in row:
+            continue
+        try:
+            vals.append(float(row[key]))
+        except (TypeError, ValueError):
+            continue
+    kind = (agg or "SUM").upper()
+    if not vals:
+        return 0
+    if kind == "AVG":
+        return round(sum(vals) / len(vals), 2)
+    if kind == "COUNT":
+        return float(len(vals))
+    if kind == "MAX":
+        return max(vals)
+    if kind == "MIN":
+        return min(vals)
+    return round(sum(vals), 2)
+
+
+def expr_error(expr: str, fields: dict[str, dict]) -> int | None:
+    text = (expr or "").strip()
+    if not text:
+        return None
+    if text.count("(") != text.count(")"):
+        return 1192
+    if not re.fullmatch(r"[0-9A-Za-z_+\-*/().,\s]+", text):
+        return 1192
+    calls = list(_CALL.finditer(text))
+    if not calls and _IDENT.search(text):
+        return 1192
+    for match in calls:
+        key = match.group(2)
+        meta = fields.get(key)
+        if meta is None:
+            return 1191
+        if meta.get("fieldType") != "METRIC":
+            return 1191
+    stripped = _CALL.sub("0", text)
+    if _IDENT.search(stripped):
+        return 1192
+    compact = re.sub(r"\s+", "", stripped)
+    if not compact or not re.fullmatch(r"[0-9+\-*/().]+", compact):
+        return 1192
+    if re.search(r"[+\-*/.]$", compact) or re.search(r"^[+*/.]", compact):
+        return 1192
+    try:
+        eval(compact, {"__builtins__": {}}, {})  # noqa: S307 — 括号与四则运算是否能算出数
+    except Exception:
+        return 1192
+    return None
+
+
+def eval_expr(expr: str, rows: list[dict]) -> float:
+    def repl(match: re.Match) -> str:
+        return str(aggregate_values(rows, match.group(2), match.group(1)))
+
+    replaced = _CALL.sub(repl, expr)
+    value = eval(replaced, {"__builtins__": {}}, {})  # noqa: S307 — 已限制为白名单函数与四则运算
+    return round(float(value), 4)
+
+
+def binding_error(comp: dict) -> int | None:
+    dataset = str(comp.get("dataset") or "METRIC_LIB")
+    if dataset == "DWS_AGGREGATION":
+        return 1191
+    fields = dataset_fields(dataset)
+    if dataset not in {item["code"] for item in DATASETS}:
+        return 1191
+    metric = str(comp.get("metric") or comp.get("fieldKey") or "").strip()
+    dimension = str(comp.get("dimension") or "").strip()
+    calc = str(comp.get("calcExpression") or "").strip()
+    if metric:
+        meta = fields.get(metric)
+        if meta is None or meta.get("fieldType") != "METRIC":
+            return 1191
+    if dimension:
+        meta = fields.get(dimension)
+        if meta is None or meta.get("fieldType") != "DIMENSION":
+            return 1191
+    if calc:
+        return expr_error(calc, fields)
+    return None
+
+
+def project_comp(comp: dict) -> dict:
+    dataset = str(comp.get("dataset") or "METRIC_LIB")
+    rows = fact_rows(dataset)
+    fields = dataset_fields(dataset)
+    metric = str(comp.get("metric") or "").strip()
+    dimension = str(comp.get("dimension") or "").strip()
+    agg = str(comp.get("agg") or "SUM").upper()
+    if agg not in _AGG:
+        agg = "SUM"
+    calc = str(comp.get("calcExpression") or "").strip()
+    if calc:
+        value = eval_expr(calc, rows)
+        return {"columns": ["label", "value"], "rows": [{"label": calc, "value": value}], "total": 1}
+    if metric and dimension:
+        grouped: dict[str, list] = {}
+        for row in rows:
+            grouped.setdefault(str(row.get(dimension, "")), []).append(row)
+        out = []
+        for key, bucket in grouped.items():
+            value = aggregate_values(bucket, metric, agg)
+            out.append({"dim": key, dimension: key, "value": value, metric: value})
+        return {"columns": [dimension, metric], "rows": out, "total": len(out)}
+    if metric:
+        value = aggregate_values(rows, metric, agg)
+        label = fields.get(metric, {}).get("fieldLabel", metric)
+        return {"columns": ["label", "value"], "rows": [{"label": label, "value": value}], "total": 1}
+    columns = list(rows[0].keys()) if rows else []
+    return {"columns": columns, "rows": rows, "total": len(rows)}
+
+
+def target_comp(body: ReportQueryBody) -> dict:
+    comps = body.components or []
+    wanted = (body.compId or "").strip()
+    if wanted and wanted != "preview":
+        for item in comps:
+            if str(item.get("id") or item.get("compId") or "") == wanted:
+                return item
+    return comps[0] if comps else {}
 
 
 def iso(dt: datetime | None) -> str:
@@ -102,12 +390,108 @@ def iso(dt: datetime | None) -> str:
     return dt.astimezone(BJ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
 
+_REPORT_NO = re.compile(r"^RPT-(\d+)$")
+REPORT_EDIT_PERM = "bi:report:edit"
+
+
 def next_report_no(db: Session, tenant_id: int) -> str:
-    count = db.scalar(
-        select(func.count()).select_from(BiReportDef).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id)
-    )
-    seq = int(count or 0) + 1
+    """取本租户已有编号的最大值 +1。含已删除行，避免按条数重号。"""
+    numbers = db.scalars(
+        select(BiReportDef.report_no).where(BiReportDef.tenant_id == tenant_id).with_for_update()
+    ).all()
+    taken = {(item or "").strip() for item in numbers}
+    max_n = 0
+    for item in taken:
+        matched = _REPORT_NO.fullmatch(item)
+        if matched:
+            max_n = max(max_n, int(matched.group(1)))
+    seq = max_n + 1
+    while True:
+        candidate = f"RPT-{seq:04d}"
+        if candidate not in taken:
+            return candidate
+        seq += 1
+
+
+def repair_duplicate_report_nos() -> list[dict]:
+    """同一租户同一编号只留最早一行，其余改成当前最大号 +1。不删数据，可重复执行。"""
+    from sqlalchemy import text
+
+    from app.core import engine
+
+    logs: list[dict] = []
+    with engine.begin() as conn:
+        groups = conn.execute(
+            text(
+                "SELECT tenant_id, report_no FROM ims_bi_report_def "
+                "GROUP BY tenant_id, report_no HAVING COUNT(*) > 1 "
+                "ORDER BY tenant_id, report_no"
+            )
+        ).all()
+        for tenant_id, report_no in groups:
+            rows = conn.execute(
+                text(
+                    "SELECT id FROM ims_bi_report_def "
+                    "WHERE tenant_id = :tenant AND report_no = :no "
+                    "ORDER BY id ASC FOR UPDATE"
+                ),
+                {"tenant": tenant_id, "no": report_no},
+            ).all()
+            for (report_id,) in rows[1:]:
+                new_no = _next_free_report_no(conn, int(tenant_id))
+                conn.execute(
+                    text("UPDATE ims_bi_report_def SET report_no = :new WHERE id = :id"),
+                    {"new": new_no, "id": report_id},
+                )
+                entry = {
+                    "tenantId": int(tenant_id),
+                    "reportId": int(report_id),
+                    "oldNo": report_no,
+                    "newNo": new_no,
+                }
+                logs.append(entry)
+                logger.info(
+                    "报表编号去重 tenant=%s report_id=%s old=%s new=%s",
+                    entry["tenantId"],
+                    entry["reportId"],
+                    entry["oldNo"],
+                    entry["newNo"],
+                )
+    return logs
+
+
+def _next_free_report_no(conn, tenant_id: int) -> str:
+    from sqlalchemy import text
+
+    numbers = conn.execute(
+        text("SELECT report_no FROM ims_bi_report_def WHERE tenant_id = :tenant"),
+        {"tenant": tenant_id},
+    ).all()
+    taken = {(item[0] or "").strip() for item in numbers}
+    max_n = 0
+    for item in taken:
+        matched = _REPORT_NO.fullmatch(item)
+        if matched:
+            max_n = max(max_n, int(matched.group(1)))
+    seq = max_n + 1
+    while f"RPT-{seq:04d}" in taken:
+        seq += 1
     return f"RPT-{seq:04d}"
+
+
+def has_report_edit_perm(db: Session, actor: User) -> bool:
+    """内置 admin 在权限种子补齐前仍可编辑。其余用户必须持有 bi:report:edit。"""
+    if (actor.username or "") == "admin":
+        return True
+    from app.system_role import user_perm_codes
+
+    return REPORT_EDIT_PERM in set(user_perm_codes(db, actor.id))
+
+
+def reject_report_write(db: Session, row: BiReportDef, actor: User, action: str):
+    if not has_report_edit_perm(db, actor) or mutation_denied(row, actor, action):
+        return fail(403, "无报表编辑权限")
+    return None
 
 
 def parse_layout(raw: str) -> dict:
@@ -118,8 +502,47 @@ def parse_layout(raw: str) -> dict:
         return {}
 
 
-def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
+def report_caps(row: BiReportDef, actor: User | None) -> dict:
+    granted = actor is not None and row.creator_id != actor.id and report_share_granted(row, actor)
+    perm = (row.op_perm or "READONLY").upper()
+    if not granted:
+        return {"canEdit": True, "canCopy": True, "canDelete": True, "canExport": True, "canPublish": True}
+    return {
+        "canEdit": False,
+        "canCopy": perm == "COPY",
+        "canDelete": False,
+        "canExport": perm == "EXPORT",
+        "canPublish": False,
+    }
+
+
+def mutation_denied(row: BiReportDef, actor: User, action: str) -> str | None:
+    caps = report_caps(row, actor)
+    allowed = {
+        "edit": caps["canEdit"],
+        "copy": caps["canCopy"],
+        "delete": caps["canDelete"],
+        "export": caps["canExport"],
+        "publish": caps["canPublish"],
+    }
+    if allowed.get(action, False):
+        return None
+    return "当前为只读，不能编辑、复制、删除或导出"
+
+
+def report_def_vo(row: BiReportDef, names: dict[int, str], actor: User | None = None) -> dict:
     layout = parse_layout(row.layout_json)
+    comps = layout.get("comps") or []
+    if not isinstance(comps, list):
+        comps = []
+    datasets = []
+    for comp in comps:
+        if isinstance(comp, dict):
+            dataset = str(comp.get("dataset") or "").strip()
+            if dataset and dataset not in datasets:
+                datasets.append(dataset)
+    tags = [item for item in [row.category, row.report_type] if item]
+    caps = report_caps(row, actor)
     return {
         "id": row.id,
         "reportNo": row.report_no,
@@ -128,10 +551,25 @@ def report_def_vo(row: BiReportDef, names: dict[int, str]) -> dict:
         "category": row.category,
         "subCategory": row.sub_category,
         "status": row.status,
+        "shareScope": row.share_scope or "PRIVATE",
+        "metricNote": row.metric_note or "",
+        "version": int(row.report_version or 1),
+        "opPerm": row.op_perm or "READONLY",
+        "rowPerm": row.row_perm or "INHERIT",
+        "publishDest": row.publish_dest or "CENTER",
+        "menuName": row.menu_name or "",
+        "viewerIds": [int(item) for item in (row.viewer_ids or "").split(",") if item.strip().isdigit()],
+        "accessType": row.access_type or "SHARE_LINK",
+        "expireDays": int(row.expire_days or 7),
+        "hasPassword": bool(row.password_hash),
+        "dataset": "、".join(datasets) if datasets else "—",
+        "compCount": len(comps),
+        "tags": tags,
         "layoutMode": layout.get("layoutMode", "FREE"),
-        "comps": layout.get("comps", []),
+        "comps": comps,
         "creatorName": names.get(row.creator_id, ""),
         "updatedAt": iso(row.updated_at),
+        **caps,
     }
 
 STANDARD_REPORTS = [
@@ -185,14 +623,67 @@ STANDARD_REPORTS = [
     },
 ]
 
-MOCK_ROWS = {
+COLUMN_LABEL = {
+    "platform": "平台",
+    "accountName": "账号",
+    "followerCount": "粉丝数",
+    "workCount": "作品数",
+    "statusName": "状态",
+    "health": "健康度",
+    "reason": "异常原因",
+    "ipGroupName": "IP组",
+    "outputCount": "产出量",
+    "interact": "互动量",
+    "author": "作者",
+    "statDate": "日期",
+    "liveHours": "直播时长",
+    "cost": "成本",
+    "gmv": "GMV",
+    "revenue": "营收",
+    "roi": "ROI",
+    "member": "人员",
+    "roleName": "角色",
+    "capacity": "产能",
+    "alertName": "预警",
+    "levelName": "级别",
+}
+# 无仓库时的标准报表种子。ipGroupId 只参与筛选，不作为展示列。
+STANDARD_SEED = {
     "unified-account": [
-        {"platform": "抖音", "accountName": "神鱼体育官方", "followerCount": 128000, "workCount": 342},
-        {"platform": "视频号", "accountName": "神鱼精选", "followerCount": 86000, "workCount": 198},
+        {"platform": "抖音", "accountName": "神鱼体育官方", "followerCount": 128000, "workCount": 342, "statDate": "2026-09-12"},
+        {"platform": "视频号", "accountName": "神鱼精选", "followerCount": 86000, "workCount": 198, "statDate": "2026-09-18"},
+    ],
+    "account-status": [
+        {"accountName": "神鱼体育官方", "platform": "抖音", "statusName": "正常", "health": 92, "reason": "—"},
+        {"accountName": "神鱼精选", "platform": "视频号", "statusName": "关注", "health": 71, "reason": "互动下滑"},
+        {"accountName": "快手旗舰", "platform": "快手", "statusName": "异常", "health": 48, "reason": "登录失效"},
+    ],
+    "video-output": [
+        {"ipGroupName": "电竞一组", "ipGroupId": 1, "platform": "抖音", "outputCount": 28, "interact": 12600, "statDate": "2026-09-08"},
+        {"ipGroupName": "体育二组", "ipGroupId": 2, "platform": "视频号", "outputCount": 16, "interact": 8400, "statDate": "2026-09-21"},
+    ],
+    "live-duration": [
+        {"author": "主播-林晓", "statDate": "2026-09-11", "liveHours": 6.5, "platform": "抖音"},
+        {"author": "主播-周宁", "statDate": "2026-09-19", "liveHours": 4.0, "platform": "视频号"},
+        {"author": "主播-林晓", "statDate": "2026-09-26", "liveHours": 5.5, "platform": "抖音"},
+    ],
+    "cost-allocation": [
+        {"accountName": "神鱼体育官方", "ipGroupName": "电竞一组", "cost": 18600, "gmv": 128400},
+        {"accountName": "神鱼精选", "ipGroupName": "体育二组", "cost": 9200, "gmv": 86400},
     ],
     "roi": [
         {"ipGroupName": "电竞一组", "revenue": 520000, "cost": 310000, "roi": 1.68},
         {"ipGroupName": "体育二组", "revenue": 410000, "cost": 280000, "roi": 1.46},
+    ],
+    "team-config": [
+        {"ipGroupName": "电竞一组", "member": "林晓", "roleName": "主播", "capacity": 18},
+        {"ipGroupName": "电竞一组", "member": "周宁", "roleName": "运营", "capacity": 12},
+        {"ipGroupName": "体育二组", "member": "陈可", "roleName": "主播", "capacity": 15},
+    ],
+    "account-alert": [
+        {"accountName": "快手旗舰", "alertName": "登录失效", "levelName": "高", "statDate": "2026-09-22"},
+        {"accountName": "神鱼精选", "alertName": "互动下滑", "levelName": "中", "statDate": "2026-09-24"},
+        {"accountName": "神鱼体育官方", "alertName": "证书临期", "levelName": "低", "statDate": "2026-09-27"},
     ],
 }
 # 标准报表本地样本窗（dataAsOf 落在 2026-09）。未传日期时不截断。
@@ -215,14 +706,355 @@ def report_catalog(_: User = Depends(current_user)):
     return ok({"reports": STANDARD_REPORTS})
 
 
+def ensure_report_categories(db: Session, tenant_id: int) -> None:
+    count = db.scalar(
+        select(func.count()).select_from(BiReportCategory).where(
+            BiReportCategory.deleted == 0,
+            BiReportCategory.tenant_id == tenant_id,
+        )
+    )
+    if int(count or 0) > 0:
+        return
+    now = utcnow()
+    for name, system, children in CATEGORY_TREE:
+        parent = BiReportCategory(
+            name=name,
+            parent_id=0,
+            system_flag=system,
+            tenant_id=tenant_id,
+            created_at=now,
+        )
+        db.add(parent)
+        db.flush()
+        for child in children:
+            db.add(
+                BiReportCategory(
+                    name=child,
+                    parent_id=parent.id,
+                    system_flag=0,
+                    tenant_id=tenant_id,
+                    created_at=now,
+                )
+            )
+    db.flush()
+
+
+def category_rows(db: Session, tenant_id: int) -> list[BiReportCategory]:
+    ensure_report_categories(db, tenant_id)
+    return list(
+        db.scalars(
+            select(BiReportCategory)
+            .where(BiReportCategory.deleted == 0, BiReportCategory.tenant_id == tenant_id)
+            .order_by(BiReportCategory.id)
+        ).all()
+    )
+
+
+def category_tree(db: Session, tenant_id: int) -> list[dict]:
+    rows = category_rows(db, tenant_id)
+    children: dict[int, list[BiReportCategory]] = {}
+    for row in rows:
+        children.setdefault(int(row.parent_id or 0), []).append(row)
+    tree = []
+    for row in children.get(0, []):
+        kids = children.get(row.id, [])
+        tree.append(
+            {
+                "id": row.id,
+                "code": str(row.id),
+                "name": row.name,
+                "parentId": 0,
+                "system": bool(row.system_flag),
+                "children": [
+                    {
+                        "id": kid.id,
+                        "code": str(kid.id),
+                        "name": kid.name,
+                        "parentId": row.id,
+                        "system": False,
+                        "children": [],
+                    }
+                    for kid in kids
+                ],
+            }
+        )
+    return tree
+
+
+def category_match_names(db: Session, tenant_id: int, name: str) -> list[str]:
+    rows = category_rows(db, tenant_id)
+    found = next((row for row in rows if row.name == name), None)
+    if found is None:
+        return [name]
+    names = [found.name]
+    if not found.parent_id:
+        names.extend(row.name for row in rows if row.parent_id == found.id)
+    return names
+
+
+def category_list_clause(db: Session, tenant_id: int, name: str):
+    """树节点筛选。不在树上的分类（如遗留「内容分析」）在查询时归入「未分类」，不改库内原值。"""
+    rows = category_rows(db, tenant_id)
+    found = next((row for row in rows if row.name == name), None)
+    names = category_match_names(db, tenant_id, name)
+    matched = BiReportDef.category.in_(names)
+    if found is None or (found.name != "未分类" and not found.system_flag):
+        return matched
+    known = [row.name for row in rows if row.name]
+    orphan = or_(
+        BiReportDef.category.is_(None),
+        BiReportDef.category == "",
+        BiReportDef.category.notin_(known) if known else BiReportDef.category.isnot(None),
+    )
+    return or_(matched, orphan)
+
+
+def category_report_count(db: Session, tenant_id: int, names: list[str]) -> int:
+    if not names:
+        return 0
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(BiReportDef)
+            .where(
+                BiReportDef.deleted == 0,
+                BiReportDef.tenant_id == tenant_id,
+                or_(BiReportDef.category.in_(names), BiReportDef.sub_category.in_(names)),
+            )
+        )
+        or 0
+    )
+
+
+def category_node(db: Session, tenant_id: int, category_id: int) -> BiReportCategory | None:
+    row = db.get(BiReportCategory, category_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return None
+    return row
+
+
 @router.get("/categories")
-def report_categories(_: User = Depends(current_user)):
-    return ok({"categories": REPORT_CATEGORIES})
+def report_categories(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    return ok({"categories": category_tree(db, tenant_of(actor))})
+
+
+@router.post("/category")
+def report_category_save(body: CategoryBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    tenant_id = tenant_of(actor)
+    ensure_report_categories(db, tenant_id)
+    action = (body.action or "add").strip().lower()
+    if action == "add":
+        name = body.name.strip()
+        if not name:
+            return fail(1001, "请填写分类名称")
+        parent_id = int(body.parentId or 0)
+        if parent_id:
+            parent = category_node(db, tenant_id, parent_id)
+            if parent is None:
+                return fail(1001, "上级分类不存在")
+            if parent.parent_id:
+                return fail(1001, "分类最多两级")
+        dup = db.scalar(
+            select(BiReportCategory).where(
+                BiReportCategory.deleted == 0,
+                BiReportCategory.tenant_id == tenant_id,
+                BiReportCategory.parent_id == parent_id,
+                BiReportCategory.name == name,
+            )
+        )
+        if dup is not None:
+            return fail(1001, "分类已存在")
+        row = BiReportCategory(
+            name=name,
+            parent_id=parent_id,
+            system_flag=0,
+            tenant_id=tenant_id,
+            created_at=utcnow(),
+        )
+        db.add(row)
+        db.flush()
+        return ok({"id": row.id, "name": row.name, "parentId": row.parent_id, "level": 2 if parent_id else 1})
+    if action == "rename":
+        row = category_node(db, tenant_id, int(body.categoryId or 0))
+        if row is None:
+            return fail(1001, "分类不存在")
+        name = body.name.strip()
+        if not name:
+            return fail(1001, "请填写分类名称")
+        if row.system_flag or row.name == "未分类":
+            return fail(1001, "未分类不能改名")
+        previous = row.name
+        row.name = name
+        reports = list(
+            db.scalars(
+                select(BiReportDef).where(
+                    BiReportDef.deleted == 0,
+                    BiReportDef.tenant_id == tenant_id,
+                    BiReportDef.category == previous,
+                )
+            ).all()
+        )
+        for report in reports:
+            report.category = name
+        return ok({"id": row.id, "name": row.name})
+    if action == "delete":
+        row = category_node(db, tenant_id, int(body.categoryId or 0))
+        if row is None:
+            return fail(1001, "分类不存在")
+        if row.system_flag or row.name == "未分类":
+            return fail(1001, "未分类不能删除")
+        rows = category_rows(db, tenant_id)
+        removing = [row] + [item for item in rows if item.parent_id == row.id]
+        names = [item.name for item in removing]
+        occupied = category_report_count(db, tenant_id, names)
+        if occupied:
+            return fail(1001, f"该分类下有 {occupied} 个报表，请先移动")
+        for item in removing:
+            item.deleted = 1
+        return ok({"deleted": len(removing), "message": "分类已删除"})
+    return fail(1001, "分类操作无效")
+
+
+def imported_report_name(db: Session, tenant_id: int, name: str) -> str:
+    """导入报表在原名后加「(导入)」，避免和导出来源重名。"""
+
+    def taken(label: str) -> bool:
+        count = db.scalar(
+            select(func.count())
+            .select_from(BiReportDef)
+            .where(
+                BiReportDef.deleted == 0,
+                BiReportDef.tenant_id == tenant_id,
+                BiReportDef.report_name == label,
+            )
+        )
+        return int(count or 0) > 0
+
+    first = f"{name}(导入)"[:128]
+    if not taken(first):
+        return first
+    seq = 2
+    while True:
+        label = f"{name}(导入{seq})"[:128]
+        if not taken(label):
+            return label
+        seq += 1
+
+
+@router.post("/import")
+def report_import(body: ImportBody, db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    template = body.template
+    if not isinstance(template, dict):
+        return fail(1001, "文件格式不正确")
+    name = str(template.get("reportName") or template.get("name") or "").strip()
+    comps = template.get("comps")
+    if comps is None:
+        comps = template.get("components")
+    layout = template.get("layoutJson")
+    if comps is None and isinstance(layout, dict):
+        comps = layout.get("comps") or layout.get("components") or []
+    if not name or not isinstance(comps, list):
+        return fail(1001, "文件格式不正确")
+    known = {item["code"] for item in DATASETS if item.get("enabled", True)}
+    warnings = []
+    seen: set[str] = set()
+    for comp in comps:
+        if not isinstance(comp, dict):
+            return fail(1001, "文件格式不正确")
+        dataset = str(comp.get("dataset") or "").strip()
+        if dataset and dataset not in known and dataset not in seen:
+            seen.add(dataset)
+            warnings.append({"key": dataset, "message": f"数据源 {dataset} 需重新配置"})
+    tenant_id = tenant_of(actor)
+    name = imported_report_name(db, tenant_id, name)
+    rtype = str(template.get("reportType") or "REPORT").strip().upper() or "REPORT"
+    if rtype not in {"REPORT", "DASHBOARD"}:
+        rtype = "REPORT"
+    scope = str(template.get("shareScope") or "PRIVATE").strip().upper() or "PRIVATE"
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        scope = "PRIVATE"
+    now = utcnow()
+    row = BiReportDef(
+        report_no=next_report_no(db, tenant_id),
+        report_name=name,
+        report_type=rtype,
+        category=str(template.get("category") or "未分类").strip() or "未分类",
+        sub_category="",
+        status="DRAFT",
+        share_scope=scope,
+        layout_json=json.dumps({"layoutMode": "FREE", "comps": comps}, ensure_ascii=False),
+        creator_id=actor.id,
+        dept_id=primary_dept_id(db, actor.id, tenant_id),
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    names = user_names(db, [row.creator_id])
+    vo = report_def_vo(row, names, actor)
+    return ok(
+        {
+            **vo,
+            "reportId": row.id,
+            "compCount": len(comps),
+            "warnings": warnings,
+            "formatOk": True,
+        }
+    )
 
 
 @router.get("/datasets")
 def report_datasets(_: User = Depends(current_user)):
     return ok({"datasets": DATASETS, "compLib": COMP_LIB})
+
+
+@router.get("/viewers")
+def report_viewers(
+    keyword: str = "",
+    includeId: int = 0,
+    pageNo: int = 1,
+    pageSize: int = 50,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    """发布「指定人」人员名单。同租户启用用户，按账号或姓名检索。不走用户管理数据范围。"""
+    tenant_id = tenant_of(actor)
+    page_no, size = page_args(pageNo, pageSize)
+    stmt = select(User).where(
+        User.deleted == 0,
+        User.status == "ENABLED",
+        User.tenant_id == tenant_id,
+    )
+    text = keyword.strip()
+    if text:
+        like = f"%{text}%"
+        stmt = stmt.where(or_(User.username.like(like), User.nickname.like(like)))
+    total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
+    rows = list(
+        db.scalars(stmt.order_by(User.username.asc(), User.id.asc()).offset((page_no - 1) * size).limit(size)).all()
+    )
+    if includeId > 0 and all(row.id != includeId for row in rows):
+        extra = db.scalar(
+            select(User).where(User.id == includeId, User.deleted == 0, User.tenant_id == tenant_id)
+        )
+        if extra is not None:
+            rows.append(extra)
+    return ok(
+        {
+            "list": [
+                {
+                    "id": str(row.id),
+                    "username": row.username,
+                    "nickname": row.nickname or row.username,
+                }
+                for row in rows
+            ],
+            "total": total,
+            "pageNo": page_no,
+            "pageSize": size,
+        }
+    )
 
 
 @router.get("/list")
@@ -232,6 +1064,7 @@ def report_manage_list(
     reportType: str | None = None,
     category: str | None = None,
     status: str | None = None,
+    shareScope: str | None = None,
     pageNo: int = 1,
     pageSize: int = 10,
     db: Session = Depends(db_session),
@@ -241,26 +1074,30 @@ def report_manage_list(
     from app.bi_br212_seed import ensure_bi_br212_seed
 
     ensure_bi_br212_seed(db)
-    q = restrict_report_def(
-        select(BiReportDef).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id),
+    scoped_ids = restrict_report_def(
+        select(BiReportDef.id).where(BiReportDef.deleted == 0, BiReportDef.tenant_id == tenant_id),
         request.state.scope,
         tenant_id,
     )
+    granted_ids = select(BiReportDef.id).where(share_grant_clause(actor))
+    q = select(BiReportDef).where(BiReportDef.id.in_(scoped_ids.union(granted_ids)))
     if keyword:
         kw = f"%{keyword.strip()}%"
         q = q.where((BiReportDef.report_name.like(kw)) | (BiReportDef.report_no.like(kw)))
     if reportType:
         q = q.where(BiReportDef.report_type == reportType.strip().upper())
     if category:
-        q = q.where(BiReportDef.category == category.strip())
+        q = q.where(category_list_clause(db, tenant_id, category.strip()))
     if status:
         q = q.where(BiReportDef.status == status.strip().upper())
+    if shareScope:
+        q = q.where(BiReportDef.share_scope == shareScope.strip().upper())
     page_no, size = page_args(pageNo, pageSize)
     stmt = q.order_by(BiReportDef.id.desc())
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = list(db.scalars(stmt.offset((page_no - 1) * size).limit(size)).all())
     names = user_names(db, [r.creator_id for r in rows])
-    return paged([report_def_vo(r, names) for r in rows], total, page_no, size)
+    return paged([report_def_vo(r, names, actor) for r in rows], total, page_no, size)
 
 
 @router.post("")
@@ -272,6 +1109,9 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
     rtype = body.reportType.strip().upper() or "REPORT"
     if rtype not in {"REPORT", "DASHBOARD"}:
         return fail(1001, "报表类型无效")
+    scope = (body.shareScope or "PRIVATE").strip().upper() or "PRIVATE"
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        return fail(1001, "可见范围无效")
     now = utcnow()
     row = BiReportDef(
         report_no=next_report_no(db, tenant_id),
@@ -280,6 +1120,9 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
         category=body.category.strip() or "内容分析",
         sub_category=body.subCategory.strip(),
         status="DRAFT",
+        share_scope=scope,
+        metric_note=(body.metricNote or "").strip()[:512],
+        report_version=1,
         layout_json="{}",
         creator_id=actor.id,
         dept_id=primary_dept_id(db, actor.id, tenant_id),
@@ -290,7 +1133,55 @@ def report_manage_create(body: ReportCreateBody, db: Session = Depends(db_sessio
     db.add(row)
     db.flush()
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
+
+
+@router.get("/edit-perm")
+def report_edit_perm(db: Session = Depends(db_session), actor: User = Depends(current_user)):
+    from app.system_role import user_perm_codes
+
+    granted = REPORT_EDIT_PERM in set(user_perm_codes(db, actor.id))
+    return ok({"permCode": REPORT_EDIT_PERM, "granted": granted, "allowed": has_report_edit_perm(db, actor)})
+
+
+@router.get("/published-menus")
+def published_menus(
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    rows = list(
+        db.scalars(
+            select(BiReportDef)
+            .where(
+                BiReportDef.deleted == 0,
+                BiReportDef.tenant_id == tenant_id,
+                BiReportDef.status == "PUBLISHED",
+                BiReportDef.publish_dest.like("%MENU%"),
+                BiReportDef.menu_name != "",
+            )
+            .order_by(BiReportDef.id.desc())
+        ).all()
+    )
+    items = []
+    for row in rows:
+        if not report_row_visible(db, row, actor, request.state.scope):
+            continue
+        can_design = report_caps(row, actor)["canEdit"] and has_report_edit_perm(db, actor)
+        items.append(
+            {
+                "reportId": row.id,
+                "menuName": row.menu_name,
+                "canDesign": can_design,
+                "path": (
+                    f"/ims/bi/report/designer?reportId={row.id}"
+                    if can_design
+                    else f"/ims/bi/report/preview?reportId={row.id}"
+                ),
+            }
+        )
+    return ok({"list": items})
 
 
 @router.get("/{report_id:int}")
@@ -307,7 +1198,7 @@ def report_design_get(
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
 
 
 @router.put("/{report_id:int}")
@@ -324,6 +1215,9 @@ def report_design_save(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
+    denied = reject_report_write(db, row, actor, "edit")
+    if denied:
+        return denied
     if body.reportName.strip():
         row.report_name = body.reportName.strip()
     if body.layoutJson is not None:
@@ -331,13 +1225,89 @@ def report_design_save(
         if "layoutMode" not in layout:
             layout = {**layout, "layoutMode": "FREE"}
         row.layout_json = json.dumps(layout, ensure_ascii=False)
+        if row.status == "PUBLISHED" and not body.keepVersion:
+            row.report_version = int(row.report_version or 1) + 1
     row.updated_at = utcnow()
     names = user_names(db, [row.creator_id])
-    return ok(report_def_vo(row, names))
+    return ok(report_def_vo(row, names, actor))
 
 
-@router.post("/{report_id:int}/publish")
-def report_design_publish(
+def pack_viewer_ids(ids: list[int]) -> str:
+    clean = []
+    for item in ids:
+        try:
+            num = int(item)
+        except (TypeError, ValueError):
+            continue
+        if num > 0 and num not in clean:
+            clean.append(num)
+    if not clean:
+        return ""
+    return "," + ",".join(str(item) for item in clean) + ","
+
+
+def publish_vo(row: BiReportPublish, names: dict[int, str]) -> dict:
+    return {
+        "publishId": row.id,
+        "reportId": row.report_id,
+        "dest": row.dest,
+        "shareScope": row.share_scope,
+        "opPerm": row.op_perm,
+        "rowPerm": row.row_perm,
+        "menuName": row.menu_name,
+        "accessType": row.access_type,
+        "expireDays": int(row.expire_days or 7),
+        "hasPassword": bool(row.password_hash),
+        "snapshotVersion": row.snapshot_version,
+        "status": row.status,
+        "shareUrl": row.share_url,
+        "publisherName": names.get(row.publisher_id, ""),
+        "publishedAt": iso(row.created_at),
+    }
+
+
+@router.post("/{report_id:int}/copy")
+def report_copy(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    src = db.get(BiReportDef, report_id)
+    if src is None or src.deleted or src.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, src, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    denied = mutation_denied(src, actor, "copy")
+    if denied:
+        return fail(1008, denied)
+    now = utcnow()
+    row = BiReportDef(
+        report_no=next_report_no(db, tenant_id),
+        report_name=f"{src.report_name}副本"[:128],
+        report_type=src.report_type,
+        category=src.category,
+        sub_category=src.sub_category,
+        status="DRAFT",
+        share_scope="PRIVATE",
+        metric_note=src.metric_note or "",
+        report_version=1,
+        layout_json=src.layout_json or "{}",
+        creator_id=actor.id,
+        dept_id=primary_dept_id(db, actor.id, tenant_id),
+        tenant_id=tenant_id,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    names = user_names(db, [row.creator_id])
+    return ok(report_def_vo(row, names, actor))
+
+
+@router.get("/{report_id:int}/export")
+def report_export(
     report_id: int,
     request: Request,
     db: Session = Depends(db_session),
@@ -349,11 +1319,177 @@ def report_design_publish(
         return fail(1001, "报表不存在")
     if not report_row_visible(db, row, actor, request.state.scope):
         return fail(1008, "无权查看该报表")
-    row.status = "PUBLISHED"
+    denied = mutation_denied(row, actor, "export")
+    if denied:
+        return fail(1008, denied)
+    layout = parse_layout(row.layout_json)
+    return ok(
+        {
+            "template": {
+                "reportName": row.report_name,
+                "reportType": row.report_type,
+                "category": row.category,
+                "version": int(row.report_version or 1),
+                "layoutJson": layout,
+            }
+        }
+    )
+
+
+@router.delete("/{report_id:int}")
+def report_delete(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(BiReportDef, report_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    denied = reject_report_write(db, row, actor, "delete")
+    if denied:
+        return denied
+    row.deleted = 1
     row.updated_at = utcnow()
-    names = user_names(db, [row.creator_id])
-    vo = report_def_vo(row, names)
-    return ok({**vo, "dest": "center", "shareUrl": f"/ims/bi/report/list?highlight={row.id}"})
+    return ok({"id": row.id, "deleted": True})
+
+
+@router.get("/{report_id:int}/publish/list")
+def report_publish_list(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(BiReportDef, report_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    rows = list(
+        db.scalars(
+            select(BiReportPublish)
+            .where(
+                BiReportPublish.report_id == report_id,
+                BiReportPublish.deleted == 0,
+                BiReportPublish.tenant_id == tenant_id,
+            )
+            .order_by(BiReportPublish.id.desc())
+        ).all()
+    )
+    names = user_names(db, [item.publisher_id for item in rows])
+    return ok({"list": [publish_vo(item, names) for item in rows]})
+
+
+@router.post("/{report_id:int}/publish")
+def report_design_publish(
+    report_id: int,
+    request: Request,
+    body: PublishBody | None = None,
+    db: Session = Depends(db_session),
+    actor: User = Depends(current_user),
+):
+    tenant_id = tenant_of(actor)
+    row = db.get(BiReportDef, report_id)
+    if row is None or row.deleted or row.tenant_id != tenant_id:
+        return fail(1001, "报表不存在")
+    if not report_row_visible(db, row, actor, request.state.scope):
+        return fail(1008, "无权查看该报表")
+    denied = reject_report_write(db, row, actor, "publish")
+    if denied:
+        return denied
+    cfg = body or PublishBody()
+    raw_dests = [str(item).strip().upper() for item in (cfg.dests or []) if str(item).strip()]
+    if not raw_dests:
+        raw_dests = [(cfg.dest or "CENTER").strip().upper() or "CENTER"]
+    dests: list[str] = []
+    for item in raw_dests:
+        if item not in dests:
+            dests.append(item)
+    if any(item not in {"CENTER", "MENU"} for item in dests):
+        return fail(1001, "发布去向无效")
+    menu_name = (cfg.menuName or "").strip()
+    if "MENU" in dests and not menu_name:
+        return fail(1001, "请填写菜单名称")
+    scope = (cfg.shareScope or row.share_scope or "PRIVATE").strip().upper()
+    if scope not in {"PRIVATE", "SPECIFIED", "ALL"}:
+        return fail(1001, "可见范围无效")
+    op_perm = (cfg.opPerm or "READONLY").strip().upper()
+    if op_perm not in {"READONLY", "EXPORT", "COPY"}:
+        return fail(1001, "操作权限无效")
+    row_perm = (cfg.rowPerm or "INHERIT").strip().upper()
+    if row_perm not in {"INHERIT", "SNAPSHOT"}:
+        return fail(1001, "行权限无效")
+    access = (cfg.accessType or row.access_type or "SHARE_LINK").strip().upper() or "SHARE_LINK"
+    if access not in {"SHARE_LINK", "SSO"}:
+        return fail(1001, "访问方式无效")
+    days = cfg.expireDays
+    if isinstance(days, bool) or not isinstance(days, int) or days < 7 or days > 30:
+        return fail(1197, "分享有效期须为 7~30 天")
+    if cfg.passwordEnabled:
+        secret = (cfg.password or "").strip()
+        if len(secret) < 8:
+            return fail(1001, "密码至少 8 位")
+        password_hash = hash_password(secret)
+    else:
+        password_hash = ""
+    viewers = pack_viewer_ids(cfg.viewerIds)
+    if scope == "SPECIFIED" and not viewers:
+        return fail(1001, "请选择可见用户")
+    dest = ",".join(dests)
+    republish = row.status == "PUBLISHED"
+    row.status = "PUBLISHED"
+    if republish:
+        row.report_version = int(row.report_version or 1) + 1
+    elif not row.report_version:
+        row.report_version = 1
+    row.share_scope = scope
+    row.op_perm = op_perm
+    row.row_perm = row_perm
+    row.publish_dest = dest
+    row.menu_name = menu_name if "MENU" in dests else ""
+    row.viewer_ids = viewers if scope == "SPECIFIED" else ""
+    row.access_type = access
+    row.expire_days = days
+    row.password_hash = password_hash
+    row.updated_at = utcnow()
+    share_url = f"/ims/bi/report/list?highlight={row.id}"
+    record = BiReportPublish(
+        report_id=row.id,
+        dest=dest,
+        share_scope=scope,
+        op_perm=op_perm,
+        row_perm=row_perm,
+        viewer_ids=row.viewer_ids,
+        menu_name=row.menu_name,
+        access_type=access,
+        expire_days=days,
+        password_hash=password_hash,
+        snapshot_version=int(row.report_version or 1),
+        status="ACTIVE",
+        share_url=share_url,
+        publisher_id=actor.id,
+        tenant_id=tenant_id,
+        created_at=row.updated_at,
+    )
+    db.add(record)
+    db.flush()
+    names = user_names(db, [row.creator_id, actor.id])
+    vo = report_def_vo(row, names, actor)
+    return ok(
+        {
+            **vo,
+            "dest": dest,
+            "dests": dests,
+            "publishId": record.id,
+            "shareUrl": share_url,
+            "menuNote": "已加入侧栏「数据决策」" if "MENU" in dests else "",
+        }
+    )
 
 
 @router.post("/query")
@@ -362,11 +1498,20 @@ def report_design_query(
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
-    comp_id = body.compId or "preview"
-    rows = [
-        {"dim": "示例A", "value": 128},
-        {"dim": "示例B", "value": 96},
-    ]
+    comp = target_comp(body)
+    comp_id = body.compId or str(comp.get("id") or "preview")
+    if comp:
+        err = binding_error(comp)
+        if err == 1191:
+            return fail(1191, "字段引用非法")
+        if err == 1192:
+            return fail(1192, "计算字段表达式非法")
+        projected = project_comp(comp)
+        dataset = str(comp.get("dataset") or "METRIC_LIB")
+    else:
+        rows = fact_rows("METRIC_LIB")
+        projected = {"columns": list(rows[0].keys()) if rows else [], "rows": rows, "total": len(rows)}
+        dataset = "METRIC_LIB"
     started = time.perf_counter()
     elapsed = max(round((time.perf_counter() - started) * 1000, 1), 1)
     record_bi_query(
@@ -377,7 +1522,7 @@ def report_design_query(
         "DESIGN",
         "SYNC",
         elapsed,
-        len(rows),
+        int(projected["total"]),
     )
     return ok(
         {
@@ -385,9 +1530,12 @@ def report_design_query(
             "status": "SYNC",
             "queryMode": "SYNC",
             "costMs": elapsed,
-            "columns": list(rows[0].keys()),
-            "rows": rows,
-            "total": len(rows),
+            "columns": projected["columns"],
+            "rows": projected["rows"],
+            "total": projected["total"],
+            "cacheHit": True,
+            "dataAsOf": "2026-10-03T14:00:00+08:00",
+            "dataset": dataset,
         }
     )
 
@@ -553,6 +1701,44 @@ def standard_platform(raw: str | None) -> str:
     return PLATFORM_LABEL.get(text, text)
 
 
+def standard_visuals(title: str, rows: list[dict], grain: str) -> tuple[list[dict], list[dict]]:
+    numeric_key = ""
+    label_key = ""
+    for row in rows:
+        for key, value in row.items():
+            if key == "ipGroupId":
+                continue
+            if not numeric_key and isinstance(value, (int, float)) and key != "roi":
+                numeric_key = key
+            if not label_key and isinstance(value, str) and key in {"statDate", "platform", "ipGroupName", "accountName", "author"}:
+                label_key = key
+        if numeric_key and label_key:
+            break
+    total = 0.0
+    if numeric_key:
+        total = float(sum(float(row.get(numeric_key) or 0) for row in rows))
+    kpis = [
+        {"metric": "记录数", "value": len(rows), "note": title},
+        {
+            "metric": COLUMN_LABEL.get(numeric_key, "合计") if numeric_key else "合计",
+            "value": round(total, 2) if numeric_key else len(rows),
+            "note": "种子数据合计" if numeric_key else "与明细行数一致",
+        },
+    ]
+    if not rows or not numeric_key:
+        return kpis, []
+    if grain == "WEEK":
+        trend = [{"label": "当周", "value": round(total, 2)}]
+    elif grain == "MONTH":
+        trend = [{"label": "当月", "value": round(total, 2)}]
+    else:
+        trend = []
+        for row in rows:
+            label = str(row.get(label_key) or row.get("statDate") or title)
+            trend.append({"label": label, "value": float(row.get(numeric_key) or 0)})
+    return kpis, trend
+
+
 @router.get("/{code}")
 def report_preview(
     code: str,
@@ -560,6 +1746,7 @@ def report_preview(
     platform: str | None = None,
     dateFrom: str = "",
     dateTo: str = "",
+    timeGrain: str = "DAY",
     _: Session = Depends(db_session),
     __: User = Depends(current_user),
 ):
@@ -575,10 +1762,12 @@ def report_preview(
             return fail(1001, "日期格式应为 yyyy-MM-dd")
         if day_from > day_to:
             return fail(1001, "开始日期不能晚于结束日期")
-    source = MOCK_ROWS.get(code)
-    placeholder = source is None
-    rows = [dict(item) for item in source] if source else [{"metric": "sample", "value": 1, "note": f"占位数据 · {code}"}]
+    source = STANDARD_SEED.get(code) or []
+    rows = [dict(item) for item in source]
     label = standard_platform(platform)
+    grain = (timeGrain or "DAY").strip().upper()
+    if grain not in {"DAY", "WEEK", "MONTH"}:
+        grain = "DAY"
     outside = bool(day_from and day_to and (day_to < REPORT_SAMPLE_FROM or day_from > REPORT_SAMPLE_TO))
     empty = False
     empty_reason = ""
@@ -587,18 +1776,27 @@ def report_preview(
         rows = []
         empty = True
         empty_reason = "当前日期下暂无数据"
-    elif label and placeholder:
-        rows = []
-        empty = True
-        empty_reason = "当前平台下暂无数据"
-    elif label and any("platform" in item for item in rows):
-        rows = [item for item in rows if item.get("platform") == label]
-        if not rows:
-            empty = True
-            empty_reason = "当前平台下暂无数据"
-    elif label:
-        filter_note = "本报表不含平台列，筛选未改变结果"
-    columns = list(rows[0].keys()) if rows else (list(source[0].keys()) if source else ["metric", "value", "note"])
+    else:
+        if label and any("platform" in item for item in source):
+            rows = [item for item in rows if item.get("platform") == label]
+            if not rows:
+                empty = True
+                empty_reason = "当前平台下暂无数据"
+        elif label:
+            filter_note = "本报表不含平台列，筛选未改变结果"
+        if ipGroupId and not empty and any("ipGroupId" in item for item in source):
+            rows = [item for item in rows if int(item.get("ipGroupId") or 0) == int(ipGroupId)]
+            if not rows:
+                empty = True
+                empty_reason = "当前 IP 组下暂无数据"
+                filter_note = ""
+        elif ipGroupId:
+            extra = "本报表不含 IP 组，筛选未改变结果"
+            filter_note = f"{filter_note} · {extra}" if filter_note else extra
+    display_keys = [key for key in (rows[0].keys() if rows else (source[0].keys() if source else [])) if key != "ipGroupId"]
+    columns = [COLUMN_LABEL.get(key, key) for key in display_keys]
+    display_rows = [{COLUMN_LABEL.get(key, key): item.get(key) for key in display_keys} for item in rows]
+    kpis, trend = standard_visuals(meta["title"], rows, grain)
     return ok(
         {
             "code": code,
@@ -608,10 +1806,13 @@ def report_preview(
                 "platform": label,
                 "dateFrom": day_from,
                 "dateTo": day_to,
+                "timeGrain": grain,
             },
+            "kpis": kpis,
+            "trend": trend,
             "columns": columns,
-            "rows": rows,
-            "total": len(rows),
+            "rows": display_rows,
+            "total": len(display_rows),
             "dataAsOf": "2026-09-30T23:59:59+08:00",
             "empty": empty,
             "emptyReason": empty_reason,

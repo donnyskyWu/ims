@@ -30,7 +30,7 @@ test.describe('bi share revoke and empty closure', () => {
     const createReportResp = page.waitForResponse(
       (r) => r.url().includes('/bi/report') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await reportModal.getByRole('button', { name: '保存草稿' }).click()
+    await reportModal.getByRole('button', { name: '创建并进入设计器' }).click()
     const createReportBody = (await (await createReportResp).json()) as { code: number; data?: { id: number } }
     expect(createReportBody.code).toBe(0)
     const reportId = createReportBody.data!.id

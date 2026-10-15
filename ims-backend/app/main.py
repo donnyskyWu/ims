@@ -228,6 +228,60 @@ def ensure_bi_share_note_column() -> None:
         )
 
 
+def ensure_bi_report_scope_column() -> None:
+    """已有库补报表可见范围。create_all 不会给旧表加列。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "ims_bi_report_def" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("ims_bi_report_def")}
+    alters: list[str] = []
+    if "share_scope" not in cols:
+        alters.append("ADD COLUMN share_scope VARCHAR(16) NOT NULL DEFAULT 'PRIVATE'")
+    if "metric_note" not in cols:
+        alters.append("ADD COLUMN metric_note VARCHAR(512) NOT NULL DEFAULT ''")
+    if "report_version" not in cols:
+        alters.append("ADD COLUMN report_version INT NOT NULL DEFAULT 1")
+    if "op_perm" not in cols:
+        alters.append("ADD COLUMN op_perm VARCHAR(16) NOT NULL DEFAULT 'READONLY'")
+    if "row_perm" not in cols:
+        alters.append("ADD COLUMN row_perm VARCHAR(16) NOT NULL DEFAULT 'INHERIT'")
+    if "publish_dest" not in cols:
+        alters.append("ADD COLUMN publish_dest VARCHAR(32) NOT NULL DEFAULT 'CENTER'")
+    if "menu_name" not in cols:
+        alters.append("ADD COLUMN menu_name VARCHAR(64) NOT NULL DEFAULT ''")
+    if "viewer_ids" not in cols:
+        alters.append("ADD COLUMN viewer_ids VARCHAR(512) NOT NULL DEFAULT ''")
+    if "access_type" not in cols:
+        alters.append("ADD COLUMN access_type VARCHAR(16) NOT NULL DEFAULT 'SHARE_LINK'")
+    if "expire_days" not in cols:
+        alters.append("ADD COLUMN expire_days INT NOT NULL DEFAULT 7")
+    if "password_hash" not in cols:
+        alters.append("ADD COLUMN password_hash VARCHAR(128) NOT NULL DEFAULT ''")
+    if alters:
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE ims_bi_report_def {', '.join(alters)}"))
+    if "ims_bi_report_publish" in insp.get_table_names():
+        pub_cols = {c["name"] for c in insp.get_columns("ims_bi_report_publish")}
+        pub_alters: list[str] = []
+        if "expire_days" not in pub_cols:
+            pub_alters.append("ADD COLUMN expire_days INT NOT NULL DEFAULT 7")
+        if "password_hash" not in pub_cols:
+            pub_alters.append("ADD COLUMN password_hash VARCHAR(128) NOT NULL DEFAULT ''")
+        if pub_alters:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE ims_bi_report_publish {', '.join(pub_alters)}"))
+
+    from app.bi_report import repair_duplicate_report_nos
+
+    repair_duplicate_report_nos()
+    index_names = {item.get("name") for item in inspect(engine).get_indexes("ims_bi_report_def")}
+    if "uk_bi_report_no" not in index_names:
+        with engine.begin() as conn:
+            conn.execute(text("CREATE UNIQUE INDEX uk_bi_report_no ON ims_bi_report_def (tenant_id, report_no)"))
+
+
 def ensure_bi_br212_columns() -> None:
     from sqlalchemy import inspect, text
 
@@ -503,6 +557,7 @@ def init_db() -> None:
     ensure_content_sop_dag_columns()
     ensure_work_task_sop_column()
     ensure_bi_br212_columns()
+    ensure_bi_report_scope_column()
     ensure_bi_share_note_column()
     ensure_asset_purchase_column()
     ensure_train_stat_schema()

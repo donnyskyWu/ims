@@ -79,7 +79,7 @@ test.describe('bi local tails 240', () => {
     const createReportResp = page.waitForResponse(
       (r) => r.url().includes('/bi/report') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await reportModal.getByRole('button', { name: '保存草稿' }).click()
+    await reportModal.getByRole('button', { name: '创建并进入设计器' }).click()
     const reportBody = (await (await createReportResp).json()) as { code: number; data?: { id: number } }
     expect(reportBody.code).toBe(0)
     const reportId = reportBody.data!.id
@@ -88,7 +88,7 @@ test.describe('bi local tails 240', () => {
     await page.getByRole('button', { name: '订阅推送' }).click()
     const subModal = page.locator('.modal-mask .card').filter({ hasText: '新建订阅' })
     await subModal.locator('input.fld-in').first().fill(`时刻 ${label}`)
-    await subModal.locator('input[type="number"]').fill(String(reportId))
+    await subModal.getByTestId('bi-sub-report').selectOption(String(reportId))
     await subModal.getByTestId('bi-sub-push-time').fill('25:99')
     await subModal.getByRole('button', { name: '保存' }).click()
     await expect(subModal.getByTestId('bi-sub-push-error')).toContainText('推送时刻应为 HH:mm')

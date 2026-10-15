@@ -17,7 +17,8 @@
               v-if="item.kind === 'leaf'"
               class="nav-item"
               :class="{ active: item.id === currentId }"
-              @click="go(item.id)"
+              :data-testid="item.path ? 'bi-side-menu' : undefined"
+              @click="go(item)"
             >
               <Ico :name="item.icon" />
               <span>{{ item.label }}</span>
@@ -35,7 +36,7 @@
                 :key="child.id"
                 class="nav-item sub"
                 :class="{ active: child.id === currentId }"
-                @click="go(child.id)"
+                @click="go(child)"
               >
                 <Ico :name="child.icon" :size="14" />
                 <span>{{ child.label }}</span>
@@ -85,14 +86,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { http } from '../api/http'
 import Ico from '../components/Ico.vue'
 import MessageBell from '../components/MessageBell.vue'
 import { codeLabel, crumbOf, groups, isSub, modIdFromPath, mods, pathOf } from '../nav/menu'
 import { useUserStore } from '../stores/user'
 
-type Leaf = { kind: 'leaf'; key: string; id: string; label: string; icon: string; code: string }
+type Leaf = { kind: 'leaf'; key: string; id: string; label: string; icon: string; code: string; path?: string }
 type Child = { id: string; label: string; icon: string }
 type Folder = { kind: 'folder'; key: string; id: string; label: string; icon: string; code: string; active: boolean; children: Child[] }
 
@@ -107,6 +109,7 @@ const roleBtn = ref<HTMLElement | null>(null)
 const menuEl = ref<HTMLElement | null>(null)
 const closedGroups = ref<Record<string, boolean>>({})
 const closedSubs = ref<Record<string, boolean>>({})
+const publishedMenus = ref<{ reportId: number; menuName: string; path: string }[]>([])
 
 const currentId = computed(() => modIdFromPath(route.path))
 const crumb = computed(() => crumbOf(currentId.value))
@@ -125,7 +128,7 @@ const visibleGroups = computed(() => {
           const mod = mods[item]
           const label = mod?.name || item
           if (hit(label) || hit(name)) {
-            visible.push({ kind: 'leaf', key: item, id: item, label, icon: mod?.icon || 'doc', code: codeLabel(mod) })
+            visible.push({ kind: 'leaf', key: item, id: item, label, icon: mod?.icon || 'doc', code: name === '数据决策' ? '' : codeLabel(mod) })
           }
           continue
         }
@@ -140,10 +143,25 @@ const visibleGroups = computed(() => {
             id: item.id,
             label: item.label,
             icon: folder?.icon || 'doc',
-            code: codeLabel(folder),
+            code: name === '数据决策' ? '' : codeLabel(folder),
             active: item.children.includes(currentId.value),
             children,
           })
+        }
+      }
+      if (name === '数据决策') {
+        for (const menu of publishedMenus.value) {
+          if (hit(menu.menuName) || hit(name)) {
+            visible.push({
+              kind: 'leaf',
+              key: `bi-menu-${menu.reportId}`,
+              id: `bi-menu-${menu.reportId}`,
+              label: menu.menuName,
+              icon: 'doc',
+              code: '',
+              path: menu.path,
+            })
+          }
         }
       }
       return { name, items: visible }
@@ -161,10 +179,10 @@ function toggleGroup(name: string) {
 function toggleSub(id: string) {
   closedSubs.value = { ...closedSubs.value, [id]: !closedSubs.value[id] }
 }
-function go(id: string) {
+function go(item: { id: string; path?: string }) {
   drawer.value = false
   userMenu.value = false
-  router.push(pathOf(id))
+  router.push(item.path || pathOf(item.id))
 }
 function onDoc(event: MouseEvent) {
   const target = event.target as Node
@@ -177,9 +195,21 @@ async function exit() {
   await user.logout()
   router.push('/login')
 }
+async function loadPublishedMenus() {
+  try {
+    const res = await http.get('/bi/report/published-menus')
+    publishedMenus.value = res.data.data?.list || []
+  } catch {
+    publishedMenus.value = []
+  }
+}
 onMounted(() => {
   window.addEventListener('resize', onResize)
   document.addEventListener('click', onDoc)
+  void loadPublishedMenus()
+})
+watch(() => route.fullPath, () => {
+  void loadPublishedMenus()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)

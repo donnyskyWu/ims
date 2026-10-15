@@ -44,21 +44,20 @@
             <tr v-for="row in subs" v-else :key="row.id">
               <td>{{ row.subName }}</td>
               <td>
-                {{ periodLabel(row.period) }}
-                <span class="csub" data-testid="bi-sub-period-code">{{ periodCode(row.period) }}</span>
-                {{ row.pushTime }}
+                {{ periodLabel(row.period, row.pushTime) }} {{ clockOf(row.pushTime) }}
                 <div class="csub" data-testid="bi-sub-next-push">下次 {{ row.nextPushAt || '不调度' }}</div>
               </td>
               <td>{{ row.reportName }}</td>
-              <td>{{ row.channels }}</td>
-              <td><span class="tag" :style="subStatusStyle(row.status)"><span class="dot"></span>{{ row.status === 'ACTIVE' ? '生效' : '暂停' }}</span></td>
+              <td>{{ channelLabel(row.channels) }}</td>
+              <td><span class="tag" :style="subStatusStyle(row.status)" data-testid="bi-sub-status"><span class="dot"></span>{{ row.status === 'ACTIVE' ? '订阅中' : '已暂停' }}</span></td>
               <td>
                 <span class="tag" :style="pushStatusStyle(row.lastPushStatus)">{{ pushStatusLabel(row.lastPushStatus) }}</span>
               </td>
               <td>{{ row.lastPushAt }}</td>
               <td data-testid="bi-sub-next">{{ row.nextPushAt || '—' }}</td>
               <td>
-                <span class="btn-txt btn" @click="toggleSub(row)">{{ row.status === 'ACTIVE' ? '暂停' : '恢复' }}</span>
+                <span class="btn-txt btn" data-testid="bi-sub-edit" @click="openEdit(row)">编辑</span>
+                <span class="btn-txt btn" data-testid="bi-sub-pause" @click="askToggle(row)">{{ row.status === 'ACTIVE' ? '暂停' : '恢复' }}</span>
                 <span v-if="row.status === 'ACTIVE'" class="btn-txt btn" @click="askPush(row)">立即推送</span>
                 <span class="btn-txt btn" data-testid="bi-sub-snapshot-open" @click="viewSnapshot(row)">查看快照</span>
                 <span class="btn-txt btn" data-testid="bi-sub-cancel" @click="cancelSub(row)">取消</span>
@@ -208,19 +207,37 @@
 
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 400px; padding: 18px">
-        <h3 style="margin: 0 0 10px">新建订阅</h3>
-        <label class="fld">名称</label>
+        <h3 style="margin: 0 0 10px">{{ editingId ? '编辑订阅' : '新建订阅' }}</h3>
+        <label class="fld">名称<i class="req">*</i></label>
         <input v-model="form.subName" class="fld-in" data-testid="bi-sub-name" />
-        <label class="fld">报表 ID</label>
-        <input v-model.number="form.reportId" class="fld-in" data-testid="bi-sub-report" type="number" />
-        <label class="fld">周期</label>
+        <p v-if="fieldErrors.subName" class="hint" data-testid="bi-sub-err-name" style="color: var(--red)">{{ fieldErrors.subName }}</p>
+        <label class="fld">报表<i class="req">*</i></label>
+        <select v-model="form.reportId" class="fld-in" data-testid="bi-sub-report">
+          <option value="">请选择报表</option>
+          <option v-for="item in reportOptions" :key="item.id" :value="String(item.id)">{{ item.reportName }}</option>
+        </select>
+        <p v-if="fieldErrors.reportId" class="hint" data-testid="bi-sub-err-report" style="color: var(--red)">{{ fieldErrors.reportId }}</p>
+        <label class="fld">周期<i class="req">*</i></label>
         <select v-model="form.period" class="fld-in" data-testid="bi-sub-period">
+          <option value="">请选择周期</option>
           <option value="DAILY">每日</option>
           <option value="WEEKLY">每周</option>
+          <option value="WEEKLY_MON">每周一</option>
           <option value="MONTHLY">每月</option>
+          <option value="MONTHLY_1">每月 1 日</option>
         </select>
-        <label class="fld">推送时刻</label>
+        <p v-if="fieldErrors.period" class="hint" data-testid="bi-sub-err-period" style="color: var(--red)">{{ fieldErrors.period }}</p>
+        <label class="fld">推送渠道<i class="req">*</i></label>
+        <select v-model="form.channels" class="fld-in" data-testid="bi-sub-channel">
+          <option value="">请选择渠道</option>
+          <option value="SITE">站内</option>
+          <option value="SITE+DING">站内+钉钉</option>
+          <option value="MAIL">邮件</option>
+        </select>
+        <p v-if="fieldErrors.channels" class="hint" data-testid="bi-sub-err-channel" style="color: var(--red)">{{ fieldErrors.channels }}</p>
+        <label class="fld">推送时刻<i class="req">*</i></label>
         <input v-model="form.pushTime" class="fld-in" data-testid="bi-sub-push-time" placeholder="09:00" />
+        <p v-if="fieldErrors.pushTime" class="hint" data-testid="bi-sub-err-time" style="color: var(--red)">{{ fieldErrors.pushTime }}</p>
         <p class="csub" style="margin: 8px 0 0">下次推送按本地时刻估算，不触发外部定时任务。时刻写 HH:mm，也可写「周一 09:00」。</p>
         <p v-if="formError" class="hint" data-testid="bi-sub-form-error" style="color: var(--red)">{{ formError }}</p>
         <p v-if="pushTimeError" class="hint" data-testid="bi-sub-push-error" style="color: var(--red)">{{ pushTimeError }}</p>
@@ -240,6 +257,19 @@
           <button class="btn btn-pri btn-sm" type="button" data-testid="bi-share-revoke-ok" @click="confirmRevoke">
             确认撤销
           </button>
+        </div>
+      </div>
+    </div>
+
+    <p v-if="statusToast" class="hint" data-testid="bi-sub-toast">{{ statusToast }}</p>
+
+    <div v-if="statusTarget" class="modal-mask" data-testid="bi-sub-status-confirm" @click.self="statusTarget = null">
+      <div class="card" style="width: 420px; padding: 18px">
+        <h3 style="margin: 0 0 10px">{{ statusTarget.status === 'ACTIVE' ? '确认暂停' : '确认恢复' }}</h3>
+        <p style="margin: 0">{{ statusTarget.status === 'ACTIVE' ? '暂停' : '恢复' }}订阅「{{ statusTarget.subName }}」？</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="statusTarget = null">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="bi-sub-status-ok" @click="confirmToggle">确认</button>
         </div>
       </div>
     </div>
@@ -283,7 +313,14 @@
       <div class="card" style="width: 420px; padding: 18px">
         <h3 style="margin: 0 0 10px">生成分享链接</h3>
         <label class="fld">报表 ID</label>
-        <input v-model.number="shareForm.reportId" class="fld-in" type="number" />
+        <input v-model.number="shareForm.reportId" class="fld-in" type="number" @change="syncShareScope" />
+        <label class="fld">可见范围</label>
+        <select v-model="shareForm.shareScope" class="fld-in" data-testid="bi-share-scope">
+          <option value="PRIVATE">私有</option>
+          <option value="SPECIFIED">指定人</option>
+          <option value="ALL">全员</option>
+        </select>
+        <p class="csub">沿用这张报表已保存的可见范围：私有 / 指定人 / 全员。</p>
         <label class="fld">有效期（天）</label>
         <input v-model.number="shareForm.expireDays" class="fld-in" type="number" min="7" max="30" />
         <p v-if="shareExpireError" class="hint" data-testid="bi-share-expire-error" style="color: var(--red)">
@@ -316,6 +353,7 @@ type SubRow = {
   period: string
   pushTime: string
   nextPushAt?: string
+  reportId: number
   reportName: string
   channels: string
   status: string
@@ -358,8 +396,13 @@ const snapshot = ref<{
 } | null>(null)
 const showForm = ref(false)
 const showShareForm = ref(false)
-const form = reactive({ subName: '', reportId: 0, period: 'DAILY', pushTime: '09:00' })
-const shareForm = reactive({ reportId: 0, sensitive: false, expireDays: 7 })
+const form = reactive({ subName: '', reportId: '', period: '', pushTime: '', channels: '' })
+const fieldErrors = reactive({ subName: '', reportId: '', period: '', pushTime: '', channels: '' })
+const reportOptions = ref<{ id: number; reportName: string; shareScope?: string }[]>([])
+const editingId = ref(0)
+const statusTarget = ref<SubRow | null>(null)
+const statusToast = ref('')
+const shareForm = reactive({ reportId: 0, shareScope: 'PRIVATE', sensitive: false, expireDays: 7 })
 const shareExpireError = ref('')
 const formError = ref('')
 const createdHint = ref('')
@@ -397,16 +440,26 @@ function switchTab(key: string) {
   loadTab()
 }
 
-function periodLabel(p: string) {
+function periodLabel(p: string, pushTime = '') {
+  const clock = pushTime || ''
+  if ((p === 'WEEK' || p === 'WEEKLY' || p === 'WEEKLY_MON') && clock.includes('周一')) return '每周一'
+  if ((p === 'MONTH' || p === 'MONTHLY' || p === 'MONTHLY_1') && /1\s*日/.test(clock)) return '每月 1 日'
   const map: Record<string, string> = {
     DAY: '每日',
     DAILY: '每日',
     WEEK: '每周',
     WEEKLY: '每周',
+    WEEKLY_MON: '每周一',
     MONTH: '每月',
     MONTHLY: '每月',
+    MONTHLY_1: '每月 1 日',
   }
   return map[p] || p
+}
+
+function clockOf(pushTime: string) {
+  const matched = String(pushTime || '').match(/(\d{1,2}:\d{2})/)
+  return matched ? matched[1] : pushTime || ''
 }
 
 function periodCode(p: string) {
@@ -508,36 +561,109 @@ function loadTab() {
   else loadPublished()
 }
 
-function openCreate() {
+function channelLabel(value: string) {
+  if (value === 'SITE') return '站内'
+  if (value === 'MAIL') return '邮件'
+  if (value === 'SITE+DING') return '站内+钉钉'
+  return value || '—'
+}
+
+async function loadReportOptions() {
+  const res = await http.get('/bi/report/list', { params: { pageNo: 1, pageSize: 50 } })
+  reportOptions.value = res.data.data?.list || []
+}
+
+async function openCreate() {
   formError.value = ''
   pushTimeError.value = ''
+  editingId.value = 0
+  form.subName = ''
+  form.reportId = ''
+  form.period = ''
+  form.pushTime = ''
+  form.channels = ''
+  fieldErrors.subName = ''
+  fieldErrors.reportId = ''
+  fieldErrors.period = ''
+  fieldErrors.pushTime = ''
+  fieldErrors.channels = ''
+  await loadReportOptions()
   showForm.value = true
+}
+
+async function openEdit(row: SubRow) {
+  formError.value = ''
+  pushTimeError.value = ''
+  editingId.value = row.id
+  form.subName = row.subName
+  form.reportId = String(row.reportId || '')
+  form.period = periodChoice(row.period, row.pushTime)
+  form.pushTime = clockOf(row.pushTime) || '09:00'
+  form.channels = row.channels || 'SITE+DING'
+  await loadReportOptions()
+  showForm.value = true
+}
+
+function periodChoice(period: string, pushTime: string) {
+  if ((period === 'WEEK' || period === 'WEEKLY') && (pushTime || '').includes('周一')) return 'WEEKLY_MON'
+  if ((period === 'MONTH' || period === 'MONTHLY') && /1\s*日/.test(pushTime || '')) return 'MONTHLY_1'
+  if (period === 'DAY') return 'DAILY'
+  if (period === 'WEEK') return 'WEEKLY'
+  if (period === 'MONTH') return 'MONTHLY'
+  return period
+}
+
+function clearFieldErrors() {
+  fieldErrors.subName = ''
+  fieldErrors.reportId = ''
+  fieldErrors.period = ''
+  fieldErrors.pushTime = ''
+  fieldErrors.channels = ''
 }
 
 async function submitSub() {
   formError.value = ''
   pushTimeError.value = ''
-  if (!form.subName.trim()) {
-    formError.value = '订阅名称必填'
-    return
-  }
-  if (!Number(form.reportId)) {
-    formError.value = '请填写报表 ID'
+  clearFieldErrors()
+  if (!form.subName.trim()) fieldErrors.subName = '必填项，请填写'
+  if (!Number(form.reportId)) fieldErrors.reportId = '必填项，请填写'
+  if (!form.period) fieldErrors.period = '必填项，请填写'
+  if (!form.channels) fieldErrors.channels = '必填项，请填写'
+  if (!form.pushTime.trim()) fieldErrors.pushTime = '必填项，请填写'
+  if (fieldErrors.subName || fieldErrors.reportId || fieldErrors.period || fieldErrors.channels || fieldErrors.pushTime) {
+    formError.value = '必填项，请填写'
     return
   }
   if (!pushClockOk(form.pushTime)) {
     pushTimeError.value = '推送时刻应为 HH:mm'
     return
   }
+  let period = form.period
+  let pushTime = form.pushTime.trim()
+  if (period === 'WEEKLY_MON') {
+    period = 'WEEKLY'
+    pushTime = `周一 ${pushTime}`
+  } else if (period === 'MONTHLY_1') {
+    period = 'MONTHLY'
+    pushTime = `1日 ${pushTime}`
+  }
   try {
-    const res = await http.post('/bi/subscribe', {
-      ...form,
+    const payload = {
       subName: form.subName.trim(),
-    })
+      reportId: Number(form.reportId),
+      period,
+      pushTime,
+      channels: form.channels,
+    }
+    const res = editingId.value
+      ? await http.put(`/bi/subscribe/${editingId.value}`, payload)
+      : await http.post('/bi/subscribe', payload)
     if (res.data.code === 0) {
       const next = String(res.data.data?.nextPushAt || '').trim()
-      createdHint.value = `订阅成功，下次推送 ${next || '不调度'}`
+      createdHint.value = editingId.value ? '订阅已保存' : `订阅成功，下次推送 ${next || '不调度'}`
+      statusToast.value = editingId.value ? '订阅已保存' : ''
       showForm.value = false
+      editingId.value = 0
       await loadSubs()
     }
   } catch (error: unknown) {
@@ -545,10 +671,22 @@ async function submitSub() {
   }
 }
 
-async function toggleSub(row: SubRow) {
+function askToggle(row: SubRow) {
+  statusTarget.value = row
+}
+
+async function confirmToggle() {
+  const row = statusTarget.value
+  if (!row) return
   const status = row.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
-  await http.put(`/bi/subscribe/${row.id}`, { status })
-  await loadSubs()
+  statusTarget.value = null
+  try {
+    await http.put(`/bi/subscribe/${row.id}`, { status })
+    statusToast.value = '状态已更新'
+    await loadSubs()
+  } catch (error: unknown) {
+    statusToast.value = errorMessage(error)
+  }
 }
 
 async function viewSnapshot(row: SubRow) {
@@ -590,11 +728,19 @@ async function confirmPush() {
   }
 }
 
-function openShare() {
+function syncShareScope() {
+  const found = reportOptions.value.find((item) => item.id === Number(shareForm.reportId))
+  if (found?.shareScope) shareForm.shareScope = found.shareScope
+}
+
+async function openShare() {
   shareForm.reportId = Number(form.reportId) || shareForm.reportId || 0
+  shareForm.shareScope = 'PRIVATE'
   shareForm.sensitive = false
   shareForm.expireDays = 7
   shareExpireError.value = ''
+  await loadReportOptions()
+  syncShareScope()
   showShareForm.value = true
 }
 

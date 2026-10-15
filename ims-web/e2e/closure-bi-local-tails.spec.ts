@@ -61,7 +61,7 @@ test.describe('bi drill report subscribe local tails', () => {
     const createReportResp = page.waitForResponse(
       (r) => r.url().includes('/bi/report') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await reportModal.getByRole('button', { name: '保存草稿' }).click()
+    await reportModal.getByRole('button', { name: '创建并进入设计器' }).click()
     const reportBody = (await (await createReportResp).json()) as { code: number; data?: { id: number } }
     expect(reportBody.code).toBe(0)
     const reportId = reportBody.data!.id
@@ -70,8 +70,8 @@ test.describe('bi drill report subscribe local tails', () => {
     await page.getByRole('button', { name: '订阅推送' }).click()
     const subModal = page.locator('.modal-mask .card').filter({ hasText: '新建订阅' })
     await subModal.locator('input.fld-in').first().fill(label)
-    await subModal.locator('input[type="number"]').fill(String(reportId))
-    await subModal.locator('select').selectOption('DAILY')
+    await subModal.getByTestId('bi-sub-report').selectOption(String(reportId))
+    await subModal.getByTestId('bi-sub-period').selectOption('DAILY')
     const createSubResp = page.waitForResponse(
       (r) => r.url().includes('/bi/subscribe') && r.request().method() === 'POST' && !r.url().includes('share') && r.status() === 200,
     )
