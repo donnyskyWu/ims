@@ -579,6 +579,7 @@ class ContentSop(Base):
     sop_code: Mapped[str] = mapped_column(String(32), index=True)
     sop_name: Mapped[str] = mapped_column(String(128))
     content_type: Mapped[str] = mapped_column(String(32), default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
     sop_level: Mapped[str] = mapped_column(String(16), default="STANDARD")
     version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(16), default="ENABLED")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta, timezone
+
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -7,11 +9,28 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.core import utcnow
-from app.corp import ops_db, page_args, paged, tenant_of, user_names, visible
-from app.models import User
-from app.ops_models import AuthorUser, IpGroup, IpGroupAnchorRel, IpGroupMember, PlatformAccount
+from app.corp import check_enum, ops_db, page_args, paged, tenant_of, user_names, visible
+from app.models import DictData, User
+from app.football_client import sum_revenue
+from app.ops_models import (
+    AccountCost,
+    AuthorUser,
+    InternalAccount,
+    InternalContent,
+    IpGroup,
+    IpGroupAnchorRel,
+    IpGroupMember,
+    PlatformAccount,
+)
 
 router = APIRouter(prefix="/ip-group", tags=["ip-group"])
+BJ = timezone(timedelta(hours=8))
+
+
+def bj_text(value) -> str:
+    if value is None:
+        return ""
+    return value.replace(tzinfo=timezone.utc).astimezone(BJ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def status_api(value: str) -> int:
@@ -80,6 +99,57 @@ def check_local_user(db: Session, actor: User, user_id: int | None, required: bo
     if (user.tenant_id or 0) != tenant_of(actor):
         return fail(1504, "资源不可用")
     return None
+
+
+def clean_group_name(name: str | None):
+    text = (name or "").strip()
+    if not text:
+        return None, fail(1001, "IP 组名称必填")
+    if len(text) > 50:
+        return None, fail(1001, "名称长度 1-50 字符")
+    return text, None
+
+
+def clean_description(text: str | None):
+    value = (text or "").strip()
+    if len(value) > 200:
+        return None, fail(1001, "描述长度 0-200 字符")
+    return value, None
+
+
+def clean_level(db: Session, level: str | None):
+    text = (level or "").strip()
+    if not text:
+        return "", None
+    err = check_enum(db, "dict_ip_group_level", text, False)
+    if err is not None:
+        return None, err
+    return text, None
+
+
+RELATION_TYPES = {"PRIMARY": "主职", "PART_TIME": "兼职"}
+
+
+def position_labels(db: Session) -> dict[str, str]:
+    rows = db.scalars(
+        select(DictData).where(DictData.dict_type == "dict_position", DictData.deleted == 0, DictData.status == "ENABLED")
+    ).all()
+    return {row.dict_value: row.dict_label for row in rows}
+
+
+def clean_position(db: Session, position: str | None, required: bool):
+    text = (position or "").strip()
+    err = check_enum(db, "dict_position", text, required)
+    if err is not None:
+        return None, err
+    return text, None
+
+
+def clean_relation(value: str | None):
+    text = (value or "PRIMARY").strip().upper()
+    if text not in RELATION_TYPES:
+        return None, fail(1001, "主/兼取值非法")
+    return text, None
 
 
 def sibling_name_taken(ops: Session, actor: User, parent_id: int | None, name: str, exclude_id: int | None = None) -> bool:
@@ -199,8 +269,13 @@ def tree_nodes(
                     "memberCount": cnt.get("memberCount", 0),
                     "accountCount": cnt.get("accountCount", 0),
                     "anchorCount": cnt.get("anchorCount", 0),
+                    "leaderUserId": row.leader_user_id,
                     "level": row.level or "",
+                    "sortOrder": row.sort_order,
+                    "remark": row.remark or "",
                     "status": status_api(row.status),
+                    "createdAt": bj_text(row.created_at),
+                    "updatedAt": bj_text(row.updated_at),
                     "children": build(row.id),
                 }
             )
@@ -319,6 +394,8 @@ def ip_group_list(
         stmt = stmt.where(IpGroup.group_type == groupType)
     if status is not None and status != "":
         stmt = stmt.where(IpGroup.status == status_store(status))
+    else:
+        stmt = stmt.where(IpGroup.status == "ENABLED")
     total = int(ops.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = ops.scalars(stmt.order_by(IpGroup.sort_order, IpGroup.id).offset((page_no - 1) * page_size).limit(page_size)).all()
     stats = counts_for(ops, [row.id for row in rows], tenant_of(actor))
@@ -352,9 +429,15 @@ def ip_group_create(
     ops: Session = Depends(ops_db),
     actor: User = Depends(current_user),
 ):
-    name = (body.groupName or "").strip()
-    if not name or len(name) > 50:
-        return fail(1001, "组名长度非法")
+    name, name_err = clean_group_name(body.groupName)
+    if name_err is not None:
+        return name_err
+    description, desc_err = clean_description(body.remark if body.remark is not None else body.description)
+    if desc_err is not None:
+        return desc_err
+    level, level_err = clean_level(db, body.level)
+    if level_err is not None:
+        return level_err
     group_type = (body.groupType or "").upper()
     if group_type not in ("BIG", "SMALL"):
         return fail(1003, "组类型非法")
@@ -378,9 +461,9 @@ def ip_group_create(
         group_type=group_type,
         parent_id=parent_id,
         leader_user_id=body.leaderUserId,
-        level=(body.level or "").strip(),
+        level=level or "",
         sort_order=body.sortOrder or 0,
-        remark=(body.remark or body.description or "").strip(),
+        remark=description or "",
         ding_dept_id=body.dingDeptId,
         status=status_store(body.status),
         tenant_id=tenant_of(actor),
@@ -402,11 +485,12 @@ def ip_group_update(
     row = get_group(ops, actor, body.id)
     if row is None:
         return fail(1504, "资源不可用")
-    leader_id = body.leaderUserId if body.leaderUserId is not None else body.leaderId
-    if leader_id is not None:
-        err = check_local_user(db, actor, leader_id)
-        if err is not None:
-            return err
+    if "leaderUserId" in body.model_fields_set or "leaderId" in body.model_fields_set:
+        leader_id = body.leaderUserId if "leaderUserId" in body.model_fields_set else body.leaderId
+        if leader_id is not None:
+            err = check_local_user(db, actor, leader_id)
+            if err is not None:
+                return err
         row.leader_user_id = leader_id
     parent_id = row.parent_id if body.parentId is None else body.parentId
     if body.parentId is not None:
@@ -421,16 +505,25 @@ def ip_group_update(
             return fail(1003, "上级组必须为大组")
         parent_id = body.parentId
         row.parent_id = parent_id
-    new_name = row.group_name if body.groupName is None else body.groupName.strip()
-    if not new_name or len(new_name) > 50:
-        return fail(1001, "组名长度非法")
+    if body.groupName is None:
+        new_name = row.group_name
+    else:
+        new_name, name_err = clean_group_name(body.groupName)
+        if name_err is not None:
+            return name_err
+    if body.level is not None:
+        level, level_err = clean_level(db, body.level)
+        if level_err is not None:
+            return level_err
+        row.level = level or ""
+    if body.remark is not None or body.description is not None:
+        description, desc_err = clean_description(body.remark if body.remark is not None else body.description)
+        if desc_err is not None:
+            return desc_err
+        row.remark = description or ""
     if sibling_name_taken(ops, actor, parent_id, new_name, exclude_id=row.id):
         return fail(1002, "同父级下名称重复")
     row.group_name = new_name
-    if body.level is not None:
-        row.level = body.level.strip()
-    if body.remark is not None or body.description is not None:
-        row.remark = (body.remark or body.description or "").strip()
     if body.sortOrder is not None:
         row.sort_order = body.sortOrder
     if body.dingDeptId is not None:
@@ -438,7 +531,7 @@ def ip_group_update(
     if body.status is not None:
         row.status = status_store(body.status)
     row.updated_at = utcnow()
-    return ok(True)
+    return ok({"id": row.id, "status": status_api(row.status)})
 
 
 @router.delete("/delete")
@@ -502,6 +595,7 @@ def ip_group_members(
         )
     ).all()
     names = user_names(db, {m.user_id for m in members})
+    labels = position_labels(db)
     return ok(
         [
             {
@@ -509,7 +603,9 @@ def ip_group_members(
                 "userId": m.user_id,
                 "userName": names.get(m.user_id, ""),
                 "position": m.position,
+                "positionName": labels.get(m.position, m.position),
                 "relationType": m.relation_type,
+                "relationTypeName": RELATION_TYPES.get(m.relation_type, m.relation_type),
                 "isLeader": m.is_leader == 1,
             }
             for m in members
@@ -532,6 +628,12 @@ def ip_group_add_member(
     err = check_local_user(db, actor, body.userId, required=True)
     if err is not None:
         return err
+    position, pos_err = clean_position(db, body.position, True)
+    if pos_err is not None:
+        return pos_err
+    relation, rel_err = clean_relation(body.relationType)
+    if rel_err is not None:
+        return rel_err
     exists = ops.scalar(
         select(IpGroupMember.id).where(
             IpGroupMember.ip_group_id == group_id,
@@ -547,8 +649,8 @@ def ip_group_add_member(
         IpGroupMember(
             ip_group_id=group_id,
             user_id=body.userId,
-            position=body.position or "",
-            relation_type=(body.relationType or "PRIMARY").upper(),
+            position=position or "",
+            relation_type=relation or "PRIMARY",
             is_leader=is_leader,
             tenant_id=tenant_of(actor),
         )
@@ -573,9 +675,15 @@ def ip_group_update_member(
     if member is None or member.deleted or member.ip_group_id != group_id or member.tenant_id != tenant_of(actor):
         return fail(1504, "资源不可用")
     if body.position is not None:
-        member.position = body.position
+        position, pos_err = clean_position(db, body.position, True)
+        if pos_err is not None:
+            return pos_err
+        member.position = position or ""
     if body.relationType is not None:
-        member.relation_type = body.relationType.upper()
+        relation, rel_err = clean_relation(body.relationType)
+        if rel_err is not None:
+            return rel_err
+        member.relation_type = relation or "PRIMARY"
     if body.isLeader is not None:
         member.is_leader = 1 if body.isLeader else 0
     member.updated_at = utcnow()
@@ -647,6 +755,8 @@ def ip_group_bind_accounts(
     row = ensure_group_access(request, db, actor, group_id, ops)
     if row is None:
         return fail(1504, "资源不可用")
+    if row.status != "ENABLED":
+        return fail(1501, "IP 组已停用")
     if row.group_type != "SMALL":
         return fail(1203, "大组不可绑定账号")
     if not body.accountIds:
@@ -771,6 +881,88 @@ def ip_group_bind_anchors(
     return ok(True)
 
 
+def _sum_int(ops: Session, column, *where) -> int:
+    value = ops.scalar(select(func.coalesce(func.sum(column), 0)).where(*where))
+    return int(value or 0)
+
+
+def group_stats(ops: Session, group_id: int, tenant_id: int) -> dict:
+    """BR-M1-004：当前组加上全部下级组，计数与成本按子项相加。"""
+    ids = descendant_ids(ops, group_id, tenant_id)
+    ids.add(group_id)
+    id_list = list(ids)
+    account_where = (
+        PlatformAccount.deleted == 0,
+        PlatformAccount.tenant_id == tenant_id,
+        PlatformAccount.ip_group_id.in_(id_list),
+    )
+    account_rows = ops.scalars(select(PlatformAccount).where(*account_where)).all()
+    account_ids = [row.id for row in account_rows]
+    cost_total = 0.0
+    if account_ids:
+        cost_total = round(
+            float(
+                ops.scalar(
+                    select(func.coalesce(func.sum(AccountCost.amount), 0)).where(
+                        AccountCost.deleted == 0,
+                        AccountCost.tenant_id == tenant_id,
+                        AccountCost.account_id.in_(account_ids),
+                    )
+                )
+                or 0
+            ),
+            2,
+        )
+    revenue_delayed = False
+    revenue_total = 0.0
+    seen_authors: set[str] = set()
+    end = utcnow().date()
+    start = end - timedelta(days=29)
+    for account in account_rows:
+        author_key = str(account.author_user_id) if account.author_user_id else str(account.id)
+        if author_key in seen_authors:
+            continue
+        seen_authors.add(author_key)
+        revenue, err = sum_revenue(
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+            author_id=author_key,
+        )
+        if err:
+            revenue_delayed = True
+            break
+        revenue_total = round(revenue_total + float(revenue or 0), 2)
+    roi_avg = None
+    revenue_out: float | None = None if revenue_delayed else revenue_total
+    if revenue_out is not None and cost_total > 0:
+        roi_avg = round(revenue_out / cost_total, 2)
+    internal_where = (
+        InternalAccount.deleted == 0,
+        InternalAccount.tenant_id == tenant_id,
+        InternalAccount.ip_group_id.in_(id_list),
+    )
+    content_where = (
+        InternalContent.deleted == 0,
+        InternalContent.tenant_id == tenant_id,
+        InternalContent.ip_group_id.in_(id_list),
+    )
+    return {
+        "ipGroupId": group_id,
+        "followerCount": _sum_int(ops, InternalAccount.follower_count, *internal_where),
+        "contentCount": _sum_int(ops, InternalAccount.content_count, *internal_where),
+        "accountCount": len(account_rows),
+        "internalContentCount": int(
+            ops.scalar(select(func.count()).select_from(InternalContent).where(*content_where)) or 0
+        ),
+        "roiAvg": roi_avg,
+        "costTotal": cost_total,
+        "revenueTotal": revenue_out,
+        "revenueDelayed": revenue_delayed,
+        "last7DaysTrend": [],
+        "last30DaysTrend": [],
+    }
+
+
 @router.get("/{group_id}/stats")
 def ip_group_stats(
     group_id: int,
@@ -782,18 +974,4 @@ def ip_group_stats(
     row = ensure_group_access(request, db, actor, group_id, ops)
     if row is None:
         return fail(1504, "资源不可用")
-    cnt = counts_for(ops, [group_id], tenant_of(actor)).get(group_id, {})
-    return ok(
-        {
-            "ipGroupId": group_id,
-            "followerCount": 0,
-            "contentCount": 0,
-            "accountCount": cnt.get("accountCount", 0),
-            "internalContentCount": 0,
-            "roiAvg": 0,
-            "costTotal": 0,
-            "revenueTotal": 0,
-            "last7DaysTrend": [],
-            "last30DaysTrend": [],
-        }
-    )
+    return ok(group_stats(ops, group_id, tenant_of(actor)))

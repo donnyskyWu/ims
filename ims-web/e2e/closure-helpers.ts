@@ -103,8 +103,9 @@ export async function createSopViaUi(
   const drawer = page.locator('.drawer.on').filter({ hasText: '新增 SOP 模板' })
   await expect(drawer).toBeVisible()
 
-  const nameInput = drawer.locator('.fld').filter({ hasText: '模板名称' }).locator('input')
+  const nameInput = drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input')
   await nameInput.fill(opts.sopName)
+  await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
   if (opts.nodeName) {
     await drawer.getByPlaceholder('脚本').fill(opts.nodeName)
   }
@@ -112,7 +113,7 @@ export async function createSopViaUi(
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/content/sop') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await drawer.getByRole('button', { name: '保存' }).click()
+  await drawer.getByRole('button', { name: '保存为新版本' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: unknown }
   expect(body.code).toBe(0)
   const sopId = idFromOkPayload(body.data)
@@ -143,12 +144,20 @@ async function ensureAdminMemberOnSelectedGroup(page: Page) {
   await waitIpGroupMembersLoaded(page).catch(() => {})
   const memberRows = page.locator('.ipg-detail-body .tbl-wrap tbody tr').filter({ hasNotText: '暂无成员' })
   if ((await memberRows.count()) > 0) return
-  const addBtn = page.getByRole('button', { name: '+ 添加成员（管理员 id=1）' })
+  const addBtn = page.getByTestId('ipg-add-member')
   if (!(await addBtn.isVisible())) return
+  await addBtn.click()
+  const drawer = page.getByTestId('ipg-member-drawer')
+  await expect(drawer).toBeVisible()
+  await drawer.getByTestId('ipg-member-user').selectOption({ label: '管理员' })
+  const position = drawer.getByTestId('ipg-member-position')
+  await expect(position.locator('option:not([value=""])').first()).toBeAttached()
+  const positionValue = await position.locator('option:not([value=""])').first().getAttribute('value')
+  await position.selectOption(positionValue || '')
   const addResp = page.waitForResponse(
     (r) => r.url().includes('/ip-group/') && r.url().includes('/members') && r.request().method() === 'POST',
   )
-  await addBtn.click()
+  await drawer.getByTestId('ipg-member-submit').click()
   const addBody = (await (await addResp).json()) as { code: number; msg?: string }
   if (addBody.code !== 0 && !String(addBody.msg || '').includes('成员已存在')) {
     expect(addBody.code).toBe(0)
@@ -197,7 +206,7 @@ export async function prepareIpGroupWithAdminMember(
   const bigResp = page.waitForResponse(
     (r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await bigDrawer.getByRole('button', { name: '确定' }).click()
+  await bigDrawer.getByRole('button', { name: '确认' }).click()
   const bigBody = (await (await bigResp).json()) as { code: number; data?: unknown }
   expect(bigBody.code).toBe(0)
   const bigId = idFromOkPayload(bigBody.data)
@@ -215,7 +224,7 @@ export async function prepareIpGroupWithAdminMember(
   const smallResp = page.waitForResponse(
     (r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await smallDrawer.getByRole('button', { name: '确定' }).click()
+  await smallDrawer.getByRole('button', { name: '确认' }).click()
   const smallBody = (await (await smallResp).json()) as { code: number; data?: unknown }
   expect(smallBody.code).toBe(0)
   const ipGroupId = idFromOkPayload(smallBody.data)
@@ -317,7 +326,8 @@ export async function createWorkTaskSopViaUi(
   const drawer = page.locator('.drawer.on').filter({ hasText: '新增 SOP 模板' })
   await expect(drawer).toBeVisible()
 
-  await drawer.locator('.fld').filter({ hasText: '模板名称' }).locator('input').fill(opts.sopName)
+  await drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input').fill(opts.sopName)
+  await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
   await drawer.locator('.fld').filter({ hasText: '营销计划' }).locator('select').selectOption(opts.marketingPlan ?? 'LIVE_PUBLIC')
   await drawer.locator('.fld').filter({ hasText: '首节点名称' }).locator('input').fill(opts.nodeName)
   await drawer.locator('.fld').filter({ hasText: '首节点类型' }).locator('select').selectOption('CONTENT_GENERATION')
@@ -326,7 +336,7 @@ export async function createWorkTaskSopViaUi(
   const createResp = page.waitForResponse(
     (r) => r.url().includes('/content/sop') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await drawer.getByRole('button', { name: '保存' }).click()
+  await drawer.getByRole('button', { name: '保存为新版本' }).click()
   const body = (await (await createResp).json()) as { code: number; data?: unknown }
   expect(body.code).toBe(0)
   const sopId = idFromOkPayload(body.data)

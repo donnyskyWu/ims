@@ -18,8 +18,22 @@ DICT_SEED = [
     ("dict_marketing_plan_type", "营销计划", [("LIVE_PUBLIC", "直播公推"), ("PAID_SALES", "付费销售"), ("LIVE", "直播"), ("VIDEO", "短视频")]),
     ("dict_sales_platform", "销售平台", [("PRIVATE", "私域"), ("KUAISHOU", "快手"), ("DOUYIN", "抖音"), ("NONE", "无")]),
     ("dict_win_prediction", "红黑", [("RED", "红"), ("BLACK", "黑"), ("UNKNOWN", "待判定")]),
-    ("dict_position", "钉钉岗位", [("LIVE_OPS", "直播运营"), ("DIRECTOR", "编导"), ("ANCHOR", "主播达人")]),
-    ("dict_content_type", "内容类型", [("SHORT_VIDEO", "短视频"), ("LIVE_CLIP", "直播切片")]),
+    (
+        "dict_position",
+        "钉钉岗位",
+        [
+            ("LIVE_OPS", "直播运营"),
+            ("DIRECTOR", "编导"),
+            ("ANCHOR", "主播达人"),
+            ("OPS_LEADER", "运营组长"),
+            ("OPERATOR", "运营"),
+            ("EDITOR", "编辑"),
+            ("LIVE_OPERATOR", "直播运营专员"),
+            ("SALES", "销售"),
+        ],
+    ),
+    ("dict_ip_group_level", "IP组等级", [("S", "S级"), ("A", "A级"), ("B", "B级"), ("C", "C级")]),
+    ("dict_content_type", "内容类型", [("ARTICLE", "文章"), ("SHORT_VIDEO", "短视频"), ("VIDEO", "视频")]),
     ("dict_ai_scene", "AI 场景", [("TITLE", "标题"), ("COVER", "封面")]),
     ("dict_yes_no", "是否", [("YES", "是"), ("NO", "否")]),
     ("dict_sim_operator", "运营商", [("MOBILE", "移动"), ("UNICOM", "联通"), ("TELECOM", "电信")]),
@@ -82,21 +96,70 @@ def seed_dict(db: Session) -> None:
     for dict_type, type_name, items in DICT_SEED:
         if db.scalar(select(DictType).where(DictType.dict_type == dict_type)) is None:
             db.add(DictType(dict_type=dict_type, type_name=type_name, status="ENABLED", tenant_id=0))
-            for index, (value, label) in enumerate(items, start=1):
-                status = "DISABLED" if value == "LEGACY_OFF" else "ENABLED"
-                db.add(
-                    DictData(
-                        dict_type=dict_type,
-                        dict_label=label,
-                        dict_value=value,
-                        sort=index,
-                        status=status,
-                        tenant_id=0,
-                    )
+            db.flush()
+        existing = set(
+            db.scalars(
+                select(DictData.dict_value).where(DictData.dict_type == dict_type, DictData.deleted == 0)
+            ).all()
+        )
+        for index, (value, label) in enumerate(items, start=1):
+            if value in existing:
+                continue
+            status = "DISABLED" if value == "LEGACY_OFF" else "ENABLED"
+            db.add(
+                DictData(
+                    dict_type=dict_type,
+                    dict_label=label,
+                    dict_value=value,
+                    sort=index,
+                    status=status,
+                    tenant_id=0,
                 )
+            )
+    db.flush()
+    ensure_dict_content_type(db)
     for key, value, remark in PARAM_SEED:
         if db.scalar(select(SysParam).where(SysParam.param_key == key)) is None:
             db.add(SysParam(param_key=key, param_value=value, remark=remark, tenant_id=0))
+
+
+CONTENT_TYPE_ITEMS = (("ARTICLE", "文章"), ("SHORT_VIDEO", "短视频"), ("VIDEO", "视频"))
+
+
+def ensure_dict_content_type(db: Session) -> None:
+    """已有库补齐内容类型三项。旧种子只有短视频/直播切片，不改角色权限种子。"""
+    row = db.scalar(select(DictType).where(DictType.dict_type == "dict_content_type"))
+    if row is None:
+        row = DictType(dict_type="dict_content_type", type_name="内容类型", status="ENABLED", tenant_id=0)
+        db.add(row)
+    else:
+        row.type_name = "内容类型"
+        row.status = "ENABLED"
+        row.deleted = 0
+    existing = db.scalars(select(DictData).where(DictData.dict_type == "dict_content_type")).all()
+    by_value = {item.dict_value: item for item in existing}
+    wanted = {value for value, _label in CONTENT_TYPE_ITEMS}
+    for index, (value, label) in enumerate(CONTENT_TYPE_ITEMS, start=1):
+        item = by_value.get(value)
+        if item is None:
+            db.add(
+                DictData(
+                    dict_type="dict_content_type",
+                    dict_label=label,
+                    dict_value=value,
+                    sort=index,
+                    status="ENABLED",
+                    tenant_id=0,
+                )
+            )
+            continue
+        item.dict_label = label
+        item.sort = index
+        item.status = "ENABLED"
+        item.deleted = 0
+    for item in existing:
+        if item.dict_value not in wanted and item.deleted == 0 and item.status == "ENABLED":
+            item.status = "DISABLED"
 
 
 def data_vo(row: DictData) -> dict:

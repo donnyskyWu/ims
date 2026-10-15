@@ -38,7 +38,7 @@ async function createEmptyGroup(page: Page, groupName: string) {
   const created = page.waitForResponse(
     (r) => r.url().includes('/ip-group/create') && r.request().method() === 'POST' && r.status() === 200,
   )
-  await drawer.getByRole('button', { name: '确定' }).click()
+  await drawer.getByRole('button', { name: '确认' }).click()
   const body = (await (await created).json()) as { code: number }
   expect(body.code).toBe(0)
   await expect(page.locator('.ipg-node', { hasText: groupName })).toBeVisible()

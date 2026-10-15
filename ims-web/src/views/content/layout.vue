@@ -6,6 +6,7 @@
         <div class="sub">CONTENT-107 · /content/layout-template · 15 CONTENT</div>
       </div>
       <div class="acts">
+        <button class="btn btn-sec btn-sm" type="button" data-testid="layout-import-open" @click="openImport">导入向导</button>
         <button class="btn btn-pri btn-sm" type="button" @click="openCreate">新建模板</button>
         <router-link class="btn btn-sec btn-sm" to="/ims/content/list">内容管理</router-link>
       </div>
@@ -62,6 +63,26 @@
               <td>
                 <button class="btn btn-txt btn-sm" type="button" @click="openPreview(row)">预览</button>
                 <button
+                  v-if="row.source === 'PRESET'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  data-testid="layout-view"
+                  @click="openView(row)"
+                >
+                  查看
+                </button>
+                <button
+                  v-if="row.source === 'PRESET'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  data-testid="layout-copy"
+                  @click="copyTemplate(row)"
+                >
+                  复制
+                </button>
+                <button
                   v-if="row.source !== 'PRESET'"
                   class="btn btn-sec btn-sm"
                   type="button"
@@ -71,7 +92,7 @@
                   编辑
                 </button>
                 <button
-                  v-if="row.status === 'DRAFT'"
+                  v-if="row.status === 'DRAFT' && row.source !== 'PRESET'"
                   class="btn btn-sec btn-sm"
                   type="button"
                   style="margin-left: 6px"
@@ -96,6 +117,16 @@
                   @click="setEnabled(row.id, true)"
                 >
                   重新启用
+                </button>
+                <button
+                  v-if="row.source !== 'PRESET' && row.status === 'DRAFT'"
+                  class="btn btn-txt btn-sm"
+                  type="button"
+                  style="margin-left: 6px"
+                  data-testid="layout-delete"
+                  @click="removeTemplate(row)"
+                >
+                  删除
                 </button>
               </td>
             </tr>
@@ -139,6 +170,65 @@
       </div>
     </div>
 
+    <div v-if="showView" class="modal-mask" @click.self="showView = false">
+      <div class="card" style="width: 520px; padding: 20px" data-testid="layout-view-dialog">
+        <h3 style="margin: 0 0 12px">查看 · {{ viewTitle }}</h3>
+        <p class="hint">{{ viewMeta }} · 只读，预置模板不可编辑</p>
+        <iframe
+          v-if="viewHtml"
+          sandbox=""
+          :srcdoc="viewHtml"
+          title="模板查看"
+          style="width: 100%; height: 220px; border: 1px solid var(--line, #ddd); background: #fff"
+        />
+        <div v-else class="empty"><div class="et">这条模板还没有预览 HTML</div></div>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="showView = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showImport" class="modal-mask" data-testid="layout-import" @click.self="showImport = false">
+      <div class="card" style="width: 560px; padding: 20px">
+        <h3 style="margin: 0 0 8px">导入向导</h3>
+        <p class="hint" style="margin-bottom: 10px">ADR-020 套用 vs 预览 · 导入方式为 Tab（非步骤条）</p>
+        <div class="tabs" style="margin-bottom: 10px">
+          <button class="tab" :class="{ on: importTab === 'url' }" type="button" data-testid="layout-import-tab-url" @click="importTab = 'url'">公众号链接</button>
+          <button class="tab" :class="{ on: importTab === 'mhtml' }" type="button" data-testid="layout-import-tab-mhtml" @click="importTab = 'mhtml'">MHTML 上传</button>
+          <button class="tab" :class="{ on: importTab === 'html' }" type="button" data-testid="layout-import-tab-html" @click="importTab = 'html'">粘贴 HTML</button>
+        </div>
+        <template v-if="importTab === 'url'">
+          <label class="fld">公众号链接 *</label>
+          <input v-model="importUrl" class="fld-in" data-testid="layout-import-url" placeholder="https://mp.weixin.qq.com/s/…" />
+          <label class="fld">模板名（可选）</label>
+          <input v-model="importName" class="fld-in" placeholder="导入后模板名称" />
+          <p class="hint">反爬失败时请改用 MHTML 或粘贴 HTML</p>
+        </template>
+        <template v-else-if="importTab === 'mhtml'">
+          <label class="fld">.mhtml 单文件 *</label>
+          <input data-testid="layout-import-file" type="file" accept=".mhtml,.mht" @change="onMhtmlFile" />
+          <label class="fld">模板名（可选）</label>
+          <input v-model="importName" class="fld-in" />
+          <label class="fld">覆盖模板 ID（可选）</label>
+          <input v-model="importOverrideId" class="fld-in" placeholder="留空为新建" />
+          <p class="hint">上传后生成 DRAFT 模板</p>
+        </template>
+        <template v-else>
+          <label class="fld">模板名 *</label>
+          <input v-model="importName" class="fld-in" data-testid="layout-import-name" />
+          <label class="fld">富文本 / 源码 *</label>
+          <textarea v-model="importHtml" class="fld-in" rows="5" data-testid="layout-import-html" placeholder="<div>…</div>" />
+          <p class="hint">开始导入后生成 DRAFT 模板</p>
+        </template>
+        <p v-if="importError" class="hint bad" data-testid="layout-import-error">{{ importError }}</p>
+        <p v-if="importResult" class="hint" data-testid="layout-import-result">{{ importResult }}</p>
+        <div class="acts" style="margin-top: 12px; justify-content: flex-end">
+          <button class="btn btn-sec btn-sm" type="button" @click="showImport = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" data-testid="layout-import-submit" @click="submitImport">开始导入</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showForm" class="modal-mask" @click.self="showForm = false">
       <div class="card" style="width: 420px; padding: 20px">
         <h3 style="margin: 0 0 12px">新建公推模板</h3>
@@ -158,7 +248,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { http } from '../../api/http'
+import { errorMessage, http } from '../../api/http'
 
 type Row = {
   id: number
@@ -176,10 +266,23 @@ const error = ref('')
 const showForm = ref(false)
 const showEdit = ref(false)
 const showPreview = ref(false)
+const showView = ref(false)
+const showImport = ref(false)
 const formError = ref('')
 const editError = ref('')
 const previewTitle = ref('')
 const previewHtml = ref('')
+const viewTitle = ref('')
+const viewHtml = ref('')
+const viewMeta = ref('')
+const importTab = ref<'url' | 'mhtml' | 'html'>('url')
+const importUrl = ref('')
+const importName = ref('')
+const importHtml = ref('')
+const importOverrideId = ref('')
+const importFile = ref<File | null>(null)
+const importError = ref('')
+const importResult = ref('')
 const editingId = ref<number | null>(null)
 const filters = reactive({ templateName: '', status: '', source: '' })
 const filtering = computed(() => !!(filters.templateName.trim() || filters.status || filters.source))
@@ -299,6 +402,105 @@ async function setEnabled(id: number, enabled: boolean) {
   if (!enabled && !window.confirm('停用后新内容不可套用该模板，已使用内容不受影响')) return
   await http.put(`/content/layout-template/${id}/enable`, null, { params: { enabled } })
   await loadList()
+}
+
+function openView(row: Row) {
+  viewTitle.value = row.templateName
+  viewHtml.value = row.previewHtml || ''
+  viewMeta.value = `${row.source} · ${row.status}`
+  showView.value = true
+}
+
+async function copyTemplate(row: Row) {
+  try {
+    const res = await http.post(`/content/layout-template/${row.id}/copy`)
+    if (res.data.code !== 0) {
+      window.alert(res.data.msg || '复制失败')
+      return
+    }
+    await loadList()
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
+async function removeTemplate(row: Row) {
+  if (!window.confirm(`删除草稿模板「${row.templateName}」？`)) return
+  try {
+    const res = await http.delete(`/content/layout-template/${row.id}`)
+    if (res.data.code !== 0) {
+      window.alert(res.data.msg || '删除失败')
+      return
+    }
+    await loadList()
+  } catch (e) {
+    window.alert(errorMessage(e))
+  }
+}
+
+function openImport() {
+  importTab.value = 'url'
+  importUrl.value = ''
+  importName.value = ''
+  importHtml.value = ''
+  importOverrideId.value = ''
+  importFile.value = null
+  importError.value = ''
+  importResult.value = ''
+  showImport.value = true
+}
+
+function onMhtmlFile(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  importFile.value = input.files?.[0] || null
+}
+
+async function submitImport() {
+  importError.value = ''
+  importResult.value = ''
+  try {
+    if (importTab.value === 'url') {
+      if (!importUrl.value.trim()) {
+        importError.value = '必填项，请填写'
+        return
+      }
+      await http.post('/content/layout-template/import-url', {
+        url: importUrl.value.trim(),
+        templateName: importName.value.trim(),
+      })
+      return
+    }
+    if (importTab.value === 'mhtml') {
+      if (!importFile.value) {
+        importError.value = '必填项，请填写'
+        return
+      }
+      const data = new FormData()
+      data.append('file', importFile.value)
+      if (importName.value.trim()) data.append('templateName', importName.value.trim())
+      if (importOverrideId.value.trim()) data.append('overrideId', importOverrideId.value.trim())
+      const res = await http.post('/content/layout-template/import-mhtml', data)
+      const jobId = res.data.data?.jobId
+      importResult.value = jobId ? `导入任务已创建 · jobId=${jobId}` : '已生成草稿模板'
+      showImport.value = false
+      await loadList()
+      return
+    }
+    if (!importName.value.trim() || !importHtml.value.trim()) {
+      importError.value = '必填项，请填写'
+      return
+    }
+    const res = await http.post('/content/layout-template/import-paste', {
+      templateName: importName.value.trim(),
+      html: importHtml.value,
+    })
+    const jobId = res.data.data?.jobId
+    importResult.value = jobId ? `导入任务已创建 · jobId=${jobId}` : '已生成草稿模板'
+    showImport.value = false
+    await loadList()
+  } catch (e) {
+    importError.value = errorMessage(e)
+  }
 }
 
 onMounted(loadList)

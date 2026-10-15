@@ -33,7 +33,8 @@ test.describe('content sop plan S1 closure', () => {
     await page.getByRole('button', { name: '新增模板' }).click()
     const drawer = page.locator('.drawer.on').filter({ hasText: '新增 SOP 模板' })
     await expect(drawer).toBeVisible()
-    await drawer.locator('.fld').filter({ hasText: '模板名称' }).locator('input').fill(sopName)
+    await drawer.locator('.fld').filter({ hasText: 'SOP 名称' }).locator('input').fill(sopName)
+    await drawer.getByTestId('sop-content-type').selectOption('SHORT_VIDEO')
     await drawer.locator('.fld').filter({ hasText: '首节点名称' }).locator('input').fill(nodeName)
     await drawer.getByRole('button', { name: '内容发布' }).click()
     await expect(drawer.locator('[data-testid="sop-dag-node"]')).toHaveCount(2)
@@ -50,7 +51,7 @@ test.describe('content sop plan S1 closure', () => {
     const createResp = page.waitForResponse(
       (r) => r.url().includes('/content/sop') && r.request().method() === 'POST' && r.status() === 200,
     )
-    await drawer.getByRole('button', { name: '保存', exact: true }).click()
+    await drawer.getByRole('button', { name: '保存为新版本' }).click()
     const created = (await (await createResp).json()) as { code: number; data?: { id?: number; version?: number } }
     expect(created.code).toBe(0)
     expect(created.data?.version).toBe(1)
@@ -82,7 +83,7 @@ test.describe('content sop plan S1 closure', () => {
     const putResp = page.waitForResponse(
       (r) => r.url().includes(`/content/sop/${sopId}`) && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await editDrawer.getByRole('button', { name: '保存新版本' }).click()
+    await editDrawer.getByRole('button', { name: '保存为新版本' }).click()
     const updated = (await (await putResp).json()) as { code: number; data?: { version?: number; id?: number } }
     expect(updated.code).toBe(0)
     expect(updated.data?.version).toBe(2)

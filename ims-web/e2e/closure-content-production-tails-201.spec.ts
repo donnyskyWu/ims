@@ -37,7 +37,7 @@ test.describe('content production local tails', () => {
     await page.getByRole('button', { name: '新增内容' }).click()
     const createDrawer = page.locator('.drawer.on').filter({ hasText: '新增内容' })
     await createDrawer.getByRole('button', { name: '保存' }).click()
-    await expect(createDrawer.getByTestId('content-title-error')).toHaveText('请填写标题')
+    await expect(createDrawer.getByTestId('content-title-error')).toHaveText('必填项，请填写')
     await page.screenshot({ path: `${SHOTS}/02-content-title-empty.png`, fullPage: true })
 
     await createDrawer.getByTestId('content-edit-title').fill(title)
@@ -122,7 +122,7 @@ test.describe('content production local tails', () => {
     const putResp = page.waitForResponse(
       (r) => r.url().includes('/content/sop/') && r.request().method() === 'PUT' && r.status() === 200,
     )
-    await editDrawer.getByRole('button', { name: '保存新版本' }).click()
+    await editDrawer.getByRole('button', { name: '保存为新版本' }).click()
     const updated = (await (await putResp).json()) as { code: number }
     expect(updated.code).toBe(0)
 
