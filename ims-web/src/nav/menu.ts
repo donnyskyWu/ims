@@ -132,6 +132,7 @@ export const IMPLEMENTED: Record<string, string> = {
   caDouyin: '/ims/corp/account/douyin',
   caKuaishou: '/ims/corp/account/kuaishou',
   caXhs: '/ims/corp/account/xiaohongshu',
+  caReturn: '/ims/account/return',
   crCompany: '/ims/corp/resource/company',
   crRealname: '/ims/corp/resource/realname',
   crSim: '/ims/corp/resource/sim-card',
@@ -152,8 +153,10 @@ export function pathOf(id: string) {
 export function modIdFromPath(path: string) {
   const matched = path.match(/^\/ims\/wip\/([^/]+)/)
   if (matched) return decodeURIComponent(matched[1])
-  const found = Object.entries(IMPLEMENTED).find(([, href]) => href === path)
-  return found?.[0] || ''
+  const hits = Object.entries(IMPLEMENTED).filter(([, href]) => href === path)
+  // 同一路径可能先挂了目录别名（asset → 办公设备）。面包屑和菜单高亮跟侧栏叶子走。
+  const menuLeaf = hits.find(([id]) => Boolean(mods[id]?.parent))
+  return (menuLeaf || hits[0])?.[0] || ''
 }
 
 export function crumbOf(id: string) {

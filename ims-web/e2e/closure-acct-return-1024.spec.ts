@@ -80,6 +80,9 @@ test.describe('account resign return 1024 closure', () => {
     const handle = page.locator('.drawer.on').filter({ hasText: '归还单处理' })
     await expect(handle.getByTestId('return-item-label')).toContainText(code)
     await expect(handle.getByTestId('return-item-status')).toHaveText('待归还')
+    await handle.getByTestId('return-item-tab-asset').click()
+    await expect(handle.getByTestId('return-item-label')).toContainText(code)
+    await expect(handle.getByTestId('return-close')).toBeDisabled()
     await page.screenshot({ path: `${shotDir}/01-return-pending.png`, fullPage: true })
 
     const disableResp = page.waitForResponse(
@@ -91,13 +94,6 @@ test.describe('account resign return 1024 closure', () => {
     await expect(handle.getByTestId('return-detail-error')).toContainText('1024')
     await expect(handle.getByTestId('return-detail-error')).toContainText('禁止关闭权限')
 
-    const closeResp = page.waitForResponse(
-      (r) => r.url().includes('/close') && r.request().method() === 'PUT' && r.status() === 200,
-    )
-    await handle.getByTestId('return-close').click()
-    const closedEarly = (await (await closeResp).json()) as { code: number }
-    expect(closedEarly.code).toBe(1024)
-    await expect(handle.getByTestId('return-detail-error')).toContainText('1024')
     await page.screenshot({ path: `${shotDir}/02-close-1024.png`, fullPage: true })
 
     const returned = page.waitForResponse(
@@ -106,6 +102,7 @@ test.describe('account resign return 1024 closure', () => {
     await handle.getByTestId('return-item-returned').click()
     expect(((await (await returned).json()) as { code: number }).code).toBe(0)
     await expect(handle.getByTestId('return-item-status')).toHaveText('已归还')
+    await expect(handle.getByTestId('return-close')).toBeEnabled()
 
     const closeOk = page.waitForResponse(
       (r) => r.url().includes('/close') && r.request().method() === 'PUT' && r.status() === 200,

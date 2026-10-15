@@ -93,8 +93,10 @@ test.describe('corp certificate digital metrics and file url closure', () => {
 
     const deniedResp = page.waitForResponse((r) => r.url().includes('/file-url') && r.status() === 200)
     await row.getByTestId('corp-cert-file-btn').click()
-    expect(((await (await deniedResp).json()) as { code: number }).code).toBe(1034)
-    await expect(fileDrawer.getByTestId('corp-cert-file-error')).toContainText('1034')
+    const adminPlain = (await (await deniedResp).json()) as { code: number; data?: { watermark?: unknown } }
+    expect(adminPlain.code).toBe(0)
+    expect(adminPlain.data?.watermark).toBeUndefined()
+    await expect(fileDrawer.getByTestId('corp-cert-file-plain')).toContainText('明文预览，禁止下载')
     await page.screenshot({ path: `${shotDir}/03-level-1034.png`, fullPage: true })
     await fileDrawer.getByRole('button', { name: '关闭' }).click()
 
@@ -112,11 +114,10 @@ test.describe('corp certificate digital metrics and file url closure', () => {
     expect(watermark.code).toBe(0)
     expect(watermark.data?.expiresInSeconds).toBe(60)
     expect(watermark.data?.signedUrl || '').toContain('/cert/archive/file?token=')
-    expect(watermark.data?.watermark?.text || '').toContain('管理员')
+    expect(watermark.data?.watermark).toBeUndefined()
     expect(JSON.stringify(watermark)).not.toContain(number)
-    await expect(fileDrawer.getByTestId('corp-cert-file-watermark')).toContainText('管理员')
+    await expect(fileDrawer.getByTestId('corp-cert-file-plain')).toContainText('明文预览，禁止下载')
     await expect(fileDrawer.getByTestId('corp-cert-file-ttl')).toContainText('禁止下载')
-    await expect(fileDrawer.getByTestId('corp-cert-file-preview')).toContainText('禁止下载')
     await page.screenshot({ path: `${shotDir}/04-l2-watermark.png`, fullPage: true })
     await fileDrawer.getByRole('button', { name: '关闭' }).click()
 

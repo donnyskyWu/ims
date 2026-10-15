@@ -110,7 +110,20 @@ def _overdue(order: AccountReturnOrder, today: date) -> tuple[bool, int]:
     return True, max((today - due).days, 0)
 
 
-def _item_vo(db: Session, item: AccountReturnItem) -> dict:
+def _dept_name(db: Session, user_id: int) -> str:
+    from app.api import user_dept_snapshot
+
+    user = db.get(User, user_id)
+    if user is None or user.deleted:
+        return ""
+    _ids, names = user_dept_snapshot(db, user.id, user.tenant_id or 0)
+    return "、".join(name for name in names if name)
+
+
+def _item_vo(db: Session, item: AccountReturnItem, holder_name: str) -> dict:
+    holder = holder_name
+    if item.item_status == "TRANSFERRED" and item.transfer_to_user_id:
+        holder = _name(db, item.transfer_to_user_id) or holder
     return {
         "id": item.id,
         "returnOrderId": item.return_order_id,
@@ -119,6 +132,7 @@ def _item_vo(db: Session, item: AccountReturnItem) -> dict:
         "itemSnapshot": item.item_snapshot,
         "itemLabel": item.item_snapshot,
         "itemStatus": item.item_status,
+        "currentHolder": holder,
         "handlerUserId": item.handler_user_id,
         "handlerName": _name(db, item.handler_user_id),
         "transferToUserId": item.transfer_to_user_id,
@@ -136,6 +150,7 @@ def _order_vo(db: Session, order: AccountReturnOrder, with_items: bool, today: d
         "userId": order.user_id,
         "userNickname": _name(db, order.user_id),
         "userName": _name(db, order.user_id),
+        "deptName": _dept_name(db, order.user_id),
         "dingtalkResignDate": order.resign_date,
         "resignDate": order.resign_date,
         "status": order.status,
@@ -148,7 +163,8 @@ def _order_vo(db: Session, order: AccountReturnOrder, with_items: bool, today: d
         "createdAt": _clock(order.created_at),
     }
     if with_items:
-        payload["items"] = [_item_vo(db, item) for item in items]
+        holder = payload["userName"]
+        payload["items"] = [_item_vo(db, item, holder) for item in items]
     return payload
 
 

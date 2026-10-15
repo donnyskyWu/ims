@@ -107,16 +107,40 @@ def realname_masked(ops: Session, ids: set[int]) -> dict[int, str]:
     return {row.id: mask_name(row.real_name) for row in rows}
 
 
-def company_vo(row: Company) -> dict:
-    capacity = row.mp_capacity_standard or 0
-    registered = 0
-    history = []
+def expansion_history_of(row: Company) -> list:
     try:
         parsed = json.loads(row.expansion_history or "[]")
-        if isinstance(parsed, list):
-            history = parsed
     except json.JSONDecodeError:
-        history = []
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def capacity_note(row: Company, capacity: int) -> str:
+    history = expansion_history_of(row)
+    if history:
+        return f"标准容量 {capacity} · 扩容 {len(history)} 次"
+    return f"标准容量 {capacity}"
+
+
+def official_counts(ops: Session, actor: User, company_ids: list[int]) -> dict[int, int]:
+    if not company_ids:
+        return {}
+    rows = ops.execute(
+        select(PlatformAccount.company_id, func.count())
+        .where(
+            PlatformAccount.deleted == 0,
+            PlatformAccount.tenant_id == tenant_of(actor),
+            PlatformAccount.platform_type == "WECHAT_OFFICIAL",
+            PlatformAccount.company_id.in_(company_ids),
+        )
+        .group_by(PlatformAccount.company_id)
+    ).all()
+    return {int(company_id): int(count) for company_id, count in rows if company_id}
+
+
+def company_vo(row: Company, registered: int = 0) -> dict:
+    capacity = row.mp_capacity_standard or 0
+    history = expansion_history_of(row)
     return {
         "id": row.id,
         "companyName": row.company_name,
@@ -127,6 +151,8 @@ def company_vo(row: Company) -> dict:
         "mpCapacityStandard": capacity,
         "mpRegisteredCount": registered,
         "mpRemaining": capacity - registered,
+        "usedTotal": f"{registered} / {capacity}",
+        "capacityNote": capacity_note(row, capacity),
         "expansionHistory": history,
         "status": row.status,
     }
@@ -141,6 +167,7 @@ def realname_vo(row: Realname) -> dict:
         "phoneMasked": mask_mobile(decrypt_text(row.phone_enc)),
         "wechat": row.wechat,
         "gender": row.gender,
+        "intermediary": row.intermediary or "",
         "status": row.status,
         "companyId": row.company_id,
     }
@@ -195,10 +222,13 @@ def sim_vo(row: SimCard, names: dict[int, str], persons: dict[int, str], linked:
 
 def cert_vo(row: CertArchive) -> dict:
     plain = decrypt_text(row.cert_no_enc) if row.cert_no_enc else ""
+    holder_name = row.holder_name or ""
+    if row.holder_user_id is None and holder_name and "（外协）" not in holder_name:
+        holder_name = f"{holder_name}（外协）"
     return {
         "id": row.id,
         "holderUserId": row.holder_user_id,
-        "holderName": row.holder_name,
+        "holderName": holder_name,
         "certType": row.cert_type,
         "certNoMasked": mask_cert_no(plain),
         "certNoHashPrefix": (row.cert_no_hash or "")[:16],
@@ -318,7 +348,112 @@ def company_page(
         stmt = stmt.where(Company.status == status)
     total = count_of(ops, stmt)
     rows = ops.scalars(stmt.order_by(Company.id).offset((page_no - 1) * size).limit(size)).all()
-    return paged([company_vo(row) for row in rows], total, page_no, size)
+    counts = official_counts(ops, actor, [row.id for row in rows])
+    return paged([company_vo(row, counts.get(row.id, 0)) for row in rows], total, page_no, size)
+
+
+class CompanyBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    companyName: str | None = None
+    creditCode: str | None = None
+    industry: str | None = None
+    legalName: str | None = None
+    mpCapacityStandard: int | None = None
+
+
+@router.post("/corp/resource/company")
+def company_create(body: CompanyBody, ops: Session = Depends(ops_db), actor: User = Depends(current_user)):
+    name = (body.companyName or "").strip()
+    credit = (body.creditCode or "").strip()
+    if not name:
+        return fail(1001, "公司名称必填")
+    if not credit:
+        return fail(1001, "信用代码必填")
+    if body.mpCapacityStandard is None:
+        return fail(1001, "容量必填")
+    if body.mpCapacityStandard < 0:
+        return fail(1001, "容量不能为负")
+    taken = ops.scalar(
+        select(Company.id).where(
+            Company.deleted == 0,
+            Company.tenant_id == tenant_of(actor),
+            Company.company_name == name,
+        )
+    )
+    if taken is not None:
+        return fail(1001, "公司名称已存在")
+    row = Company(
+        company_name=name,
+        credit_code=credit,
+        industry=(body.industry or "").strip(),
+        legal_name=(body.legalName or "").strip(),
+        mp_capacity_standard=body.mpCapacityStandard,
+        expansion_history="[]",
+        status="ENABLED",
+        deleted=0,
+        tenant_id=tenant_of(actor),
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    ops.add(row)
+    ops.flush()
+    return ok(company_vo(row, 0))
+
+
+@router.get("/corp/resource/company/export/file")
+@router.get("/corp/resource/realname/export/file")
+@router.get("/corp/resource/sim-card/export/file")
+def corp_export_file(token: str, actor: User = Depends(current_user)):
+    from app.list_export import take_csv
+
+    return take_csv(token, actor)
+
+
+@router.get("/corp/resource/company/export")
+def company_export(
+    companyName: str = "",
+    creditCode: str = "",
+    industry: str = "",
+    status: str = "",
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(Company).where(Company.deleted == 0, Company.tenant_id == tenant_of(actor))
+    if companyName:
+        stmt = stmt.where(Company.company_name.like(f"%{companyName}%"))
+    if creditCode:
+        stmt = stmt.where(Company.credit_code.like(f"%{creditCode}%"))
+    if industry.strip():
+        stmt = stmt.where(Company.industry == industry.strip())
+    if status:
+        stmt = stmt.where(Company.status == status)
+    rows = ops.scalars(stmt.order_by(Company.id).limit(5000)).all()
+    counts = official_counts(ops, actor, [row.id for row in rows])
+    matrix = [["公司ID", "公司", "信用代码", "行业", "法人", "已用/总量", "容量/扩容说明", "状态"]]
+    for row in rows:
+        item = company_vo(row, counts.get(row.id, 0))
+        matrix.append(
+            [
+                str(item["id"]),
+                item["companyName"],
+                item["creditCode"],
+                item["industry"] or "",
+                item["legalName"] or "",
+                item["usedTotal"],
+                item["capacityNote"],
+                "启用" if item["status"] == "ENABLED" else "停用",
+            ]
+        )
+    return ok(
+        issue_list_csv(
+            actor.id,
+            "companies.csv",
+            matrix,
+            "/admin-api/ims/corp/resource/company/export/file",
+        )
+    )
 
 
 @router.get("/corp/resource/company/{company_id}")
@@ -326,7 +461,66 @@ def company_detail(company_id: int, ops: Session = Depends(ops_db), actor: User 
     row = ops.get(Company, company_id)
     if not visible(row, actor):
         return fail(1504, "资源不可用")
-    return ok(company_vo(row))
+    counts = official_counts(ops, actor, [row.id])
+    data = company_vo(row, counts.get(row.id, 0))
+    data["linkedOfficialAccounts"] = linked_official_accounts(ops, actor, row.id)
+    return ok(data)
+
+
+class OfficialLinkBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    accountId: int | None = None
+
+
+def linked_official_accounts(ops: Session, actor: User, company_id: int) -> list[dict]:
+    rows = ops.scalars(
+        select(PlatformAccount)
+        .where(
+            PlatformAccount.deleted == 0,
+            PlatformAccount.tenant_id == tenant_of(actor),
+            PlatformAccount.platform_type == "WECHAT_OFFICIAL",
+            PlatformAccount.company_id == company_id,
+        )
+        .order_by(PlatformAccount.id)
+    ).all()
+    return [
+        {
+            "accountId": item.id,
+            "accountNo": item.account_no,
+            "nickname": item.account_name,
+            "status": item.status,
+        }
+        for item in rows
+    ]
+
+
+@router.post("/corp/resource/company/{company_id}/official-accounts")
+def company_link_official(
+    company_id: int,
+    body: OfficialLinkBody,
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = ops.get(Company, company_id)
+    if not visible(row, actor):
+        return fail(1504, "资源不可用")
+    if not body.accountId:
+        return fail(1001, "公众号必填")
+    account = ops.get(PlatformAccount, body.accountId)
+    if account is None or account.deleted or (account.tenant_id or 0) != tenant_of(actor):
+        return fail(1500, "公众号不存在")
+    if account.platform_type != "WECHAT_OFFICIAL":
+        return fail(1001, "只能关联公众号")
+    if account.company_id == row.id:
+        return ok({"linkedOfficialAccounts": linked_official_accounts(ops, actor, row.id)})
+    used = official_counts(ops, actor, [row.id]).get(row.id, 0)
+    capacity = row.mp_capacity_standard or 0
+    if used >= capacity:
+        return fail(1001, "公众号容量已满")
+    account.company_id = row.id
+    account.updated_at = utcnow()
+    ops.flush()
+    return ok({"linkedOfficialAccounts": linked_official_accounts(ops, actor, row.id)})
 
 
 @router.get("/corp/resource/realname/page")
@@ -352,13 +546,164 @@ def realname_page(
     return paged([realname_vo(row) for row in rows], total, page_no, size)
 
 
+@router.get("/corp/resource/realname/export")
+def realname_export(
+    realName: str = "",
+    status: str = "",
+    idType: str = "",
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(Realname).where(Realname.deleted == 0, Realname.tenant_id == tenant_of(actor))
+    if realName:
+        stmt = stmt.where(Realname.real_name.like(f"%{realName}%"))
+    if status:
+        stmt = stmt.where(Realname.status == status)
+    if idType:
+        stmt = stmt.where(Realname.id_type == idType)
+    rows = ops.scalars(stmt.order_by(Realname.id).limit(5000)).all()
+    matrix = [["实名人ID", "姓名", "证件类型", "证件号", "手机", "中介人", "状态"]]
+    for row in rows:
+        item = realname_vo(row)
+        matrix.append(
+            [
+                str(item["id"]),
+                item["realName"],
+                item["idType"],
+                item["idCardMasked"],
+                item["phoneMasked"],
+                item.get("intermediary") or "",
+                "在职" if item["status"] == "ENABLED" else "离职",
+            ]
+        )
+    return ok(
+        issue_list_csv(actor.id, "realnames.csv", matrix, "/admin-api/ims/corp/resource/realname/export/file")
+    )
+
+
+@router.get("/corp/resource/sim-card/export")
+def sim_export(
+    phoneNumber: str = "",
+    operator: str = "",
+    status: str = "",
+    realnameId: int | None = None,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    stmt = select(SimCard).where(SimCard.deleted == 0, SimCard.tenant_id == tenant_of(actor))
+    number = phoneNumber.strip()
+    if number:
+        if PHONE_RE.match(number):
+            stmt = stmt.where(SimCard.phone_sha256 == sha256_hex(number))
+        else:
+            stmt = stmt.where(SimCard.id < 0)
+    if operator:
+        stmt = stmt.where(SimCard.operator == operator)
+    if status:
+        stmt = stmt.where(SimCard.status == status)
+    if realnameId:
+        stmt = stmt.where(SimCard.realname_id == realnameId)
+    rows = ops.scalars(stmt.order_by(SimCard.id).limit(5000)).all()
+    names = user_names(db, {row.assigned_user_id for row in rows if row.assigned_user_id})
+    persons = realname_masked(ops, {row.realname_id for row in rows if row.realname_id})
+    matrix = [["号码", "实名人", "运营商", "归属人", "月租", "状态"]]
+    for row in rows:
+        item = sim_vo(row, names, persons)
+        matrix.append(
+            [
+                item["phoneNumber"],
+                item["realNameMasked"],
+                item["operator"],
+                item["assignedUserName"],
+                str(item["monthlyRent"] or ""),
+                item["status"],
+            ]
+        )
+    return ok(issue_list_csv(actor.id, "sim-cards.csv", matrix, "/admin-api/ims/corp/resource/sim-card/export/file"))
+
+
 @router.get("/corp/resource/realname/{realname_id}")
 def realname_detail(realname_id: int, ops: Session = Depends(ops_db), actor: User = Depends(current_user)):
     row = ops.get(Realname, realname_id)
     if not visible(row, actor):
         return fail(1504, "资源不可用")
     data = realname_vo(row)
-    data["intermediaries"] = []
+    data["intermediaries"] = [{"name": row.intermediary}] if row.intermediary else []
+    data["linkedAccounts"] = []
+    return ok(data)
+
+
+class RealnameBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    realName: str | None = None
+    idCard: str | None = None
+    phone: str | None = None
+    intermediary: str | None = None
+    status: str | None = None
+
+
+def realname_phone_taken(ops: Session, actor: User, digest: str) -> bool:
+    return (
+        ops.scalar(
+            select(Realname.id).where(
+                Realname.deleted == 0,
+                Realname.tenant_id == tenant_of(actor),
+                Realname.phone_sha256 == digest,
+            )
+        )
+        is not None
+    )
+
+
+@router.post("/corp/resource/realname")
+def realname_create(
+    body: RealnameBody,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    name = (body.realName or "").strip()
+    card = (body.idCard or "").strip()
+    phone = (body.phone or "").strip()
+    if not name:
+        return fail(1001, "姓名必填")
+    if not card:
+        return fail(1001, "证件号必填")
+    status = (body.status or "ENABLED").strip() or "ENABLED"
+    enum_error = check_enum(db, "dict_realname_status", status, True)
+    if enum_error:
+        return enum_error
+    phone_enc = ""
+    digest = None
+    if phone:
+        if not PHONE_RE.match(phone):
+            return fail(1001, "手机号格式不正确")
+        digest = sha256_hex(phone)
+        if realname_phone_taken(ops, actor, digest):
+            return fail(1001, "手机号已存在")
+        phone_enc = encrypt_text(phone)
+    row = Realname(
+        real_name=name,
+        id_type="ID_CARD",
+        id_card_enc=encrypt_text(card),
+        phone_enc=phone_enc,
+        phone_sha256=digest,
+        intermediary=(body.intermediary or "").strip(),
+        status=status,
+        deleted=0,
+        tenant_id=tenant_of(actor),
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    ops.add(row)
+    ops.flush()
+    data = realname_vo(row)
+    data["intermediaries"] = [{"name": row.intermediary}] if row.intermediary else []
     data["linkedAccounts"] = []
     return ok(data)
 

@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -29,6 +31,7 @@ from app.ops_db import ops_session
 from app.ops_models import PlatformAccount
 
 router = APIRouter()
+logger = logging.getLogger("ims.acct_pool")
 
 POOL_STATUSES = ("IN_POOL", "IN_USE", "FROZEN", "RETURNED", "CANCELLED")
 STATUS_LABEL = {
@@ -56,7 +59,9 @@ FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
 )
+_USER_ID = re.compile(r"userId=(\d+)")
 # token -> (expires_at, body, filename, user_id)
 _EXPORTS: dict[str, tuple[float, bytes, str, int]] = {}
 
@@ -97,38 +102,76 @@ def purge_exports(now: float) -> None:
         _EXPORTS.pop(key, None)
 
 
-def register_cjk() -> str:
+def _cid_font() -> str:
+    """系统里没有可用的中文字体文件时，用 reportlab 自带的 CID 字库画中文。"""
     from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+    name = "STSong-Light"
+    if name not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(UnicodeCIDFont(name))
+    return name
+
+
+def register_cjk() -> str:
+    """登记一个能画中文的字体。某个候选文件打不开就试下一个，最后退到 CID。
+
+    reportlab 对坏字体抛 TTFError，它不是 OSError。以前这里一抛就变成 HTTP 500。
+    """
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont, TTFError
 
     if "IMS-CJK" in pdfmetrics.getRegisteredFontNames():
         return "IMS-CJK"
     for path in FONT_CANDIDATES:
         if not os.path.isfile(path):
             continue
-        pdfmetrics.registerFont(TTFont("IMS-CJK", path, subfontIndex=0))
+        try:
+            pdfmetrics.registerFont(TTFont("IMS-CJK", path, subfontIndex=0))
+        except (OSError, TTFError, ValueError):
+            logger.warning("skip unreadable cjk font %s", path, exc_info=True)
+            continue
         return "IMS-CJK"
-    raise FileNotFoundError("cjk font")
+    return _cid_font()
 
 
-def build_pdf(lines: list[str]) -> bytes:
+def _wrap(text: str, width: int = 36) -> list[str]:
+    body = text or ""
+    if len(body) <= width:
+        return [body]
+    return [body[index : index + width] for index in range(0, len(body), width)]
+
+
+def _render_pdf(lines: list[str], font: str) -> bytes:
     from reportlab.pdfgen import canvas
 
-    font = register_cjk()
     buf = BytesIO()
     pdf = canvas.Canvas(buf, pagesize=(595, 842))
     pdf.setTitle("账号交接凭证")
     y = 800
     pdf.setFont(font, 11)
     for line in lines:
-        if y < 48:
-            pdf.showPage()
-            pdf.setFont(font, 11)
-            y = 800
-        pdf.drawString(40, y, line[:42])
-        y -= 18
+        for piece in _wrap(line):
+            if y < 48:
+                pdf.showPage()
+                pdf.setFont(font, 11)
+                y = 800
+            pdf.drawString(40, y, piece)
+            y -= 18
     pdf.save()
     return buf.getvalue()
+
+
+def build_pdf(lines: list[str]) -> bytes:
+    """先用本机字体。画不出来就改用 CID，保证还能吐出 PDF 字节。"""
+    try:
+        body = _render_pdf(lines, register_cjk())
+    except Exception:
+        logger.exception("handover pdf font draw failed, retry cid")
+        body = _render_pdf(lines, _cid_font())
+    if not body.startswith(b"%PDF"):
+        raise ValueError("pdf bytes")
+    return body
 
 
 def event_vo(row: AccountTimelineEvent, names: dict[int, str]) -> dict:
@@ -142,8 +185,10 @@ def event_vo(row: AccountTimelineEvent, names: dict[int, str]) -> dict:
         "operatorUserId": row.operator_user_id,
         "operatorName": names.get(row.operator_user_id, ""),
         "snapshotSummary": row.snapshot_summary,
+        "snapshotText": render_summary(row.snapshot_summary or "", names),
         "remark": row.remark,
         "eventTime": iso(row.event_time),
+        "eventTimeText": beijing_clock(row.event_time),
     }
 
 
@@ -266,11 +311,7 @@ def timeline_events(
         stmt = stmt.where(AccountTimelineEvent.event_time >= start, AccountTimelineEvent.event_time <= end)
     total = count_of(db, stmt)
     rows = db.scalars(stmt.order_by(AccountTimelineEvent.id.desc()).offset((page_no - 1) * size).limit(size)).all()
-    ids = {row.operator_user_id for row in rows if row.operator_user_id}
-    names: dict[int, str] = {}
-    if ids:
-        for user in db.scalars(select(User).where(User.id.in_(ids))).all():
-            names[user.id] = user.nickname or user.username
+    names = user_names(db, summary_user_ids(list(rows)))
     return paged([event_vo(row, names) for row in rows], total, page_no, size)
 
 
@@ -285,7 +326,48 @@ def _prefer_static(target, path: str, method: str) -> None:
 _prefer_static(flow_router, "/account/timeline/events", "GET")
 
 
-def voucher_lines(account: PlatformAccount, events: list[AccountTimelineEvent]) -> list[str]:
+def summary_user_ids(events: list[AccountTimelineEvent]) -> set[int]:
+    ids: set[int] = set()
+    for row in events:
+        if row.operator_user_id:
+            ids.add(int(row.operator_user_id))
+        for raw in _USER_ID.findall(row.snapshot_summary or ""):
+            ids.add(int(raw))
+    return ids
+
+
+def user_names(db: Session, ids: set[int]) -> dict[int, str]:
+    if not ids:
+        return {}
+    names: dict[int, str] = {}
+    for user in db.scalars(select(User).where(User.id.in_(ids))).all():
+        names[int(user.id)] = (user.nickname or user.username or "").strip()
+    return names
+
+
+def render_summary(text: str, names: dict[int, str]) -> str:
+    def person(match: re.Match[str]) -> str:
+        return names.get(int(match.group(1))) or "未知"
+
+    rendered = _USER_ID.sub(person, text or "")
+    for code, label in STATUS_LABEL.items():
+        rendered = rendered.replace(code, label)
+    return rendered
+
+
+def beijing_clock(value: datetime | None) -> str:
+    """库内时间是 naive UTC。凭证上只把这一处显示成北京时间，不改全局时区。"""
+    if value is None:
+        return ""
+    return (value + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+
+
+def voucher_lines(
+    account: PlatformAccount,
+    events: list[AccountTimelineEvent],
+    names: dict[int, str] | None = None,
+) -> list[str]:
+    looked_up = names or {}
     status = STATUS_LABEL.get(account.status, account.status)
     lines = [
         "账号交接凭证",
@@ -296,8 +378,9 @@ def voucher_lines(account: PlatformAccount, events: list[AccountTimelineEvent]) 
         return lines
     for row in events:
         label = EVENT_LABEL.get(row.event_type, row.event_type)
-        when = iso(row.event_time)
-        lines.append(f"{when} {label} {row.snapshot_summary or ''}".strip())
+        when = beijing_clock(row.event_time)
+        summary = render_summary(row.snapshot_summary or "", looked_up)
+        lines.append(f"{when} {label} {summary}".strip())
     return lines
 
 
@@ -313,29 +396,34 @@ def export_timeline(
         account = _load_account(ops, account_id)
         if account is None or (account.tenant_id or 0) != tenant_of(actor):
             return fail(1504, "资源不可用")
-        events = db.scalars(
-            select(AccountTimelineEvent)
-            .where(
-                AccountTimelineEvent.account_id == account.id,
-                AccountTimelineEvent.tenant_id == tenant_of(actor),
-            )
-            .order_by(AccountTimelineEvent.id.desc())
-        ).all()
+        events = list(
+            db.scalars(
+                select(AccountTimelineEvent)
+                .where(
+                    AccountTimelineEvent.account_id == account.id,
+                    AccountTimelineEvent.tenant_id == tenant_of(actor),
+                )
+                .order_by(AccountTimelineEvent.id.desc())
+            ).all()
+        )
+        names = user_names(db, summary_user_ids(events))
         try:
-            body = build_pdf(voucher_lines(account, list(events)))
-            folder = file_root() / "account" / datetime.now().strftime("%Y%m")
-            folder.mkdir(parents=True, exist_ok=True)
-        except (OSError, FileNotFoundError):
+            body = build_pdf(voucher_lines(account, events, names))
+        except Exception:
+            # 字体和 PDF 库的异常都不是 OSError。不接住的话 FastAPI 回 HTTP 500。
+            logger.exception("handover pdf failed account_id=%s", account_id)
             return fail(5005, "交接凭证生成失败，请稍后重试")
         now = time.time()
         purge_exports(now)
         token = secrets.token_urlsafe(24)
         filename = f"handover_{account.account_no or account.id}.pdf"
-        path = folder / f"{token}.pdf"
+        # 下载走内存里的正文。磁盘只是留底，写失败不能把已经生成的 PDF 变成 5005。
         try:
-            path.write_bytes(body)
+            folder = file_root() / "account" / datetime.now().strftime("%Y%m")
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{token}.pdf").write_bytes(body)
         except OSError:
-            return fail(5005, "交接凭证生成失败，请稍后重试")
+            logger.exception("handover pdf disk write failed account_id=%s", account_id)
         _EXPORTS[token] = (now + EXPORT_TTL_SEC, body, filename, actor.id)
         return ok(
             {

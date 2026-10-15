@@ -236,6 +236,8 @@ def check_ip_group(ops: Session, actor: User, group_id: int | None, required: bo
         return fail(1504, "资源不可用")
     if row.status != "ENABLED":
         return fail(1501, "IP 组已停用")
+    if (row.group_type or "SMALL") == "BIG":
+        return fail(1203, "大组不可绑定账号")
     return None
 
 
@@ -281,6 +283,29 @@ class PlatformAccountBody(BaseModel):
     cookie: str | None = None
 
 
+def check_platform_account_id(
+    ops: Session,
+    actor: User,
+    platform: str | None,
+    platform_account_id: str | None,
+    current_id: int | None,
+):
+    value = (platform_account_id or "").strip()
+    if not value or not platform:
+        return None
+    stmt = select(PlatformAccount.id).where(
+        PlatformAccount.deleted == 0,
+        PlatformAccount.tenant_id == tenant_of(actor),
+        PlatformAccount.platform_type == platform,
+        PlatformAccount.platform_account_id == value,
+    )
+    if current_id is not None:
+        stmt = stmt.where(PlatformAccount.id != current_id)
+    if ops.scalar(stmt) is not None:
+        return fail(1001, "账号 ID 同平台内已存在")
+    return None
+
+
 def validate_account_body(
     body: PlatformAccountBody,
     db: Session,
@@ -295,15 +320,20 @@ def validate_account_body(
     platform = fixed_platform or body.platformType
     for item in (
         check_platform(platform),
-        check_enum(db, "dict_account_status", body.status if creating or body.status else None, creating),
         check_company(ops, actor, body.companyId if creating or body.companyId else None, creating),
         check_ip_group(ops, actor, body.ipGroupId if creating or body.ipGroupId else None, creating),
+    ):
+        if item is not None:
+            return item, None
+    if creating and not body.realnameId:
+        return fail(1001, "实名人必填"), None
+    for item in (
         check_realname(ops, actor, body.realnameId),
         check_phone(ops, actor, body.phoneId),
         check_sim(ops, actor, body.simCardId),
-        check_assigned(db, actor, body.holderUserId if creating or body.holderUserId else None)
-        if creating or body.holderUserId
-        else None,
+        check_assigned(db, actor, body.holderUserId) if body.holderUserId else None,
+        None if creating else check_enum(db, "dict_account_status", body.status, False),
+        check_platform_account_id(ops, actor, platform, body.platformAccountId, current_id),
     ):
         if item is not None:
             return item, None
@@ -319,7 +349,7 @@ def apply_account(row: PlatformAccount, body: PlatformAccountBody, prepared: dic
     if prepared["name"]:
         row.account_name = prepared["name"]
     if body.platformAccountId is not None:
-        row.platform_account_id = body.platformAccountId
+        row.platform_account_id = body.platformAccountId.strip()
     if body.ipGroupId is not None:
         row.ip_group_id = body.ipGroupId
     if body.companyId is not None:
@@ -331,8 +361,10 @@ def apply_account(row: PlatformAccount, body: PlatformAccountBody, prepared: dic
     if body.simCardId is not None:
         row.sim_card_id = body.simCardId or None
     if body.holderUserId is not None:
-        row.holder_user_id = body.holderUserId
-    if body.status is not None:
+        row.holder_user_id = body.holderUserId or None
+    if creating:
+        row.status = "IN_POOL"
+    elif body.status is not None:
         row.status = body.status
     if body.cookie is not None:
         from app.crypto import encrypt_text
@@ -421,6 +453,88 @@ def account_page(
         page_no,
         size,
     )
+
+
+@router.get("/corp/account/export/file")
+def account_export_file(token: str, actor: User = Depends(current_user)):
+    from app.list_export import take_csv
+
+    return take_csv(token, actor)
+
+
+@router.get("/corp/account/export")
+def account_export(
+    request: Request,
+    platformType: str = "",
+    keyword: str = "",
+    ipGroupId: int | None = None,
+    companyId: int | None = None,
+    status: str = "",
+    holderUserId: int | None = None,
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    from app.list_export import issue_list_csv
+
+    load_scope_ip_groups(db, request, actor)
+    platform_error = check_platform(platformType)
+    if platform_error:
+        return platform_error
+    status_error = check_list_status(status)
+    if status_error:
+        return status_error
+    holder_error = check_list_holder(db, actor, holderUserId)
+    if holder_error:
+        return holder_error
+    stmt = select(PlatformAccount).where(
+        PlatformAccount.deleted == 0,
+        PlatformAccount.tenant_id == tenant_of(actor),
+        PlatformAccount.platform_type == platformType,
+    )
+    scoped_groups = scope_ip_groups(request)
+    if scoped_groups is not None:
+        if not scoped_groups:
+            rows = []
+        else:
+            stmt = stmt.where(PlatformAccount.ip_group_id.in_(scoped_groups))
+            rows = None
+    else:
+        rows = None
+    if rows is None:
+        if keyword.strip():
+            like = f"%{keyword.strip()}%"
+            stmt = stmt.where(or_(PlatformAccount.account_no.like(like), PlatformAccount.account_name.like(like)))
+        if ipGroupId:
+            stmt = stmt.where(PlatformAccount.ip_group_id == ipGroupId)
+        if companyId:
+            stmt = stmt.where(PlatformAccount.company_id == companyId)
+        if status:
+            stmt = stmt.where(PlatformAccount.status == status)
+        if holderUserId:
+            stmt = stmt.where(PlatformAccount.holder_user_id == holderUserId)
+        rows = ops.scalars(stmt.order_by(PlatformAccount.id.desc()).limit(5000)).all()
+    bind_map = binds_map(ops, [row.id for row in rows])
+    groups = ip_group_names(ops, {row.ip_group_id for row in rows if row.ip_group_id})
+    companies = company_names(ops, {row.company_id for row in rows if row.company_id})
+    persons = realname_masked(ops, {row.realname_id for row in rows if row.realname_id})
+    holders = user_names(db, {row.holder_user_id for row in rows if row.holder_user_id})
+    matrix = [["账号编号", "昵称", "IP组", "公司", "责任人", "实名人", "状态", "采集"]]
+    for row in rows:
+        item = list_vo(row, groups, companies, persons, holders, bind_map.get(row.id))
+        matrix.append(
+            [
+                str(item["accountNo"]),
+                str(item["nickname"] or ""),
+                str(item["ipGroupName"] or ""),
+                str(item["companyName"] or ""),
+                str(item["holderUserName"] or ""),
+                str(item["realNameMasked"] or ""),
+                str(item["status"] or ""),
+                str(item["collectBindSummary"] or ""),
+            ]
+        )
+    return ok(issue_list_csv(actor.id, "platform-accounts.csv", matrix, "/admin-api/ims/corp/account/export/file"))
 
 
 @router.get("/corp/account/{account_id}")
@@ -571,7 +685,7 @@ def platform_account_create(
     error, prepared = validate_account_body(body, db, ops, actor, None, True)
     if error:
         return error
-    row = PlatformAccount(tenant_id=tenant_of(actor), deleted=0, status="IN_USE", created_at=utcnow())
+    row = PlatformAccount(tenant_id=tenant_of(actor), deleted=0, status="IN_POOL", created_at=utcnow())
     ops.add(row)
     ops.flush()
     row.account_no = f"ACCT-{utcnow().strftime('%Y')}-{row.id:04d}"

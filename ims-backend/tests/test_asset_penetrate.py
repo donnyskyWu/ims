@@ -1,6 +1,7 @@
 """#65 · E2E-S5-03/04 实名人→资产 5 层与资产→使用人三态。"""
 
 import os
+import uuid
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -10,10 +11,12 @@ os.environ["IMS_MYSQL_HOST"] = "127.0.0.1"
 
 from fastapi.testclient import TestClient
 
+from app.core import SessionLocal
 from app.crypto import encrypt_text, sha256_hex
 from app.main import app
+from app.models import FinProfit, LiveSession
 from app.ops_db import ops_session
-from app.ops_models import Realname
+from app.ops_models import Phone, PlatformAccount, Realname
 
 client = TestClient(app)
 
@@ -158,7 +161,7 @@ def test_reverse_holders_distinguish_three_asset_states():
     detail = client.get(f"/admin-api/ims/asset/ledger/{scrapped}", headers=auth).json()
     assert detail["code"] == 0
     assert [row["status"] for row in detail["data"]["holders"]] == ["IN_USE", "RETURNED", "SCRAPPED"]
-    assert {row["statusLabel"] for row in detail["data"]["holders"]} == {"在用", "已归还", "已报废"}
+    assert {row["statusLabel"] for row in detail["data"]["holders"]} == {"使用中", "已归还", "已报废"}
     assert all(row["userName"] == "管理员" for row in detail["data"]["holders"])
 
     forward = client.get(f"/admin-api/ims/asset/forward/detail/{scrapped}", headers=auth).json()
@@ -179,3 +182,127 @@ def test_reverse_holders_distinguish_three_asset_states():
     assert by_code["AS-PY-SCR"] == "SCRAPPED"
     assert listed["data"]["summary"] == {"total": 3, "inUse": 1, "returned": 1, "scrapped": 1}
     assert in_use and returned and scrapped
+
+
+def test_forward_chain_layers_are_independent_and_cost_is_read_only():
+    auth = headers()
+    created = _create(auth, "AS-CHAIN-1", assetType="LIVE", assetName="直播灯")
+    assert created["code"] == 0, created
+    asset_id = created["data"]["id"]
+    first = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L1"}).json()
+    assert first["code"] == 0, first
+    assert first["data"]["asset"]["assetCode"] == "AS-CHAIN-1"
+    assert first["data"]["asset"]["assetType"] == "LIVE"
+    assert "accounts" not in first["data"]
+    accounts = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L2"}).json()
+    assert accounts["data"]["accounts"] == []
+    people = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L3"}).json()
+    assert people["data"]["persons"] == []
+    sessions = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L4"}).json()
+    assert sessions["data"]["sessions"] == []
+    cost = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L5"}).json()
+    assert cost["data"]["cost"]["totalCost"] == 0
+    assert cost["data"]["cost"]["totalRevenue"] == 0
+    assert cost["data"]["cost"]["costMasked"] is False
+    assert cost["data"]["cost"]["sessionCount"] == 0
+    blocked = client.get(f"/admin-api/ims/asset/forward/chain/{asset_id}", headers=auth, params={"layer": "L6"}).json()
+    assert blocked["code"] == 1013
+    assert blocked["msg"] == "穿透层级超限"
+    missing = client.get("/admin-api/ims/asset/forward/chain/99999999", headers=auth, params={"layer": "L1"}).json()
+    assert missing["code"] == 1011
+
+
+def test_phone_forward_chain_follows_bound_accounts_and_session_cost():
+    auth = headers()
+    stamp = uuid.uuid4().hex[:8]
+    ops = ops_session()
+    try:
+        phone = Phone(
+            phone_enc=encrypt_text(f"136{stamp[:8]}"),
+            phone_sha256=sha256_hex(f"phone-{stamp}"),
+            phone_code=f"PH-{stamp}",
+            phone_model="测试机",
+            device_number=f"DV-{stamp}",
+            status="IN_USE",
+            keeper_id=1,
+            purchase_date="2026-04-01",
+            tenant_id=0,
+        )
+        ops.add(phone)
+        ops.flush()
+        account = PlatformAccount(
+            account_no=f"AC-PH-{stamp}",
+            account_name=f"手机号{stamp}",
+            platform_type="DOUYIN",
+            phone_id=phone.id,
+            status="IN_USE",
+            tenant_id=0,
+        )
+        ops.add(account)
+        ops.commit()
+        phone_id = int(phone.id)
+        account_id = int(account.id)
+    finally:
+        ops.close()
+    code = f"IMS20261011DY{stamp[:4].upper()}"
+    db = SessionLocal()
+    try:
+        db.add(
+            LiveSession(
+                session_code=code,
+                account_id=account_id,
+                topic="手机场次",
+                session_status="ENDED",
+                platform="DOUYIN",
+                responsible_user_id=1,
+                tenant_id=0,
+            )
+        )
+        db.add(FinProfit(session_code=code, revenue=12.5, total_cost=3.25, tenant_id=0))
+        db.commit()
+    finally:
+        db.close()
+
+    first = client.get(
+        f"/admin-api/ims/asset/forward/chain/{phone_id}",
+        headers=auth,
+        params={"layer": "L1", "subject": "phone"},
+    ).json()
+    assert first["code"] == 0, first
+    assert first["data"]["asset"]["assetCode"] == f"PH-{stamp}"
+    assert first["data"]["asset"]["assetType"] == "PHONE"
+    assert first["data"]["asset"]["bindCount"] == 1
+    assert first["data"]["subject"] == "phone"
+    accounts = client.get(
+        f"/admin-api/ims/asset/forward/chain/{phone_id}",
+        headers=auth,
+        params={"layer": "L2", "subject": "phone"},
+    ).json()
+    assert accounts["data"]["accounts"][0]["accountNo"] == f"AC-PH-{stamp}"
+    assert accounts["data"]["accounts"][0]["nickname"] == f"手机号{stamp}"
+    sessions = client.get(
+        f"/admin-api/ims/asset/forward/chain/{phone_id}",
+        headers=auth,
+        params={"layer": "L4", "subject": "phone"},
+    ).json()
+    assert sessions["data"]["sessions"][0]["sessionCode"] == code
+    cost = client.get(
+        f"/admin-api/ims/asset/forward/chain/{phone_id}",
+        headers=auth,
+        params={"layer": "L5", "subject": "phone"},
+    ).json()
+    assert cost["data"]["cost"]["totalCost"] == 3.25
+    assert cost["data"]["cost"]["totalRevenue"] == 12.5
+    assert cost["data"]["cost"]["sessionCount"] == 1
+    blocked = client.get(
+        f"/admin-api/ims/asset/forward/chain/{phone_id}",
+        headers=auth,
+        params={"layer": "L6", "subject": "phone"},
+    ).json()
+    assert blocked["code"] == 1013
+    missing = client.get(
+        "/admin-api/ims/asset/forward/chain/99999998",
+        headers=auth,
+        params={"layer": "L1", "subject": "phone"},
+    ).json()
+    assert missing["code"] == 1011

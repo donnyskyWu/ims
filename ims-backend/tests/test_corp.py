@@ -4,6 +4,7 @@ os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core import Base, SessionLocal, engine
 from app.crypto import encrypt_text, sha256_hex
@@ -33,7 +34,24 @@ def test_company_and_realname_are_query_only_and_masked():
     assert missing.json()["code"] == 1504
     assert missing.json()["msg"] == "资源不可用"
     blocked = client.post("/admin-api/ims/corp/resource/company", headers=auth, json={"companyName": "甲"})
-    assert blocked.status_code == 404
+    assert blocked.json()["code"] == 1001
+    assert blocked.json()["msg"] == "信用代码必填"
+    created = client.post(
+        "/admin-api/ims/corp/resource/company",
+        headers=auth,
+        json={"companyName": "丙公司", "creditCode": "91330100MA0000099X", "mpCapacityStandard": 10},
+    )
+    assert created.json()["code"] == 0
+    assert created.json()["data"]["status"] == "ENABLED"
+    assert created.json()["data"]["usedTotal"] == "0 / 10"
+    assert created.json()["data"]["capacityNote"] == "标准容量 10"
+    duplicate = client.post(
+        "/admin-api/ims/corp/resource/company",
+        headers=auth,
+        json={"companyName": "丙公司", "creditCode": "91330100MA0000098X", "mpCapacityStandard": 1},
+    )
+    assert duplicate.json()["code"] == 1001
+    assert duplicate.json()["msg"] == "公司名称已存在"
 
     ops = ops_session()
     try:
@@ -227,6 +245,112 @@ def test_cert_e2e_seed_watermark_view():
     assert "admin" in view.json()["data"]["watermarkText"].lower()
     assert view.json()["data"]["indexInfo"]["certNoMasked"] != "110101199888011234"
     assert "signedUrl" not in view.text
+
+
+def test_company_detail_links_wechat_official_account():
+    from app.ops_models import IpGroup, PlatformAccount
+
+    auth = headers()
+    ops = ops_session()
+    try:
+        company = Company(company_name="公众号公司", credit_code="91330100MP0000001", mp_capacity_standard=1, status="ENABLED", tenant_id=0)
+        group = IpGroup(group_name="公众号组", group_type="SMALL", status="ENABLED", tenant_id=0)
+        ops.add_all([company, group])
+        ops.flush()
+        first = PlatformAccount(
+            account_no="ACCT-MP-1",
+            account_name="一号公众号",
+            platform_type="WECHAT_OFFICIAL",
+            ip_group_id=group.id,
+            status="IN_POOL",
+            tenant_id=0,
+        )
+        second = PlatformAccount(
+            account_no="ACCT-MP-2",
+            account_name="二号公众号",
+            platform_type="WECHAT_OFFICIAL",
+            ip_group_id=group.id,
+            status="IN_POOL",
+            tenant_id=0,
+        )
+        ops.add_all([first, second])
+        ops.commit()
+        company_id, first_id, second_id = company.id, first.id, second.id
+    finally:
+        ops.close()
+
+    linked = client.post(
+        f"/admin-api/ims/corp/resource/company/{company_id}/official-accounts",
+        headers=auth,
+        json={"accountId": first_id},
+    )
+    assert linked.json()["code"] == 0
+    assert linked.json()["data"]["linkedOfficialAccounts"][0]["nickname"] == "一号公众号"
+    detail = client.get(f"/admin-api/ims/corp/resource/company/{company_id}", headers=auth)
+    assert detail.json()["data"]["usedTotal"] == "1 / 1"
+    full = client.post(
+        f"/admin-api/ims/corp/resource/company/{company_id}/official-accounts",
+        headers=auth,
+        json={"accountId": second_id},
+    )
+    assert full.json()["code"] == 1001
+    assert full.json()["msg"] == "公众号容量已满"
+
+
+def test_realname_create_encrypts_id_card_and_keeps_status_codes():
+    auth = headers()
+    missing = client.post("/admin-api/ims/corp/resource/realname", headers=auth, json={"realName": "王五"})
+    assert missing.json()["code"] == 1001
+    created = client.post(
+        "/admin-api/ims/corp/resource/realname",
+        headers=auth,
+        json={
+            "realName": "王五",
+            "idCard": "330102199001011234",
+            "intermediary": "中介甲",
+            "status": "ENABLED",
+        },
+    )
+    body = created.json()
+    assert body["code"] == 0
+    assert "330102199001011234" not in created.text
+    assert body["data"]["idCardMasked"].startswith("330102")
+    assert body["data"]["intermediary"] == "中介甲"
+    assert body["data"]["status"] == "ENABLED"
+    assert body["data"]["intermediaries"] == [{"name": "中介甲"}]
+    listed = client.get(
+        "/admin-api/ims/corp/resource/realname/page",
+        headers=auth,
+        params={"realName": "王五", "status": "ENABLED"},
+    )
+    assert listed.json()["data"]["total"] >= 1
+    assert listed.json()["data"]["list"][0]["intermediary"] == "中介甲"
+
+
+def test_e2e_content_company_is_restored_when_douyin_account_exists():
+    from app.main import _ensure_e2e_douyin_account
+
+    ops = ops_session()
+    db = SessionLocal()
+    try:
+        company = ops.scalar(select(Company).where(Company.company_name == "E2E内容公司"))
+        assert company is not None
+        company.deleted = 1
+        ops.commit()
+        _ensure_e2e_douyin_account(db, ops)
+        ops.commit()
+        revived = ops.scalar(
+            select(Company).where(
+                Company.company_name == "E2E内容公司",
+                Company.deleted == 0,
+                Company.tenant_id == 0,
+            )
+        )
+        assert revived is not None
+        assert revived.status == "ENABLED"
+    finally:
+        ops.close()
+        db.close()
 
 
 def test_company_scope_without_all_is_1008():

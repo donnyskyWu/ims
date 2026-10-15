@@ -26,7 +26,7 @@ client = TestClient(app)
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 STATUS_LABEL = {
     "PENDING_REVIEW": "待审核",
-    "IN_USE": "在用",
+    "IN_USE": "使用中",
     "RETURNED": "已归还",
     "SCRAPPED": "已报废",
 }
@@ -99,7 +99,7 @@ def _xlsx_rows(blob: bytes) -> list[list[str]]:
 
 def _summary_line(summary: dict) -> str:
     return (
-        f"命中 {summary['total']} 条（在用 {summary['inUse']} / "
+        f"命中 {summary['total']} 条（使用中 {summary['inUse']} / "
         f"已归还 {summary['returned']} / 已报废 {summary['scrapped']}）"
     )
 
@@ -286,7 +286,7 @@ def test_reverse_export_xlsx_covers_person_account_and_session():
     assert media.startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     assert blob[:2] == b"PK"
     _assert_sheet_matches(_xlsx_rows(blob), person_list["data"])
-    assert any(row[0] == "AS-EX-ACC" and row[2] == "在用" for row in _xlsx_rows(blob)[2:])
+    assert any(row[0] == "AS-EX-ACC" and row[2] == "使用中" for row in _xlsx_rows(blob)[2:])
 
     account_list = client.get(
         f"/admin-api/ims/asset/reverse/by-account/{account_id}",

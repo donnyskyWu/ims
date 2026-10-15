@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from datetime import datetime, timedelta
 
 os.environ["IMS_DB"] = "ims_test"
 os.environ["IMS_OPS_DB"] = "ims_ops_test"
@@ -75,7 +76,28 @@ def test_timeline_includes_chinese_label_and_operator():
     payload = timeline.json()
     assert payload["code"] == 0, payload
     events = payload["data"]["list"]
+    assert payload["data"]["events"] == events
+    assert events, payload
     apply_event = next(item for item in events if item["eventType"] == "APPLY")
     assert apply_event["eventLabel"] == "领用"
     assert apply_event["operatorName"] == "管理员"
     assert "APPLY" == apply_event["eventType"]
+    assert "userId=" in apply_event["snapshotSummary"]
+    assert "userId=" not in apply_event["snapshotText"]
+    assert "管理员" in apply_event["snapshotText"]
+    assert "T" in apply_event["eventTime"]
+    shown = datetime.strptime(apply_event["eventTimeText"], "%Y-%m-%d %H:%M")
+    stored = datetime.strptime(apply_event["eventTime"], "%Y-%m-%dT%H:%M:%S")
+    assert shown == (stored + timedelta(hours=8)).replace(second=0)
+
+    returned = client.post(
+        "/admin-api/ims/account/return/submit",
+        headers=auth,
+        json={"accountId": account_id},
+    )
+    assert returned.json()["code"] == 0
+    again = client.get(f"/admin-api/ims/account/timeline/{account_id}", headers=auth).json()
+    return_event = next(item for item in again["data"]["list"] if item["eventType"] == "RETURN")
+    assert "RETURNED" in return_event["snapshotSummary"]
+    assert "已归还" in return_event["snapshotText"]
+    assert "RETURNED" not in return_event["snapshotText"]

@@ -16,7 +16,7 @@ class LedgerBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
     assetCode: str = ""
     assetName: str = ""
-    assetType: str = "OFFICE"
+    assetType: str = ""
     spec: str = ""
     purchaseDate: str = ""
     realnameId: int | None = None
@@ -178,7 +178,7 @@ def _add_event(
 LEDGER_EXPORT_LIMIT = 2000
 LEDGER_STATUS_LABEL = {
     "PENDING_REVIEW": "待审核",
-    "IN_USE": "在用",
+    "IN_USE": "使用中",
     "RETURNED": "已归还",
     "SCRAPPED": "已报废",
 }
@@ -252,7 +252,13 @@ def _filtered_ledger(
         like = f"%{text}%"
         stmt = stmt.where(or_(AssetLedger.asset_code.like(like), AssetLedger.asset_name.like(like)))
     if status:
-        stmt = stmt.where(AssetLedger.status == status)
+        code = status.strip()
+        if code in {"在用", "使用中"}:
+            code = "IN_USE"
+        if code == "IN_USE":
+            stmt = stmt.where(AssetLedger.status.in_(["IN_USE", "在用"]))
+        else:
+            stmt = stmt.where(AssetLedger.status == code)
     if owner_user_id > 0:
         stmt = stmt.where(AssetLedger.owner_user_id == owner_user_id)
     elif unassigned:
@@ -528,7 +534,10 @@ def ledger_create(
     spec = (body.spec or "").strip()
     if len(spec) > 128:
         return fail(1001, "规格过长")
-    enum_error = check_enum(db, "dict_asset_type", body.assetType, True)
+    asset_type = (body.assetType or "").strip()
+    if not asset_type:
+        return fail(1001, "资产类型必填")
+    enum_error = check_enum(db, "dict_asset_type", asset_type, True)
     if enum_error:
         return enum_error
     date_error = check_date(body.purchaseDate or None, False)
@@ -559,7 +568,7 @@ def ledger_create(
     row = AssetLedger(
         asset_code=code,
         asset_name=name,
-        asset_type=body.assetType,
+        asset_type=asset_type,
         spec=spec,
         status="PENDING_REVIEW",
         owner_user_id=None,

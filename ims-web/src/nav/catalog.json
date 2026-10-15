@@ -226,6 +226,15 @@
       "parent": "账号管理",
       "desc": "P-M4-008 · XIAOHONGSHU"
     },
+    "caReturn": {
+      "no": "08",
+      "name": "离职归还单",
+      "code": "CORP-A",
+      "icon": "box",
+      "page": "离职归还",
+      "parent": "账号管理",
+      "desc": "ACCT-003 · /ims/account/return"
+    },
     "corpRes": {
       "no": "06",
       "name": "资源管理",
@@ -1254,7 +1263,8 @@
             "caWechatChannels",
             "caDouyin",
             "caKuaishou",
-            "caXhs"
+            "caXhs",
+            "caReturn"
           ]
         },
         {

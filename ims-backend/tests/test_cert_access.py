@@ -115,8 +115,12 @@ def test_digital_rate_level_and_signed_file_url():
 
     approve(auth, cert_id)
     still = client.get(f"/admin-api/ims/cert/archive/{cert_id}/file-url", headers=auth).json()
-    assert still["code"] == 1034
-    assert "1034" in still["msg"]
+    assert still["code"] == 0, still
+    assert "watermark" not in still["data"]
+    still_token = still["data"]["signedUrl"].split("token=", 1)[1]
+    still_file = client.get("/admin-api/ims/cert/archive/file", headers=auth, params={"token": still_token}).json()
+    assert still_file["data"]["viewLevel"] == 3
+    assert still_file["data"]["download"] is False
     done = metrics(auth)
     assert done["digitalizedCount"] == before["digitalizedCount"] + 1
     assert done["totalExpected"] == before["totalExpected"] + 1
@@ -170,14 +174,15 @@ def test_digital_rate_level_and_signed_file_url():
     opened = client.get(f"/admin-api/ims/cert/archive/{cert_id}/file-url", headers=auth).json()
     assert opened["code"] == 0, opened
     assert opened["data"]["expiresInSeconds"] == 60
-    assert "管理员" in opened["data"]["watermark"]["text"]
+    assert "watermark" not in opened["data"]
     assert number not in str(opened)
     token = opened["data"]["signedUrl"].split("token=", 1)[1]
     preview = client.get("/admin-api/ims/cert/archive/file", headers=auth, params={"token": token}).json()
     assert preview["code"] == 0
+    assert preview["data"]["viewLevel"] == 3
     assert preview["data"]["download"] is False
     assert "禁止下载" in preview["data"]["preview"]
-    assert "fileKey" not in preview["data"]
+    assert preview["data"]["fileKey"] == f"local/cert/{number}"
 
     TICKETS[token]["exp"] = time.time() - 5
     expired = client.get("/admin-api/ims/cert/archive/file", headers=auth, params={"token": token}).json()
@@ -212,6 +217,47 @@ def test_digital_rate_level_and_signed_file_url():
     assert own["data"]["viewLevel"] == 3
     assert own["data"]["download"] is False
     assert own["data"]["fileKey"] == f"local/cert/{number}"
+
+
+def test_external_holder_is_marked_and_internal_uses_user():
+    auth = headers()
+    external = upload(auth, "外协张三", f"EX{uuid.uuid4().hex[:10]}")
+    assert external.json()["code"] == 0
+    external_id = external.json()["data"]["id"]
+    patched = client.post(
+        "/admin-api/ims/cert/archive/upload",
+        headers=auth,
+        json={
+            "holderMode": "EXTERNAL",
+            "holderName": "外协李四",
+            "certType": "PASSPORT",
+            "certNoPlain": f"PS{uuid.uuid4().hex[:10]}",
+            "fileKey": "local/cert/ext",
+            "issueDate": "2020-01-01",
+            "expireDate": (date.today() + timedelta(days=400)).isoformat(),
+        },
+    )
+    assert patched.json()["code"] == 0, patched.json()
+    assert patched.json()["data"]["holderUserId"] is None
+    assert patched.json()["data"]["holderName"].endswith("（外协）")
+    admin_id = client.get("/admin-api/ims/system/user/page", headers=auth).json()["data"]["list"][0]["id"]
+    internal = client.post(
+        "/admin-api/ims/cert/archive/upload",
+        headers=auth,
+        json={
+            "holderMode": "INTERNAL",
+            "holderUserId": int(admin_id),
+            "certType": "OTHER",
+            "certNoPlain": f"IN{uuid.uuid4().hex[:10]}",
+            "fileKey": "local/cert/int",
+            "issueDate": "2020-01-01",
+            "expireDate": (date.today() + timedelta(days=400)).isoformat(),
+        },
+    )
+    assert internal.json()["code"] == 0, internal.json()
+    assert internal.json()["data"]["holderUserId"] == int(admin_id)
+    assert "（外协）" not in internal.json()["data"]["holderName"]
+    assert external_id
 
 
 def test_file_url_eleventh_view_is_1035():

@@ -8,7 +8,7 @@
       <div class="acts">
         <button v-if="kind === 'phone'" class="btn btn-pri" type="button" @click="openCreate">新建手机</button>
         <template v-else>
-          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click="openForwardPerson">正向穿透</button>
+          <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-forward-open" @click.stop="openForwardPerson">按实名人穿透</button>
           <button v-if="kind !== 'phone'" class="btn btn-sec" type="button" data-testid="corp-asset-entry-open" @click="openEntryReverse">账号/场次反查</button>
           <button v-if="kind === 'office'" class="btn btn-sec" type="button" data-testid="corp-asset-verify-open" @click="openVerify">关联校验</button>
           <button class="btn btn-sec" type="button" data-testid="corp-asset-import-btn" @click="openImport">采购导入</button>
@@ -65,6 +65,14 @@
       </template>
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
+      <FilteredExportButton
+        v-if="kind === 'phone'"
+        url="/master/phone/export"
+        :params="phoneExportParams"
+        test-id="corp-phone-export"
+        @done="onPhoneExport"
+        @error="onPhoneExport"
+      />
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
       <button
         v-if="kind !== 'phone'"
@@ -107,7 +115,10 @@
             </tr>
             <tr v-for="row in rows" v-else :key="String(row.id)">
               <td v-for="key in meta.keys" :key="key" :data-testid="cellTestId(key)">
-                <template v-if="key === 'bindCount'">
+                <template v-if="key === 'assetCode'">
+                  <button class="btn btn-txt" type="button" data-testid="corp-asset-code-link" @click="openAssetDetail(row)">{{ show(row, key) }}</button>
+                </template>
+                <template v-else-if="key === 'bindCount'">
                   <span>{{ show(row, key) }}</span>
                   <span v-if="row.linkGap" data-testid="corp-asset-link-gap" style="margin-left: 6px; color: #8b909a">待补关联</span>
                 </template>
@@ -115,6 +126,7 @@
               </td>
               <td v-if="kind === 'phone'">
                 <button class="btn btn-txt" type="button" @click="openDetail(row)">详情</button>
+                <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-btn" @click="openChain(row)">正向穿透</button>
               </td>
               <td v-else>
                 <button v-if="row.status === 'PENDING_REVIEW'" class="btn btn-txt" type="button" data-testid="corp-asset-checkout-btn" @click="openCheckout(row)">领用</button>
@@ -122,7 +134,8 @@
                 <button v-if="row.status === 'IN_USE'" class="btn btn-txt" type="button" data-testid="corp-asset-return-btn" @click="openReturn(row)">归还</button>
                 <button v-if="row.status === 'RETURNED'" class="btn btn-txt" type="button" data-testid="corp-asset-scrap-btn" @click="openScrap(row)">报废</button>
                 <button class="btn btn-txt" type="button" data-testid="corp-asset-detail-btn" @click="openAssetDetail(row)">详情</button>
-                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">正向穿透</button>
+                <button v-if="kind === 'live' || kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-chain-btn" @click="openChain(row)">正向穿透</button>
+                <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-forward-btn" @click="openForwardAsset(row)">层级穿透</button>
                 <button v-if="kind === 'office'" class="btn btn-txt" type="button" data-testid="corp-asset-reverse-btn" @click="openReverse(row)">反向穿透</button>
               </td>
             </tr>
@@ -234,11 +247,13 @@
       <div class="formrow one"><div class="fld"><label>规格</label><input v-model="assetForm.spec" data-testid="corp-asset-spec" /></div></div>
       <div v-if="kind === 'live'" class="formrow one">
         <div class="fld">
-          <label>类型</label>
-          <select v-model="assetForm.assetType" data-testid="corp-asset-type">
+          <label>类型<i class="req">*</i></label>
+          <select v-model="assetForm.assetType" data-testid="corp-asset-type" :class="{ err: liveTypeError }">
+            <option value="">请选择类型</option>
             <option value="LIVE">直播设备</option>
             <option value="SHOOT">拍摄设备</option>
           </select>
+          <div v-if="liveTypeError" class="ferr" data-testid="corp-asset-type-error">必填项，请填写</div>
         </div>
       </div>
       <div class="formrow one"><div class="fld"><label>采购日期</label><input v-model="assetForm.purchaseDate" type="date" data-testid="corp-asset-purchase" /></div></div>
@@ -296,7 +311,7 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="useOpen" title="使用" width="480px" @close="useOpen = false">
-      <p class="hint">登记使用后状态仍为在用，之后才能归还。</p>
+      <p class="hint">登记使用后状态仍为使用中，之后才能归还。</p>
       <div class="formrow one"><div class="fld"><label>使用说明</label><input v-model="assetForm.remark" data-testid="corp-asset-use-remark" /></div></div>
       <div v-if="formError" class="hint bad">{{ formError }}</div>
       <template #foot>
@@ -326,14 +341,16 @@
       <div v-if="assetDetail" class="formrow one">
         <div class="fld"><label>编号</label><div>{{ assetDetail.assetCode }}</div></div>
         <div class="fld"><label>名称</label><div>{{ assetDetail.assetName }}</div></div>
-        <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
-        <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
-        <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
+        <div class="fld"><label>类型</label><div data-testid="corp-asset-detail-type">{{ typeLabel(String(assetDetail.assetType || '')) }}</div></div>
         <div class="fld">
           <label>规格</label>
           <div v-if="String(assetDetail.spec || '').trim()" data-testid="corp-asset-detail-spec">{{ assetDetail.spec }}</div>
           <div v-else data-testid="corp-asset-detail-spec-empty">未填规格</div>
         </div>
+        <div class="fld"><label>状态</label><div data-testid="corp-asset-detail-status">{{ statusLabel(String(assetDetail.status || '')) }}</div></div>
+        <div class="fld"><label>责任人</label><div>{{ assetDetail.ownerName || '—' }}</div></div>
+        <div class="fld"><label>采购日期</label><div>{{ assetDetail.purchaseDate || '—' }}</div></div>
+        <div class="fld"><label>绑定账号</label><div data-testid="corp-asset-detail-bind">绑定账号（{{ Number(assetDetail.bindCount || 0) }}）</div></div>
         <div class="fld"><label>采购批次</label><div data-testid="corp-asset-detail-batch">{{ assetDetail.purchaseBatchNo || '—' }}</div></div>
       </div>
       <p v-if="assetDetail?.status === 'SCRAPPED'" class="hint" data-testid="corp-asset-terminal">已报废为终态，不能再领用。</p>
@@ -353,6 +370,97 @@
       </table>
       <template #foot>
         <button class="btn btn-sec" type="button" @click="assetDetailOpen = false">关闭</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="chainOpen" title="正向穿透" width="90%" @close="chainOpen = false">
+      <div data-testid="corp-asset-chain">
+        <section data-testid="corp-asset-chain-l1">
+          <p v-if="chainState.L1.loading" class="hint">资产信息加载中</p>
+          <p v-else-if="chainState.L1.error" class="hint bad" data-testid="corp-asset-chain-l1-error">
+            {{ chainState.L1.error }}
+            <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l1" @click="loadChainLayer('L1')">重试</button>
+          </p>
+          <div v-else-if="chainAsset" class="formrow one">
+            <div class="fld"><label>编号</label><div>{{ chainAsset.assetCode }}</div></div>
+            <div class="fld"><label>名称</label><div>{{ chainAsset.assetName }}</div></div>
+            <div class="fld"><label>类型</label><div>{{ typeLabel(String(chainAsset.assetType || '')) }}</div></div>
+            <div class="fld"><label>规格</label><div>{{ chainAsset.spec || '—' }}</div></div>
+            <div class="fld"><label>状态</label><div>{{ statusLabel(String(chainAsset.status || '')) }}</div></div>
+            <div class="fld"><label>责任人</label><div>{{ chainAsset.ownerPersonName || '—' }}</div></div>
+            <div class="fld"><label>采购日期</label><div>{{ chainAsset.purchaseDate || '—' }}</div></div>
+          </div>
+        </section>
+        <div class="acts" style="margin: 8px 0">
+          <button class="btn btn-sm" :class="chainTab === 'layers' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="corp-asset-chain-tab-layers" @click="chainTab = 'layers'">层级视图</button>
+          <button class="btn btn-sm" :class="chainTab === 'graph' ? 'btn-pri' : 'btn-sec'" type="button" data-testid="corp-asset-chain-tab-graph" @click="chainTab = 'graph'">关系图</button>
+        </div>
+        <div v-if="chainTab === 'layers'">
+          <section data-testid="corp-asset-chain-accounts">
+            <p class="hint">绑定账号</p>
+            <p v-if="chainState.L2.loading" class="hint">账号加载中</p>
+            <p v-else-if="chainState.L2.error" class="hint bad">
+              {{ chainState.L2.error }}
+              <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l2" @click="loadChainLayer('L2')">重试</button>
+            </p>
+            <p v-else-if="!chainAccounts.length" class="hint">没有绑定账号</p>
+            <p v-for="item in chainAccounts" v-else :key="String(item.accountId)">{{ item.nickname || item.accountNo }} · {{ item.platform || '—' }}</p>
+          </section>
+          <section data-testid="corp-asset-chain-persons">
+            <p class="hint">实名人</p>
+            <p v-if="chainState.L3.loading" class="hint">实名人加载中</p>
+            <p v-else-if="chainState.L3.error" class="hint bad">
+              {{ chainState.L3.error }}
+              <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l3" @click="loadChainLayer('L3')">重试</button>
+            </p>
+            <p v-else-if="!chainPersons.length" class="hint">没有实名人</p>
+            <p v-for="item in chainPersons" v-else :key="String(item.personId)">{{ item.personName }} · {{ item.idCardMasked || '—' }}</p>
+          </section>
+          <section data-testid="corp-asset-chain-sessions">
+            <p class="hint">使用场次</p>
+            <p v-if="chainState.L4.loading" class="hint">场次加载中</p>
+            <p v-else-if="chainState.L4.error" class="hint bad">
+              {{ chainState.L4.error }}
+              <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l4" @click="loadChainLayer('L4')">重试</button>
+            </p>
+            <p v-else-if="!chainSessions.length" class="hint">没有使用场次</p>
+            <p v-for="item in chainSessions" v-else :key="String(item.sessionId)">{{ item.sessionCode || item.title || '场次' }}</p>
+          </section>
+        </div>
+        <ol v-else data-testid="corp-asset-chain-graph">
+          <li>资产 · {{ chainAsset?.assetCode || '—' }} {{ chainAsset?.assetName || '' }}</li>
+          <li v-for="item in chainAccounts" :key="'a' + String(item.accountId)">账号 · {{ item.nickname || item.accountNo }}</li>
+          <li v-if="!chainAccounts.length">账号 · 没有绑定账号</li>
+          <li v-for="item in chainPersons" :key="'p' + String(item.personId)">实名人 · {{ item.personName }}</li>
+          <li v-if="!chainPersons.length">实名人 · 没有实名人</li>
+          <li v-for="item in chainSessions" :key="'s' + String(item.sessionId)">场次 · {{ item.sessionCode || item.title }}</li>
+          <li v-if="!chainSessions.length">场次 · 没有使用场次</li>
+          <li>成本 · {{ chainCostText }}</li>
+        </ol>
+        <section data-testid="corp-asset-chain-cost">
+          <p class="hint">成本汇总</p>
+          <p v-if="chainState.L5.loading" class="hint">成本加载中</p>
+          <p v-else-if="chainState.L5.error" class="hint bad">
+            {{ chainState.L5.error }}
+            <button class="btn btn-txt" type="button" data-testid="corp-asset-chain-retry-l5" @click="loadChainLayer('L5')">重试</button>
+          </p>
+          <div v-else class="cost-cards" data-testid="corp-asset-chain-cost-cards">
+            <div class="card stat">
+              <span class="l">成本</span>
+              <div class="n" data-testid="corp-asset-chain-cost-amount">{{ chainCostText }}</div>
+            </div>
+            <div class="card stat">
+              <span class="l">收入</span>
+              <div class="n" data-testid="corp-asset-chain-revenue">{{ chainRevenueText }}</div>
+            </div>
+            <div class="card stat">
+              <span class="l">场次</span>
+              <div class="n" data-testid="corp-asset-chain-session-count">{{ chainCost?.sessionCount || 0 }}</div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="chainOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
     <ProtoDrawer v-if="kind === 'office'" :open="forwardOpen" title="正向穿透" width="560px" @close="forwardOpen = false">
@@ -571,8 +679,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import FilteredExportButton from '../../components/FilteredExportButton.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal } from '../../api/read'
@@ -591,6 +700,21 @@ const pageSize = ref(10)
 const keyword = ref('')
 const phoneModel = ref('')
 const phoneType = ref('')
+const phoneExportParams = computed(() => {
+  const query: Record<string, string> = {}
+  const text = keyword.value.trim()
+  const model = phoneModel.value.trim()
+  if (text && /^[A-Za-z0-9-]+$/.test(text) && !/^\d{11}$/.test(text)) query.deviceNumber = text
+  else if (text && !model) query.phoneModel = text
+  if (model) query.phoneModel = model
+  if (phoneType.value) query.phoneType = phoneType.value
+  if (status.value) query.status = status.value
+  return query
+})
+
+function onPhoneExport(message: string) {
+  ledgerExportNote.value = message
+}
 const status = ref('')
 const ownerFilter = ref('')
 const assetTypeFilter = ref('')
@@ -604,6 +728,7 @@ const detail = ref<Row | null>(null)
 const formOpen = ref(false)
 const saving = ref(false)
 const formError = ref('')
+const liveTypeError = computed(() => kind.value === 'live' && formError.value === '必填项，请填写')
 const users = ref<UserOpt[]>([])
 const phoneStatus = ref<Opt[]>([])
 const phoneTypes = ref<Opt[]>([])
@@ -619,6 +744,23 @@ const returnOpen = ref(false)
 const scrapOpen = ref(false)
 const assetDetailOpen = ref(false)
 const forwardOpen = ref(false)
+const chainOpen = ref(false)
+const chainTab = ref<'layers' | 'graph'>('layers')
+const chainAssetId = ref(0)
+const chainSubject = ref('')
+type ChainLayer = { loading: boolean; error: string }
+const chainState = ref<Record<string, ChainLayer>>({
+  L1: { loading: false, error: '' },
+  L2: { loading: false, error: '' },
+  L3: { loading: false, error: '' },
+  L4: { loading: false, error: '' },
+  L5: { loading: false, error: '' },
+})
+const chainAsset = ref<Row | null>(null)
+const chainAccounts = ref<Row[]>([])
+const chainPersons = ref<Row[]>([])
+const chainSessions = ref<Row[]>([])
+const chainCost = ref<Row | null>(null)
 const reverseOpen = ref(false)
 const forwardRealnameId = ref('')
 const forwardNodes = ref<Row[]>([])
@@ -710,7 +852,7 @@ const parentOverridesPerson = computed(
 
 const fallbackStatus: Opt[] = [
   { value: 'PENDING_REVIEW', label: '待审核' },
-  { value: 'IN_USE', label: '在用' },
+  { value: 'IN_USE', label: '使用中' },
   { value: 'RETURNED', label: '已归还' },
   { value: 'SCRAPPED', label: '已报废' },
 ]
@@ -862,6 +1004,7 @@ function statusLabel(value: string) {
 }
 
 function typeLabel(value: string) {
+  if (value === 'PHONE') return '手机设备'
   const dict = assetTypes.value.length ? assetTypes.value : fallbackType
   return dict.find((item) => item.value === value)?.label || value
 }
@@ -881,6 +1024,7 @@ function show(row: Row, key: string) {
   const value = row[key]
   if (value === undefined || value === null || value === '') return '—'
   if (key === 'status' && kind.value === 'phone') {
+    if (value === 'IN_USE') return '使用中'
     return phoneStatus.value.find((item) => item.value === value)?.label || String(value)
   }
   if (key === 'status') return statusLabel(String(value))
@@ -1122,9 +1266,49 @@ function closeAssetDrawers() {
   returnOpen.value = false
   scrapOpen.value = false
   forwardOpen.value = false
+  chainOpen.value = false
   reverseOpen.value = false
   entryOpen.value = false
   verifyOpen.value = false
+}
+
+const chainCostText = computed(() => {
+  if (!chainCost.value) return '—'
+  if (chainCost.value.costMasked) return '¥****'
+  return `¥${money(chainCost.value.totalCost)}`
+})
+const chainRevenueText = computed(() => (chainCost.value ? `¥${money(chainCost.value.totalRevenue)}` : '—'))
+
+async function loadChainLayer(layer: 'L1' | 'L2' | 'L3' | 'L4' | 'L5') {
+  if (!chainAssetId.value) return
+  chainState.value[layer] = { loading: true, error: '' }
+  try {
+    const params: Record<string, string> = { layer }
+    if (chainSubject.value) params.subject = chainSubject.value
+    const res = await http.get(`/asset/forward/chain/${chainAssetId.value}`, { params })
+    const data = (res.data?.data || {}) as Row
+    if (layer === 'L1') chainAsset.value = (data.asset as Row) || null
+    if (layer === 'L2') chainAccounts.value = (data.accounts as Row[]) || []
+    if (layer === 'L3') chainPersons.value = (data.persons as Row[]) || []
+    if (layer === 'L4') chainSessions.value = (data.sessions as Row[]) || []
+    if (layer === 'L5') chainCost.value = (data.cost as Row) || null
+    chainState.value[layer] = { loading: false, error: '' }
+  } catch (e: unknown) {
+    chainState.value[layer] = { loading: false, error: errorMessage(e) }
+  }
+}
+
+function openChain(row: Row) {
+  chainAssetId.value = Number(row.id)
+  chainSubject.value = kind.value === 'phone' ? 'phone' : ''
+  chainTab.value = 'layers'
+  chainAsset.value = null
+  chainAccounts.value = []
+  chainPersons.value = []
+  chainSessions.value = []
+  chainCost.value = null
+  chainOpen.value = true
+  void Promise.all([loadChainLayer('L1'), loadChainLayer('L2'), loadChainLayer('L3'), loadChainLayer('L4'), loadChainLayer('L5')])
 }
 
 function money(value: unknown) {
@@ -1245,7 +1429,7 @@ function openAssetCreate() {
   assetForm.assetCode = ''
   assetForm.assetName = ''
   assetForm.spec = ''
-  assetForm.assetType = kind.value === 'live' ? 'LIVE' : 'OFFICE'
+  assetForm.assetType = kind.value === 'live' ? '' : 'OFFICE'
   assetForm.purchaseDate = today()
   assetForm.realnameId = ''
   assetForm.parentAssetCode = ''
@@ -1307,6 +1491,7 @@ function registerFormError() {
   const spec = assetForm.spec.trim()
   const session = assetForm.sessionCode.trim().toUpperCase()
   if (!name) return '资产名称必填'
+  if (kind.value === 'live' && !assetForm.assetType) return '必填项，请填写'
   if (name.length > 128) return '资产名称过长'
   if (code.length > 64) return '资产编号过长'
   if (spec.length > 128) return '规格过长'
@@ -1336,10 +1521,8 @@ async function saveAsset() {
     if (assetForm.accountNo.trim()) payload.accountNo = assetForm.accountNo.trim()
     const session = assetForm.sessionCode.trim().toUpperCase()
     if (session) payload.sessionCode = session
-    const res = await http.post('/asset/ledger', payload)
-    const created = (res.data?.data || {}) as Row
+    await http.post('/asset/ledger', payload)
     assetCreateOpen.value = false
-    keyword.value = String(created.assetCode || assetForm.assetCode.trim())
     await load()
   } catch (e: unknown) {
     formError.value = bizError(e)
@@ -1370,9 +1553,8 @@ const forwardEmpty = computed(
   () => forwardNodes.value.length > 0 && forwardNodes.value.every((node) => node.layer === 'PERSON'),
 )
 
-function openForwardPerson() {
+async function openForwardPerson() {
   closeAssetDrawers()
-  forwardOpen.value = true
   forwardNodes.value = []
   forwardError.value = ''
   forwardHint.value = '实名人 → 资产，最多 5 层'
@@ -1380,6 +1562,8 @@ function openForwardPerson() {
   clearForwardLayers()
   exportNote.value = ''
   forwardRealnameId.value = persons.value[0] ? String(persons.value[0].id) : ''
+  await nextTick()
+  forwardOpen.value = true
 }
 
 async function queryForwardPerson() {
@@ -1589,7 +1773,7 @@ function pickEntry(type: 'ACCOUNT' | 'SESSION' | 'PERSON') {
 }
 
 function entrySummaryText(summary: Row) {
-  return `命中 ${summary.total || 0} 条（在用 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
+  return `命中 ${summary.total || 0} 条（使用中 ${summary.inUse || 0} / 已归还 ${summary.returned || 0} / 已报废 ${summary.scrapped || 0}）`
 }
 
 async function queryEntry() {
@@ -1734,7 +1918,7 @@ async function openReverse(row: Row) {
   reverseOpen.value = true
   reverseHolders.value = []
   reverseError.value = ''
-  reverseHint.value = `${row.assetCode || ''} → 使用人（在用 / 已归还 / 已报废）`
+  reverseHint.value = `${row.assetCode || ''} → 使用人（使用中 / 已归还 / 已报废）`
   try {
     const res = await http.get(`/asset/ledger/${row.id}`)
     reverseHolders.value = (res.data?.data?.holders || []) as Row[]
@@ -1840,3 +2024,12 @@ onMounted(async () => {
   await load()
 })
 </script>
+
+<style scoped>
+.cost-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+</style>

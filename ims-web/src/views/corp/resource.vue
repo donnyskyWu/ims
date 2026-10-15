@@ -5,7 +5,13 @@
         <h1>{{ meta.title }}</h1>
         <div class="sub">{{ meta.sub }}</div>
       </div>
-      <div v-if="kind === 'sim-card'" class="acts">
+      <div v-if="kind === 'company'" class="acts">
+        <button class="btn btn-pri" type="button" data-testid="corp-company-create" @click="openCompanyCreate">新建公司</button>
+      </div>
+      <div v-else-if="kind === 'realname'" class="acts">
+        <button class="btn btn-pri" type="button" data-testid="corp-realname-create" @click="openRealnameCreate">新增实名人</button>
+      </div>
+      <div v-else-if="kind === 'sim-card'" class="acts">
         <button class="btn btn-pri" type="button" @click="openCreate">新建手机卡</button>
       </div>
       <div v-else-if="kind === 'certificate'" class="acts">
@@ -88,6 +94,14 @@
       <span class="sp"></span>
       <button class="btn btn-pri btn-sm" type="submit">查询</button>
       <button class="btn btn-sec btn-sm" type="button" @click="reset">重置</button>
+      <FilteredExportButton
+        v-if="kind === 'company' || kind === 'realname' || kind === 'sim-card'"
+        :url="`/corp/resource/${kind}/export`"
+        :params="exportParams"
+        :test-id="`corp-${kind}-export`"
+        @done="onExportDone"
+        @error="onExportDone"
+      />
     </form>
     <p v-if="kind === 'realname'" class="hint" data-testid="master-realname-idtype-hint">{{ idTypeHint }}</p>
     <p v-if="kind === 'certificate' && originalNote" class="hint" data-testid="corp-cert-original-note">{{ originalNote }}</p>
@@ -130,6 +144,8 @@
                   class="btn btn-txt btn-sm"
                   type="button"
                   data-testid="corp-cert-file-btn"
+                  :disabled="certViewLevel < 2"
+                  :title="certViewLevel < 2 ? '无原图查看权限，仅索引可见' : undefined"
                   @click="openFileUrl(row)"
                 >
                   原图
@@ -163,6 +179,9 @@
         <span class="pg-n" :class="{ dis: pageNo >= pageCount }" @click="goto(pageNo + 1)">›</span>
       </div>
     </div>
+    <p v-if="exportNote" class="hint" data-testid="corp-list-export-note">{{ exportNote }}</p>
+    <p v-if="companyToast" class="hint" data-testid="corp-company-toast">{{ companyToast }}</p>
+    <p v-if="realnameToast" class="hint" data-testid="corp-realname-toast">{{ realnameToast }}</p>
     <p v-if="kind === 'company'" class="hint" data-testid="master-company-industry-hint">
       行业来自字典 dict_industry。未列入字典的行业不会出现在下拉里。
     </p>
@@ -443,6 +462,25 @@
               <li v-for="(item, index) in expansionItems" :key="index">{{ expansionText(item) }}</li>
             </ul>
           </div>
+          <div class="fld">
+            <label>关联公众号</label>
+            <ul v-if="officialItems.length" data-testid="corp-company-official-list">
+              <li v-for="item in officialItems" :key="String(item.accountId)">
+                {{ item.accountNo || item.accountId }} · {{ item.nickname || '—' }}
+              </li>
+            </ul>
+            <div v-else class="empty" data-testid="corp-company-official-empty">
+              <div class="et">暂无关联公众号</div>
+            </div>
+            <select v-model="officialAccountId" data-testid="corp-company-official-pick">
+              <option value="">请选择公众号</option>
+              <option v-for="item in officialChoices" :key="String(item.id)" :value="String(item.id)">
+                {{ item.nickname || item.accountNo || item.id }}
+              </option>
+            </select>
+            <button class="btn btn-sec btn-sm" type="button" data-testid="corp-company-official-link" @click="linkOfficial">关联</button>
+            <p v-if="officialMsg" class="hint" data-testid="corp-company-official-msg">{{ officialMsg }}</p>
+          </div>
         </template>
       </div>
       <p
@@ -478,7 +516,7 @@
       <div v-if="kind === 'realname' && detailReady" data-testid="master-realname-relations">
         <div v-if="!intermediaryItems.length" class="empty" data-testid="master-realname-intermediary-empty">
           <div class="et">暂无中介人</div>
-          <div class="es">契约没有实名人写入接口，中介关系不会在这里新增。</div>
+          <div class="es">登记实名人时填写的中介人会列在这里。</div>
         </div>
         <ul v-else data-testid="master-realname-intermediaries">
           <li v-for="(item, index) in intermediaryItems" :key="index">{{ relationText(item) }}</li>
@@ -543,6 +581,89 @@
         <button class="btn btn-sec" type="button" @click="fileOpen = false">关闭</button>
       </template>
     </ProtoDrawer>
+    <ProtoDrawer :open="companyOpen" title="新建公司" width="480px" @close="companyOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>公司名称<i class="req">*</i></label>
+          <input v-model="companyForm.companyName" data-testid="corp-company-name" :class="{ err: companyErrors.companyName }" />
+          <div v-if="companyErrors.companyName" class="ferr" data-testid="corp-company-error-name">{{ companyErrors.companyName }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>信用代码<i class="req">*</i></label>
+          <input v-model="companyForm.creditCode" data-testid="corp-company-credit" :class="{ err: companyErrors.creditCode }" />
+          <div v-if="companyErrors.creditCode" class="ferr" data-testid="corp-company-error-credit">{{ companyErrors.creditCode }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>行业</label>
+          <select v-model="companyForm.industry" data-testid="corp-company-industry">
+            <option value="">请选择行业</option>
+            <option v-for="item in industries" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>法人</label>
+          <input v-model="companyForm.legalName" data-testid="corp-company-legal" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>容量<i class="req">*</i></label>
+          <input v-model="companyForm.capacity" data-testid="corp-company-capacity" :class="{ err: companyErrors.capacity }" />
+          <div v-if="companyErrors.capacity" class="ferr" data-testid="corp-company-error-capacity">{{ companyErrors.capacity }}</div>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="companyOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-company-save" @click="submitCompany">保存</button>
+      </template>
+    </ProtoDrawer>
+    <ProtoDrawer :open="realnameOpen" title="新增实名人" width="480px" @close="realnameOpen = false">
+      <div class="formrow one">
+        <div class="fld">
+          <label>姓名<i class="req">*</i></label>
+          <input v-model="realnameForm.realName" data-testid="corp-realname-name" :class="{ err: realnameErrors.realName }" />
+          <div v-if="realnameErrors.realName" class="ferr" data-testid="corp-realname-error-name">{{ realnameErrors.realName }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>证件号<i class="req">*</i></label>
+          <input v-model="realnameForm.idCard" data-testid="corp-realname-idcard" :class="{ err: realnameErrors.idCard }" />
+          <div v-if="realnameErrors.idCard" class="ferr" data-testid="corp-realname-error-idcard">{{ realnameErrors.idCard }}</div>
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>手机号</label>
+          <input v-model="realnameForm.phone" data-testid="corp-realname-phone" placeholder="可空" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>中介人</label>
+          <input v-model="realnameForm.intermediary" data-testid="corp-realname-intermediary" />
+        </div>
+      </div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>状态</label>
+          <select v-model="realnameForm.status" data-testid="corp-realname-status">
+            <option value="ENABLED">在职</option>
+            <option value="DISABLED">离职</option>
+          </select>
+        </div>
+      </div>
+      <template #foot>
+        <button class="btn btn-sec" type="button" @click="realnameOpen = false">取消</button>
+        <button class="btn btn-pri" type="button" data-testid="corp-realname-save" @click="submitRealname">保存</button>
+      </template>
+    </ProtoDrawer>
     <ProtoDrawer :open="formOpen" :title="editingId ? '编辑手机卡' : '新建手机卡'" width="480px" @close="formOpen = false">
       <p class="hint" data-testid="master-sim-dict-hint">{{ simDictHint }}</p>
       <div class="formrow one"><div class="fld"><label>手机号<i class="req">*</i></label><input v-model="form.phoneNumber" data-testid="master-sim-phone" placeholder="11 位，编辑时留空表示不改" /></div></div>
@@ -598,7 +719,30 @@
       </template>
     </ProtoDrawer>
     <ProtoDrawer :open="certFormOpen" title="录入证件" width="480px" @close="certFormOpen = false">
-      <div class="formrow one"><div class="fld"><label>持有人<i class="req">*</i></label><input v-model="certForm.holderName" data-testid="corp-cert-holder" placeholder="姓名" /></div></div>
+      <div class="formrow one">
+        <div class="fld">
+          <label>持有人<i class="req">*</i></label>
+          <select v-model="certForm.holderMode" data-testid="corp-cert-holder-mode">
+            <option value="EXTERNAL">外协</option>
+            <option value="INTERNAL">内部人员</option>
+          </select>
+        </div>
+      </div>
+      <div v-if="certForm.holderMode === 'INTERNAL'" class="formrow one">
+        <div class="fld">
+          <label>内部人员<i class="req">*</i></label>
+          <select v-model="certForm.holderUserId" data-testid="corp-cert-holder-user">
+            <option value="">请选择人员</option>
+            <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.nickname || user.username }}</option>
+          </select>
+        </div>
+      </div>
+      <div v-else class="formrow one">
+        <div class="fld">
+          <label>外协姓名<i class="req">*</i></label>
+          <input v-model="certForm.holderName" data-testid="corp-cert-holder" placeholder="姓名" />
+        </div>
+      </div>
       <div class="formrow one">
         <div class="fld">
           <label>证件类型<i class="req">*</i></label>
@@ -722,6 +866,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import FilteredExportButton from '../../components/FilteredExportButton.vue'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 import { http, errorMessage } from '../../api/http'
 import { asList, asTotal } from '../../api/read'
@@ -790,6 +935,7 @@ const detailAuditLoading = ref(false)
 const digitalOpen = ref(false)
 const digital = reactive({ totalExpected: 0, digitalizedCount: 0, digitalizedRate: 1 })
 const digitalReady = ref(false)
+const certViewLevel = ref(1)
 const digitalError = ref('')
 const fileOpen = ref(false)
 const fileLoading = ref(false)
@@ -825,6 +971,8 @@ const certFormOpen = ref(false)
 const certSaving = ref(false)
 const certFormError = ref('')
 const certForm = reactive({
+  holderMode: 'EXTERNAL',
+  holderUserId: '',
   holderName: '',
   certType: 'IDCARD',
   certNoPlain: '',
@@ -928,6 +1076,33 @@ const riskTotal = ref(0)
 const riskExportOpen = ref(false)
 const riskExportNote = ref('')
 const formOpen = ref(false)
+const companyOpen = ref(false)
+const companyToast = ref('')
+const companyForm = reactive({
+  companyName: '',
+  creditCode: '',
+  industry: '',
+  legalName: '',
+  capacity: '',
+})
+const companyErrors = reactive({
+  companyName: '',
+  creditCode: '',
+  capacity: '',
+})
+const realnameOpen = ref(false)
+const realnameToast = ref('')
+const realnameForm = reactive({
+  realName: '',
+  idCard: '',
+  phone: '',
+  intermediary: '',
+  status: 'ENABLED',
+})
+const realnameErrors = reactive({
+  realName: '',
+  idCard: '',
+})
 const editingId = ref<number | null>(null)
 const saving = ref(false)
 const formError = ref('')
@@ -962,14 +1137,14 @@ const specs: Record<string, {
 }> = {
   company: {
     title: '公司管理',
-    sub: 'CORP-R · 只查询 · GET /corp/resource/company/page',
+    sub: 'CORP-R · 新建公司 · GET/POST /corp/resource/company',
     placeholder: '公司名称',
     empty: '没有公司',
-    emptyHint: '契约只有分页和详情，这里不能新建。',
-    hint: '公司、实名人按契约只做查询。信用代码和法人来自详情，不提供写入。',
+    emptyHint: '点右上角「新建公司」登记主体。',
+    hint: '公司名称、信用代码、容量必填。已用/总量按该公司公众号账号计数。',
     detailTitle: '公司详情',
-    columns: ['公司', '信用代码', '行业', '法人', '容量', '已注册', '剩余', '状态'],
-    keys: ['companyName', 'creditCode', 'industry', 'legalName', 'mpCapacityStandard', 'mpRegisteredCount', 'mpRemaining', 'status'],
+    columns: ['公司ID', '公司', '信用代码', '行业', '法人', '已用/总量', '容量/扩容说明', '状态'],
+    keys: ['id', 'companyName', 'creditCode', 'industry', 'legalName', 'usedTotal', 'capacityNote', 'status'],
     statusOptions: [
       { value: 'ENABLED', label: '启用' },
       { value: 'DISABLED', label: '停用' },
@@ -980,14 +1155,14 @@ const specs: Record<string, {
     sub: 'CORP-R · 姓名、证件号、手机由接口脱敏',
     placeholder: '姓名',
     empty: '没有实名人',
-    emptyHint: '契约只有分页和详情。',
-    hint: '列表不返回证件号和手机明文。没有新建接口。',
+    emptyHint: '点右上角「新增实名人」。',
+    hint: '列表不返回证件号和手机明文。状态按在职、离职筛选，库存值仍是 ENABLED / DISABLED。',
     detailTitle: '实名人详情',
-    columns: ['姓名', '证件类型', '证件号', '手机', '状态'],
-    keys: ['realName', 'idType', 'idCardMasked', 'phoneMasked', 'status'],
+    columns: ['实名人ID', '姓名', '证件类型', '证件号', '手机', '中介人', '状态'],
+    keys: ['id', 'realName', 'idType', 'idCardMasked', 'phoneMasked', 'intermediary', 'status'],
     statusOptions: [
-      { value: 'ENABLED', label: '启用' },
-      { value: 'DISABLED', label: '停用' },
+      { value: 'ENABLED', label: '在职' },
+      { value: 'DISABLED', label: '离职' },
     ],
   },
   'sim-card': {
@@ -1064,6 +1239,13 @@ const pageList = computed(() => {
   return list
 })
 const detailReady = computed(() => detail.value?.id != null)
+const officialAccountId = ref('')
+const officialMsg = ref('')
+const officialChoices = ref<Row[]>([])
+const officialItems = computed(() => {
+  const list = detail.value?.linkedOfficialAccounts
+  return Array.isArray(list) ? (list as Row[]) : []
+})
 const linkedItems = computed(() => {
   const list = detail.value?.linkedAccounts
   return Array.isArray(list) ? (list as Row[]) : []
@@ -1191,6 +1373,8 @@ function expireStatusStyle(value: string) {
 }
 
 function openCertCreate() {
+  certForm.holderMode = 'EXTERNAL'
+  certForm.holderUserId = ''
   certForm.holderName = ''
   certForm.certType = 'IDCARD'
   certForm.certNoPlain = ''
@@ -1281,7 +1465,9 @@ async function saveCert() {
   certFormError.value = ''
   try {
     const res = await http.post('/cert/archive/upload', {
-      holderName: certForm.holderName.trim(),
+      holderMode: certForm.holderMode,
+      holderUserId: certForm.holderMode === 'INTERNAL' ? Number(certForm.holderUserId) : undefined,
+      holderName: certForm.holderMode === 'INTERNAL' ? undefined : certForm.holderName.trim(),
       certType: certForm.certType,
       certNoPlain: certForm.certNoPlain.trim(),
       fileKey: certForm.fileKey.trim(),
@@ -1476,10 +1662,11 @@ function renewWindowProblem(expireDate: string, oldExpire: string) {
 }
 
 function uploadProblem(
-  input: { holderName?: string; certType: string; certNoPlain: string; issueDate: string; expireDate: string; fileKey: string },
+  input: { holderMode?: string; holderUserId?: string; holderName?: string; certType: string; certNoPlain: string; issueDate: string; expireDate: string; fileKey: string },
   requireHolder: boolean,
 ) {
-  if (requireHolder && !(input.holderName || '').trim()) return '持有人必填'
+  if (requireHolder && input.holderMode === 'INTERNAL' && !input.holderUserId) return '持有人必填'
+  if (requireHolder && input.holderMode !== 'INTERNAL' && !(input.holderName || '').trim()) return '持有人必填'
   const number = certNoProblem(input.certNoPlain)
   if (number) return number
   const dates = certDateProblem(input.issueDate, input.expireDate)
@@ -1554,6 +1741,11 @@ async function loadRisk() {
   riskTotal.value = Number(data.abnormalTotal || 0)
 }
 
+function sameHolder(shown: unknown, typed: string) {
+  const text = String(shown || '')
+  return text === typed || text.replace(/（外协）$/, '') === typed
+}
+
 function userLabel(id: number) {
   const user = users.value.find((item) => Number(item.id) === id)
   return user?.nickname || user?.username || String(id)
@@ -1603,7 +1795,7 @@ async function loadAudit() {
           params: { pageNo: 1, pageSize: 20, holderName: holder },
         })
         const list = asList(found.data?.data)
-        const exact = list.filter((item) => String(item.holderName) === holder)
+        const exact = list.filter((item) => sameHolder(item.holderName, holder))
         if (exact.length !== 1) {
           auditRows.value = []
           auditTotal.value = 0
@@ -1889,6 +2081,27 @@ function typeLabel(value: string) {
   return map[value] || value
 }
 
+const exportNote = ref('')
+
+function onExportDone(message: string) {
+  exportNote.value = message
+}
+
+const exportParams = computed(() => {
+  const query: Record<string, string | number> = {}
+  const text = keyword.value.trim()
+  if (text && kind.value === 'company') query.companyName = text
+  if (text && kind.value === 'realname') query.realName = text
+  if (text && kind.value === 'sim-card' && /^1\d{10}$/.test(text)) query.phoneNumber = text
+  if (kind.value === 'company' && creditCode.value.trim()) query.creditCode = creditCode.value.trim()
+  if (kind.value === 'company' && industry.value) query.industry = industry.value
+  if (kind.value === 'realname' && idType.value) query.idType = idType.value
+  if (kind.value === 'sim-card' && operator.value) query.operator = operator.value
+  if (kind.value === 'sim-card' && realnameId.value) query.realnameId = Number(realnameId.value)
+  if (status.value) query.status = status.value
+  return query
+})
+
 function params() {
   phoneHint.value = ''
   certRangeHint.value = ''
@@ -1979,6 +2192,15 @@ function changeSize(event: Event) {
   pageSize.value = Number((event.target as HTMLSelectElement).value)
   pageNo.value = 1
   load()
+}
+
+async function loadCertViewLevel() {
+  try {
+    const res = await http.get('/cert/security/my-view-level')
+    certViewLevel.value = Number(res.data?.data?.viewLevel || 1)
+  } catch {
+    certViewLevel.value = 1
+  }
 }
 
 async function loadDigital() {
@@ -2158,7 +2380,12 @@ async function openDetail(row: Row) {
   detailOpen.value = true
   const id = row.id
   const url = kind.value === 'certificate' ? `/corp/resource/certificate/${id}/view` : `/corp/resource/${kind.value}/${id}`
-  if (kind.value === 'company') void ensureIndustryDict()
+  if (kind.value === 'company') {
+    void ensureIndustryDict()
+    officialAccountId.value = ''
+    officialMsg.value = ''
+    void loadOfficialChoices()
+  }
   try {
     const res = await http.get(url)
     const data = res.data?.data || {}
@@ -2174,6 +2401,36 @@ async function openDetail(row: Row) {
   if (kind.value === 'certificate') {
     const certId = Number(id)
     if (Number.isFinite(certId)) await loadDetailAudit(certId)
+  }
+}
+
+async function loadOfficialChoices() {
+  try {
+    const res = await http.get('/corp/account/page', {
+      params: { pageNo: 1, pageSize: 100, platformType: 'WECHAT_OFFICIAL' },
+    })
+    officialChoices.value = asList(res.data?.data)
+  } catch {
+    officialChoices.value = []
+  }
+}
+
+async function linkOfficial() {
+  const companyId = detail.value?.id
+  if (!companyId || !officialAccountId.value) {
+    officialMsg.value = '请选择公众号'
+    return
+  }
+  try {
+    await http.post(`/corp/resource/company/${companyId}/official-accounts`, {
+      accountId: Number(officialAccountId.value),
+    })
+    officialMsg.value = '已关联公众号'
+    const res = await http.get(`/corp/resource/company/${companyId}`)
+    detail.value = res.data?.data || detail.value
+    await load()
+  } catch (e: unknown) {
+    officialMsg.value = errorMessage(e)
   }
 }
 
@@ -2235,6 +2492,88 @@ async function prepareSim() {
     persons.value = asList(personPage.data?.data) as unknown as { id: number; realName: string }[]
   } finally {
     simDictReady.value = true
+  }
+}
+
+function openRealnameCreate() {
+  realnameForm.realName = ''
+  realnameForm.idCard = ''
+  realnameForm.phone = ''
+  realnameForm.intermediary = ''
+  realnameForm.status = 'ENABLED'
+  realnameErrors.realName = ''
+  realnameErrors.idCard = ''
+  realnameToast.value = ''
+  realnameOpen.value = true
+}
+
+async function submitRealname() {
+  const required = '必填项，请填写'
+  realnameErrors.realName = realnameForm.realName.trim() ? '' : required
+  realnameErrors.idCard = realnameForm.idCard.trim() ? '' : required
+  if (realnameErrors.realName || realnameErrors.idCard) {
+    realnameToast.value = '请先完成必填项'
+    return
+  }
+  try {
+    await http.post('/corp/resource/realname', {
+      realName: realnameForm.realName.trim(),
+      idCard: realnameForm.idCard.trim(),
+      phone: realnameForm.phone.trim() || undefined,
+      intermediary: realnameForm.intermediary.trim() || undefined,
+      status: realnameForm.status,
+    })
+    realnameOpen.value = false
+    realnameToast.value = '实名人已创建'
+    pageNo.value = 1
+    await load()
+  } catch (e: unknown) {
+    realnameToast.value = errorMessage(e)
+  }
+}
+
+function openCompanyCreate() {
+  companyForm.companyName = ''
+  companyForm.creditCode = ''
+  companyForm.industry = ''
+  companyForm.legalName = ''
+  companyForm.capacity = ''
+  companyErrors.companyName = ''
+  companyErrors.creditCode = ''
+  companyErrors.capacity = ''
+  companyToast.value = ''
+  companyOpen.value = true
+}
+
+async function submitCompany() {
+  const required = '必填项，请填写'
+  companyErrors.companyName = companyForm.companyName.trim() ? '' : required
+  companyErrors.creditCode = companyForm.creditCode.trim() ? '' : required
+  companyErrors.capacity = companyForm.capacity.trim() ? '' : required
+  if (companyErrors.companyName || companyErrors.creditCode || companyErrors.capacity) {
+    companyToast.value = '请先完成必填项'
+    return
+  }
+  const capacity = Number(companyForm.capacity.trim())
+  if (!Number.isInteger(capacity) || capacity < 0) {
+    companyErrors.capacity = '容量须为非负整数'
+    companyToast.value = '请先完成必填项'
+    return
+  }
+  try {
+    await http.post('/corp/resource/company', {
+      companyName: companyForm.companyName.trim(),
+      creditCode: companyForm.creditCode.trim(),
+      industry: companyForm.industry || undefined,
+      legalName: companyForm.legalName.trim() || undefined,
+      mpCapacityStandard: capacity,
+    })
+    companyOpen.value = false
+    companyToast.value = '公司已创建'
+    pageNo.value = 1
+    await load()
+  } catch (e: unknown) {
+    companyToast.value = errorMessage(e)
   }
 }
 
@@ -2333,7 +2672,7 @@ watch(kind, async () => {
   load()
   if (kind.value === 'certificate') {
     await loadAuditUsers()
-    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig()])
+    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig(), loadCertViewLevel()])
   }
 })
 
@@ -2350,7 +2689,7 @@ onMounted(async () => {
   await load()
   if (kind.value === 'certificate') {
     await loadAuditUsers()
-    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig()])
+    await Promise.all([loadExpire(), searchAudit(), loadDigital(), loadLevelConfig(), loadCertViewLevel()])
   }
 })
 </script>
