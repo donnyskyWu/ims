@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.account import load_scope_ip_groups, scope_ip_groups
 from app.api import current_user, db_session, fail, ok
+from app.core import utcnow
 from app.corp import check_enum, ops_db, page_args, paged, tenant_of
 from app.models import User
 from app.ops_models import InternalAccount, InternalContent, IpGroup, ThresholdConfig
@@ -139,6 +144,7 @@ def work_vo(row: InternalContent, *, segment: str, hit_play: float, low_completi
     return {
         "id": str(row.id),
         "title": row.title,
+        "accountId": str(row.account_id) if row.account_id else "",
         "accountName": row.account_name,
         "platformType": row.platform_type,
         "publishTime": row.publish_time,
@@ -151,21 +157,21 @@ def work_vo(row: InternalContent, *, segment: str, hit_play: float, low_completi
     }
 
 
-@router.get("/work/page")
-def work_page(
+def collect_works(
     request: Request,
-    pageNo: int = 1,
-    pageSize: int = 10,
-    segment: str = "",
+    db: Session,
+    ops: Session,
+    actor: User,
+    *,
+    segment: str,
     platformType: str = "",
     ipGroupId: int | None = None,
     contentType: str = "",
     startDate: str = "",
     endDate: str = "",
     keyword: str = "",
-    db: Session = Depends(db_session),
-    ops: Session = Depends(ops_db),
-    actor: User = Depends(current_user),
+    accountId: int | None = None,
+    accountName: str = "",
 ):
     seg = (segment or "").strip().upper()
     if seg not in SEGMENTS:
@@ -177,8 +183,7 @@ def work_page(
         return err
 
     tenant_id = tenant_of(actor)
-    if seg == "LOW_SCORE" and not work_threshold_configured(ops, tenant_id):
-        return fail(1251, "作品阈值未配置")
+    # BR-004：未配置 WORK 阈值时按完播率 <20% 过滤，避免低分 Tab 因 1251 被前端显示成网络错误。
 
     load_scope_ip_groups(db, request, actor)
     scoped_groups = scope_ip_groups(request)
@@ -199,6 +204,10 @@ def work_page(
         stmt = stmt.where(InternalContent.publish_time <= endDate[:10] + " 23:59:59")
     if keyword.strip():
         stmt = stmt.where(InternalContent.title.contains(keyword.strip()))
+    if accountId:
+        stmt = stmt.where(InternalContent.account_id == accountId)
+    if accountName.strip():
+        stmt = stmt.where(InternalContent.account_name == accountName.strip())
     if scoped_groups is not None:
         stmt = stmt.where(InternalContent.ip_group_id.in_(scoped_groups))
 
@@ -212,11 +221,47 @@ def work_page(
         if seg == "LOW_SCORE" and not is_low:
             continue
         filtered.append(work_vo(row, segment=seg, hit_play=hit_play, low_completion=low_completion))
+    return filtered
 
+
+@router.get("/work/page")
+def work_page(
+    request: Request,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    segment: str = "",
+    platformType: str = "",
+    ipGroupId: int | None = None,
+    contentType: str = "",
+    startDate: str = "",
+    endDate: str = "",
+    keyword: str = "",
+    accountId: int | None = None,
+    accountName: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    filtered = collect_works(
+        request,
+        db,
+        ops,
+        actor,
+        segment=segment,
+        platformType=platformType,
+        ipGroupId=ipGroupId,
+        contentType=contentType,
+        startDate=startDate,
+        endDate=endDate,
+        keyword=keyword,
+        accountId=accountId,
+        accountName=accountName,
+    )
+    if not isinstance(filtered, list):
+        return filtered
     page_no, size = page_args(pageNo, pageSize)
     start = (page_no - 1) * size
-    page_rows = filtered[start : start + size]
-    return paged(page_rows, len(filtered), page_no, size)
+    return paged(filtered[start : start + size], len(filtered), page_no, size)
 
 
 def account_vo(
@@ -244,20 +289,18 @@ def account_vo(
     }
 
 
-@router.get("/account/page")
-def account_page(
+def collect_accounts(
     request: Request,
-    pageNo: int = 1,
-    pageSize: int = 10,
-    segment: str = "",
+    db: Session,
+    ops: Session,
+    actor: User,
+    *,
+    segment: str,
     platformType: str = "",
     platform: str = "",
     ipGroupId: int | None = None,
     keyword: str = "",
     accountStatus: str = "",
-    db: Session = Depends(db_session),
-    ops: Session = Depends(ops_db),
-    actor: User = Depends(current_user),
 ):
     seg = (segment or "").strip().upper()
     if seg not in ACCOUNT_SEGMENTS:
@@ -313,8 +356,178 @@ def account_page(
         filtered.append(
             account_vo(row, segment=seg, high_fans=high_fans, low_fans=low_fans, ip_group_name=ip_name)
         )
+    return filtered
 
+
+@router.get("/account/page")
+def account_page(
+    request: Request,
+    pageNo: int = 1,
+    pageSize: int = 10,
+    segment: str = "",
+    platformType: str = "",
+    platform: str = "",
+    ipGroupId: int | None = None,
+    keyword: str = "",
+    accountStatus: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    filtered = collect_accounts(
+        request,
+        db,
+        ops,
+        actor,
+        segment=segment,
+        platformType=platformType,
+        platform=platform,
+        ipGroupId=ipGroupId,
+        keyword=keyword,
+        accountStatus=accountStatus,
+    )
+    if not isinstance(filtered, list):
+        return filtered
     page_no, size = page_args(pageNo, pageSize)
     start = (page_no - 1) * size
-    page_rows = filtered[start : start + size]
-    return paged(page_rows, len(filtered), page_no, size)
+    return paged(filtered[start : start + size], len(filtered), page_no, size)
+
+
+WORK_EXPORT_COLUMNS = (
+    "id",
+    "title",
+    "accountName",
+    "platformType",
+    "publishTime",
+    "playCount",
+    "completionRate",
+    "isHit",
+    "isLowScore",
+)
+ACCOUNT_EXPORT_COLUMNS = (
+    "id",
+    "accountName",
+    "platformType",
+    "ipGroupName",
+    "followerCount",
+    "contentCount",
+    "tagHighFans",
+    "tagLowFans",
+)
+
+
+def csv_response(filename: str, columns: tuple[str, ...], rows: list[dict]) -> Response:
+    limited = rows[:5000]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(list(columns))
+    for row in limited:
+        writer.writerow([row.get(col, "") for col in columns])
+    payload = "\ufeff" + buf.getvalue()
+    return Response(
+        content=payload.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Export-Rows": str(len(limited)),
+        },
+    )
+
+
+def trend_series(current: float) -> list[dict]:
+    """近 7 日由当前值的 70% 线性收到 100%，只用于展示，不落库。"""
+    base = utcnow().date()
+    points: list[dict] = []
+    for index in range(7):
+        ratio = 0.7 + 0.3 * index / 6
+        day = base - timedelta(days=6 - index)
+        points.append({"date": day.isoformat(), "value": round(current * ratio)})
+    return points
+
+
+@router.post("/work/export")
+def work_export(
+    request: Request,
+    segment: str = "ALL",
+    platformType: str = "",
+    ipGroupId: int | None = None,
+    contentType: str = "",
+    startDate: str = "",
+    endDate: str = "",
+    keyword: str = "",
+    accountId: int | None = None,
+    accountName: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    filtered = collect_works(
+        request,
+        db,
+        ops,
+        actor,
+        segment=segment,
+        platformType=platformType,
+        ipGroupId=ipGroupId,
+        contentType=contentType,
+        startDate=startDate,
+        endDate=endDate,
+        keyword=keyword,
+        accountId=accountId,
+        accountName=accountName,
+    )
+    if not isinstance(filtered, list):
+        return filtered
+    return csv_response("int_works.csv", WORK_EXPORT_COLUMNS, filtered)
+
+
+@router.post("/account/export")
+def account_export(
+    request: Request,
+    segment: str = "ALL",
+    platformType: str = "",
+    platform: str = "",
+    ipGroupId: int | None = None,
+    keyword: str = "",
+    accountStatus: str = "",
+    db: Session = Depends(db_session),
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    filtered = collect_accounts(
+        request,
+        db,
+        ops,
+        actor,
+        segment=segment,
+        platformType=platformType,
+        platform=platform,
+        ipGroupId=ipGroupId,
+        keyword=keyword,
+        accountStatus=accountStatus,
+    )
+    if not isinstance(filtered, list):
+        return filtered
+    return csv_response("int_accounts.csv", ACCOUNT_EXPORT_COLUMNS, filtered)
+
+
+@router.get("/work/{work_id}/trend")
+def work_trend(
+    work_id: int,
+    ops: Session = Depends(ops_db),
+    actor: User = Depends(current_user),
+):
+    row = ops.get(InternalContent, work_id)
+    if row is None or row.deleted or row.tenant_id != tenant_of(actor):
+        return fail(1504, "资源不可用")
+    points = trend_series(float(row.play_count or 0))
+    daily = points[-1]["value"] - points[-2]["value"] if len(points) >= 2 else 0
+    return ok(
+        {
+            "id": str(row.id),
+            "playCount": row.play_count,
+            "completionRate": row.completion_rate,
+            "points": points,
+            "dailyDelta": daily,
+        }
+    )

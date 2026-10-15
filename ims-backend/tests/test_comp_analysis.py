@@ -134,6 +134,8 @@ def test_comp_account_page_all_and_high_fans():
     assert body["data"]["total"] == 2
     assert any(row["isHighFans"] for row in body["data"]["list"])
     assert body["data"]["list"][0]["followerCount"] == 520_000
+    assert body["data"]["list"][0]["rank"] == 1
+    assert body["data"]["list"][0]["dailyNet"] is None
 
     high_resp = client.get(
         "/admin-api/ims/comp-analysis/account/page",
@@ -180,7 +182,8 @@ def test_comp_account_low_fans_requires_threshold():
     assert low_body["data"]["list"][0]["accountName"] == "竞品低粉号"
 
 
-def test_comp_work_low_score_requires_threshold():
+def test_comp_work_low_score_uses_br004_default():
+    """BUG-B028：竞品低分 Tab 与内部作品同一根因，未配置阈值时按完播率 <20% 加载。"""
     seed_external_works()
     auth = headers()
     missing = client.get(
@@ -188,7 +191,11 @@ def test_comp_work_low_score_requires_threshold():
         headers=auth,
         params={"segment": "LOW_SCORE", "pageNo": 1, "pageSize": 20},
     )
-    assert missing.json()["code"] == 1251
+    missing_body = missing.json()
+    assert missing_body["code"] == 0
+    assert missing_body["data"]["total"] == 1
+    assert missing_body["data"]["list"][0]["title"] == "对手日常更新"
+    assert missing_body["data"]["list"][0]["isLowScore"] is True
 
     created = client.post(
         "/admin-api/ims/collect/threshold",
@@ -212,3 +219,61 @@ def test_comp_work_low_score_requires_threshold():
     assert low_body["code"] == 0
     assert low_body["data"]["total"] == 1
     assert low_body["data"]["list"][0]["title"] == "对手日常更新"
+
+
+def test_comp_work_article_filter_and_summary():
+    ops = ops_session()
+    try:
+        ops.add(
+            ExternalWork(
+                platform_work_id="article-001",
+                title="图文测评",
+                account_name="公众号竞品",
+                platform_type="WECHAT_OFFICIAL",
+                content_type="ARTICLE",
+                play_count=20_000,
+                like_count=300,
+                completion_rate=0,
+                publish_time="2026-10-03 09:00:00",
+                tenant_id=0,
+            )
+        )
+        ops.commit()
+    finally:
+        ops.close()
+    auth = headers()
+    resp = client.get(
+        "/admin-api/ims/comp-analysis/work/page",
+        headers=auth,
+        params={"segment": "ALL", "contentType": "ARTICLE", "pageNo": 1, "pageSize": 10},
+    )
+    body = resp.json()
+    assert body["code"] == 0, body
+    assert body["data"]["total"] == 1
+    assert body["data"]["list"][0]["rank"] == 1
+    assert body["data"]["list"][0]["contentType"] == "ARTICLE"
+    assert body["data"]["summary"]["totalPlay"] == 20_000
+    assert "avgShare" in body["data"]["summary"]
+
+
+def test_comp_work_and_account_export_follow_filter():
+    seed_external_works()
+    seed_external_accounts()
+    auth = headers()
+    exported = client.get(
+        "/admin-api/ims/comp-analysis/work/export",
+        headers=auth,
+        params={"segment": "HIT", "platformType": "DOUYIN"},
+    )
+    assert exported.status_code == 200
+    assert exported.headers["x-export-rows"] == "1"
+    assert "对手爆款复盘" in exported.text
+
+    accounts = client.get(
+        "/admin-api/ims/comp-analysis/account/export",
+        headers=auth,
+        params={"segment": "ALL", "accountName": "高粉"},
+    )
+    assert accounts.status_code == 200
+    assert accounts.headers["x-export-rows"] == "1"
+    assert "竞品高粉号" in accounts.text

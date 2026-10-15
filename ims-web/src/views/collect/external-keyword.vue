@@ -16,7 +16,7 @@
       <input v-model="filters.keyword" data-testid="kw-keyword" placeholder="关键词" style="width: 140px" />
       <select v-model="filters.platformType" data-testid="kw-platform" style="width: 110px">
         <option value="">全部平台</option>
-        <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
+        <option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option>
       </select>
       <select v-model="filters.status" data-testid="kw-status" style="width: 110px">
         <option value="">全部状态</option>
@@ -61,7 +61,7 @@
             </tr>
             <tr v-for="row in rows" v-else :key="row.id" :data-testid="'kw-row-' + row.id">
               <td class="mono">{{ row.id }}</td>
-              <td><span class="chip">{{ row.platformType }}</span></td>
+              <td><span class="chip">{{ platformLabel(row.platformType) }}</span></td>
               <td>{{ row.keyword }}</td>
               <td>
                 <button
@@ -94,13 +94,12 @@
         <label>
           平台
           <select v-model="form.platformType" data-testid="kw-form-platform">
-            <option v-for="p in platforms" :key="p" :value="p">{{ p }}</option>
+            <option v-for="p in platforms" :key="p.value" :value="p.value">{{ p.label }}</option>
           </select>
         </label>
-        <label>
-          关键词
-          <input v-model="form.keyword" data-testid="kw-form-keyword" required />
-        </label>
+        <FormField label="关键词" required :error="keywordError">
+          <input v-model="form.keyword" data-testid="kw-form-keyword" />
+        </FormField>
         <label>
           匹配类型
           <select v-model="form.matchType" data-testid="kw-form-match">
@@ -136,6 +135,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { http, errorMessage } from '../../api/http'
+import FormField from '../../components/form/FormField.vue'
+import { requiredError } from '../../components/form/required'
+import { showToast } from '../../components/form/toast'
 import ProtoDrawer from '../../components/ProtoDrawer.vue'
 
 type KeywordRow = {
@@ -158,7 +160,17 @@ const STATUS_LABEL: Record<string, string> = {
   DISABLED: '停用',
 }
 
-const platforms = ['DOUYIN', 'KUAISHOU', 'XIAOHONGSHU']
+const platforms = [
+  { value: 'DOUYIN', label: '抖音' },
+  { value: 'KUAISHOU', label: '快手' },
+  { value: 'XIAOHONGSHU', label: '小红书' },
+]
+const PLATFORM_LABEL: Record<string, string> = Object.fromEntries(platforms.map((item) => [item.value, item.label]))
+const keywordError = ref('')
+
+function platformLabel(code: string) {
+  return PLATFORM_LABEL[code] || code
+}
 const rows = ref<KeywordRow[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -238,6 +250,7 @@ function openCreate() {
   form.collectEnabled = true
   form.status = 'ENABLED'
   formMsg.value = ''
+  keywordError.value = ''
   drawerOpen.value = true
 }
 
@@ -264,10 +277,8 @@ function payload() {
 
 async function save() {
   formMsg.value = ''
-  if (!form.keyword.trim()) {
-    formMsg.value = '请填写关键词'
-    return
-  }
+  keywordError.value = requiredError(form.keyword)
+  if (keywordError.value) return
   try {
     const res = editingId.value
       ? await http.put(`/collect/external/keyword/${editingId.value}`, payload())
@@ -277,6 +288,7 @@ async function save() {
       return
     }
     drawerOpen.value = false
+    showToast('采集配置已保存')
     await loadList()
   } catch (e) {
     formMsg.value = errorMessage(e)
@@ -297,6 +309,7 @@ async function toggleCollect(row: KeywordRow) {
       error.value = res.data?.msg || '更新是否采集失败'
       return
     }
+    showToast('是否采集已更新')
     await loadList()
   } catch (e) {
     error.value = errorMessage(e)

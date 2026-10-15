@@ -264,6 +264,39 @@ class CollectKeyword(OpsBase):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class CollectCredential(OpsBase):
+    """租户采集凭账号（P2t）。Cookie/Token 只存密文，接口只回脱敏。"""
+
+    __tablename__ = "oa_collect_credential"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    platform_type: Mapped[str] = mapped_column(String(32), default="", index=True)
+    profile: Mapped[str] = mapped_column(String(64), default="default")
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    secret_enc: Mapped[str] = mapped_column(String(512), default="")
+    conn_status: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
+    expire_at: Mapped[str] = mapped_column(String(32), default="")
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CollectHttpSource(OpsBase):
+    """外部 HTTP 数据源（P2c，从竞品账号配置抽屉进入）。"""
+
+    __tablename__ = "oa_collect_http_source"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_name: Mapped[str] = mapped_column(String(128), default="")
+    base_url: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(16), default="ENABLED")
+    remark: Mapped[str] = mapped_column(String(255), default="")
+    deleted: Mapped[int] = mapped_column(Integer, default=0)
+    tenant_id: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class ThresholdConfig(OpsBase):
     __tablename__ = "oa_threshold_config"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

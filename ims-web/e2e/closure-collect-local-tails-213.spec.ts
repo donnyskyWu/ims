@@ -98,7 +98,7 @@ test.describe('collect list filter tails', () => {
     await page.getByTestId('acct-query').click()
     const acctRow = page.locator('tr', { hasText: stamp })
     await expect(acctRow).toBeVisible()
-    await expect(acctRow.getByTestId('acct-collect-cell')).toHaveText('否')
+    await expect(acctRow.getByTestId('acct-collect-switch')).toHaveAttribute('aria-pressed', 'false')
     await expect(acctRow).toContainText('启用')
     await page.screenshot({ path: path.join(SHOTS, '08-account-collect-off.png'), fullPage: true })
 

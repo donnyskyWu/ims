@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends
@@ -406,9 +407,25 @@ def consecutive_failure_top(ops: Session, tenant_id: int, *, limit: int = 5) -> 
     return ranked[:limit]
 
 
+_CRON_FIELD = re.compile(
+    r"^(\*|\?|\d+|\d+-\d+|[A-Za-z]{3}(?:-[A-Za-z]{3})?)(/\d+)?"
+    r"(,(\*|\?|\d+|\d+-\d+|[A-Za-z]{3}(?:-[A-Za-z]{3})?)(/\d+)?)*$"
+)
+
+
+def cron_invalid(raw: str) -> bool:
+    """5 段 cron 或 6/7 段 Quartz（允许 ? 与步进）。`abc` 这类文本不通过。"""
+    parts = (raw or "").strip().split()
+    if len(parts) not in {5, 6, 7}:
+        return True
+    return any(_CRON_FIELD.fullmatch(part) is None for part in parts)
+
+
 def validate_task_body(body: TaskBody, ims: Session, *, external: bool = False):
     if not body.taskName.strip():
         return fail(1001, "必填项缺失")
+    if cron_invalid(body.cron):
+        return fail(1001, "cron 表达式不合法（1001）")
     if body.platformType not in COLLECT_PLATFORMS and body.platformType != "MULTI":
         return fail(1503, "字典枚举非法")
     method = body.method or ("EXTERNAL" if external or body.collectConfigId else "INTERNAL")
@@ -712,6 +729,10 @@ def perform_task_run(ops: Session, row: CollectTask) -> dict:
 
     started = utcnow().strftime("%Y-%m-%d %H:%M:%S")
     status, type_results, record_count, error_summary, log_account = simulate_run(ops, row)
+    if status in {"SUCCESS", "PARTIAL"}:
+        from app.collect_snapshot import persist_run_accounts
+
+        persist_run_accounts(ops, row, type_results, log_account or row.account_id)
     retries = retry_count_for_run(ops, row.id)
     duration_ms = 8200 if status == "FAILED" else 45000
     log = CollectLog(
@@ -843,6 +864,7 @@ def ensure_unified(
             CollectTask.platform_type == platform,
         )
     )
+    existed = existing is not None
     if existing is None:
         existing = CollectTask(
             task_name=f"{platform} 统一 nightly",
@@ -885,7 +907,11 @@ def ensure_unified(
                 )
             )
     ops.flush()
-    return ok(task_vo(ops, existing))
+    data = task_vo(ops, existing)
+    data["existed"] = existed
+    if existed:
+        data["message"] = "任务已存在"
+    return ok(data)
 
 
 @router.post("/task/ensure-external-unified")
@@ -901,6 +927,7 @@ def ensure_external_unified(
             CollectTask.is_external_unified == 1,
         )
     )
+    existed = existing is not None
     if existing is None:
         existing = CollectTask(
             task_name="外部竞品统一任务",
@@ -942,7 +969,11 @@ def ensure_external_unified(
                 )
             )
     ops.flush()
-    return ok(task_vo(ops, existing))
+    data = task_vo(ops, existing)
+    data["existed"] = existed
+    if existed:
+        data["message"] = "任务已存在"
+    return ok(data)
 
 
 @router.get("/task/{task_id}/members")

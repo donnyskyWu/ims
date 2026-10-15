@@ -89,7 +89,8 @@ def test_int_work_page_all_and_hit():
     assert hit_body["data"]["list"][0]["title"] == "晚间集锦"
 
 
-def test_int_work_low_score_requires_threshold():
+def test_int_work_low_score_uses_br004_default():
+    """BUG-B016：未配置 WORK 阈值时低分 Tab 仍按完播率 <20% 返回，而不是 1251。"""
     seed_works()
     auth = headers()
     missing = client.get(
@@ -97,7 +98,11 @@ def test_int_work_low_score_requires_threshold():
         headers=auth,
         params={"segment": "LOW_SCORE", "pageNo": 1, "pageSize": 20},
     )
-    assert missing.json()["code"] == 1251
+    missing_body = missing.json()
+    assert missing_body["code"] == 0
+    assert missing_body["data"]["total"] == 1
+    assert missing_body["data"]["list"][0]["title"] == "训练周记"
+    assert missing_body["data"]["list"][0]["isLowScore"] is True
 
     created = client.post(
         "/admin-api/ims/collect/threshold",
