@@ -146,10 +146,15 @@ export function isSub(item: string | SubNav): item is SubNav {
 }
 
 export function pathOf(id: string) {
+  if (id.startsWith('qtSeed_')) {
+    return `/ims/analysis/query-tool/run/${encodeURIComponent(id.slice('qtSeed_'.length))}`
+  }
   return IMPLEMENTED[id] || `/ims/wip/${id}`
 }
 
 export function modIdFromPath(path: string) {
+  const run = path.match(/^\/ims\/analysis\/query-tool\/run\/([^/]+)/)
+  if (run) return `qtSeed_${decodeURIComponent(run[1])}`
   const matched = path.match(/^\/ims\/wip\/([^/]+)/)
   if (matched) return decodeURIComponent(matched[1])
   const found = Object.entries(IMPLEMENTED).find(([, href]) => href === path)
@@ -157,6 +162,7 @@ export function modIdFromPath(path: string) {
 }
 
 export function crumbOf(id: string) {
+  if (id.startsWith('qtSeed_')) return { parent: '数据分析', page: '查询执行' }
   const mod = mods[id]
   if (!mod) return { parent: 'IMS', page: '建设中' }
   return { parent: mod.parent || mod.name, page: mod.page || mod.name }

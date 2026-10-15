@@ -535,3 +535,132 @@ def test_dc_trace_query_rejects_inverted_or_partial_date_range():
     ).json()
     assert partial["code"] == 1001
     assert partial["msg"] == "dateRange 须为开始日,结束日"
+
+
+def test_bug_c050_all_entry_search_still_queries():
+    """BUG-C050 · 全部类型能搜到入口，选中后再查询不会变成空入口。"""
+    from tests.test_fin import approved_session
+
+    auth = headers()
+    code = approved_session(auth)
+    live = client.get(f"/admin-api/ims/live/register/{code}", headers=auth).json()["data"]
+    account_no = live["accountNo"]
+    listed = client.get(
+        "/admin-api/ims/dc/trace/entry",
+        headers=auth,
+        params={"entryType": "ALL", "keyword": account_no, "limit": 8},
+    )
+    body = listed.json()
+    assert body["code"] == 0, body
+    hits = body["data"]
+    assert isinstance(hits, list) and hits
+    account = next(
+        (item for item in hits if item["entryType"] == "ACCOUNT" and item["entryId"] == str(live["accountId"])),
+        None,
+    )
+    assert account is not None, hits
+    session_hit = client.get(
+        "/admin-api/ims/dc/trace/entry",
+        headers=auth,
+        params={"entryType": "ALL", "keyword": code, "limit": 8},
+    ).json()
+    assert any(item["entryType"] == "SESSION" and item["entryId"] == code for item in session_hit["data"])
+
+    queried = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=auth,
+        json={"entryType": account["entryType"], "entryId": account["entryId"], "mode": "DETAIL", "pageNo": 1, "pageSize": 10},
+    ).json()
+    assert queried["code"] == 0, queried
+    assert code in [row["sessionCode"] for row in queried["data"]["detailList"]["list"]]
+
+    missing = client.get(
+        "/admin-api/ims/dc/trace/entry",
+        headers=auth,
+        params={"entryType": "ALL", "keyword": "___no_such_asset___", "limit": 8},
+    ).json()
+    assert missing["code"] == 0
+    assert missing["data"] == []
+
+
+def test_bug_c051_live_cost_fills_profit_before_fin_confirm():
+    """BUG-C051 · GMV 5 万、退款 2 千只有下播成本时，链路和抽屉要算出成本与利润。财务核准后仍用核准数。"""
+    import uuid
+
+    from tests.test_fin import confirm_cost_for_session
+    from tests.test_live import register_payload, seed_live_deps
+
+    auth = headers()
+    account_id, person_id, phone_id, room_id = seed_live_deps()
+    reg = client.post(
+        "/admin-api/ims/live/register",
+        headers={**auth, "clientToken": uuid.uuid4().hex},
+        json=register_payload(account_id, person_id, phone_id, room_id),
+    )
+    assert reg.json()["code"] == 0, reg.json()
+    code = reg.json()["data"]["sessionCode"]
+    detail = client.get(f"/admin-api/ims/live/register/{code}", headers=auth).json()["data"]
+    if detail.get("sessionStatus") == "PENDING_RISK_CHECK":
+        client.put(
+            f"/admin-api/ims/live/register/{code}/approve",
+            headers=auth,
+            json={"approve": True},
+        )
+    report = client.post(
+        f"/admin-api/ims/live/report/{code}",
+        headers=auth,
+        json={
+            "actualStart": "2026-10-06T20:00:00+08:00",
+            "actualEnd": "2026-10-06T22:00:00+08:00",
+            "gmv": 50000.0,
+            "refundAmount": 2000.0,
+            "orderCount": 40,
+            "viewerCount": 800,
+            "peakOnline": 120,
+            "newFans": 30,
+            "adCost": 3000.0,
+            "costDetails": [
+                {"costType": "AD", "amount": 3000.0},
+                {"costType": "GIFT", "amount": 500.0},
+            ],
+        },
+    )
+    assert report.json()["code"] == 0, report.json()
+    confirm = client.put(f"/admin-api/ims/live/report/{code}/confirm", headers=auth)
+    assert confirm.json()["code"] == 0, confirm.json()
+
+    drawer = client.get(f"/admin-api/ims/dc/trace/detail/{code}", headers=auth).json()
+    assert drawer["code"] == 0, drawer
+    assert drawer["data"]["liveData"]["gmv"] == 50000.0
+    assert drawer["data"]["liveData"]["refund"] == 2000.0
+    amounts = {row["costItem"]: row["amount"] for row in drawer["data"]["costDetail"]}
+    assert amounts["ad"] == 3000.0
+    assert amounts["gift"] == 500.0
+    assert drawer["data"]["costDetail"], "不应再显示暂无成本"
+    # 净利润 = 50000 - 2000 - (投流 3000 + 礼物 500)；毛利不含成本；经营利润再减投流
+    assert drawer["data"]["profit"]["netProfit"] == 44500.0
+    assert drawer["data"]["profit"]["grossProfit"] == 48000.0
+    assert drawer["data"]["profit"]["operatingProfit"] == 45000.0
+
+    queried = client.post(
+        "/admin-api/ims/dc/trace/query",
+        headers=auth,
+        json={"entryType": "SESSION", "entryId": code, "mode": "DETAIL", "pageNo": 1, "pageSize": 10},
+    ).json()
+    assert queried["code"] == 0, queried
+    cost_node = next(node for node in queried["data"]["nodes"] if node["nodeId"] == f"cost:{code}")
+    profit_node = next(node for node in queried["data"]["nodes"] if node["nodeId"] == f"profit:{code}")
+    assert cost_node["metrics"]["totalCost"] == 3500.0
+    assert profit_node["metrics"]["netProfit"] == 44500.0
+    listed = next(row for row in queried["data"]["detailList"]["list"] if row["sessionCode"] == code)
+    assert listed["gmv"] == 50000.0
+    assert listed["totalCost"] == 3500.0
+    assert listed["netProfit"] == 44500.0
+
+    confirm_cost_for_session(auth, code)
+    confirmed = client.get(f"/admin-api/ims/dc/trace/detail/{code}", headers=auth).json()
+    # 核准后改用成本核算：佣金 2500 + 各项 11600，净利润 = 50000 - 2000 - 14100
+    assert confirmed["data"]["profit"]["netProfit"] == 33900.0
+    confirmed_amounts = {row["costItem"]: row["amount"] for row in confirmed["data"]["costDetail"]}
+    assert confirmed_amounts["ad"] == 5000.0
+    assert "gift" not in confirmed_amounts

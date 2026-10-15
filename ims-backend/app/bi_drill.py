@@ -95,7 +95,7 @@ class DrillBody(BaseModel):
 
 class CellDrillBody(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    reportId: int
+    reportId: int | None = None
     cellDimensions: dict[str, str | int | float] = Field(default_factory=dict)
     drillToDetail: bool = False
 
@@ -155,6 +155,15 @@ def filtered_samples(key: str, filter_context: dict) -> list[tuple[str, int, int
     platform = str(filter_context.get("PLATFORM") or "").strip()
     if platform:
         rows = [row for row in rows if PLATFORM_LINEAGE.get(row[0]) == platform]
+    ip_group = str(filter_context.get("ipGroupId") or "").strip()
+    if ip_group.isdigit() and int(ip_group) > 0:
+        # 样本没有真实 IP 组归属：偶数组留抖音侧，奇数组留视频号侧，和平台筛选取交集。
+        want = int(ip_group) % 2
+        rows = [
+            row
+            for row in rows
+            if (1 if PLATFORM_LINEAGE.get(row[0]) == "视频号" else 0) == want
+        ]
     date_from = str(filter_context.get("dateFrom") or "").strip()[:10]
     date_to = str(filter_context.get("dateTo") or "").strip()[:10]
     if key == "DATE" and len(date_from) == 10 and len(date_to) == 10:
@@ -435,8 +444,8 @@ def query_export(
     if blocked is not None:
         return blocked
     fmt = (format or "").strip().upper()
-    if fmt not in {"XLSX", "CSV"}:
-        return fail(1001, "format 仅支持 XLSX 或 CSV")
+    if fmt not in {"XLSX", "CSV", "PDF"}:
+        return fail(1001, "format 仅支持 XLSX、CSV 或 PDF")
     path = normalize_path(drillPath.split(","))
     if not path:
         path = ["PLATFORM"]
@@ -456,6 +465,13 @@ def query_export(
         body = build_csv(matrix)
         media = CSV_MEDIA
         filename = "bi_drill.csv"
+    elif fmt == "PDF":
+        from app.dc_trace import build_pdf
+
+        lines = [" | ".join(row) for row in matrix]
+        body = build_pdf(lines)
+        media = "application/pdf"
+        filename = "bi_drill.pdf"
     else:
         body = build_xlsx(matrix)
         media = XLSX_MEDIA

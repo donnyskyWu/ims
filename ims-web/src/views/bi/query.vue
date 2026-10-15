@@ -3,7 +3,7 @@
     <div class="pg-h">
       <div>
         <h1>自定义查询</h1>
-        <div class="sub">FR-M6-005 · 只读消费 COLLECT 元数据 · /ims/bi/query</div>
+        <div class="sub">按已映射实体配置条件并查询</div>
       </div>
       <div class="acts">
         <button class="btn btn-sec btn-sm" type="button" @click="goMetadata">元数据维护</button>
@@ -27,6 +27,7 @@
           </div>
           <div class="rowline">
             <button class="btn btn-pri btn-sm" type="button" :disabled="running" @click="runAdhoc">执行查询</button>
+            <button class="btn btn-sec btn-sm" type="button" @click="copySql">复制 SQL</button>
             <button class="btn btn-sec btn-sm" type="button" @click="saveDraft">保存为我的查询</button>
           </div>
         </div>
@@ -54,7 +55,7 @@
                     data-testid="bi-query-limit"
                     type="number"
                     min="1"
-                    max="1000"
+                    max="100000"
                   />
                 </label>
                 <label class="fld">
@@ -77,19 +78,95 @@
               <div class="qb-row">
                 <label>展示字段</label>
                 <div class="qb-chips" data-testid="bi-query-select-fields">
-                  <span
+                  <label
                     v-for="f in fields"
                     :key="f.fieldCode"
-                    class="chip field-chip"
+                    class="chip"
                     :class="{ off: !builder.selectFields.includes(f.fieldCode) }"
-                    @click="toggleSelectField(f.fieldCode)"
+                    :data-field-code="f.fieldCode"
+                    @click.prevent="onPickField"
                   >
+                    <input type="checkbox" tabindex="-1" :checked="builder.selectFields.includes(f.fieldCode)" />
                     {{ f.displayName }}
-                  </span>
-                  <span v-if="fields.length" class="qb-val-muted">多选 · displayFields</span>
+                  </label>
+                  <span v-if="fields.length" class="qb-val-muted">多选 · 点击加入展示</span>
                   <span v-else class="qb-val-muted">先选数据源</span>
                 </div>
               </div>
+              <div class="bi0-form-grid" style="margin-top: 12px">
+                <label class="fld">
+                  <span>计算方式</span>
+                  <select v-model="builder.aggFunc" data-testid="bi-query-agg">
+                    <option value="DETAIL">明细</option>
+                    <option value="SUM">SUM</option>
+                    <option value="COUNT">COUNT</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>计算字段</span>
+                  <select v-model="builder.aggField" data-testid="bi-query-agg-field">
+                    <option value="">请选择</option>
+                    <option v-for="f in aggFieldOptions" :key="f.fieldCode" :value="f.fieldCode">
+                      {{ f.displayName }}
+                    </option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>汇总字段</span>
+                  <select v-model="builder.groupBy" multiple data-testid="bi-query-group" class="bi0-multi">
+                    <option v-for="f in fields" :key="'g' + f.fieldCode" :value="f.fieldCode">{{ f.displayName }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>关联表</span>
+                  <select v-model="builder.joinTable" data-testid="bi-query-join">
+                    <option value="">不关联</option>
+                    <option v-for="j in joinOptions" :key="j.table" :value="j.table">{{ j.label }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>排序字段</span>
+                  <select v-model="builder.orderField" data-testid="bi-query-order">
+                    <option value="">不排序</option>
+                    <option v-for="f in fields" :key="'o' + f.fieldCode" :value="f.fieldCode">{{ f.displayName }}</option>
+                  </select>
+                </label>
+                <label class="fld">
+                  <span>排序方向</span>
+                  <select v-model="builder.orderDir">
+                    <option value="ASC">升序</option>
+                    <option value="DESC">降序</option>
+                  </select>
+                </label>
+              </div>
+              <div class="qb-cond-hd"><b>条件</b></div>
+              <table class="bi0-cond-table" data-testid="bi-query-conditions">
+                <thead>
+                  <tr><th>字段</th><th>运算符</th><th>值</th><th></th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, idx) in builder.condRows" :key="idx">
+                    <td>
+                      <select v-model="row.fieldCode">
+                        <option value="">请选择</option>
+                        <option v-for="f in fields" :key="f.fieldCode" :value="f.fieldCode">{{ f.displayName }}</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select v-model="row.operator">
+                        <option value="EQ">等于</option>
+                        <option value="LIKE">包含</option>
+                        <option value="RANGE">区间</option>
+                      </select>
+                    </td>
+                    <td><input v-model="row.value" placeholder="条件值" /></td>
+                    <td>
+                      <button class="btn btn-sec btn-sm" type="button" @click="removeCond(idx)">删除</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <button class="btn btn-sec btn-sm" type="button" data-testid="bi-query-add-cond" @click="addCond">+ 添加条件</button>
               <p v-if="fieldHint" class="hint bi0-field-hint">{{ fieldHint }}</p>
               <p v-if="formError" class="hint bad" data-testid="bi-query-form-error">{{ formError }}</p>
               <div class="qb-cond-hd"><b>SQL 预览</b></div>
@@ -97,15 +174,17 @@
             </div>
             <div class="qb-side">
               <div class="qb-side-hd">可选字段（只读 · entity/fields）</div>
-              <div
+              <button
                 v-for="f in fields"
                 :key="'s' + f.fieldCode"
+                type="button"
                 class="fi"
-                @click="toggleSelectField(f.fieldCode)"
+                :data-field-code="f.fieldCode"
+                @click="onPickField"
               >
                 {{ f.displayName }}
                 <br /><span class="mono" style="font-size: 10px; color: var(--text2)">{{ f.fieldCode }}</span>
-              </div>
+              </button>
               <p v-if="!fields.length" class="hint">先选数据源；未映射请去元数据维护</p>
             </div>
           </div>
@@ -114,6 +193,7 @@
       <div v-if="result && result.empty" class="card bi0-result-card">
         <div class="empty" data-testid="bi-query-result-empty">
           <div class="et">{{ result.emptyReason || '当前条件下暂无数据' }}</div>
+          <div v-if="result.queryCostMs != null" class="csub">queryCostMs {{ result.queryCostMs }} ms</div>
         </div>
       </div>
       <div v-else-if="result" class="card bi0-result-card">
@@ -290,6 +370,28 @@
       </div>
     </template>
     <p v-if="toast" class="hint" style="margin-top: 10px">{{ toast }}</p>
+
+    <div v-if="saveOpen" class="modal-mask" @click.self="saveOpen = false">
+      <div class="card" style="width: 420px; padding: 20px" data-testid="bi-query-save-modal">
+        <h3 style="margin: 0 0 12px">保存为我的查询</h3>
+        <label class="fld">
+          <span>查询名称 <em class="req">*</em></span>
+          <input v-model="saveName" data-testid="bi-query-save-name" placeholder="请填写查询名称" />
+        </label>
+        <label class="fld">
+          <span>状态</span>
+          <select v-model="saveStatus">
+            <option value="DRAFT">草稿</option>
+            <option value="PUBLISHED">已发布</option>
+          </select>
+        </label>
+        <p v-if="saveError" class="hint bad">{{ saveError }}</p>
+        <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px">
+          <button class="btn btn-sec btn-sm" type="button" @click="saveOpen = false">取消</button>
+          <button class="btn btn-pri btn-sm" type="button" @click="confirmSave">保存</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -307,7 +409,9 @@ import {
 } from './query-chart'
 
 type FieldVo = { fieldCode: string; displayName: string; columnName: string; queryConditionType?: string }
-type EntityOpt = { entityCode: string; entityName: string }
+type JoinOpt = { table: string; entityCode: string; label: string }
+type EntityOpt = { entityCode: string; entityName: string; tableName?: string; joins?: JoinOpt[] }
+type CondRow = { fieldCode: string; operator: string; value: string }
 type QueryRow = {
   id: string
   queryName: string
@@ -335,6 +439,11 @@ const fields = ref<FieldVo[]>([])
 const fieldHint = ref('')
 const toast = ref('')
 const formError = ref('')
+const saveOpen = ref(false)
+const saveName = ref('')
+const saveStatus = ref('DRAFT')
+const saveError = ref('')
+const adhoc = ref(false)
 const running = ref(false)
 const result = ref<QueryResult | null>(null)
 const previewSql = ref('SELECT … FROM …（执行后展示实际 SQL）')
@@ -356,11 +465,21 @@ const resultFieldMap = ref<Record<string, string>>({})
 const builder = reactive({
   entityCode: '',
   selectFields: [] as string[],
-  limit: 100,
+  limit: 1000,
   dateFrom: '',
   dateTo: '',
   condValue: '',
+  aggFunc: 'DETAIL',
+  aggField: '',
+  groupBy: [] as string[],
+  joinTable: '',
+  orderField: '',
+  orderDir: 'ASC',
+  condRows: [{ fieldCode: '', operator: 'EQ', value: '' }] as CondRow[],
 })
+
+const joinOptions = computed(() => entities.value.find((e) => e.entityCode === builder.entityCode)?.joins || [])
+const aggFieldOptions = computed(() => fields.value)
 
 const mineFilter = reactive({ queryName: '', status: '' })
 const appliedMine = reactive({ queryName: '', status: '' })
@@ -417,15 +536,24 @@ function columnLabel(code: string): string {
   return resultFieldMap.value[code] || fields.value.find((f) => f.fieldCode === code)?.displayName || code
 }
 
-function toggleSelectField(code: string) {
-  const set = new Set(builder.selectFields)
-  if (set.has(code)) {
-    if (set.size <= 1) return
-    set.delete(code)
-  } else {
-    set.add(code)
+function onPickField(ev: MouseEvent) {
+  const code = (ev.currentTarget as HTMLElement).dataset.fieldCode || ''
+  const field = fields.value.find((f) => f.fieldCode === code)
+  if (!field) return
+  if (!builder.selectFields.includes(code)) builder.selectFields.push(code)
+  toast.value = `已加入展示：${field.displayName}`
+}
+
+function addCond() {
+  builder.condRows.push({ fieldCode: '', operator: 'EQ', value: '' })
+}
+
+function removeCond(index: number) {
+  if (builder.condRows.length <= 1) {
+    toast.value = '至少保留一个条件行'
+    return
   }
-  builder.selectFields = [...set]
+  builder.condRows.splice(index, 1)
 }
 
 function syncResultFieldMap() {
@@ -466,13 +594,17 @@ function dateEdge(): string {
 
 function limitEdge(): string {
   const limit = Number(builder.limit)
-  if (!Number.isInteger(limit) || limit < 1 || limit > 1000) return '行数上限须为 1~1000'
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100000) return '行数上限须为 1~100000'
   return ''
 }
 
 const payloadConfig = computed(() => {
   const selectFields = builder.selectFields.length ? builder.selectFields : fields.value.map((f) => f.fieldCode)
   const conditions: { fieldCode: string; operator: string; value: string }[] = []
+  for (const row of builder.condRows) {
+    if (!row.fieldCode) continue
+    conditions.push({ fieldCode: row.fieldCode, operator: row.operator || 'EQ', value: row.value })
+  }
   const probe = builder.condValue.trim()
   if (probe && selectFields.length) {
     conditions.push({ fieldCode: selectFields[0], operator: 'EQ', value: probe })
@@ -487,17 +619,59 @@ const payloadConfig = computed(() => {
       })
     }
   }
-  return { selectFields, conditions, limit: Number(builder.limit) || 100 }
+  const orderBy: string[] = []
+  if (builder.orderField) {
+    orderBy.push(builder.orderDir === 'DESC' ? `-${builder.orderField}` : builder.orderField)
+  }
+  return {
+    selectFields,
+    conditions,
+    orderBy,
+    limit: Number(builder.limit) || 100,
+    aggFunc: builder.aggFunc === 'DETAIL' ? '' : builder.aggFunc,
+    aggField: builder.aggField,
+    groupBy: [...builder.groupBy],
+    joinTable: builder.joinTable,
+  }
 })
+
+function quoteIdent(name: string) {
+  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) ? name : ''
+}
+
+function refreshPreview() {
+  const table = quoteIdent(entities.value.find((e) => e.entityCode === builder.entityCode)?.tableName || '')
+  const cols = (payloadConfig.value.selectFields || [])
+    .map((code) => {
+      const field = fields.value.find((f) => f.fieldCode === code)
+      const column = quoteIdent(field?.columnName || '')
+      return column ? `\`${column}\` AS \`${code}\`` : ''
+    })
+    .filter(Boolean)
+  if (!table || !cols.length) {
+    previewSql.value = 'SELECT … FROM … WHERE tenant_id = :tenant_id'
+    return
+  }
+  let sql = `SELECT ${cols.join(', ')} FROM \`${table}\` WHERE deleted = 0 AND tenant_id = :tenant_id`
+  payloadConfig.value.conditions.forEach((cond, idx) => {
+    const field = fields.value.find((f) => f.fieldCode === cond.fieldCode)
+    const column = quoteIdent(field?.columnName || '')
+    if (!column) return
+    if (cond.operator === 'LIKE') sql += ` AND \`${column}\` LIKE :p${idx}`
+    else if (cond.operator === 'RANGE') sql += ` AND \`${column}\` BETWEEN :p${idx}_lo AND :p${idx}_hi`
+    else sql += ` AND \`${column}\` = :p${idx}`
+  })
+  if (payloadConfig.value.aggFunc === 'SUM' || payloadConfig.value.aggFunc === 'COUNT') {
+    sql += ' /* GROUP BY */'
+  }
+  sql += ` LIMIT ${Number(builder.limit) || 100}`
+  previewSql.value = sql
+}
 
 async function loadEntities() {
   try {
-    const res = await http.get('/collect/metadata/list', { params: { pageNo: 1, pageSize: 100 } })
-    const list = res.data.data?.list || []
-    entities.value = list.map((r: { entityCode: string; entityName: string }) => ({
-      entityCode: r.entityCode,
-      entityName: r.entityName,
-    }))
+    const res = await http.get('/bi/query/sources')
+    entities.value = res.data.data?.list || []
   } catch (error: unknown) {
     fieldHint.value = errorMessage(error)
   }
@@ -510,8 +684,13 @@ async function loadFields() {
   try {
     const res = await http.get(`/collect/metadata/entity/${builder.entityCode}/fields`)
     fields.value = res.data.data?.fields || []
-    builder.selectFields = fields.value.slice(0, 2).map((f) => f.fieldCode)
+    builder.selectFields = []
+    builder.aggField = ''
+    builder.groupBy = []
+    builder.joinTable = ''
+    builder.orderField = ''
     syncResultFieldMap()
+    refreshPreview()
   } catch (error: unknown) {
     if (rejectedCode(error) === 1261) {
       fieldHint.value = '实体未映射（1261）· 请点击右上角「元数据维护」完成 COLLECT P4m 映射'
@@ -521,21 +700,48 @@ async function loadFields() {
   }
 }
 
-async function ensureSaved(name: string) {
+async function copySql() {
+  formError.value = ''
+  if (!builder.entityCode) {
+    formError.value = '请选择数据源'
+    return
+  }
+  const limitMsg = limitEdge()
+  if (limitMsg) {
+    formError.value = limitMsg
+    return
+  }
   try {
-    const res = await http.post('/bi/query', {
-      queryName: name,
+    const res = await http.post('/bi/query/preview', {
       entityCode: builder.entityCode,
-      status: 'DRAFT',
       config: payloadConfig.value,
     })
-    return res.data.data.id as string
+    const sql = String(res.data.data?.sql || '')
+    previewSql.value = sql
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(sql)
+    }
+    toast.value = 'SQL 已复制到剪贴板'
   } catch (error: unknown) {
-    const msg = rejectedCode(error) === 1261 ? '实体未映射（1261）' : errorMessage(error)
-    formError.value = msg
-    toast.value = msg
-    return null
+    formError.value = errorMessage(error)
+    toast.value = formError.value
   }
+}
+
+async function fetchAdhoc(pageNo = resultPageNo.value, pageSize = resultPageSize.value) {
+  const run = await http.post('/bi/query/run', {
+    entityCode: builder.entityCode,
+    config: payloadConfig.value,
+    pageNo,
+    pageSize,
+  })
+  result.value = run.data.data
+  previewSql.value = run.data.data.sql || previewSql.value
+  resultPageNo.value = run.data.data.pageNo ?? pageNo
+  resultPageSize.value = run.data.data.pageSize ?? pageSize
+  lastRunQueryId.value = null
+  adhoc.value = true
+  if (run.data.data.columns?.length) resetChartAxes(run.data.data.columns)
 }
 
 async function fetchRunResult(queryId: string, pageNo = resultPageNo.value, pageSize = resultPageSize.value) {
@@ -545,6 +751,7 @@ async function fetchRunResult(queryId: string, pageNo = resultPageNo.value, page
   resultPageNo.value = run.data.data.pageNo ?? pageNo
   resultPageSize.value = run.data.data.pageSize ?? pageSize
   lastRunQueryId.value = queryId
+  adhoc.value = false
   if (run.data.data.columns?.length) resetChartAxes(run.data.data.columns)
 }
 
@@ -574,18 +781,21 @@ async function runAdhoc() {
   }
   running.value = true
   try {
-    const id = await ensureSaved(`临时查询 ${new Date().toLocaleTimeString()}`)
-    if (!id) return
     syncResultFieldMap()
-    await fetchRunResult(id, 1, resultPageSize.value)
+    await fetchAdhoc(1, resultPageSize.value)
   } catch (error: unknown) {
+    if (rejectedCode(error) === 1262) {
+      toast.value = '导出任务已提交'
+      formError.value = ''
+      return
+    }
     formError.value = errorMessage(error)
   } finally {
     running.value = false
   }
 }
 
-async function saveDraft() {
+function saveDraft() {
   const blocked = dateEdge() || limitEdge()
   if (blocked) {
     formError.value = blocked
@@ -595,10 +805,31 @@ async function saveDraft() {
     formError.value = '请选择数据源'
     return
   }
-  const name = window.prompt('查询名称', '我的查询')
-  if (!name?.trim()) return
-  const id = await ensureSaved(name.trim())
-  if (id) toast.value = '已保存'
+  saveName.value = ''
+  saveStatus.value = 'DRAFT'
+  saveError.value = ''
+  saveOpen.value = true
+}
+
+async function confirmSave() {
+  if (!saveName.value.trim()) {
+    saveError.value = '请填写查询名称'
+    return
+  }
+  saveError.value = ''
+  try {
+    const res = await http.post('/bi/query', {
+      queryName: saveName.value.trim(),
+      entityCode: builder.entityCode,
+      status: saveStatus.value,
+      config: payloadConfig.value,
+    })
+    saveOpen.value = false
+    toast.value = '已保存'
+    lastRunQueryId.value = res.data.data.id
+  } catch (error: unknown) {
+    saveError.value = errorMessage(error)
+  }
 }
 
 async function loadMine() {
@@ -621,10 +852,12 @@ function switchMine() {
 }
 
 async function gotoResultPage(page: number) {
-  if (!lastRunQueryId.value || page < 1 || page > resultPageCount.value || page === resultPageNo.value) return
+  if (page < 1 || page > resultPageCount.value || page === resultPageNo.value) return
+  if (!adhoc.value && !lastRunQueryId.value) return
   running.value = true
   try {
-    await fetchRunResult(lastRunQueryId.value, page, resultPageSize.value)
+    if (adhoc.value) await fetchAdhoc(page, resultPageSize.value)
+    else await fetchRunResult(lastRunQueryId.value as string, page, resultPageSize.value)
   } catch (error: unknown) {
     formError.value = errorMessage(error)
   } finally {
@@ -634,12 +867,13 @@ async function gotoResultPage(page: number) {
 
 async function changeResultPageSize(ev: Event) {
   const size = Number((ev.target as HTMLSelectElement).value)
-  if (!lastRunQueryId.value || !size) return
+  if ((!adhoc.value && !lastRunQueryId.value) || !size) return
   resultPageSize.value = size
   resultPageNo.value = 1
   running.value = true
   try {
-    await fetchRunResult(lastRunQueryId.value, 1, size)
+    if (adhoc.value) await fetchAdhoc(1, size)
+    else await fetchRunResult(lastRunQueryId.value as string, 1, size)
   } catch (error: unknown) {
     formError.value = errorMessage(error)
   } finally {
@@ -724,6 +958,33 @@ onMounted(() => {
 }
 .bi0-mine-qbar .fld input,
 .bi0-mine-qbar .fld select {
+  width: 100%;
+}
+.qb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qb-chips .chip {
+  margin: 0;
+}
+.fi {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.bi0-multi {
+  min-height: 72px;
+}
+.bi0-cond-table {
+  width: 100%;
+  margin: 8px 0;
+}
+.bi0-cond-table select,
+.bi0-cond-table input {
   width: 100%;
 }
 .sr-only {

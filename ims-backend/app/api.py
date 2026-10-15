@@ -111,6 +111,31 @@ def normalize_id_list(raw: list | None) -> list[int] | None:
     return ids
 
 
+def id_list(raw) -> list[int]:
+    """组织同步里的 deptIds 可能是数组、单个数字或空。不能对数字做 list()。"""
+    if raw is None or raw is False:
+        return []
+    if isinstance(raw, bool):
+        return []
+    if isinstance(raw, int):
+        return [raw] if raw > 0 else []
+    if isinstance(raw, str):
+        return [int(raw)] if raw.isdigit() else []
+    if isinstance(raw, dict):
+        raw = raw.get("deptIds") or []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    ids: list[int] = []
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int) and item > 0:
+            ids.append(item)
+        elif str(item).isdigit():
+            ids.append(int(item))
+    return ids
+
+
 def user_dept_snapshot(db: Session, user_id: int, tenant_id: int) -> tuple[list[int], list[str]]:
     from app.org_sync import dept_names_of, latest_person_event, read_payload
 
@@ -127,16 +152,27 @@ def user_dept_snapshot(db: Session, user_id: int, tenant_id: int) -> tuple[list[
     if mapping is not None:
         event = latest_person_event(db, user_id)
         payload = read_payload(event.payload_json) if event and event.payload_json else {}
-        if not payload.get("deptIds") and mapping.dept_ids:
-            payload = {"deptIds": list(mapping.dept_ids or []), "deptNames": []}
+        mapped_ids = id_list(mapping.dept_ids)
+        if not payload.get("deptIds") and mapped_ids:
+            payload = {"deptIds": mapped_ids, "deptNames": []}
         names = dept_names_of(payload, event)
-        if not dept_ids and mapping.dept_ids:
-            dept_ids = sorted({int(item) for item in mapping.dept_ids if str(item).isdigit()})
+        if not dept_ids and mapped_ids:
+            dept_ids = sorted(set(mapped_ids))
     if dept_ids and not names:
         names = [f"部门 {dept_id}" for dept_id in dept_ids]
     elif len(names) < len(dept_ids):
         names = list(names) + [f"部门 {dept_id}" for dept_id in dept_ids[len(names) :]]
     return dept_ids, names
+
+
+def user_brief(user: User) -> dict:
+    """归属下拉只需要姓名。不查角色、部门和组织事件。"""
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "nickname": user.nickname,
+        "status": user.status,
+    }
 
 
 def user_vo(db: Session, user: User, *, mobile_full: bool = False) -> dict:
@@ -309,6 +345,7 @@ def user_page(
     username: str = "",
     mobile: str = "",
     status: str = "",
+    brief: int = 0,
     db: Session = Depends(db_session),
     actor: User = Depends(current_user),
 ):
@@ -325,7 +362,9 @@ def user_page(
         stmt = stmt.where(User.status == status)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(User.id).offset((page_no - 1) * size).limit(size)).all()
-    return ok({"list": [user_vo(db, row) for row in rows], "total": total, "pageNo": page_no, "pageSize": size})
+    # brief=1 给归属人员下拉：完整 user_vo 会按人查组织事件，事件表无 user_id 索引时请求拖过前端超时，页面只能显示「网络异常」。
+    listed = [user_brief(row) for row in rows] if brief else [user_vo(db, row) for row in rows]
+    return ok({"list": listed, "total": total, "pageNo": page_no, "pageSize": size})
 
 
 @router.get("/system/user/{user_id}")

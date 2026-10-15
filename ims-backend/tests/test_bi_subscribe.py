@@ -283,3 +283,74 @@ def test_bi_report_preview_run_and_drill():
     )
     assert drill.json()["code"] == 0
     assert drill.json()["data"]["rows"][0].get("account")
+
+
+def test_bug_c049_preview_kpi_matches_detail_and_filters():
+    """BUG-C049 · ¥412.8 万是视频号单行误按万展示；指标改为当前明细合计，并接受 IP 组与时间维度。"""
+    auth = headers()
+    run = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"dateFrom": "2026-09-01", "dateTo": "2026-10-03"},
+    )
+    body = run.json()
+    assert body["code"] == 0, body
+    data = body["data"]
+    assert data["gmvTotal"] == 186400 + 412800
+    assert data["orderTotal"] == 621 + 1376
+    assert "412.8" not in data["kpis"][0]["value"]
+    assert data["kpis"][0]["value"] == "¥599,200"
+    assert "视频号" in data["kpiNote"]
+    assert "412,800" in data["kpiNote"]
+    assert [point["label"] for point in data["trend"]][0] == "2026-09-28"
+    assert sum(point["value"] for point in data["trend"]) == data["gmvTotal"]
+    assert {slice_["name"] for slice_ in data["pie"]} == {"抖音", "视频号"}
+
+    channel = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"platform": "视频号", "dateFrom": "2026-09-01", "dateTo": "2026-10-03"},
+    ).json()
+    assert channel["data"]["gmvTotal"] == 412800
+    assert channel["data"]["kpis"][0]["value"] == "¥412,800"
+
+    week = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"dateFrom": "2026-09-01", "dateTo": "2026-10-03", "timeGrain": "WEEK"},
+    ).json()
+    assert week["data"]["trend"][0]["label"] == "W1"
+    month = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"dateFrom": "2026-09-01", "dateTo": "2026-10-03", "timeGrain": "month"},
+    ).json()
+    assert [point["label"] for point in month["data"]["trend"]] == ["2026-09", "2026-10"]
+    bad = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"dateFrom": "2026-09-01", "dateTo": "2026-10-03", "timeGrain": "YEAR"},
+    ).json()
+    assert bad["code"] == 1001
+
+    even_group = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"dateFrom": "2026-09-01", "dateTo": "2026-10-03", "ipGroupId": 2},
+    ).json()
+    assert even_group["data"]["gmvTotal"] == 186400
+    odd_group = client.post(
+        "/admin-api/ims/bi/report/preview/run",
+        headers=auth,
+        json={"dateFrom": "2026-09-01", "dateTo": "2026-10-03", "ipGroupId": 1},
+    ).json()
+    assert odd_group["data"]["gmvTotal"] == 412800
+
+    opened = client.post(
+        "/admin-api/ims/bi/query/cell-drill",
+        headers=auth,
+        json={"cellDimensions": {"PLATFORM": "抖音"}, "drillToDetail": True},
+    ).json()
+    assert opened["code"] == 0, opened
+    assert opened["data"]["jumpType"] == "DC_TRACE"
+    assert opened["data"]["jumpParams"]["keyword"] == "抖音"

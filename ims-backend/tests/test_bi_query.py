@@ -5,8 +5,9 @@ os.environ["IMS_OPS_DB"] = "ims_ops_test"
 
 from fastapi.testclient import TestClient
 
-from app.core import Base, engine
+from app.core import Base, SessionLocal, engine
 from app.main import app, init_db
+from app.models import Notify
 from app.ops_db import OpsBase, ops_engine
 
 client = TestClient(app)
@@ -185,6 +186,96 @@ def test_bi_query_run_pagination_and_cost():
     assert "queryCostMs" in data
     assert len(data["rows"]) <= 1
     assert data["total"] >= len(data["rows"])
+
+
+def test_bi_query_sources_and_agg_join_preview():
+    auth = headers()
+    sources = client.get("/admin-api/ims/bi/query/sources", headers=auth)
+    assert sources.json()["code"] == 0
+    codes = {row["entityCode"] for row in sources.json()["data"]["list"]}
+    assert "IP_GROUP" in codes
+    assert "CONTENT_METRIC" in codes
+    ip = next(row for row in sources.json()["data"]["list"] if row["entityCode"] == "IP_GROUP")
+    assert any(j["table"] == "oa_internal_content" for j in ip["joins"])
+
+    preview = client.post(
+        "/admin-api/ims/bi/query/preview",
+        headers=auth,
+        json={
+            "entityCode": "IP_GROUP",
+            "config": {
+                "selectFields": ["group_name"],
+                "aggFunc": "SUM",
+                "aggField": "play_count",
+                "groupBy": ["group_name"],
+                "joinTable": "oa_internal_content",
+                "conditions": [{"fieldCode": "group_name", "operator": "EQ", "value": "电竞一组"}],
+                "limit": 100,
+            },
+        },
+    )
+    assert preview.json()["code"] == 0, preview.json()
+    sql = preview.json()["data"]["sql"]
+    assert "SUM(" in sql
+    assert "GROUP BY" in sql
+    assert "`oa_ip_group`" in sql
+    assert "`oa_internal_content`" in sql
+    assert ":tenant_id" in sql
+    assert ":p0" in sql
+    assert "电竞一组" not in sql
+
+
+def test_bi_query_limit_and_timeout_export():
+    auth = headers()
+    client.get("/admin-api/ims/bi/query/sources", headers=auth)
+    too_big = client.post(
+        "/admin-api/ims/bi/query/run",
+        headers=auth,
+        json={"entityCode": "IP_GROUP", "config": {"selectFields": ["group_name"], "limit": 100001}},
+    )
+    assert too_big.json()["code"] == 1001
+    assert "100000" in too_big.json()["msg"]
+    os.environ["IMS_BI_QUERY_TIMEOUT_MS"] = "0"
+    try:
+        timed = client.post(
+            "/admin-api/ims/bi/query/run",
+            headers=auth,
+            json={"entityCode": "IP_GROUP", "config": {"selectFields": ["group_name"], "limit": 100000}},
+        )
+        body = timed.json()
+        assert body["code"] == 1262, body
+        assert body["msg"] == "导出任务已提交"
+        task_id = body["data"]["exportTaskId"]
+        db = SessionLocal()
+        try:
+            note = db.query(Notify).filter(Notify.event_type == "BI_QUERY_EXPORT", Notify.biz_key == task_id).one()
+            assert note.deleted == 0
+        finally:
+            db.close()
+    finally:
+        os.environ.pop("IMS_BI_QUERY_TIMEOUT_MS", None)
+
+
+def test_bi_query_adhoc_run_does_not_create_row():
+    auth = headers()
+    client.get("/admin-api/ims/bi/query/sources", headers=auth)
+    before = client.get("/admin-api/ims/bi/query/page", headers=auth, params={"pageNo": 1, "pageSize": 1})
+    before_total = before.json()["data"]["total"]
+    run = client.post(
+        "/admin-api/ims/bi/query/run",
+        headers=auth,
+        json={
+            "entityCode": "IP_GROUP",
+            "config": {"selectFields": ["group_name"], "limit": 10},
+            "pageNo": 1,
+            "pageSize": 5,
+        },
+    )
+    assert run.json()["code"] == 0, run.json()
+    assert "queryCostMs" in run.json()["data"]
+    assert "临时查询" not in str(run.json()["data"])
+    after = client.get("/admin-api/ims/bi/query/page", headers=auth, params={"pageNo": 1, "pageSize": 1})
+    assert after.json()["data"]["total"] == before_total
 
 
 def test_bi_query_save_and_publish():

@@ -26,7 +26,7 @@ test.describe('bi local tails 240', () => {
     await expect(page.locator('h1')).toContainText('自定义查询')
     await page.getByTestId('bi-query-limit').fill('0')
     await page.getByRole('button', { name: '执行查询' }).click()
-    await expect(page.getByTestId('bi-query-form-error')).toContainText('行数上限须为 1~1000')
+    await expect(page.getByTestId('bi-query-form-error')).toContainText('行数上限须为 1~100000')
     await page.screenshot({ path: `${shotDir}/01-query-limit.png` })
 
     await page.getByTestId('bi-query-limit').fill('100')

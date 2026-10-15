@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api import current_user, db_session, fail, ok
 from app.bi_br212 import primary_dept_id, report_row_visible, restrict_report_def
-from app.bi_drill import guard_report, record_bi_query, report_label, span_response
+from app.bi_drill import filtered_samples, guard_report, record_bi_query, report_label, span_response
 from app.core import utcnow
 from app.corp import page_args, paged, tenant_of, user_names
 from app.models import BiReportDef, User
@@ -392,15 +392,53 @@ def report_design_query(
     )
 
 
-PREVIEW_TABLE = [
-    {"platform": "抖音", "gmv": 186400, "orders": 621, "mom": "+6.2%"},
-    {"platform": "视频号", "gmv": 412800, "orders": 1376, "mom": "+6.2%"},
-    {"platform": "斗鱼", "gmv": 96700, "orders": 322, "mom": "-2.1%"},
-    {"platform": "快手", "gmv": 61200, "orders": 204, "mom": "-2.1%"},
-]
+# 原指标卡「¥412.8 万」= 视频号单行 412,800 被当成 412.8 万（4,128,000），不是明细相加。
+KPI_NOTE = (
+    "原指标「¥412.8 万」是视频号单行 GMV 412,800 被标成 412.8 万（即 4,128,000），"
+    "不是各平台明细相加。当前 GMV 与明细合计同一单位（元）。"
+)
+TIME_GRAINS = frozenset({"DAY", "WEEK", "MONTH"})
 # 预览指标卡的本地样本窗。落在窗外时只空指标卡，不下钻过滤（下钻过滤属查询性能切片）。
 SAMPLE_FROM = "2026-09-01"
 SAMPLE_TO = "2026-10-03"
+
+
+def format_yuan(amount: int) -> str:
+    return f"¥{int(amount):,}"
+
+
+def trend_points(grain: str, total: int) -> list[dict]:
+    if grain == "MONTH":
+        labels = ["2026-09", "2026-10"]
+        weights = [62, 38]
+    elif grain == "WEEK":
+        labels = [f"W{index + 1}" for index in range(6)]
+        weights = [62, 78, 55, 92, 71, 86]
+    else:
+        labels = [
+            "2026-09-28",
+            "2026-09-29",
+            "2026-09-30",
+            "2026-10-01",
+            "2026-10-02",
+            "2026-10-03",
+        ]
+        weights = [12, 18, 15, 22, 16, 17]
+    scale = sum(weights) or 1
+    if total <= 0:
+        return [{"label": label, "value": 0} for label in labels]
+    allocated = [total * weight // scale for weight in weights]
+    allocated[-1] += total - sum(allocated)
+    return [{"label": label, "value": value} for label, value in zip(labels, allocated)]
+
+
+def preview_detail_rows(platform: str, ip_group_id: int | None) -> list[dict]:
+    """与下钻平台层同一批样本，保证指标卡合计等于明细合计。"""
+    ctx: dict[str, str] = {"PLATFORM": platform or ""}
+    if ip_group_id:
+        ctx["ipGroupId"] = str(ip_group_id)
+    samples = filtered_samples("PLATFORM", ctx)
+    return [{"platform": name, "gmv": gmv, "orders": orders, "mom": ""} for name, gmv, orders in samples]
 
 
 def preview_day(raw: str) -> str | None:
@@ -441,20 +479,23 @@ def report_preview_run(
         return fail(1001, "日期格式应为 yyyy-MM-dd")
     if day_from and day_to and day_from > day_to:
         return fail(1001, "开始日期不能晚于结束日期")
+    grain = (body.timeGrain or "DAY").strip().upper() or "DAY"
+    if grain not in TIME_GRAINS:
+        return fail(1001, "时间维度仅支持 DAY、WEEK、MONTH")
     outside = bool(day_from and day_to and (day_to < SAMPLE_FROM or day_from > SAMPLE_TO))
     ctx = {
         "dateFrom": body.dateFrom,
         "dateTo": body.dateTo,
         "PLATFORM": body.platform or "",
+        "timeGrain": grain,
     }
+    if body.ipGroupId:
+        ctx["ipGroupId"] = str(body.ipGroupId)
     blocked_span = span_response(db, actor, body.reportId, title, "PREVIEW", ["PLATFORM"], ctx)
     if blocked_span is not None:
         return blocked_span
     t0 = time.perf_counter()
-    rows = [dict(r) for r in PREVIEW_TABLE]
-    if body.platform and not outside:
-        plat = body.platform.strip()
-        rows = [r for r in rows if r["platform"] == plat] or rows[:1]
+    rows = [] if outside else preview_detail_rows(body.platform, body.ipGroupId)
     elapsed = int((time.perf_counter() - t0) * 1000) + 856
     record_bi_query(db, actor, body.reportId, title, "PREVIEW", "SYNC", elapsed, len(rows))
     filters = {
@@ -462,8 +503,10 @@ def report_preview_run(
         "dateTo": day_to or body.dateTo,
         "ipGroupId": body.ipGroupId,
         "platform": body.platform,
-        "timeGrain": body.timeGrain,
+        "timeGrain": grain,
     }
+    gmv_total = sum(int(row["gmv"]) for row in rows)
+    order_total = sum(int(row["orders"]) for row in rows)
     if outside:
         return ok(
             {
@@ -490,12 +533,15 @@ def report_preview_run(
             "reportTitle": title,
             "filters": filters,
             "kpis": [
-                {"label": "GMV（近 30 天累计）", "value": "¥412.8 万", "delta": "+18.6%"},
-                {"label": "直播场次", "value": "14 场", "delta": "覆盖 4 平台"},
-                {"label": "互动率均值", "value": "4.7%", "delta": "达标线 4.0%"},
+                {"label": "GMV（当前明细合计）", "value": format_yuan(gmv_total), "delta": "与明细同一单位"},
+                {"label": "订单数（当前明细合计）", "value": str(order_total), "delta": f"{len(rows)} 行"},
+                {"label": "口径", "value": "元", "delta": "不再按万展示"},
             ],
-            "trend": [{"label": f"W{i + 1}", "value": v} for i, v in enumerate([62, 78, 55, 92, 71, 86])],
-            "pie": [{"name": r["platform"], "value": r["gmv"]} for r in PREVIEW_TABLE],
+            "gmvTotal": gmv_total,
+            "orderTotal": order_total,
+            "kpiNote": KPI_NOTE,
+            "trend": trend_points(grain, gmv_total),
+            "pie": [{"name": row["platform"], "value": row["gmv"]} for row in rows],
             "columns": ["platform", "gmv", "orders", "mom"],
             "rows": rows,
             "total": len(rows),

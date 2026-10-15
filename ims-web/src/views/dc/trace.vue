@@ -10,7 +10,12 @@
       </div>
     </div>
     <div class="hint" style="margin-bottom: 10px" data-testid="dc-trace-meta">
-      <span v-if="dataAsOf">数据截至 <b>{{ dataAsOf }}</b> · </span>
+      <span
+        v-if="dataAsOf"
+        data-testid="dc-trace-as-of"
+        :data-fresh="asOfFresh ? '1' : '0'"
+        :style="{ color: asOfFresh ? 'var(--green)' : 'var(--red)', fontWeight: '600' }"
+      >数据截至 <b>{{ asOfText }}</b>{{ asOfFresh ? ' ✓' : ' 同步延迟告警' }} · </span>
       <router-link
         data-testid="dc-trace-query-cost"
         to="/ims/dc/trace/perf"
@@ -27,6 +32,7 @@
     </div>
     <form class="qbar" @submit.prevent="onSubmit">
       <select v-model="entryType" style="width: 132px" data-testid="dc-trace-entry-type" @change="onEntryTypeChange">
+        <option value="ALL">全部</option>
         <option value="PERSON">实名人</option>
         <option value="ACCOUNT">账号</option>
         <option value="ASSET">资产</option>
@@ -63,22 +69,39 @@
     </form>
     <p v-if="filterRestored" class="hint" data-testid="dc-filter-restored">已恢复上次筛选</p>
     <p v-if="exportNote" class="hint" data-testid="dc-trace-export-note">{{ exportNote }}</p>
-    <div v-if="entries.length" class="hint" style="margin: 8px 0">
-      入口：
-      <button
-        v-for="e in entries"
-        :key="e.entryType + ':' + e.entryId"
-        type="button"
-        class="btn btn-sec btn-sm"
-        style="margin-right: 6px"
-        data-testid="dc-trace-entry-pick"
-        :data-entry-type="e.entryType"
-        :data-entry-id="e.entryId"
-        :title="e.hint || ''"
-        @click="pickEntry(e)"
-      >
-        {{ e.entryLabel }}
-      </button>
+    <div v-if="entries.length" class="tbl-block" data-testid="dc-trace-source-list" style="margin: 8px 0">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>类型</th>
+              <th>标签</th>
+              <th>提示</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in entries" :key="e.entryType + ':' + e.entryId" data-testid="dc-trace-source-row">
+              <td>{{ entryTypeLabel(e.entryType) }}</td>
+              <td>{{ e.entryLabel }}</td>
+              <td>{{ e.hint || '—' }}</td>
+              <td>
+                <button
+                  type="button"
+                  class="btn btn-sec btn-sm"
+                  data-testid="dc-trace-entry-pick"
+                  :data-entry-type="e.entryType"
+                  :data-entry-id="e.entryId"
+                  :title="e.hint || ''"
+                  @click="pickEntry(e)"
+                >
+                  设为源头
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
     <p v-else-if="searched" class="hint" data-testid="dc-trace-entry-empty">未找到入口</p>
     <p v-if="selectedEntry" class="hint" data-testid="dc-trace-current-entry">
@@ -224,6 +247,7 @@
             :key="n.nodeType + ':' + n.nodeId"
             :data-node-type="n.nodeType"
             :data-node-id="n.nodeId"
+            :data-focused="focusSession && n.nodeId === focusSession ? '1' : '0'"
           >
             {{ n.nodeType }} ·
             <button
@@ -273,10 +297,16 @@
                 <th>实名人</th>
                 <th>关联资产</th>
                 <th>GMV</th>
+                <th>净利润</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="d in details" :key="d.sessionCode">
+              <tr
+                v-for="d in details"
+                :key="d.sessionCode"
+                :data-focused="focusSession === d.sessionCode ? '1' : '0'"
+              >
                 <td class="mono">
                   <button
                     type="button"
@@ -307,9 +337,21 @@
                   <span v-if="!(d.assetIds || []).length" data-testid="dc-trace-detail-asset-empty">—</span>
                 </td>
                 <td class="num">{{ moneyOrDash(d.gmv) }}</td>
+                <td class="num">{{ moneyOrDash(d.netProfit) }}</td>
+                <td>
+                  <button
+                    type="button"
+                    class="btn btn-sec btn-sm"
+                    data-testid="dc-trace-focus"
+                    :data-session-code="d.sessionCode"
+                    @click="focusDetail(d)"
+                  >
+                    聚焦
+                  </button>
+                </td>
               </tr>
               <tr v-if="!details.length">
-                <td colspan="6">
+                <td colspan="8">
                   <div class="empty" data-testid="dc-trace-detail-empty">
                     <div class="et">{{ detailEmptyText }}</div>
                   </div>
@@ -334,7 +376,7 @@
       </div>
       <div class="drawer-b">
         <p class="hint">
-          {{ sessionDetail.sessionTitle }} · {{ sessionDetail.platform }} · 数据截至 {{ sessionDetail.dataAsOf }}
+          {{ sessionDetail.sessionTitle }} · {{ sessionDetail.platform }} · 数据截至 {{ formatShanghai(sessionDetail.dataAsOf || '') }}
         </p>
         <div class="g2" style="margin: 12px 0">
           <div class="card stat">
@@ -494,6 +536,7 @@ const dateTo = ref('')
 const exportFormat = ref<'XLSX' | 'PDF'>('XLSX')
 const selectedEntry = ref<Entry | null>(null)
 const entries = ref<Entry[]>([])
+const focusSession = ref('')
 const searched = ref(false)
 const nodes = ref<Node[]>([])
 const details = ref<Detail[]>([])
@@ -513,8 +556,10 @@ const drawerOpen = ref(false)
 const sessionDetail = ref<SessionDetail | null>(null)
 
 const timeoutHint = computed(() =>
-  timeoutDegraded.value ? '1181 穿透查询超时降级，请缩小日期范围' : '超时降级 1181',
+  timeoutDegraded.value ? '1181 穿透查询超时降级，请缩小日期范围' : '',
 )
+const asOfText = computed(() => formatShanghai(dataAsOf.value))
+const asOfFresh = computed(() => freshAsOf(dataAsOf.value))
 const dateFiltered = computed(
   () => !!(dateFrom.value && dateTo.value && dateFrom.value <= dateTo.value),
 )
@@ -531,6 +576,7 @@ const aggregateEmptyText = computed(() =>
 )
 
 const ENTRY_LABELS: Record<string, string> = {
+  ALL: '全部',
   PERSON: '实名人',
   ACCOUNT: '账号',
   ASSET: '资产',
@@ -673,6 +719,30 @@ onMounted(() => {
   filterRestored.value = restoreDcFilters()
 })
 
+function formatShanghai(raw: string) {
+  if (!raw) return ''
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return raw
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value || ''
+  return `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}`
+}
+
+function freshAsOf(raw: string) {
+  if (!raw) return true
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return true
+  return Date.now() - date.getTime() < 60 * 60 * 1000
+}
+
 function fmt(n: unknown) {
   return Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -718,7 +788,7 @@ function applyResult(data: TracePayload | undefined, degraded: boolean) {
   dataAsOf.value = data?.dataAsOf || ''
   queryCostMs.value = data?.queryCostMs ?? 0
   queried.value = true
-  timeoutDegraded.value = degraded || queryCostMs.value > 3000
+  timeoutDegraded.value = degraded
 }
 
 async function searchEntry() {
@@ -726,19 +796,26 @@ async function searchEntry() {
   persistDcFilters()
   error.value = ''
   searched.value = false
-  selectedEntry.value = null
-  crumbs.value = []
   try {
     const res = await http.get('/dc/trace/entry', {
       params: { keyword: keyword.value, entryType: entryType.value, limit: 8 },
     })
-    entries.value = res.data.data || []
+    const list = Array.isArray(res.data.data) ? res.data.data : res.data.data?.list || []
+    entries.value = list
     searched.value = true
     if (entries.value.length === 1) pickEntry(entries.value[0])
+    else {
+      selectedEntry.value = null
+      crumbs.value = []
+    }
   } catch (err) {
     const fail = asApiFail(err)
     error.value = fail?.msg || '网络错误'
   }
+}
+
+function focusDetail(row: Detail) {
+  focusSession.value = row.sessionCode
 }
 
 function drillEntry(chip: RelationChip) {
@@ -853,6 +930,14 @@ async function onSubmit() {
   filterRestored.value = false
   if (rejectDateEdge()) return
   persistDcFilters()
+  if (!selectedEntry.value && entries.value.length === 1) {
+    pickEntry(entries.value[0])
+    return
+  }
+  if (!selectedEntry.value && entries.value.length > 1) {
+    error.value = '请先点「设为源头」'
+    return
+  }
   if (selectedEntry.value) {
     if (viewMode.value === 'AGGREGATE') await loadAggregate()
     else await runQuery()
